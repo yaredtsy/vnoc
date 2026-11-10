@@ -83,6 +83,7 @@ async function loadStructure(): Promise<StructureResult> {
   gitRoot = structure.git_root;
   // what the session points at may be gone: it drops those (a focused node you deleted: you are one step back, not looking at nothing)
   store.dispatch({ type: "treeChanged" });
+  syncCursor();
   return structure;
 }
 
@@ -128,9 +129,12 @@ function showFocusInSidebar() {
 
 const isTreeNode = (arg: unknown): arg is TreeNode => typeof arg === "object" && arg !== null && "kind" in arg && "children" in arg;
 
-/** The nodes around the cursor of the active editor: the file, then the class or function it is in (innermost last). */
+/** The editor whose cursor counts: the active one, else a visible code editor (clicking into a webview leaves none active). */
+const cursorEditor = () => vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
+
+/** The nodes around the cursor: the file, then the class or function it is in (innermost last). */
 async function chainAtCursor(): Promise<TreeNode[]> {
-  const editor = vscode.window.activeTextEditor;
+  const editor = cursorEditor();
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!editor || !folder) return [];
   if (!tree) await loadStructure();
@@ -170,14 +174,20 @@ const command = (run: (arg: unknown, selected?: unknown) => Promise<unknown> | u
   }
 };
 
-/** Focus: narrow the canvas and the sidebar to this node, and bring the canvas up. */
-function focusOn(id: string) {
+/** Focus: the sidebar and the canvas both start at this node (the focus is shared), and the V-NOC side bar comes up. The canvas is not opened. */
+async function focusInSidebar(id: string) {
+  store.dispatch({ type: "focus", id });
+  await vscode.commands.executeCommand("workbench.view.extension.vnoc");
+}
+
+/** Show on Canvas: zoom the canvas into this node (and the sidebar follows), opening the canvas if it is closed. */
+function showOnCanvas(id: string) {
   store.dispatch({ type: "focus", id });
   panels.showCanvas();
 }
 
-/** Show on canvas: reveal the node without changing the focus more than needed. The canvas finds the request in the session, whether it was open or not. */
-function revealOnCanvas(id: string) {
+/** Open Canvas, on a node: bring the canvas up with the node revealed and selected, keeping the focus unless it hides the node. The canvas finds the request in the session, whether it was open or not. */
+function openCanvasAt(id: string) {
   store.dispatch({ type: "reveal", id, canvas: true });
   panels.showCanvas();
 }
@@ -194,20 +204,24 @@ async function goToCode(node: TreeNode) {
 async function showDocsBeside(arg: unknown, selected: unknown) {
   const explicit = isTreeNode(arg) || (typeof arg === "object" && arg !== null && "nodeKey" in arg) || Array.isArray(selected);
   panels.showDocs(explicit ? (await nodeFor(arg, selected)).id : undefined);
+  syncCursor(); // an unpinned tab shows the cursor node: make sure the session has it, also when no cursor has moved since the window opened
 }
 
 /** Cursor moves come in bursts; look at where it rests. */
 const CURSOR_DEBOUNCE_MS = 200;
 
-/** The session's `cursor`: the node the text cursor is in. Only a code editor moves it: clicking into a webview does not clear it. */
+/** Puts the node the text cursor is in into the session's `cursor`. */
+function syncCursor() {
+  void chainAtCursor().then((chain) => store.dispatch({ type: "cursor", id: chain[chain.length - 1]?.id ?? null }), () => {});
+}
+
+/** The session's `cursor` follows the cursor. Only a code editor moves it: clicking into a webview does not clear it. */
 function followCursor(): vscode.Disposable {
   let timer: NodeJS.Timeout | undefined;
   const soon = (editor: vscode.TextEditor | undefined) => {
     if (!editor) return;
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      void chainAtCursor().then((chain) => store.dispatch({ type: "cursor", id: chain[chain.length - 1]?.id ?? null }), () => {});
-    }, CURSOR_DEBOUNCE_MS);
+    timer = setTimeout(syncCursor, CURSOR_DEBOUNCE_MS);
   };
   return vscode.Disposable.from(
     vscode.window.onDidChangeTextEditorSelection((e) => soon(e.textEditor)),
@@ -259,7 +273,8 @@ export function activate(ctx: vscode.ExtensionContext) {
 
   // Registered synchronously, before anything is awaited: on restart VS Code waits for this serializer (S1).
   ctx.subscriptions.push(
-    vscode.commands.registerCommand("vnoc.openCanvas", () => panels.showCanvas()),
+    // with a node (the editor's or the Explorer's menu, a row) the canvas opens at it; from the palette it just opens
+    vscode.commands.registerCommand("vnoc.openCanvas", command(async (arg, selected) => (arg === undefined ? void panels.showCanvas() : openCanvasAt((await nodeFor(arg, selected)).id)))),
     vscode.window.registerWebviewPanelSerializer(CANVAS, { deserializeWebviewPanel: async (panel) => panels.restore("canvas", panel) }),
     vscode.window.registerWebviewPanelSerializer(DOCS, { deserializeWebviewPanel: async (panel) => panels.restore("docs", panel) }),
     sidebarView,
@@ -268,10 +283,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     watchFiles(),
     docs.watchEditors(),
     // these start from a sidebar item, a card's right-click menu, the Explorer, or the editor's menu (see `nodeFor`)
-    vscode.commands.registerCommand("vnoc.focus", command(async (arg, selected) => focusOn((await nodeFor(arg, selected)).id))),
+    vscode.commands.registerCommand("vnoc.focus", command(async (arg, selected) => focusInSidebar((await nodeFor(arg, selected)).id))),
     vscode.commands.registerCommand("vnoc.focusBack", () => store.dispatch({ type: "focusBack" })),
     vscode.commands.registerCommand("vnoc.focusClear", () => store.dispatch({ type: "focusJump", depth: 0 })),
-    vscode.commands.registerCommand("vnoc.showOnCanvas", command(async (arg, selected) => revealOnCanvas((await nodeFor(arg, selected)).id))),
+    vscode.commands.registerCommand("vnoc.showOnCanvas", command(async (arg, selected) => showOnCanvas((await nodeFor(arg, selected)).id))),
     vscode.commands.registerCommand("vnoc.goToCode", command(async (arg, selected) => goToCode(await nodeFor(arg, selected)))),
     vscode.commands.registerCommand("vnoc.showDocs", command(showDocsBeside)),
     vscode.commands.registerCommand("vnoc.addDoc", command(async (arg, selected) => {

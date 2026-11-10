@@ -43,45 +43,54 @@
     "commands": [
       {
         "command": "vnoc.openCanvas",
-        "title": "V-NOC: Open canvas"
+        "title": "Open Canvas",
+        "category": "V-NOC"
       },
       {
         "command": "vnoc.focus",
-        "title": "V-NOC: Focus on canvas",
-        "icon": "$(target)"
+        "title": "Focus",
+        "icon": "$(target)",
+        "category": "V-NOC"
       },
       {
         "command": "vnoc.refreshStructure",
-        "title": "V-NOC: Refresh structure",
-        "icon": "$(refresh)"
+        "title": "Refresh Structure",
+        "icon": "$(refresh)",
+        "category": "V-NOC"
       },
       {
         "command": "vnoc.addDoc",
-        "title": "V-NOC: Add doc",
-        "icon": "$(add)"
+        "title": "Add Doc\u2026",
+        "icon": "$(add)",
+        "category": "V-NOC"
       },
       {
         "command": "vnoc.showOnCanvas",
-        "title": "V-NOC: Show on canvas"
+        "title": "Show on Canvas",
+        "category": "V-NOC"
       },
       {
         "command": "vnoc.showDocs",
-        "title": "V-NOC: Show docs",
-        "icon": "$(info)"
+        "title": "Show Docs",
+        "icon": "$(info)",
+        "category": "V-NOC"
       },
       {
         "command": "vnoc.focusBack",
-        "title": "V-NOC: Focus back",
-        "icon": "$(arrow-left)"
+        "title": "Focus Back",
+        "icon": "$(arrow-left)",
+        "category": "V-NOC"
       },
       {
         "command": "vnoc.focusClear",
-        "title": "V-NOC: Clear focus",
-        "icon": "$(clear-all)"
+        "title": "Clear Focus",
+        "icon": "$(clear-all)",
+        "category": "V-NOC"
       },
       {
         "command": "vnoc.goToCode",
-        "title": "V-NOC: Go to code"
+        "title": "Go to Code",
+        "category": "V-NOC"
       }
     ],
     "menus": {
@@ -97,24 +106,34 @@
           "group": "inline"
         },
         {
+          "command": "vnoc.goToCode",
+          "when": "view == vnoc.structure",
+          "group": "3_code@1"
+        },
+        {
           "command": "vnoc.focus",
           "when": "view == vnoc.structure",
           "group": "1_vnoc@1"
         },
         {
-          "command": "vnoc.addDoc",
-          "when": "view == vnoc.structure && (viewItem == function || viewItem == class || viewItem == file || viewItem == folder)",
+          "command": "vnoc.showOnCanvas",
+          "when": "view == vnoc.structure",
           "group": "1_vnoc@2"
         },
         {
-          "command": "vnoc.showDocs",
+          "command": "vnoc.openCanvas",
           "when": "view == vnoc.structure",
           "group": "1_vnoc@3"
         },
         {
-          "command": "vnoc.goToCode",
+          "command": "vnoc.addDoc",
+          "when": "view == vnoc.structure && (viewItem == function || viewItem == class || viewItem == file || viewItem == folder)",
+          "group": "2_vnoc@1"
+        },
+        {
+          "command": "vnoc.showDocs",
           "when": "view == vnoc.structure",
-          "group": "2_code@1"
+          "group": "2_vnoc@2"
         }
       ],
       "view/title": [
@@ -173,16 +192,16 @@
       ],
       "vnoc.editorMenu": [
         {
-          "command": "vnoc.openCanvas",
-          "group": "1_canvas@0"
+          "command": "vnoc.focus",
+          "group": "1_show@1"
         },
         {
           "command": "vnoc.showOnCanvas",
-          "group": "1_canvas@1"
+          "group": "1_show@2"
         },
         {
-          "command": "vnoc.focus",
-          "group": "1_canvas@2"
+          "command": "vnoc.openCanvas",
+          "group": "1_show@3"
         },
         {
           "command": "vnoc.showDocs",

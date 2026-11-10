@@ -24,9 +24,11 @@ interface DocPanelProps {
   fill?: boolean;
   /** extra header buttons, before the close button */
   extra?: ReactNode;
+  /** what to say when there is no node (the canvas: nothing is selected; the docs tab: the cursor is not in a function or class) */
+  emptyText?: string;
 }
 
-export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extra }: DocPanelProps) {
+export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extra, emptyText = "Select a node to see its docs." }: DocPanelProps) {
   const nodeId = node?.node_id ?? null;
   const [docs, setDocs] = useState<DocInfo[]>([]);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -126,7 +128,7 @@ export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extr
         {!node && (
           <div className="mt-10 flex flex-col items-center gap-2 text-center text-muted-foreground">
             <IconPointer className="size-8 opacity-60" />
-            <p>Select a node to see its docs.</p>
+            <p>{emptyText}</p>
           </div>
         )}
         {node && docs.length === 0 && (

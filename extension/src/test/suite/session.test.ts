@@ -42,9 +42,9 @@ suite("the session", () => {
     await closeCanvas();
   });
 
-  test("two Show on Canvas before the canvas is up: the second one is the one that waits for it", async () => {
-    await vscode.commands.executeCommand("vnoc.showOnCanvas", first);
-    await vscode.commands.executeCommand("vnoc.showOnCanvas", second);
+  test("two Open Canvas on a node before the canvas is up: the second one is the one that waits for it", async () => {
+    await vscode.commands.executeCommand("vnoc.openCanvas", first);
+    await vscode.commands.executeCommand("vnoc.openCanvas", second);
     assert.strictEqual(api.session().reveal?.id, second.id, "the request in the session is the second one");
     assert.strictEqual(api.session().contexts.main.selected, second.id);
     // the canvas starts, finds it in the session, centres the node and reports it done: the session clears it
@@ -57,6 +57,20 @@ suite("the session", () => {
     await until("the canvas tab", () => canvasTabs().length === 1);
     await sleep(1500); // time enough for a replay, if there were one
     assert.strictEqual(api.session().reveal, null);
+  });
+
+  test("Focus focuses without opening the canvas; Show on Canvas focuses and opens it", async () => {
+    const file = (await api.structure()).root.children[0];
+    await closeCanvas();
+    await vscode.commands.executeCommand("vnoc.focus", file);
+    await sleep(800);
+    assert.strictEqual(canvasTabs().length, 0, "Focus goes to the sidebar, not the canvas");
+    assert.deepStrictEqual([...api.session().contexts.main.focus], [file.id]);
+    await vscode.commands.executeCommand("vnoc.focusClear");
+    await vscode.commands.executeCommand("vnoc.showOnCanvas", file);
+    await until("the canvas tab", () => canvasTabs().length === 1);
+    assert.deepStrictEqual([...api.session().contexts.main.focus], [file.id]);
+    await vscode.commands.executeCommand("vnoc.focusClear");
   });
 
   test("a focus is saved with the workspace, for the next start", async () => {

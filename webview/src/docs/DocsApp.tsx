@@ -42,6 +42,7 @@ export function DocsApp() {
     <div className="flex h-screen">
       <DocPanel
         fill
+        emptyText="Put the cursor in a function or class to see its docs here."
         node={node}
         revision={structure?.revision ?? 0}
         onAddDoc={addDoc}
