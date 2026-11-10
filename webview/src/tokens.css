@@ -38,3 +38,26 @@
   --card-badge-bg: var(--vscode-badge-background, #4d4d4d);
   --card-badge-fg: var(--vscode-badge-foreground, #fff);
 }
+
+/* React Flow draws its own pane, edges, controls and minimap in a dark or a light palette that it picks once, from the <body> class, when the canvas is
+   drawn: after a theme switch (or in a theme class it does not know) the pane could stay black in a light theme. These rules give every one of its
+   variables a value from the tokens above, in all three of its modes, so the canvas always follows the theme VS Code has now. */
+.react-flow,
+.react-flow.dark,
+.react-flow.light {
+  --xy-background-color-default: var(--background);
+  --xy-background-pattern-dots-color-default: color-mix(in srgb, var(--foreground) 22%, transparent);
+  --xy-background-pattern-lines-color-default: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --xy-background-pattern-cross-color-default: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --xy-edge-stroke-default: color-mix(in srgb, var(--foreground) 40%, transparent);
+  --xy-edge-stroke-selected-default: var(--card-selected);
+  --xy-controls-button-background-color-default: var(--card);
+  --xy-controls-button-background-color-hover-default: var(--accent);
+  --xy-controls-button-color-default: var(--foreground);
+  --xy-controls-button-color-hover-default: var(--foreground);
+  --xy-controls-button-border-color-default: var(--border);
+  --xy-minimap-background-color-default: var(--card);
+  --xy-minimap-mask-background-color-default: color-mix(in srgb, var(--background) 65%, transparent);
+  --xy-minimap-node-background-color-default: var(--muted-foreground);
+  --xy-attribution-background-color-default: transparent;
+}

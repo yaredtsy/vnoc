@@ -16,6 +16,18 @@ menus
 └── 6. how to check a menu really shows, and a test that keeps the lists equal
 ```
 
+> **Built differently from the tables below (decided while building, 2026-11-10).** Where this file and the code disagree, the code is right:
+>
+> | Entry | The plan said | Built |
+> |---|---|---|
+> | **Focus** | focus; the canvas shows it too | focus, and **the V-NOC side bar comes up**; the canvas is not opened (`vnoc.focus`) |
+> | **Show on Canvas** | reveal the node, no focus change | **zoom the canvas into the node** (focus), opening the canvas if it is closed (`vnoc.showOnCanvas`) |
+> | **Open Canvas** (on a node) | bring the canvas up as it was | **reveal the node** on the canvas: its ancestors open, the focus steps back if it hides the node, the card is selected and centred. With no node (the palette) it only opens. (`vnoc.openCanvas`) |
+> | titles | "V-NOC: Focus" in the submenu | every command has `category: "V-NOC"` and a short title, so the palette reads "V-NOC: Focus" and a menu reads "Focus" |
+> | the row's and the card's lists | exceptions: row only `showOnCanvas`; card only `revealInSidebar`, `focusBack`, `expand`, `collapse`, `expandAll`, `showCodeInCard`, `hideCodeInCard` | the same, plus **row only `openCanvas`**: a card is already on the canvas (`menus.test.ts` lists the exceptions) |
+> | the crumb's menu (§4) | `webviewSection == 'crumb'` | **not built**; nor a right-click menu on the selection strip |
+> | arrow keys in the sidebar (`02-sidebar.md` §4) | move the selection | move VS Code's focus row only; `Enter`, `Space` or a click select (checked in step R6) |
+
 ## 1. Two lists, one set of commands
 
 A row of the native tree gets its right-click menu from `view/item/context`; a card in the canvas webview gets it from `webview/context`. Two

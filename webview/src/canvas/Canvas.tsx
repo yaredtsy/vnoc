@@ -94,7 +94,6 @@ export function Canvas({ laid }: { laid: Layout }) {
       nodesConnectable={false}
       fitView
       minZoom={0.02}
-      colorMode={document.body.classList.contains("vscode-light") ? "light" : "dark"}
       proOptions={{ hideAttribution: true }}
     >
       <Background />
