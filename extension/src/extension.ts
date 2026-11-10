@@ -3,6 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, TransportKind } from "vscode-languageclient/node";
 
+import { addDoc } from "./addDoc";
 import { StructureView, type TreeNode } from "./structureView";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio
@@ -69,10 +70,21 @@ async function request<T>(method: string, params?: object): Promise<T> {
   return client!.sendRequest<T>(method, params);
 }
 
+/** The absolute path of the git root, from the last structure. Node ids and the paths in `vnoc/attach` start there. */
+let gitRoot: string | undefined;
+
 /** The structure of the opened folder; the canvas and the sidebar both read it through here. It waits for the core's first build. */
-function loadStructure<T = { root: TreeNode }>(): Promise<T> {
-  if (!vscode.workspace.workspaceFolders?.[0]) return Promise.reject(new Error("Open a folder first: V-NOC shows the code of the folder you opened."));
-  return request<T>("vnoc/structure");
+async function loadStructure<T = { root: TreeNode }>(): Promise<T> {
+  if (!vscode.workspace.workspaceFolders?.[0]) throw new Error("Open a folder first: V-NOC shows the code of the folder you opened.");
+  const structure = await request<T & { git_root: string }>("vnoc/structure");
+  gitRoot = structure.git_root;
+  return structure;
+}
+
+/** The "Add doc" flow for the node with this id (a sidebar item, or a card on the canvas). */
+async function addDocTo(key: string): Promise<void> {
+  const root = gitRoot ?? (await loadStructure<{ git_root: string }>()).git_root;
+  await addDoc(request, root, key);
 }
 
 let sidebar: StructureView;
@@ -126,6 +138,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     watchFiles(),
     // the hover button on a sidebar item: the canvas opens (or comes to the front) showing just that item
     vscode.commands.registerCommand("vnoc.focus", (node: TreeNode) => focusOnCanvas(ctx, node.id)),
+    vscode.commands.registerCommand("vnoc.addDoc", (node: TreeNode) => addDocTo(node.id)),
     { dispose: () => client?.stop() },
   );
 
@@ -213,6 +226,9 @@ function setupPanel(ctx: vscode.ExtensionContext, panel: vscode.WebviewPanel) {
       let result: unknown;
       if (m.method === "structure") {
         result = await loadStructure();
+      } else if (m.method === "addDoc") {
+        await addDocTo(m.params.key);
+        result = null;
       } else if (m.method === "code") {
         result = await readSlice(m.params);
       } else if (m.method === "pendingFocus") {

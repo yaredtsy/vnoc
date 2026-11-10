@@ -2425,6 +2425,7 @@ name = "vnoc-driver-python"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "lsp-server",
  "pylspt",
  "ruff_python_ast",

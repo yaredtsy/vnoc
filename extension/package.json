@@ -53,6 +53,11 @@
         "command": "vnoc.refreshStructure",
         "title": "V-NOC: Refresh structure",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "vnoc.addDoc",
+        "title": "V-NOC: Add doc",
+        "icon": "$(add)"
       }
     ],
     "menus": {
@@ -61,6 +66,16 @@
           "command": "vnoc.focus",
           "when": "view == vnoc.structure",
           "group": "inline"
+        },
+        {
+          "command": "vnoc.addDoc",
+          "when": "view == vnoc.structure && (viewItem == function || viewItem == class)",
+          "group": "inline"
+        },
+        {
+          "command": "vnoc.addDoc",
+          "when": "view == vnoc.structure && (viewItem == function || viewItem == class)",
+          "group": "vnoc"
         }
       ],
       "view/title": [
@@ -73,6 +88,10 @@
       "commandPalette": [
         {
           "command": "vnoc.focus",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.addDoc",
           "when": "false"
         }
       ]

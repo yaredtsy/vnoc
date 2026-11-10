@@ -53,6 +53,8 @@ export function App() {
       return next;
     });
   }, []);
+  // the host asks for the title, attaches, and opens the doc; if it fails it says so itself
+  const addDoc = useCallback((key: string) => void request("addDoc", { key }).catch(() => {}), []);
   const focusOn = useCallback((id: string) => setFocus((f) => push(f, id)), []);
 
   // survives closing and reopening the panel
@@ -114,7 +116,7 @@ export function App() {
           ))}
         </nav>
       )}
-      {laid && <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} onToggle={toggle} onToggleCode={toggleCode} onFocus={focusOn} />}
+      {laid && <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} onToggle={toggle} onToggleCode={toggleCode} onAddDoc={addDoc} onFocus={focusOn} />}
     </div>
   );
 }

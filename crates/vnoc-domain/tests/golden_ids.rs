@@ -1,4 +1,4 @@
-//! The public way of making an ID (`persist`) against the values an independent oracle computed.
+//! The public way of making an ID (`first_free_id`) against the values an independent oracle computed.
 
 #[allow(dead_code)] // this binary uses only part of the table
 mod golden_data;
@@ -6,17 +6,10 @@ mod golden_data;
 use std::collections::HashSet;
 
 use golden_data::ID_CASES;
-use vnoc_domain::{IdWriter, LocationKey, NodeId, RepoPath, persist};
-
-struct Sink;
-impl IdWriter for Sink {
-    fn write_id(&mut self, _: &LocationKey, _: &NodeId) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(())
-    }
-}
+use vnoc_domain::{LocationKey, NodeId, RepoPath, first_free_id};
 
 #[test]
-fn persist_gives_the_oracles_ids_including_collision_counters() {
+fn first_free_id_gives_the_oracles_ids_including_collision_counters() {
     for (path, qualname, occurrence, counter, expected) in ID_CASES {
         let loc = LocationKey::new(RepoPath::new(*path).unwrap(), *qualname, *occurrence).unwrap();
         // "counter c" means: attempts 1..c are taken. Their ids are the earlier rows of the same location in the table.
@@ -25,7 +18,7 @@ fn persist_gives_the_oracles_ids_including_collision_counters() {
             .filter(|(p, q, o, c, _)| p == path && q == qualname && o == occurrence && c < counter)
             .map(|(.., id)| id.to_string())
             .collect();
-        let id = persist(&loc, &|id| taken.contains(&id.to_string()), &mut Sink).unwrap();
+        let id = first_free_id(&loc, |id| taken.contains(&id.to_string())).unwrap();
         assert_eq!(id.to_string(), *expected, "{path}::{qualname}#{occurrence} counter {counter}");
     }
 }

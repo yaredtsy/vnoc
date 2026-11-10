@@ -21,7 +21,7 @@ window.addEventListener("message", (e: MessageEvent) => {
   else p.resolve(e.data.result);
 });
 
-export function request<T>(method: "structure" | "ping" | "pendingFocus" | "code", params?: object): Promise<T> {
+export function request<T>(method: "structure" | "ping" | "pendingFocus" | "code" | "addDoc", params?: object): Promise<T> {
   const id = ++nextId;
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve, reject });

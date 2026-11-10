@@ -5,6 +5,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 mod outline;
+mod plan_ids;
 mod positions;
 
 use std::collections::HashMap;
@@ -14,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::anyhow;
 use lsp_server::{Connection, ErrorCode, Message, Request, RequestId, Response};
 use serde_json::Value;
-use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, method};
+use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanIdsParams, method};
 
 fn main() -> anyhow::Result<()> {
     // Filtered by default: the type checker underneath traces every query, which is tens of MB per run.
@@ -77,7 +78,7 @@ fn handshake(conn: &Connection) -> anyhow::Result<()> {
         name: "python".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         // present even when small: stock LSP clients refuse a reply without it. Optional methods are announced here.
-        capabilities: [("outline", true), ("ids.plan", false), ("callTree", false), ("environmentInputs", false)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        capabilities: [("outline", true), ("ids.plan", true), ("callTree", false), ("environmentInputs", false)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
     };
     conn.initialize_finish(id, serde_json::to_value(reply)?)?;
     Ok(())
@@ -90,6 +91,7 @@ fn respond(req: Request, cancel: &AtomicBool) -> Response {
     }
     let result = match req.method.as_str() {
         method::OUTLINE => outline_request(&req.params),
+        method::PLAN_IDS => plan_ids_request(req.params.clone()),
         other => return Response::new_err(req.id, ErrorCode::MethodNotFound as i32, format!("unknown method {other}")),
     };
     // A running analysis cannot be interrupted (pylspt has no cancel flag, VS-D69): its answer is dropped.
@@ -124,4 +126,9 @@ fn outline_request(params: &Value) -> Result<Value, Failure> {
         _ => return Err(invalid("give `text`, or `root` and `file`")),
     };
     serde_json::to_value(outline::outline(&text)).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
+}
+
+fn plan_ids_request(params: Value) -> Result<Value, Failure> {
+    let params: PlanIdsParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
+    serde_json::to_value(plan_ids::plan(params)).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
 }

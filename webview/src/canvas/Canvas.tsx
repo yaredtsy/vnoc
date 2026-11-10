@@ -11,11 +11,11 @@ const nodeTypes = { card: NodeCard };
 
 const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p }));
 
-export function Canvas({ laid, onToggle, onToggleCode, onFocus }: { laid: Layout; onToggle: (id: string) => void; onToggleCode: (id: string) => void; onFocus: (id: string) => void }) {
+export function Canvas({ laid, onToggle, onToggleCode, onAddDoc, onFocus }: { laid: Layout; onToggle: (id: string) => void; onToggleCode: (id: string) => void; onAddDoc: (id: string) => void; onFocus: (id: string) => void }) {
   // The layout decides where nodes start; dragging moves them in this state. A new layout (expand, collapse, refresh) puts them back in their rows.
   const [nodes, setNodes, onNodesChange] = useNodesState(toFlow(laid)); // starting with the nodes (not []) lets fitView frame them on first paint
   useEffect(() => setNodes(toFlow(laid)), [laid, setNodes]);
-  const actions = useMemo(() => ({ toggle: onToggle, toggleCode: onToggleCode }), [onToggle, onToggleCode]);
+  const actions = useMemo(() => ({ toggle: onToggle, toggleCode: onToggleCode, addDoc: onAddDoc }), [onToggle, onToggleCode, onAddDoc]);
   return (
     <CanvasActionsProvider value={actions}>
       <ReactFlow

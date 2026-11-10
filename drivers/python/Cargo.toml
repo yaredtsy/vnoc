@@ -26,6 +26,7 @@ ruff_text_size = { git = "https://github.com/yaredtsy/rust_python_parser", rev =
 # The wire types are shared with the core (D1): a renamed field breaks the build on both sides, not at run time.
 vnoc-driver-protocol = { path = "../../crates/vnoc-driver-protocol" }
 serde = { version = "1", features = ["derive"] }
+blake3 = "1"
 
 [dev-dependencies]
 # Tests check the driver against the domain's golden IDs. The driver itself never depends on the domain (the core picks IDs).

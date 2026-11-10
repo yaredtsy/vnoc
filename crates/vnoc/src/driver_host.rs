@@ -12,7 +12,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, OutlineResult, PROTOCOL_VERSION, method};
+use serde::de::DeserializeOwned;
+use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, OutlineResult, PROTOCOL_VERSION, PlanIdsParams, PlanIdsResult, method};
 
 /// How long the driver may take to answer one request before it is treated as broken (review C4).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -82,8 +83,20 @@ impl DriverClient {
     /// The defs of a file the driver reads itself.
     pub async fn outline_file(&self, root: &Path, file: &str) -> Result<OutlineResult, HostError> {
         let params = OutlineParams { root: Some(root.to_string_lossy().into_owned()), file: Some(file.to_string()), ..Default::default() };
+        self.call(method::OUTLINE, &params).await
+    }
+
+    pub async fn plan_ids(&self, params: &PlanIdsParams) -> Result<PlanIdsResult, HostError> {
+        if !self.info.capabilities.get("ids.plan").copied().unwrap_or(false) {
+            return Err(HostError::MissingCapability("ids.plan"));
+        }
+        self.call(method::PLAN_IDS, params).await
+    }
+
+    /// One request, answered within `REQUEST_TIMEOUT`.
+    async fn call<R: DeserializeOwned>(&self, method: &'static str, params: &impl Serialize) -> Result<R, HostError> {
         let mut io = self.io.lock().await;
-        let reply = tokio::time::timeout(REQUEST_TIMEOUT, request(&mut io, method::OUTLINE, &params)).await.map_err(|_| HostError::Timeout(method::OUTLINE))??;
+        let reply = tokio::time::timeout(REQUEST_TIMEOUT, request(&mut io, method, params)).await.map_err(|_| HostError::Timeout(method))??;
         serde_json::from_value(reply).map_err(|e| HostError::Protocol(e.to_string()))
     }
 }
@@ -101,11 +114,21 @@ impl DriverHost {
     }
 
     /// The outline of one file (repo path relative to `root`), starting the driver on first use.
-    /// An error from the driver about this file is returned as is; anything else means the connection is broken, so the driver is dropped.
     pub async fn outline(&self, root: &Path, file: &str) -> Result<OutlineResult, HostError> {
+        self.with_client(|client| async move { client.outline_file(root, file).await }).await
+    }
+
+    /// Where the `ID:` lines go in `params.text` (the editor's buffer).
+    pub async fn plan_ids(&self, params: &PlanIdsParams) -> Result<PlanIdsResult, HostError> {
+        self.with_client(|client| async move { client.plan_ids(params).await }).await
+    }
+
+    /// Runs `request` on the driver. An error from the driver about this request is returned as is; anything else means the
+    /// connection is broken, so the driver is dropped (its process dies with it) and the next request starts a new one.
+    async fn with_client<T, Fut: std::future::Future<Output = Result<T, HostError>>>(&self, request: impl FnOnce(Arc<DriverClient>) -> Fut) -> Result<T, HostError> {
         let client = self.client().await?;
-        let result = client.outline_file(root, file).await;
-        if matches!(&result, Err(e) if !matches!(e, HostError::Remote { .. })) {
+        let result = request(client).await;
+        if matches!(&result, Err(e) if !matches!(e, HostError::Remote { .. } | HostError::MissingCapability(_))) {
             *self.client.lock().await = None;
         }
         result

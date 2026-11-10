@@ -135,6 +135,11 @@ impl NodeToml {
         self.str_field("id_in_code").map(IdInCode::read)
     }
 
+    /// Records whether the ID is in the code. Keeps everything else.
+    pub fn set_id_in_code(&mut self, in_code: IdInCode) {
+        self.doc["id_in_code"] = value(in_code.as_str());
+    }
+
     /// A file without `status` is active.
     pub fn status(&self) -> Status {
         self.str_field("status").map_or(Status::Active, Status::read)

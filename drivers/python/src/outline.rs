@@ -5,8 +5,8 @@ use std::collections::HashMap;
 
 use pylspt::defs::{DefNode, scan_defs};
 use ruff_python_ast::statement_visitor::{StatementVisitor, walk_body, walk_stmt};
-use ruff_python_ast::{PythonVersion, Stmt};
-use ruff_python_parser::{Mode, ParseOptions, parse_unchecked};
+use ruff_python_ast::{ModModule, PythonVersion, Stmt};
+use ruff_python_parser::{Mode, ParseOptions, Parsed, parse_unchecked};
 use ruff_text_size::{Ranged, TextRange};
 use vnoc_driver_protocol::{Def, DefKind, OutlineResult, SyntaxError};
 
@@ -38,6 +38,8 @@ struct Collector<'a> {
     errors: &'a [TextRange],
     stack: Vec<(String, DefKind)>,
     out: Vec<Def>,
+    /// where each def of `out` is, in byte offsets (same order)
+    ranges: Vec<TextRange>,
 }
 
 impl<'a> Collector<'a> {
@@ -57,6 +59,7 @@ impl<'a> Collector<'a> {
             // a def whose lines contain a parse error; it errs toward flagging a neighbour, never toward missing the broken one
             syntax_error: self.errors.iter().any(|e| range.intersect(*e).is_some()),
         });
+        self.ranges.push(range);
         self.stack.push((qualname, kind));
         walk_body(self, body);
         self.stack.pop();
@@ -82,16 +85,31 @@ impl<'a> StatementVisitor<'a> for Collector<'a> {
     }
 }
 
-pub fn outline(text: &str) -> OutlineResult {
+/// Parses a module. Always gives a tree: a syntax error is in `errors()`, not a failure.
+pub fn parse(text: &str) -> Parsed<ModModule> {
     let options = ParseOptions::from(Mode::Module).with_target_version(PythonVersion::PY313);
-    let parsed = parse_unchecked(text, options).try_into_module().expect("Mode::Module always produces a module");
+    parse_unchecked(text, options).try_into_module().expect("Mode::Module always produces a module")
+}
+
+/// The defs of a parsed module, with each one's place in the text.
+pub struct Outlined {
+    pub result: OutlineResult,
+    /// `result.defs[i]` is at `ranges[i]`
+    pub ranges: Vec<TextRange>,
+}
+
+pub fn outline_parsed(text: &str, parsed: &Parsed<ModModule>) -> Outlined {
     let lines = Lines::new(text);
     let mut ids = HashMap::new();
     ids_by_range(&scan_defs(&parsed.syntax().body), &mut ids);
     let errors: Vec<TextRange> = parsed.errors().iter().map(|e| e.location).collect();
 
-    let mut c = Collector { lines: &lines, ids: &ids, errors: &errors, stack: vec![], out: vec![] };
+    let mut c = Collector { lines: &lines, ids: &ids, errors: &errors, stack: vec![], out: vec![], ranges: vec![] };
     walk_body(&mut c, &parsed.syntax().body);
     let syntax_errors = parsed.errors().iter().map(|e| SyntaxError { range: lines.range(e.location), message: e.error.to_string() }).collect();
-    OutlineResult { defs: c.out, syntax_errors }
+    Outlined { result: OutlineResult { defs: c.out, syntax_errors }, ranges: c.ranges }
+}
+
+pub fn outline(text: &str) -> OutlineResult {
+    outline_parsed(text, &parse(text)).result
 }

@@ -17,7 +17,10 @@
 .node-header .expand.open { transform: rotate(90deg); }
 
 .node-body { flex: 1; padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 24px; opacity: .85; }
-.node-footer { padding: 0 10px; height: 20px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: .55; }
+.node-footer { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 20px; line-height: 20px; font-size: 11px; }
+.node-footer .where { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .55; }
+.node-footer .add-doc { flex: none; padding: 0 4px; line-height: 16px; border: 0; background: none; color: inherit; cursor: pointer; opacity: .6; }
+.node-footer .add-doc:hover { opacity: 1; }
 
 .node-card.code-open { height: 300px; }
 .node-header .code-toggle { flex: none; padding: 0 5px; height: 18px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: 11px var(--vscode-editor-font-family, monospace); cursor: pointer; opacity: .7; }

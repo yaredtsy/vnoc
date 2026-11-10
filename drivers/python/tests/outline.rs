@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Value, json};
-use vnoc_domain::{IdWriter, LocationKey, NodeId, RepoPath, occurrences, persist};
+use vnoc_domain::{LocationKey, RepoPath, first_free_id, occurrences};
 
 #[allow(dead_code)] // this binary uses only part of the golden table
 mod golden {
@@ -77,11 +77,15 @@ impl Driver {
     }
 }
 
-struct Sink;
-impl IdWriter for Sink {
-    fn write_id(&mut self, _: &LocationKey, _: &NodeId) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(())
+/// Applies a plan's edits to ASCII `text` (positions are line/character; for ASCII a character is a byte).
+fn apply_edits(text: &str, edits: &[Value]) -> String {
+    let starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
+    let offset = |p: &Value| starts[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize;
+    let mut out = text.to_string();
+    for e in edits.iter().rev() {
+        out.insert_str(offset(&e["range"]["start"]), e["newText"].as_str().unwrap());
     }
+    out
 }
 
 fn defs(outline: &Value) -> &Vec<Value> {
@@ -94,7 +98,8 @@ fn the_handshake_announces_what_the_driver_can_do() {
     assert_eq!(init["protocol"], 1);
     assert_eq!(init["name"], "python");
     assert_eq!(init["capabilities"]["outline"], true);
-    assert_eq!(init["capabilities"]["ids.plan"], false, "not built yet, and it says so");
+    assert_eq!(init["capabilities"]["ids.plan"], true);
+    assert_eq!(init["capabilities"]["callTree"], false, "not built yet, and it says so");
     d.finish();
 }
 
@@ -134,7 +139,7 @@ fn qualnames_and_ids_of_the_fixture_match_the_independent_oracle() {
     for ((qualname, o), (expected_q, expected_o, expected_id)) in found.iter().zip(&occ).zip(golden::FIXTURE_DEFS) {
         assert_eq!((*qualname, *o), (*expected_q, *expected_o));
         let loc = LocationKey::new(RepoPath::new(golden::FIXTURE_PATH).unwrap(), *qualname, *o).unwrap();
-        let id = persist(&loc, &|_| false, &mut Sink).unwrap();
+        let id = first_free_id(&loc, |_| false).unwrap();
         assert_eq!(id.to_string(), *expected_id, "{qualname}#{o}");
     }
     d.finish();
@@ -210,5 +215,34 @@ fn bad_params_get_32602() {
     let (mut d, _) = Driver::start();
     assert_eq!(d.request("vnoc/outline", json!({})).unwrap_err()["code"], -32602);
     assert_eq!(d.request("vnoc/outline", json!({ "text": "x", "fingerprints": true })).unwrap_err()["code"], -32602, "fingerprints are not built yet");
+    d.finish();
+}
+
+#[test]
+fn plan_ids_puts_the_id_line_in_the_docstring_and_says_what_it_did() {
+    let (mut d, init) = Driver::start();
+    assert_eq!(init["capabilities"]["ids.plan"], true);
+    let text = "def with_doc():\n    \"\"\"Summary.\n\n    More.\n    \"\"\"\n\ndef no_doc():\n    return 1\n\ndef broken(:\n    pass\n\ndef no_doc():\n    return 2\n";
+    let ask = |qualname: &str, occurrence: u32, id: &str| json!({ "qualname": qualname, "occurrence": occurrence, "id": id, "replace_existing": false });
+    let plan = d
+        .request("vnoc/planIds", json!({ "text": text, "version": 7, "ids": [ask("with_doc", 1, "AAAA"), ask("no_doc", 2, "BBBB"), ask("nowhere", 1, "CCCC"), ask("broken", 1, "DDDD")] }))
+        .expect("planIds answers");
+    assert_eq!(plan["version"], 7, "the version is echoed");
+
+    let new_text = apply_edits(text, plan["edits"].as_array().unwrap());
+    assert!(new_text.contains("    More.\n\n    ID: AAAA\n    \"\"\""), "extends the docstring:\n{new_text}");
+    assert!(new_text.contains("def no_doc():\n    \"\"\"ID: BBBB\"\"\"\n    return 2"), "the second no_doc, and only that one:\n{new_text}");
+    assert_eq!(new_text.matches("ID: ").count(), 2);
+
+    let written: Vec<(&str, &str)> = plan["written"].as_array().unwrap().iter().map(|w| (w["id"].as_str().unwrap(), w["qualname"].as_str().unwrap())).collect();
+    assert_eq!(written, vec![("AAAA", "with_doc"), ("BBBB", "no_doc")]);
+    assert_eq!(plan["unmatched"][0]["qualname"], "nowhere");
+    assert_eq!(plan["skipped"][0]["qualname"], "broken", "a def with a syntax error is skipped on its own");
+    assert_eq!(plan["text_hash"], blake3::hash(new_text.as_bytes()).to_hex().as_str());
+
+    // a def that already carries an ID is left alone
+    let again = d.request("vnoc/planIds", json!({ "text": new_text, "version": 8, "ids": [ask("with_doc", 1, "ZZZZ")] })).unwrap();
+    assert_eq!(again["edits"], json!([]));
+    assert_eq!(again["skipped"][0]["reason"], "already has an ID");
     d.finish();
 }

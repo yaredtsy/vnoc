@@ -64,6 +64,8 @@ impl fmt::Display for RepoPath {
 pub enum LocationKeyError {
     #[error("an occurrence is 1-based; 0 is not a valid occurrence")]
     ZeroOccurrence,
+    #[error("`{0}` is not a location key (`path::qualname` or `path::qualname#n`)")]
+    Malformed(String),
 }
 
 /// A node that has no permanent ID (yet): `path::qualname`, and which same-named definition of that file it is.
@@ -102,6 +104,22 @@ impl fmt::Display for LocationKey {
             write!(f, "#{}", self.occurrence)?;
         }
         Ok(())
+    }
+}
+
+/// The reverse of `Display`: `path::qualname`, with `#n` for the second occurrence on. Used on keys the UI sends back.
+impl std::str::FromStr for LocationKey {
+    type Err = LocationKeyError;
+
+    fn from_str(text: &str) -> Result<LocationKey, LocationKeyError> {
+        let (path, rest) = text.split_once("::").ok_or_else(|| LocationKeyError::Malformed(text.to_string()))?;
+        // `#` cannot be in a Python name, so a trailing `#<digits>` is always the occurrence
+        let (qualname, occurrence) = match rest.rsplit_once('#') {
+            Some((q, n)) if n.bytes().all(|b| b.is_ascii_digit()) && !n.is_empty() => (q, n.parse().map_err(|_| LocationKeyError::Malformed(text.to_string()))?),
+            _ => (rest, 1),
+        };
+        let path = RepoPath::new(path).map_err(|_| LocationKeyError::Malformed(text.to_string()))?;
+        LocationKey::new(path, qualname, occurrence)
     }
 }
 
@@ -150,6 +168,18 @@ mod tests {
         assert_eq!(LocationKey::new(p.clone(), "C.f", 1).unwrap().to_string(), "src/a.py::C.f");
         assert_eq!(LocationKey::new(p.clone(), "C.f", 2).unwrap().to_string(), "src/a.py::C.f#2");
         assert_eq!(LocationKey::new(p, "C.f", 0), Err(LocationKeyError::ZeroOccurrence));
+    }
+
+    #[test]
+    fn a_location_parses_back_from_what_it_shows() {
+        let p = RepoPath::new("src/a.py").unwrap();
+        for (qualname, n) in [("f", 1), ("C.f", 2), ("top.<locals>.inner", 3)] {
+            let key = LocationKey::new(p.clone(), qualname, n).unwrap();
+            assert_eq!(key.to_string().parse::<LocationKey>().unwrap(), key);
+        }
+        for bad in ["", "src/a.py", "../a.py::f", "a.py::f#0"] {
+            assert!(bad.parse::<LocationKey>().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

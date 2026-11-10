@@ -24,7 +24,9 @@ use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 use crate::driver_host::DriverHost;
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
-use crate::protocol::{FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, Rebuild, Stats, Structure, StructureResult};
+use crate::identity::{self, Env};
+use crate::protocol::{Attach, AttachParams, AttachResult, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Stats, Structure, StructureResult};
+use crate::userdata::UserData;
 use crate::watchdog::timed;
 
 /// Where the first build is.
@@ -49,6 +51,8 @@ struct State {
     status: tokio::sync::watch::Sender<Status>,
     /// Updates run one at a time: they read the index at the start and write it at the end.
     one_at_a_time: tokio::sync::Mutex<()>,
+    /// One attach at a time: two at once could both pick the same ID.
+    attaching: tokio::sync::Mutex<()>,
     /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
     everything_pending: AtomicBool,
 }
@@ -67,6 +71,7 @@ impl Core {
             index: RwLock::default(),
             status: tokio::sync::watch::channel(Status::Building).0,
             one_at_a_time: tokio::sync::Mutex::new(()),
+            attaching: tokio::sync::Mutex::new(()),
             everything_pending: AtomicBool::new(false),
         };
         Core { client, host: Arc::default(), state: Arc::new(state) }
@@ -133,6 +138,8 @@ pub fn router(client: ClientSocket) -> Router<Core> {
             timed("ping", async { Ok(PingResult { pong: true, pid: std::process::id(), version: env!("CARGO_PKG_VERSION").to_string() }) })
         })
         .request::<Structure, _>(structure)
+        .request::<ProjectInfo, _>(project_info)
+        .request::<Attach, _>(attach)
         .notification::<FilesChanged>(files_changed)
         .notification::<Rebuild>(|core, _| {
             core.spawn_update(Work::Everything);
@@ -207,5 +214,26 @@ fn structure(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::
             truncated: index.truncated(),
             failed: index.failed(),
         })
+    })
+}
+
+/// `vnoc/projectInfo`: whether the first-attach question still has to be asked.
+fn project_info(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<ProjectInfoResult, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("projectInfo", async move {
+        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let settings = UserData::new(project.git_root()).settings().map_err(internal)?;
+        Ok(ProjectInfoResult { initialized: settings.initialized, markers: settings.markers })
+    })
+}
+
+/// `vnoc/attach`: see `identity::attach`.
+fn attach(core: &mut Core, params: AttachParams) -> impl std::future::Future<Output = Result<AttachResult, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("attach", async move {
+        let _one_at_a_time = core.state.attaching.lock().await;
+        let project = core.state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let env = Env { project, index: &core.state.index, host: &core.host, client: core.client.clone() };
+        identity::attach(env, params).await.map_err(internal)
     })
 }

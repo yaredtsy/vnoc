@@ -36,6 +36,10 @@ struct Core {
     next: u64,
     /// notifications that arrived while waiting for a response: (method, params)
     notifications: Vec<(String, Value)>,
+    /// How this stand-in editor answers `workspace/applyEdit`: it applies the edits to the file on disk (and says so), or refuses.
+    editor_applies_edits: bool,
+    /// the `workspace/applyEdit` requests the core made
+    edit_requests: Vec<Value>,
 }
 
 impl Core {
@@ -45,7 +49,7 @@ impl Core {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).env_remove("VNOC_DRIVER");
         let mut child = cmd.spawn().unwrap();
         let (stdin, out) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
-        let mut core = Core { child, stdin, out, next: 0, notifications: vec![] };
+        let mut core = Core { child, stdin, out, next: 0, notifications: vec![], editor_applies_edits: true, edit_requests: vec![] };
         let options = driver.map_or(json!({ "root": root }), |d| json!({ "driverPath": d, "root": root }));
         let init = core.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {}, "initializationOptions": options })).expect("initialize answers");
         assert_eq!(init["serverInfo"]["name"], "vnoc");
@@ -71,7 +75,11 @@ impl Core {
         loop {
             let msg = self.read_frame();
             if let Some(method) = msg["method"].as_str() {
-                self.notifications.push((method.to_string(), msg["params"].clone()));
+                if msg.get("id").is_some() {
+                    self.answer_core_request(&msg);
+                } else {
+                    self.notifications.push((method.to_string(), msg["params"].clone()));
+                }
                 continue;
             }
             assert_eq!(msg["id"], json!(id), "{msg}");
@@ -80,6 +88,17 @@ impl Core {
                 None => Ok(msg["result"].clone()),
             };
         }
+    }
+
+    /// The core asked the editor for something. Only `workspace/applyEdit` is expected.
+    fn answer_core_request(&mut self, request: &Value) {
+        assert_eq!(request["method"], "workspace/applyEdit", "{request}");
+        self.edit_requests.push(request["params"].clone());
+        let applied = self.editor_applies_edits;
+        if applied {
+            apply_document_changes(&request["params"]["edit"]["documentChanges"]);
+        }
+        self.send(json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "applied": applied } }));
     }
 
     /// The params of the next `method` notification (reading frames until it comes).
@@ -91,6 +110,7 @@ impl Core {
             let msg = self.read_frame();
             match msg["method"].as_str() {
                 Some(m) if m == method => return msg["params"].clone(),
+                Some(_) if msg.get("id").is_some() => self.answer_core_request(&msg),
                 Some(m) => self.notifications.push((m.to_string(), msg["params"].clone())),
                 None => panic!("a response nobody asked for: {msg}"),
             }
@@ -112,6 +132,20 @@ impl Core {
         self.request("shutdown", Value::Null).unwrap();
         self.notify("exit", Value::Null);
         assert!(self.child.wait().unwrap().success(), "the core exits cleanly after shutdown + exit");
+    }
+}
+
+/// Applies a `documentChanges` list of text edits to the files on disk (ASCII text: a character is a byte).
+fn apply_document_changes(changes: &Value) {
+    for change in changes.as_array().unwrap() {
+        let path = PathBuf::from(change["textDocument"]["uri"].as_str().unwrap().strip_prefix("file://").unwrap());
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        let starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
+        let offset = |p: &Value| starts[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize;
+        for edit in change["edits"].as_array().unwrap().iter().rev() {
+            text.insert_str(offset(&edit["range"]["start"]), edit["newText"].as_str().unwrap());
+        }
+        std::fs::write(path, text).unwrap();
     }
 }
 
@@ -241,5 +275,99 @@ fn a_folder_that_does_not_exist_is_an_error_not_a_crash() {
     let e = core.request("vnoc/structure", Value::Null).unwrap_err();
     assert!(e["message"].as_str().unwrap().contains("not a folder"), "{e}");
     assert_eq!(core.request("vnoc/ping", Value::Null).unwrap()["pong"], true);
+    core.finish();
+}
+
+const ORDERS: &str = "class OrderService:\n    def parse_order(self, raw):\n        return raw\n\n    def other(self):\n        pass\n";
+
+/// A project with one file, `orders.py`, opened in a core that is ready.
+fn orders_project(label: &str, vnoc_toml: Option<&str>) -> (Core, PathBuf) {
+    let root = std::env::temp_dir().join(format!("vnoc-attach-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join(".vnoc")).unwrap();
+    std::fs::write(root.join("orders.py"), ORDERS).unwrap();
+    match vnoc_toml {
+        Some(text) => std::fs::write(root.join(".vnoc/vnoc.toml"), text).unwrap(),
+        None => std::fs::remove_dir_all(root.join(".vnoc")).unwrap(),
+    }
+    let mut core = Core::start(Some(driver_path()), &root);
+    core.request("vnoc/structure", Value::Null).unwrap();
+    (core, root)
+}
+
+fn attach_params(root: &std::path::Path, key: &str, title: &str, markers: Option<bool>) -> Value {
+    let file = root.join("orders.py");
+    json!({ "key": key, "title": title, "markers": markers, "document": { "uri": format!("file://{}", file.display()), "version": 3, "text": std::fs::read_to_string(&file).unwrap() } })
+}
+
+#[test]
+fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
+    let (mut core, root) = orders_project("full", None);
+    assert_eq!(core.request("vnoc/projectInfo", Value::Null).unwrap(), json!({ "initialized": false, "markers": true }));
+
+    let key = "orders.py::OrderService.parse_order";
+    let r = core.request("vnoc/attach", attach_params(&root, key, "Why we parse twice", Some(true))).expect("attach answers");
+    let id = r["id"].as_str().unwrap().to_string();
+    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(true), true));
+
+    // the editor was asked once, for a versioned edit of that document
+    assert_eq!(core.edit_requests.len(), 1);
+    assert_eq!(core.edit_requests[0]["edit"]["documentChanges"][0]["textDocument"]["version"], 3);
+    // the ID line is in the code, in the docstring that was added
+    let code = std::fs::read_to_string(root.join("orders.py")).unwrap();
+    assert!(code.contains(&format!("def parse_order(self, raw):\n        \"\"\"ID: {id}\"\"\"\n")), "{code}");
+
+    // .vnoc/ was set up and the node and doc are where the plan says
+    let (shard, node) = (&id[24..], root.join(".vnoc/nodes").join(&id[24..]).join(&id));
+    assert!(root.join(".vnoc/vnoc.toml").is_file() && root.join(".vnoc/.gitignore").is_file(), "{shard}");
+    let toml = std::fs::read_to_string(node.join("node.toml")).unwrap();
+    assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"OrderService.parse_order\"") && toml.contains("id_in_code = \"yes\""), "{toml}");
+    assert_eq!(r["doc"], json!(node.join("why-we-parse-twice.md")));
+    assert!(std::fs::read_to_string(node.join("why-we-parse-twice.md")).unwrap().starts_with(&format!("---\nnode: {id}\nhint: {key}\n---\n# Why we parse twice")));
+    assert_eq!(core.request("vnoc/projectInfo", Value::Null).unwrap(), json!({ "initialized": true, "markers": true }));
+
+    // a second doc on the same function: same ID, no new edit, no new question
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    core.wait_for("vnoc/indexChanged");
+    let second = core.request("vnoc/attach", attach_params(&root, key, "Edge cases", None)).unwrap();
+    assert_eq!(second["id"], json!(id));
+    assert_eq!(core.edit_requests.len(), 1);
+    assert!(second["doc"].as_str().unwrap().ends_with("edge-cases.md"));
+    core.finish();
+}
+
+#[test]
+fn a_marker_that_cannot_be_written_does_not_stop_the_attach() {
+    let (mut core, root) = orders_project("refused", None);
+    core.editor_applies_edits = false; // the document changed meanwhile, or the user undid it
+    let r = core.request("vnoc/attach", attach_params(&root, "orders.py::OrderService.other", "Notes", Some(true))).unwrap();
+    assert_eq!(r["id_in_code"], false);
+    assert!(r["notice"].as_str().unwrap().contains("attached by name"), "{r}");
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS, "the code is untouched");
+    let node = root.join(".vnoc/nodes").join(&r["id"].as_str().unwrap()[24..]).join(r["id"].as_str().unwrap());
+    assert!(std::fs::read_to_string(node.join("node.toml")).unwrap().contains("id_in_code = \"no\""));
+    assert!(node.join("notes.md").is_file());
+    core.finish();
+}
+
+#[test]
+fn a_project_set_to_no_ids_never_touches_the_code() {
+    let (mut core, root) = orders_project("none", Some("format = 1\n[ids]\ndefault = \"none\"\n"));
+    let r = core.request("vnoc/attach", attach_params(&root, "orders.py::OrderService.other", "Notes", None)).unwrap();
+    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(false), true), "off is a choice, not a failure");
+    assert!(core.edit_requests.is_empty());
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS);
+    core.finish();
+}
+
+#[test]
+fn attach_refuses_what_is_not_in_the_index_or_not_that_document() {
+    let (mut core, root) = orders_project("refuse", None);
+    let e = core.request("vnoc/attach", attach_params(&root, "orders.py::Nope", "x", None)).unwrap_err();
+    assert!(e["message"].as_str().unwrap().contains("not in the index"), "{e}");
+    let mut wrong = attach_params(&root, "orders.py::OrderService.other", "x", None);
+    wrong["document"]["uri"] = json!("file:///somewhere/else.py");
+    assert!(core.request("vnoc/attach", wrong).unwrap_err()["message"].as_str().unwrap().contains("not the file"));
+    assert!(!root.join(".vnoc").exists(), "a refused attach writes nothing");
     core.finish();
 }

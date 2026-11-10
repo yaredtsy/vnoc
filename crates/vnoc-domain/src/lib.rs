@@ -3,10 +3,10 @@
 //! * [`NodeId`]: a node's permanent identity, and the one rule for making it. **The on-disk format starts here and is
 //!   final from the MVP on.**
 //! * [`LocationKey`] / [`RepoPath`]: where a node is *right now* (it changes on every rename; it is never stored as an identity).
-//! * [`persist`]: the only way to turn a location into a `NodeId`.
+//! * [`first_free_id`]: the only way to turn a location into a `NodeId`.
 //!
 //! Anything that saves a reference to a node (a doc link, an MCP answer, a saved canvas tab) must hold a `NodeId`, so it
-//! must call [`persist`] first.
+//! must call [`first_free_id`] first.
 
 mod id;
 mod location;
@@ -16,7 +16,7 @@ mod persist;
 pub use id::{NodeId, NodeIdError, ProvisionalId};
 pub use location::{LocationKey, LocationKeyError, RepoPath, RepoPathError, occurrences};
 pub use node_toml::{IdInCode, NodeToml, NodeTomlError, Status};
-pub use persist::{IdWriter, MAX_ATTEMPTS, PersistError, persist};
+pub use persist::{MAX_ATTEMPTS, NoFreeId, first_free_id};
 
 #[cfg(test)]
 #[allow(dead_code)] // each test binary uses only part of the table

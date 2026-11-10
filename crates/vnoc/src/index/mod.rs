@@ -10,7 +10,7 @@ mod tree;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use vnoc_domain::RepoPath;
+use vnoc_domain::{LocationKey, RepoPath, occurrences};
 use vnoc_driver_protocol::Def;
 
 pub use build::{BuildError, Touched, refresh};
@@ -46,6 +46,13 @@ impl Index {
     /// The tree the sidebar and the canvas draw. `prefix`: the opened folder's place in the repo.
     pub fn tree(&self, root_name: &str, prefix: &str) -> Node {
         tree::build(root_name, prefix, &self.files)
+    }
+
+    /// The def a location names, as outlined from the saved file. `None` when the file or the def is not in the index.
+    pub fn def_at(&self, location: &LocationKey) -> Option<Def> {
+        let defs = self.files.get(location.path())?;
+        let which = occurrences(defs.iter().map(|d| d.qualname.as_str()));
+        defs.iter().zip(which).find(|(d, n)| d.qualname == location.qualname() && *n == location.occurrence()).map(|(d, _)| d.clone())
     }
 
     /// Whether the index already has an answer (an outline or an error) for this file.

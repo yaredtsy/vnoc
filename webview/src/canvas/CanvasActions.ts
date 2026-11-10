@@ -8,6 +8,8 @@ export interface CanvasActions {
   toggle(id: string): void;
   /** show or hide a node's code inside its card */
   toggleCode(id: string): void;
+  /** start the "add a doc" flow for a node (the host asks for the title and does the rest) */
+  addDoc(id: string): void;
 }
 
 const Ctx = createContext<CanvasActions | null>(null);
