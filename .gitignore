@@ -1,0 +1,8 @@
+target/
+node_modules/
+extension/dist/
+extension/media/webview/
+extension/bin/*
+!extension/bin/.gitkeep
+*.vsix
+.DS_Store

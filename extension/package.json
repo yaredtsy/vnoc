@@ -1,0 +1,22 @@
+{
+  "name": "vnoc",
+  "displayName": "V-NOC",
+  "description": "Browse code as a graph and attach docs to it.",
+  "version": "0.0.1",
+  "publisher": "vnoc",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {},
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": { "vscode-languageclient": "^9.0.1" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}

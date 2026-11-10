@@ -1,0 +1,10 @@
+{
+  "name": "vnoc-monorepo",
+  "private": true,
+  "workspaces": ["extension", "webview", "shared"],
+  "scripts": {
+    "build": "npm run build -w webview && npm run build -w extension",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "package": "node scripts/package.mjs"
+  }
+}

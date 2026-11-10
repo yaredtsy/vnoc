@@ -1,0 +1,13 @@
+[package]
+name = "vnoc"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+vnoc-domain = { path = "../vnoc-domain" }
+vnoc-driver-protocol = { path = "../vnoc-driver-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
