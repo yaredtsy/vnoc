@@ -17,8 +17,8 @@ const run = (cmd, args, cwd = root) => {
 
 run("cargo", ["build", "--release", "-p", "vnoc"]);
 run("cargo", ["build", "--release"], join(root, "drivers/python"));
-run("npm", ["run", "build", "-w", "webview"]);
-run("npm", ["run", "build", "-w", "extension"]);
+run("pnpm", ["--filter", "vnoc-webview", "build"]);
+run("pnpm", ["--filter", "vnoc", "build"]);
 
 const bin = join(root, "extension/bin");
 mkdirSync(bin, { recursive: true });
@@ -26,5 +26,5 @@ for (const f of readdirSync(bin)) if (f !== ".gitkeep") rmSync(join(bin, f));
 copyFileSync(join(root, "target/release", exe("vnoc")), join(bin, exe("vnoc")));
 copyFileSync(join(root, "drivers/python/target/release", exe("vnoc-driver-python")), join(bin, exe("vnoc-driver-python")));
 
-// vsce does not understand npm workspaces; the extension is bundled by esbuild, so it needs no node_modules at run time.
+// vsce does not understand pnpm workspaces; the extension is bundled by esbuild, so it needs no node_modules at run time.
 run("npx", ["--no", "@vscode/vsce", "package", "--no-dependencies", "--target", target, "--allow-missing-repository", "--skip-license", "--out", join(root, `vnoc-${target}.vsix`)], join(root, "extension"));

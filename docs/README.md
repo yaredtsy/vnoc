@@ -73,7 +73,11 @@ V-NOC
 │       ├── state                     who owns what, how it flows
 │       └── design                    sidebar · canvas · node card · doc panel
 │
-└── WHAT I FOUND ────────────────────────────────── 01-review.md
+├── WHAT I FOUND ────────────────────────────────── 01-review.md
+│
+└── LATER (ideas, not scheduled) ────────────────── futureplan/
+    ├── graph diff        changes as functions and as a graph; fixing them per function
+    └── agent access      CLI + skill · MCP · native plugins for coding agents
 ```
 
 ## Reading order

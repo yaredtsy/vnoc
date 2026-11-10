@@ -1,3 +1,6 @@
+import { IconPlus } from "@tabler/icons-react";
+
+import { Button } from "@/components/ui/button.tsx";
 import { useCanvasActions } from "../canvas/CanvasActions.ts";
 import type { Placed } from "../canvas/layout.ts";
 
@@ -12,9 +15,9 @@ export function NodeFooter({ node }: { node: Placed }) {
         {where}
       </span>
       {canAttach && (
-        <button className="add-doc nodrag nopan" title="Add a doc to this node" aria-label={`Add a doc to ${node.name}`} onClick={() => addDoc(node.id)}>
-          ＋
-        </button>
+        <Button variant="ghost" size="icon-xs" className="nodrag nopan size-4" title="Add a doc to this node" aria-label={`Add a doc to ${node.name}`} onClick={() => addDoc(node.id)}>
+          <IconPlus className="size-3" />
+        </Button>
       )}
     </div>
   );

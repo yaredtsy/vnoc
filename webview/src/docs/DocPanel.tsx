@@ -3,6 +3,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { IconFileText, IconPencil, IconPlus, IconPointer, IconX } from "@tabler/icons-react";
+
+import { Button } from "@/components/ui/button.tsx";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select.tsx";
 import { onDocText, request } from "../host.ts";
 import type { TreeNode } from "../types.ts";
 import { renderMarkdown } from "./markdown.ts";
@@ -14,6 +18,8 @@ interface DocInfo {
 }
 
 const NEW_DOC = "+new";
+const MIN_WIDTH = 280;
+const MAX_WIDTH = 800;
 
 export function DocPanel({ node, revision, onAddDoc, onClose }: { node: TreeNode | null; revision: number; onAddDoc: (id: string) => void; onClose: () => void }) {
   const nodeId = node?.node_id ?? null;
@@ -55,38 +61,77 @@ export function DocPanel({ node, revision, onAddDoc, onClose }: { node: TreeNode
     void request("openLink", { href: link.getAttribute("data-href"), from: path }).catch(() => {});
   };
 
+  // drag the left edge to resize; pointer capture keeps the drag alive over the canvas
+  const [width, setWidth] = useState(380);
+  const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.buttons !== 1) return;
+    setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - e.clientX)));
+  };
+
   return (
-    <aside className="doc-panel">
-      <header>
-        {docs.length > 0 ? (
-          <select value={doc?.path ?? ""} onChange={(e) => pick(e.target.value)} aria-label="Doc">
-            {docs.map((d) => (
-              <option key={d.path} value={d.path}>
-                {d.title}
-              </option>
-            ))}
-            <option value={NEW_DOC}>＋ New doc…</option>
-          </select>
-        ) : (
-          <span className="title">Docs</span>
-        )}
-        {path && <button onClick={() => void request("openDoc", { path }).catch(() => {})}>✎ Edit</button>}
-        <button className="close" aria-label="Close the doc panel" onClick={onClose}>
-          ✕
-        </button>
-      </header>
-      {node && (
-        <div className="doc-node">
-          {node.name} · {node.path}
-          {node.range ? `:${node.range.start.line + 1}` : ""}
+    <aside className="relative flex flex-none flex-col border-l border-border bg-background text-[13px]" style={{ width }}>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the doc panel"
+        className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none transition-colors hover:bg-ring/40 active:bg-ring/60"
+        onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+        onPointerMove={onResizeMove}
+      />
+      <header className="flex flex-none items-center gap-2 border-b border-border px-3 py-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold">{node?.name ?? "Docs"}</div>
+          {node && (
+            <div className="truncate font-mono text-[11px] text-muted-foreground" title={node.path}>
+              {node.path}
+              {node.range ? `:${node.range.start.line + 1}` : ""}
+            </div>
+          )}
         </div>
-      )}
-      <div className="doc-body" onClick={onBodyClick}>
-        {!node && <p className="empty">Select a node to see its docs.</p>}
+        {docs.length > 0 && (
+          <Select value={doc?.path ?? ""} items={docs.map((d) => ({ value: d.path, label: d.title }))} onValueChange={(value) => value && pick(value)}>
+            <SelectTrigger size="sm" className="max-w-[45%] min-w-0 font-medium" aria-label="Doc">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {docs.map((d) => (
+                <SelectItem key={d.path} value={d.path}>
+                  {d.title}
+                </SelectItem>
+              ))}
+              <SelectItem value={NEW_DOC}>
+                <IconPlus /> New doc…
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        )}
+        {path && (
+          <Button variant="ghost" size="icon-sm" title="Edit this doc" aria-label="Edit this doc" onClick={() => void request("openDoc", { path }).catch(() => {})}>
+            <IconPencil />
+          </Button>
+        )}
+        <Button variant="ghost" size="icon-sm" aria-label="Close the doc panel" onClick={onClose}>
+          <IconX />
+        </Button>
+      </header>
+      <div className="flex-1 overflow-auto px-4 py-4" onClick={onBodyClick}>
+        {!node && (
+          <div className="mt-10 flex flex-col items-center gap-2 text-center text-muted-foreground">
+            <IconPointer className="size-8 opacity-60" />
+            <p>Select a node to see its docs.</p>
+          </div>
+        )}
         {node && docs.length === 0 && (
-          <div className="empty">
-            <p>No docs on <code>{node.name}</code> yet.</p>
-            {(node.kind === "function" || node.kind === "class") && <button onClick={() => onAddDoc(node.id)}>Write the first doc</button>}
+          <div className="mt-10 flex flex-col items-center gap-3 text-center text-muted-foreground">
+            <IconFileText className="size-8 opacity-60" />
+            <p>
+              No docs on <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{node.name}</code> yet.
+            </p>
+            {(node.kind === "function" || node.kind === "class") && (
+              <Button variant="outline" size="sm" onClick={() => onAddDoc(node.id)}>
+                <IconPlus /> Write the first doc
+              </Button>
+            )}
           </div>
         )}
         {doc && <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />}

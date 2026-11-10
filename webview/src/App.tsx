@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { IconChevronRight, IconInfoCircle, IconRefresh } from "@tabler/icons-react";
+
+import { Button } from "@/components/ui/button.tsx";
+import { Toggle } from "@/components/ui/toggle.tsx";
 import { onFocus, onIndexChanged, request, vscode } from "./host.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
 import { DocPanel } from "./docs/DocPanel.tsx";
@@ -119,20 +123,24 @@ export function App() {
             {load.data.failed.length > 0 ? ` · ${load.data.failed.length} files could not be read` : ""}
           </span>
         )}
-        <button onClick={() => refresh()}>Refresh</button>
-        <button className={`info${docsOpen ? " on" : ""}`} aria-pressed={docsOpen} title="Docs of the selected node" onClick={() => setDocsOpen((open) => !open)}>
-          ⓘ
-        </button>
+        <Button className="ml-auto" size="sm" onClick={() => refresh()}>
+          <IconRefresh /> Refresh
+        </Button>
+        <Toggle variant="outline" size="sm" pressed={docsOpen} aria-label="Docs of the selected node" title="Docs of the selected node" onPressedChange={setDocsOpen}>
+          <IconInfoCircle />
+        </Toggle>
       </header>
       {crumbs.length > 0 && (
         <nav className="crumbs" aria-label="Focus">
-          <button onClick={() => setFocus((f) => jump(f, 0))}>All code</button>
+          <Button variant="ghost" size="xs" onClick={() => setFocus((f) => jump(f, 0))}>
+            All code
+          </Button>
           {crumbs.map((c, i) => (
             <span key={c.id}>
-              <span className="sep">›</span>
-              <button disabled={i === crumbs.length - 1} onClick={() => setFocus((f) => jump(f, i + 1))}>
+              <IconChevronRight className="mx-1 inline size-3 opacity-50" />
+              <Button variant="ghost" size="xs" className="disabled:opacity-100 disabled:font-semibold" disabled={i === crumbs.length - 1} onClick={() => setFocus((f) => jump(f, i + 1))}>
                 {c.node?.name ?? "?"}
-              </button>
+              </Button>
             </span>
           ))}
         </nav>
