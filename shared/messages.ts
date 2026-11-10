@@ -1,6 +1,8 @@
 // Everything that crosses between the extension host and a webview, declared once. A message that is not in this file does not exist
 // (docs/10-ui-rework/01-state.md §4). Types only: nothing here runs, so any side can import it.
 
+import type { ContextId, Intent, Session } from "./session";
+
 export type Kind = "folder" | "file" | "class" | "function";
 
 export interface Position {
@@ -61,29 +63,25 @@ export interface Requests {
   openDoc: { params: { path: string }; result: void };
   openLink: { params: { href: string; from: string }; result: void };
   goToCode: { params: { key: string }; result: void };
-  /** removed in step R3: the session carries all of these */
-  pending: { params: void; result: { type: "reveal"; id: string } | null };
-  focusStack: { params: void; result: string[] };
-  docsTarget: { params: void; result: string | null };
+  /** the session as it is now; a webview asks once when it starts, and after that it listens for the `session` event */
+  session: { params: void; result: Session };
 }
 
 /** extension → webview. No answer. */
 export interface Events {
   indexChanged: { revision: number };
   docText: { path: string; text: string };
-  /** the docs tab: the node to show (the one at the cursor) */
+  /** the whole session, every time it changes: whole snapshots cannot get out of step, and `seq` drops one that arrives late */
+  session: Session;
+  /** the docs tab beside an editor is already open: show this node and stay on it (pinned) */
   showNode: { id: string };
-  /** removed in step R3: the session carries both */
-  focusStack: { stack: string[] };
-  reveal: { id: string };
 }
 
 /** webview → extension, no answer. */
 export type Notes =
+  | { type: "intent"; context: ContextId; intent: Intent } // the one way a webview changes the session
   | { type: "rendered"; visible: number; hidden: number } // the extension's test suite uses it
-  | { type: "pin"; pinned: boolean } // the docs tab
-  | { type: "close" } // the docs tab
-  | { type: "focusChanged"; stack: string[] }; // removed in step R3
+  | { type: "close" }; // the docs tab
 
 // What actually travels. `postMessage` carries one of these:
 export type RequestMessage = { [M in keyof Requests]: { type: "req"; id: number; method: M; params: Requests[M]["params"] } }[keyof Requests];

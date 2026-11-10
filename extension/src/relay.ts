@@ -1,4 +1,5 @@
 import type { Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
+import type { Session } from "@vnoc/shared/session.ts";
 
 import type { Docs } from "./docs";
 
@@ -17,10 +18,7 @@ export interface Deps {
   /** the text of a definition, from VS Code's document */
   code(path: string, range: Range): Promise<string>;
   goToCode(key: string): Promise<void>;
-  // removed in step R3: the session carries these
-  takePendingReveal(): string | undefined;
-  focusStack(): string[];
-  docsTarget(): string | null;
+  session(): Session;
 }
 
 export function createHandlers(d: Deps): Handlers {
@@ -33,12 +31,7 @@ export function createHandlers(d: Deps): Handlers {
     openDoc: ({ path }) => d.docs.open(path),
     openLink: ({ href, from }) => d.docs.openLink(href, from),
     goToCode: ({ key }) => d.goToCode(key),
-    pending: async () => {
-      const id = d.takePendingReveal();
-      return id ? { type: "reveal", id } : null;
-    },
-    focusStack: async () => d.focusStack(),
-    docsTarget: async () => d.docsTarget(),
+    session: async () => d.session(),
   };
 }
 

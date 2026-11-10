@@ -46,13 +46,17 @@ export class Panels {
     return this.adopt("canvas", vscode.window.createWebviewPanel(CANVAS, "V-NOC canvas", vscode.ViewColumn.Active, this.options()));
   }
 
-  /** The one docs tab, in the column beside the editor, with the cursor left in the code. */
-  showDocs(): vscode.WebviewPanel {
+  /**
+   * The one docs tab, in the column beside the editor, with the cursor left in the code. It follows the cursor, unless `pinTo` names a node
+   * (Show Docs on a row or a card): then it shows that one until the pin is released. A new tab learns it from its page (no message can be lost).
+   */
+  showDocs(pinTo?: string): vscode.WebviewPanel {
     if (this.docsPanel) {
       this.docsPanel.reveal(undefined, true);
+      if (pinTo) this.docsPanel.webview.postMessage(event("showNode", { id: pinTo }));
       return this.docsPanel;
     }
-    return this.adopt("docs", vscode.window.createWebviewPanel(DOCS, "V-NOC docs", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, this.options()));
+    return this.adopt("docs", vscode.window.createWebviewPanel(DOCS, "V-NOC docs", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, this.options()), pinTo);
   }
 
   /** A tab VS Code restored after a restart. */
@@ -69,26 +73,26 @@ export class Panels {
     return vscode.Uri.joinPath(this.ctx.extensionUri, "media", "webview");
   }
 
-  private adopt(mode: Mode, panel: vscode.WebviewPanel): vscode.WebviewPanel {
+  private adopt(mode: Mode, panel: vscode.WebviewPanel, pinTo?: string): vscode.WebviewPanel {
     if (mode === "canvas") this.canvasPanel = panel;
     else this.docsPanel = panel;
     panel.onDidDispose(() => {
       if (this.canvasPanel === panel) this.canvasPanel = undefined;
       if (this.docsPanel === panel) this.docsPanel = undefined;
     });
-    panel.webview.html = this.html(panel.webview, mode);
+    panel.webview.html = this.html(panel.webview, mode, pinTo);
     panel.webview.onDidReceiveMessage((m: RequestMessage | Notes) => this.receive(panel, m));
     return panel;
   }
 
-  private html(webview: vscode.Webview, mode: Mode): string {
+  private html(webview: vscode.Webview, mode: Mode, pinTo?: string): string {
     const asUri = (file: string) => webview.asWebviewUri(vscode.Uri.joinPath(this.dist(), file));
     const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     // CSP: no remote anything. Scripts only with our nonce, styles and fonts only from the extension.
     return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
 <link rel="stylesheet" href="${asUri("assets/index.css")}">
-</head><body><div id="root" data-mode="${mode}"></div>
+</head><body><div id="root" data-mode="${mode}"${pinTo ? ` data-node="${escapeAttribute(pinTo)}"` : ""}></div>
 <script nonce="${nonce}" type="module" src="${asUri("assets/index.js")}"></script></body></html>`;
   }
 
@@ -97,4 +101,9 @@ export class Panels {
     if (message.type === "close") return panel.dispose();
     this.onNote(message);
   }
+}
+
+/** A node key can hold `"`, `<` and `&` (a Python name cannot, a path can): it goes into an attribute. */
+function escapeAttribute(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }

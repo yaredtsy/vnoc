@@ -255,8 +255,8 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "test": "tsc -p . --noEmit false --outDir out && node out/test/runTest.js",
-    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts"
+    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
+    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

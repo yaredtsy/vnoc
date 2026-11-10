@@ -1,7 +1,7 @@
 // The graph view. It draws a layout and reports what the user asked for; it knows nothing about the host or where the tree came from.
 
 import { Background, Controls, MiniMap, type Node, ReactFlow, useNodesState, useReactFlow } from "@xyflow/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 
 import { NodeCard } from "../node-card/NodeCard.tsx";
 import { CanvasActionsProvider } from "./CanvasActions.ts";
@@ -23,23 +23,26 @@ interface CanvasProps {
   onFocus: (id: string) => void;
   /** bring this node to the middle of the view; `n` makes asking twice for the same node work */
   centerOn: { id: string; n: number } | null;
+  /** the request `n` is done: the session clears it, so a canvas that opens later does not do it again */
+  onCentered: (n: number) => void;
 }
 
 /** Brings the requested node to the middle of the view once it is drawn. Inside `<ReactFlow>` so it can reach the view. */
-function CenterOn({ target, laid }: { target: { id: string; n: number } | null; laid: Layout }) {
+function CenterOn({ target, laid, onDone }: { target: { id: string; n: number } | null; laid: Layout; onDone: (n: number) => void }) {
   const { fitView } = useReactFlow();
-  const done = useRef(0);
   useEffect(() => {
-    if (!target || done.current === target.n || !laid.nodes.some((p) => p.id === target.id)) return;
-    done.current = target.n;
+    if (!target || !laid.nodes.some((p) => p.id === target.id)) return;
     // the cards of a new layout are measured on the next frames; framing them before that frames nothing
-    const timer = setTimeout(() => void fitView({ nodes: [{ id: target.id }], duration: 300, maxZoom: 1.2 }), 60);
+    const timer = setTimeout(() => {
+      void fitView({ nodes: [{ id: target.id }], duration: 300, maxZoom: 1.2 });
+      onDone(target.n);
+    }, 60);
     return () => clearTimeout(timer);
-  }, [fitView, target, laid]);
+  }, [fitView, target, laid, onDone]);
   return null;
 }
 
-export function Canvas({ laid, selected, onSelect, onToggle, onToggleCode, onAddDoc, onShowDocs, onFocus, centerOn }: CanvasProps) {
+export function Canvas({ laid, selected, onSelect, onToggle, onToggleCode, onAddDoc, onShowDocs, onFocus, centerOn, onCentered }: CanvasProps) {
   // The layout decides where nodes start; dragging moves them in this state. A new layout (expand, collapse, refresh) puts them back in their rows.
   const [nodes, setNodes, onNodesChange] = useNodesState(toFlow(laid, selected)); // starting with the nodes (not []) lets fitView frame them on first paint
   useEffect(() => setNodes(toFlow(laid, selected)), [laid, setNodes]); // eslint-disable-line react-hooks/exhaustive-deps -- a click must not put dragged cards back
@@ -65,7 +68,7 @@ export function Canvas({ laid, selected, onSelect, onToggle, onToggleCode, onAdd
         <Background />
         <Controls showInteractive={false} />
         <MiniMap pannable zoomable />
-        <CenterOn target={centerOn} laid={laid} />
+        <CenterOn target={centerOn} laid={laid} onDone={onCentered} />
       </ReactFlow>
     </CanvasActionsProvider>
   );

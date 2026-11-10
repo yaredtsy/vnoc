@@ -1,20 +1,23 @@
-// The docs tab beside a code editor (07-ui/02-design.md §3, "Docs beside the code"): the doc panel alone. The host decides which node it shows
-// (the one at the cursor in the editor) and sends it as `showNode`; the pin stops the host from following the cursor.
+// The docs tab beside a code editor (07-ui/02-design.md §3, "Docs beside the code"): the doc panel alone. It shows the node the text cursor is in
+// (`session.cursor`, widened to the innermost node around it that has docs), until the pin holds it on one node. A tab opened by "Show Docs" on a
+// row or a card starts pinned to that node. The pin is this tab's own state: nothing else needs to know.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { IconPin, IconPinFilled } from "@tabler/icons-react";
 
 import { Toggle } from "@/components/ui/toggle.tsx";
-import { on, post, request } from "../host.ts";
 import type { StructureResult } from "@vnoc/shared/messages.ts";
-import { findNode } from "@vnoc/shared/tree.ts";
+import { docTarget, findNode, pathTo } from "@vnoc/shared/tree.ts";
+import { on, post, request, vscode } from "../host.ts";
+import { useSession } from "../state/session.ts";
 import { DocPanel } from "./DocPanel.tsx";
 
 export function DocsApp() {
   const [structure, setStructure] = useState<StructureResult | null>(null);
-  const [key, setKey] = useState<string | null>(null);
-  const [pinned, setPinned] = useState(false);
+  const cursor = useSession((s) => s.cursor);
+  // the node it was opened for (the page carries it: a message sent while the page loads could be lost), else the one saved with the tab
+  const [pinned, setPinned] = useState<string | null>(() => document.getElementById("root")?.dataset.node ?? vscode.getState<{ pinned?: string }>()?.pinned ?? null);
 
   // The newest revision shown: two asks can cross, and the older answer must not replace the newer one.
   const refresh = useCallback(() => {
@@ -22,18 +25,18 @@ export function DocsApp() {
   }, []);
   useEffect(() => {
     refresh();
-    // a tab opened by "Show docs" asks for its node; after that the host pushes changes
-    request("docsTarget").then(setKey, () => {});
-    const stops = [on("indexChanged", refresh), on("showNode", ({ id }) => setKey(id))];
+    const stops = [on("indexChanged", refresh), on("showNode", ({ id }) => setPinned(id))];
     return () => stops.forEach((stop) => stop());
   }, [refresh]);
+  useEffect(() => vscode.setState({ pinned: pinned ?? undefined }), [pinned]);
 
-  const togglePin = (pressed: boolean) => {
-    setPinned(pressed);
-    post({ type: "pin", pinned: pressed });
-  };
-  const node = (structure && key ? findNode(structure.root, key) : null) ?? null;
-  const addDoc = (id: string) => void request("addDoc", { key: id }).catch(() => {});
+  // the pin, else the cursor node widened to what has docs (a folder is never the answer: the tab follows the code)
+  const followed = useMemo(() => {
+    if (!structure || !cursor) return null;
+    return docTarget((pathTo(structure.root, cursor) ?? []).filter((n) => n.kind !== "folder")) ?? null;
+  }, [structure, cursor]);
+  const node = (structure && pinned ? findNode(structure.root, pinned) : null) ?? followed;
+  const addDoc = (key: string) => void request("addDoc", { key }).catch(() => {});
 
   return (
     <div className="flex h-screen">
@@ -44,7 +47,14 @@ export function DocsApp() {
         onAddDoc={addDoc}
         onClose={() => post({ type: "close" })}
         extra={
-          <Toggle size="sm" pressed={pinned} aria-label="Keep showing this node" title={pinned ? "Following is off: click to follow the cursor again" : "Stop following the cursor"} onPressedChange={togglePin}>
+          <Toggle
+            size="sm"
+            pressed={pinned !== null}
+            disabled={!node}
+            aria-label="Keep showing this node"
+            title={pinned ? "Pinned: click to follow the cursor again" : "Stop following the cursor"}
+            onPressedChange={(pressed) => setPinned(pressed && node ? node.id : null)}
+          >
             {pinned ? <IconPinFilled /> : <IconPin />}
           </Toggle>
         }
