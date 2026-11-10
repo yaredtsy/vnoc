@@ -45,27 +45,20 @@ export interface Layout {
   hidden: number;
 }
 
-/** What is collapsed when the canvas first opens: every file (so classes and functions are one click away) and every folder from depth 2 down. */
-export function defaultCollapsed(root: TreeNode): string[] {
-  const out: string[] = [];
-  const walk = (n: TreeNode, depth: number) => {
-    if (n.children.length > 0 && (n.kind === "file" || (n.kind === "folder" && depth >= 2))) out.push(n.id);
-    n.children.forEach((c) => walk(c, depth + 1));
-  };
-  walk(root, 0);
-  return out;
-}
-
 function size(n: TreeNode): number {
   return 1 + n.children.reduce((sum, c) => sum + size(c), 0);
 }
 
-export function layout(root: TreeNode, collapsed: ReadonlySet<string>, codeOpen: ReadonlySet<string> = new Set()): Layout {
+/**
+ * What is drawn. The root of the view is always open and everything under it starts closed: `expanded` holds only what the user opened,
+ * so a new file that appears is closed without any work, and the saved view state stays small.
+ */
+export function layout(root: TreeNode, expanded: ReadonlySet<string>, codeOpen: ReadonlySet<string> = new Set()): Layout {
   const nodes: Placed[] = [];
   const edges: Edge[] = [];
   let y = 0; // an open code view makes a card taller, so rows are stacked by their heights
   const walk = (n: TreeNode, depth: number) => {
-    const isCollapsed = n.children.length > 0 && collapsed.has(n.id);
+    const isCollapsed = n.children.length > 0 && n !== root && !expanded.has(n.id);
     nodes.push({ id: n.id, kind: n.kind, name: n.name, path: n.path, line: n.range ? n.range.start.line + 1 : null, range: n.range, codeOpen: n.range !== null && codeOpen.has(n.id), depth, x: depth * COL_W, y, childCount: n.children.length, collapsed: isCollapsed, syntaxError: n.syntax_error, docs: n.docs, link: n.link });
     y += ROW_H + (n.range !== null && codeOpen.has(n.id) ? CODE_H : 0);
     if (isCollapsed) return;
