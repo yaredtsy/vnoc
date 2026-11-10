@@ -1,9 +1,7 @@
 /* How a card shows its state (docs/10-ui-rework/06-how-it-looks.md §2). Outlines and insets do not change the card's size, so ROW_H and CODE_H
-   in layout.ts stay right. These variables move to tokens.css in step R5. */
-.node-card { --card-selected: var(--vscode-focusBorder, #007fd4); --card-selected-bg: var(--vscode-list-activeSelectionBackground, #04395e);
-  --card-selected-fg: var(--vscode-list-activeSelectionForeground, #fff); --card-error: var(--vscode-errorForeground, #f48771); }
+   in layout.ts stay right. The colours are tokens.css. */
 .node-card { position: relative; display: flex; flex-direction: column; width: 240px; height: 80px; box-sizing: border-box; overflow: hidden; border-radius: 6px; font-size: 12px; cursor: default;
-  background: var(--vscode-editorWidget-background, #252526); border: 1px solid var(--vscode-editorWidget-border, #454545); border-left-width: 4px; }
+  background: var(--card); border: 1px solid var(--card-border); border-left-width: 4px; }
 .node-card.folder { border-left-color: #4e94ce; }
 .node-card.file { border-left-color: #7a7a7a; }
 .node-card.class { border-left-color: #c586c0; }
@@ -11,23 +9,23 @@
 .node-card.selected { outline: 2px solid var(--card-selected); outline-offset: 1px; }
 .node-card.selected .node-header { background: var(--card-selected-bg); color: var(--card-selected-fg); }
 /* the syntax-error line is inside the card, so the selection ring can sit outside it */
-.node-card.broken::after { content: ""; position: absolute; inset: 2px; border: 1px solid var(--card-error); border-radius: 4px; pointer-events: none; }
+.node-card.broken::after { content: ""; position: absolute; inset: 2px; border: 1px solid var(--destructive); border-radius: 4px; pointer-events: none; }
 .node-card .react-flow__handle { opacity: 0; pointer-events: none; }
 
-.node-header { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 4px; border-bottom: 1px solid var(--vscode-editorWidget-border, #454545); }
+.node-header { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 4px; border-bottom: 1px solid var(--card-border); }
 .node-header .icon { opacity: .8; width: 14px; text-align: center; }
 .node-header .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.node-header .badge { opacity: .7; font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--vscode-badge-background, #4d4d4d); color: var(--vscode-badge-foreground, #fff); }
+.node-header .badge { opacity: .7; font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--card-badge-bg); color: var(--card-badge-fg); }
 
 .node-body { flex: 1; padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 24px; opacity: .85; }
 .node-footer { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 20px; line-height: 20px; font-size: 11px; }
 .node-footer .where { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .55; }
 
 .node-card.code-open { height: 300px; }
-.node-code { flex: 1; min-height: 0; margin: 0; padding: 4px 0; overflow: auto; font: 11px/1.5 var(--vscode-editor-font-family, monospace); white-space: pre; cursor: text; user-select: text; }
+.node-code { flex: 1; min-height: 0; margin: 0; padding: 4px 0; overflow: auto; font: 11px/1.5 var(--editor-font); white-space: pre; cursor: text; user-select: text; }
 .node-code .ln { display: inline-block; width: 3.2em; padding-right: 1em; text-align: right; opacity: .4; user-select: none; }
 .node-code.muted { padding: 4px 10px; opacity: .6; }
-.node-code.error { padding: 4px 10px; color: var(--vscode-errorForeground, #f48771); white-space: pre-wrap; }
+.node-code.error { padding: 4px 10px; color: var(--destructive); white-space: pre-wrap; }
 .node-code.monaco-host { padding: 0; overflow: hidden; cursor: default; }
 
 .node-header .link { flex: none; font-size: 11px; opacity: .9; }

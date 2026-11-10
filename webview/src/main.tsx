@@ -1,4 +1,5 @@
 import "@xyflow/react/dist/style.css";
+import "./tokens.css";
 import "./style.css";
 
 import { createRoot } from "react-dom/client";

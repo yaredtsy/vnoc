@@ -25,7 +25,7 @@ export function NodeCode({ node }: { node: Placed }) {
     return () => {
       live = false;
     };
-  }, [node.id]);
+  }, [node.path, node.range]); // a new range (the code above moved, or the index changed) reads the code again
 
   if (!state) return <div className="node-code muted">loading…</div>;
   if ("error" in state) return <div className="node-code error">{state.error}</div>;
@@ -59,7 +59,7 @@ function CodeEditor({ text, path, firstLine }: { text: string; path: string; fir
         domReadOnly: true,
         contextmenu: false,
         fontSize: 11,
-        fontFamily: getComputedStyle(document.body).getPropertyValue("--vscode-editor-font-family") || "monospace",
+        fontFamily: getComputedStyle(document.body).getPropertyValue("--editor-font") || "monospace",
         overviewRulerLanes: 0,
         hideCursorInOverviewRuler: true,
         scrollbar: { alwaysConsumeMouseWheel: false, verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
@@ -80,7 +80,7 @@ function CodeEditor({ text, path, firstLine }: { text: string; path: string; fir
     }
     if (e.getValue() !== text) e.setValue(text);
     const model = e.getModel();
-    if (model) loadMonaco().then((m) => m.editor.setModelLanguage(model, languageOf(path)));
+    if (model) loadMonaco().then((m) => !model.isDisposed() && m.editor.setModelLanguage(model, languageOf(path)));
     e.updateOptions({ lineNumbers: (n) => String(n + firstLine - 1) });
   }, [text, path, firstLine]);
 

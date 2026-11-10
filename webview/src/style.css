@@ -1,29 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* shadcn tokens, mapped to the editor's theme so the UI follows whatever VS Code theme is active */
-:root {
-  --background: var(--vscode-editor-background, #1e1e1e);
-  --foreground: var(--vscode-editor-foreground, #ccc);
-  --card: var(--vscode-editorWidget-background, #252526);
-  --card-foreground: var(--foreground);
-  --popover: var(--vscode-dropdown-background, #3c3c3c);
-  --popover-foreground: var(--vscode-dropdown-foreground, #f0f0f0);
-  --primary: var(--vscode-button-background, #0e639c);
-  --primary-foreground: var(--vscode-button-foreground, #fff);
-  --secondary: color-mix(in srgb, var(--foreground) 12%, transparent);
-  --secondary-foreground: var(--foreground);
-  --muted: var(--vscode-toolbar-hoverBackground, #ffffff1a);
-  --muted-foreground: var(--vscode-descriptionForeground, #9d9d9d);
-  --accent: var(--vscode-list-hoverBackground, #2a2d2e);
-  --accent-foreground: var(--foreground);
-  --destructive: var(--vscode-errorForeground, #f48771);
-  --border: var(--vscode-panel-border, #444);
-  --input: var(--vscode-dropdown-border, #444);
-  --ring: var(--vscode-focusBorder, #007fd4);
-  --radius: 0.375rem;
-}
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -50,13 +27,13 @@
 }
 
 html, body, #root { height: 100%; margin: 0; }
-body { background: var(--vscode-editor-background, #1e1e1e); color: var(--vscode-editor-foreground, #ccc); font-family: var(--vscode-font-family, sans-serif); }
+body { background: var(--background); color: var(--foreground); font-family: var(--font); }
 .app { height: 100vh; display: flex; flex-direction: column; }
 .main { flex: 1; min-height: 0; display: flex; }
 .main > .react-flow { flex: 1; min-width: 0; }
-.bar { display: flex; gap: 12px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--vscode-panel-border, #444); font-size: 12px; }
-.bar .error { color: var(--vscode-errorForeground, #f48771); white-space: pre-wrap; }
-.crumbs { display: flex; align-items: center; gap: 4px; padding: 4px 12px; border-bottom: 1px solid var(--vscode-panel-border, #444); font-size: 12px; }
+.bar { display: flex; gap: 12px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.bar .error { color: var(--destructive); white-space: pre-wrap; }
+.crumbs { display: flex; align-items: center; gap: 4px; padding: 4px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
 
 .markdown { font-size: 13px; line-height: 1.6; }
 .markdown > :first-child { margin-top: 0; }
@@ -69,9 +46,9 @@ body { background: var(--vscode-editor-background, #1e1e1e); color: var(--vscode
 .markdown ul, .markdown ol { padding-left: 1.4em; }
 .markdown ul { list-style: disc; }
 .markdown ol { list-style: decimal; }
-.markdown a { color: var(--vscode-textLink-foreground, #3794ff); }
-.markdown code { font-family: var(--vscode-editor-font-family, monospace); font-size: .92em; background: var(--vscode-textCodeBlock-background, #ffffff14); padding: .1em .35em; border-radius: 4px; }
-.markdown pre { background: var(--vscode-textCodeBlock-background, #ffffff14); padding: 10px 12px; overflow: auto; border-radius: 6px; }
+.markdown a { color: var(--link); }
+.markdown code { font-family: var(--editor-font); font-size: .92em; background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+.markdown pre { background: var(--code-bg); padding: 10px 12px; overflow: auto; border-radius: 6px; }
 .markdown pre code { background: none; padding: 0; }
 .markdown blockquote { margin-left: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted-foreground); }
 .markdown img { max-width: 100%; border-radius: 6px; }

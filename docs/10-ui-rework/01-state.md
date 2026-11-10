@@ -316,6 +316,11 @@ const crumbs   = useSession(useShallow((s) => s.contexts[s.active].focus));     
 
 The canvas turns `expanded` into a `Set` once per change, in one `useMemo` beside the layout, rather than calling `includes` in every card.
 
+**Measured in step R5** (a real window, 9 cards drawn, 6 selections): a click draws **2 cards**, the one that lost the selection and the one that got it.
+It took two things beyond the selectors. React Flow re-draws every card when any prop of its renderer changes, so the click handlers are module-level
+functions (an inline arrow is new on every render), and `NodeCard` is `memo`. Before those, a click drew all 9 cards and 2 of them twice (11 draws).
+React Flow's own `selected` is not used (`elementsSelectable={false}`): the ring is the session's, and a second source of "selected" cost a second draw.
+
 `CanvasActions` (a React context that only carries callbacks down) is deleted. So are the eight callback props on `<Canvas>`.
 
 ## 6. What is saved, and where

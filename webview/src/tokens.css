@@ -1,0 +1,38 @@
+/* The only file that names a --vscode-* variable. Everything else in the webview uses these names, so the whole UI follows whatever theme VS Code has
+   (docs/10-ui-rework/06-how-it-looks.md), and a restyle is one file. */
+:root {
+  /* shadcn tokens, mapped to the editor's theme */
+  --background: var(--vscode-editor-background, #1e1e1e);
+  --foreground: var(--vscode-editor-foreground, #ccc);
+  --card: var(--vscode-editorWidget-background, #252526);
+  --card-foreground: var(--foreground);
+  --popover: var(--vscode-dropdown-background, #3c3c3c);
+  --popover-foreground: var(--vscode-dropdown-foreground, #f0f0f0);
+  --primary: var(--vscode-button-background, #0e639c);
+  --primary-foreground: var(--vscode-button-foreground, #fff);
+  --secondary: color-mix(in srgb, var(--foreground) 12%, transparent);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--vscode-toolbar-hoverBackground, #ffffff1a);
+  --muted-foreground: var(--vscode-descriptionForeground, #9d9d9d);
+  --accent: var(--vscode-list-hoverBackground, #2a2d2e);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--vscode-errorForeground, #f48771);
+  --border: var(--vscode-panel-border, #444);
+  --input: var(--vscode-dropdown-border, #444);
+  --ring: var(--vscode-focusBorder, #007fd4);
+  --radius: 0.375rem;
+
+  /* text and surfaces */
+  --font: var(--vscode-font-family, sans-serif);
+  --editor-font: var(--vscode-editor-font-family, monospace);
+  --link: var(--vscode-textLink-foreground, #3794ff);
+  --code-bg: var(--vscode-textCodeBlock-background, #ffffff14);
+
+  /* the card: how it looks in each state (06-how-it-looks.md §2) */
+  --card-border: var(--vscode-editorWidget-border, #454545);
+  --card-selected: var(--vscode-focusBorder, #007fd4);
+  --card-selected-bg: var(--vscode-list-activeSelectionBackground, #04395e);
+  --card-selected-fg: var(--vscode-list-activeSelectionForeground, #fff);
+  --card-badge-bg: var(--vscode-badge-background, #4d4d4d);
+  --card-badge-fg: var(--vscode-badge-foreground, #fff);
+}

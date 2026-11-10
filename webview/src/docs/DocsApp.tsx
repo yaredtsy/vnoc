@@ -10,8 +10,9 @@ import { IconPin, IconPinFilled } from "@tabler/icons-react";
 import { Toggle } from "@/components/ui/toggle.tsx";
 import type { StructureResult } from "@vnoc/shared/messages.ts";
 import { docTarget, findNode, pathTo } from "@vnoc/shared/tree.ts";
-import { on, post, request, vscode } from "../host.ts";
+import { on, post, request } from "../host.ts";
 import { useSession } from "../state/session.ts";
+import { pin, useView } from "../state/view.ts";
 import { DocPanel } from "./DocPanel.tsx";
 
 export function DocsApp() {
@@ -25,12 +26,8 @@ export function DocsApp() {
     setSeen({ cursor, selected, source: seen.selected !== selected ? "selection" : "cursor" });
   }
 
-  // the node it was opened for (the page carries it: a message sent while the page loads could be lost), else the one saved with the tab
-  const [pinned, setPinned] = useState<string | null>(() => document.getElementById("root")?.dataset.node ?? vscode.getState<{ pinned?: string }>()?.pinned ?? null);
-  const pin = useCallback((id: string | null) => {
-    setPinned(id);
-    vscode.setState({ pinned: id ?? undefined }); // saved with the tab, in the handler that changes it
-  }, []);
+  // the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; saved with the tab by state/view.ts)
+  const pinned = useView((v) => v.pinned);
 
   // The newest revision shown: two asks can cross, and the older answer must not replace the newer one.
   const refresh = useCallback(() => {
@@ -40,7 +37,7 @@ export function DocsApp() {
     refresh();
     const stops = [on("indexChanged", refresh), on("showNode", ({ id }) => pin(id))];
     return () => stops.forEach((stop) => stop());
-  }, [refresh, pin]);
+  }, [refresh]);
 
   // the pin; else what moved last. The cursor node is widened to what has docs (a folder is never the answer there: the tab follows the code).
   const followed = useMemo(() => {
