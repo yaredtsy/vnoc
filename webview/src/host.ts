@@ -6,7 +6,8 @@ import type { Events, Notes, Requests } from "@vnoc/shared/messages.ts";
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
   getState<T>(): T | undefined;
-  setState<T>(state: T): void;
+  /** returns the state it was given (so `useEffect(() => vscode.setState(x))` is a type error: React would call the result) */
+  setState<T>(state: T): T;
 };
 
 /** `acquireVsCodeApi` may be called once per webview. */

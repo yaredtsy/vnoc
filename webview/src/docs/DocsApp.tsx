@@ -28,7 +28,9 @@ export function DocsApp() {
     const stops = [on("indexChanged", refresh), on("showNode", ({ id }) => setPinned(id))];
     return () => stops.forEach((stop) => stop());
   }, [refresh]);
-  useEffect(() => vscode.setState({ pinned: pinned ?? undefined }), [pinned]);
+  useEffect(() => {
+    vscode.setState({ pinned: pinned ?? undefined }); // in braces: `setState` returns the state, and React would take that for a cleanup function
+  }, [pinned]);
 
   // the pin, else the cursor node widened to what has docs (a folder is never the answer: the tab follows the code)
   const followed = useMemo(() => {
