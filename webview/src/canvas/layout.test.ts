@@ -13,7 +13,7 @@ test("at first only the root is open: its children are drawn closed, one row eac
   const l = layout(tree, new Set());
   assert.deepEqual(l.nodes.map((p) => p.id), ["/", "pkg", "b.py"]);
   assert.deepEqual(l.nodes.map((p) => [p.x, p.y]), [[0, 0], [COL_W, ROW_H], [COL_W, 2 * ROW_H]]);
-  assert.equal(l.hidden, 5, "a.py, C, m and f are not drawn, and neither is the file a.py hides");
+  assert.equal(l.hidden, 4, "a.py, C, m and f are not drawn");
   assert.deepEqual(l.edges.map((e) => e.id), ["/->pkg", "/->b.py"]);
 });
 

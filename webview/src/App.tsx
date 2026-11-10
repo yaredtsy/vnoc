@@ -4,11 +4,12 @@ import { IconChevronRight, IconInfoCircle, IconRefresh } from "@tabler/icons-rea
 
 import { Button } from "@/components/ui/button.tsx";
 import { Toggle } from "@/components/ui/toggle.tsx";
-import { onFocus, onIndexChanged, request, vscode } from "./host.ts";
+import { onFocus, onIndexChanged, onReveal, request, vscode } from "./host.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
 import { DocPanel } from "./docs/DocPanel.tsx";
 import { type FocusStack, jump, prune, push } from "./canvas/focusStack.ts";
-import { defaultCollapsed, layout } from "./canvas/layout.ts";
+import { layout } from "./canvas/layout.ts";
+import { reveal } from "./canvas/reveal.ts";
 import { findNode } from "./tree.ts";
 import type { StructureResult, TreeNode } from "./types.ts";
 
@@ -17,13 +18,17 @@ type Load = { status: "loading" } | { status: "error"; message: string } | { sta
 export function App() {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [reloads, setReloads] = useState(0);
-  const saved = vscode.getState<{ collapsed: string[]; focus?: string[]; docsOpen?: boolean }>();
-  const [collapsed, setCollapsed] = useState<Set<string> | null>(saved ? new Set(saved.collapsed) : null);
+  const saved = vscode.getState<{ expanded?: string[]; focus?: string[]; docsOpen?: boolean }>();
+  // what the user opened. At first nothing is: the root is open and its children are closed.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(saved?.expanded));
   const [codeOpen, setCodeOpen] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<FocusStack>(saved?.focus ?? []);
   // the doc panel: open or closed (saved), and the card the user clicked last
   const [docsOpen, setDocsOpen] = useState(saved?.docsOpen ?? false);
   const [selected, setSelected] = useState<string | null>(null);
+  // "Show on canvas": the node to reveal once the tree is there, and the node to bring to the middle of the view
+  const [revealId, setRevealId] = useState<string | null>(null);
+  const [centerOn, setCenterOn] = useState<{ id: string; n: number } | null>(null);
 
   // The newest revision shown. Two asks can cross; the older answer must not replace the newer one.
   const shown = useRef(-1);
@@ -35,7 +40,6 @@ export function App() {
       (data) => {
         if (data.revision < shown.current) return;
         shown.current = data.revision;
-        setCollapsed((c) => c ?? new Set(defaultCollapsed(data.root)));
         setLoad({ status: "ready", data });
         if (!quiet) setReloads((n) => n + 1);
       },
@@ -48,8 +52,8 @@ export function App() {
   }, [refresh]);
 
   const toggle = useCallback((id: string) => {
-    setCollapsed((c) => {
-      const next = new Set(c ?? []);
+    setExpanded((open) => {
+      const next = new Set(open);
       if (!next.delete(id)) next.add(id);
       return next;
     });
@@ -73,17 +77,23 @@ export function App() {
     },
     [showDocs],
   );
-  const focusOn = useCallback((id: string) => setFocus((f) => push(f, id)), []);
+  // focusing a node also selects it, so an open doc panel shows that node's docs
+  const focusOn = useCallback((id: string) => {
+    setFocus((f) => push(f, id));
+    setSelected(id);
+  }, []);
 
   // survives closing and reopening the panel
   useEffect(() => {
-    if (collapsed) vscode.setState({ collapsed: [...collapsed], focus, docsOpen });
-  }, [collapsed, focus, docsOpen]);
+    vscode.setState({ expanded: [...expanded], focus, docsOpen });
+  }, [expanded, focus, docsOpen]);
 
-  // A Focus click in the sidebar: while the canvas is open the host sends it; a canvas opened by that click asks for it once it is up.
+  // A Focus or Show on canvas from the sidebar or a menu: while the canvas is open the host sends it; a canvas opened by that command asks for it once it is up.
   useEffect(() => {
-    request<string | null>("pendingFocus").then((id) => id && focusOn(id), () => {});
-    return onFocus(focusOn);
+    request<{ type: "focus" | "reveal"; id: string } | null>("pending").then((p) => p && (p.type === "focus" ? focusOn(p.id) : setRevealId(p.id)), () => {});
+    const stopFocus = onFocus(focusOn);
+    const stopReveal = onReveal(setRevealId);
+    return () => (stopFocus(), stopReveal());
   }, [focusOn]);
 
   // After a refresh the node we were zoomed into may be gone: drop the stack down to one that still exists.
@@ -91,6 +101,18 @@ export function App() {
   useEffect(() => {
     if (root) setFocus((f) => prune(f, (id) => findNode(root, id) !== null));
   }, [root]);
+  // Show on canvas: back to the nearest focus that contains the node, open its ancestors, select it, bring it to the middle
+  useEffect(() => {
+    if (!root || !revealId) return;
+    const shown = reveal(root, focus, revealId);
+    if (shown) {
+      setFocus(shown.focus);
+      setExpanded((open) => new Set([...open, ...shown.open]));
+      setSelected(revealId);
+      setCenterOn((c) => ({ id: revealId, n: (c?.n ?? 0) + 1 }));
+    }
+    setRevealId(null);
+  }, [root, revealId, focus]);
   const rootRef = useRef<TreeNode | null>(null);
   rootRef.current = root;
   // the doc panel shows the selected card, else the focused node
@@ -98,11 +120,8 @@ export function App() {
   const crumbs = useMemo(() => (root ? focus.map((id) => ({ id, node: findNode(root, id) })) : []), [root, focus]);
   const top = crumbs.length > 0 ? crumbs[crumbs.length - 1].node : null;
 
-  const laid = useMemo(() => {
-    if (!root || !collapsed) return null;
-    // zoomed in: the focused node is the root of what is drawn, and it is open (otherwise there would be nothing to see)
-    return top ? layout(top, new Set([...collapsed].filter((id) => id !== top.id)), codeOpen) : layout(root, collapsed, codeOpen);
-  }, [root, collapsed, top, codeOpen]);
+  // zoomed in: the focused node is the root of what is drawn (and the root of a drawing is always open)
+  const laid = useMemo(() => (root ? layout(top ?? root, expanded, codeOpen) : null), [root, expanded, top, codeOpen]);
 
   // Tell the host what was drawn: the extension's test suite uses it to prove the whole chain ran (bundle, request, core, driver, layout).
   useEffect(() => {
@@ -146,7 +165,7 @@ export function App() {
         </nav>
       )}
       <div className="main">
-        {laid && <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} selected={selected} onSelect={setSelected} onToggle={toggle} onToggleCode={toggleCode} onAddDoc={addDoc} onShowDocs={showDocs} onFocus={focusOn} />}
+        {laid && <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} selected={selected} onSelect={setSelected} onToggle={toggle} onToggleCode={toggleCode} onAddDoc={addDoc} onShowDocs={showDocs} onFocus={focusOn} centerOn={centerOn} />}
         {docsOpen && <DocPanel node={docNode} revision={load.status === "ready" ? load.data.revision : 0} onAddDoc={addDoc} onClose={() => setDocsOpen(false)} />}
       </div>
     </div>

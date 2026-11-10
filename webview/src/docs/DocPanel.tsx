@@ -1,7 +1,7 @@
 // The doc panel: a node's docs, rendered and read-only (07-ui/02-design.md §3). Editing happens in a normal editor tab ("Edit"); this panel is
 // its live preview. The panel never writes, and it never holds the truth: the host lists the docs and sends their text.
 
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { IconFileText, IconPencil, IconPlus, IconPointer, IconX } from "@tabler/icons-react";
 
@@ -21,7 +21,18 @@ const NEW_DOC = "+new";
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 800;
 
-export function DocPanel({ node, revision, onAddDoc, onClose }: { node: TreeNode | null; revision: number; onAddDoc: (id: string) => void; onClose: () => void }) {
+interface DocPanelProps {
+  node: TreeNode | null;
+  revision: number;
+  onAddDoc: (id: string) => void;
+  onClose: () => void;
+  /** take the whole width (the docs tab beside a code editor) instead of a resizable column next to the canvas */
+  fill?: boolean;
+  /** extra header buttons, before the close button */
+  extra?: ReactNode;
+}
+
+export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extra }: DocPanelProps) {
   const nodeId = node?.node_id ?? null;
   const [docs, setDocs] = useState<DocInfo[]>([]);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -69,15 +80,17 @@ export function DocPanel({ node, revision, onAddDoc, onClose }: { node: TreeNode
   };
 
   return (
-    <aside className="relative flex flex-none flex-col border-l border-border bg-background text-[13px]" style={{ width }}>
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize the doc panel"
-        className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none transition-colors hover:bg-ring/40 active:bg-ring/60"
-        onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
-        onPointerMove={onResizeMove}
-      />
+    <aside className={`relative flex flex-col bg-background text-[13px] ${fill ? "min-w-0 flex-1" : "flex-none border-l border-border"}`} style={fill ? undefined : { width }}>
+      {!fill && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the doc panel"
+          className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none transition-colors hover:bg-ring/40 active:bg-ring/60"
+          onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+          onPointerMove={onResizeMove}
+        />
+      )}
       <header className="flex flex-none items-center gap-2 border-b border-border px-3 py-2">
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold">{node?.name ?? "Docs"}</div>
@@ -110,6 +123,7 @@ export function DocPanel({ node, revision, onAddDoc, onClose }: { node: TreeNode
             <IconPencil />
           </Button>
         )}
+        {extra}
         <Button variant="ghost" size="icon-sm" aria-label="Close the doc panel" onClick={onClose}>
           <IconX />
         </Button>

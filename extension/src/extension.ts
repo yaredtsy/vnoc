@@ -5,6 +5,8 @@ import { LanguageClient, TransportKind } from "vscode-languageclient/node";
 
 import { addDoc } from "./addDoc";
 import { Docs } from "./docs";
+import { chainAt, docTarget } from "./nodeAt";
+import { CANVAS, DOCS, Panels } from "./panels";
 import { StructureView, type TreeNode } from "./structureView";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio
@@ -20,15 +22,15 @@ let output: vscode.OutputChannel;
 let rendered: { visible: number; hidden: number } | undefined;
 const renderWaiters: ((r: { visible: number; hidden: number }) => void)[] = [];
 
-const PANEL = "vnoc.canvas";
-
 /** Saves arrive in bursts (a format-on-save, a `git checkout`): collect the touched files for this long, then send one message. */
 const CHANGE_DEBOUNCE_MS = 200;
 
-/** The one canvas panel (a second `Open canvas` or a Focus click shows this one again). */
-let canvas: vscode.WebviewPanel | undefined;
-/** A focus asked for while the canvas was closed: the new webview takes it when it starts. */
-let pendingFocus: string | undefined;
+/** Something the canvas should do as soon as it is up: a Focus or Show on canvas asked for while it was closed. */
+let pendingOnCanvas: { type: "focus" | "reveal"; id: string } | undefined;
+/** The node the docs tab shows (the one at the cursor), for a tab that is just starting. */
+let docsTarget: string | undefined;
+/** The pin in the docs tab is on: do not follow the cursor. */
+let docsPinned = false;
 
 /**
  * A binary path: the setting if set; else, when running from source (F5), the build folder of this repository
@@ -71,30 +73,105 @@ async function request<T>(method: string, params?: object): Promise<T> {
   return client!.sendRequest<T>(method, params);
 }
 
-/** The absolute path of the git root, from the last structure. Node ids and the paths in `vnoc/attach` start there. */
+interface Structure {
+  root: TreeNode;
+  git_root: string;
+}
+
+/** The last structure the core sent. The editor menus look the node at the cursor up here. */
+let tree: TreeNode | undefined;
+/** The absolute path of the git root. Node ids and the paths in `vnoc/attach` start there. */
 let gitRoot: string | undefined;
 
-/** The structure of the opened folder; the canvas and the sidebar both read it through here. It waits for the core's first build. */
-async function loadStructure<T = { root: TreeNode }>(): Promise<T> {
+/** The structure of the opened folder; the canvas, the docs tab and the sidebar all read it through here. It waits for the core's first build. */
+async function loadStructure(): Promise<Structure> {
   if (!vscode.workspace.workspaceFolders?.[0]) throw new Error("Open a folder first: V-NOC shows the code of the folder you opened.");
-  const structure = await request<T & { git_root: string }>("vnoc/structure");
+  const structure = await request<Structure>("vnoc/structure");
+  tree = structure.root;
   gitRoot = structure.git_root;
   return structure;
 }
 
 /** The "Add doc" flow for the node with this id (a sidebar item, or a card on the canvas). Resolves to whether a doc was added. */
 async function addDocTo(key: string, existingDocs: number): Promise<boolean> {
-  const root = gitRoot ?? (await loadStructure<{ git_root: string }>()).git_root;
+  const root = gitRoot ?? (await loadStructure()).git_root;
   return addDoc(request, root, key, existingDocs);
 }
 
 let sidebar: StructureView;
-const docs = new Docs(() => gitRoot, (message) => canvas?.webview.postMessage(message));
+let panels: Panels;
+const docs = new Docs(() => gitRoot, (message) => panels.post(message));
 
-/** The core has a new index: the sidebar redraws, and an open canvas asks for the new structure. */
+/** The core has a new index: the sidebar redraws, and every open tab asks for the new structure. */
 function indexChanged(revision: number) {
   void sidebar.refresh();
-  canvas?.webview.postMessage({ type: "indexChanged", revision });
+  panels.post({ type: "indexChanged", revision });
+}
+
+// ── the commands behind the editor's V-NOC menu, the sidebar's buttons and the canvas ──────────────────────────────────────
+
+const isTreeNode = (arg: unknown): arg is TreeNode => typeof arg === "object" && arg !== null && "kind" in arg && "children" in arg;
+
+/** The nodes around the cursor of the active editor: the file, then the class or function it is in (innermost last). */
+async function chainAtCursor(): Promise<TreeNode[]> {
+  const editor = vscode.window.activeTextEditor;
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!editor || !folder) return [];
+  if (!tree) await loadStructure();
+  const relative = path.relative(folder.uri.fsPath, editor.document.uri.fsPath).split(path.sep).join("/");
+  return chainAt(tree!, relative, editor.selection.active.line);
+}
+
+/** The node a command is about: the tree item or card it was started from, else the node at the cursor. */
+async function nodeFor(arg: unknown): Promise<TreeNode> {
+  if (isTreeNode(arg)) return arg;
+  const chain = await chainAtCursor();
+  if (chain.length === 0) throw new Error("Put the cursor in a Python file that V-NOC has read.");
+  return chain[chain.length - 1];
+}
+
+/** Runs a command and shows what went wrong as a message: menu clicks have nowhere else to report. */
+const command = (run: (arg: unknown) => Promise<unknown> | unknown) => async (arg: unknown) => {
+  try {
+    await run(arg);
+  } catch (e) {
+    void vscode.window.showErrorMessage(`V-NOC: ${(e as Error).message ?? e}`);
+  }
+};
+
+/** Focus (zoom into the node) or Show (reveal it, keep the focus): an open canvas is told now; a canvas that is just starting asks for it. */
+function onCanvas(type: "focus" | "reveal", id: string) {
+  const wasOpen = panels.canvas !== undefined;
+  const panel = panels.showCanvas();
+  if (wasOpen) panel.webview.postMessage({ type, id });
+  else pendingOnCanvas = { type, id };
+}
+
+/** Opens (or reuses) the docs tab beside the editor, showing the docs of the node at the cursor. */
+async function showDocsBeside() {
+  await updateDocsTarget(true);
+  panels.showDocs();
+}
+
+/** The docs tab follows the cursor: the innermost node around it that has docs, else the innermost node. */
+async function updateDocsTarget(force = false) {
+  if (!force && (!panels.docs || docsPinned)) return;
+  const target = docTarget(await chainAtCursor());
+  if (!target || target.id === docsTarget) return;
+  docsTarget = target.id;
+  panels.docs?.webview.postMessage({ type: "showNode", id: target.id });
+}
+
+/** Cursor moves come in bursts; look at where it rests. */
+const FOLLOW_DEBOUNCE_MS = 200;
+
+function followCursor(): vscode.Disposable {
+  let timer: NodeJS.Timeout | undefined;
+  const soon = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => void updateDocsTarget().catch(() => {}), FOLLOW_DEBOUNCE_MS);
+  };
+  return vscode.Disposable.from(vscode.window.onDidChangeTextEditorSelection(soon), vscode.window.onDidChangeActiveTextEditor(soon), { dispose: () => clearTimeout(timer) });
 }
 
 /** Tells the core which files were touched. `.gitignore` is watched too: it changes which files are in scope. */
@@ -124,26 +201,40 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.window.showErrorMessage(String(e.message ?? e));
   });
 
+  panels = new Panels(ctx, answer, {
+    rendered(visible, hidden) {
+      rendered = { visible, hidden };
+      output.appendLine(`webview drew ${visible} nodes (${hidden} hidden)`);
+      renderWaiters.splice(0).forEach((w) => w(rendered!));
+    },
+    pinned(pinned) {
+      docsPinned = pinned;
+      if (!pinned) void updateDocsTarget().catch(() => {});
+    },
+  });
   sidebar = new StructureView(async () => (await loadStructure()).root);
   void sidebar.refresh();
 
   // Registered synchronously, before anything is awaited: on restart VS Code waits for this serializer (S1).
   ctx.subscriptions.push(
-    vscode.commands.registerCommand("vnoc.openCanvas", () => showCanvas(ctx)),
-    vscode.window.registerWebviewPanelSerializer(PANEL, {
-      async deserializeWebviewPanel(panel) {
-        panel.webview.options = panelOptions(ctx);
-        adopt(ctx, panel);
-      },
-    }),
+    vscode.commands.registerCommand("vnoc.openCanvas", () => panels.showCanvas()),
+    vscode.window.registerWebviewPanelSerializer(CANVAS, { deserializeWebviewPanel: async (panel) => panels.restore("canvas", panel) }),
+    vscode.window.registerWebviewPanelSerializer(DOCS, { deserializeWebviewPanel: async (panel) => panels.restore("docs", panel) }),
     vscode.window.registerTreeDataProvider("vnoc.structure", sidebar),
     // the tree follows the code by itself; Refresh is the way out if it ever does not: the core reads everything again
     vscode.commands.registerCommand("vnoc.refreshStructure", () => void ready.then(() => client?.sendNotification("vnoc/rebuild"))),
     watchFiles(),
     docs.watchEditors(),
-    // the hover button on a sidebar item: the canvas opens (or comes to the front) showing just that item
-    vscode.commands.registerCommand("vnoc.focus", (node: TreeNode) => focusOnCanvas(ctx, node.id)),
-    vscode.commands.registerCommand("vnoc.addDoc", (node: TreeNode) => addDocTo(node.id, node.docs)),
+    // these start from a sidebar item (a tree node), or from the editor's menu (the node at the cursor)
+    vscode.commands.registerCommand("vnoc.focus", command(async (arg) => onCanvas("focus", (await nodeFor(arg)).id))),
+    vscode.commands.registerCommand("vnoc.showOnCanvas", command(async (arg) => onCanvas("reveal", (await nodeFor(arg)).id))),
+    vscode.commands.registerCommand("vnoc.showDocs", command(showDocsBeside)),
+    vscode.commands.registerCommand("vnoc.addDoc", command(async (arg) => {
+      const node = await nodeFor(arg);
+      if (node.kind !== "function" && node.kind !== "class") throw new Error("Docs go on functions and classes for now: put the cursor inside one.");
+      await addDocTo(node.id, node.docs);
+    })),
+    followCursor(),
     { dispose: () => client?.stop() },
   );
 
@@ -173,91 +264,35 @@ async function readSlice({ path: relative, range: r }: Slice): Promise<string> {
   return doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character));
 }
 
-function showCanvas(ctx: vscode.ExtensionContext): vscode.WebviewPanel {
-  if (canvas) {
-    canvas.reveal();
-    return canvas;
+/** What a webview may ask of the extension. */
+async function answer(method: string, params: any): Promise<unknown> {
+  switch (method) {
+    case "structure":
+      return loadStructure();
+    case "addDoc":
+      return { added: await addDocTo(params.key, params.docs) };
+    case "docs":
+      return request("vnoc/docs", params);
+    case "docText":
+      return docs.text(params.path);
+    case "openDoc":
+      return void (await docs.open(params.path));
+    case "openLink":
+      return void (await docs.openLink(params.href, params.from));
+    case "code":
+      return readSlice(params);
+    case "pending": {
+      const pending = pendingOnCanvas;
+      pendingOnCanvas = undefined;
+      return pending ?? null;
+    }
+    case "docsTarget":
+      return docsTarget ?? null;
+    case "ping":
+      return request("vnoc/ping");
+    default:
+      throw new Error(`unknown request ${method}`);
   }
-  const panel = vscode.window.createWebviewPanel(PANEL, "V-NOC canvas", vscode.ViewColumn.Active, panelOptions(ctx));
-  adopt(ctx, panel);
-  return panel;
-}
-
-function adopt(ctx: vscode.ExtensionContext, panel: vscode.WebviewPanel) {
-  canvas = panel;
-  panel.onDidDispose(() => {
-    if (canvas === panel) canvas = undefined;
-  });
-  setupPanel(ctx, panel);
-}
-
-function focusOnCanvas(ctx: vscode.ExtensionContext, id: string) {
-  const wasOpen = canvas !== undefined;
-  const panel = showCanvas(ctx);
-  // an open canvas is told now; a canvas that is just starting asks for it (the `pendingFocus` request)
-  if (wasOpen) panel.webview.postMessage({ type: "focus", id });
-  else pendingFocus = id;
-}
-
-function distUri(ctx: vscode.ExtensionContext): vscode.Uri {
-  return vscode.Uri.joinPath(ctx.extensionUri, "media", "webview");
-}
-
-function panelOptions(ctx: vscode.ExtensionContext): vscode.WebviewPanelOptions & vscode.WebviewOptions {
-  return { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [distUri(ctx)] };
-}
-
-function setupPanel(ctx: vscode.ExtensionContext, panel: vscode.WebviewPanel) {
-  const dist = distUri(ctx);
-  const asUri = (f: string) => panel.webview.asWebviewUri(vscode.Uri.joinPath(dist, f));
-  const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  // CSP: no remote anything. Scripts only with our nonce, styles and fonts only from the extension.
-  panel.webview.html = `<!doctype html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${panel.webview.cspSource} 'unsafe-inline'; img-src ${panel.webview.cspSource} data:; font-src ${panel.webview.cspSource};">
-<link rel="stylesheet" href="${asUri("assets/index.css")}">
-</head><body><div id="root"></div>
-<script nonce="${nonce}" type="module" src="${asUri("assets/index.js")}"></script></body></html>`;
-
-  // The webview cannot reach the core. It posts a request; we relay it and post the answer back.
-  panel.webview.onDidReceiveMessage(async (m: { type: string; id: number; method: string; params?: any; visible?: number; hidden?: number }) => {
-    if (m.type === "rendered") {
-      rendered = { visible: m.visible ?? 0, hidden: m.hidden ?? 0 };
-      output.appendLine(`webview drew ${rendered.visible} nodes (${rendered.hidden} hidden)`);
-      renderWaiters.splice(0).forEach((w) => w(rendered!));
-      return;
-    }
-    if (m.type !== "req") return;
-    try {
-      let result: unknown;
-      if (m.method === "structure") {
-        result = await loadStructure();
-      } else if (m.method === "addDoc") {
-        result = { added: await addDocTo(m.params.key, m.params.docs) };
-      } else if (m.method === "docs") {
-        result = await request("vnoc/docs", m.params);
-      } else if (m.method === "docText") {
-        result = await docs.text(m.params.path);
-      } else if (m.method === "openDoc") {
-        await docs.open(m.params.path);
-        result = null;
-      } else if (m.method === "openLink") {
-        await docs.openLink(m.params.href, m.params.from);
-        result = null;
-      } else if (m.method === "code") {
-        result = await readSlice(m.params);
-      } else if (m.method === "pendingFocus") {
-        result = pendingFocus ?? null;
-        pendingFocus = undefined;
-      } else if (m.method === "ping") {
-        result = await request("vnoc/ping");
-      } else {
-        throw new Error(`unknown request ${m.method}`);
-      }
-      panel.webview.postMessage({ type: "res", id: m.id, result });
-    } catch (e) {
-      panel.webview.postMessage({ type: "res", id: m.id, error: String((e as Error).message ?? e) });
-    }
-  });
 }
 
 export async function deactivate() {

@@ -21,7 +21,7 @@ window.addEventListener("message", (e: MessageEvent) => {
   else p.resolve(e.data.result);
 });
 
-export function request<T>(method: "structure" | "ping" | "pendingFocus" | "code" | "addDoc" | "docs" | "docText" | "openDoc" | "openLink", params?: object): Promise<T> {
+export function request<T>(method: "structure" | "ping" | "pending" | "code" | "addDoc" | "docs" | "docsTarget" | "docText" | "openDoc" | "openLink", params?: object): Promise<T> {
   const id = ++nextId;
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve, reject });
@@ -42,6 +42,24 @@ export function onDocText(callback: (path: string, text: string) => void): () =>
 export function onIndexChanged(callback: () => void): () => void {
   const listener = (e: MessageEvent) => {
     if (e.data?.type === "indexChanged") callback();
+  };
+  window.addEventListener("message", listener);
+  return () => window.removeEventListener("message", listener);
+}
+
+/** "Show on canvas" from a menu: the host tells the canvas which node to reveal. Returns the way to stop listening. */
+export function onReveal(callback: (id: string) => void): () => void {
+  const listener = (e: MessageEvent) => {
+    if (e.data?.type === "reveal" && typeof e.data.id === "string") callback(e.data.id);
+  };
+  window.addEventListener("message", listener);
+  return () => window.removeEventListener("message", listener);
+}
+
+/** The docs tab beside an editor: the host says which node to show (the one at the cursor). */
+export function onShowNode(callback: (id: string) => void): () => void {
+  const listener = (e: MessageEvent) => {
+    if (e.data?.type === "showNode" && typeof e.data.id === "string") callback(e.data.id);
   };
   window.addEventListener("message", listener);
   return () => window.removeEventListener("message", listener);

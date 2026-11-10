@@ -9,7 +9,8 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onWebviewPanel:vnoc.canvas"
+    "onWebviewPanel:vnoc.canvas",
+    "onWebviewPanel:vnoc.docs"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -46,7 +47,7 @@
       },
       {
         "command": "vnoc.focus",
-        "title": "V-NOC: Focus on the canvas",
+        "title": "V-NOC: Focus on canvas",
         "icon": "$(target)"
       },
       {
@@ -58,6 +59,15 @@
         "command": "vnoc.addDoc",
         "title": "V-NOC: Add doc",
         "icon": "$(add)"
+      },
+      {
+        "command": "vnoc.showOnCanvas",
+        "title": "V-NOC: Show on canvas"
+      },
+      {
+        "command": "vnoc.showDocs",
+        "title": "V-NOC: Show docs",
+        "icon": "$(info)"
       }
     ],
     "menus": {
@@ -88,11 +98,51 @@
       "commandPalette": [
         {
           "command": "vnoc.focus",
-          "when": "false"
+          "when": "editorLangId == python"
         },
         {
           "command": "vnoc.addDoc",
-          "when": "false"
+          "when": "editorLangId == python"
+        },
+        {
+          "command": "vnoc.showOnCanvas",
+          "when": "editorLangId == python"
+        },
+        {
+          "command": "vnoc.showDocs",
+          "when": "editorLangId == python"
+        }
+      ],
+      "editor/context": [
+        {
+          "submenu": "vnoc.editorMenu",
+          "group": "navigation@9",
+          "when": "resourceLangId == python"
+        }
+      ],
+      "vnoc.editorMenu": [
+        {
+          "command": "vnoc.showOnCanvas",
+          "group": "1_canvas@1"
+        },
+        {
+          "command": "vnoc.focus",
+          "group": "1_canvas@2"
+        },
+        {
+          "command": "vnoc.showDocs",
+          "group": "2_docs@1"
+        },
+        {
+          "command": "vnoc.addDoc",
+          "group": "2_docs@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "vnoc.showDocs",
+          "group": "navigation",
+          "when": "resourceLangId == python"
         }
       ]
     },
@@ -110,12 +160,19 @@
           "description": "Path to the Python driver binary. Empty = the build folder of this repository (development). Ignored from workspace settings in Restricted Mode."
         }
       }
-    }
+    },
+    "submenus": [
+      {
+        "id": "vnoc.editorMenu",
+        "label": "V-NOC"
+      }
+    ]
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "test": "tsc -p . --noEmit false --outDir out && node out/test/runTest.js"
+    "test": "tsc -p . --noEmit false --outDir out && node out/test/runTest.js",
+    "unit": "node --test --experimental-strip-types src/nodeAt.test.ts"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
