@@ -48,10 +48,10 @@ test("ids stay unique, so a toggle always hits one node", () => {
   assert.equal(new Set(l.nodes.map((p) => p.id)).size, l.nodes.length);
 });
 
-test("an open code view pushes the rows below it down, and only defs have code", () => {
+test("an open code view pushes the rows below it down: defs and files have code, folders do not", () => {
   const range = { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } };
   const t = n("/", "folder", [n("a.py", "file", [{ ...n("f", "function"), range }, n("g", "function")])]);
-  const l = layout(t, new Set(["a.py"]), new Set(["f", "a.py"]));
-  assert.deepEqual(l.nodes.map((p) => p.y), [0, ROW_H, 2 * ROW_H, 3 * ROW_H + CODE_H], "f is open and taller, so g starts lower; a.py has no range, so asking for its code does nothing");
-  assert.deepEqual(l.nodes.map((p) => p.codeOpen), [false, false, true, false]);
+  const l = layout(t, new Set(["a.py"]), new Set(["/", "f", "a.py"]));
+  assert.deepEqual(l.nodes.map((p) => p.y), [0, ROW_H, 2 * ROW_H + CODE_H, 3 * ROW_H + 2 * CODE_H], "the file and f are open and taller, so what is below them starts lower");
+  assert.deepEqual(l.nodes.map((p) => p.codeOpen), [false, true, true, false], "the root folder has no code, so asking for it does nothing");
 });

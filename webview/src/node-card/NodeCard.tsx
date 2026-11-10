@@ -12,7 +12,11 @@ import "./node-card.css";
 
 export function NodeCard({ data }: NodeProps<Node<Placed>>) {
   return (
-    <div className={`node-card ${data.kind}${data.syntaxError ? " broken" : ""}${data.codeOpen ? " code-open" : ""}`}>
+    <div
+      className={`node-card ${data.kind}${data.syntaxError ? " broken" : ""}${data.codeOpen ? " code-open" : ""}`}
+      // VS Code's own right-click menu for a webview: the entries are in package.json (`webview/context`), shown when these keys match
+      data-vscode-context={JSON.stringify({ webviewSection: "node", nodeKey: data.id, kind: data.kind, preventDefaultContextMenuItems: true })}
+    >
       {/* the edges attach here; nobody connects nodes by hand, so the dots are invisible (node-card.css) */}
       <Handle type="target" position={Position.Left} isConnectable={false} />
       <NodeHeader node={data} />

@@ -31,3 +31,27 @@ function findFile(node: TreeNode, relativePath: string): TreeNode | undefined {
   }
   return undefined;
 }
+
+/** The node with this id, or undefined. */
+export function findNode(root: TreeNode, id: string): TreeNode | undefined {
+  if (root.id === id) return root;
+  for (const child of root.children) {
+    const hit = findNode(child, id);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/** The folder or file at this path (relative to the opened folder; `""` is the opened folder itself): what an Explorer right-click is on. */
+export function nodeAtPath(root: TreeNode, relativePath: string): TreeNode | undefined {
+  if (relativePath === "") return root;
+  const search = (node: TreeNode): TreeNode | undefined => {
+    if ((node.kind === "folder" || node.kind === "file") && node.path === relativePath) return node;
+    for (const child of node.children) {
+      const hit = search(child);
+      if (hit) return hit;
+    }
+    return undefined;
+  };
+  return search(root);
+}

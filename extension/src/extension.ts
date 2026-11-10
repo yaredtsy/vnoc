@@ -5,9 +5,11 @@ import { LanguageClient, TransportKind } from "vscode-languageclient/node";
 
 import { addDoc } from "./addDoc";
 import { Docs } from "./docs";
-import { chainAt, docTarget } from "./nodeAt";
+import { type FocusStack, jump, pop, prune, push } from "@vnoc/shared/focusStack";
+import { FocusState } from "./focus";
+import { chainAt, docTarget, findNode, nodeAtPath } from "./nodeAt";
 import { CANVAS, DOCS, Panels } from "./panels";
-import { StructureView, type TreeNode } from "./structureView";
+import { StructureView, type TreeNode, absolute } from "./structureView";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio
 // client here, we use its custom-request API and none of the language features) and relays the webview's requests to it.
@@ -25,8 +27,8 @@ const renderWaiters: ((r: { visible: number; hidden: number }) => void)[] = [];
 /** Saves arrive in bursts (a format-on-save, a `git checkout`): collect the touched files for this long, then send one message. */
 const CHANGE_DEBOUNCE_MS = 200;
 
-/** Something the canvas should do as soon as it is up: a Focus or Show on canvas asked for while it was closed. */
-let pendingOnCanvas: { type: "focus" | "reveal"; id: string } | undefined;
+/** A "Show on canvas" asked for while the canvas was closed: the new canvas takes it when it starts. (Focus needs no such thing: the canvas reads the shared focus stack.) */
+let pendingReveal: string | undefined;
 /** The node the docs tab shows (the one at the cursor), for a tab that is just starting. */
 let docsTarget: string | undefined;
 /** The pin in the docs tab is on: do not follow the cursor. */
@@ -89,6 +91,8 @@ async function loadStructure(): Promise<Structure> {
   const structure = await request<Structure>("vnoc/structure");
   tree = structure.root;
   gitRoot = structure.git_root;
+  // a focused node that no longer exists: drop it (and what was above it), so neither UI is left looking at nothing
+  setFocus(prune(focus.get(), (id) => findNode(structure.root, id) !== undefined), "host");
   return structure;
 }
 
@@ -99,13 +103,40 @@ async function addDocTo(key: string, existingDocs: number): Promise<boolean> {
 }
 
 let sidebar: StructureView;
+let sidebarView: vscode.TreeView<TreeNode>;
 let panels: Panels;
+let focus: FocusState;
 const docs = new Docs(() => gitRoot, (message) => panels.post(message));
 
 /** The core has a new index: the sidebar redraws, and every open tab asks for the new structure. */
 function indexChanged(revision: number) {
-  void sidebar.refresh();
+  refreshSidebar();
   panels.post({ type: "indexChanged", revision });
+}
+
+// ── focus: one stack for the canvas and the sidebar ────────────────────────────────────────────────────────────────────
+
+/**
+ * Both UIs show this stack: the canvas zooms into the top node, the sidebar tree starts at it. A change from the sidebar's buttons
+ * (`from: "host"`) is sent to the canvas; a change that came from the canvas is already there.
+ */
+function setFocus(next: FocusStack, from: "host" | "canvas") {
+  if (!focus.set(next)) return;
+  showFocusInSidebar(next);
+  if (from === "host") panels?.canvas?.webview.postMessage({ type: "focusStack", stack: next });
+}
+
+/** Redraws the sidebar from the new structure, then the header (its names come from that structure). */
+function refreshSidebar() {
+  void sidebar.refresh().then(() => showFocusInSidebar(focus.get()));
+}
+
+/** The sidebar starts at the focused node, says so in its header, and shows Back and Clear (the `vnoc.focused` context key). */
+function showFocusInSidebar(stack: FocusStack) {
+  sidebar.setFocus(stack[stack.length - 1]);
+  const names = stack.map((id) => sidebar.find(id)?.name ?? "?");
+  sidebarView.description = names.length > 0 ? `Focus: ${names.join(" › ")}` : undefined;
+  void vscode.commands.executeCommand("setContext", "vnoc.focused", stack.length > 0);
 }
 
 // ── the commands behind the editor's V-NOC menu, the sidebar's buttons and the canvas ──────────────────────────────────────
@@ -122,35 +153,70 @@ async function chainAtCursor(): Promise<TreeNode[]> {
   return chainAt(tree!, relative, editor.selection.active.line);
 }
 
-/** The node a command is about: the tree item or card it was started from, else the node at the cursor. */
-async function nodeFor(arg: unknown): Promise<TreeNode> {
+/**
+ * The node a command is about. It starts from one of: a sidebar item (a tree node), a card's right-click menu (`{ nodeKey }`), the Explorer
+ * (a Uri, with the list of selected Uris as the next argument), or the editor's menu (a Uri, nothing after it: the node at the cursor).
+ */
+async function nodeFor(arg: unknown, selected?: unknown): Promise<TreeNode> {
   if (isTreeNode(arg)) return arg;
+  if (!tree) await loadStructure();
+  if (typeof arg === "object" && arg !== null && "nodeKey" in arg) {
+    const hit = findNode(tree!, String((arg as { nodeKey: unknown }).nodeKey));
+    if (!hit) throw new Error("That node is not in the structure any more.");
+    return hit;
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (arg instanceof vscode.Uri && Array.isArray(selected) && folder) {
+    const hit = nodeAtPath(tree!, path.relative(folder.uri.fsPath, arg.fsPath).split(path.sep).join("/"));
+    if (!hit) throw new Error("V-NOC has not read that file or folder (it is not Python, or it is ignored).");
+    return hit;
+  }
   const chain = await chainAtCursor();
   if (chain.length === 0) throw new Error("Put the cursor in a Python file that V-NOC has read.");
   return chain[chain.length - 1];
 }
 
 /** Runs a command and shows what went wrong as a message: menu clicks have nowhere else to report. */
-const command = (run: (arg: unknown) => Promise<unknown> | unknown) => async (arg: unknown) => {
+const command = (run: (arg: unknown, selected?: unknown) => Promise<unknown> | unknown) => async (arg: unknown, selected?: unknown) => {
   try {
-    await run(arg);
+    await run(arg, selected);
   } catch (e) {
     void vscode.window.showErrorMessage(`V-NOC: ${(e as Error).message ?? e}`);
   }
 };
 
-/** Focus (zoom into the node) or Show (reveal it, keep the focus): an open canvas is told now; a canvas that is just starting asks for it. */
-function onCanvas(type: "focus" | "reveal", id: string) {
+/** Focus: narrow the canvas and the sidebar to this node, and bring the canvas up. */
+function focusOn(id: string) {
+  setFocus(push(focus.get(), id), "host");
+  panels.showCanvas();
+}
+
+/** Show on canvas: reveal the node without changing the focus more than needed. An open canvas is told now; a canvas that is just starting asks for it. */
+function revealOnCanvas(id: string) {
   const wasOpen = panels.canvas !== undefined;
   const panel = panels.showCanvas();
-  if (wasOpen) panel.webview.postMessage({ type, id });
-  else pendingOnCanvas = { type, id };
+  if (wasOpen) panel.webview.postMessage({ type: "reveal", id });
+  else pendingReveal = id;
+}
+
+/** Go to code: the definition in the editor (a folder is shown in the Explorer). */
+async function goToCode(node: TreeNode) {
+  const uri = absolute(node.path);
+  if (node.kind === "folder") return vscode.commands.executeCommand("revealInExplorer", uri);
+  const start = node.range ? new vscode.Position(node.range.start.line, node.range.start.character) : undefined;
+  await vscode.window.showTextDocument(uri, start ? { selection: new vscode.Range(start, start) } : {});
 }
 
 /** Opens (or reuses) the docs tab beside the editor, showing the docs of the node at the cursor. */
-async function showDocsBeside() {
-  await updateDocsTarget(true);
-  panels.showDocs();
+async function showDocsBeside(arg: unknown, selected: unknown) {
+  // from a card or a sidebar item: that node. From the editor's menu or the title bar: the node at the cursor.
+  if (isTreeNode(arg) || (typeof arg === "object" && arg !== null && "nodeKey" in arg) || Array.isArray(selected)) {
+    docsTarget = (await nodeFor(arg, selected)).id;
+  } else {
+    await updateDocsTarget(true);
+  }
+  const panel = panels.showDocs();
+  if (docsTarget) panel.webview.postMessage({ type: "showNode", id: docsTarget });
 }
 
 /** The docs tab follows the cursor: the innermost node around it that has docs, else the innermost node. */
@@ -201,36 +267,43 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.window.showErrorMessage(String(e.message ?? e));
   });
 
+  focus = new FocusState(ctx.workspaceState);
   panels = new Panels(ctx, answer, {
     rendered(visible, hidden) {
       rendered = { visible, hidden };
       output.appendLine(`webview drew ${visible} nodes (${hidden} hidden)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
     },
+    focusChanged: (stack) => setFocus(stack, "canvas"),
     pinned(pinned) {
       docsPinned = pinned;
       if (!pinned) void updateDocsTarget().catch(() => {});
     },
   });
   sidebar = new StructureView(async () => (await loadStructure()).root);
-  void sidebar.refresh();
+  sidebarView = vscode.window.createTreeView("vnoc.structure", { treeDataProvider: sidebar });
+  showFocusInSidebar(focus.get()); // the focus saved with the workspace
+  refreshSidebar();
 
   // Registered synchronously, before anything is awaited: on restart VS Code waits for this serializer (S1).
   ctx.subscriptions.push(
     vscode.commands.registerCommand("vnoc.openCanvas", () => panels.showCanvas()),
     vscode.window.registerWebviewPanelSerializer(CANVAS, { deserializeWebviewPanel: async (panel) => panels.restore("canvas", panel) }),
     vscode.window.registerWebviewPanelSerializer(DOCS, { deserializeWebviewPanel: async (panel) => panels.restore("docs", panel) }),
-    vscode.window.registerTreeDataProvider("vnoc.structure", sidebar),
+    sidebarView,
     // the tree follows the code by itself; Refresh is the way out if it ever does not: the core reads everything again
     vscode.commands.registerCommand("vnoc.refreshStructure", () => void ready.then(() => client?.sendNotification("vnoc/rebuild"))),
     watchFiles(),
     docs.watchEditors(),
-    // these start from a sidebar item (a tree node), or from the editor's menu (the node at the cursor)
-    vscode.commands.registerCommand("vnoc.focus", command(async (arg) => onCanvas("focus", (await nodeFor(arg)).id))),
-    vscode.commands.registerCommand("vnoc.showOnCanvas", command(async (arg) => onCanvas("reveal", (await nodeFor(arg)).id))),
+    // these start from a sidebar item, a card's right-click menu, the Explorer, or the editor's menu (see `nodeFor`)
+    vscode.commands.registerCommand("vnoc.focus", command(async (arg, selected) => focusOn((await nodeFor(arg, selected)).id))),
+    vscode.commands.registerCommand("vnoc.focusBack", () => setFocus(pop(focus.get()), "host")),
+    vscode.commands.registerCommand("vnoc.focusClear", () => setFocus(jump(focus.get(), 0), "host")),
+    vscode.commands.registerCommand("vnoc.showOnCanvas", command(async (arg, selected) => revealOnCanvas((await nodeFor(arg, selected)).id))),
+    vscode.commands.registerCommand("vnoc.goToCode", command(async (arg, selected) => goToCode(await nodeFor(arg, selected)))),
     vscode.commands.registerCommand("vnoc.showDocs", command(showDocsBeside)),
-    vscode.commands.registerCommand("vnoc.addDoc", command(async (arg) => {
-      const node = await nodeFor(arg);
+    vscode.commands.registerCommand("vnoc.addDoc", command(async (arg, selected) => {
+      const node = await nodeFor(arg, selected);
       if (node.kind !== "function" && node.kind !== "class") throw new Error("Docs go on functions and classes for now: put the cursor inside one.");
       await addDocTo(node.id, node.docs);
     })),
@@ -282,10 +355,12 @@ async function answer(method: string, params: any): Promise<unknown> {
     case "code":
       return readSlice(params);
     case "pending": {
-      const pending = pendingOnCanvas;
-      pendingOnCanvas = undefined;
-      return pending ?? null;
+      const id = pendingReveal;
+      pendingReveal = undefined;
+      return id ? { type: "reveal", id } : null;
     }
+    case "focusStack":
+      return focus.get();
     case "docsTarget":
       return docsTarget ?? null;
     case "ping":

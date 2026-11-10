@@ -21,7 +21,7 @@ window.addEventListener("message", (e: MessageEvent) => {
   else p.resolve(e.data.result);
 });
 
-export function request<T>(method: "structure" | "ping" | "pending" | "code" | "addDoc" | "docs" | "docsTarget" | "docText" | "openDoc" | "openLink", params?: object): Promise<T> {
+export function request<T>(method: "structure" | "ping" | "pending" | "focusStack" | "code" | "addDoc" | "docs" | "docsTarget" | "docText" | "openDoc" | "openLink", params?: object): Promise<T> {
   const id = ++nextId;
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve, reject });
@@ -65,10 +65,10 @@ export function onShowNode(callback: (id: string) => void): () => void {
   return () => window.removeEventListener("message", listener);
 }
 
-/** The sidebar's Focus button: the host tells an open canvas which node to zoom into. Returns the way to stop listening. */
-export function onFocus(callback: (id: string) => void): () => void {
+/** The focus stack changed on the host's side (the sidebar's Focus, Back or Clear): the canvas shows the new stack. */
+export function onFocusStack(callback: (stack: string[]) => void): () => void {
   const listener = (e: MessageEvent) => {
-    if (e.data?.type === "focus" && typeof e.data.id === "string") callback(e.data.id);
+    if (e.data?.type === "focusStack" && Array.isArray(e.data.stack)) callback(e.data.stack);
   };
   window.addEventListener("message", listener);
   return () => window.removeEventListener("message", listener);

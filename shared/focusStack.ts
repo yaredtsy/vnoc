@@ -3,9 +3,14 @@
 
 export type FocusStack = readonly string[];
 
-/** Focus `id`. Focusing what is already on top changes nothing (a double-click on the root of the view). */
+/**
+ * Focus `id`. Focusing what is already on top changes nothing (a double-click on the root of the view), and focusing a node that is
+ * already lower in the stack goes back to it instead of adding it a second time, so the crumbs stay short.
+ */
 export function push(stack: FocusStack, id: string): FocusStack {
-  return stack[stack.length - 1] === id ? stack : [...stack, id];
+  if (stack[stack.length - 1] === id) return stack;
+  const at = stack.indexOf(id);
+  return at >= 0 ? stack.slice(0, at + 1) : [...stack, id];
 }
 
 /** Go back one level. */

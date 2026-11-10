@@ -12,11 +12,13 @@ export const DOCS = "vnoc.docs";
 export interface Hooks {
   /** the canvas drew this many nodes (the extension's test suite uses it) */
   rendered(visible: number, hidden: number): void;
+  /** the canvas changed its focus stack (focus, back, a crumb): the sidebar follows */
+  focusChanged(stack: string[]): void;
   /** the pin in the docs tab: stop (or resume) following the cursor */
   pinned(pinned: boolean): void;
 }
 
-type Message = { type: string; id?: number; method?: string; params?: unknown; visible?: number; hidden?: number; pinned?: boolean };
+type Message = { type: string; id?: number | string; stack?: string[]; method?: string; params?: unknown; visible?: number; hidden?: number; pinned?: boolean };
 
 export class Panels {
   private canvasPanel: vscode.WebviewPanel | undefined;
@@ -99,6 +101,7 @@ export class Panels {
 
   private async receive(panel: vscode.WebviewPanel, m: Message): Promise<void> {
     if (m.type === "rendered") return this.hooks.rendered(m.visible ?? 0, m.hidden ?? 0);
+    if (m.type === "focusChanged" && Array.isArray(m.stack)) return this.hooks.focusChanged(m.stack);
     if (m.type === "pin") return this.hooks.pinned(m.pinned === true);
     if (m.type === "close") return panel.dispose();
     if (m.type !== "req" || m.method === undefined) return;

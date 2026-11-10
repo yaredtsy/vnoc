@@ -10,6 +10,9 @@ importers:
 
   extension:
     dependencies:
+      '@vnoc/shared':
+        specifier: workspace:*
+        version: link:../shared
       vscode-languageclient:
         specifier: ^9.0.1
         version: 9.0.1
@@ -58,6 +61,9 @@ importers:
       '@tabler/icons-react':
         specifier: ^3.51.0
         version: 3.51.0(react@18.3.1)
+      '@vnoc/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@xyflow/react':
         specifier: ^12.3.0
         version: 12.12.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

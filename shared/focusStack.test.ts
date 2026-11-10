@@ -6,7 +6,8 @@ import { jump, pop, prune, push } from "./focusStack.ts";
 test("push adds to the top, and the same node twice in a row is one entry", () => {
   assert.deepEqual(push(push([], "a"), "b"), ["a", "b"]);
   assert.deepEqual(push(["a"], "a"), ["a"]);
-  assert.deepEqual(push(["a", "b"], "a"), ["a", "b", "a"], "going back to an earlier node is a new level, not a pop");
+  assert.deepEqual(push(["a", "b", "c"], "a"), ["a"], "a node already lower in the stack is gone back to, not added a second time");
+  assert.deepEqual(push(["a", "b", "c"], "b"), ["a", "b"]);
 });
 
 test("pop goes back one level, and popping nothing is fine", () => {

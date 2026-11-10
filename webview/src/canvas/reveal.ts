@@ -2,7 +2,7 @@
 
 import { pathTo } from "../tree.ts";
 import type { TreeNode } from "../types.ts";
-import type { FocusStack } from "./focusStack.ts";
+import type { FocusStack } from "@vnoc/shared/focusStack.ts";
 
 export interface Reveal {
   /** the focus stack to use: the nearest entry that contains the node, or empty when none does */

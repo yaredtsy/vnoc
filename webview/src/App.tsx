@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { IconChevronRight, IconInfoCircle, IconRefresh } from "@tabler/icons-react";
+import { IconArrowLeft, IconChevronRight, IconInfoCircle, IconRefresh } from "@tabler/icons-react";
 
 import { Button } from "@/components/ui/button.tsx";
 import { Toggle } from "@/components/ui/toggle.tsx";
-import { onFocus, onIndexChanged, onReveal, request, vscode } from "./host.ts";
+import { onFocusStack, onIndexChanged, onReveal, request, vscode } from "./host.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
 import { DocPanel } from "./docs/DocPanel.tsx";
-import { type FocusStack, jump, prune, push } from "./canvas/focusStack.ts";
+import { type FocusStack, jump, pop, prune, push } from "@vnoc/shared/focusStack.ts";
 import { layout } from "./canvas/layout.ts";
 import { reveal } from "./canvas/reveal.ts";
 import { findNode } from "./tree.ts";
@@ -18,11 +18,13 @@ type Load = { status: "loading" } | { status: "error"; message: string } | { sta
 export function App() {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [reloads, setReloads] = useState(0);
-  const saved = vscode.getState<{ expanded?: string[]; focus?: string[]; docsOpen?: boolean }>();
+  const saved = vscode.getState<{ expanded?: string[]; docsOpen?: boolean }>();
   // what the user opened. At first nothing is: the root is open and its children are closed.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(saved?.expanded));
   const [codeOpen, setCodeOpen] = useState<ReadonlySet<string>>(new Set());
-  const [focus, setFocus] = useState<FocusStack>(saved?.focus ?? []);
+  // The focus stack belongs to the host: the sidebar shares it. This is a copy that starts empty, is filled from the host, and tells it about every change.
+  const [focus, setFocus] = useState<FocusStack>([]);
+  const focusLoaded = useRef(false);
   // the doc panel: open or closed (saved), and the card the user clicked last
   const [docsOpen, setDocsOpen] = useState(saved?.docsOpen ?? false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -83,18 +85,40 @@ export function App() {
     setSelected(id);
   }, []);
 
-  // survives closing and reopening the panel
+  // survives closing and reopening the panel (the focus is the host's: see above)
   useEffect(() => {
-    vscode.setState({ expanded: [...expanded], focus, docsOpen });
-  }, [expanded, focus, docsOpen]);
+    vscode.setState({ expanded: [...expanded], docsOpen });
+  }, [expanded, docsOpen]);
 
-  // A Focus or Show on canvas from the sidebar or a menu: while the canvas is open the host sends it; a canvas opened by that command asks for it once it is up.
+  // the focus: ask the host for it once, then follow it, and report every change of ours (the sidebar follows). An echo changes nothing on the host.
   useEffect(() => {
-    request<{ type: "focus" | "reveal"; id: string } | null>("pending").then((p) => p && (p.type === "focus" ? focusOn(p.id) : setRevealId(p.id)), () => {});
-    const stopFocus = onFocus(focusOn);
-    const stopReveal = onReveal(setRevealId);
-    return () => (stopFocus(), stopReveal());
-  }, [focusOn]);
+    request<string[]>("focusStack").then(
+      (stack) => {
+        setFocus(stack);
+        focusLoaded.current = true;
+      },
+      () => (focusLoaded.current = true),
+    );
+    return onFocusStack(setFocus);
+  }, []);
+  useEffect(() => {
+    if (focusLoaded.current) vscode.postMessage({ type: "focusChanged", stack: [...focus] });
+  }, [focus]);
+
+  // Show on canvas from a menu: while the canvas is open the host sends it; a canvas opened by that command asks for it once it is up.
+  useEffect(() => {
+    request<{ type: "reveal"; id: string } | null>("pending").then((p) => p && setRevealId(p.id), () => {});
+    return onReveal(setRevealId);
+  }, []);
+
+  // Alt+← goes back one focus, like the ← button
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey && e.key === "ArrowLeft") setFocus((f) => (f.length > 0 ? pop(f) : f));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // After a refresh the node we were zoomed into may be gone: drop the stack down to one that still exists.
   const root = load.status === "ready" ? load.data.root : null;
@@ -119,6 +143,7 @@ export function App() {
   const docNode = root ? (findNode(root, selected ?? "") ?? (focus.length > 0 ? findNode(root, focus[focus.length - 1]) : null)) : null;
   const crumbs = useMemo(() => (root ? focus.map((id) => ({ id, node: findNode(root, id) })) : []), [root, focus]);
   const top = crumbs.length > 0 ? crumbs[crumbs.length - 1].node : null;
+
 
   // zoomed in: the focused node is the root of what is drawn (and the root of a drawing is always open)
   const laid = useMemo(() => (root ? layout(top ?? root, expanded, codeOpen) : null), [root, expanded, top, codeOpen]);
@@ -151,6 +176,9 @@ export function App() {
       </header>
       {crumbs.length > 0 && (
         <nav className="crumbs" aria-label="Focus">
+          <Button variant="ghost" size="icon-xs" title="Back one step (Alt+←)" aria-label="Back one focus" onClick={() => setFocus(pop)}>
+            <IconArrowLeft />
+          </Button>
           <Button variant="ghost" size="xs" onClick={() => setFocus((f) => jump(f, 0))}>
             All code
           </Button>

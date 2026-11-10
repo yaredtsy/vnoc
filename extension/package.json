@@ -68,6 +68,20 @@
         "command": "vnoc.showDocs",
         "title": "V-NOC: Show docs",
         "icon": "$(info)"
+      },
+      {
+        "command": "vnoc.focusBack",
+        "title": "V-NOC: Focus back",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "vnoc.focusClear",
+        "title": "V-NOC: Clear focus",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "vnoc.goToCode",
+        "title": "V-NOC: Go to code"
       }
     ],
     "menus": {
@@ -83,9 +97,24 @@
           "group": "inline"
         },
         {
+          "command": "vnoc.focus",
+          "when": "view == vnoc.structure",
+          "group": "1_vnoc@1"
+        },
+        {
           "command": "vnoc.addDoc",
           "when": "view == vnoc.structure && (viewItem == function || viewItem == class)",
-          "group": "vnoc"
+          "group": "1_vnoc@2"
+        },
+        {
+          "command": "vnoc.showDocs",
+          "when": "view == vnoc.structure",
+          "group": "1_vnoc@3"
+        },
+        {
+          "command": "vnoc.goToCode",
+          "when": "view == vnoc.structure",
+          "group": "2_code@1"
         }
       ],
       "view/title": [
@@ -93,6 +122,16 @@
           "command": "vnoc.refreshStructure",
           "when": "view == vnoc.structure",
           "group": "navigation"
+        },
+        {
+          "command": "vnoc.focusBack",
+          "when": "view == vnoc.structure && vnoc.focused",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vnoc.focusClear",
+          "when": "view == vnoc.structure && vnoc.focused",
+          "group": "navigation@2"
         }
       ],
       "commandPalette": [
@@ -111,6 +150,18 @@
         {
           "command": "vnoc.showDocs",
           "when": "editorLangId == python"
+        },
+        {
+          "command": "vnoc.focusBack",
+          "when": "vnoc.focused"
+        },
+        {
+          "command": "vnoc.focusClear",
+          "when": "vnoc.focused"
+        },
+        {
+          "command": "vnoc.goToCode",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -121,6 +172,10 @@
         }
       ],
       "vnoc.editorMenu": [
+        {
+          "command": "vnoc.openCanvas",
+          "group": "1_canvas@0"
+        },
         {
           "command": "vnoc.showOnCanvas",
           "group": "1_canvas@1"
@@ -143,6 +198,35 @@
           "command": "vnoc.showDocs",
           "group": "navigation",
           "when": "resourceLangId == python"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "vnoc.addDoc",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && (kind == function || kind == class)",
+          "group": "1_docs@1"
+        },
+        {
+          "command": "vnoc.showDocs",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node'",
+          "group": "1_docs@2"
+        },
+        {
+          "command": "vnoc.focus",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node'",
+          "group": "2_canvas@1"
+        },
+        {
+          "command": "vnoc.goToCode",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node'",
+          "group": "3_code@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "submenu": "vnoc.editorMenu",
+          "group": "7_modification@9",
+          "when": "resourceLangId == python || explorerResourceIsFolder"
         }
       ]
     },
@@ -175,7 +259,8 @@
     "unit": "node --test --experimental-strip-types src/nodeAt.test.ts"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^9.0.1",
+    "@vnoc/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.0",

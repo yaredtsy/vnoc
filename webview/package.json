@@ -6,7 +6,7 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "typecheck": "tsc",
-    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/canvas/focusStack.test.ts src/docs/markdown.test.ts src/canvas/reveal.test.ts"
+    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/docs/markdown.test.ts src/canvas/reveal.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -22,7 +22,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "shiki": "^4.6.0",
-    "tailwind-merge": "^3.7.0"
+    "tailwind-merge": "^3.7.0",
+    "@vnoc/shared": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.5",

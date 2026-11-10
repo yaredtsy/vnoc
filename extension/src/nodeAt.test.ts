@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { chainAt, docTarget } from "./nodeAt.ts";
+import { chainAt, docTarget, findNode, nodeAtPath } from "./nodeAt.ts";
 import type { TreeNode } from "./structureView";
 
 const range = (from: number, to: number) => ({ start: { line: from, character: 0 }, end: { line: to, character: 0 } });
@@ -33,4 +33,13 @@ test("the docs shown are the innermost node that has docs, else the innermost no
   assert.equal(docTarget([withDocs(file, 1), c, m])?.id, "pkg/a.py", "then its file");
   assert.equal(docTarget([file, c, m])?.id, "m", "none anywhere: the innermost, to write the first doc");
   assert.equal(docTarget([]), undefined);
+});
+
+test("a node is found by id, and a folder or file by its path", () => {
+  assert.equal(findNode(root, "m")?.id, "m");
+  assert.equal(findNode(root, "nope"), undefined);
+  assert.equal(nodeAtPath(root, "pkg")?.id, "pkg");
+  assert.equal(nodeAtPath(root, "pkg/a.py")?.id, "pkg/a.py");
+  assert.equal(nodeAtPath(root, "")?.id, "/", "the opened folder itself");
+  assert.equal(nodeAtPath(root, "pkg/other.py"), undefined);
 });
