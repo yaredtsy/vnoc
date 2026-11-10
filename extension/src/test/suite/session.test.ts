@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 
 import type { StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
+import { canvasTabs, closeCanvas, sleep, until } from "./util";
 
 // The session in a real window (docs/10-ui-rework/05-build-order.md §4): what the pure tests in shared/ cannot see, the canvas and the host together.
 
@@ -12,21 +13,6 @@ interface Api {
   saved(): { contexts: Record<string, { focus: string[] }> } | undefined;
 }
 let api: Api;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const canvasTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith("vnoc.canvas"));
-
-async function until(what: string, check: () => boolean, ms = 20_000) {
-  for (let waited = 0; !check(); waited += 100) {
-    if (waited >= ms) assert.fail(`timed out waiting for ${what}`);
-    await sleep(100);
-  }
-}
-
-async function closeCanvas() {
-  await vscode.window.tabGroups.close(canvasTabs());
-  await until("the canvas tab to close", () => canvasTabs().length === 0);
-}
 
 suiteSetup(async () => {
   api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();

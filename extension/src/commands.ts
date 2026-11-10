@@ -7,12 +7,14 @@ import { addDoc } from "./addDoc";
 import type { Core } from "./core";
 import type { Panels } from "./panels";
 import type { SessionStore } from "./session";
-import { absolute } from "./structureView";
+import { type Row, absolute, selectionOf } from "./structureView";
 
 // Every `vnoc.*` command: what a sidebar row, a card's right-click menu, the Explorer and the editor's menu run. Each one turns its argument into a
 // node (`nodeFor`), then changes the session or shows something. The commands never keep state of their own.
 
 const isTreeNode = (arg: unknown): arg is TreeNode => typeof arg === "object" && arg !== null && "kind" in arg && "children" in arg;
+/** What the native tree gives a menu command: the row. */
+const isNodeRow = (arg: unknown): arg is Row & { row: "node" } => typeof arg === "object" && arg !== null && "row" in arg && (arg as Row).row === "node";
 
 /** Cursor moves come in bursts; look at where it rests. */
 const CURSOR_DEBOUNCE_MS = 200;
@@ -42,6 +44,11 @@ export class Commands {
     return [
       // with a node (the editor's or the Explorer's menu, a row) the canvas opens at it; from the palette it just opens
       on("vnoc.openCanvas", async (arg, selected) => (arg === undefined ? void this.panels.showCanvas() : this.openCanvasAt((await this.nodeFor(arg, selected)).id))),
+      on("vnoc.open", (arg) => (isNodeRow(arg) ? this.open(arg.node) : isTreeNode(arg) ? this.open(arg) : undefined)),
+      on("vnoc.focusJump", (depth) => this.store.dispatch({ type: "focusJump", depth: Number(depth) })),
+      // the inline ✕ on a FOCUS-view row: drop this step and those after it
+      on("vnoc.focusDrop", (step) => this.store.dispatch({ type: "focusJump", depth: Math.max(0, Number((step as { depth?: number }).depth) - 1) })),
+      on("vnoc.showLog", () => this.core.showLog()),
       on("vnoc.focus", async (arg, selected) => this.focusInSidebar((await this.nodeFor(arg, selected)).id)),
       on("vnoc.showOnCanvas", async (arg, selected) => this.showOnCanvas((await this.nodeFor(arg, selected)).id)),
       on("vnoc.focusBack", () => this.store.dispatch({ type: "focusBack" })),
@@ -76,6 +83,7 @@ export class Commands {
    */
   async nodeFor(arg: unknown, selected?: unknown): Promise<TreeNode> {
     if (isTreeNode(arg)) return arg;
+    if (isNodeRow(arg)) return arg.node;
     const tree = this.core.tree ?? (await this.core.loadStructure()).root;
     if (typeof arg === "object" && arg !== null && "nodeKey" in arg) {
       const hit = findNode(tree, String((arg as { nodeKey: unknown }).nodeKey));
@@ -113,12 +121,36 @@ export class Commands {
     this.panels.showCanvas();
   }
 
-  /** Go to code: the definition in the editor (a folder is shown in the Explorer). */
+  /**
+   * A click on a sidebar row (docs/10-ui-rework/02-sidebar.md §4): the canvas is where you are working while it is open, so a click shows the node there;
+   * the code comes along beside it, never on top of it. With the canvas closed it opens the code as a preview tab, like a click in the Explorer.
+   */
+  private async open(node: TreeNode) {
+    this.store.dispatch({ type: "select", id: node.id });
+    const mode = vscode.workspace.getConfiguration("vnoc").get<"auto" | "code" | "canvas">("sidebar.click", "auto");
+    if (mode === "canvas" || (mode === "auto" && this.panels.canvas)) {
+      this.store.dispatch({ type: "reveal", id: node.id, canvas: true });
+      const canvas = this.panels.showCanvas({ preserveFocus: true });
+      // a code editor already visible in another column follows the click too (canvas and code side by side); none is opened in the canvas's column
+      const code = vscode.window.visibleTextEditors.find((e) => e.viewColumn !== undefined && e.viewColumn !== canvas.viewColumn);
+      if (code && node.kind !== "folder") await this.showCode(node, { viewColumn: code.viewColumn, preview: true, preserveFocus: true });
+      return;
+    }
+    if (node.kind !== "folder") await this.showCode(node, { preview: true, preserveFocus: true });
+  }
+
+  /** The definition in an editor tab (the file, for a file). */
+  private async showCode(node: TreeNode, options: vscode.TextDocumentShowOptions) {
+    await vscode.window.showTextDocument(absolute(node.path), { ...selectionOf(node), ...options });
+  }
+
+  /**
+   * Go to code: the definition in the editor, always (a folder is shown in the Explorer). With the canvas in front it opens in the column beside it,
+   * so the canvas is not covered, and the keyboard goes to the code.
+   */
   async goToCode(node: TreeNode) {
-    const uri = absolute(node.path);
-    if (node.kind === "folder") return vscode.commands.executeCommand("revealInExplorer", uri);
-    const start = node.range ? new vscode.Position(node.range.start.line, node.range.start.character) : undefined;
-    await vscode.window.showTextDocument(uri, start ? { selection: new vscode.Range(start, start) } : {});
+    if (node.kind === "folder") return vscode.commands.executeCommand("revealInExplorer", absolute(node.path));
+    await this.showCode(node, this.panels.canvas?.active ? { viewColumn: vscode.ViewColumn.Beside } : {});
   }
 
   /** `goToCode` for a node key (a card's button). */

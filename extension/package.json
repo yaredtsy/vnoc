@@ -35,6 +35,11 @@
     "views": {
       "vnoc": [
         {
+          "id": "vnoc.focusStack",
+          "name": "Focus",
+          "when": "vnoc.focused"
+        },
+        {
           "id": "vnoc.structure",
           "name": "Structure"
         }
@@ -90,6 +95,28 @@
       {
         "command": "vnoc.goToCode",
         "title": "Go to Code",
+        "category": "V-NOC",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "vnoc.open",
+        "title": "Open",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.focusJump",
+        "title": "Jump Back to This Focus",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.focusDrop",
+        "title": "Drop This Focus Step",
+        "category": "V-NOC",
+        "icon": "$(close)"
+      },
+      {
+        "command": "vnoc.showLog",
+        "title": "Show Log",
         "category": "V-NOC"
       }
     ],
@@ -97,43 +124,63 @@
       "view/item/context": [
         {
           "command": "vnoc.focus",
-          "when": "view == vnoc.structure",
-          "group": "inline"
-        },
-        {
-          "command": "vnoc.addDoc",
-          "when": "view == vnoc.structure && (viewItem == function || viewItem == class || viewItem == file || viewItem == folder)",
-          "group": "inline"
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
+          "group": "inline@1"
         },
         {
           "command": "vnoc.goToCode",
-          "when": "view == vnoc.structure",
-          "group": "3_code@1"
+          "when": "view == vnoc.structure && viewItem =~ /\\b(file|class|function)\\b/",
+          "group": "inline@2"
+        },
+        {
+          "command": "vnoc.addDoc",
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
+          "group": "inline@3"
+        },
+        {
+          "command": "vnoc.focusBack",
+          "when": "view == vnoc.structure && viewItem == focusBar",
+          "group": "inline@1"
+        },
+        {
+          "command": "vnoc.focusClear",
+          "when": "view == vnoc.structure && viewItem == focusBar",
+          "group": "inline@2"
+        },
+        {
+          "command": "vnoc.focusDrop",
+          "when": "view == vnoc.focusStack && viewItem == step",
+          "group": "inline"
         },
         {
           "command": "vnoc.focus",
-          "when": "view == vnoc.structure",
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "1_vnoc@1"
         },
         {
           "command": "vnoc.showOnCanvas",
-          "when": "view == vnoc.structure",
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "1_vnoc@2"
         },
         {
           "command": "vnoc.openCanvas",
-          "when": "view == vnoc.structure",
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "1_vnoc@3"
         },
         {
           "command": "vnoc.addDoc",
-          "when": "view == vnoc.structure && (viewItem == function || viewItem == class || viewItem == file || viewItem == folder)",
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "2_vnoc@1"
         },
         {
           "command": "vnoc.showDocs",
-          "when": "view == vnoc.structure",
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "2_vnoc@2"
+        },
+        {
+          "command": "vnoc.goToCode",
+          "when": "view == vnoc.structure && viewItem =~ /\\b(file|class|function)\\b/",
+          "group": "3_code@1"
         }
       ],
       "view/title": [
@@ -144,12 +191,12 @@
         },
         {
           "command": "vnoc.focusBack",
-          "when": "view == vnoc.structure && vnoc.focused",
+          "when": "view == vnoc.focusStack",
           "group": "navigation@1"
         },
         {
           "command": "vnoc.focusClear",
-          "when": "view == vnoc.structure && vnoc.focused",
+          "when": "view == vnoc.focusStack",
           "group": "navigation@2"
         }
       ],
@@ -180,6 +227,18 @@
         },
         {
           "command": "vnoc.goToCode",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.open",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.focusJump",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.focusDrop",
           "when": "false"
         }
       ],
@@ -261,6 +320,21 @@
           "type": "string",
           "default": "",
           "description": "Path to the Python driver binary. Empty = the build folder of this repository (development). Ignored from workspace settings in Restricted Mode."
+        },
+        "vnoc.sidebar.click": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "code",
+            "canvas"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Show the node on the canvas while the canvas is open; otherwise open the code.",
+            "Always open the code (the behaviour before 0.1).",
+            "Always show the node on the canvas, opening the canvas if it is closed."
+          ],
+          "description": "What a click on a node in the V-NOC sidebar does."
         }
       }
     },
@@ -269,12 +343,29 @@
         "id": "vnoc.editorMenu",
         "label": "V-NOC"
       }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "vnoc.structure",
+        "when": "workspaceFolderCount == 0",
+        "contents": "Open a folder to see its code.\n[Open Folder](command:workbench.action.files.openFolder)"
+      },
+      {
+        "view": "vnoc.structure",
+        "when": "workspaceFolderCount != 0 && vnoc.sidebarState == empty",
+        "contents": "No Python files here yet."
+      },
+      {
+        "view": "vnoc.structure",
+        "when": "workspaceFolderCount != 0 && vnoc.sidebarState == error",
+        "contents": "V-NOC could not read this project.\n[Try Again](command:vnoc.refreshStructure)\n[Show Log](command:vnoc.showLog)"
+      }
     ]
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
+    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
     "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts"
   },
   "dependencies": {

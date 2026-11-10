@@ -95,6 +95,11 @@ export class Core {
     return structure;
   }
 
+  /** Shows the V-NOC output channel (the "Show Log" button of the sidebar). */
+  showLog(): void {
+    this.output.show();
+  }
+
   async stop(): Promise<void> {
     await this.client?.stop();
   }

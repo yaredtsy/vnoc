@@ -99,7 +99,7 @@ The other gestures, the same whatever is open:
 |---|---|
 | inline `↗` · menu "Go to Code" | open the code, always. With the canvas in front, in the column **beside** it (created the first time, reused after). Keyboard goes to the code. |
 | inline `⌖` · menu "Focus" · `Ctrl/Cmd+Enter` | focus: the tree and the canvas both start at this node. Does not open a closed canvas (the editor menu's "Focus on Canvas" does). |
-| `↑` `↓` | move the selection (`select`); the canvas ring follows; nothing opens **[check: VS Code does not run `item.command` on arrow keys]** |
+| `↑` `↓` | move VS Code's focus (the highlighted row); nothing opens. **Checked in step R6** (real window, `list.focusDown` and the like): the row's command does not run on an arrow key, **and the selection does not move either**. `Enter`, `Space` or a click select the row (and run `vnoc.open`), and then the canvas ring follows. The plan assumed the arrows select; they do not in this VS Code. |
 | right-click | the row is selected by VS Code, then the menu |
 
 **Recommended layout**, offered by "V-NOC: Open Canvas to the Side": code on the left, canvas on the right. Then every click in the sidebar moves

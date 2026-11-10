@@ -1,14 +1,15 @@
 import * as vscode from "vscode";
 
-import type { Notes, TreeNode } from "@vnoc/shared/messages";
+import type { Notes } from "@vnoc/shared/messages";
 import type { ContextState } from "@vnoc/shared/session.ts";
 import { Commands } from "./commands";
 import { Core, watchFiles } from "./core";
 import { Docs } from "./docs";
+import { FocusView } from "./focusView";
 import { CANVAS, DOCS, Panels } from "./panels";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
-import { StructureView } from "./structureView";
+import { type Row, StructureView } from "./structureView";
 
 // Wires the pieces together: the core, the session, the two webview tabs, the sidebar, the commands. Nothing here decides anything.
 
@@ -22,7 +23,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel("V-NOC");
   let panels: Panels;
   let sidebar: StructureView;
-  let sidebarView: vscode.TreeView<TreeNode>;
+  let sidebarView: vscode.TreeView<Row>;
+  const focusView = new FocusView();
   let commands: Commands;
 
   /** The core has a new index: the sidebar redraws, and every open tab asks for the new structure. */
@@ -32,12 +34,17 @@ export function activate(ctx: vscode.ExtensionContext) {
   };
   /** Redraws the sidebar from the new structure, then the header (its names come from that structure). */
   const refreshSidebar = () => void sidebar.refresh().then(showFocusInSidebar);
-  /** The sidebar starts at the focused node and says so in its header. */
+  /** The tree starts at the focused node (with the focus bar above it), and the FOCUS view lists every step. */
   const showFocusInSidebar = () => {
     const stack = store.get().contexts[store.get().active].focus;
-    sidebar.setFocus(stack[stack.length - 1]);
-    const names = stack.map((id) => sidebar.find(id)?.name ?? "?");
-    sidebarView.description = names.length > 0 ? `Focus: ${names.join(" › ")}` : undefined;
+    sidebar.setFocus(stack);
+    focusView.update(stack, (id) => sidebar.find(id));
+  };
+  /** The row of the selected node, selected in the tree: both surfaces show the same node. (`reveal` fires the selection event; `reduce` returns the same session for it, so nothing loops.) */
+  const revealSelection = () => {
+    const id = store.get().contexts[store.get().active].selected;
+    const row = id ? sidebar.rowForId(id) : undefined;
+    if (row && sidebarView.visible) void Promise.resolve(sidebarView.reveal(row, { select: true, focus: false })).catch(() => {});
   };
 
   const c = new Core(ctx, output, indexChanged);
@@ -58,15 +65,27 @@ export function activate(ctx: vscode.ExtensionContext) {
   commands = new Commands(c, store, panels);
 
   sidebar = new StructureView(async () => (await c.loadStructure()).root);
-  sidebarView = vscode.window.createTreeView("vnoc.structure", { treeDataProvider: sidebar });
+  sidebarView = vscode.window.createTreeView("vnoc.structure", { treeDataProvider: sidebar, showCollapseAll: true });
+  const focusTree = vscode.window.createTreeView("vnoc.focusStack", { treeDataProvider: focusView });
   showFocusInSidebar(); // the focus saved with the workspace
-  refreshSidebar();
 
   // Registered synchronously, before anything is awaited: on restart VS Code waits for these serializers (S1).
   ctx.subscriptions.push(
     vscode.window.registerWebviewPanelSerializer(CANVAS, { deserializeWebviewPanel: async (panel) => panels.restore("canvas", panel) }),
     vscode.window.registerWebviewPanelSerializer(DOCS, { deserializeWebviewPanel: async (panel) => panels.restore("docs", panel) }),
     sidebarView,
+    focusTree,
+    // the sidebar's four states: loading and error say so in the view, empty and error also show the welcome text (package.json `viewsWelcome`)
+    sidebar.onDidChangeState((state) => {
+      sidebarView.message = state.kind === "loading" ? "Reading the code…" : state.kind === "error" ? state.message : undefined;
+      void vscode.commands.executeCommand("setContext", "vnoc.sidebarState", state.kind);
+    }),
+    // a click or the arrow keys on a row select it; `select` never opens anything (opening is `vnoc.open`'s job)
+    sidebarView.onDidChangeSelection((e) => {
+      const row = e.selection[0];
+      if (row?.row === "node") store.dispatch({ type: "select", id: row.node.id });
+    }),
+    sidebarView.onDidChangeVisibility((e) => e.visible && revealSelection()),
     ...commands.register(),
     watchFiles(c, (fsPath) => docs.changed(fsPath)),
     docs.watchEditors(),
@@ -74,6 +93,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     store.onChange(({ prev, next }) => {
       panels.emit("session", next);
       if (prev.contexts[prev.active].focus !== next.contexts[next.active].focus) showFocusInSidebar();
+      if (prev.contexts[prev.active].selected !== next.contexts[next.active].selected) revealSelection();
     }),
     // what the session points at may be gone (a focused node you deleted: you are one step back, not looking at nothing)
     c.onStructure(() => {
@@ -83,6 +103,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     { dispose: () => void c.stop() },
   );
 
+  refreshSidebar(); // last: the listeners above hear the "loading" state
+
   // What the test suite drives.
   return {
     session: () => store.get(),
@@ -90,6 +112,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     saved: () => ctx.workspaceState.get<{ contexts: Record<string, ContextState> }>("vnoc.session.v1"),
     ping: () => c.request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
     structure: () => c.request<any>("vnoc/structure"),
+    /** selects a node's row in the sidebar tree, as a click would (the session hears it from `onDidChangeSelection`) */
+    selectInTree: async (id: string) => {
+      const row = sidebar.rowForId(id);
+      if (row) await sidebarView.reveal(row, { select: true, focus: false });
+    },
     /** Resolves when a webview reports that it drew the structure (immediately if one already has). */
     waitRendered: (timeoutMs: number) =>
       new Promise<{ visible: number; hidden: number }>((resolve, reject) => {

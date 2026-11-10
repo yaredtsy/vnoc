@@ -37,13 +37,16 @@ export class Panels {
     this.docsPanel?.webview.postMessage(event(name, data));
   }
 
-  /** The one canvas (a second `Open canvas` or a Focus click shows this one again). */
-  showCanvas(): vscode.WebviewPanel {
+  /**
+   * The one canvas (a second `Open canvas` or a Focus click shows this one again). `preserveFocus`: bring it to the front of its group without
+   * taking the keyboard away from where the user is (a click in the sidebar).
+   */
+  showCanvas(opts: { preserveFocus?: boolean } = {}): vscode.WebviewPanel {
     if (this.canvasPanel) {
-      this.canvasPanel.reveal();
+      this.canvasPanel.reveal(undefined, opts.preserveFocus);
       return this.canvasPanel;
     }
-    return this.adopt("canvas", vscode.window.createWebviewPanel(CANVAS, "V-NOC canvas", vscode.ViewColumn.Active, this.options()));
+    return this.adopt("canvas", vscode.window.createWebviewPanel(CANVAS, "V-NOC canvas", { viewColumn: vscode.ViewColumn.Active, preserveFocus: opts.preserveFocus }, this.options()));
   }
 
   /**
@@ -76,8 +79,12 @@ export class Panels {
   private adopt(mode: Mode, panel: vscode.WebviewPanel, pinTo?: string): vscode.WebviewPanel {
     if (mode === "canvas") this.canvasPanel = panel;
     else this.docsPanel = panel;
+    if (mode === "canvas") void vscode.commands.executeCommand("setContext", "vnoc.canvasOpen", true);
     panel.onDidDispose(() => {
-      if (this.canvasPanel === panel) this.canvasPanel = undefined;
+      if (this.canvasPanel === panel) {
+        this.canvasPanel = undefined;
+        void vscode.commands.executeCommand("setContext", "vnoc.canvasOpen", false);
+      }
       if (this.docsPanel === panel) this.docsPanel = undefined;
     });
     panel.webview.html = this.html(panel.webview, mode, pinTo);
