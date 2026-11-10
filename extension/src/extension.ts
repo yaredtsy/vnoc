@@ -29,17 +29,20 @@ let canvas: vscode.WebviewPanel | undefined;
 let pendingFocus: string | undefined;
 
 /**
- * A binary path: the setting if set, else `<extension>/bin/` (the installed VSIX), else the build folder of this repository
- * (development layout: `extension/` sits next to `target/` and `drivers/`). In Restricted Mode VS Code hands us the default instead of a workspace value
- * (`restrictedConfigurations` in package.json), so a cloned repo cannot choose which program we run.
+ * A binary path: the setting if set; else, when running from source (F5), the build folder of this repository
+ * (`extension/` sits next to `target/` and `drivers/`); else `<extension>/bin/` (the installed VSIX).
+ * From source the build folder wins, because `bin/` may hold a stale copy left by an earlier packaging run.
+ * In Restricted Mode VS Code hands us the default instead of a workspace value (`restrictedConfigurations` in package.json),
+ * so a cloned repo cannot choose which program we run.
  */
 function binary(ctx: vscode.ExtensionContext, setting: string, name: string, devPath: string[]): string {
   const configured = vscode.workspace.getConfiguration("vnoc").get<string>(setting);
   if (configured) return configured;
   const exe = process.platform === "win32" ? `${name}.exe` : name;
+  const fromSource = path.join(ctx.extensionPath, "..", ...devPath.slice(0, -1), exe);
   const packaged = path.join(ctx.extensionPath, "bin", exe);
-  if (fs.existsSync(packaged)) return packaged;
-  return path.join(ctx.extensionPath, "..", ...devPath.slice(0, -1), exe);
+  const developing = ctx.extensionMode === vscode.ExtensionMode.Development;
+  return developing && fs.existsSync(fromSource) ? fromSource : fs.existsSync(packaged) ? packaged : fromSource;
 }
 
 async function startCore(ctx: vscode.ExtensionContext): Promise<void> {
