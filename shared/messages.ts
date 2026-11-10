@@ -83,7 +83,8 @@ export interface Events {
 export type Notes =
   | { type: "intent"; context: ContextId; intent: Intent } // the one way a webview changes the session
   | { type: "rendered"; visible: number; hidden: number } // the extension's test suite uses it
-  | { type: "close" }; // the docs tab
+  | { type: "close" } // the docs tab
+  | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 
 // What actually travels. `postMessage` carries one of these:
 export type RequestMessage = { [M in keyof Requests]: { type: "req"; id: number; method: M; params: Requests[M]["params"] } }[keyof Requests];

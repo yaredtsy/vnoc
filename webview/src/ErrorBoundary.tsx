@@ -1,12 +1,18 @@
 // A page that crashes must say why, not turn into a blank tab: the error text is what a bug report needs.
 
-import { Component, type ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
+
+import { post } from "./host.ts";
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
 
   static getDerivedStateFromError(error: Error) {
     return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    post({ type: "error", message: `${error.message}\n${info.componentStack ?? ""}` }); // the host logs it: a blank or broken tab must not go unnoticed
   }
 
   render() {

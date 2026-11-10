@@ -19,6 +19,8 @@ let rendered: { visible: number; hidden: number } | undefined;
 const renderWaiters: ((r: { visible: number; hidden: number }) => void)[] = [];
 
 let core: Core | undefined;
+/** Pages that crashed while drawing (for the test suite). */
+const webviewErrors: string[] = [];
 
 export function activate(ctx: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel("V-NOC");
@@ -120,6 +122,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   // What the test suite drives.
   return {
     session: () => store.get(),
+    webviewErrors: () => webviewErrors,
     /** what the next window restart would read back */
     saved: () => ctx.workspaceState.get<{ contexts: Record<string, ContextState> }>("vnoc.session.v1"),
     ping: () => c.request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
@@ -149,6 +152,10 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel) 
       rendered = { visible: note.visible, hidden: note.hidden };
       output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
+      break;
+    case "error":
+      webviewErrors.push(note.message);
+      output.appendLine(`a V-NOC page crashed while drawing: ${note.message}`);
       break;
     case "close":
       break; // the panel closes itself (panels.ts)

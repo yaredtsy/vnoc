@@ -13,6 +13,7 @@ interface Api {
   structure(): Promise<StructureResult>;
   session(): Session;
   selectInTree(id: string): Promise<void>;
+  webviewErrors(): string[];
 }
 let api: Api;
 
@@ -88,11 +89,17 @@ suite("the sidebar", () => {
   });
 
   test("moving through the search list points at nodes without selecting; closing it clears the pointer", async () => {
+    // with the canvas open: cards are drawn, so a highlight really reaches them (it once crashed the page: a hook was skipped on the highlighted card)
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await until("the canvas tab", () => canvasTabs().length === 1);
+    await sleep(1200);
     await api.selectInTree(first.id);
     await sleep(600);
     const selected = api.session().contexts.main.selected;
     await vscode.commands.executeCommand("vnoc.search");
     await until("the list's first item to be pointed at", () => api.session().highlight !== null);
+    await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
+    await sleep(400);
     await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
     await sleep(400);
     assert.notStrictEqual(api.session().highlight, null);
@@ -113,5 +120,11 @@ suite("the sidebar", () => {
     await api.selectInTree(other.id);
     await sleep(500);
     assert.strictEqual(api.session().seq, before + 1, "selecting what is selected changes nothing");
+  });
+});
+
+suite("the pages", () => {
+  test("no V-NOC page crashed while the other tests ran", () => {
+    assert.deepStrictEqual(api.webviewErrors(), []);
   });
 });

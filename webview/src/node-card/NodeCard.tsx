@@ -22,7 +22,10 @@ export const NodeCard = memo(function NodeCard({ data }: NodeProps<Node<Placed>>
   // the card at the top of a focused view (the focused node is always the first card drawn)
   const isFocusRoot = useSession((s) => s.contexts[s.active].focus.length > 0) && data.depth === 0;
   // pointing without selecting (the search list, a crumb under the pointer), the text cursor, and a card just brought into view
-  const highlighted = useSession((s) => s.highlight === data.id) || useView((v) => v.hover === data.id);
+  // both hooks are always called: `a || useX()` would skip the second one when the first is true, and React needs the same hooks on every render
+  const pointedAt = useSession((s) => s.highlight === data.id);
+  const hovered = useView((v) => v.hover === data.id);
+  const highlighted = pointedAt || hovered;
   const cursor = useSession((s) => s.cursor === data.id);
   const revealed = useView((v) => v.revealed === data.id);
   return (
