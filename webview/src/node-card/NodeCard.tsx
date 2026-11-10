@@ -10,10 +10,12 @@ import { NodeFooter } from "./NodeFooter.tsx";
 import { NodeHeader } from "./NodeHeader.tsx";
 import "./node-card.css";
 
-export function NodeCard({ data }: NodeProps<Node<Placed>>) {
+// `selected` is the prop React Flow passes to every node: the canvas sets it from the selected node (Canvas.tsx), the card only draws it.
+export function NodeCard({ data, selected }: NodeProps<Node<Placed>>) {
   return (
     <div
-      className={`node-card ${data.kind}${data.syntaxError ? " broken" : ""}${data.codeOpen ? " code-open" : ""}`}
+      className={`node-card ${data.kind}${data.syntaxError ? " broken" : ""}${data.codeOpen ? " code-open" : ""}${selected ? " selected" : ""}`}
+      aria-selected={selected}
       // VS Code's own right-click menu for a webview: the entries are in package.json (`webview/context`), shown when these keys match
       data-vscode-context={JSON.stringify({ webviewSection: "node", nodeKey: data.id, kind: data.kind, preventDefaultContextMenuItems: true })}
     >

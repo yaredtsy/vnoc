@@ -1,10 +1,17 @@
-.node-card { display: flex; flex-direction: column; width: 240px; height: 80px; box-sizing: border-box; overflow: hidden; border-radius: 6px; font-size: 12px; cursor: default;
+/* How a card shows its state (docs/10-ui-rework/06-how-it-looks.md §2). Outlines and insets do not change the card's size, so ROW_H and CODE_H
+   in layout.ts stay right. These variables move to tokens.css in step R5. */
+.node-card { --card-selected: var(--vscode-focusBorder, #007fd4); --card-selected-bg: var(--vscode-list-activeSelectionBackground, #04395e);
+  --card-selected-fg: var(--vscode-list-activeSelectionForeground, #fff); --card-error: var(--vscode-errorForeground, #f48771); }
+.node-card { position: relative; display: flex; flex-direction: column; width: 240px; height: 80px; box-sizing: border-box; overflow: hidden; border-radius: 6px; font-size: 12px; cursor: default;
   background: var(--vscode-editorWidget-background, #252526); border: 1px solid var(--vscode-editorWidget-border, #454545); border-left-width: 4px; }
 .node-card.folder { border-left-color: #4e94ce; }
 .node-card.file { border-left-color: #7a7a7a; }
 .node-card.class { border-left-color: #c586c0; }
 .node-card.function { border-left-color: #4ec9b0; }
-.node-card.broken { outline: 1px solid var(--vscode-errorForeground, #f48771); }
+.node-card.selected { outline: 2px solid var(--card-selected); outline-offset: 1px; }
+.node-card.selected .node-header { background: var(--card-selected-bg); color: var(--card-selected-fg); }
+/* the syntax-error line is inside the card, so the selection ring can sit outside it */
+.node-card.broken::after { content: ""; position: absolute; inset: 2px; border: 1px solid var(--card-error); border-radius: 4px; pointer-events: none; }
 .node-card .react-flow__handle { opacity: 0; pointer-events: none; }
 
 .node-header { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 4px; border-bottom: 1px solid var(--vscode-editorWidget-border, #454545); }
