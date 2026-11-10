@@ -13,9 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
 use lsp_server::{Connection, ErrorCode, Message, Request, RequestId, Response};
-use serde_json::{Value, json};
-
-const PROTOCOL: u64 = 1;
+use serde_json::Value;
+use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, method};
 
 fn main() -> anyhow::Result<()> {
     // Filtered by default: the type checker underneath traces every query, which is tens of MB per run.
@@ -67,22 +66,20 @@ fn main() -> anyhow::Result<()> {
 /// `initialize { protocol: 1 }`: refuse a protocol we do not speak, with the reason.
 fn handshake(conn: &Connection) -> anyhow::Result<()> {
     let (id, params) = conn.initialize_start()?;
-    let asked = params.get("protocol").and_then(Value::as_u64);
-    if asked != Some(PROTOCOL) {
-        let reason = format!("this driver speaks protocol {PROTOCOL}, the core asked for {asked:?}");
+    let asked = serde_json::from_value::<InitializeParams>(params).ok().map(|p| p.protocol);
+    if asked != Some(PROTOCOL_VERSION) {
+        let reason = format!("this driver speaks protocol {PROTOCOL_VERSION}, the core asked for {asked:?}");
         conn.sender.send(Message::Response(Response::new_err(id, ErrorCode::InvalidRequest as i32, reason.clone())))?;
         return Err(anyhow!(reason));
     }
-    conn.initialize_finish(
-        id,
-        json!({
-            "protocol": PROTOCOL,
-            "name": "python",
-            "version": env!("CARGO_PKG_VERSION"),
-            // present even when small: stock LSP clients refuse a reply without it. Optional methods are announced here.
-            "capabilities": { "outline": true, "ids.plan": false, "callTree": false, "environmentInputs": false },
-        }),
-    )?;
+    let reply = InitializeResult {
+        protocol: PROTOCOL_VERSION,
+        name: "python".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        // present even when small: stock LSP clients refuse a reply without it. Optional methods are announced here.
+        capabilities: [("outline", true), ("ids.plan", false), ("callTree", false), ("environmentInputs", false)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+    };
+    conn.initialize_finish(id, serde_json::to_value(reply)?)?;
     Ok(())
 }
 
@@ -92,7 +89,7 @@ fn respond(req: Request, cancel: &AtomicBool) -> Response {
         return cancelled(req.id);
     }
     let result = match req.method.as_str() {
-        "vnoc/outline" => outline_request(&req.params),
+        method::OUTLINE => outline_request(&req.params),
         other => return Response::new_err(req.id, ErrorCode::MethodNotFound as i32, format!("unknown method {other}")),
     };
     // A running analysis cannot be interrupted (pylspt has no cancel flag, VS-D69): its answer is dropped.
@@ -114,17 +111,17 @@ fn invalid(message: impl Into<String>) -> Failure {
     Failure { code: ErrorCode::InvalidParams, message: message.into() }
 }
 
-fn outline_request(p: &Value) -> Result<Value, Failure> {
-    if p.get("fingerprints").and_then(Value::as_bool) == Some(true) {
+fn outline_request(params: &Value) -> Result<Value, Failure> {
+    if params.get("fingerprints").and_then(Value::as_bool) == Some(true) {
         return Err(invalid("`fingerprints` is not supported by this driver version"));
     }
-    let text = match p.get("text").and_then(Value::as_str) {
-        Some(t) => t.to_string(),
-        None => {
-            let (root, file) = (p.get("root").and_then(Value::as_str), p.get("file").and_then(Value::as_str));
-            let (Some(root), Some(file)) = (root, file) else { return Err(invalid("give `text`, or `root` and `file`")) };
-            std::fs::read_to_string(std::path::Path::new(root).join(file)).map_err(|e| Failure { code: ErrorCode::InternalError, message: format!("cannot read {file}: {e}") })?
+    let p: OutlineParams = serde_json::from_value(params.clone()).map_err(|e| invalid(e.to_string()))?;
+    let text = match (p.text, p.root, p.file) {
+        (Some(text), _, _) => text,
+        (None, Some(root), Some(file)) => {
+            std::fs::read_to_string(std::path::Path::new(&root).join(&file)).map_err(|e| Failure { code: ErrorCode::InternalError, message: format!("cannot read {file}: {e}") })?
         }
+        _ => return Err(invalid("give `text`, or `root` and `file`")),
     };
-    Ok(outline::outline(&text))
+    serde_json::to_value(outline::outline(&text)).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
 }

@@ -8,16 +8,16 @@ use ruff_python_ast::statement_visitor::{StatementVisitor, walk_body, walk_stmt}
 use ruff_python_ast::{PythonVersion, Stmt};
 use ruff_python_parser::{Mode, ParseOptions, parse_unchecked};
 use ruff_text_size::{Ranged, TextRange};
-use serde_json::{Value, json};
+use vnoc_driver_protocol::{Def, DefKind, OutlineResult, SyntaxError};
 
 use crate::positions::Lines;
 
 /// Python's `__qualname__`: a def inside a FUNCTION gets `<locals>` after that function (`top.<locals>.inner`);
 /// inside a class or at module level it is just joined with a dot.
-fn qualname(stack: &[(String, &'static str)], name: &str) -> String {
+fn qualname(stack: &[(String, DefKind)], name: &str) -> String {
     match stack.last() {
         None => name.to_string(),
-        Some((q, "function")) => format!("{q}.<locals>.{name}"),
+        Some((q, DefKind::Function)) => format!("{q}.<locals>.{name}"),
         Some((q, _)) => format!("{q}.{name}"),
     }
 }
@@ -36,27 +36,27 @@ struct Collector<'a> {
     lines: &'a Lines<'a>,
     ids: &'a HashMap<TextRange, String>,
     errors: &'a [TextRange],
-    stack: Vec<(String, &'static str)>,
-    out: Vec<Value>,
+    stack: Vec<(String, DefKind)>,
+    out: Vec<Def>,
 }
 
 impl<'a> Collector<'a> {
-    fn record(&mut self, stmt: &'a Stmt, name: &str, kind: &'static str, params: Vec<String>, body: &'a [Stmt]) {
+    fn record(&mut self, stmt: &'a Stmt, name: &str, kind: DefKind, params: Vec<String>, body: &'a [Stmt]) {
         let range = stmt.range();
         let qualname = qualname(&self.stack, name);
         let (parent, parent_kind) = self.stack.last().map_or(("", None), |(q, k)| (q.as_str(), Some(*k)));
-        self.out.push(json!({
-            "qualname": qualname,
-            "name": name,
-            "kind": kind,
-            "parent": parent,
-            "parent_kind": parent_kind,
-            "range": self.lines.range(range),
-            "params": params,
-            "id": self.ids.get(&range),
+        self.out.push(Def {
+            qualname: qualname.clone(),
+            name: name.to_string(),
+            kind,
+            parent: parent.to_string(),
+            parent_kind,
+            range: self.lines.range(range),
+            params,
+            id: self.ids.get(&range).cloned(),
             // a def whose lines contain a parse error; it errs toward flagging a neighbour, never toward missing the broken one
-            "syntax_error": self.errors.iter().any(|e| range.intersect(*e).is_some()),
-        }));
+            syntax_error: self.errors.iter().any(|e| range.intersect(*e).is_some()),
+        });
         self.stack.push((qualname, kind));
         walk_body(self, body);
         self.stack.pop();
@@ -74,15 +74,15 @@ impl<'a> StatementVisitor<'a> for Collector<'a> {
                 if let Some(k) = &f.parameters.kwarg {
                     params.push(format!("**{}", k.name));
                 }
-                self.record(stmt, f.name.as_str(), "function", params, &f.body);
+                self.record(stmt, f.name.as_str(), DefKind::Function, params, &f.body);
             }
-            Stmt::ClassDef(c) => self.record(stmt, c.name.as_str(), "class", vec![], &c.body),
+            Stmt::ClassDef(c) => self.record(stmt, c.name.as_str(), DefKind::Class, vec![], &c.body),
             _ => walk_stmt(self, stmt), // defs can sit inside if / try / with / for
         }
     }
 }
 
-pub fn outline(text: &str) -> Value {
+pub fn outline(text: &str) -> OutlineResult {
     let options = ParseOptions::from(Mode::Module).with_target_version(PythonVersion::PY313);
     let parsed = parse_unchecked(text, options).try_into_module().expect("Mode::Module always produces a module");
     let lines = Lines::new(text);
@@ -92,6 +92,6 @@ pub fn outline(text: &str) -> Value {
 
     let mut c = Collector { lines: &lines, ids: &ids, errors: &errors, stack: vec![], out: vec![] };
     walk_body(&mut c, &parsed.syntax().body);
-    let syntax_errors: Vec<Value> = parsed.errors().iter().map(|e| json!({ "range": lines.range(e.location), "message": e.error.to_string() })).collect();
-    json!({ "defs": c.out, "syntax_errors": syntax_errors })
+    let syntax_errors = parsed.errors().iter().map(|e| SyntaxError { range: lines.range(e.location), message: e.error.to_string() }).collect();
+    OutlineResult { defs: c.out, syntax_errors }
 }

@@ -33,12 +33,12 @@ pub struct Range {
     pub end: Position,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitializeParams {
     pub protocol: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitializeResult {
     pub protocol: u32,
     pub name: String,
@@ -49,13 +49,13 @@ pub struct InitializeResult {
 }
 
 /// Give `text` (an unsaved buffer) **or** `root` and `file` (a path the driver reads).
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OutlineParams {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
 }
 
@@ -67,7 +67,7 @@ pub enum DefKind {
 }
 
 /// One def or class. `qualname` is the language's own name and **opaque to the core** (Python: `__qualname__`, with `<locals>`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Def {
     pub qualname: String,
     pub name: String,
@@ -87,14 +87,14 @@ pub struct Def {
     pub syntax_error: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyntaxError {
     pub range: Range,
     pub message: String,
 }
 
 /// Defs are **flat, in source order, parents before children**.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OutlineResult {
     pub defs: Vec<Def>,
     #[serde(default)]

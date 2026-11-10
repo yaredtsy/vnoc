@@ -2414,6 +2414,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vnoc-driver-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "vnoc-driver-python"
 version = "0.1.0"
 dependencies = [
@@ -2423,10 +2430,12 @@ dependencies = [
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
+ "serde",
  "serde_json",
  "tracing",
  "tracing-subscriber",
  "vnoc-domain",
+ "vnoc-driver-protocol",
 ]
 
 [[package]]
