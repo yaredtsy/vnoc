@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 
 import type { Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
+import type { Events } from "@vnoc/shared/messages";
 import { addDoc } from "./addDoc";
 import type { Core } from "./core";
 import type { Panels } from "./panels";
@@ -18,6 +19,9 @@ const isNodeRow = (arg: unknown): arg is Row & { row: "node" } => typeof arg ===
 
 /** Cursor moves come in bursts; look at where it rests. */
 const CURSOR_DEBOUNCE_MS = 200;
+
+/** "Expand All Below" opens at most this many nodes: the open set is in the saved session and travels with every broadcast. */
+const EXPAND_ALL_LIMIT = 500;
 
 /** The editor whose cursor counts: the active one, else a visible code editor (clicking into a webview leaves none active). */
 const cursorEditor = () => vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
@@ -36,6 +40,8 @@ export class Commands {
     private readonly core: Core,
     private readonly store: SessionStore,
     private readonly panels: Panels,
+    /** selects the node's row in the sidebar tree and brings the V-NOC side bar up */
+    private readonly revealRow: (id: string) => Promise<void>,
   ) {}
 
   /** Registers every command, and the cursor follower. */
@@ -49,6 +55,25 @@ export class Commands {
       // the inline ✕ on a FOCUS-view row: drop this step and those after it
       on("vnoc.focusDrop", (step) => this.store.dispatch({ type: "focusJump", depth: Math.max(0, Number((step as { depth?: number }).depth) - 1) })),
       on("vnoc.showLog", () => this.core.showLog()),
+      on("vnoc.revealInSidebar", async (arg, selected) => {
+        const node = await this.nodeFor(arg, selected);
+        this.store.dispatch({ type: "reveal", id: node.id, canvas: false }); // steps the focus back if it hides the node, selects it
+        await this.revealRow(node.id);
+      }),
+      on("vnoc.revealInExplorer", async (arg, selected) => vscode.commands.executeCommand("revealInExplorer", absolute((await this.nodeFor(arg, selected)).path))),
+      on("vnoc.openCanvasBeside", async (arg, selected) => (arg === undefined ? void this.panels.showCanvas({ beside: true }) : this.openCanvasAt((await this.nodeFor(arg, selected)).id, { beside: true }))),
+      on("vnoc.expand", async (arg, selected) => this.store.dispatch({ type: "expand", ids: [(await this.nodeFor(arg, selected)).id] })),
+      on("vnoc.collapse", async (arg, selected) => this.store.dispatch({ type: "toggle", id: (await this.nodeFor(arg, selected)).id })),
+      on("vnoc.expandAll", async (arg, selected) => this.expandAll(await this.nodeFor(arg, selected))),
+      on("vnoc.collapseAll", () => this.store.dispatch({ type: "collapseAll" })),
+      on("vnoc.showCodeInCard", async (arg, selected) => this.viewCommand({ name: "showCode", key: (await this.nodeFor(arg, selected)).id })),
+      on("vnoc.hideCodeInCard", async (arg, selected) => this.viewCommand({ name: "hideCode", key: (await this.nodeFor(arg, selected)).id })),
+      on("vnoc.fitView", () => this.viewCommand({ name: "fitView" })),
+      on("vnoc.copyPath", async (arg, selected) => {
+        const node = await this.nodeFor(arg, selected);
+        await vscode.env.clipboard.writeText(node.range ? `${node.path}:${node.range.start.line + 1}` : node.path);
+      }),
+      on("vnoc.clearSelection", () => this.store.dispatch({ type: "select", id: null })),
       on("vnoc.focus", async (arg, selected) => this.focusInSidebar((await this.nodeFor(arg, selected)).id)),
       on("vnoc.showOnCanvas", async (arg, selected) => this.showOnCanvas((await this.nodeFor(arg, selected)).id)),
       on("vnoc.focusBack", () => this.store.dispatch({ type: "focusBack" })),
@@ -91,7 +116,10 @@ export class Commands {
       return hit;
     }
     const folder = vscode.workspace.workspaceFolders?.[0];
-    if (arg instanceof vscode.Uri && Array.isArray(selected) && folder) {
+    // The Explorer passes the clicked Uri and the list of selected ones. The editor menu and a tab's menu pass the Uri alone: the active editor's own
+    // document means "the node at the cursor"; any other Uri (a right-click on a background tab) is that file.
+    const explorer = Array.isArray(selected);
+    if (arg instanceof vscode.Uri && folder && (explorer || vscode.window.activeTextEditor?.document.uri.toString() !== arg.toString())) {
       const hit = nodeAtPath(tree, path.relative(folder.uri.fsPath, arg.fsPath).split(path.sep).join("/"));
       if (!hit) throw new Error("V-NOC has not read that file or folder (it is not Python, or it is ignored).");
       return hit;
@@ -116,9 +144,27 @@ export class Commands {
   }
 
   /** Open Canvas, on a node: bring the canvas up with the node revealed and selected, keeping the focus unless it hides the node. The canvas finds the request in the session, whether it was open or not. */
-  private openCanvasAt(id: string) {
+  private openCanvasAt(id: string, opts: { beside?: boolean } = {}) {
     this.store.dispatch({ type: "reveal", id, canvas: true });
-    this.panels.showCanvas();
+    this.panels.showCanvas(opts);
+  }
+
+  /** Opens every closed node below this one on the canvas, up to a limit. */
+  private async expandAll(node: TreeNode) {
+    const ids: string[] = [];
+    const walk = (n: TreeNode) => {
+      if (n.children.length === 0 || ids.length >= EXPAND_ALL_LIMIT) return;
+      ids.push(n.id);
+      n.children.forEach(walk);
+    };
+    walk(node);
+    this.store.dispatch({ type: "expand", ids });
+    if (ids.length >= EXPAND_ALL_LIMIT) void vscode.window.showInformationMessage(`V-NOC opened the first ${EXPAND_ALL_LIMIT} nodes below ${node.name}. Open the rest where you need them.`);
+  }
+
+  /** A menu entry that changes only what the canvas draws, not the session. */
+  private viewCommand(data: Events["viewCommand"]) {
+    this.panels.emit("viewCommand", data);
   }
 
   /**
@@ -163,7 +209,8 @@ export class Commands {
 
   /** Opens (or reuses) the docs tab beside the editor. From a card or a row it shows that node; from the editor's menu it follows the cursor. */
   private async showDocsBeside(arg: unknown, selected: unknown) {
-    const explicit = isTreeNode(arg) || (typeof arg === "object" && arg !== null && "nodeKey" in arg) || Array.isArray(selected);
+    const otherTab = arg instanceof vscode.Uri && vscode.window.activeTextEditor?.document.uri.toString() !== arg.toString();
+    const explicit = isTreeNode(arg) || isNodeRow(arg) || (typeof arg === "object" && arg !== null && "nodeKey" in arg) || Array.isArray(selected) || otherTab;
     this.panels.showDocs(explicit ? (await this.nodeFor(arg, selected)).id : undefined);
     this.syncCursor(); // an unpinned tab shows the cursor node: make sure the session has it, also when no cursor has moved since the window opened
   }

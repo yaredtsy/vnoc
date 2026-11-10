@@ -15,6 +15,9 @@ import { setDocsOpen, useView } from "./state/view.ts";
 
 // The canvas page: the bar, the crumbs (the focus), the cards, the doc panel. It reads the stores and draws; nothing here keeps state of its own.
 
+// right-click on the empty canvas: its own menu (Fit View, Collapse All, ...); a card inside it says "node" and wins
+const PANE_CONTEXT = JSON.stringify({ webviewSection: "pane", preventDefaultContextMenuItems: true });
+
 export function App() {
   const { status, message, structure, reloads } = useData();
   const docsOpen = useView((v) => v.docsOpen);
@@ -87,7 +90,7 @@ export function App() {
           ))}
         </nav>
       )}
-      <div className="main">
+      <div className="main" data-vscode-context={PANE_CONTEXT}>
         {laid && <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} />}
         {docsOpen && (
           <DocPanel

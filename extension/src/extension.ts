@@ -62,7 +62,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     session: () => store.get(),
   });
   panels = new Panels(ctx, handlers, (note) => onNote(note, store, output));
-  commands = new Commands(c, store, panels);
+  commands = new Commands(c, store, panels, async (id) => {
+    const row = sidebar.rowForId(id);
+    if (row) await sidebarView.reveal(row, { select: true, focus: true, expand: false }); // shows the V-NOC side bar too
+  });
 
   sidebar = new StructureView(async () => (await c.loadStructure()).root);
   sidebarView = vscode.window.createTreeView("vnoc.structure", { treeDataProvider: sidebar, showCollapseAll: true });
@@ -103,6 +106,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     { dispose: () => void c.stop() },
   );
 
+  // the files whose menus carry the V-NOC submenu (later: from the driver manifests)
+  void vscode.commands.executeCommand("setContext", "vnoc.extensions", [".py", ".pyi"]);
   refreshSidebar(); // last: the listeners above hear the "loading" state
 
   // What the test suite drives.

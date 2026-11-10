@@ -4,7 +4,9 @@ import { Background, Controls, MiniMap, type Node, ReactFlow, useNodesState, use
 import { useEffect, useMemo, useState } from "react";
 
 import { NodeCard } from "../node-card/NodeCard.tsx";
+import { on } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
+import { setCodeOpen } from "../state/view.ts";
 import type { Layout, Placed } from "./layout.ts";
 
 const nodeTypes = { card: NodeCard };
@@ -26,6 +28,20 @@ function CenterOn({ laid }: { laid: Layout }) {
     }, 60);
     return () => clearTimeout(timer);
   }, [fitView, target, laid]);
+  return null;
+}
+
+/** Menu commands that change only what this canvas draws: show or hide a card's code, fit the view. */
+function ViewCommands() {
+  const { fitView } = useReactFlow();
+  useEffect(
+    () =>
+      on("viewCommand", ({ name, key }) => {
+        if (name === "fitView") void fitView({ duration: 300 });
+        else if (key) setCodeOpen(key, name === "showCode");
+      }),
+    [fitView],
+  );
   return null;
 }
 
@@ -63,6 +79,7 @@ export function Canvas({ laid }: { laid: Layout }) {
       <Controls showInteractive={false} />
       <MiniMap pannable zoomable />
       <CenterOn laid={laid} />
+      <ViewCommands />
     </ReactFlow>
   );
 }

@@ -73,6 +73,8 @@ export interface Events {
   docText: { path: string; text: string };
   /** the whole session, every time it changes: whole snapshots cannot get out of step, and `seq` drops one that arrives late */
   session: Session;
+  /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view */
+  viewCommand: { name: "showCode" | "hideCode" | "fitView"; key?: string };
   /** the docs tab beside an editor is already open: show this node and stay on it (pinned) */
   showNode: { id: string };
 }

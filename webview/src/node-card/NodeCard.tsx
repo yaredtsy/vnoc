@@ -5,7 +5,7 @@ import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { memo } from "react";
 
 import type { Placed } from "../canvas/layout.ts";
-import { useSession } from "../state/session.ts";
+import { dispatch, useSession } from "../state/session.ts";
 import { nodeContext } from "./nodeContext.ts";
 import { NodeCode } from "./NodeCode.tsx";
 import { NodeBody } from "./NodeBody.tsx";
@@ -24,6 +24,8 @@ export const NodeCard = memo(function NodeCard({ data }: NodeProps<Node<Placed>>
     <div
       className={`node-card ${data.kind}${data.syntaxError ? " broken" : ""}${data.codeOpen ? " code-open" : ""}${selected ? " selected" : ""}`}
       aria-selected={selected}
+      // a right-click selects the card first, so the ring shows what the menu is about (as in the Explorer); selecting never opens anything
+      onContextMenu={() => dispatch({ type: "select", id: data.id }, contextId)}
       // VS Code's own right-click menu for a webview: the entries are in package.json (`webview/context`), shown when these keys match
       data-vscode-context={nodeContext({ node: data, contextId, isFocusRoot })}
     >

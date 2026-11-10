@@ -22,6 +22,14 @@ suiteSetup(async () => {
   api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
 });
 
+suite("the commands", () => {
+  test("every command package.json declares is registered by the extension", async () => {
+    const declared: string[] = vscode.extensions.getExtension("vnoc.vnoc")!.packageJSON.contributes.commands.map((c: { command: string }) => c.command);
+    const registered = new Set(await vscode.commands.getCommands(true));
+    assert.deepStrictEqual(declared.filter((c) => !registered.has(c)), [], "declared in package.json, but nothing registers them");
+  });
+});
+
 suite("the sidebar", () => {
   let first: TreeNode;
   let other: TreeNode;

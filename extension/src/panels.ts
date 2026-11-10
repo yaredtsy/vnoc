@@ -41,12 +41,13 @@ export class Panels {
    * The one canvas (a second `Open canvas` or a Focus click shows this one again). `preserveFocus`: bring it to the front of its group without
    * taking the keyboard away from where the user is (a click in the sidebar).
    */
-  showCanvas(opts: { preserveFocus?: boolean } = {}): vscode.WebviewPanel {
+  showCanvas(opts: { preserveFocus?: boolean; beside?: boolean } = {}): vscode.WebviewPanel {
+    const column = opts.beside ? vscode.ViewColumn.Beside : undefined;
     if (this.canvasPanel) {
-      this.canvasPanel.reveal(undefined, opts.preserveFocus);
+      this.canvasPanel.reveal(column, opts.preserveFocus);
       return this.canvasPanel;
     }
-    return this.adopt("canvas", vscode.window.createWebviewPanel(CANVAS, "V-NOC canvas", { viewColumn: vscode.ViewColumn.Active, preserveFocus: opts.preserveFocus }, this.options()));
+    return this.adopt("canvas", vscode.window.createWebviewPanel(CANVAS, "V-NOC canvas", { viewColumn: column ?? vscode.ViewColumn.Active, preserveFocus: opts.preserveFocus }, this.options()));
   }
 
   /**

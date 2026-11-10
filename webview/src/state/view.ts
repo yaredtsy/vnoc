@@ -39,6 +39,16 @@ export function toggleCode(id: string): void {
   });
 }
 
+/** Shows or hides one card's code. */
+export function setCodeOpen(id: string, open: boolean): void {
+  useView.setState(({ codeOpen }) => {
+    const next = new Set(codeOpen);
+    if (open) next.add(id);
+    else next.delete(id);
+    return { codeOpen: next };
+  });
+}
+
 export const setDocsOpen = (docsOpen: boolean) => useView.setState({ docsOpen });
 export const setDocWidth = (docWidth: number) => useView.setState({ docWidth });
 export const pin = (pinned: string | null) => useView.setState({ pinned });
