@@ -1,0 +1,12 @@
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--vscode-editor-background, #1e1e1e); color: var(--vscode-editor-foreground, #ccc); font-family: var(--vscode-font-family, sans-serif); }
+.app { height: 100vh; display: flex; flex-direction: column; }
+.app > .react-flow { flex: 1; }
+.bar { display: flex; gap: 12px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--vscode-panel-border, #444); font-size: 12px; }
+.bar .error { color: var(--vscode-errorForeground, #f48771); white-space: pre-wrap; }
+.bar button { margin-left: auto; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; padding: 3px 10px; cursor: pointer; }
+.crumbs { display: flex; align-items: center; gap: 4px; padding: 4px 12px; border-bottom: 1px solid var(--vscode-panel-border, #444); font-size: 12px; }
+.crumbs .sep { opacity: .5; margin: 0 4px; }
+.crumbs button { background: transparent; color: inherit; border: 0; padding: 2px 4px; border-radius: 3px; cursor: pointer; }
+.crumbs button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, #ffffff1a); text-decoration: underline; }
+.crumbs button:disabled { cursor: default; font-weight: 600; }

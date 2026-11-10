@@ -5,14 +5,19 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc",
+    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/canvas/focusStack.test.ts"
   },
   "dependencies": {
+    "@shikijs/monaco": "^4.6.0",
     "@xyflow/react": "^12.3.0",
+    "monaco-editor": "^0.57.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "shiki": "^4.6.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",

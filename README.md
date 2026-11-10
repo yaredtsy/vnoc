@@ -1,6 +1,6 @@
 # V-NOC
 
-Browse code as a graph and attach docs to it. Layout and rationale: `docs/fable_plan/03-repo-structure.md`.
+Browse code as a graph and attach docs to it.
 
 - `crates/` Rust workspace (core, domain types, driver protocol)
 - `drivers/python/` separate Cargo workspace (own toolchain)

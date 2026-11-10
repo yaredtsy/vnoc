@@ -1,7 +1,8 @@
 [package]
 name = "vnoc-driver-protocol"
-version.workspace = true
-edition.workspace = true
+version = "0.1.0"
+edition = "2024"
+description = "Rust types for the core <-> driver wire (plan_vs/07-drivers/01-driver-protocol.md). The wire spec is the definition; these types follow it."
+
 [dependencies]
-serde.workspace = true
-serde_json.workspace = true
+serde = { version = "1", features = ["derive"] }

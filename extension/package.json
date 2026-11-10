@@ -1,22 +1,114 @@
 {
   "name": "vnoc",
   "displayName": "V-NOC",
-  "description": "Browse code as a graph and attach docs to it.",
+  "description": "Browse code as a graph and attach docs to it (walking skeleton).",
   "version": "0.0.1",
   "publisher": "vnoc",
-  "engines": { "vscode": "^1.90.0" },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
   "main": "./dist/extension.js",
-  "activationEvents": [],
-  "contributes": {},
+  "activationEvents": [
+    "onWebviewPanel:vnoc.canvas"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode V-NOC ignores the executable paths set in workspace settings.",
+      "restrictedConfigurations": [
+        "vnoc.server.path",
+        "vnoc.driver.path"
+      ]
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vnoc",
+          "title": "V-NOC",
+          "icon": "media/vnoc.svg"
+        }
+      ]
+    },
+    "views": {
+      "vnoc": [
+        {
+          "id": "vnoc.structure",
+          "name": "Structure"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "vnoc.openCanvas",
+        "title": "V-NOC: Open canvas"
+      },
+      {
+        "command": "vnoc.focus",
+        "title": "V-NOC: Focus on the canvas",
+        "icon": "$(target)"
+      },
+      {
+        "command": "vnoc.refreshStructure",
+        "title": "V-NOC: Refresh structure",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "vnoc.focus",
+          "when": "view == vnoc.structure",
+          "group": "inline"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vnoc.refreshStructure",
+          "when": "view == vnoc.structure",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vnoc.focus",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "V-NOC",
+      "properties": {
+        "vnoc.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the vnoc core binary. Empty = the build folder of this repository (development). Ignored from workspace settings in Restricted Mode."
+        },
+        "vnoc.driver.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Python driver binary. Empty = the build folder of this repository (development). Ignored from workspace settings in Restricted Mode."
+        }
+      }
+    }
+  },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "test": "tsc -p . --noEmit false --outDir out && node out/test/runTest.js"
   },
-  "dependencies": { "vscode-languageclient": "^9.0.1" },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
   "devDependencies": {
+    "@types/mocha": "^10.0.0",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.4.0",
+    "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.25.0",
+    "mocha": "^10.0.0",
     "typescript": "^5.6.0"
   }
 }

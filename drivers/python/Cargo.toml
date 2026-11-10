@@ -1,0 +1,38 @@
+[package]
+name = "vnoc-driver-python"
+version = "0.1.0"
+edition = "2024"
+description = "The Python language driver: a thin adapter between the V-NOC driver protocol (plan_vs/07-drivers/01) and pylspt."
+
+# Its own workspace: its own rust-toolchain.toml (pylspt pins 1.98.0) and its own Cargo.lock (ruff only compiles against the
+# salsa version pylspt is locked to; this lockfile started as a copy of the spike's, which started as pylspt's).
+[workspace]
+
+[dependencies]
+anyhow = "1"
+lsp-server = "0.10"
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# pylspt and the ruff crates come from one pinned commit (plan_vs 02-07 §1). For local work, put a `[patch]` section in an
+# uncommitted .cargo/config.toml pointing at ../../../pylspt.
+# TODO(M1): drop the three ruff_* lines when pylspt has a facade (S2 finding: it re-exports nothing, so the adapter names ruff crates).
+pylspt = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "670ae79a15" }
+ruff_python_parser = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "670ae79a15" }
+ruff_python_ast = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "670ae79a15" }
+ruff_text_size = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "670ae79a15" }
+
+[dev-dependencies]
+# Tests check the driver against the domain's golden IDs. The driver itself never depends on the domain (the core picks IDs).
+vnoc-domain = { path = "../../crates/vnoc-domain" }
+
+# Dependencies (ruff, ty, salsa) at opt-level 2 even in dev: unoptimised ruff is too slow to test against. Release is for packaging.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1
+panic = "abort"

@@ -1,0 +1,130 @@
+//! `vnoc-driver-python`: speaks the V-NOC driver protocol (plan_vs/07-drivers/01-driver-protocol.md) on stdin / stdout.
+//!
+//! stdout IS the protocol. Nothing else may write there, not even a panic message: the two lints below, a stderr-only
+//! logger, and the test harness that fails a run on any byte outside a frame keep it that way.
+#![deny(clippy::print_stdout, clippy::print_stderr)]
+
+mod outline;
+mod positions;
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use anyhow::anyhow;
+use lsp_server::{Connection, ErrorCode, Message, Request, RequestId, Response};
+use serde_json::{Value, json};
+
+const PROTOCOL: u64 = 1;
+
+fn main() -> anyhow::Result<()> {
+    // Filtered by default: the type checker underneath traces every query, which is tens of MB per run.
+    let filter = tracing_subscriber::EnvFilter::try_from_env("VNOC_LOG").unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,vnoc_driver_python=info"));
+    tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).with_ansi(false).init();
+
+    let (conn, io) = Connection::stdio();
+    handshake(&conn)?;
+
+    // The main loop only dispatches (VS-D68). Each request runs on its own thread with a cancel flag, so a cancel, a
+    // shutdown or stdin EOF is handled while an analysis runs.
+    let in_flight: Arc<Mutex<HashMap<RequestId, Arc<AtomicBool>>>> = Arc::default();
+    for msg in &conn.receiver {
+        match msg {
+            Message::Request(req) => {
+                if conn.handle_shutdown(&req)? {
+                    break;
+                }
+                let cancel = Arc::new(AtomicBool::new(false));
+                in_flight.lock().unwrap().insert(req.id.clone(), cancel.clone());
+                let (sender, in_flight) = (conn.sender.clone(), in_flight.clone());
+                std::thread::spawn(move || {
+                    let id = req.id.clone();
+                    let resp = respond(req, &cancel);
+                    in_flight.lock().unwrap().remove(&id);
+                    let _ = sender.send(Message::Response(resp));
+                });
+            }
+            Message::Notification(n) if n.method == "$/cancelRequest" => {
+                let id = n.params.get("id").and_then(|v| serde_json::from_value::<RequestId>(v.clone()).ok());
+                if let Some(flag) = id.and_then(|id| in_flight.lock().unwrap().get(&id).cloned()) {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            }
+            // An unknown notification is ignored: a driver never exits over a message it does not understand.
+            Message::Notification(n) => tracing::debug!("ignored notification {}", n.method),
+            Message::Response(_) => {}
+        }
+    }
+    // shutdown, `exit`, or stdin EOF: tell running work to stop and leave
+    for flag in in_flight.lock().unwrap().values() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    drop(conn);
+    io.join()?;
+    Ok(())
+}
+
+/// `initialize { protocol: 1 }`: refuse a protocol we do not speak, with the reason.
+fn handshake(conn: &Connection) -> anyhow::Result<()> {
+    let (id, params) = conn.initialize_start()?;
+    let asked = params.get("protocol").and_then(Value::as_u64);
+    if asked != Some(PROTOCOL) {
+        let reason = format!("this driver speaks protocol {PROTOCOL}, the core asked for {asked:?}");
+        conn.sender.send(Message::Response(Response::new_err(id, ErrorCode::InvalidRequest as i32, reason.clone())))?;
+        return Err(anyhow!(reason));
+    }
+    conn.initialize_finish(
+        id,
+        json!({
+            "protocol": PROTOCOL,
+            "name": "python",
+            "version": env!("CARGO_PKG_VERSION"),
+            // present even when small: stock LSP clients refuse a reply without it. Optional methods are announced here.
+            "capabilities": { "outline": true, "ids.plan": false, "callTree": false, "environmentInputs": false },
+        }),
+    )?;
+    Ok(())
+}
+
+fn respond(req: Request, cancel: &AtomicBool) -> Response {
+    let cancelled = |id| Response::new_err(id, ErrorCode::RequestCanceled as i32, "cancelled".into());
+    if cancel.load(Ordering::Relaxed) {
+        return cancelled(req.id);
+    }
+    let result = match req.method.as_str() {
+        "vnoc/outline" => outline_request(&req.params),
+        other => return Response::new_err(req.id, ErrorCode::MethodNotFound as i32, format!("unknown method {other}")),
+    };
+    // A running analysis cannot be interrupted (pylspt has no cancel flag, VS-D69): its answer is dropped.
+    if cancel.load(Ordering::Relaxed) {
+        return cancelled(req.id);
+    }
+    match result {
+        Ok(v) => Response::new_ok(req.id, v),
+        Err(e) => Response::new_err(req.id, e.code as i32, e.message),
+    }
+}
+
+struct Failure {
+    code: ErrorCode,
+    message: String,
+}
+
+fn invalid(message: impl Into<String>) -> Failure {
+    Failure { code: ErrorCode::InvalidParams, message: message.into() }
+}
+
+fn outline_request(p: &Value) -> Result<Value, Failure> {
+    if p.get("fingerprints").and_then(Value::as_bool) == Some(true) {
+        return Err(invalid("`fingerprints` is not supported by this driver version"));
+    }
+    let text = match p.get("text").and_then(Value::as_str) {
+        Some(t) => t.to_string(),
+        None => {
+            let (root, file) = (p.get("root").and_then(Value::as_str), p.get("file").and_then(Value::as_str));
+            let (Some(root), Some(file)) = (root, file) else { return Err(invalid("give `text`, or `root` and `file`")) };
+            std::fs::read_to_string(std::path::Path::new(root).join(file)).map_err(|e| Failure { code: ErrorCode::InternalError, message: format!("cannot read {file}: {e}") })?
+        }
+    };
+    Ok(outline::outline(&text))
+}

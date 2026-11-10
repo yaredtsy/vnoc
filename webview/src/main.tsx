@@ -1,3 +1,8 @@
+import "@xyflow/react/dist/style.css";
+import "./style.css";
+
 import { createRoot } from "react-dom/client";
 
-createRoot(document.getElementById("root")!).render(<div>V-NOC</div>);
+import { App } from "./App.tsx";
+
+createRoot(document.getElementById("root")!).render(<App />);

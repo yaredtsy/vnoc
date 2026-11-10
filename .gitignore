@@ -6,3 +6,4 @@ extension/bin/*
 !extension/bin/.gitkeep
 *.vsix
 .DS_Store
+extension/out/

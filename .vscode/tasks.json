@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "build: core", "type": "shell", "command": "cargo build -p vnoc", "problemMatcher": "$rustc", "presentation": { "reveal": "silent" } },
+    { "label": "build: python driver", "type": "shell", "command": "cargo build", "options": { "cwd": "${workspaceFolder}/drivers/python" }, "problemMatcher": "$rustc", "presentation": { "reveal": "silent" } },
+    { "label": "build: webview", "type": "shell", "command": "npm run build", "options": { "cwd": "${workspaceFolder}/webview" }, "presentation": { "reveal": "silent" } },
+    { "label": "build: extension", "type": "shell", "command": "npm run build", "options": { "cwd": "${workspaceFolder}/extension" }, "problemMatcher": "$tsc", "presentation": { "reveal": "silent" } },
+    {
+      "label": "build: everything",
+      "dependsOn": ["build: core", "build: python driver", "build: webview", "build: extension"],
+      "dependsOrder": "parallel",
+      "group": { "kind": "build", "isDefault": true }
+    }
+  ]
+}

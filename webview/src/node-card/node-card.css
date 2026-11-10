@@ -1,0 +1,29 @@
+.node-card { display: flex; flex-direction: column; width: 240px; height: 80px; box-sizing: border-box; overflow: hidden; border-radius: 6px; font-size: 12px; cursor: default;
+  background: var(--vscode-editorWidget-background, #252526); border: 1px solid var(--vscode-editorWidget-border, #454545); border-left-width: 4px; }
+.node-card.folder { border-left-color: #4e94ce; }
+.node-card.file { border-left-color: #7a7a7a; }
+.node-card.class { border-left-color: #c586c0; }
+.node-card.function { border-left-color: #4ec9b0; }
+.node-card.broken { outline: 1px solid var(--vscode-errorForeground, #f48771); }
+.node-card .react-flow__handle { opacity: 0; pointer-events: none; }
+
+.node-header { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 4px; border-bottom: 1px solid var(--vscode-editorWidget-border, #454545); }
+.node-header .icon { opacity: .8; width: 14px; text-align: center; }
+.node-header .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.node-header .badge { opacity: .7; font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--vscode-badge-background, #4d4d4d); color: var(--vscode-badge-foreground, #fff); }
+.node-header .expand, .node-header .expand-spacer { width: 18px; height: 18px; flex: none; }
+.node-header .expand { padding: 0; border: 0; border-radius: 3px; background: transparent; color: inherit; font-size: 11px; line-height: 18px; cursor: pointer; transition: transform .12s; }
+.node-header .expand:hover { background: var(--vscode-toolbar-hoverBackground, #ffffff1a); }
+.node-header .expand.open { transform: rotate(90deg); }
+
+.node-body { flex: 1; padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 24px; opacity: .85; }
+.node-footer { padding: 0 10px; height: 20px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: .55; }
+
+.node-card.code-open { height: 300px; }
+.node-header .code-toggle { flex: none; padding: 0 5px; height: 18px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: 11px var(--vscode-editor-font-family, monospace); cursor: pointer; opacity: .7; }
+.node-header .code-toggle:hover, .node-header .code-toggle.on { opacity: 1; background: var(--vscode-toolbar-hoverBackground, #ffffff1a); }
+.node-code { flex: 1; min-height: 0; margin: 0; padding: 4px 0; overflow: auto; font: 11px/1.5 var(--vscode-editor-font-family, monospace); white-space: pre; cursor: text; user-select: text; }
+.node-code .ln { display: inline-block; width: 3.2em; padding-right: 1em; text-align: right; opacity: .4; user-select: none; }
+.node-code.muted { padding: 4px 10px; opacity: .6; }
+.node-code.error { padding: 4px 10px; color: var(--vscode-errorForeground, #f48771); white-space: pre-wrap; }
+.node-code.monaco-host { padding: 0; overflow: hidden; cursor: default; }
