@@ -5,77 +5,139 @@
 //!    breaks the whole main loop on an unknown notification that does not start with `$/`.)
 //! 2. **Lifecycle** (`initialize`, `initialized`, `shutdown`; `exit` is the lifecycle layer's) is handled explicitly.
 //! 3. A test sends unknown messages and a full lifecycle and checks the core is still alive (`tests/lifecycle.rs`).
-//! 4. **Async is for I/O only**: every handler body runs under `watchdog::timed`, and blocking work (walking the disk,
-//!    building the tree) goes through `spawn_blocking`.
+//! 4. **Async is for I/O only**: every handler body runs under `watchdog::timed`, and blocking work (walking the disk)
+//!    goes through `spawn_blocking`.
+//!
+//! The index is built in the background once the editor says `initialized`; `vnoc/structure` waits for that first build, and
+//! every later change is announced with `vnoc/indexChanged`.
 
 use std::fmt::Display;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
 
-use async_lsp::lsp_types::{InitializeParams, InitializeResult, ServerCapabilities, ServerInfo, notification, request};
+use async_lsp::lsp_types::{InitializeParams, InitializeResult, InitializedParams, ServerCapabilities, ServerInfo, notification, request};
 use async_lsp::router::Router;
-use async_lsp::{ErrorCode, ResponseError};
+use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 
-use crate::driver_host::{DriverClient, HostError};
-use crate::protocol::{FailedFile, Ping, PingResult, Stats, Structure, StructureParams, StructureResult};
-use crate::structure::{self, FileDefs, Node};
+use crate::driver_host::DriverHost;
+use crate::index::{Index, Touched, refresh};
+use crate::project::Project;
+use crate::protocol::{FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, Rebuild, Stats, Structure, StructureResult};
 use crate::watchdog::timed;
-use crate::scan;
 
-/// More files than this and the rest are not read (the answer says so). A skeleton guard, not a design.
-const MAX_FILES: usize = 20_000;
-
-/// Which driver, and the running connection to it.
-#[derive(Default)]
-pub struct Host {
-    driver_path: Mutex<Option<PathBuf>>,
-    client: tokio::sync::Mutex<Option<Arc<DriverClient>>>,
+/// Where the first build is.
+#[derive(Clone)]
+enum Status {
+    Building,
+    Ready,
+    /// the build could not run (no folder, no driver, a broken driver); the message is what `vnoc/structure` answers with
+    Failed(String),
 }
 
-impl Host {
-    /// The running driver, started on first use. A driver that failed is dropped (see `forget`), so the next call starts a new one.
-    async fn client(&self) -> Result<Arc<DriverClient>, HostError> {
-        let mut slot = self.client.lock().await;
-        if let Some(c) = slot.as_ref() {
-            return Ok(c.clone());
-        }
-        let path = self.driver_path.lock().unwrap().clone().ok_or(HostError::NotConfigured)?;
-        let client = Arc::new(DriverClient::start(&path).await?);
-        tracing::info!("driver `{}` {} started from {}", client.info.name, client.info.version, path.display());
-        *slot = Some(client.clone());
-        Ok(client)
-    }
-
-    async fn forget(&self) {
-        *self.client.lock().await = None;
-    }
+/// What an update has to read again.
+enum Work {
+    Everything,
+    Files(Vec<PathBuf>),
 }
 
-/// The core's state. The structure is **held in memory** here (SQLite arrives with the store trait in M1).
-#[derive(Default)]
+/// Shared between the handlers and the background tasks they start.
+struct State {
+    project: OnceLock<Project>,
+    index: RwLock<Index>,
+    status: tokio::sync::watch::Sender<Status>,
+    /// Updates run one at a time: they read the index at the start and write it at the end.
+    one_at_a_time: tokio::sync::Mutex<()>,
+    /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
+    everything_pending: AtomicBool,
+}
+
+#[derive(Clone)]
 pub struct Core {
-    host: Arc<Host>,
-    structure: Arc<Mutex<Option<Node>>>,
+    client: ClientSocket,
+    host: Arc<DriverHost>,
+    state: Arc<State>,
+}
+
+impl Core {
+    fn new(client: ClientSocket) -> Core {
+        let state = State {
+            project: OnceLock::new(),
+            index: RwLock::default(),
+            status: tokio::sync::watch::channel(Status::Building).0,
+            one_at_a_time: tokio::sync::Mutex::new(()),
+            everything_pending: AtomicBool::new(false),
+        };
+        Core { client, host: Arc::default(), state: Arc::new(state) }
+    }
+
+    /// Starts an update in the background.
+    fn spawn_update(&self, work: Work) {
+        if matches!(work, Work::Everything) && self.state.everything_pending.swap(true, Ordering::AcqRel) {
+            tracing::debug!("a full read is already waiting: dropped");
+            return;
+        }
+        let core = self.clone();
+        tokio::spawn(async move { core.update(work).await });
+    }
+
+    async fn update(&self, work: Work) {
+        let Some(project) = self.state.project.get() else { return };
+        let _only_one = self.state.one_at_a_time.lock().await;
+        if matches!(work, Work::Everything) {
+            self.state.everything_pending.store(false, Ordering::Release);
+        }
+        // until one build has worked, every update is a full one (this also retries a build that failed)
+        let first = !matches!(*self.state.status.borrow(), Status::Ready);
+        let result = match &work {
+            Work::Files(paths) if !first => refresh(project, &self.host, &self.state.index, Touched::Files(paths)).await,
+            _ => refresh(project, &self.host, &self.state.index, Touched::All).await,
+        };
+        match result {
+            Ok(changed) => {
+                self.state.status.send_replace(Status::Ready);
+                if changed || first {
+                    self.announce();
+                }
+            }
+            // after a first success the old index stays; the driver was dropped, so the next update starts a new one
+            Err(e) if first => {
+                tracing::error!("the first build failed: {e}");
+                self.state.status.send_replace(Status::Failed(e.to_string()));
+            }
+            Err(e) => tracing::warn!("update failed, the index is as it was: {e}"),
+        }
+    }
+
+    fn announce(&self) {
+        let revision = self.state.index.read().unwrap().revision();
+        if let Err(e) = self.client.notify::<IndexChanged>(IndexChangedParams { revision }) {
+            tracing::warn!("could not tell the editor about revision {revision}: {e}");
+        }
+    }
 }
 
 fn internal(e: impl Display) -> ResponseError {
     ResponseError::new(ErrorCode::INTERNAL_ERROR, e)
 }
 
-pub fn router() -> Router<Core> {
-    let mut router = Router::new(Core::default());
+pub fn router(client: ClientSocket) -> Router<Core> {
+    let mut router = Router::new(Core::new(client));
     router
         // 2. lifecycle
         .request::<request::Initialize, _>(initialize)
         .request::<request::Shutdown, _>(|_, _| async { Ok(()) })
-        .notification::<notification::Initialized>(|_, _| ControlFlow::Continue(()))
-        // the messages of this skeleton
+        .notification::<notification::Initialized>(initialized)
         .request::<Ping, _>(|_, _ignored| {
             timed("ping", async { Ok(PingResult { pong: true, pid: std::process::id(), version: env!("CARGO_PKG_VERSION").to_string() }) })
         })
         .request::<Structure, _>(structure)
+        .notification::<FilesChanged>(files_changed)
+        .notification::<Rebuild>(|core, _| {
+            core.spawn_update(Work::Everything);
+            ControlFlow::Continue(())
+        })
         // 1. catch-alls: log and continue, never exit
         .unhandled_notification(|_, n| {
             tracing::warn!("ignored notification `{}`", n.method);
@@ -90,11 +152,22 @@ pub fn router() -> Router<Core> {
 
 /// (`use<>`: the returned future captures nothing from `core`; async-lsp needs it independent of the `&mut` borrow.)
 ///
-/// `initialize`: the driver's path comes in `initializationOptions.driverPath` (the extension resolves it, and ignores
-/// workspace settings in Restricted Mode), with the `VNOC_DRIVER` environment variable as a fallback for tests and terminals.
+/// `initialize` reads `initializationOptions`: `driverPath` (the extension resolves it, and ignores workspace settings in
+/// Restricted Mode; the `VNOC_DRIVER` environment variable is a fallback for tests and terminals) and `root`, the opened folder.
 fn initialize(core: &mut Core, params: InitializeParams) -> impl std::future::Future<Output = Result<InitializeResult, ResponseError>> + Send + use<> {
-    let from_options = params.initialization_options.as_ref().and_then(|o| o.get("driverPath")).and_then(|p| p.as_str()).map(PathBuf::from);
-    *core.host.driver_path.lock().unwrap() = from_options.or_else(|| std::env::var_os("VNOC_DRIVER").map(PathBuf::from));
+    let option = |key: &str| params.initialization_options.as_ref().and_then(|o| o.get(key)).and_then(|v| v.as_str()).map(PathBuf::from);
+    core.host.set_path(option("driverPath").or_else(|| std::env::var_os("VNOC_DRIVER").map(PathBuf::from)));
+    match option("root").map(|root| Project::open(&root)) {
+        Some(Ok(project)) => {
+            let _ = core.state.project.set(project);
+        }
+        Some(Err(e)) => {
+            core.state.status.send_replace(Status::Failed(e.to_string()));
+        }
+        None => {
+            core.state.status.send_replace(Status::Failed("no folder is open: V-NOC shows the code of the folder you opened".into()));
+        }
+    }
     timed("initialize", async {
         Ok(InitializeResult {
             capabilities: ServerCapabilities::default(),
@@ -103,44 +176,36 @@ fn initialize(core: &mut Core, params: InitializeParams) -> impl std::future::Fu
     })
 }
 
-/// `vnoc/structure`: start the driver if needed, list the Python files, ask the driver for each one's outline, build the tree.
-fn structure(core: &mut Core, params: StructureParams) -> impl std::future::Future<Output = Result<StructureResult, ResponseError>> + Send + use<> {
-    let (host, held) = (core.host.clone(), core.structure.clone());
+/// The editor is ready for notifications: build the index in the background, and say so when it is there.
+fn initialized(core: &mut Core, _: InitializedParams) -> ControlFlow<async_lsp::Result<()>> {
+    core.spawn_update(Work::Everything);
+    ControlFlow::Continue(())
+}
+
+fn files_changed(core: &mut Core, params: FilesChangedParams) -> ControlFlow<async_lsp::Result<()>> {
+    core.spawn_update(Work::Files(params.paths.into_iter().map(PathBuf::from).collect()));
+    ControlFlow::Continue(())
+}
+
+/// `vnoc/structure`: the tree, from the index. Waits for the first build.
+fn structure(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<StructureResult, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
     timed("structure", async move {
-        let started = Instant::now();
-        let root = PathBuf::from(&params.root);
-
-        let client = host.client().await.map_err(internal)?;
-        let scan_root = root.clone();
-        let scan = tokio::task::spawn_blocking(move || scan::python_files(&scan_root, MAX_FILES)).await.map_err(internal)?.map_err(internal)?;
-
-        let mut files = Vec::with_capacity(scan.files.len());
-        let mut failed = Vec::new();
-        for path in &scan.files {
-            match client.outline_file(&root, path).await {
-                Ok(outline) => files.push(FileDefs { path: path.clone(), defs: outline.defs }),
-                // the driver answered with an error for THIS file: note it, carry on with the others
-                Err(HostError::Remote { message, .. }) => failed.push(FailedFile { path: path.clone(), error: message }),
-                // anything else means the connection is broken: forget the driver so the next request starts a fresh one
-                Err(e) => {
-                    host.forget().await;
-                    return Err(internal(e));
-                }
-            }
+        let status = state.status.subscribe().wait_for(|s| !matches!(s, Status::Building)).await.map_err(internal)?.clone();
+        if let Status::Failed(message) = status {
+            return Err(internal(message));
         }
-
-        let root_name = root.file_name().map_or_else(|| params.root.clone(), |n| n.to_string_lossy().into_owned());
-        // building the tree is CPU work that grows with the repo: off the async workers
-        let tree = tokio::task::spawn_blocking(move || structure::build(&root_name, files)).await.map_err(internal)?;
-        let [folders, files, classes, functions] = tree.counts();
-        let folders = folders.saturating_sub(1); // the opened folder is not a folder under itself
-        *held.lock().unwrap() = Some(tree.clone());
-
+        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let index = state.index.read().unwrap();
+        let root = index.tree(&project.name(), project.prefix());
+        let [folders, files, classes, functions] = root.counts();
         Ok(StructureResult {
-            root: tree,
-            stats: Stats { folders, files, classes, functions, ms: started.elapsed().as_millis() },
-            truncated: scan.truncated,
-            failed,
+            revision: index.revision(),
+            git_root: project.git_root().to_string_lossy().into_owned(),
+            root,
+            stats: Stats { folders: folders.saturating_sub(1), files, classes, functions }, // the opened folder is not a folder under itself
+            truncated: index.truncated(),
+            failed: index.failed(),
         })
     })
 }

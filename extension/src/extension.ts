@@ -20,6 +20,9 @@ const renderWaiters: ((r: { visible: number; hidden: number }) => void)[] = [];
 
 const PANEL = "vnoc.canvas";
 
+/** Saves arrive in bursts (a format-on-save, a `git checkout`): collect the touched files for this long, then send one message. */
+const CHANGE_DEBOUNCE_MS = 200;
+
 /** The one canvas panel (a second `Open canvas` or a Focus click shows this one again). */
 let canvas: vscode.WebviewPanel | undefined;
 /** A focus asked for while the canvas was closed: the new webview takes it when it starts. */
@@ -40,6 +43,7 @@ function binary(ctx: vscode.ExtensionContext, setting: string, name: string, dev
 }
 
 async function startCore(ctx: vscode.ExtensionContext): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
   const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"]);
   const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"]);
   if (!fs.existsSync(core)) {
@@ -49,9 +53,10 @@ async function startCore(ctx: vscode.ExtensionContext): Promise<void> {
     "vnoc",
     "V-NOC core",
     { command: core, transport: TransportKind.stdio },
-    // not a language server: no document selector. The driver's path travels to the core in `initializationOptions`.
-    { documentSelector: [], outputChannel: output, initializationOptions: { driverPath: driver } },
+    // not a language server: no document selector. The driver's path and the opened folder travel to the core in `initializationOptions`.
+    { documentSelector: [], outputChannel: output, initializationOptions: { driverPath: driver, root: folder?.uri.fsPath } },
   );
+  client.onNotification("vnoc/indexChanged", (p: { revision: number }) => indexChanged(p.revision));
   await client.start();
   output.appendLine(`core started: ${core}\ndriver: ${driver}`);
 }
@@ -61,11 +66,35 @@ async function request<T>(method: string, params?: object): Promise<T> {
   return client!.sendRequest<T>(method, params);
 }
 
-/** The structure of the opened folder; the canvas and the sidebar both read it through here. */
+/** The structure of the opened folder; the canvas and the sidebar both read it through here. It waits for the core's first build. */
 function loadStructure<T = { root: TreeNode }>(): Promise<T> {
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) return Promise.reject(new Error("Open a folder first: V-NOC shows the code of the folder you opened."));
-  return request<T>("vnoc/structure", { root: folder.uri.fsPath });
+  if (!vscode.workspace.workspaceFolders?.[0]) return Promise.reject(new Error("Open a folder first: V-NOC shows the code of the folder you opened."));
+  return request<T>("vnoc/structure");
+}
+
+let sidebar: StructureView;
+
+/** The core has a new index: the sidebar redraws, and an open canvas asks for the new structure. */
+function indexChanged(revision: number) {
+  void sidebar.refresh();
+  canvas?.webview.postMessage({ type: "indexChanged", revision });
+}
+
+/** Tells the core which Python files were touched. `.gitignore` is watched too: it changes which files are in scope. */
+function watchFiles(): vscode.Disposable {
+  const watcher = vscode.workspace.createFileSystemWatcher("**/{*.py,.gitignore}");
+  const touched = new Set<string>();
+  let timer: NodeJS.Timeout | undefined;
+  const touch = (uri: vscode.Uri) => {
+    touched.add(uri.fsPath);
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const paths = [...touched];
+      touched.clear();
+      void ready.then(() => client?.sendNotification("vnoc/filesChanged", { paths }));
+    }, CHANGE_DEBOUNCE_MS);
+  };
+  return vscode.Disposable.from(watcher, watcher.onDidCreate(touch), watcher.onDidChange(touch), watcher.onDidDelete(touch), { dispose: () => clearTimeout(timer) });
 }
 
 export function activate(ctx: vscode.ExtensionContext) {
@@ -76,7 +105,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.window.showErrorMessage(String(e.message ?? e));
   });
 
-  const sidebar = new StructureView(async () => (await loadStructure()).root);
+  sidebar = new StructureView(async () => (await loadStructure()).root);
   void sidebar.refresh();
 
   // Registered synchronously, before anything is awaited: on restart VS Code waits for this serializer (S1).
@@ -89,7 +118,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       },
     }),
     vscode.window.registerTreeDataProvider("vnoc.structure", sidebar),
-    vscode.commands.registerCommand("vnoc.refreshStructure", () => sidebar.refresh(true)),
+    // the tree follows the code by itself; Refresh is the way out if it ever does not: the core reads everything again
+    vscode.commands.registerCommand("vnoc.refreshStructure", () => void ready.then(() => client?.sendNotification("vnoc/rebuild"))),
+    watchFiles(),
     // the hover button on a sidebar item: the canvas opens (or comes to the front) showing just that item
     vscode.commands.registerCommand("vnoc.focus", (node: TreeNode) => focusOnCanvas(ctx, node.id)),
     { dispose: () => client?.stop() },
@@ -98,7 +129,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   // What the test suite drives.
   return {
     ping: () => request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
-    structure: (root: string) => request<any>("vnoc/structure", { root }),
+    structure: () => request<any>("vnoc/structure"),
     /** Resolves when a webview reports that it drew the structure (immediately if one already has). */
     waitRendered: (timeoutMs: number) =>
       new Promise<{ visible: number; hidden: number }>((resolve, reject) => {

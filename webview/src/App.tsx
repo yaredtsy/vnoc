@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { onFocus, request, vscode } from "./host.ts";
+import { onFocus, onIndexChanged, request, vscode } from "./host.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
 import { type FocusStack, jump, prune, push } from "./canvas/focusStack.ts";
 import { defaultCollapsed, layout } from "./canvas/layout.ts";
@@ -17,18 +17,27 @@ export function App() {
   const [codeOpen, setCodeOpen] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<FocusStack>(saved?.focus ?? []);
 
-  const refresh = useCallback(() => {
-    setLoad({ status: "loading" });
+  // The newest revision shown. Two asks can cross; the older answer must not replace the newer one.
+  const shown = useRef(-1);
+
+  /** `quiet`: the core's index changed while the user is looking: swap the data without the loading state, and keep the view where it is. */
+  const refresh = useCallback((quiet = false) => {
+    if (!quiet) setLoad({ status: "loading" });
     request<StructureResult>("structure").then(
       (data) => {
+        if (data.revision < shown.current) return;
+        shown.current = data.revision;
         setCollapsed((c) => c ?? new Set(defaultCollapsed(data.root)));
         setLoad({ status: "ready", data });
-        setReloads((n) => n + 1);
+        if (!quiet) setReloads((n) => n + 1);
       },
       (e: Error) => setLoad({ status: "error", message: e.message }),
     );
   }, []);
-  useEffect(refresh, [refresh]);
+  useEffect(() => {
+    refresh();
+    return onIndexChanged(() => refresh(true));
+  }, [refresh]);
 
   const toggle = useCallback((id: string) => {
     setCollapsed((c) => {
@@ -84,13 +93,13 @@ export function App() {
         {load.status === "error" && <span className="error">{load.message}</span>}
         {load.status === "ready" && (
           <span>
-            {load.data.root.name}: {load.data.stats.folders} folders · {load.data.stats.files} files · {load.data.stats.classes} classes · {load.data.stats.functions} functions · {load.data.stats.ms} ms
+            {load.data.root.name}: {load.data.stats.folders} folders · {load.data.stats.files} files · {load.data.stats.classes} classes · {load.data.stats.functions} functions
             {laid && laid.hidden > 0 ? ` · ${laid.hidden} hidden (click a node to expand)` : ""}
             {load.data.truncated ? " · TRUNCATED: too many files" : ""}
             {load.data.failed.length > 0 ? ` · ${load.data.failed.length} files could not be read` : ""}
           </span>
         )}
-        <button onClick={refresh}>Refresh</button>
+        <button onClick={() => refresh()}>Refresh</button>
       </header>
       {crumbs.length > 0 && (
         <nav className="crumbs" aria-label="Focus">

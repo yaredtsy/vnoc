@@ -15,13 +15,13 @@ async fn main() {
     let filter = tracing_subscriber::EnvFilter::try_from_env("VNOC_LOG").unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,vnoc=info"));
     tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).with_ansi(false).init();
 
-    let (server, _client) = MainLoop::new_server(|_client| {
+    let (server, _client) = MainLoop::new_server(|client| {
         ServiceBuilder::new()
             .layer(TracingLayer::default())
             .layer(LifecycleLayer::default())
             .layer(CatchUnwindLayer::default()) // a panicking handler becomes an error response, not a dead core
             .layer(ConcurrencyLayer::default())
-            .service(vnoc::server::router())
+            .service(vnoc::server::router(client))
     });
 
     #[cfg(unix)]

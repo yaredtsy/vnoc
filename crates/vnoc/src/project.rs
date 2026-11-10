@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use vnoc_domain::{RepoPath, RepoPathError};
 
+#[derive(Clone, Debug)]
 pub struct Project {
     open_dir: PathBuf,
     /// the nearest folder at or above `open_dir` that holds a `.git` entry; `open_dir` itself when there is none

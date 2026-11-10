@@ -1,9 +1,10 @@
-//! Editor ↔ core messages (plan_vs/06-core/02-editor-protocol.md). LSP-framed JSON-RPC; every method is a custom `vnoc/*` request.
+//! Editor ↔ core messages (plan_vs/06-core/02-editor-protocol.md). LSP-framed JSON-RPC; every method is a custom `vnoc/*` message.
 
+use async_lsp::lsp_types::notification::Notification;
 use async_lsp::lsp_types::request::Request;
 use serde::{Deserialize, Serialize};
 
-use crate::structure::Node;
+use crate::index::Node;
 
 /// `vnoc/ping`: is the core alive, which one is it.
 ///
@@ -24,14 +25,9 @@ impl Request for Ping {
     const METHOD: &'static str = "vnoc/ping";
 }
 
-/// `vnoc/structure`: the folders, files, classes and functions under `root`.
+/// `vnoc/structure`: the folders, files, classes and functions under the opened folder (the one named in `initializationOptions.root`).
+/// Answers once the first build is done. Takes no parameters (see `Ping`).
 pub enum Structure {}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct StructureParams {
-    /// absolute path of the opened folder
-    pub root: String,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FailedFile {
@@ -45,11 +41,14 @@ pub struct Stats {
     pub files: usize,
     pub classes: usize,
     pub functions: usize,
-    pub ms: u128,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StructureResult {
+    /// the index's revision this answer was made from
+    pub revision: u64,
+    /// absolute path of the git root. Ids and `Node::path` below it are explained in `index::Node`: a node's `id` starts at this root.
+    pub git_root: String,
     pub root: Node,
     pub stats: Stats,
     /// more files than the cap: the rest were not read
@@ -59,7 +58,42 @@ pub struct StructureResult {
 }
 
 impl Request for Structure {
-    type Params = StructureParams;
+    type Params = serde_json::Value;
     type Result = StructureResult;
     const METHOD: &'static str = "vnoc/structure";
+}
+
+/// `vnoc/filesChanged` (editor → core): these files were created, changed or deleted. Absolute paths. The core finds out what
+/// is new or gone by itself; the list says which existing files changed content.
+pub enum FilesChanged {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FilesChangedParams {
+    pub paths: Vec<String>,
+}
+
+impl Notification for FilesChanged {
+    type Params = FilesChangedParams;
+    const METHOD: &'static str = "vnoc/filesChanged";
+}
+
+/// `vnoc/rebuild` (editor → core): read every file again. The escape hatch behind the sidebar's Refresh button.
+pub enum Rebuild {}
+
+impl Notification for Rebuild {
+    type Params = serde_json::Value;
+    const METHOD: &'static str = "vnoc/rebuild";
+}
+
+/// `vnoc/indexChanged` (core → editor): the index has a new revision (or its first one); ask for `vnoc/structure` again.
+pub enum IndexChanged {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IndexChangedParams {
+    pub revision: u64,
+}
+
+impl Notification for IndexChanged {
+    type Params = IndexChangedParams;
+    const METHOD: &'static str = "vnoc/indexChanged";
 }

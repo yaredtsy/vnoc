@@ -2,7 +2,7 @@ import * as assert from "assert";
 import * as vscode from "vscode";
 
 const WS = process.env.VNOC_TEST_WORKSPACE!;
-let api: { ping(): Promise<any>; structure(root: string): Promise<any>; waitRendered(ms: number): Promise<{ visible: number; hidden: number }> };
+let api: { ping(): Promise<any>; structure(): Promise<any>; waitRendered(ms: number): Promise<{ visible: number; hidden: number }> };
 
 suiteSetup(async () => {
   const ext = vscode.extensions.getExtension("vnoc.vnoc")!;
@@ -18,7 +18,7 @@ suite("walking skeleton: extension host -> core -> Python driver -> structure ->
   });
 
   test("the core reads the opened folder through the driver", async () => {
-    const r = await api.structure(WS);
+    const r = await api.structure();
     assert.strictEqual(r.root.children[0].name, "nested.py");
     assert.strictEqual(r.stats.files, 1);
     assert.strictEqual(r.stats.classes, 3);

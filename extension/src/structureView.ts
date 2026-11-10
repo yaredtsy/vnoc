@@ -6,12 +6,12 @@ import * as vscode from "vscode";
 
 export type Kind = "folder" | "file" | "class" | "function";
 
-/** The shape the core sends for `vnoc/structure` (crates/vnoc/src/structure.rs). */
+/** The shape the core sends for `vnoc/structure` (crates/vnoc/src/index/tree.rs). */
 export interface TreeNode {
   id: string;
   kind: Kind;
   name: string;
-  /** relative to the opened folder; empty for the root */
+  /** relative to the opened folder (not the git root); empty for the root */
   path: string;
   range: { start: { line: number; character: number }; end: { line: number; character: number } } | null;
   syntax_error: boolean;

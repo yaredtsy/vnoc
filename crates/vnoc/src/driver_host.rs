@@ -1,16 +1,21 @@
 //! Starts a language driver and talks to it (the wire in plan_vs/07-drivers/01-driver-protocol.md).
 //!
-//! Skeleton version: one driver, one request at a time, found by an explicit path. **Moves to `vnoc-driver-host` in M1**,
-//! which adds lookup in the drivers folder, copy-on-first-run, restarts and concurrent requests.
+//! One driver, one request at a time, found by an explicit path. A driver that fails or hangs is dropped (its process dies
+//! with it) and the next request starts a new one. Concurrent requests, several drivers and lookup in a drivers folder come later.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, OutlineResult, PROTOCOL_VERSION, method};
+
+/// How long the driver may take to answer one request before it is treated as broken (review C4).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
@@ -30,6 +35,8 @@ pub enum HostError {
     Io(#[from] std::io::Error),
     #[error("the driver sent something that is not the protocol: {0}")]
     Protocol(String),
+    #[error("the driver did not answer `{0}` in time")]
+    Timeout(&'static str),
     #[error("the driver answered with an error ({code}): {message}")]
     Remote { code: i64, message: String },
 }
@@ -76,8 +83,44 @@ impl DriverClient {
     pub async fn outline_file(&self, root: &Path, file: &str) -> Result<OutlineResult, HostError> {
         let params = OutlineParams { root: Some(root.to_string_lossy().into_owned()), file: Some(file.to_string()), ..Default::default() };
         let mut io = self.io.lock().await;
-        let reply = request(&mut io, method::OUTLINE, &params).await?;
+        let reply = tokio::time::timeout(REQUEST_TIMEOUT, request(&mut io, method::OUTLINE, &params)).await.map_err(|_| HostError::Timeout(method::OUTLINE))??;
         serde_json::from_value(reply).map_err(|e| HostError::Protocol(e.to_string()))
+    }
+}
+
+/// Which driver to run, and the running connection to it.
+#[derive(Default)]
+pub struct DriverHost {
+    path: Mutex<Option<PathBuf>>,
+    client: tokio::sync::Mutex<Option<Arc<DriverClient>>>,
+}
+
+impl DriverHost {
+    pub fn set_path(&self, path: Option<PathBuf>) {
+        *self.path.lock().unwrap() = path;
+    }
+
+    /// The outline of one file (repo path relative to `root`), starting the driver on first use.
+    /// An error from the driver about this file is returned as is; anything else means the connection is broken, so the driver is dropped.
+    pub async fn outline(&self, root: &Path, file: &str) -> Result<OutlineResult, HostError> {
+        let client = self.client().await?;
+        let result = client.outline_file(root, file).await;
+        if matches!(&result, Err(e) if !matches!(e, HostError::Remote { .. })) {
+            *self.client.lock().await = None;
+        }
+        result
+    }
+
+    async fn client(&self) -> Result<Arc<DriverClient>, HostError> {
+        let mut slot = self.client.lock().await;
+        if let Some(c) = slot.as_ref() {
+            return Ok(c.clone());
+        }
+        let path = self.path.lock().unwrap().clone().ok_or(HostError::NotConfigured)?;
+        let client = Arc::new(DriverClient::start(&path).await?);
+        tracing::info!("driver `{}` {} started from {}", client.info.name, client.info.version, path.display());
+        *slot = Some(client.clone());
+        Ok(client)
     }
 }
 
