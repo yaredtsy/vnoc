@@ -3,20 +3,31 @@
 //! The fields are private on purpose: the methods below are the whole interface, so a SQLite copy can replace the storage later
 //! without touching callers. They speak in domain words, never in storage words.
 //!
-//! Step 1 holds the outline of every file in scope. Folders' markers, `.vnoc/` records and resolution join it in later steps.
+//! It holds the outline of every file in scope, the records read from `.vnoc/`, and which node each record is (resolved).
+//! Folders' markers join it in a later step.
 
 mod build;
 mod tree;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use vnoc_domain::{LocationKey, RepoPath, occurrences};
+use vnoc_domain::{LocationKey, NodeId, RepoPath, occurrences};
 use vnoc_driver_protocol::Def;
 
 pub use build::{BuildError, Touched, refresh};
 pub use tree::{Kind, Node};
 
+use crate::identity::{FoundBy, Markers, Resolved, resolve};
 use crate::protocol::FailedFile;
+use crate::userdata::{LoadReport, NodeRecord};
+
+/// A documented node that was found: what the tree shows on it.
+#[derive(Debug, Clone, Copy)]
+pub struct Attached {
+    pub id: NodeId,
+    pub docs: usize,
+    pub by: FoundBy,
+}
 
 #[derive(Default)]
 pub struct Index {
@@ -28,6 +39,12 @@ pub struct Index {
     failed: BTreeMap<RepoPath, String>,
     /// the scope had more files than the cap; the rest are not read
     truncated: bool,
+    /// every node folder in `.vnoc/nodes/`
+    records: BTreeMap<NodeId, NodeRecord>,
+    /// what was wrong in `.vnoc/` (a `node.toml` that does not parse…): one line each
+    problems: Vec<String>,
+    /// where each record was found, by location key text. Computed from `files` and `records` at the end of every update.
+    attached: HashMap<String, Attached>,
 }
 
 impl Index {
@@ -43,9 +60,13 @@ impl Index {
         self.failed.iter().map(|(path, error)| FailedFile { path: path.to_string(), error: error.clone() }).collect()
     }
 
+    pub fn problems(&self) -> &[String] {
+        &self.problems
+    }
+
     /// The tree the sidebar and the canvas draw. `prefix`: the opened folder's place in the repo.
     pub fn tree(&self, root_name: &str, prefix: &str) -> Node {
-        tree::build(root_name, prefix, &self.files)
+        tree::build(root_name, prefix, &self.files, &self.attached)
     }
 
     /// The def a location names, as outlined from the saved file. `None` when the file or the def is not in the index.
@@ -80,6 +101,29 @@ impl Index {
         self.files.retain(|p, _| keep.contains(p));
         self.failed.retain(|p, _| keep.contains(p));
         self.files.len() + self.failed.len() != before
+    }
+
+    /// Replaces the records with what `.vnoc/` holds now. Returns whether that differs.
+    fn set_records(&mut self, report: LoadReport) -> bool {
+        let records: BTreeMap<NodeId, NodeRecord> = report.records.into_iter().collect();
+        let changed = records != self.records || report.problems != self.problems;
+        self.records = records;
+        self.problems = report.problems;
+        changed
+    }
+
+    /// Finds every record again in the code. Call after `files` or `records` changed.
+    fn resolve_all(&mut self) {
+        let markers = Markers::read(&self.files);
+        let mut attached = HashMap::new();
+        for (id, record) in &self.records {
+            let anchor = record.toml.location().ok();
+            let found = resolve(id, anchor.as_ref(), &markers, |location| self.def_at(location).is_some());
+            if let Resolved::Found { at, by } = found {
+                attached.insert(at.to_string(), Attached { id: *id, docs: record.docs.len(), by });
+            }
+        }
+        self.attached = attached;
     }
 
     fn set_truncated(&mut self, truncated: bool) -> bool {

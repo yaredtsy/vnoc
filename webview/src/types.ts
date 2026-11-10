@@ -12,6 +12,12 @@ export interface TreeNode {
   qualname: string | null;
   range: { start: { line: number; character: number }; end: { line: number; character: number } } | null;
   syntax_error: boolean;
+  /** the permanent ID, when someone attached a doc to this node */
+  node_id: string | null;
+  /** how many docs are attached */
+  docs: number;
+  /** how it was found again: the ID is in the code ("marker"), or only the stored path and name matched ("name") */
+  link: "marker" | "name" | null;
   children: TreeNode[];
 }
 

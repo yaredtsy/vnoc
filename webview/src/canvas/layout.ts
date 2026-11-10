@@ -27,6 +27,9 @@ export type Placed = {
   childCount: number;
   collapsed: boolean;
   syntaxError: boolean;
+  /** how many docs are attached, and how the node was found again (see `TreeNode`) */
+  docs: number;
+  link: TreeNode["link"];
 };
 
 export interface Edge {
@@ -63,7 +66,7 @@ export function layout(root: TreeNode, collapsed: ReadonlySet<string>, codeOpen:
   let y = 0; // an open code view makes a card taller, so rows are stacked by their heights
   const walk = (n: TreeNode, depth: number) => {
     const isCollapsed = n.children.length > 0 && collapsed.has(n.id);
-    nodes.push({ id: n.id, kind: n.kind, name: n.name, path: n.path, line: n.range ? n.range.start.line + 1 : null, range: n.range, codeOpen: n.range !== null && codeOpen.has(n.id), depth, x: depth * COL_W, y, childCount: n.children.length, collapsed: isCollapsed, syntaxError: n.syntax_error });
+    nodes.push({ id: n.id, kind: n.kind, name: n.name, path: n.path, line: n.range ? n.range.start.line + 1 : null, range: n.range, codeOpen: n.range !== null && codeOpen.has(n.id), depth, x: depth * COL_W, y, childCount: n.children.length, collapsed: isCollapsed, syntaxError: n.syntax_error, docs: n.docs, link: n.link });
     y += ROW_H + (n.range !== null && codeOpen.has(n.id) ? CODE_H : 0);
     if (isCollapsed) return;
     for (const c of n.children) {

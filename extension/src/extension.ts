@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import { LanguageClient, TransportKind } from "vscode-languageclient/node";
 
 import { addDoc } from "./addDoc";
+import { Docs } from "./docs";
 import { StructureView, type TreeNode } from "./structureView";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio
@@ -81,13 +82,14 @@ async function loadStructure<T = { root: TreeNode }>(): Promise<T> {
   return structure;
 }
 
-/** The "Add doc" flow for the node with this id (a sidebar item, or a card on the canvas). */
-async function addDocTo(key: string): Promise<void> {
+/** The "Add doc" flow for the node with this id (a sidebar item, or a card on the canvas). Resolves to whether a doc was added. */
+async function addDocTo(key: string, existingDocs: number): Promise<boolean> {
   const root = gitRoot ?? (await loadStructure<{ git_root: string }>()).git_root;
-  await addDoc(request, root, key);
+  return addDoc(request, root, key, existingDocs);
 }
 
 let sidebar: StructureView;
+const docs = new Docs(() => gitRoot, (message) => canvas?.webview.postMessage(message));
 
 /** The core has a new index: the sidebar redraws, and an open canvas asks for the new structure. */
 function indexChanged(revision: number) {
@@ -95,12 +97,14 @@ function indexChanged(revision: number) {
   canvas?.webview.postMessage({ type: "indexChanged", revision });
 }
 
-/** Tells the core which Python files were touched. `.gitignore` is watched too: it changes which files are in scope. */
+/** Tells the core which files were touched. `.gitignore` is watched too: it changes which files are in scope. */
 function watchFiles(): vscode.Disposable {
-  const watcher = vscode.workspace.createFileSystemWatcher("**/{*.py,.gitignore}");
+  // `.vnoc/**` and `.vnoc-id` are V-NOC's own files: a doc added by a teammate's `git pull` shows up like one added here
+  const watcher = vscode.workspace.createFileSystemWatcher("**/{*.py,.gitignore,.vnoc-id,.vnoc/**}");
   const touched = new Set<string>();
   let timer: NodeJS.Timeout | undefined;
   const touch = (uri: vscode.Uri) => {
+    docs.changed(uri.fsPath);
     touched.add(uri.fsPath);
     clearTimeout(timer);
     timer = setTimeout(() => {
@@ -136,9 +140,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     // the tree follows the code by itself; Refresh is the way out if it ever does not: the core reads everything again
     vscode.commands.registerCommand("vnoc.refreshStructure", () => void ready.then(() => client?.sendNotification("vnoc/rebuild"))),
     watchFiles(),
+    docs.watchEditors(),
     // the hover button on a sidebar item: the canvas opens (or comes to the front) showing just that item
     vscode.commands.registerCommand("vnoc.focus", (node: TreeNode) => focusOnCanvas(ctx, node.id)),
-    vscode.commands.registerCommand("vnoc.addDoc", (node: TreeNode) => addDocTo(node.id)),
+    vscode.commands.registerCommand("vnoc.addDoc", (node: TreeNode) => addDocTo(node.id, node.docs)),
     { dispose: () => client?.stop() },
   );
 
@@ -227,7 +232,16 @@ function setupPanel(ctx: vscode.ExtensionContext, panel: vscode.WebviewPanel) {
       if (m.method === "structure") {
         result = await loadStructure();
       } else if (m.method === "addDoc") {
-        await addDocTo(m.params.key);
+        result = { added: await addDocTo(m.params.key, m.params.docs) };
+      } else if (m.method === "docs") {
+        result = await request("vnoc/docs", m.params);
+      } else if (m.method === "docText") {
+        result = await docs.text(m.params.path);
+      } else if (m.method === "openDoc") {
+        await docs.open(m.params.path);
+        result = null;
+      } else if (m.method === "openLink") {
+        await docs.openLink(m.params.href, m.params.from);
         result = null;
       } else if (m.method === "code") {
         result = await readSlice(m.params);

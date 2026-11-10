@@ -30,3 +30,7 @@
 .node-code.muted { padding: 4px 10px; opacity: .6; }
 .node-code.error { padding: 4px 10px; color: var(--vscode-errorForeground, #f48771); white-space: pre-wrap; }
 .node-code.monaco-host { padding: 0; overflow: hidden; cursor: default; }
+
+.node-header .link { flex: none; font-size: 11px; opacity: .9; }
+.node-header .link.name { opacity: .4; filter: grayscale(1); }
+.node-header .docs { flex: none; margin-left: 4px; padding: 0 5px; font-size: 11px; border: 0; border-radius: 8px; background: var(--vscode-badge-background, #4d4d4d); color: var(--vscode-badge-foreground, #fff); cursor: pointer; }

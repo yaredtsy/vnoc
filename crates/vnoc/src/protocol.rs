@@ -156,3 +156,26 @@ impl Request for Attach {
     type Result = AttachResult;
     const METHOD: &'static str = "vnoc/attach";
 }
+
+/// `vnoc/docs`: the docs attached to a node, for the doc picker.
+pub enum Docs {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocsParams {
+    /// the node's permanent ID (`Node::node_id`)
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocInfo {
+    pub file: String,
+    pub title: String,
+    /// absolute path of the Markdown file
+    pub path: String,
+}
+
+impl Request for Docs {
+    type Params = DocsParams;
+    type Result = Vec<DocInfo>;
+    const METHOD: &'static str = "vnoc/docs";
+}

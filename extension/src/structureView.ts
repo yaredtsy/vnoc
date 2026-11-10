@@ -15,6 +15,9 @@ export interface TreeNode {
   path: string;
   range: { start: { line: number; character: number }; end: { line: number; character: number } } | null;
   syntax_error: boolean;
+  /** how many docs are attached, and how the node was found again (crates/vnoc/src/index/tree.rs) */
+  docs: number;
+  link: "marker" | "name" | null;
   children: TreeNode[];
 }
 
@@ -56,6 +59,8 @@ export class StructureView implements vscode.TreeDataProvider<TreeNode> {
       item.iconPath = new vscode.ThemeIcon(DEF_ICON[node.kind]);
     }
     if (node.syntax_error) item.description = "syntax error";
+    else if (node.docs > 0) item.description = `📄 ${node.docs}`;
+    if (node.link) item.tooltip = node.link === "marker" ? "Docs attached: the ID is in the code, so they follow it anywhere" : "Docs attached: found by path and name only, so they are lost if it moves";
     // folders just expand; the rest open the file (at the definition, for classes and functions)
     if (node.kind !== "folder") item.command = { command: "vscode.open", title: "Open", arguments: [absolute(node.path), selectionOf(node)] };
     return item;

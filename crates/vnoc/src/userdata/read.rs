@@ -9,10 +9,18 @@ use vnoc_domain::{NodeId, NodeToml};
 use super::layout;
 
 /// What is in one node folder.
+#[derive(Debug)]
 pub struct NodeRecord {
     pub toml: NodeToml,
     /// file names of the `*.md` files, sorted
     pub docs: Vec<String>,
+}
+
+/// Two records are the same when their `node.toml` text and their docs are.
+impl PartialEq for NodeRecord {
+    fn eq(&self, other: &NodeRecord) -> bool {
+        self.docs == other.docs && self.toml.to_string() == other.toml.to_string()
+    }
 }
 
 #[derive(Default)]
@@ -55,4 +63,47 @@ fn markdown_files(folder: &Path) -> Vec<String> {
     let mut names: Vec<String> = entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".md")).collect();
     names.sort();
     names
+}
+
+/// One doc of a node, as the UI lists it.
+pub struct DocInfo {
+    /// the file name inside the node folder
+    pub file: String,
+    /// the first `# heading`, else the file name
+    pub title: String,
+    pub path: std::path::PathBuf,
+}
+
+pub fn docs_of(root: &Path, id: &NodeId) -> Vec<DocInfo> {
+    let folder = layout::node_dir(root, id);
+    markdown_files(&folder)
+        .into_iter()
+        .map(|file| {
+            let path = folder.join(&file);
+            let title = fs::read_to_string(&path).ok().and_then(|text| title_of(&text)).unwrap_or_else(|| file.trim_end_matches(".md").to_string());
+            DocInfo { file, title, path }
+        })
+        .collect()
+}
+
+/// The first `# heading` after the frontmatter.
+fn title_of(text: &str) -> Option<String> {
+    let body = match text.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---\n")) {
+        Some((_, body)) => body,
+        None => text,
+    };
+    body.lines().find_map(|line| line.strip_prefix("# ")).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::title_of;
+
+    #[test]
+    fn the_title_is_the_first_heading_after_the_frontmatter() {
+        assert_eq!(title_of("---\nnode: X\nhint: a::b\n---\n# Why we parse twice\n\ntext").as_deref(), Some("Why we parse twice"));
+        assert_eq!(title_of("no frontmatter\n# Here").as_deref(), Some("Here"));
+        assert_eq!(title_of("---\nhint: # not a title\n---\ntext only"), None);
+        assert_eq!(title_of("## second level only"), None);
+    }
 }

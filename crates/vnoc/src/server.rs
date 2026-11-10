@@ -25,8 +25,9 @@ use crate::driver_host::DriverHost;
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
 use crate::identity::{self, Env};
-use crate::protocol::{Attach, AttachParams, AttachResult, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Stats, Structure, StructureResult};
+use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Stats, Structure, StructureResult};
 use crate::userdata::UserData;
+use vnoc_domain::NodeId;
 use crate::watchdog::timed;
 
 /// Where the first build is.
@@ -140,6 +141,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<Structure, _>(structure)
         .request::<ProjectInfo, _>(project_info)
         .request::<Attach, _>(attach)
+        .request::<Docs, _>(docs)
         .notification::<FilesChanged>(files_changed)
         .notification::<Rebuild>(|core, _| {
             core.spawn_update(Work::Everything);
@@ -234,6 +236,20 @@ fn attach(core: &mut Core, params: AttachParams) -> impl std::future::Future<Out
         let _one_at_a_time = core.state.attaching.lock().await;
         let project = core.state.project.get().ok_or_else(|| internal("no folder is open"))?;
         let env = Env { project, index: &core.state.index, host: &core.host, client: core.client.clone() };
-        identity::attach(env, params).await.map_err(internal)
+        let result = identity::attach(env, params).await.map_err(internal)?;
+        core.spawn_update(Work::Files(vec![])); // the new node and doc are in `.vnoc/` now: the tree shows them
+        Ok(result)
+    })
+}
+
+/// `vnoc/docs`: the titles of a node's docs, read from the files.
+fn docs(core: &mut Core, params: DocsParams) -> impl std::future::Future<Output = Result<Vec<DocInfo>, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("docs", async move {
+        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let id = NodeId::parse(&params.id).map_err(|e| ResponseError::new(ErrorCode::INVALID_PARAMS, e))?;
+        let data = UserData::new(project.git_root());
+        let docs = tokio::task::spawn_blocking(move || data.docs_of(&id)).await.map_err(internal)?;
+        Ok(docs.into_iter().map(|d| DocInfo { file: d.file, title: d.title, path: d.path.to_string_lossy().into_owned() }).collect())
     })
 }

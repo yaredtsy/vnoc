@@ -21,12 +21,21 @@ window.addEventListener("message", (e: MessageEvent) => {
   else p.resolve(e.data.result);
 });
 
-export function request<T>(method: "structure" | "ping" | "pendingFocus" | "code" | "addDoc", params?: object): Promise<T> {
+export function request<T>(method: "structure" | "ping" | "pendingFocus" | "code" | "addDoc" | "docs" | "docText" | "openDoc" | "openLink", params?: object): Promise<T> {
   const id = ++nextId;
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve, reject });
     vscode.postMessage({ type: "req", id, method, params });
   });
+}
+
+/** The text of a doc changed (typing in its editor tab, or a change on disk): the host sends the new text. */
+export function onDocText(callback: (path: string, text: string) => void): () => void {
+  const listener = (e: MessageEvent) => {
+    if (e.data?.type === "docText") callback(e.data.path, e.data.text);
+  };
+  window.addEventListener("message", listener);
+  return () => window.removeEventListener("message", listener);
 }
 
 /** The core's index changed (a save, a branch switch): the host tells the canvas to ask for the structure again. */

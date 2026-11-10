@@ -15,6 +15,7 @@ use super::Index;
 use crate::driver_host::{DriverHost, HostError};
 use crate::project::Project;
 use crate::scan;
+use crate::userdata::UserData;
 
 /// More files than this and the rest are not read (the index says so). A guard, not a design.
 const MAX_FILES: usize = 20_000;
@@ -73,15 +74,24 @@ pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>
         outlined.push((path, outcome));
     }
 
+    // `.vnoc/` is small and read from disk every time: a doc added by a teammate's `git pull` is as good as one added here
+    let data = UserData::new(project.git_root());
+    let report = tokio::task::spawn_blocking(move || data.load_all()).await?;
+    for problem in &report.problems {
+        tracing::warn!("{problem}");
+    }
+
     let read = outlined.len();
     let changed = {
         let mut index = index.write().unwrap();
         let mut changed = index.retain_only(&in_scope);
+        changed |= index.set_records(report);
         changed |= index.set_truncated(scan.truncated);
         for (path, outcome) in outlined {
             changed |= index.set_outline(path, outcome);
         }
         if changed {
+            index.resolve_all();
             index.next_revision();
         }
         changed

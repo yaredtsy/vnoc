@@ -371,3 +371,52 @@ fn attach_refuses_what_is_not_in_the_index_or_not_that_document() {
     assert!(!root.join(".vnoc").exists(), "a refused attach writes nothing");
     core.finish();
 }
+
+/// The first node of a tree of `orders.py`: the file's children, by name.
+fn def_named<'a>(structure: &'a Value, name: &str) -> &'a Value {
+    structure["root"]["children"][0]["children"].as_array().and_then(|nodes| nodes.iter().flat_map(|n| std::iter::once(n).chain(n["children"].as_array().into_iter().flatten())).find(|n| n["name"] == name)).unwrap_or_else(|| panic!("no node `{name}` in {structure}"))
+}
+
+#[test]
+fn a_documented_node_is_found_again_after_a_rename_and_a_move() {
+    let (mut core, root) = orders_project("refind", None);
+    let key = "orders.py::OrderService.parse_order";
+    core.request("vnoc/attach", attach_params(&root, key, "Why we parse twice", Some(true))).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+
+    // the tree shows the id, the count and a marker link
+    let shown = loop {
+        core.wait_for("vnoc/indexChanged");
+        let s = core.request("vnoc/structure", Value::Null).unwrap();
+        if def_named(&s, "parse_order")["link"] == "marker" {
+            break s;
+        }
+    };
+    let node = def_named(&shown, "parse_order");
+    assert_eq!(node["docs"], 1);
+    let id = node["node_id"].as_str().unwrap().to_string();
+    assert_eq!(def_named(&shown, "other")["docs"], 0);
+
+    // the doc list comes from the files
+    let docs = core.request("vnoc/docs", json!({ "id": id })).unwrap();
+    assert_eq!((docs[0]["file"].as_str(), docs[0]["title"].as_str()), (Some("why-we-parse-twice.md"), Some("Why we parse twice")));
+
+    // rename the function AND move it to another file; the ID line travels with it
+    let code = std::fs::read_to_string(root.join("orders.py")).unwrap();
+    let moved = code.replace("parse_order", "parse_payload");
+    std::fs::write(root.join("orders.py"), ORDERS.replace("    def parse_order(self, raw):\n        return raw\n\n", "")).unwrap();
+    let body_start = moved.find("    def parse_payload").unwrap();
+    let body_end = moved.find("    def other").unwrap();
+    std::fs::write(root.join("payments.py"), format!("class Payments:\n{}", &moved[body_start..body_end])).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py"), root.join("payments.py")] }));
+    let after = loop {
+        core.wait_for("vnoc/indexChanged");
+        let s = core.request("vnoc/structure", Value::Null).unwrap();
+        if s["stats"]["files"] == 2 {
+            break s;
+        }
+    };
+    let found = after["root"]["children"].as_array().unwrap().iter().flat_map(|f| f["children"].as_array().unwrap().iter().flat_map(|c| std::iter::once(c).chain(c["children"].as_array().unwrap().iter()))).find(|n| n["node_id"] == json!(id)).expect("the node is still found");
+    assert_eq!((found["name"].as_str(), found["path"].as_str(), found["link"].as_str(), found["docs"].as_u64()), (Some("parse_payload"), Some("payments.py"), Some("marker"), Some(1)));
+    core.finish();
+}

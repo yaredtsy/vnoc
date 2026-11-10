@@ -10,6 +10,8 @@ export interface CanvasActions {
   toggleCode(id: string): void;
   /** start the "add a doc" flow for a node (the host asks for the title and does the rest) */
   addDoc(id: string): void;
+  /** open the doc panel on this node */
+  showDocs(id: string): void;
 }
 
 const Ctx = createContext<CanvasActions | null>(null);

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { CODE_H, COL_W, ROW_H, defaultCollapsed, layout } from "./layout.ts";
 import type { Kind, TreeNode } from "../types.ts";
 
-const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, children });
+const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, node_id: null, docs: 0, link: null, children });
 
 // repo/ ├ pkg/ ├ a.py ├ class C ├ method m   and  repo/ ├ b.py
 const tree = n("/", "folder", [n("pkg", "folder", [n("a.py", "file", [n("C", "class", [n("m", "function")])])]), n("b.py", "file", [n("f", "function")])]);

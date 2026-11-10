@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, value};
 use vnoc_domain::{LocationKey, NodeId, NodeToml};
 
-pub use read::{LoadReport, NodeRecord};
+pub use read::{DocInfo, LoadReport, NodeRecord};
 
 #[derive(Debug, thiserror::Error)]
 pub enum UserDataError {
@@ -112,6 +112,16 @@ impl UserData {
             }
         }
         unreachable!("the loop ends by returning")
+    }
+
+    /// The docs of one node, with their titles (read from the files).
+    pub fn docs_of(&self, id: &NodeId) -> Vec<DocInfo> {
+        read::docs_of(&self.root, id)
+    }
+
+    /// Whether `path` is a file inside `nodes/` (the editor asks before it shows a doc it was told about).
+    pub fn is_doc(&self, path: &Path) -> bool {
+        path.starts_with(layout::nodes_dir(&self.root)) && path.extension().is_some_and(|e| e == "md") && !path.components().any(|c| c.as_os_str() == "..")
     }
 
     /// Every node folder, read. Broken ones are reported, not fatal.

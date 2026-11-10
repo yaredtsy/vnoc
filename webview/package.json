@@ -6,17 +6,19 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "typecheck": "tsc",
-    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/canvas/focusStack.test.ts"
+    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/canvas/focusStack.test.ts src/docs/markdown.test.ts"
   },
   "dependencies": {
     "@shikijs/monaco": "^4.6.0",
     "@xyflow/react": "^12.3.0",
+    "markdown-it": "^15.0.3",
     "monaco-editor": "^0.57.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "shiki": "^4.6.0"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
