@@ -1,7 +1,7 @@
 // "Show on canvas": make a node visible without changing what the user asked for more than needed. Pure, so it is tested without a browser.
 
-import { pathTo } from "../tree.ts";
-import type { TreeNode } from "../types.ts";
+import type { TreeNode } from "@vnoc/shared/messages.ts";
+import { pathTo } from "@vnoc/shared/tree.ts";
 import type { FocusStack } from "@vnoc/shared/focusStack.ts";
 
 export interface Reveal {

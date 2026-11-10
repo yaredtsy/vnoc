@@ -1,7 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 
-import type { TreeNode } from "./structureView";
+import type { TreeNode } from "@vnoc/shared/messages";
 
 // "Add doc" (07-ui/02-design.md): ask for a title, ask the once-per-project question, let the core attach, open the new doc.
 // The core does the work (an ID line in the code, then `.vnoc/`); this file is only the conversation with the user.

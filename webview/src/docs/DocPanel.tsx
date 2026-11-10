@@ -7,15 +7,9 @@ import { IconFileText, IconPencil, IconPlus, IconPointer, IconX } from "@tabler/
 
 import { Button } from "@/components/ui/button.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select.tsx";
-import { onDocText, request } from "../host.ts";
-import type { TreeNode } from "../types.ts";
+import { on, request } from "../host.ts";
+import type { DocInfo, TreeNode } from "@vnoc/shared/messages.ts";
 import { renderMarkdown } from "./markdown.ts";
-
-interface DocInfo {
-  file: string;
-  title: string;
-  path: string;
-}
 
 const NEW_DOC = "+new";
 const MIN_WIDTH = 280;
@@ -42,7 +36,7 @@ export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extr
   useEffect(() => {
     if (!nodeId) return setDocs([]);
     let current = true;
-    request<DocInfo[]>("docs", { id: nodeId }).then((list) => current && setDocs(list), () => current && setDocs([]));
+    request("docs", { nodeId }).then((list) => current && setDocs(list), () => current && setDocs([]));
     return () => void (current = false);
   }, [nodeId, revision]);
 
@@ -53,9 +47,9 @@ export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extr
   useEffect(() => {
     if (!path) return setText(null);
     let current = true;
-    request<string>("docText", { path }).then((t) => current && setText(t), () => current && setText(null));
+    request("docText", { path }).then((t) => current && setText(t), () => current && setText(null));
     // typing in the editor tab, or a change on disk: the host sends the new text
-    const stop = onDocText((changed, newText) => changed === path && setText(newText));
+    const stop = on("docText", (changed) => changed.path === path && setText(changed.text));
     return () => {
       current = false;
       stop();
@@ -69,7 +63,7 @@ export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extr
     const link = (e.target as HTMLElement).closest("a[data-href]");
     if (!link || !path) return;
     e.preventDefault();
-    void request("openLink", { href: link.getAttribute("data-href"), from: path }).catch(() => {});
+    void request("openLink", { href: link.getAttribute("data-href") ?? "", from: path }).catch(() => {});
   };
 
   // drag the left edge to resize; pointer capture keeps the drag alive over the canvas

@@ -1,4 +1,7 @@
-// The bridge to the extension host: the webview cannot reach the core, so it posts a request and waits for the answer.
+// The bridge to the extension host: a webview cannot reach the core or any file, so it posts a request and waits for the answer, listens
+// for events, and posts notes. All three are typed by `@vnoc/shared/messages.ts`: a name that is not in that file does not compile.
+
+import type { Events, Notes, Requests } from "@vnoc/shared/messages.ts";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -21,55 +24,27 @@ window.addEventListener("message", (e: MessageEvent) => {
   else p.resolve(e.data.result);
 });
 
-export function request<T>(method: "structure" | "ping" | "pending" | "focusStack" | "code" | "addDoc" | "docs" | "docsTarget" | "docText" | "openDoc" | "openLink", params?: object): Promise<T> {
+type Params<M extends keyof Requests> = Requests[M]["params"] extends void ? [] : [Requests[M]["params"]];
+
+/** Asks the host something; the method name decides the parameters and the result. */
+export function request<M extends keyof Requests>(method: M, ...params: Params<M>): Promise<Requests[M]["result"]> {
   const id = ++nextId;
-  return new Promise<T>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    vscode.postMessage({ type: "req", id, method, params });
+    vscode.postMessage({ type: "req", id, method, params: params[0] });
   });
 }
 
-/** The text of a doc changed (typing in its editor tab, or a change on disk): the host sends the new text. */
-export function onDocText(callback: (path: string, text: string) => void): () => void {
+/** Listens for one kind of event from the host. Returns the way to stop listening. */
+export function on<E extends keyof Events>(name: E, callback: (data: Events[E]) => void): () => void {
   const listener = (e: MessageEvent) => {
-    if (e.data?.type === "docText") callback(e.data.path, e.data.text);
+    if (e.data?.type === "event" && e.data.name === name) callback(e.data.data);
   };
   window.addEventListener("message", listener);
   return () => window.removeEventListener("message", listener);
 }
 
-/** The core's index changed (a save, a branch switch): the host tells the canvas to ask for the structure again. */
-export function onIndexChanged(callback: () => void): () => void {
-  const listener = (e: MessageEvent) => {
-    if (e.data?.type === "indexChanged") callback();
-  };
-  window.addEventListener("message", listener);
-  return () => window.removeEventListener("message", listener);
-}
-
-/** "Show on canvas" from a menu: the host tells the canvas which node to reveal. Returns the way to stop listening. */
-export function onReveal(callback: (id: string) => void): () => void {
-  const listener = (e: MessageEvent) => {
-    if (e.data?.type === "reveal" && typeof e.data.id === "string") callback(e.data.id);
-  };
-  window.addEventListener("message", listener);
-  return () => window.removeEventListener("message", listener);
-}
-
-/** The docs tab beside an editor: the host says which node to show (the one at the cursor). */
-export function onShowNode(callback: (id: string) => void): () => void {
-  const listener = (e: MessageEvent) => {
-    if (e.data?.type === "showNode" && typeof e.data.id === "string") callback(e.data.id);
-  };
-  window.addEventListener("message", listener);
-  return () => window.removeEventListener("message", listener);
-}
-
-/** The focus stack changed on the host's side (the sidebar's Focus, Back or Clear): the canvas shows the new stack. */
-export function onFocusStack(callback: (stack: string[]) => void): () => void {
-  const listener = (e: MessageEvent) => {
-    if (e.data?.type === "focusStack" && Array.isArray(e.data.stack)) callback(e.data.stack);
-  };
-  window.addEventListener("message", listener);
-  return () => window.removeEventListener("message", listener);
+/** Tells the host something that needs no answer. */
+export function post(note: Notes): void {
+  vscode.postMessage(note);
 }

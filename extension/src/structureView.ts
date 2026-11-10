@@ -1,25 +1,10 @@
 import * as path from "path";
 import * as vscode from "vscode";
 
+import type { TreeNode } from "@vnoc/shared/messages";
+
 // The sidebar: the structure down to classes and functions. Calls are not here; they live on the canvas.
 // The core already sorts like the explorer (folders first, then names; defs in source order), so this file only draws what it is given.
-
-export type Kind = "folder" | "file" | "class" | "function";
-
-/** The shape the core sends for `vnoc/structure` (crates/vnoc/src/index/tree.rs). */
-export interface TreeNode {
-  id: string;
-  kind: Kind;
-  name: string;
-  /** relative to the opened folder (not the git root); empty for the root */
-  path: string;
-  range: { start: { line: number; character: number }; end: { line: number; character: number } } | null;
-  syntax_error: boolean;
-  /** how many docs are attached, and how the node was found again (crates/vnoc/src/index/tree.rs) */
-  docs: number;
-  link: "marker" | "name" | null;
-  children: TreeNode[];
-}
 
 const DEF_ICON: Record<"class" | "function", string> = { class: "symbol-class", function: "symbol-function" };
 

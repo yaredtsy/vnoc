@@ -1,24 +1,16 @@
 import * as vscode from "vscode";
 
+import type { Events, Notes, RequestMessage } from "@vnoc/shared/messages";
+
+import { type Handlers, event, serve } from "./relay";
+
 // The two webview tabs: the canvas, and the docs tab beside a code editor. Same bundle and same relay; the mode tells the page which one it is.
-// A webview cannot reach the core or any file: it posts a request, `answer` serves it, and the result is posted back.
+// A webview cannot reach the core or any file: it posts a request, the relay serves it, and the result is posted back.
 
 export type Mode = "canvas" | "docs";
 
 export const CANVAS = "vnoc.canvas";
 export const DOCS = "vnoc.docs";
-
-/** What a webview can say besides a request. */
-export interface Hooks {
-  /** the canvas drew this many nodes (the extension's test suite uses it) */
-  rendered(visible: number, hidden: number): void;
-  /** the canvas changed its focus stack (focus, back, a crumb): the sidebar follows */
-  focusChanged(stack: string[]): void;
-  /** the pin in the docs tab: stop (or resume) following the cursor */
-  pinned(pinned: boolean): void;
-}
-
-type Message = { type: string; id?: number | string; stack?: string[]; method?: string; params?: unknown; visible?: number; hidden?: number; pinned?: boolean };
 
 export class Panels {
   private canvasPanel: vscode.WebviewPanel | undefined;
@@ -26,8 +18,9 @@ export class Panels {
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
-    private readonly answer: (method: string, params: any) => Promise<unknown>,
-    private readonly hooks: Hooks,
+    private readonly handlers: Handlers,
+    /** what a webview says that needs no answer (`Notes`); `close` is handled here */
+    private readonly onNote: (note: Notes) => void,
   ) {}
 
   get canvas(): vscode.WebviewPanel | undefined {
@@ -38,10 +31,10 @@ export class Panels {
     return this.docsPanel;
   }
 
-  /** Posts to every open V-NOC tab. */
-  post(message: object): void {
-    this.canvasPanel?.webview.postMessage(message);
-    this.docsPanel?.webview.postMessage(message);
+  /** Sends an event to every open V-NOC tab. */
+  emit<E extends keyof Events>(name: E, data: Events[E]): void {
+    this.canvasPanel?.webview.postMessage(event(name, data));
+    this.docsPanel?.webview.postMessage(event(name, data));
   }
 
   /** The one canvas (a second `Open canvas` or a Focus click shows this one again). */
@@ -84,7 +77,7 @@ export class Panels {
       if (this.docsPanel === panel) this.docsPanel = undefined;
     });
     panel.webview.html = this.html(panel.webview, mode);
-    panel.webview.onDidReceiveMessage((m: Message) => this.receive(panel, m));
+    panel.webview.onDidReceiveMessage((m: RequestMessage | Notes) => this.receive(panel, m));
     return panel;
   }
 
@@ -99,17 +92,9 @@ export class Panels {
 <script nonce="${nonce}" type="module" src="${asUri("assets/index.js")}"></script></body></html>`;
   }
 
-  private async receive(panel: vscode.WebviewPanel, m: Message): Promise<void> {
-    if (m.type === "rendered") return this.hooks.rendered(m.visible ?? 0, m.hidden ?? 0);
-    if (m.type === "focusChanged" && Array.isArray(m.stack)) return this.hooks.focusChanged(m.stack);
-    if (m.type === "pin") return this.hooks.pinned(m.pinned === true);
-    if (m.type === "close") return panel.dispose();
-    if (m.type !== "req" || m.method === undefined) return;
-    try {
-      const result = await this.answer(m.method, m.params);
-      panel.webview.postMessage({ type: "res", id: m.id, result });
-    } catch (e) {
-      panel.webview.postMessage({ type: "res", id: m.id, error: String((e as Error).message ?? e) });
-    }
+  private async receive(panel: vscode.WebviewPanel, message: RequestMessage | Notes): Promise<void> {
+    if (message.type === "req") return void (await panel.webview.postMessage(await serve(this.handlers, message)));
+    if (message.type === "close") return panel.dispose();
+    this.onNote(message);
   }
 }

@@ -1,6 +1,6 @@
 // A simple, deterministic tree layout: one row per visible node, depth to the right. Pure, so it is tested without a browser.
 
-import type { Kind, TreeNode } from "../types.ts";
+import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 
 export const COL_W = 300;
 /** One card (80 px, see node-card.css) plus a gap. Fixed until the code toggle makes cards grow and the layout has to measure them. */

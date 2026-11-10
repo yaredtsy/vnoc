@@ -18,7 +18,7 @@ export function NodeCode({ node }: { node: Placed }) {
   const [state, setState] = useState<State>(null);
   useEffect(() => {
     let live = true;
-    request<string>("code", { path: node.path, range: node.range }).then(
+    request("code", { path: node.path, range: node.range! }).then(
       (text) => live && setState({ text }),
       (e: Error) => live && setState({ error: e.message }),
     );

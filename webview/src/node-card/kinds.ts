@@ -1,6 +1,6 @@
 // What differs between a folder, a file, a class and a function. One table, so a new kind is one row and not an edit in every component.
 
-import type { Kind } from "../types.ts";
+import type { Kind } from "@vnoc/shared/messages.ts";
 
 export interface KindStyle {
   icon: string;

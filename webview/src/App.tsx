@@ -4,14 +4,14 @@ import { IconArrowLeft, IconChevronRight, IconInfoCircle, IconRefresh } from "@t
 
 import { Button } from "@/components/ui/button.tsx";
 import { Toggle } from "@/components/ui/toggle.tsx";
-import { onFocusStack, onIndexChanged, onReveal, request, vscode } from "./host.ts";
+import { on, post, request, vscode } from "./host.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
 import { DocPanel } from "./docs/DocPanel.tsx";
 import { type FocusStack, jump, pop, prune, push } from "@vnoc/shared/focusStack.ts";
 import { layout } from "./canvas/layout.ts";
 import { reveal } from "./canvas/reveal.ts";
-import { findNode } from "./tree.ts";
-import type { StructureResult, TreeNode } from "./types.ts";
+import type { StructureResult } from "@vnoc/shared/messages.ts";
+import { findNode } from "@vnoc/shared/tree.ts";
 
 type Load = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: StructureResult };
 
@@ -38,7 +38,7 @@ export function App() {
   /** `quiet`: the core's index changed while the user is looking: swap the data without the loading state, and keep the view where it is. */
   const refresh = useCallback((quiet = false) => {
     if (!quiet) setLoad({ status: "loading" });
-    request<StructureResult>("structure").then(
+    request("structure").then(
       (data) => {
         if (data.revision < shown.current) return;
         shown.current = data.revision;
@@ -50,7 +50,7 @@ export function App() {
   }, []);
   useEffect(() => {
     refresh();
-    return onIndexChanged(() => refresh(true));
+    return on("indexChanged", () => refresh(true));
   }, [refresh]);
 
   const toggle = useCallback((id: string) => {
@@ -74,8 +74,7 @@ export function App() {
   }, []);
   const addDoc = useCallback(
     (key: string) => {
-      const docs = (rootRef.current && findNode(rootRef.current, key)?.docs) || 0;
-      request<{ added: boolean }>("addDoc", { key, docs }).then((r) => r.added && showDocs(key), () => {});
+      request("addDoc", { key }).then((r) => r.added && showDocs(key), () => {});
     },
     [showDocs],
   );
@@ -92,23 +91,23 @@ export function App() {
 
   // the focus: ask the host for it once, then follow it, and report every change of ours (the sidebar follows). An echo changes nothing on the host.
   useEffect(() => {
-    request<string[]>("focusStack").then(
+    request("focusStack").then(
       (stack) => {
         setFocus(stack);
         focusLoaded.current = true;
       },
       () => (focusLoaded.current = true),
     );
-    return onFocusStack(setFocus);
+    return on("focusStack", ({ stack }) => setFocus(stack));
   }, []);
   useEffect(() => {
-    if (focusLoaded.current) vscode.postMessage({ type: "focusChanged", stack: [...focus] });
+    if (focusLoaded.current) post({ type: "focusChanged", stack: [...focus] });
   }, [focus]);
 
   // Show on canvas from a menu: while the canvas is open the host sends it; a canvas opened by that command asks for it once it is up.
   useEffect(() => {
-    request<{ type: "reveal"; id: string } | null>("pending").then((p) => p && setRevealId(p.id), () => {});
-    return onReveal(setRevealId);
+    request("pending").then((p) => p && setRevealId(p.id), () => {});
+    return on("reveal", ({ id }) => setRevealId(id));
   }, []);
 
   // Alt+← goes back one focus, like the ← button
@@ -123,7 +122,7 @@ export function App() {
   // After a refresh the node we were zoomed into may be gone: drop the stack down to one that still exists.
   const root = load.status === "ready" ? load.data.root : null;
   useEffect(() => {
-    if (root) setFocus((f) => prune(f, (id) => findNode(root, id) !== null));
+    if (root) setFocus((f) => prune(f, (id) => findNode(root, id) !== undefined));
   }, [root]);
   // Show on canvas: back to the nearest focus that contains the node, open its ancestors, select it, bring it to the middle
   useEffect(() => {
@@ -137,10 +136,8 @@ export function App() {
     }
     setRevealId(null);
   }, [root, revealId, focus]);
-  const rootRef = useRef<TreeNode | null>(null);
-  rootRef.current = root;
   // the doc panel shows the selected card, else the focused node
-  const docNode = root ? (findNode(root, selected ?? "") ?? (focus.length > 0 ? findNode(root, focus[focus.length - 1]) : null)) : null;
+  const docNode = root ? (findNode(root, selected ?? "") ?? (focus.length > 0 ? findNode(root, focus[focus.length - 1]) : null) ?? null) : null;
   const crumbs = useMemo(() => (root ? focus.map((id) => ({ id, node: findNode(root, id) })) : []), [root, focus]);
   const top = crumbs.length > 0 ? crumbs[crumbs.length - 1].node : null;
 
@@ -150,7 +147,7 @@ export function App() {
 
   // Tell the host what was drawn: the extension's test suite uses it to prove the whole chain ran (bundle, request, core, driver, layout).
   useEffect(() => {
-    if (laid) vscode.postMessage({ type: "rendered", visible: laid.nodes.length, hidden: laid.hidden });
+    if (laid) post({ type: "rendered", visible: laid.nodes.length, hidden: laid.hidden });
   }, [laid]);
 
   return (

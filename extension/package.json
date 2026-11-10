@@ -256,7 +256,7 @@
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
     "test": "tsc -p . --noEmit false --outDir out && node out/test/runTest.js",
-    "unit": "node --test --experimental-strip-types src/nodeAt.test.ts"
+    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

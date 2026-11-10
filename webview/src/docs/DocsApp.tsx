@@ -6,9 +6,9 @@ import { useCallback, useEffect, useState } from "react";
 import { IconPin, IconPinFilled } from "@tabler/icons-react";
 
 import { Toggle } from "@/components/ui/toggle.tsx";
-import { onIndexChanged, onShowNode, request, vscode } from "../host.ts";
-import { findNode } from "../tree.ts";
-import type { StructureResult } from "../types.ts";
+import { on, post, request } from "../host.ts";
+import type { StructureResult } from "@vnoc/shared/messages.ts";
+import { findNode } from "@vnoc/shared/tree.ts";
 import { DocPanel } from "./DocPanel.tsx";
 
 export function DocsApp() {
@@ -18,22 +18,22 @@ export function DocsApp() {
 
   // The newest revision shown: two asks can cross, and the older answer must not replace the newer one.
   const refresh = useCallback(() => {
-    request<StructureResult>("structure").then((data) => setStructure((current) => (current && data.revision < current.revision ? current : data)), () => {});
+    request("structure").then((data) => setStructure((current) => (current && data.revision < current.revision ? current : data)), () => {});
   }, []);
   useEffect(() => {
     refresh();
     // a tab opened by "Show docs" asks for its node; after that the host pushes changes
-    request<string | null>("docsTarget").then(setKey, () => {});
-    const stops = [onIndexChanged(refresh), onShowNode(setKey)];
+    request("docsTarget").then(setKey, () => {});
+    const stops = [on("indexChanged", refresh), on("showNode", ({ id }) => setKey(id))];
     return () => stops.forEach((stop) => stop());
   }, [refresh]);
 
   const togglePin = (pressed: boolean) => {
     setPinned(pressed);
-    vscode.postMessage({ type: "pin", pinned: pressed });
+    post({ type: "pin", pinned: pressed });
   };
-  const node = structure && key ? findNode(structure.root, key) : null;
-  const addDoc = (id: string) => void request("addDoc", { key: id, docs: node?.docs ?? 0 }).catch(() => {});
+  const node = (structure && key ? findNode(structure.root, key) : null) ?? null;
+  const addDoc = (id: string) => void request("addDoc", { key: id }).catch(() => {});
 
   return (
     <div className="flex h-screen">
@@ -42,7 +42,7 @@ export function DocsApp() {
         node={node}
         revision={structure?.revision ?? 0}
         onAddDoc={addDoc}
-        onClose={() => vscode.postMessage({ type: "close" })}
+        onClose={() => post({ type: "close" })}
         extra={
           <Toggle size="sm" pressed={pinned} aria-label="Keep showing this node" title={pinned ? "Following is off: click to follow the cursor again" : "Stop following the cursor"} onPressedChange={togglePin}>
             {pinned ? <IconPinFilled /> : <IconPin />}

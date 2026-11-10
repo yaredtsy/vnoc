@@ -7,9 +7,11 @@ import { addDoc } from "./addDoc";
 import { Docs } from "./docs";
 import { type FocusStack, jump, pop, prune, push } from "@vnoc/shared/focusStack";
 import { FocusState } from "./focus";
-import { chainAt, docTarget, findNode, nodeAtPath } from "./nodeAt";
+import type { Notes, Range, StructureResult, TreeNode } from "@vnoc/shared/messages";
+import { chainAt, docTarget, findNode, nodeAtPath } from "@vnoc/shared/tree";
 import { CANVAS, DOCS, Panels } from "./panels";
-import { StructureView, type TreeNode, absolute } from "./structureView";
+import { type Handlers, createHandlers, event } from "./relay";
+import { StructureView, absolute } from "./structureView";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio
 // client here, we use its custom-request API and none of the language features) and relays the webview's requests to it.
@@ -75,20 +77,15 @@ async function request<T>(method: string, params?: object): Promise<T> {
   return client!.sendRequest<T>(method, params);
 }
 
-interface Structure {
-  root: TreeNode;
-  git_root: string;
-}
-
 /** The last structure the core sent. The editor menus look the node at the cursor up here. */
 let tree: TreeNode | undefined;
 /** The absolute path of the git root. Node ids and the paths in `vnoc/attach` start there. */
 let gitRoot: string | undefined;
 
 /** The structure of the opened folder; the canvas, the docs tab and the sidebar all read it through here. It waits for the core's first build. */
-async function loadStructure(): Promise<Structure> {
+async function loadStructure(): Promise<StructureResult> {
   if (!vscode.workspace.workspaceFolders?.[0]) throw new Error("Open a folder first: V-NOC shows the code of the folder you opened.");
-  const structure = await request<Structure>("vnoc/structure");
+  const structure = await request<StructureResult>("vnoc/structure");
   tree = structure.root;
   gitRoot = structure.git_root;
   // a focused node that no longer exists: drop it (and what was above it), so neither UI is left looking at nothing
@@ -97,23 +94,23 @@ async function loadStructure(): Promise<Structure> {
 }
 
 /** The "Add doc" flow for the node with this id (a sidebar item, or a card on the canvas). Resolves to whether a doc was added. */
-async function addDocTo(key: string, existingDocs: number): Promise<boolean> {
+async function addDocTo(key: string): Promise<boolean> {
   const root = gitRoot ?? (await loadStructure()).git_root;
   const node = findNode(tree!, key);
   if (!node || node.id === "/") throw new Error("That node is not in the structure any more.");
-  return addDoc(request, root, node, existingDocs);
+  return addDoc(request, root, node, node.docs);
 }
 
 let sidebar: StructureView;
 let sidebarView: vscode.TreeView<TreeNode>;
 let panels: Panels;
 let focus: FocusState;
-const docs = new Docs(() => gitRoot, (message) => panels.post(message));
+const docs = new Docs(() => gitRoot, (name, data) => panels.emit(name, data));
 
 /** The core has a new index: the sidebar redraws, and every open tab asks for the new structure. */
 function indexChanged(revision: number) {
   refreshSidebar();
-  panels.post({ type: "indexChanged", revision });
+  panels.emit("indexChanged", { revision });
 }
 
 // ── focus: one stack for the canvas and the sidebar ────────────────────────────────────────────────────────────────────
@@ -125,7 +122,7 @@ function indexChanged(revision: number) {
 function setFocus(next: FocusStack, from: "host" | "canvas") {
   if (!focus.set(next)) return;
   showFocusInSidebar(next);
-  if (from === "host") panels?.canvas?.webview.postMessage({ type: "focusStack", stack: next });
+  if (from === "host") panels?.canvas?.webview.postMessage(event("focusStack", { stack: [...next] }));
 }
 
 /** Redraws the sidebar from the new structure, then the header (its names come from that structure). */
@@ -197,7 +194,7 @@ function focusOn(id: string) {
 function revealOnCanvas(id: string) {
   const wasOpen = panels.canvas !== undefined;
   const panel = panels.showCanvas();
-  if (wasOpen) panel.webview.postMessage({ type: "reveal", id });
+  if (wasOpen) panel.webview.postMessage(event("reveal", { id }));
   else pendingReveal = id;
 }
 
@@ -218,7 +215,7 @@ async function showDocsBeside(arg: unknown, selected: unknown) {
     await updateDocsTarget(true);
   }
   const panel = panels.showDocs();
-  if (docsTarget) panel.webview.postMessage({ type: "showNode", id: docsTarget });
+  if (docsTarget) panel.webview.postMessage(event("showNode", { id: docsTarget }));
 }
 
 /** The docs tab follows the cursor: the innermost node around it that has docs, else the innermost node. */
@@ -227,7 +224,7 @@ async function updateDocsTarget(force = false) {
   const target = docTarget(await chainAtCursor());
   if (!target || target.id === docsTarget) return;
   docsTarget = target.id;
-  panels.docs?.webview.postMessage({ type: "showNode", id: target.id });
+  panels.docs?.webview.postMessage(event("showNode", { id: target.id }));
 }
 
 /** Cursor moves come in bursts; look at where it rests. */
@@ -270,18 +267,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   });
 
   focus = new FocusState(ctx.workspaceState);
-  panels = new Panels(ctx, answer, {
-    rendered(visible, hidden) {
-      rendered = { visible, hidden };
-      output.appendLine(`webview drew ${visible} nodes (${hidden} hidden)`);
-      renderWaiters.splice(0).forEach((w) => w(rendered!));
-    },
-    focusChanged: (stack) => setFocus(stack, "canvas"),
-    pinned(pinned) {
-      docsPinned = pinned;
-      if (!pinned) void updateDocsTarget().catch(() => {});
-    },
-  });
+  panels = new Panels(ctx, handlers(), onNote);
   sidebar = new StructureView(async () => (await loadStructure()).root);
   sidebarView = vscode.window.createTreeView("vnoc.structure", { treeDataProvider: sidebar });
   showFocusInSidebar(focus.get()); // the focus saved with the workspace
@@ -307,7 +293,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.addDoc", command(async (arg, selected) => {
       const node = await nodeFor(arg, selected);
       if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");
-      await addDocTo(node.id, node.docs);
+      await addDocTo(node.id);
     })),
     followCursor(),
     { dispose: () => client?.stop() },
@@ -327,10 +313,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   };
 }
 
-type Slice = { path: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } };
-
 /** The text of a definition, from VS Code's document (so unsaved edits show). The path comes from the webview, so it must stay inside the opened folder. */
-async function readSlice({ path: relative, range: r }: Slice): Promise<string> {
+async function readSlice(relative: string, r: Range): Promise<string> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) throw new Error("Open a folder first.");
   const file = path.resolve(folder.uri.fsPath, relative);
@@ -339,36 +323,47 @@ async function readSlice({ path: relative, range: r }: Slice): Promise<string> {
   return doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character));
 }
 
-/** What a webview may ask of the extension. */
-async function answer(method: string, params: any): Promise<unknown> {
-  switch (method) {
-    case "structure":
-      return loadStructure();
-    case "addDoc":
-      return { added: await addDocTo(params.key, params.docs) };
-    case "docs":
-      return request("vnoc/docs", params);
-    case "docText":
-      return docs.text(params.path);
-    case "openDoc":
-      return void (await docs.open(params.path));
-    case "openLink":
-      return void (await docs.openLink(params.href, params.from));
-    case "code":
-      return readSlice(params);
-    case "pending": {
+/** What a webview may ask of the extension (`shared/messages.ts` lists it, `relay.ts` serves it). */
+function handlers(): Handlers {
+  return createHandlers({
+    structure: loadStructure,
+    core: request,
+    addDoc: addDocTo,
+    docs,
+    code: readSlice,
+    goToCode: async (key) => {
+      if (!tree) await loadStructure();
+      const node = findNode(tree!, key);
+      if (!node) throw new Error("That node is not in the structure any more.");
+      await goToCode(node);
+    },
+    takePendingReveal: () => {
       const id = pendingReveal;
       pendingReveal = undefined;
-      return id ? { type: "reveal", id } : null;
-    }
-    case "focusStack":
-      return focus.get();
-    case "docsTarget":
-      return docsTarget ?? null;
-    case "ping":
-      return request("vnoc/ping");
-    default:
-      throw new Error(`unknown request ${method}`);
+      return id;
+    },
+    focusStack: () => [...focus.get()],
+    docsTarget: () => docsTarget ?? null,
+  });
+}
+
+/** What a webview says that needs no answer. */
+function onNote(note: Notes) {
+  switch (note.type) {
+    case "rendered":
+      rendered = { visible: note.visible, hidden: note.hidden };
+      output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden)`);
+      renderWaiters.splice(0).forEach((w) => w(rendered!));
+      break;
+    case "focusChanged":
+      setFocus(note.stack, "canvas");
+      break;
+    case "pin":
+      docsPinned = note.pinned;
+      if (!note.pinned) void updateDocsTarget().catch(() => {});
+      break;
+    case "close":
+      break; // the panel closes itself (panels.ts)
   }
 }
 
