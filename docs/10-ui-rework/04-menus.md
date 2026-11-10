@@ -51,7 +51,7 @@ webviewSection == 'node'`).
 | `3_code@2` | Hide Code in Card | `vnoc.hideCodeInCard` | | ✓ | `hasCode && codeOpen` |
 | `3_code@3` | Reveal in Explorer | `vnoc.revealInExplorer` | ✓ | ✓ | a folder or a file |
 | `4_docs@1` | Show Docs | `vnoc.showDocs` | ✓ | ✓ | — |
-| `4_docs@2` | Add Doc… | `vnoc.addDoc` | ✓ | ✓ | any node except the opened folder (files and folders: MVP Step 4, done) |
+| `4_docs@2` | Add Doc… | `vnoc.addDoc` | ✓ | ✓ | any node except the opened folder itself (S: the opened folder is never a row · C: `nodeKey != '/'`). Files and folders take docs since MVP Step 4 (`dcdeed6`). |
 | `9_copy@1` | Copy Path | `vnoc.copyPath` | ✓ | ✓ | — |
 
 Two separate commands for Show / Hide Code in Card: a menu entry's label is its command's title, so one command cannot read two ways.
@@ -102,7 +102,7 @@ export function nodeContext(f: { node: TreeNode; contextId: string; open: boolea
 
 ```ts
 item.contextValue = ["node", node.kind, node.docs > 0 ? "docs" : "", node.range ? "hasCode" : ""].filter(Boolean).join(" ");
-// package.json:  "when": "view == vnoc.structure && viewItem =~ /\\b(function|class)\\b/"
+// package.json:  "when": "view == vnoc.structure && viewItem =~ /\\b(file|class|function)\\b/"   (e.g. Go to Code: not a folder)
 ```
 
 The focus bar row is `focusBar`, so no node entry matches it.
@@ -111,7 +111,7 @@ The focus bar row is `focusBar`, so no node entry matches it.
 
 | Surface | Buttons | How |
 |---|---|---|
-| a row | `⌖` Focus · `↗` Go to Code (not folders) · `＋` Add Doc (functions and classes) | `view/item/context`, `"group": "inline@1…3"`. VS Code shows them on hover and on the selected row. |
+| a row | `⌖` Focus · `↗` Go to Code (not folders) · `＋` Add Doc (every row) | `view/item/context`, `"group": "inline@1…3"`. VS Code shows them on hover and on the selected row. |
 | a card | header: `▸` open · `📄 n` docs · `</>` code · footer: `⌖` · `↗` · `＋` | React buttons calling `useNodeActions` |
 
 ```ts
@@ -145,11 +145,11 @@ V-NOC ▸  Show on Canvas              reveal + select the node at the cursor; t
          Open Canvas to the Side     the same, in the column beside this editor                           vnoc.openCanvasBeside  NEW
          ─────────
          Show Docs                   the docs tab beside this editor                                      vnoc.showDocs
-         Add Doc…                    the node at the cursor; outside a function or class it says so      vnoc.addDoc
+         Add Doc…                    the node at the cursor; outside any function or class, the file      vnoc.addDoc
 ```
 
-"The node at the cursor" is `chainAt` (exists). Add Doc… is always shown: the right-click moves the cursor and opens the menu at the same moment, so
-a `when` clause on the cursor's kind would see the previous position.
+"The node at the cursor" is `chainAt` (exists): the innermost function or class around the cursor, else the file. Add Doc… is always shown: every
+place in a supported file has a node, so it always has something to attach to.
 
 **The tab's menu passes the tab's `Uri`.** Today `nodeFor` ignores a `Uri` that comes without an Explorer selection and uses the active editor's
 cursor, so a right-click on a background tab would act on the wrong file. New rule in `nodeFor`: a `Uri` that is the active editor's document → the
@@ -164,12 +164,15 @@ await treeView.reveal(rowFor(node.id), { select: true, focus: true, expand: fals
 
 ### Explorer (right-click a file or folder)
 
-Its **own** submenu, `vnoc.explorerMenu`, so a folder is never offered something that cannot work:
+Its **own** submenu, `vnoc.explorerMenu`, without the cursor and canvas-opening entries that only make sense in an editor:
 
 ```
 V-NOC ▸  Show on Canvas · Focus on Canvas · Reveal in V-NOC Sidebar
-         Show Docs
+         Show Docs · Add Doc…
 ```
+
+Add Doc… here works on files and folders (MVP Step 4). Right-clicking the opened folder's own root in the Explorer is answered by the command's
+existing message ("Docs go on a folder inside the opened folder"), as today.
 
 ### `package.json`
 
@@ -195,7 +198,8 @@ V-NOC ▸  Show on Canvas · Focus on Canvas · Reveal in V-NOC Sidebar
     { "command": "vnoc.showOnCanvas",     "group": "1_show@1" },
     { "command": "vnoc.focus",            "group": "1_show@2" },
     { "command": "vnoc.revealInSidebar",  "group": "1_show@3" },
-    { "command": "vnoc.showDocs",         "group": "3_docs@1" }
+    { "command": "vnoc.showDocs",         "group": "3_docs@1" },
+    { "command": "vnoc.addDoc",           "group": "3_docs@2" }
   ]
 }
 ```

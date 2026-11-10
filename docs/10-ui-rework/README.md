@@ -26,8 +26,8 @@ ui rework
 | the sidebar does not show the focus like the web | The tree does start at the focused node (since `11b99ce`), but the stack is only text in the view's title line, with Back and Clear as two small title icons. | `extension/src/extension.ts:135–140` |
 | which node is selected | The selected card looks like every other card: `NodeCard` never reads React Flow's `selected` and `node-card.css` has no rule for it. Selection lives in one `useState` in the canvas; the sidebar never shows it, and it is lost on reload. | `webview/src/node-card/NodeCard.tsx:13` · `webview/src/App.tsx:30` |
 | a sidebar click covers the canvas | Every row runs `vscode.open`, so a click with the canvas in front opens a code tab over it. | `extension/src/structureView.ts:90` |
-| the menus | Two hand-written lists (`view/item/context` for the row, `webview/context` for the card): different order, different entries, neither has "show me this on the other surface". The **V-NOC** submenu exists for the editor and the Explorer, but only for Python, it has no "Reveal in V-NOC Sidebar", and the Explorer reuses the editor's list (a folder is offered "Add doc" and answers with an error). | `extension/package.json` (`menus`) |
-| the submenu "is not there" | `vnoc-darwin-arm64.vsix` in the repo root was built at 16:50; the first commit with these menus is 16:52. An installed copy of it shows none of them. **Not run yet**: step 0 of the build order checks a fresh build. | repo root |
+| the menus | Two hand-written lists (`view/item/context` for the row, `webview/context` for the card): different order, different entries, neither has "show me this on the other surface". The **V-NOC** submenu exists for the editor and the Explorer, but only for Python, it has no "Reveal in V-NOC Sidebar", and the Explorer reuses the editor's list (cursor entries such as "Open Canvas" on a folder). | `extension/package.json` (`menus`) |
+| the submenu "is not there" | `vnoc-darwin-arm64.vsix` in the repo root was built at 16:50; the first commit with these menus is 16:52. An installed copy of it shows none of them. **Not run yet**: step R0 of the build order checks a fresh build. | repo root |
 
 ## 2. What you decided
 
@@ -56,7 +56,7 @@ ui rework
 | `07-ui` section | Status |
 |---|---|
 | `01-state` §2 "the webview never changes its copy of the data", revisions | **kept** |
-| `01-state` §3 typed message map | **kept**, built in step 2; the map is in [`01-state.md`](01-state.md) §4 |
+| `01-state` §3 typed message map | **kept**, built in step R2; the map is in [`01-state.md`](01-state.md) §4 |
 | `01-state` §1, §4, §6 "the webview owns view state" | **replaced** by U2: the extension owns what more than one surface shows |
 | `02-design` §2 the sidebar | **kept as a native tree**, extended by [`02-sidebar.md`](02-sidebar.md); its menu table is replaced by [`04-menus.md`](04-menus.md) |
 | `02-design` §3 canvas, node card, doc panel, docs beside the code; §4 looking native; §5 Shiki / Monaco | **kept** |
@@ -114,7 +114,7 @@ Paste what you accept into `08-decisions-to-log.md`; I did not edit it.
 | one command for "Show / Hide Code in Card" | two commands (a menu label is the command's title) | [`04-menus.md`](04-menus.md) §2 |
 | `Alt+←` bound everywhere | not while a text field has focus (it is word-left on macOS) | [`04-menus.md`](04-menus.md) §5 |
 | the editor-tab menu used the active editor's cursor | it uses the tab's `Uri` | [`04-menus.md`](04-menus.md) §3 |
-| the selection ring came in step 3 | it is step 1 | [`05-build-order.md`](05-build-order.md) §3 |
+| the selection ring came in step R3 | it is step R1 | [`05-build-order.md`](05-build-order.md) §3 |
 | how each state looks was only in `07-ui/03`, which is replaced | its own file, with `highlight` (pointing without selecting) added | [`06-how-it-looks.md`](06-how-it-looks.md) |
 
 Next: [`01-state.md`](01-state.md)

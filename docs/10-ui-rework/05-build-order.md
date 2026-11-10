@@ -33,7 +33,7 @@ extension/src/
 ~ ├── structureView.ts               rows from the store: focus bar row, contextValue flags, vnoc.open, selection both ways
 + ├── focusView.ts                   the FOCUS view
 + ├── search.ts                      the QuickPick
-+ ├── cursorMark.ts                  the FileDecorationProvider for the cursor node (step 8)
++ ├── cursorMark.ts                  the FileDecorationProvider for the cursor node (step R8)
   ├── docs.ts · addDoc.ts
 + ├── menus.test.ts
 − ├── focus.ts                       FocusState → session.ts
@@ -63,23 +63,23 @@ keep a webview sidebar light (U8, dropped). It comes back with the webview sideb
 
 ## 3. The steps
 
-Each step leaves an extension you can use. Steps 2–4 change no behaviour on purpose: they move state to where it belongs while the old UI still
+Each step leaves an extension you can use. Steps R2–R4 change no behaviour on purpose: they move state to where it belongs while the old UI still
 proves it works.
 
 | Step | What | Proof it is done |
 |---|---|---|
-| **0. A fresh build** | Package and install the current source ([`04-menus.md`](04-menus.md) §6). Write down what is really missing from the menus before changing anything. | you know whether the V-NOC submenu problem is a stale VSIX or a real bug |
-| **1. See the selection** | `.node-card.selected` (outline + filled header, [`06-how-it-looks.md`](06-how-it-looks.md) §2) and the syntax-error line moved inside the card: `NodeCard` reads the `selected` prop React Flow already passes. CSS and a class name, nothing else. | click a card: it is obvious which one is selected, also on a broken card |
-| **2. Typed messages** | `shared/messages.ts` (one `TreeNode`, `Requests`, `Events`, `Notes`) and `shared/tree.ts`. `host.ts` becomes the typed `request / on / post`. The `switch` in `extension.ts:342` and the `if` chain in `panels.ts:102` become the handler table in `relay.ts`. Delete the hand-written `TreeNode` copies. | `pnpm -r typecheck` passes; misspell a method name and it fails |
-| **3. The session** | `shared/session.ts` with `reduce`, `keepEqual` and their tests. `extension/src/session.ts` replaces `FocusState`, `setFocus`, `pendingReveal`, `docsTarget`, `docsPinned`. The canvas posts intents and draws the `session` event: delete its `focus` / `selected` / `expanded` / `revealId` / `centerOn` state, `focusLoaded`, the `focusChanged` echo and its `prune`; report `revealed`. The tree reads `store.get()` and refreshes on `store.onChange`. | unit tests · reload the window with a focus, a selection and open cards: all three come back · drag a card, move the editor cursor: the card stays · **measure** click → ring |
-| **4. Split `extension.ts`** | `core.ts`, `commands.ts`, `relay.ts`. Moves only. | the extension suite passes unchanged |
-| **5. Canvas stores** | `zustand`, `state/`, `nodeContext`, `useNodeActions`, `tokens.css`. `CanvasActions` and the eight callback props go. React Flow's own selection off (`elementsSelectable={false}`); the card's ring comes from the session. | the canvas works as before · React DevTools: a click re-renders two cards |
-| **6. The sidebar** | `vnoc.open` with the click rule and `vnoc.sidebar.click` ([`02-sidebar.md`](02-sidebar.md) §4); preview tabs; "Go to Code" beside the canvas; selection both ways (§5); the focus bar row; the FOCUS view; the four states with `viewsWelcome`. Remove the title-line focus text and STRUCTURE's Back / Clear. | with the canvas open, click through the sidebar: the canvas stays in front, the card is centred, no code tab appears in its column · canvas closed: one preview tab, replaced by each click · click a card: the row is selected · focus three deep, resize the FOCUS view, click its middle row |
-| **7. Menus** | The node menu tables ([`04-menus.md`](04-menus.md) §2) on both surfaces. `category` and short titles. `vnoc.revealInSidebar`, `vnoc.revealInExplorer`, `vnoc.openCanvasBeside`, `vnoc.expand*`, Show / Hide Code in Card, `vnoc.copyPath`. `vnoc.explorerMenu`, `editor/title/context`, `vnoc.extensions`, the tab-`Uri` rule in `nodeFor`. Right-click on a card selects. `menus.test.ts`. | right-click the same node on a row and on its card: the same entries in the same order, except the listed ones · right-click a background editor tab: the menu acts on that file |
-| **8. Search and the full look** | `vnoc.search` (QuickPick) with `highlight` on the active item. Everything in [`06-how-it-looks.md`](06-how-it-looks.md): highlighted and cursor cards, reveal pulse, path edges, hidden-selection dots, minimap colours, selection strip, crumb hover, canvas keys; the cursor mark on rows (`cursorMark.ts`). `Ctrl/Cmd+Enter` and `Alt+←` bindings. Tooltips as Markdown. The checks in 06 §8. | find a node by name from the 🔍: arrowing through the list highlights cards without selecting · code and canvas side by side: move the cursor, the mark follows on both · 06 §8 ticked |
+| **R0. A fresh build** | Package and install the current source ([`04-menus.md`](04-menus.md) §6). Write down what is really missing from the menus before changing anything. | you know whether the V-NOC submenu problem is a stale VSIX or a real bug |
+| **R1. See the selection** | `.node-card.selected` (outline + filled header, [`06-how-it-looks.md`](06-how-it-looks.md) §2) and the syntax-error line moved inside the card: `NodeCard` reads the `selected` prop React Flow already passes. CSS and a class name, nothing else. | click a card: it is obvious which one is selected, also on a broken card |
+| **R2. Typed messages** | `shared/messages.ts` (one `TreeNode`, `Requests`, `Events`, `Notes`) and `shared/tree.ts`. `host.ts` becomes the typed `request / on / post`. The `switch` in `extension.ts:342` and the `if` chain in `panels.ts:102` become the handler table in `relay.ts`. Delete the hand-written `TreeNode` copies. | `pnpm -r typecheck` passes; misspell a method name and it fails |
+| **R3. The session** | `shared/session.ts` with `reduce`, `keepEqual` and their tests. `extension/src/session.ts` replaces `FocusState`, `setFocus`, `pendingReveal`, `docsTarget`, `docsPinned`. The canvas posts intents and draws the `session` event: delete its `focus` / `selected` / `expanded` / `revealId` / `centerOn` state, `focusLoaded`, the `focusChanged` echo and its `prune`; report `revealed`. The tree reads `store.get()` and refreshes on `store.onChange`. | unit tests · reload the window with a focus, a selection and open cards: all three come back · drag a card, move the editor cursor: the card stays · **measure** click → ring |
+| **R4. Split `extension.ts`** | `core.ts`, `commands.ts`, `relay.ts`. Moves only. | the extension suite passes unchanged |
+| **R5. Canvas stores** | `zustand`, `state/`, `nodeContext`, `useNodeActions`, `tokens.css`. `CanvasActions` and the eight callback props go. React Flow's own selection off (`elementsSelectable={false}`); the card's ring comes from the session. | the canvas works as before · React DevTools: a click re-renders two cards |
+| **R6. The sidebar** | `vnoc.open` with the click rule and `vnoc.sidebar.click` ([`02-sidebar.md`](02-sidebar.md) §4); preview tabs; "Go to Code" beside the canvas; selection both ways (§5); the focus bar row; the FOCUS view; the four states with `viewsWelcome`. Remove the title-line focus text and STRUCTURE's Back / Clear. | with the canvas open, click through the sidebar: the canvas stays in front, the card is centred, no code tab appears in its column · canvas closed: one preview tab, replaced by each click · click a card: the row is selected · focus three deep, resize the FOCUS view, click its middle row |
+| **R7. Menus** | The node menu tables ([`04-menus.md`](04-menus.md) §2) on both surfaces. `category` and short titles. `vnoc.revealInSidebar`, `vnoc.revealInExplorer`, `vnoc.openCanvasBeside`, `vnoc.expand*`, Show / Hide Code in Card, `vnoc.copyPath`. `vnoc.explorerMenu`, `editor/title/context`, `vnoc.extensions`, the tab-`Uri` rule in `nodeFor`. Right-click on a card selects. `menus.test.ts`. | right-click the same node on a row and on its card: the same entries in the same order, except the listed ones · right-click a background editor tab: the menu acts on that file |
+| **R8. Search and the full look** | `vnoc.search` (QuickPick) with `highlight` on the active item. Everything in [`06-how-it-looks.md`](06-how-it-looks.md): highlighted and cursor cards, reveal pulse, path edges, hidden-selection dots, minimap colours, selection strip, crumb hover, canvas keys; the cursor mark on rows (`cursorMark.ts`). `Ctrl/Cmd+Enter` and `Alt+←` bindings. Tooltips as Markdown. The checks in 06 §8. | find a node by name from the 🔍: arrowing through the list highlights cards without selecting · code and canvas side by side: move the cursor, the mark follows on both · 06 §8 ticked |
 
-Order that cannot be swapped: 2 before 3 (the session travels in typed messages), 3 before 5 and 6 (the canvas stores and the tree both draw the
-session), 6 before 7 (the row's `contextValue` flags come with the new rows). Step 1 can be done today, before anything else.
+Order that cannot be swapped: R2 before R3 (the session travels in typed messages), R3 before R5 and R6 (the canvas stores and the tree both draw the
+session), R6 before R7 (the row's `contextValue` flags come with the new rows). R1 can be done today, before anything else.
 
 ## 4. Tests
 
@@ -95,9 +95,12 @@ session), 6 before 7 (the row's `contextValue` flags come with the new rows). St
 
 ## 5. Where this sits in the 0.1 plan
 
-`02-mvp-and-releases.md` lists Steps 0–6 for 0.1. The code is around Step 3 (docs are shown, the doc panel and the docs tab exist). **Do this rework
-now, before Step 4 (files and folders) and Step 5 (Missing, Relink, Remove):** both add menu entries, rows and state, and would otherwise be written
-against the old state and then again.
+`02-mvp-and-releases.md` lists Steps 0–6 for 0.1. Steps 1–4 are built: Step 4, files and folders, is commit `dcdeed6` (docs on files and folders,
+`# FileID:`, `.vnoc-id`). **Do this rework now, before Step 5 (Missing, Relink, Remove):** Step 5 adds a view, menu entries and state, and would
+otherwise be written against the old state and then again.
+
+The rework must keep what Step 4 added: Add Doc on files and folders from every menu (`04-menus.md` §2, §3), and the "not on the opened folder
+itself" check in `vnoc.addDoc`.
 
 Nothing here changes what 0.1 contains, and nothing touches a committed file format (`.vnoc/`, IDs, markers), so all of it can still change in any
 later release.
@@ -126,12 +129,12 @@ What it would add or change:
 
 | Risk | How you would notice | What to do |
 |---|---|---|
-| The round trip makes card clicks feel late | the measurement in step 3 is above ~30 ms, or you feel it | draw the ring locally at once, let the session correct it (`01-state.md` §3) |
-| Cards snap back after dragging | step 3's proof fails | `keepEqual` is not applied, or `reduce` copies arrays it did not change |
+| The round trip makes card clicks feel late | the measurement in step R3 is above ~30 ms, or you feel it | draw the ring locally at once, let the session correct it (`01-state.md` §3) |
+| Cards snap back after dragging | step R3's proof fails | `keepEqual` is not applied, or `reduce` copies arrays it did not change |
 | The tree and the canvas chase each other's selection | a selection flickers, or the extension log shows a burst of `select` | `reduce` must return the same object for a `select` of the selected id; the test in §4 |
-| Arrow keys in the tree open files | step 6 | VS Code ran `item.command` on the key: dispatch from `onDidChangeSelection` only and drop the command for keyboard (keep it for the mouse) |
+| Arrow keys in the tree open files | step R6 | VS Code ran `item.command` on the key: dispatch from `onDidChangeSelection` only and drop the command for keyboard (keep it for the mouse) |
 | A user wants the old "click opens code" | they say so | `vnoc.sidebar.click: "code"` |
 | The saved session from before the rework has the old shape | a crash at activation after updating | read `vnoc.session.v1`, convert `vnoc.focus` once, drop what does not parse (`01-state.md` §6) |
-| The cursor decoration does not show on custom rows | step 8 | the description fallback (`02-sidebar.md` §7) |
+| The cursor decoration does not show on custom rows | step R8 | the description fallback (`02-sidebar.md` §7) |
 
 Next: [`06-how-it-looks.md`](06-how-it-looks.md)

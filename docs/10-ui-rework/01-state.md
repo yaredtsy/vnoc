@@ -168,7 +168,7 @@ What this deletes from today's code:
 | `selected`, `expanded`, `revealId`, `centerOn` `useState`s in `App.tsx` | they are in the session |
 
 > **🧩 VS Code note: is a round trip fast enough for a click?** A click on a card now goes webview → extension host → back before the ring moves.
-> Both hops are `postMessage` inside one machine; on a warm window that is a few milliseconds **[measure in step 3: log `performance.now()` at the
+> Both hops are `postMessage` inside one machine; on a warm window that is a few milliseconds **[measure in step R3: log `performance.now()` at the
 > click and when the session arrives]**. If it is ever felt, the webview may draw its own click at once and let the session correct it. Do not start
 > with that: it is a second writer, which is the bug we are removing.
 

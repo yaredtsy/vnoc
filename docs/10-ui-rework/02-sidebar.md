@@ -27,7 +27,7 @@ V-NOC
 ├─ STRUCTURE                                  🔍  ⟳  ⊟      ← Search · Refresh · Collapse All
 │  ⌖ Focus: app › checkout                       ←  ✕       ← the focus bar row (only while there is a focus)
 │  ▾ 📄 checkout                                             ← the tree starts at the focused node (built)
-│      ƒ checkout_order           📄 2        ⌖  ↗  ＋        ← hover buttons; the selected row is VS Code's own selection
+│      ƒ checkout_order           📄 2        ⌖  ↗  ＋        ← hover buttons (＋ on every row: files and folders take docs too)
 │      ƒ validate
 └─ MISSING (2)                                               ← shown only when something is missing
 ```
@@ -184,7 +184,7 @@ The node the text cursor is in gets a mark in the tree, not the selection (rule 
   for the cursor node, and fires a change for the old and the new one when `cursor` moves.
 
 **[check]** that a custom tree honours decorations for a custom scheme. If it does not, fall back to the description: `📄 2 · ●`. This is polish
-(step 8); nothing depends on it.
+(step R8); nothing depends on it.
 
 VS Code's Outline view has "Follow Cursor", which *selects* the row. That is deliberately not done here: in V-NOC the selection drives the doc panel
 and the menus, and it must not jump while you type.
