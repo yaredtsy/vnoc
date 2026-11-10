@@ -3,6 +3,8 @@ import * as vscode from "vscode";
 
 import type { TreeNode } from "@vnoc/shared/messages";
 
+import { nodeUri } from "./cursorMark";
+
 // The sidebar: the structure down to classes and functions. Calls are not here; they live on the canvas.
 // The core already sorts like the explorer (folders first, then names; defs in source order), so this file only draws what it is given.
 
@@ -17,7 +19,7 @@ export type SidebarState = { kind: "loading" | "ready" | "empty" } | { kind: "er
 const FOCUS_BAR: Row = { row: "focusBar" };
 
 export class StructureView implements vscode.TreeDataProvider<Row> {
-  private readonly changed = new vscode.EventEmitter<void>();
+  private readonly changed = new vscode.EventEmitter<Row | void>();
   readonly onDidChangeTreeData = this.changed.event;
   private readonly stateChanged = new vscode.EventEmitter<SidebarState>();
   readonly onDidChangeState = this.stateChanged.event;
@@ -30,6 +32,8 @@ export class StructureView implements vscode.TreeDataProvider<Row> {
   private focus: readonly string[] = [];
   /** One row object per node object, so `reveal` finds the row the tree was given (a newer structure has new node objects, and so new rows). */
   private readonly rows = new WeakMap<TreeNode, Row>();
+  /** the node the text cursor is in: file and folder rows say so in their description (class and function rows get a decoration, cursorMark.ts) */
+  private cursor: string | null = null;
 
   /** `load` asks the core; it is called again on every refresh. */
   constructor(private readonly load: () => Promise<TreeNode>) {}
@@ -56,6 +60,16 @@ export class StructureView implements vscode.TreeDataProvider<Row> {
   setFocus(stack: readonly string[]): void {
     this.focus = stack;
     this.changed.fire();
+  }
+
+  /** The cursor moved: the two rows that are or were the cursor node are drawn again. */
+  setCursor(id: string | null): void {
+    const before = this.cursor;
+    this.cursor = id;
+    for (const changed of [before, id]) {
+      const row = changed ? this.rowForId(changed) : undefined;
+      if (row) this.changed.fire(row);
+    }
   }
 
   /** The node this view holds for an id. (`reveal` wants the very object the view gave out, not an equal one from a newer structure.) */
@@ -110,9 +124,10 @@ export class StructureView implements vscode.TreeDataProvider<Row> {
       item.iconPath = node.kind === "folder" ? vscode.ThemeIcon.Folder : vscode.ThemeIcon.File;
     } else {
       item.iconPath = new vscode.ThemeIcon(DEF_ICON[node.kind]);
+      item.resourceUri = nodeUri(node.id); // so the cursor mark can decorate it; the icon stays the codicon (`iconPath` wins)
     }
-    if (node.syntax_error) item.description = "syntax error";
-    else if (node.docs > 0) item.description = `📄 ${node.docs}`;
+    const description = [node.syntax_error ? "syntax error" : node.docs > 0 ? `📄 ${node.docs}` : "", this.cursor === node.id && (node.kind === "file" || node.kind === "folder") ? "●" : ""].filter(Boolean).join(" · ");
+    if (description) item.description = description;
     if (node.link) item.tooltip = node.link === "marker" ? "Docs attached: the ID is in the code, so they follow it anywhere" : "Docs attached: found by path and name only, so they are lost if it moves";
     item.accessibilityInformation = { label: `${node.kind} ${node.name}${node.docs > 0 ? `, ${node.docs} docs` : ""}` };
     // a click (or Enter) runs `vnoc.open`: select, and show the node on the canvas if it is open, else open the code (commands.ts)

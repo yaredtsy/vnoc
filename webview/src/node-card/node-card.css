@@ -30,3 +30,17 @@
 
 .node-header .link { flex: none; font-size: 11px; opacity: .9; }
 .node-header .link.name { opacity: .4; filter: grayscale(1); }
+
+/* the other states of a card (docs/10-ui-rework/06-how-it-looks.md §2). Outside the card: the outline. Inside: the inset line. Header: the fill and the marks. */
+.node-card.highlighted:not(.selected) { outline: 2px dotted var(--card-highlight); outline-offset: 1px; }
+.node-card.cursor::after { content: ""; position: absolute; inset: 2px; border: 1px dashed var(--card-cursor); border-radius: 4px; pointer-events: none; } /* after .broken: the cursor wins */
+.node-card.revealed { animation: vnoc-pulse 0.5s ease-out 2; }
+@keyframes vnoc-pulse { 50% { outline: 2px solid var(--card-selected); outline-offset: 5px; } }
+@media (prefers-reduced-motion: reduce) { .node-card.revealed { animation: none; } }
+.node-header .cursor-mark { color: var(--card-cursor); }
+.node-header .focus-chip { flex: none; font-size: 10px; padding: 0 5px; border: 1px solid var(--card-selected); border-radius: 8px; }
+.node-header .hidden-dot { flex: none; font-size: 10px; }
+.node-header .hidden-dot.selected { color: var(--card-selected); }
+.node-header .hidden-dot.cursor { color: var(--card-cursor); }
+/* the edges down to the selection are thicker (Canvas.tsx marks them) */
+.react-flow__edge.on-path .react-flow__edge-path { stroke: var(--card-selected); stroke-width: 2px; }

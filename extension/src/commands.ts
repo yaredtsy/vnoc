@@ -8,6 +8,7 @@ import { addDoc } from "./addDoc";
 import type { Core } from "./core";
 import type { Panels } from "./panels";
 import type { SessionStore } from "./session";
+import { searchNodes } from "./search";
 import { type Row, absolute, selectionOf } from "./structureView";
 
 // Every `vnoc.*` command: what a sidebar row, a card's right-click menu, the Explorer and the editor's menu run. Each one turns its argument into a
@@ -74,6 +75,13 @@ export class Commands {
         await vscode.env.clipboard.writeText(node.range ? `${node.path}:${node.range.start.line + 1}` : node.path);
       }),
       on("vnoc.clearSelection", () => this.store.dispatch({ type: "select", id: null })),
+      on("vnoc.search", async () => searchNodes(this.core.tree ?? (await this.core.loadStructure()).root, this.store, (node) => this.open(node))),
+      // Ctrl/Cmd+Enter in the sidebar: focus the selected node
+      on("vnoc.focusSelection", () => {
+        const s = this.store.get();
+        const id = s.contexts[s.active].selected;
+        if (id) this.store.dispatch({ type: "focus", id });
+      }),
       on("vnoc.focus", async (arg, selected) => this.focusInSidebar((await this.nodeFor(arg, selected)).id)),
       on("vnoc.showOnCanvas", async (arg, selected) => this.showOnCanvas((await this.nodeFor(arg, selected)).id)),
       on("vnoc.focusBack", () => this.store.dispatch({ type: "focusBack" })),

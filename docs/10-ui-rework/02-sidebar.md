@@ -143,7 +143,7 @@ A click inside the sidebar never needs a focus step back: every row drawn is ins
 
 > **🧩 VS Code note: no double-click.** A native tree has no double-click event: the item's `command` runs on a click and on Enter. That is why focus
 > is the `⌖` button and `Ctrl/Cmd+Enter` (a key binding with `"when": "focusedView == vnoc.structure"`, running `vnoc.focusSelection`) and not a
-> double-click as on a card. **[check: `Ctrl+Enter` does not clash with a built-in list binding]**
+> double-click as on a card. **[not verified in step R8: `Ctrl+Enter` may clash with a built-in list binding; the binding is `when focusedView == vnoc.structure`]**
 
 ## 5. Selection, both ways
 
@@ -167,12 +167,12 @@ The native tree has no box of its own, so two ways in:
 
 | Way | Good for | How |
 |---|---|---|
-| **🔍 in the STRUCTURE title** (`vnoc.search`, also `Ctrl/Cmd+Alt+N` **[check the key]**) | finding any node in the project | a `QuickPick` over **every** node: name, then `path:line` as description, kind icon. `matchOnDescription: true`, so typing `billing/` finds by path. Moving through the list **highlights** the active item on the canvas without
+| **🔍 in the STRUCTURE title** (`vnoc.search`, also `Ctrl/Cmd+Alt+N`; **not verified**: built in step R8 without a way to read VS Code's default key table here, so look for a clash in *Keyboard Shortcuts*) | finding any node in the project | a `QuickPick` over **every** node: name, then `path:line` as description, kind icon. `matchOnDescription: true`, so typing `billing/` finds by path. Moving through the list **highlights** the active item on the canvas without
 selecting it (`onDidChangeActive` → `highlight`, [`06-how-it-looks.md`](06-how-it-looks.md) §6). Picking one: `reveal` with `canvas` per the click rule, then the tree reveals and selects it. If the focus hides it, the focus steps back (the `reveal` rule). |
 | **type in the tree** (VS Code's find box, `Ctrl/Cmd+Alt+F`) | filtering what is open | free; it only searches rows that are loaded (open), so it is not a project search |
 
 The QuickPick is built from the structure the extension already holds: no request to the core, and it works the same on a big project. 10,000 items
-are fine for a QuickPick **[measure on a large repo]**.
+are expected to be fine for a QuickPick (**not measured** in step R8: there is no large repository here).
 
 ## 7. The cursor node
 
@@ -183,8 +183,7 @@ The node the text cursor is in gets a mark in the tree, not the selection (rule 
 - A `FileDecorationProvider` for that scheme returns `{ badge: "●", tooltip: "the cursor is here", color: new ThemeColor("editorCursor.foreground") }`
   for the cursor node, and fires a change for the old and the new one when `cursor` moves.
 
-**[check]** that a custom tree honours decorations for a custom scheme. If it does not, fall back to the description: `📄 2 · ●`. This is polish
-(step R8); nothing depends on it.
+**[check, not verified visually in step R8]** that a custom tree honours decorations for a custom scheme: the provider and the `vnoc-node:` URIs are built (`cursorMark.ts`) and a real-window test cannot see a badge. File and folder rows already use the description (`📄 2 · ●`), which is the fallback; if the badge does not show on class and function rows, use the same description there.
 
 VS Code's Outline view has "Follow Cursor", which *selects* the row. That is deliberately not done here: in V-NOC the selection drives the doc panel
 and the menus, and it must not jump while you type.

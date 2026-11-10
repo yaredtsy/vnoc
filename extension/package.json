@@ -178,6 +178,17 @@
         "command": "vnoc.clearSelection",
         "title": "Clear Selection",
         "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.search",
+        "title": "Search\u2026",
+        "category": "V-NOC",
+        "icon": "$(search)"
+      },
+      {
+        "command": "vnoc.focusSelection",
+        "title": "Focus Selection",
+        "category": "V-NOC"
       }
     ],
     "menus": {
@@ -254,6 +265,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "vnoc.search",
+          "when": "view == vnoc.structure",
+          "group": "navigation@0"
+        },
         {
           "command": "vnoc.refreshStructure",
           "when": "view == vnoc.structure",
@@ -358,6 +374,10 @@
         {
           "command": "vnoc.clearSelection",
           "when": "vnoc.hasSelection"
+        },
+        {
+          "command": "vnoc.focusSelection",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -593,6 +613,24 @@
         "view": "vnoc.structure",
         "when": "workspaceFolderCount != 0 && vnoc.sidebarState == error",
         "contents": "V-NOC could not read this project.\n[Try Again](command:vnoc.refreshStructure)\n[Show Log](command:vnoc.showLog)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "vnoc.search",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n"
+      },
+      {
+        "command": "vnoc.focusBack",
+        "key": "alt+left",
+        "when": "vnoc.focused && (focusedView == vnoc.structure || focusedView == vnoc.focusStack)"
+      },
+      {
+        "command": "vnoc.focusSelection",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "focusedView == vnoc.structure"
       }
     ]
   },

@@ -87,6 +87,20 @@ suite("the sidebar", () => {
     assert.strictEqual(api.session().contexts.main.selected, first.id, "the arrow keys moved the selection (the plan assumed they would; see 02-sidebar.md §4)");
   });
 
+  test("moving through the search list points at nodes without selecting; closing it clears the pointer", async () => {
+    await api.selectInTree(first.id);
+    await sleep(600);
+    const selected = api.session().contexts.main.selected;
+    await vscode.commands.executeCommand("vnoc.search");
+    await until("the list's first item to be pointed at", () => api.session().highlight !== null);
+    await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
+    await sleep(400);
+    assert.notStrictEqual(api.session().highlight, null);
+    assert.strictEqual(api.session().contexts.main.selected, selected, "a highlight never changes the selection");
+    await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+    await until("the pointer to clear", () => api.session().highlight === null);
+  });
+
   test("a selection from the tree reaches the session once; the tree and the session do not chase each other", async () => {
     await closeCanvas();
     await api.selectInTree(first.id); // a known starting point

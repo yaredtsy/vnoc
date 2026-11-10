@@ -6,7 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 import { NodeCard } from "../node-card/NodeCard.tsx";
 import { on } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
-import { setCodeOpen } from "../state/view.ts";
+import { useData } from "../state/data.ts";
+import { pulse, setCodeOpen, useView } from "../state/view.ts";
+import { holderOf, pathEdges } from "./marks.ts";
 import type { Layout, Placed } from "./layout.ts";
 
 const nodeTypes = { card: NodeCard };
@@ -25,6 +27,7 @@ function CenterOn({ laid }: { laid: Layout }) {
     const timer = setTimeout(() => {
       void fitView({ nodes: [{ id: target.id }], duration: 300, maxZoom: 1.2 });
       dispatch({ type: "revealed", n: target.n });
+      pulse(target.id); // the card pulses for a second so the eye finds it
     }, 60);
     return () => clearTimeout(timer);
   }, [fitView, target, laid]);
@@ -50,6 +53,25 @@ const onNodeClick = (_: unknown, node: { id: string }) => dispatch({ type: "sele
 const onNodeDoubleClick = (_: unknown, node: { id: string }) => dispatch({ type: "focus", id: node.id });
 
 export function Canvas({ laid }: { laid: Layout }) {
+  const root = useData((s) => s.structure?.root ?? null);
+  const selected = useSession((s) => s.contexts[s.active].selected);
+  const cursor = useSession((s) => s.cursor);
+
+  // The edges from the root of what is drawn down to the selection are thicker: you see where it sits in the tree at a glance.
+  const drawnRoot = laid.nodes[0]?.id;
+  const edges = useMemo(() => {
+    const onPath = root && drawnRoot ? pathEdges(root, drawnRoot, selected) : new Set<string>();
+    return onPath.size === 0 ? laid.edges : laid.edges.map((e) => (onPath.has(e.id) ? { ...e, className: "on-path" } : e));
+  }, [laid, root, drawnRoot, selected]);
+
+  // A closed card that holds the selection or the cursor shows a dot (the cards read these two ids from the view store).
+  const drawnIds = useMemo(() => new Set(laid.nodes.map((p) => p.id)), [laid]);
+  const hidesSelected = root ? holderOf(root, drawnIds, selected) : null;
+  const hidesCursor = root ? holderOf(root, drawnIds, cursor) : null;
+  useEffect(() => {
+    useView.setState({ hidesSelected, hidesCursor });
+  }, [hidesSelected, hidesCursor]);
+
   // The layout decides where nodes start; dragging moves them in this state. A new layout (expand, collapse, refresh) puts them back in their rows.
   const [nodes, setNodes, onNodesChange] = useNodesState(toFlow(laid)); // starting with the nodes (not []) lets fitView frame them on first paint
   // Adjusted during the render, not in an effect (React's way to update state from a changed prop: no frame drawn with the old cards).
@@ -62,7 +84,7 @@ export function Canvas({ laid }: { laid: Layout }) {
   return (
     <ReactFlow
       nodes={nodes}
-      edges={laid.edges}
+      edges={edges}
       nodeTypes={nodeTypes}
       onNodesChange={onNodesChange}
       onNodeClick={onNodeClick}
@@ -77,7 +99,7 @@ export function Canvas({ laid }: { laid: Layout }) {
     >
       <Background />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable />
+      <MiniMap pannable zoomable nodeColor={(node) => (node.id === selected ? "var(--card-selected)" : node.id === cursor ? "var(--card-cursor)" : "var(--muted-foreground)")} />
       <CenterOn laid={laid} />
       <ViewCommands />
     </ReactFlow>

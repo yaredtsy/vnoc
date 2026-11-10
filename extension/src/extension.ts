@@ -4,6 +4,7 @@ import type { Notes } from "@vnoc/shared/messages";
 import type { ContextState } from "@vnoc/shared/session.ts";
 import { Commands } from "./commands";
 import { Core, watchFiles } from "./core";
+import { CursorMark } from "./cursorMark";
 import { Docs } from "./docs";
 import { FocusView } from "./focusView";
 import { CANVAS, DOCS, Panels } from "./panels";
@@ -25,6 +26,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   let sidebar: StructureView;
   let sidebarView: vscode.TreeView<Row>;
   const focusView = new FocusView();
+  const cursorMark = new CursorMark();
   let commands: Commands;
 
   /** The core has a new index: the sidebar redraws, and every open tab asks for the new structure. */
@@ -78,6 +80,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.window.registerWebviewPanelSerializer(DOCS, { deserializeWebviewPanel: async (panel) => panels.restore("docs", panel) }),
     sidebarView,
     focusTree,
+    vscode.window.registerFileDecorationProvider(cursorMark),
     // the sidebar's four states: loading and error say so in the view, empty and error also show the welcome text (package.json `viewsWelcome`)
     sidebar.onDidChangeState((state) => {
       sidebarView.message = state.kind === "loading" ? "Reading the code…" : state.kind === "error" ? state.message : undefined;
@@ -97,6 +100,10 @@ export function activate(ctx: vscode.ExtensionContext) {
       panels.emit("session", next);
       if (prev.contexts[prev.active].focus !== next.contexts[next.active].focus) showFocusInSidebar();
       if (prev.contexts[prev.active].selected !== next.contexts[next.active].selected) revealSelection();
+      if (prev.cursor !== next.cursor) {
+        cursorMark.update(next.cursor);
+        sidebar.setCursor(next.cursor);
+      }
     }),
     // what the session points at may be gone (a focused node you deleted: you are one step back, not looking at nothing)
     c.onStructure(() => {

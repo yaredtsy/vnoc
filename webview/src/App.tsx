@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button.tsx";
 import { Toggle } from "@/components/ui/toggle.tsx";
 import { findNode } from "@vnoc/shared/tree.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
+import { canvasKey } from "./canvas/keys.ts";
+import { SelectionStrip } from "./canvas/SelectionStrip.tsx";
 import { layout } from "./canvas/layout.ts";
 import { DocPanel } from "./docs/DocPanel.tsx";
 import { post, request } from "./host.ts";
 import { refresh, useData } from "./state/data.ts";
 import { dispatch, useSession } from "./state/session.ts";
-import { setDocsOpen, useView } from "./state/view.ts";
+import { setDocsOpen, setHover, useView } from "./state/view.ts";
 
 // The canvas page: the bar, the crumbs (the focus), the cards, the doc panel. It reads the stores and draws; nothing here keeps state of its own.
 
@@ -35,16 +37,25 @@ export function App() {
   // zoomed in: the focused node is the root of what is drawn (and the root of a drawing is always open)
   const laid = useMemo(() => (root ? layout(top ?? root, expanded, codeOpen) : null), [root, expanded, top, codeOpen]);
   // the doc panel shows the selected card, else the focused node
-  const docNode = root ? (findNode(root, selected ?? "") ?? top) : null;
+  const selectedNode = root && selected ? findNode(root, selected) ?? null : null;
+  const docNode = selectedNode ?? top;
 
-  // Alt+← goes back one focus, like the ← button
+  // The keys on the canvas (06-how-it-looks.md §7). Alt+← goes back one focus, like the ← button; both stay out of a text field and a code card
+  // (Option+← is "word left" on macOS), and the other keys leave a focused button alone (Space and Enter are the button's).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.altKey && e.key === "ArrowLeft") dispatch({ type: "focusBack" });
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("input, textarea, select, [contenteditable], .monaco-editor")) return;
+      if (e.altKey && e.key === "ArrowLeft") return void dispatch({ type: "focusBack" });
+      if (e.altKey || e.ctrlKey || e.metaKey || target?.closest("button, a")) return;
+      const intent = laid && root ? canvasKey(e.key, laid, root, selected) : null;
+      if (!intent) return;
+      e.preventDefault();
+      dispatch(intent);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [laid, root, selected]);
 
   // Tell the host what was drawn: the extension's test suite uses it to prove the whole chain ran (bundle, request, core, driver, layout).
   useEffect(() => {
@@ -83,13 +94,14 @@ export function App() {
           {crumbs.map((c, i) => (
             <span key={c.id}>
               <IconChevronRight className="mx-1 inline size-3 opacity-50" />
-              <Button variant="ghost" size="xs" className="disabled:opacity-100 disabled:font-semibold" disabled={i === crumbs.length - 1} onClick={() => dispatch({ type: "focusJump", depth: i + 1 })}>
+              <Button variant="ghost" size="xs" className="disabled:opacity-100 disabled:font-semibold" disabled={i === crumbs.length - 1} onMouseEnter={() => setHover(c.id)} onMouseLeave={() => setHover(null)} onClick={() => dispatch({ type: "focusJump", depth: i + 1 })}>
                 {c.node?.name ?? "?"}
               </Button>
             </span>
           ))}
         </nav>
       )}
+      {selectedNode && <SelectionStrip node={selectedNode} />}
       <div className="main" data-vscode-context={PANE_CONTEXT}>
         {laid && <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} />}
         {docsOpen && (

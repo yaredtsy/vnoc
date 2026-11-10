@@ -3,12 +3,16 @@ import { IconChevronRight, IconCode, IconFileText, IconLink } from "@tabler/icon
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
 import type { Placed } from "../canvas/layout.ts";
+import { useView } from "../state/view.ts";
 import { KINDS } from "./kinds.ts";
 import { useNodeActions } from "./useNodeActions.ts";
 
-export function NodeHeader({ node, contextId }: { node: Placed; contextId: string }) {
+export function NodeHeader({ node, contextId, cursor, focusRoot }: { node: Placed; contextId: string; cursor: boolean; focusRoot: boolean }) {
   const { toggle, toggleCode, showDocs } = useNodeActions(node.id, contextId);
   const kind = KINDS[node.kind];
+  // a closed card that holds the selection or the cursor says so: after a collapse neither is lost
+  const hidesSelected = useView((v) => v.hidesSelected === node.id);
+  const hidesCursor = useView((v) => v.hidesCursor === node.id);
   return (
     <div className="node-header">
       {node.childCount > 0 ? (
@@ -27,8 +31,16 @@ export function NodeHeader({ node, contextId }: { node: Placed; contextId: strin
         <span className="size-[18px] flex-none" />
       )}
       <span className="icon">{kind.icon}</span>
+      {cursor && (
+        <span className="cursor-mark" title="the cursor is here" aria-hidden>
+          ▌
+        </span>
+      )}
       <span className="label">{kind.title(node.name)}</span>
+      {focusRoot && <span className="focus-chip" title="the canvas is focused on this node">⌖ focus</span>}
       {node.collapsed && <span className="badge">+{node.childCount}</span>}
+      {hidesSelected && <span className="hidden-dot selected" title="the selected node is inside">●</span>}
+      {hidesCursor && <span className="hidden-dot cursor" title="the cursor is inside">○</span>}
       {node.link && (
         <span className={`link ${node.link}`} title={node.link === "marker" ? "The ID is in the code: the docs follow it anywhere" : "Found by its stored path and name: the docs are lost if it moves"}>
           <IconLink className="size-3" />
