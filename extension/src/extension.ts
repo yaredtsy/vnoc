@@ -99,7 +99,9 @@ async function loadStructure(): Promise<Structure> {
 /** The "Add doc" flow for the node with this id (a sidebar item, or a card on the canvas). Resolves to whether a doc was added. */
 async function addDocTo(key: string, existingDocs: number): Promise<boolean> {
   const root = gitRoot ?? (await loadStructure()).git_root;
-  return addDoc(request, root, key, existingDocs);
+  const node = findNode(tree!, key);
+  if (!node || node.id === "/") throw new Error("That node is not in the structure any more.");
+  return addDoc(request, root, node, existingDocs);
 }
 
 let sidebar: StructureView;
@@ -304,7 +306,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.showDocs", command(showDocsBeside)),
     vscode.commands.registerCommand("vnoc.addDoc", command(async (arg, selected) => {
       const node = await nodeFor(arg, selected);
-      if (node.kind !== "function" && node.kind !== "class") throw new Error("Docs go on functions and classes for now: put the cursor inside one.");
+      if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");
       await addDocTo(node.id, node.docs);
     })),
     followCursor(),

@@ -115,21 +115,24 @@ impl Request for ProjectInfo {
     const METHOD: &'static str = "vnoc/projectInfo";
 }
 
-/// `vnoc/attach`: attach a new doc to a function or class (`04-storage/03-writing-safely.md` §3).
+/// `vnoc/attach`: attach a new doc to a function, class, file or folder (`04-storage/03-writing-safely.md` §3).
 ///
-/// The editor sends the document as it is now (`version` and `text`, unsaved changes included): the ID line is planned on that text.
-/// The core asks the editor to apply the edit (`workspace/applyEdit`, refused if the document changed meanwhile), then writes `.vnoc/`.
+/// For a function, class or file the editor sends the document as it is now (`version` and `text`, unsaved changes included): the ID
+/// is planned on that text. The core asks the editor to apply the edit (`workspace/applyEdit`, refused if the document changed
+/// meanwhile), then writes `.vnoc/`. A folder has no document: its ID goes into a `.vnoc-id` file, which the core writes itself.
 pub enum Attach {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AttachParams {
-    /// the node's `id` from `vnoc/structure`: `path::qualname` or `path::qualname#n`
+    /// the node's `id` from `vnoc/structure`: `path::qualname` or `path::qualname#n` for a function or class, the repo path for a file or folder
     pub key: String,
     pub title: String,
     /// the answer to the once-per-project question: write an ID into the code? Only used for the first attach in a project.
     #[serde(default)]
     pub markers: Option<bool>,
-    pub document: Document,
+    /// required for a function, class or file; a folder has none
+    #[serde(default)]
+    pub document: Option<Document>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

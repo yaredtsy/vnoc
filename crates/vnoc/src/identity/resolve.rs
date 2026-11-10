@@ -30,17 +30,29 @@ pub struct Markers {
 }
 
 impl Markers {
-    pub fn read(files: &BTreeMap<RepoPath, Vec<Def>>) -> Markers {
-        let mut markers = Markers::default();
+    /// `file_ids` are the texts of the `# FileID:` comments, `folder_ids` the parsed `.vnoc-id` files. A file or a folder is a
+    /// location with an empty qualname. An ID that is not a V-NOC ID (an old UUID) is not ours: it is neither a marker nor a block.
+    pub fn read(files: &BTreeMap<RepoPath, Vec<Def>>, file_ids: &BTreeMap<RepoPath, String>, folder_ids: &BTreeMap<RepoPath, NodeId>) -> Markers {
+        let whole = |path: &RepoPath| LocationKey::new(path.clone(), "", 1).expect("occurrences are 1-based");
+        let mut found: Vec<(LocationKey, NodeId)> = Vec::new();
         for (path, defs) in files {
+            if let Some(id) = file_ids.get(path).and_then(|text| NodeId::parse(text).ok()) {
+                found.push((whole(path), id));
+            }
             let which = occurrences(defs.iter().map(|d| d.qualname.as_str()));
             for (def, occurrence) in defs.iter().zip(which) {
-                // an ID that is not a V-NOC ID (an old UUID) is not ours: it is neither a marker nor a block
                 let Some(id) = def.id.as_deref().and_then(|text| NodeId::parse(text).ok()) else { continue };
-                let location = LocationKey::new(path.clone(), def.qualname.clone(), occurrence).expect("occurrences are 1-based");
-                markers.by_id.entry(id).or_default().push(location.clone());
-                markers.at.insert(location, id);
+                found.push((LocationKey::new(path.clone(), def.qualname.clone(), occurrence).expect("occurrences are 1-based"), id));
             }
+        }
+        found.extend(folder_ids.iter().map(|(path, id)| (whole(path), *id)));
+        // path order; the sort is stable, so inside one file the file's own marker comes first, then the defs in line order
+        found.sort_by(|a, b| a.0.path().cmp(b.0.path()));
+
+        let mut markers = Markers::default();
+        for (location, id) in found {
+            markers.by_id.entry(id).or_default().push(location.clone());
+            markers.at.insert(location, id);
         }
         markers
     }
@@ -79,13 +91,17 @@ mod tests {
         Def { qualname: qualname.into(), name: qualname.into(), kind: DefKind::Function, parent: String::new(), parent_kind: None, range: Range { start: p, end: p }, params: vec![], id: marker.map(|m| m.to_string()), syntax_error: false }
     }
 
+    fn read(files: &BTreeMap<RepoPath, Vec<Def>>) -> Markers {
+        Markers::read(files, &BTreeMap::new(), &BTreeMap::new())
+    }
+
     /// The code: `a.py` has `f` (marked 1) and `g` (unmarked); `b.py` has `f` marked 2 and a copy of 1's marker on `copy`.
     fn code() -> (BTreeMap<RepoPath, Vec<Def>>, Markers) {
         let files: BTreeMap<_, _> = [("a.py", vec![def("f", Some(id(1))), def("g", None)]), ("b.py", vec![def("f", Some(id(2))), def("copy", Some(id(1)))])]
             .into_iter()
             .map(|(p, d)| (RepoPath::new(p).unwrap(), d))
             .collect();
-        let markers = Markers::read(&files);
+        let markers = read(&files);
         (files, markers)
     }
 
@@ -131,8 +147,35 @@ mod tests {
     fn an_old_uuid_is_not_a_marker() {
         let mut files = BTreeMap::new();
         files.insert(RepoPath::new("a.py").unwrap(), vec![Def { id: Some("e4efd15c-958e-47c5-abb3-7ffd7c7920da".into()), ..def("main", None) }]);
-        let markers = Markers::read(&files);
+        let markers = read(&files);
         // the anchor still finds the node: an old UUID there does not block it
         assert_eq!(resolve(&id(3), Some(&at("a.py", "main")), &markers, exists(&files)), Resolved::Found { at: at("a.py", "main"), by: FoundBy::Anchor });
+    }
+
+    #[test]
+    fn a_file_and_a_folder_are_found_by_their_markers_wherever_they_went() {
+        let files: BTreeMap<_, _> = [(RepoPath::new("new/place.py").unwrap(), vec![def("f", None)])].into_iter().collect();
+        let file_ids = BTreeMap::from([(RepoPath::new("new/place.py").unwrap(), id(1).to_string())]);
+        let folder_ids = BTreeMap::from([(RepoPath::new("new").unwrap(), id(2))]);
+        let markers = Markers::read(&files, &file_ids, &folder_ids);
+        let exists = |_: &LocationKey| false;
+        assert_eq!(resolve(&id(1), Some(&at("old/place.py", "")), &markers, exists), Resolved::Found { at: at("new/place.py", ""), by: FoundBy::Marker });
+        assert_eq!(resolve(&id(2), Some(&at("old", "")), &markers, exists), Resolved::Found { at: at("new", ""), by: FoundBy::Marker });
+    }
+
+    #[test]
+    fn a_file_without_a_marker_is_found_by_its_path_while_it_stays() {
+        let files = BTreeMap::new();
+        let markers = read(&files);
+        assert_eq!(resolve(&id(1), Some(&at("a.py", "")), &markers, |l| l.path().as_str() == "a.py"), Resolved::Found { at: at("a.py", ""), by: FoundBy::Anchor });
+        assert_eq!(resolve(&id(1), Some(&at("a.py", "")), &markers, |_| false), Resolved::Missing);
+    }
+
+    #[test]
+    fn a_copied_folder_marker_leaves_the_node_at_its_anchor() {
+        let folder_ids = BTreeMap::from([(RepoPath::new("billing").unwrap(), id(1)), (RepoPath::new("billing2").unwrap(), id(1))]);
+        let markers = Markers::read(&BTreeMap::new(), &BTreeMap::new(), &folder_ids);
+        assert_eq!(resolve(&id(1), Some(&at("billing2", "")), &markers, |_| true), Resolved::Found { at: at("billing2", ""), by: FoundBy::Marker });
+        assert_eq!(resolve(&id(1), Some(&at("gone", "")), &markers, |_| true), Resolved::Found { at: at("billing", ""), by: FoundBy::Marker }, "else the first by path");
     }
 }

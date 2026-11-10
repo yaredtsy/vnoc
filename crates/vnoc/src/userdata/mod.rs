@@ -3,7 +3,7 @@
 //!
 //! This module does not know the index, the driver or the editor, so it is tested with nothing but a temp folder.
 
-mod atomic;
+pub(crate) mod atomic;
 mod layout;
 mod read;
 

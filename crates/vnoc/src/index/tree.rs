@@ -10,7 +10,6 @@ use vnoc_domain::{LocationKey, RepoPath, occurrences};
 use vnoc_driver_protocol::{Def, DefKind, Range};
 
 use super::Attached;
-use crate::identity::FoundBy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -134,8 +133,26 @@ pub fn build(root_name: &str, prefix: &str, files: &BTreeMap<RepoPath, Vec<Def>>
         let parent = descend(&mut root, prefix, folder);
         parent.children.push(file_node(repo_path, shown, name, defs, attached));
     }
+    decorate_folders(&mut root, attached);
     root.sort();
     root
+}
+
+/// A folder's docs: found by its `.vnoc-id`, or by its path. The root (the opened folder) has none.
+fn decorate_folders(node: &mut Node, attached: &HashMap<String, Attached>) {
+    for child in &mut node.children {
+        if child.kind == Kind::Folder {
+            if let Some(found) = RepoPath::new(child.id.clone()).ok().and_then(|path| attached.get(&whole_key(&path))) {
+                (child.node_id, child.docs, child.link) = found.shown();
+            }
+            decorate_folders(child, attached);
+        }
+    }
+}
+
+/// How a file or a folder is called in the `attached` map: a location with no name.
+fn whole_key(path: &RepoPath) -> String {
+    LocationKey::new(path.clone(), "", 1).expect("occurrences are 1-based").to_string()
 }
 
 /// The folder node for `dir` (`"a/b"`, below the opened folder), created on the way.
@@ -162,6 +179,9 @@ fn descend<'a>(root: &'a mut Node, prefix: &str, dir: &str) -> &'a mut Node {
 
 fn file_node(path: &RepoPath, shown: &str, name: String, defs: &[Def], attached: &HashMap<String, Attached>) -> Node {
     let mut file = Node { id: path.to_string(), kind: Kind::File, name, path: shown.to_string(), qualname: None, range: None, syntax_error: defs.iter().any(|d| d.syntax_error), node_id: None, docs: 0, link: None, children: vec![] };
+    if let Some(found) = attached.get(&whole_key(path)) {
+        (file.node_id, file.docs, file.link) = found.shown();
+    }
     // Defs come flat, in source order, parents before children. A def's parent is the NEAREST preceding def with the parent's
     // qualname still open, which stays right when a name is defined twice (two `top`s): pop until the top of the stack is the parent.
     let occ = occurrences(defs.iter().map(|d| d.qualname.as_str()));
@@ -175,10 +195,11 @@ fn file_node(path: &RepoPath, shown: &str, name: String, defs: &[Def], attached:
         }
         let key = LocationKey::new(path.clone(), def.qualname.clone(), occurrence).expect("occurrences are 1-based").to_string();
         let found = attached.get(&key);
+        let (node_id, docs, link) = found.map_or((None, 0, None), Attached::shown);
         let node = Node {
-            node_id: found.map(|a| a.id.to_string()),
-            docs: found.map_or(0, |a| a.docs),
-            link: found.map(|a| if a.by == FoundBy::Marker { Link::Marker } else { Link::Name }),
+            node_id,
+            docs,
+            link,
             id: key,
             kind: if def.kind == DefKind::Class { Kind::Class } else { Kind::Function },
             name: def.name.clone(),
@@ -204,6 +225,7 @@ fn file_node(path: &RepoPath, shown: &str, name: String, defs: &[Def], attached:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::FoundBy;
     use vnoc_driver_protocol::Position;
 
     fn def(qualname: &str, parent: &str, kind: DefKind) -> Def {

@@ -141,7 +141,7 @@ export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extr
             <p>
               No docs on <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{node.name}</code> yet.
             </p>
-            {(node.kind === "function" || node.kind === "class") && (
+            {node.id !== "/" && (
               <Button variant="outline" size="sm" onClick={() => onAddDoc(node.id)}>
                 <IconPlus /> Write the first doc
               </Button>

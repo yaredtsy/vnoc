@@ -107,7 +107,7 @@ pub fn outline_parsed(text: &str, parsed: &Parsed<ModModule>) -> Outlined {
     let mut c = Collector { lines: &lines, ids: &ids, errors: &errors, stack: vec![], out: vec![], ranges: vec![] };
     walk_body(&mut c, &parsed.syntax().body);
     let syntax_errors = parsed.errors().iter().map(|e| SyntaxError { range: lines.range(e.location), message: e.error.to_string() }).collect();
-    Outlined { result: OutlineResult { defs: c.out, syntax_errors }, ranges: c.ranges }
+    Outlined { result: OutlineResult { defs: c.out, file_id: crate::file_id::read(text), syntax_errors }, ranges: c.ranges }
 }
 
 pub fn outline(text: &str) -> OutlineResult {

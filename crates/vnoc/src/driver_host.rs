@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use serde::de::DeserializeOwned;
-use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, OutlineResult, PROTOCOL_VERSION, PlanIdsParams, PlanIdsResult, method};
+use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, OutlineResult, PROTOCOL_VERSION, PlanFileIdParams, PlanFileIdResult, PlanIdsParams, PlanIdsResult, method};
 
 /// How long the driver may take to answer one request before it is treated as broken (review C4).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -93,6 +93,13 @@ impl DriverClient {
         self.call(method::PLAN_IDS, params).await
     }
 
+    pub async fn plan_file_id(&self, params: &PlanFileIdParams) -> Result<PlanFileIdResult, HostError> {
+        if !self.info.capabilities.get("ids.file").copied().unwrap_or(false) {
+            return Err(HostError::MissingCapability("ids.file"));
+        }
+        self.call(method::PLAN_FILE_ID, params).await
+    }
+
     /// One request, answered within `REQUEST_TIMEOUT`.
     async fn call<R: DeserializeOwned>(&self, method: &'static str, params: &impl Serialize) -> Result<R, HostError> {
         let mut io = self.io.lock().await;
@@ -121,6 +128,11 @@ impl DriverHost {
     /// Where the `ID:` lines go in `params.text` (the editor's buffer).
     pub async fn plan_ids(&self, params: &PlanIdsParams) -> Result<PlanIdsResult, HostError> {
         self.with_client(|client| async move { client.plan_ids(params).await }).await
+    }
+
+    /// Where the `# FileID:` comment goes in `params.text` (the editor's buffer).
+    pub async fn plan_file_id(&self, params: &PlanFileIdParams) -> Result<PlanFileIdResult, HostError> {
+        self.with_client(|client| async move { client.plan_file_id(params).await }).await
     }
 
     /// Runs `request` on the driver. An error from the driver about this request is returned as is; anything else means the

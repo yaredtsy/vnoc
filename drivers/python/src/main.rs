@@ -4,6 +4,7 @@
 //! logger, and the test harness that fails a run on any byte outside a frame keep it that way.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+mod file_id;
 mod outline;
 mod plan_ids;
 mod positions;
@@ -15,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::anyhow;
 use lsp_server::{Connection, ErrorCode, Message, Request, RequestId, Response};
 use serde_json::Value;
-use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanIdsParams, method};
+use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanFileIdParams, PlanIdsParams, method};
 
 fn main() -> anyhow::Result<()> {
     // Filtered by default: the type checker underneath traces every query, which is tens of MB per run.
@@ -78,7 +79,7 @@ fn handshake(conn: &Connection) -> anyhow::Result<()> {
         name: "python".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         // present even when small: stock LSP clients refuse a reply without it. Optional methods are announced here.
-        capabilities: [("outline", true), ("ids.plan", true), ("callTree", false), ("environmentInputs", false)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        capabilities: [("outline", true), ("ids.plan", true), ("ids.file", true), ("callTree", false), ("environmentInputs", false)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
     };
     conn.initialize_finish(id, serde_json::to_value(reply)?)?;
     Ok(())
@@ -92,6 +93,7 @@ fn respond(req: Request, cancel: &AtomicBool) -> Response {
     let result = match req.method.as_str() {
         method::OUTLINE => outline_request(&req.params),
         method::PLAN_IDS => plan_ids_request(req.params.clone()),
+        method::PLAN_FILE_ID => plan_file_id_request(req.params.clone()),
         other => return Response::new_err(req.id, ErrorCode::MethodNotFound as i32, format!("unknown method {other}")),
     };
     // A running analysis cannot be interrupted (pylspt has no cancel flag, VS-D69): its answer is dropped.
@@ -131,4 +133,9 @@ fn outline_request(params: &Value) -> Result<Value, Failure> {
 fn plan_ids_request(params: Value) -> Result<Value, Failure> {
     let params: PlanIdsParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
     serde_json::to_value(plan_ids::plan(params)).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
+}
+
+fn plan_file_id_request(params: Value) -> Result<Value, Failure> {
+    let params: PlanFileIdParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
+    serde_json::to_value(file_id::plan(params)).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
 }

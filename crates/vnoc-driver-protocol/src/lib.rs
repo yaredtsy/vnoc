@@ -16,6 +16,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub mod method {
     pub const OUTLINE: &str = "vnoc/outline";
     pub const PLAN_IDS: &str = "vnoc/planIds";
+    pub const PLAN_FILE_ID: &str = "vnoc/planFileId";
     pub const CALL_TREE: &str = "vnoc/callTree";
     pub const EXPAND: &str = "vnoc/expand";
     pub const ENVIRONMENT_INPUTS: &str = "vnoc/environmentInputs";
@@ -97,6 +98,9 @@ pub struct SyntaxError {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OutlineResult {
     pub defs: Vec<Def>,
+    /// the ID text found in the file's `# FileID:` comment, as written (the core classifies it)
+    #[serde(default)]
+    pub file_id: Option<String>,
     #[serde(default)]
     pub syntax_errors: Vec<SyntaxError>,
 }
@@ -158,5 +162,29 @@ pub struct PlanIdsResult {
     /// asked for, but no such def in this text
     pub unmatched: Vec<PlanId>,
     /// blake3 of the new text, lowercase hex: "this is exactly what I predicted"
+    pub text_hash: String,
+}
+
+/// `vnoc/planFileId` (capability `ids.file`): plan the edit that puts a `FileID` comment at the top of `text`, the editor's buffer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanFileIdParams {
+    pub text: String,
+    /// echoed back; the editor drops a plan made for an older version of the document
+    pub version: i64,
+    /// the ID text to write
+    pub id: String,
+}
+
+/// One edit (or none, when the file already has a `FileID`), in the coordinates of the text the driver was given.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlanFileIdResult {
+    pub version: i64,
+    pub edits: Vec<TextEdit>,
+    /// what was inserted; `span` is in the coordinates of the **new** text
+    pub written: Option<Written>,
+    /// why nothing was planned (the file already has a `FileID`)
+    #[serde(default)]
+    pub skipped: Option<String>,
+    /// blake3 of the new text, lowercase hex
     pub text_hash: String,
 }

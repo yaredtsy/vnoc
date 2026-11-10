@@ -71,7 +71,16 @@ V-NOC
 │   │
 │   └── UI ──────────────────────────────────────── 07-ui/
 │       ├── state                     who owns what, how it flows
-│       └── design                    sidebar · canvas · node card · doc panel
+│       ├── design                    sidebar · canvas · node card · doc panel
+│       └── selection and menus       (replaced by 10-ui-rework/)
+│
+├── UI REWORK (wins over 07-ui where they differ) ── 10-ui-rework/
+│   ├── state                     one session in the extension · intents up, state down · typed messages
+│   ├── sidebar                   the native tree: focus bar row · FOCUS view · click rule · search
+│   ├── focus and contexts        one focus stack on both surfaces · MAIN now, EXPLORE in 0.2
+│   ├── menus                     the same node menu on row and card · the V-NOC submenus
+│   ├── build order               where the files go · nine steps · the webview sidebar later
+│   └── how it looks              selected · highlighted · cursor · revealed · focused
 │
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
 │

@@ -436,4 +436,4 @@ for 0.x.
 | Docs | **doc panel** (rendered, read-only, live preview) · edit in a VS Code tab | | **edit in the panel** | freshness, links between docs |
 | Feedback | Missing view · Problems lines | | | notifications, status bar |
 
-Next: [`../08-decisions-to-log.md`](../08-decisions-to-log.md)
+Next: [`03-selection-and-menus.md`](03-selection-and-menus.md) (selection, the click rules and every menu; it replaces the menu in §2 and two focus rules in §3)

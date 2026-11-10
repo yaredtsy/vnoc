@@ -66,7 +66,7 @@ pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>
     let mut outlined = Vec::with_capacity(to_read.len());
     for path in to_read {
         let outcome = match host.outline(project.git_root(), path.as_str()).await {
-            Ok(result) => Ok(result.defs),
+            Ok(result) => Ok((result.defs, result.file_id)),
             // the driver answered with an error for THIS file: note it, carry on with the others
             Err(HostError::Remote { message, .. }) => Err(message),
             Err(e) => return Err(e.into()),
@@ -86,6 +86,7 @@ pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>
         let mut index = index.write().unwrap();
         let mut changed = index.retain_only(&in_scope);
         changed |= index.set_records(report);
+        changed |= index.set_folders(scan.folders);
         changed |= index.set_truncated(scan.truncated);
         for (path, outcome) in outlined {
             changed |= index.set_outline(path, outcome);

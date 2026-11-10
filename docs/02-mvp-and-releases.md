@@ -110,6 +110,12 @@ This is the heart of the product. Build it for functions only, end to end, befor
 
 If `planFileId` turns out slow to port, ship files with **no marker** in 0.1 (found by path) and add the comment in 0.1.x. No format changes either way.
 
+*Done when:* attach a doc to a file and to a folder, rename or `git mv` each, restart VS Code. The badge is still on it.
+
+*Status:* built. `planFileId` was a small port (it works on the header's lines of text, not the syntax tree), so files get their `# FileID:` comment in 0.1.
+Folders and files are nodes with an empty `qualname` in `node.toml`; the core finds them by marker, then by path (`identity/resolve.rs`).
+A `.vnoc-id` that exists but cannot be read is listed as a problem and is **never overwritten**: that attach falls back to path only, with a notice.
+
 **Step 5. Missing, Relink, Remove**
 - [ ] a "Missing" group in the sidebar
 - [ ] Relink: pick a node in the tree → the anchor in `node.toml` is rewritten (and a marker is written at the new place if markers are on)

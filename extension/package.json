@@ -93,7 +93,7 @@
         },
         {
           "command": "vnoc.addDoc",
-          "when": "view == vnoc.structure && (viewItem == function || viewItem == class)",
+          "when": "view == vnoc.structure && (viewItem == function || viewItem == class || viewItem == file || viewItem == folder)",
           "group": "inline"
         },
         {
@@ -103,7 +103,7 @@
         },
         {
           "command": "vnoc.addDoc",
-          "when": "view == vnoc.structure && (viewItem == function || viewItem == class)",
+          "when": "view == vnoc.structure && (viewItem == function || viewItem == class || viewItem == file || viewItem == folder)",
           "group": "1_vnoc@2"
         },
         {
@@ -203,7 +203,7 @@
       "webview/context": [
         {
           "command": "vnoc.addDoc",
-          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && (kind == function || kind == class)",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && (kind == function || kind == class || kind == file || kind == folder)",
           "group": "1_docs@1"
         },
         {

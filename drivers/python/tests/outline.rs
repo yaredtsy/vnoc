@@ -246,3 +246,23 @@ fn plan_ids_puts_the_id_line_in_the_docstring_and_says_what_it_did() {
     assert_eq!(again["skipped"][0]["reason"], "already has an ID");
     d.finish();
 }
+
+#[test]
+fn plan_file_id_writes_the_header_comment_and_outline_reads_it_back() {
+    let (mut d, init) = Driver::start();
+    assert_eq!(init["capabilities"]["ids.file"], true);
+    let text = "#!/usr/bin/env python3\n\"\"\"Orders.\"\"\"\n\ndef f():\n    pass\n";
+    assert_eq!(d.request("vnoc/outline", json!({ "text": text })).unwrap()["file_id"], serde_json::Value::Null);
+
+    let plan = d.request("vnoc/planFileId", json!({ "text": text, "version": 4, "id": "AAAA" })).expect("planFileId answers");
+    assert_eq!(plan["version"], 4, "the version is echoed");
+    let new_text = apply_edits(text, plan["edits"].as_array().unwrap());
+    assert_eq!(new_text, "#!/usr/bin/env python3\n# FileID: AAAA\n\"\"\"Orders.\"\"\"\n\ndef f():\n    pass\n");
+    assert_eq!(plan["written"]["text"], "# FileID: AAAA\n");
+    assert_eq!(plan["text_hash"], blake3::hash(new_text.as_bytes()).to_hex().as_str());
+    assert_eq!(d.request("vnoc/outline", json!({ "text": new_text })).unwrap()["file_id"], "AAAA");
+
+    let again = d.request("vnoc/planFileId", json!({ "text": new_text, "version": 5, "id": "BBBB" })).unwrap();
+    assert_eq!(again["edits"], json!([]));
+    d.finish();
+}

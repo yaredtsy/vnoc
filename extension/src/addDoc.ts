@@ -1,6 +1,8 @@
 import * as path from "path";
 import * as vscode from "vscode";
 
+import type { TreeNode } from "./structureView";
+
 // "Add doc" (07-ui/02-design.md): ask for a title, ask the once-per-project question, let the core attach, open the new doc.
 // The core does the work (an ID line in the code, then `.vnoc/`); this file is only the conversation with the user.
 
@@ -21,15 +23,24 @@ interface AttachResult {
 /** The line a new doc's cursor starts on: under the `# Title` heading (the frontmatter takes four lines). */
 const FIRST_BODY_LINE = 5;
 
+/** What the first-attach question says V-NOC will write, by kind of node. */
+const MARKER: Record<TreeNode["kind"], string> = {
+  function: "an ID line to {name}'s docstring",
+  class: "an ID line to {name}'s docstring",
+  file: "a `# FileID:` comment at the top of {name}",
+  folder: "a .vnoc-id file to the folder {name}",
+};
+
 /**
- * `key` is a node's id from `vnoc/structure`: `path::qualname` (or `#n`), the path from the git root. `existingDocs` is how many docs
- * the node has: the first one is pre-filled with "Overview", later ones start empty.
+ * `node` is a node of `vnoc/structure`: its `id` is `path::qualname` (or `#n`) for a function or class, the path from the git root for a
+ * file or folder. `existingDocs` is how many docs the node has: the first one is pre-filled with "Overview", later ones start empty.
  * Resolves to whether a doc was added. Failures are shown to the user here; the promise only rejects for bugs.
  */
-export async function addDoc(request: Request, gitRoot: string, key: string, existingDocs: number): Promise<boolean> {
+export async function addDoc(request: Request, gitRoot: string, node: TreeNode, existingDocs: number): Promise<boolean> {
   try {
+    const key = node.id;
     const [file, qualname = ""] = key.split("::");
-    const name = qualname.replace(/#\d+$/, "").split(".").pop() || file;
+    const name = qualname.replace(/#\d+$/, "").split(".").pop() || file.split("/").pop() || file;
 
     const title = await vscode.window.showInputBox({ title: "Add doc", prompt: `Title of the new doc for ${name}`, value: existingDocs === 0 ? "Overview" : "", validateInput: (t) => (t.trim() ? undefined : "A doc needs a title") });
     if (title === undefined) return false; // Esc: nothing has been written
@@ -38,7 +49,7 @@ export async function addDoc(request: Request, gitRoot: string, key: string, exi
     let markers: boolean | undefined;
     if (!(await request<ProjectInfo>("vnoc/projectInfo")).initialized) {
       const answer = await vscode.window.showInformationMessage(
-        `V-NOC will add an ID line to ${name}'s docstring and create a .vnoc/ folder in this repository.`,
+        `V-NOC will add ${MARKER[node.kind].replace("{name}", name)} and create a .vnoc/ folder in this repository.`,
         { modal: true },
         "Add doc",
         "Add without ID",
@@ -47,17 +58,18 @@ export async function addDoc(request: Request, gitRoot: string, key: string, exi
       markers = answer === "Add doc";
     }
 
-    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(gitRoot, file)));
-    const wasDirty = document.isDirty;
+    // a folder has no document: the core writes its `.vnoc-id` itself
+    const document = node.kind === "folder" ? undefined : await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(gitRoot, file)));
+    const wasDirty = document?.isDirty ?? false;
     const result = await request<AttachResult>("vnoc/attach", {
       key,
       title: title.trim(),
       markers,
-      document: { uri: document.uri.toString(), version: document.version, text: document.getText() },
+      document: document && { uri: document.uri.toString(), version: document.version, text: document.getText() },
     });
 
-    // The ID line is in the editor's buffer now. Save it so the core's index sees it, unless the user had unsaved work of their own.
-    if (result.id_in_code && !wasDirty) await document.save();
+    // The ID is in the editor's buffer now. Save it so the core's index sees it, unless the user had unsaved work of their own.
+    if (result.id_in_code && !wasDirty) await document?.save();
     if (result.notice) void vscode.window.showWarningMessage(`V-NOC: ${result.notice}`);
 
     const doc = await vscode.window.showTextDocument(vscode.Uri.file(result.doc));

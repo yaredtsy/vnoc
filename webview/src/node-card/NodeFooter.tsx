@@ -7,8 +7,8 @@ import type { Placed } from "../canvas/layout.ts";
 export function NodeFooter({ node }: { node: Placed }) {
   const { addDoc } = useCanvasActions();
   const where = node.line === null ? node.path : `${node.path}:${node.line}`;
-  // 0.1 attaches docs to functions and classes; files and folders follow
-  const canAttach = node.kind === "function" || node.kind === "class";
+  // the opened folder (the root) is not a node of the project: its id is "/"
+  const canAttach = node.id !== "/";
   return (
     <div className="node-footer">
       <span className="where" title={where}>

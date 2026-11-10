@@ -420,3 +420,127 @@ fn a_documented_node_is_found_again_after_a_rename_and_a_move() {
     assert_eq!((found["name"].as_str(), found["path"].as_str(), found["link"].as_str(), found["docs"].as_u64()), (Some("parse_payload"), Some("payments.py"), Some("marker"), Some(1)));
     core.finish();
 }
+
+/// The first node in the tree (any depth) that `pred` accepts.
+fn find_node<'a>(node: &'a Value, pred: &dyn Fn(&Value) -> bool) -> Option<&'a Value> {
+    if pred(node) {
+        return Some(node);
+    }
+    node["children"].as_array()?.iter().find_map(|child| find_node(child, pred))
+}
+
+/// Waits for index changes until the tree satisfies `ready`, and returns that tree.
+fn structure_when(core: &mut Core, ready: impl Fn(&Value) -> bool) -> Value {
+    loop {
+        let s = core.request("vnoc/structure", Value::Null).unwrap();
+        if ready(&s) {
+            return s;
+        }
+        core.wait_for("vnoc/indexChanged");
+    }
+}
+
+#[test]
+fn a_file_gets_a_header_comment_and_is_found_again_after_a_rename() {
+    let (mut core, root) = orders_project("file", None);
+    let r = core.request("vnoc/attach", attach_params(&root, "orders.py", "About orders", Some(true))).expect("attach answers");
+    let id = r["id"].as_str().unwrap().to_string();
+    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(true), true));
+    assert_eq!(core.edit_requests.len(), 1, "one edit of the open document");
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), format!("# FileID: {id}\n{ORDERS}"));
+
+    let node = root.join(".vnoc/nodes").join(&id[24..]).join(&id);
+    let toml = std::fs::read_to_string(node.join("node.toml")).unwrap();
+    assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"\"") && toml.contains("id_in_code = \"yes\""), "{toml}");
+    assert!(std::fs::read_to_string(node.join("about-orders.md")).unwrap().contains("hint: orders.py\n"));
+
+    // saved: the tree shows the file with its doc, found by its marker
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    let shown = structure_when(&mut core, |s| s["root"]["children"][0]["link"] == "marker");
+    assert_eq!((shown["root"]["children"][0]["node_id"].as_str(), shown["root"]["children"][0]["docs"].as_u64()), (Some(id.as_str()), Some(1)));
+
+    // renamed in the terminal: the comment travels with the file
+    std::fs::rename(root.join("orders.py"), root.join("billing.py")).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py"), root.join("billing.py")] }));
+    let after = structure_when(&mut core, |s| s["root"]["children"][0]["name"] == "billing.py");
+    let file = &after["root"]["children"][0];
+    assert_eq!((file["node_id"].as_str(), file["link"].as_str(), file["docs"].as_u64()), (Some(id.as_str()), Some("marker"), Some(1)));
+    core.finish();
+}
+
+#[test]
+fn a_folder_gets_a_marker_file_and_is_found_again_after_a_move() {
+    let (mut core, root) = orders_project("folder", None);
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::write(root.join("pkg/m.py"), "def f():\n    pass\n").unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("pkg/m.py")] }));
+    structure_when(&mut core, |s| s["stats"]["files"] == 2);
+
+    let r = core.request("vnoc/attach", json!({ "key": "pkg", "title": "The pkg folder", "markers": true })).expect("a folder needs no document");
+    let id = r["id"].as_str().unwrap().to_string();
+    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(true), true));
+    assert!(core.edit_requests.is_empty(), "the core writes the marker itself");
+    let marker = std::fs::read_to_string(root.join("pkg/.vnoc-id")).unwrap();
+    assert!(marker.contains(&format!("id = \"{id}\"")), "{marker}");
+    let node = root.join(".vnoc/nodes").join(&id[24..]).join(&id);
+    assert!(std::fs::read_to_string(node.join("node.toml")).unwrap().contains("path = \"pkg\""));
+
+    let shown = structure_when(&mut core, |s| find_node(&s["root"], &|n| n["id"] == "pkg").is_some_and(|n| n["link"] == "marker"));
+    assert_eq!(find_node(&shown["root"], &|n| n["id"] == "pkg").unwrap()["docs"], 1);
+
+    // moved and renamed in the terminal; the marker file went along inside it
+    std::fs::create_dir_all(root.join("core")).unwrap();
+    std::fs::rename(root.join("pkg"), root.join("core/pkg2")).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("core/pkg2/.vnoc-id")] }));
+    let after = structure_when(&mut core, |s| find_node(&s["root"], &|n| n["id"] == "core/pkg2").is_some());
+    let folder = find_node(&after["root"], &|n| n["id"] == "core/pkg2").unwrap();
+    assert_eq!((folder["node_id"].as_str(), folder["link"].as_str(), folder["docs"].as_u64()), (Some(id.as_str()), Some("marker"), Some(1)));
+
+    // a second doc on the same folder reuses its ID and does not touch the marker
+    let second = core.request("vnoc/attach", json!({ "key": "core/pkg2", "title": "More" })).unwrap();
+    assert_eq!(second["id"], json!(id));
+    core.finish();
+}
+
+#[test]
+fn a_folder_marker_that_cannot_be_read_is_never_overwritten() {
+    let (mut core, root) = orders_project("badmarker", None);
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::write(root.join("pkg/m.py"), "x = 1\n").unwrap();
+    std::fs::write(root.join("pkg/.vnoc-id"), "id = [").unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("pkg/m.py")] }));
+    structure_when(&mut core, |s| s["stats"]["files"] == 2);
+
+    let r = core.request("vnoc/attach", json!({ "key": "pkg", "title": "Notes", "markers": true })).unwrap();
+    assert_eq!(r["id_in_code"], false);
+    assert!(r["notice"].as_str().unwrap().contains("cannot read"), "{r}");
+    assert_eq!(std::fs::read_to_string(root.join("pkg/.vnoc-id")).unwrap(), "id = [", "the unreadable file is left as it was");
+    core.finish();
+}
+
+#[test]
+fn with_ids_off_a_file_is_attached_by_path_and_goes_missing_when_renamed() {
+    let (mut core, root) = orders_project("filenone", Some("format = 1\n[ids]\ndefault = \"none\"\n"));
+    let r = core.request("vnoc/attach", attach_params(&root, "orders.py", "Notes", None)).unwrap();
+    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(false), true));
+    assert!(core.edit_requests.is_empty());
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS);
+
+    core.notify("vnoc/filesChanged", json!({ "paths": [] }));
+    let shown = structure_when(&mut core, |s| s["root"]["children"][0]["link"] == "name");
+    assert_eq!(shown["root"]["children"][0]["docs"], 1, "found by its path");
+
+    std::fs::rename(root.join("orders.py"), root.join("billing.py")).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py"), root.join("billing.py")] }));
+    let after = structure_when(&mut core, |s| s["root"]["children"][0]["name"] == "billing.py");
+    assert_eq!(after["root"]["children"][0]["node_id"], Value::Null, "no marker, so nothing follows the rename: it is Missing");
+    core.finish();
+}
+
+#[test]
+fn attach_to_a_file_needs_its_document() {
+    let (mut core, _root) = orders_project("nodocument", None);
+    let e = core.request("vnoc/attach", json!({ "key": "orders.py", "title": "x" })).unwrap_err();
+    assert!(e["message"].as_str().unwrap().contains("needs the open document"), "{e}");
+    core.finish();
+}
