@@ -1,6 +1,6 @@
 //! node.toml round trips: what the MVP writes, and what must survive a read-modify-write.
 
-use vnoc_domain::{IdInCode, LocationKey, NodeToml, RepoPath, Status};
+use vnoc_domain::{IdInCode, LocationKey, NodeKind, NodeToml, RepoPath, Status};
 
 fn loc(path: &str, q: &str, occ: u32) -> LocationKey {
     LocationKey::new(RepoPath::new(path).unwrap(), q, occ).unwrap()
@@ -94,4 +94,28 @@ fn a_file_without_an_anchor_is_an_error_not_a_guess() {
     assert!(NodeToml::parse("path = \"/abs/a.py\"\nqualname = \"f\"\n").is_err());
     assert!(NodeToml::parse("path = \"a.py\"\nqualname = \"f\"\noccurrence = 0\n").is_err());
     assert!(NodeToml::parse("this is = not [ toml").is_err());
+}
+
+#[test]
+fn kind_is_written_when_set_and_a_file_without_it_reads_as_unknown_and_stays_as_it_is() {
+    let mut n = NodeToml::new(&loc("a.py", "f", 1));
+    assert_eq!(n.kind(), None, "a new file has no kind until the code sets one");
+    n.set_kind(&NodeKind::Function);
+    assert!(n.to_string().contains("kind = \"function\"\n"));
+    assert_eq!(NodeToml::parse(&n.to_string()).unwrap().kind(), Some(NodeKind::Function));
+
+    let old = "path = \"a.py\"\nqualname = \"f\"\nid_in_code = \"yes\"\n# my note\n";
+    let parsed = NodeToml::parse(old).unwrap();
+    assert_eq!(parsed.kind(), None);
+    assert_eq!(parsed.to_string(), old, "reading never writes a kind");
+}
+
+#[test]
+fn an_unknown_kind_is_kept_and_a_relink_can_replace_it() {
+    let text = "path = \"a.py\"\nqualname = \"f\"\nkind = \"method\"\nfuture = 1\n";
+    let mut n = NodeToml::parse(text).unwrap();
+    assert_eq!(n.kind(), Some(NodeKind::Other("method".into())));
+    assert_eq!(n.to_string(), text);
+    n.set_kind(&NodeKind::Class);
+    assert_eq!(n.to_string(), "path = \"a.py\"\nqualname = \"f\"\nkind = \"class\"\nfuture = 1\n", "other keys keep their place");
 }

@@ -78,7 +78,7 @@ pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>
     let data = UserData::new(project.git_root());
     let report = tokio::task::spawn_blocking(move || data.load_all()).await?;
     for problem in &report.problems {
-        tracing::warn!("{problem}");
+        tracing::warn!("{}", problem.text);
     }
 
     let read = outlined.len();

@@ -35,6 +35,26 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+/** A documented node nothing in the code matches any more (Needs Attention). The anchor is as `node.toml` says it. */
+export interface MissingNode {
+  /** the permanent ID */
+  id: string;
+  /** "function" | "class" | "file" | "folder", a value a newer V-NOC wrote, or null when `node.toml` does not say */
+  kind: string | null;
+  path: string;
+  qualname: string;
+  docs: number;
+}
+
+/** Something to look at: where to go when it is clicked. */
+export interface Problem {
+  text: string;
+  /** absolute path */
+  file: string | null;
+  /** 0-based */
+  line: number | null;
+}
+
 export interface StructureResult {
   /** which version of the index this answer is from; a lower number than the one shown is a late answer */
   revision: number;
@@ -43,6 +63,9 @@ export interface StructureResult {
   stats: { folders: number; files: number; classes: number; functions: number };
   truncated: boolean;
   failed: { path: string; error: string }[];
+  /** documented nodes that are not in the code now, sorted by path */
+  missing: MissingNode[];
+  problems: Problem[];
 }
 
 export interface DocInfo {

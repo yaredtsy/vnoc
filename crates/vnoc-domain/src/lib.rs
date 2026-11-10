@@ -15,7 +15,7 @@ mod persist;
 
 pub use id::{NodeId, NodeIdError, ProvisionalId};
 pub use location::{LocationKey, LocationKeyError, RepoPath, RepoPathError, occurrences};
-pub use node_toml::{IdInCode, NodeToml, NodeTomlError, Status};
+pub use node_toml::{IdInCode, NodeKind, NodeToml, NodeTomlError, Status};
 pub use persist::{MAX_ATTEMPTS, NoFreeId, first_free_id};
 
 #[cfg(test)]

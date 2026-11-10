@@ -12,8 +12,8 @@ use std::sync::RwLock;
 
 use async_lsp::lsp_types::{ApplyWorkspaceEditParams, DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, WorkspaceEdit};
 use async_lsp::{ClientSocket, LanguageClient};
-use vnoc_domain::{IdInCode, LocationKey, LocationKeyError, NoFreeId, NodeId, NodeToml, RepoPath, first_free_id};
-use vnoc_driver_protocol::{PlanFileIdParams, PlanId, PlanIdsParams, TextEdit};
+use vnoc_domain::{IdInCode, LocationKey, LocationKeyError, NoFreeId, NodeId, NodeKind, NodeToml, RepoPath, first_free_id};
+use vnoc_driver_protocol::{DefKind, PlanFileIdParams, PlanId, PlanIdsParams, TextEdit};
 
 use crate::driver_host::DriverHost;
 use crate::index::Index;
@@ -49,15 +49,24 @@ pub struct Env<'a> {
 
 /// What the doc is attached to, with what the index knows of its ID.
 enum Target {
-    Def { in_code: Option<NodeId> },
+    Def { in_code: Option<NodeId>, kind: DefKind },
     File { in_code: Option<NodeId> },
     Folder { in_code: Option<NodeId> },
 }
 
 impl Target {
+    fn kind(&self) -> NodeKind {
+        match self {
+            Target::Def { kind: DefKind::Class, .. } => NodeKind::Class,
+            Target::Def { kind: DefKind::Function, .. } => NodeKind::Function,
+            Target::File { .. } => NodeKind::File,
+            Target::Folder { .. } => NodeKind::Folder,
+        }
+    }
+
     fn in_code(&self) -> Option<NodeId> {
         match self {
-            Target::Def { in_code } | Target::File { in_code } | Target::Folder { in_code } => *in_code,
+            Target::Def { in_code, .. } | Target::File { in_code } | Target::Folder { in_code } => *in_code,
         }
     }
 }
@@ -69,7 +78,7 @@ fn find_target(index: &Index, key: &str) -> Result<(LocationKey, Target), Attach
         let location: LocationKey = key.parse()?;
         let def = index.def_at(&location).ok_or_else(not_in_index)?;
         let in_code = def.id.as_deref().and_then(|text| NodeId::parse(text).ok());
-        return Ok((location, Target::Def { in_code }));
+        return Ok((location, Target::Def { in_code, kind: def.kind }));
     }
     let path = RepoPath::new(key).map_err(|_| not_in_index())?;
     let whole = LocationKey::new(path.clone(), "", 1).expect("occurrences are 1-based");
@@ -128,6 +137,7 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
     data.initialize(params.markers.unwrap_or(true))?;
     let mut toml = NodeToml::new(&location);
     toml.set_id_in_code(if id_in_code { IdInCode::Yes } else { IdInCode::No });
+    toml.set_kind(&target.kind());
     data.create_node(&id, &toml)?;
     let hint = if location.qualname().is_empty() { location.path().to_string() } else { location.to_string() };
     let doc: PathBuf = data.create_doc(&id, &params.title, &hint)?;

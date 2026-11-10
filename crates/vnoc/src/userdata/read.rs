@@ -23,11 +23,19 @@ impl PartialEq for NodeRecord {
     }
 }
 
+/// Something wrong in `.vnoc/`: a line for people, and the file to open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadProblem {
+    pub text: String,
+    /// absolute path of the broken file or folder
+    pub file: std::path::PathBuf,
+}
+
 #[derive(Default)]
 pub struct LoadReport {
     pub records: Vec<(NodeId, NodeRecord)>,
     /// one line each, for people: which file, what is wrong
-    pub problems: Vec<String>,
+    pub problems: Vec<LoadProblem>,
 }
 
 pub fn load_all(root: &Path) -> LoadReport {
@@ -37,13 +45,13 @@ pub fn load_all(root: &Path) -> LoadReport {
             let name = folder.file_name().unwrap_or_default().to_string_lossy().into_owned();
             // folder names are IDs in canonical form: 26 characters, upper case
             let Some(id) = NodeId::parse(&name).ok().filter(|id| id.to_string() == name) else {
-                report.problems.push(format!("{}: the folder name is not a node ID", folder.display()));
+                report.problems.push(LoadProblem { text: format!("{}: the folder name is not a node ID", folder.display()), file: folder.clone() });
                 continue;
             };
             let file = folder.join("node.toml");
             match fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|text| NodeToml::parse(&text).map_err(|e| e.to_string())) {
                 Ok(toml) => report.records.push((id, NodeRecord { toml, docs: markdown_files(&folder) })),
-                Err(e) => report.problems.push(format!("{}: {e}", file.display())),
+                Err(e) => report.problems.push(LoadProblem { text: format!("{}: {e}", file.display()), file: file.clone() }),
             }
         }
     }

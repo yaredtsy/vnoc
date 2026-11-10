@@ -321,7 +321,7 @@ fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
     let (shard, node) = (&id[24..], root.join(".vnoc/nodes").join(&id[24..]).join(&id));
     assert!(root.join(".vnoc/vnoc.toml").is_file() && root.join(".vnoc/.gitignore").is_file(), "{shard}");
     let toml = std::fs::read_to_string(node.join("node.toml")).unwrap();
-    assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"OrderService.parse_order\"") && toml.contains("id_in_code = \"yes\""), "{toml}");
+    assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"OrderService.parse_order\"") && toml.contains("id_in_code = \"yes\"") && toml.contains("kind = \"function\""), "{toml}");
     assert_eq!(r["doc"], json!(node.join("why-we-parse-twice.md")));
     assert!(std::fs::read_to_string(node.join("why-we-parse-twice.md")).unwrap().starts_with(&format!("---\nnode: {id}\nhint: {key}\n---\n# Why we parse twice")));
     assert_eq!(core.request("vnoc/projectInfo", Value::Null).unwrap(), json!({ "initialized": true, "markers": true }));
@@ -451,7 +451,7 @@ fn a_file_gets_a_header_comment_and_is_found_again_after_a_rename() {
 
     let node = root.join(".vnoc/nodes").join(&id[24..]).join(&id);
     let toml = std::fs::read_to_string(node.join("node.toml")).unwrap();
-    assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"\"") && toml.contains("id_in_code = \"yes\""), "{toml}");
+    assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"\"") && toml.contains("id_in_code = \"yes\"") && toml.contains("kind = \"file\""), "{toml}");
     assert!(std::fs::read_to_string(node.join("about-orders.md")).unwrap().contains("hint: orders.py\n"));
 
     // saved: the tree shows the file with its doc, found by its marker
@@ -483,7 +483,7 @@ fn a_folder_gets_a_marker_file_and_is_found_again_after_a_move() {
     let marker = std::fs::read_to_string(root.join("pkg/.vnoc-id")).unwrap();
     assert!(marker.contains(&format!("id = \"{id}\"")), "{marker}");
     let node = root.join(".vnoc/nodes").join(&id[24..]).join(&id);
-    assert!(std::fs::read_to_string(node.join("node.toml")).unwrap().contains("path = \"pkg\""));
+    assert!(std::fs::read_to_string(node.join("node.toml")).unwrap().contains("path = \"pkg\"") && std::fs::read_to_string(node.join("node.toml")).unwrap().contains("kind = \"folder\""));
 
     let shown = structure_when(&mut core, |s| find_node(&s["root"], &|n| n["id"] == "pkg").is_some_and(|n| n["link"] == "marker"));
     assert_eq!(find_node(&shown["root"], &|n| n["id"] == "pkg").unwrap()["docs"], 1);

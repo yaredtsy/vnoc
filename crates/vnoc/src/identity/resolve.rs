@@ -58,6 +58,13 @@ impl Markers {
     }
 }
 
+impl Markers {
+    /// Every place the ID is written, in path order then line order. Empty when it is written nowhere.
+    pub fn places(&self, id: &NodeId) -> &[LocationKey] {
+        self.by_id.get(id).map_or(&[], Vec::as_slice)
+    }
+}
+
 /// `anchor` is what `node.toml` says; `exists` says whether a location is in the index.
 pub fn resolve(id: &NodeId, anchor: Option<&LocationKey>, markers: &Markers, exists: impl Fn(&LocationKey) -> bool) -> Resolved {
     // 1. MARKER. With several copies, the one at the anchor is the node; else the first by path, then line (§3).

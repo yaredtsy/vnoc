@@ -43,6 +43,29 @@ pub struct Stats {
     pub functions: usize,
 }
 
+/// A documented node nothing in the code matches any more: shown under Needs Attention. The anchor is as `node.toml` says it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingNode {
+    /// the permanent ID
+    pub id: String,
+    /// `function`, `class`, `file`, `folder`, a value a newer V-NOC wrote, or `null` when `node.toml` does not say
+    pub kind: Option<String>,
+    pub path: String,
+    pub qualname: String,
+    /// how many docs are attached
+    pub docs: usize,
+}
+
+/// Something the user should look at: where to go when they click it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Problem {
+    pub text: String,
+    /// absolute path
+    pub file: Option<String>,
+    /// 0-based line in `file`
+    pub line: Option<u32>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StructureResult {
     /// the index's revision this answer was made from
@@ -55,6 +78,10 @@ pub struct StructureResult {
     pub truncated: bool,
     /// files the driver could not outline (the rest of the structure is still there)
     pub failed: Vec<FailedFile>,
+    /// documented nodes that are not in the code now, sorted by path
+    pub missing: Vec<MissingNode>,
+    /// broken `.vnoc/` files and `.vnoc-id` files, and an ID written in two places
+    pub problems: Vec<Problem>,
 }
 
 impl Request for Structure {

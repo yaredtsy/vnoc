@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, value};
 use vnoc_domain::{LocationKey, NodeId, NodeToml};
 
-pub use read::{DocInfo, LoadReport, NodeRecord};
+pub use read::{DocInfo, LoadProblem, LoadReport, NodeRecord};
 
 #[derive(Debug, thiserror::Error)]
 pub enum UserDataError {

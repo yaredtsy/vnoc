@@ -215,6 +215,8 @@ fn structure(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::
             stats: Stats { folders: folders.saturating_sub(1), files, classes, functions }, // the opened folder is not a folder under itself
             truncated: index.truncated(),
             failed: index.failed(),
+            missing: index.missing(),
+            problems: index.problems(project.git_root()),
         })
     })
 }

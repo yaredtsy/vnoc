@@ -1,7 +1,7 @@
 //! `node.toml`: one per node, in `.vnoc/nodes/<shard>/<id>/`. It is the node's **anchor** (where it is, so a fresh clone can
 //! find it again) and the node's state.
 //!
-//! # The format (final from the MVP on)
+//! # The format (final from the MVP on, plus `kind` from 0.1)
 //!
 //! ```toml
 //! path       = "src/orders.py"             # anchor: the repo path, as git records it
@@ -10,6 +10,7 @@
 //! status     = "active"                    # "active" | "archived"
 //! # archived_at = 2026-11-06               # a date; written when the node is archived
 //! # occurrence = 2                         # only when it is not 1: which same-named definition of the file
+//! kind       = "function"                  # "function" | "class" | "file" | "folder"; display only, never used for matching
 //! ```
 //!
 //! **The rules that make later changes migration-free:**
@@ -18,7 +19,8 @@
 //! 2. The MVP **writes only the fields it uses** (plus `id_in_code`, which a later mode reads).
 //! 3. A *known* field with a value this version does not know (`id_in_code = "sometimes"`) is read as [`IdInCode::Other`] and
 //!    **kept untouched** unless the code deliberately sets it.
-//! 4. There is **no version field here**: adding a field is not a format change. Only `vnoc.toml` carries `format`.
+//! 4. `kind` is written on attach and on Relink. A file without it reads as unknown and is **never rewritten by itself**.
+//! 5. There is **no version field here**: adding a field is not a format change. Only `vnoc.toml` carries `format`.
 
 use std::str::FromStr;
 
@@ -50,6 +52,38 @@ impl IdInCode {
             "no" => IdInCode::No,
             "never" => IdInCode::Never,
             other => IdInCode::Other(other.to_string()),
+        }
+    }
+}
+
+/// What a node is, as the user sees it. A method is a `Function`: the driver has no method kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeKind {
+    Function,
+    Class,
+    File,
+    Folder,
+    /// A value a newer V-NOC wrote. Kept as it is.
+    Other(String),
+}
+
+impl NodeKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            NodeKind::Function => "function",
+            NodeKind::Class => "class",
+            NodeKind::File => "file",
+            NodeKind::Folder => "folder",
+            NodeKind::Other(s) => s,
+        }
+    }
+    fn read(s: &str) -> NodeKind {
+        match s {
+            "function" => NodeKind::Function,
+            "class" => NodeKind::Class,
+            "file" => NodeKind::File,
+            "folder" => NodeKind::Folder,
+            other => NodeKind::Other(other.to_string()),
         }
     }
 }
@@ -138,6 +172,16 @@ impl NodeToml {
     /// Records whether the ID is in the code. Keeps everything else.
     pub fn set_id_in_code(&mut self, in_code: IdInCode) {
         self.doc["id_in_code"] = value(in_code.as_str());
+    }
+
+    /// `None` when the file does not say (written before 0.1, or by hand).
+    pub fn kind(&self) -> Option<NodeKind> {
+        self.str_field("kind").map(NodeKind::read)
+    }
+
+    /// Records what the node is (attach, Relink). Keeps everything else.
+    pub fn set_kind(&mut self, kind: &NodeKind) {
+        self.doc["kind"] = value(kind.as_str());
     }
 
     /// A file without `status` is active.
