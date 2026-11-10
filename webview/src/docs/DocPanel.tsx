@@ -7,15 +7,10 @@ import { IconFileText, IconPencil, IconPlus, IconPointer, IconX } from "@tabler/
 
 import { Button } from "@/components/ui/button.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select.tsx";
-import { onDocText, request } from "../host.ts";
-import type { TreeNode } from "../types.ts";
+import { on, request } from "../host.ts";
+import { setDocWidth, useView } from "../state/view.ts";
+import type { DocInfo, TreeNode } from "@vnoc/shared/messages.ts";
 import { renderMarkdown } from "./markdown.ts";
-
-interface DocInfo {
-  file: string;
-  title: string;
-  path: string;
-}
 
 const NEW_DOC = "+new";
 const MIN_WIDTH = 280;
@@ -30,32 +25,38 @@ interface DocPanelProps {
   fill?: boolean;
   /** extra header buttons, before the close button */
   extra?: ReactNode;
+  /** what to say when there is no node (the canvas: nothing is selected; the docs tab: the cursor is not in a function or class) */
+  emptyText?: string;
 }
 
-export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extra }: DocPanelProps) {
+export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extra, emptyText = "Select a node to see its docs." }: DocPanelProps) {
   const nodeId = node?.node_id ?? null;
-  const [docs, setDocs] = useState<DocInfo[]>([]);
+  // Each answer keeps what it was asked for, so another node's docs (or another doc's text) are never shown while the new ones load.
+  const [listed, setListed] = useState<{ nodeId: string; docs: DocInfo[] } | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
-  const [text, setText] = useState<string | null>(null);
+  const [read, setRead] = useState<{ path: string; text: string | null } | null>(null);
 
   // the docs of this node: again whenever the index changes (a doc was added, removed or renamed)
   useEffect(() => {
-    if (!nodeId) return setDocs([]);
+    if (!nodeId) return;
     let current = true;
-    request<DocInfo[]>("docs", { id: nodeId }).then((list) => current && setDocs(list), () => current && setDocs([]));
+    request("docs", { nodeId }).then((docs) => current && setListed({ nodeId, docs }), () => current && setListed({ nodeId, docs: [] }));
     return () => void (current = false);
   }, [nodeId, revision]);
+  const loading = nodeId !== null && listed?.nodeId !== nodeId;
+  const docs = !loading && listed ? listed.docs : [];
 
   // keep the chosen doc while it exists, else the first
   const doc = docs.find((d) => d.path === chosen) ?? docs[0] ?? null;
   const path = doc?.path ?? null;
+  const text = read && read.path === path ? read.text : null;
 
   useEffect(() => {
-    if (!path) return setText(null);
+    if (!path) return;
     let current = true;
-    request<string>("docText", { path }).then((t) => current && setText(t), () => current && setText(null));
+    request("docText", { path }).then((t) => current && setRead({ path, text: t }), () => current && setRead({ path, text: null }));
     // typing in the editor tab, or a change on disk: the host sends the new text
-    const stop = onDocText((changed, newText) => changed === path && setText(newText));
+    const stop = on("docText", (changed) => changed.path === path && setRead({ path, text: changed.text }));
     return () => {
       current = false;
       stop();
@@ -69,14 +70,14 @@ export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extr
     const link = (e.target as HTMLElement).closest("a[data-href]");
     if (!link || !path) return;
     e.preventDefault();
-    void request("openLink", { href: link.getAttribute("data-href"), from: path }).catch(() => {});
+    void request("openLink", { href: link.getAttribute("data-href") ?? "", from: path }).catch(() => {});
   };
 
   // drag the left edge to resize; pointer capture keeps the drag alive over the canvas
-  const [width, setWidth] = useState(380);
+  const width = useView((v) => v.docWidth);
   const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.buttons !== 1) return;
-    setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - e.clientX)));
+    setDocWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - e.clientX)));
   };
 
   return (
@@ -132,10 +133,10 @@ export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extr
         {!node && (
           <div className="mt-10 flex flex-col items-center gap-2 text-center text-muted-foreground">
             <IconPointer className="size-8 opacity-60" />
-            <p>Select a node to see its docs.</p>
+            <p>{emptyText}</p>
           </div>
         )}
-        {node && docs.length === 0 && (
+        {node && !loading && docs.length === 0 && (
           <div className="mt-10 flex flex-col items-center gap-3 text-center text-muted-foreground">
             <IconFileText className="size-8 opacity-60" />
             <p>

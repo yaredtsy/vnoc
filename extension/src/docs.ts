@@ -1,6 +1,8 @@
 import * as path from "path";
 import * as vscode from "vscode";
 
+import type { Events } from "@vnoc/shared/messages";
+
 // What the doc panel needs from the editor: the text of a doc (from VS Code's own copy, so unsaved typing shows), opening a doc or a
 // link, and a push of the new text when a doc changes. The panel never reads files and never writes; every path it sends is checked here.
 
@@ -10,10 +12,10 @@ const PUSH_DEBOUNCE_MS = 150;
 export class Docs {
   private readonly timers = new Map<string, NodeJS.Timeout>();
 
-  /** `gitRoot` is where `.vnoc/` is; `post` sends a message to the open canvas (if any). */
+  /** `gitRoot` is where `.vnoc/` is; `emit` sends an event to every open V-NOC tab. */
   constructor(
     private readonly gitRoot: () => string | undefined,
-    private readonly post: (message: object) => void,
+    private readonly emit: <E extends keyof Events>(name: E, data: Events[E]) => void,
   ) {}
 
   /** A doc is a Markdown file inside `<git root>/.vnoc/nodes/`. The webview names files, so nothing else is ever read for it. */
@@ -58,7 +60,7 @@ export class Docs {
       doc,
       setTimeout(() => {
         this.timers.delete(doc);
-        this.text(doc).then((text) => this.post({ type: "docText", path: doc, text }), () => {});
+        this.text(doc).then((text) => this.emit("docText", { path: doc, text }), () => {});
       }, PUSH_DEBOUNCE_MS),
     );
   }

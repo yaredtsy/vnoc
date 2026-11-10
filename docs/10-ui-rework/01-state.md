@@ -168,9 +168,12 @@ What this deletes from today's code:
 | `selected`, `expanded`, `revealId`, `centerOn` `useState`s in `App.tsx` | they are in the session |
 
 > **🧩 VS Code note: is a round trip fast enough for a click?** A click on a card now goes webview → extension host → back before the ring moves.
-> Both hops are `postMessage` inside one machine; on a warm window that is a few milliseconds **[measure in step R3: log `performance.now()` at the
-> click and when the session arrives]**. If it is ever felt, the webview may draw its own click at once and let the session correct it. Do not start
-> with that: it is a second writer, which is the bug we are removing.
+> Both hops are `postMessage` inside one machine. **Measured in step R3** (a real VS Code window, the canvas visible, 30 selections that alternate
+> between four cards, `performance.now()` at `dispatch` and a `MutationObserver` on the card): the `selected` class is on the card after a
+> **median of 2.8 ms (p90 4.4 ms)**, and the frame that shows it is drawn after a median of 12.5 ms (the next display frame, which any approach
+> waits for). Two runs agreed; a single outlier of 15 ms in 60 samples. A tree of four cards on a warm window: a large tree has more cards to
+> re-render, but only the two whose `selected` changed do (step R5). Far below the ~30 ms where the plan would draw the ring locally first, so
+> nothing is drawn locally: that would be a second writer, which is the bug this rework removes.
 
 > **🧩 VS Code note: the session is sent whole.** Not "what changed", the whole object, every time: a focus stack, one id and a few hundred open
 > keys is a few KB. Whole snapshots cannot get out of step; diffs can. `seq` protects against the one thing that can go wrong: two snapshots
@@ -312,6 +315,11 @@ const crumbs   = useSession(useShallow((s) => s.contexts[s.active].focus));     
 ```
 
 The canvas turns `expanded` into a `Set` once per change, in one `useMemo` beside the layout, rather than calling `includes` in every card.
+
+**Measured in step R5** (a real window, 9 cards drawn, 6 selections): a click draws **2 cards**, the one that lost the selection and the one that got it.
+It took two things beyond the selectors. React Flow re-draws every card when any prop of its renderer changes, so the click handlers are module-level
+functions (an inline arrow is new on every render), and `NodeCard` is `memo`. Before those, a click drew all 9 cards and 2 of them twice (11 draws).
+React Flow's own `selected` is not used (`elementsSelectable={false}`): the ring is the session's, and a second source of "selected" cost a second draw.
 
 `CanvasActions` (a React context that only carries callbacks down) is deleted. So are the eight callback props on `<Canvas>`.
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { CODE_H, COL_W, ROW_H, layout } from "./layout.ts";
-import type { Kind, TreeNode } from "../types.ts";
+import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, node_id: null, docs: 0, link: null, children });
 

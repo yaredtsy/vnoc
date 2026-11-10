@@ -1,0 +1,127 @@
+import * as fs from "fs";
+import * as path from "path";
+import * as vscode from "vscode";
+import { LanguageClient, TransportKind } from "vscode-languageclient/node";
+
+import type { StructureResult, TreeNode } from "@vnoc/shared/messages";
+
+// The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio client here, we use
+// its custom-request API and none of the language features). The extension never starts a driver: the core owns the drivers.
+
+/** Saves arrive in bursts (a format-on-save, a `git checkout`): collect the touched files for this long, then send one message. */
+const CHANGE_DEBOUNCE_MS = 200;
+
+/**
+ * A binary path: the setting if set; else, when running from source (F5), the build folder of this repository
+ * (`extension/` sits next to `target/` and `drivers/`); else `<extension>/bin/` (the installed VSIX).
+ * From source the build folder wins, because `bin/` may hold a stale copy left by an earlier packaging run.
+ * In Restricted Mode VS Code hands us the default instead of a workspace value (`restrictedConfigurations` in package.json),
+ * so a cloned repo cannot choose which program we run.
+ */
+function binary(ctx: vscode.ExtensionContext, setting: string, name: string, devPath: string[]): string {
+  const configured = vscode.workspace.getConfiguration("vnoc").get<string>(setting);
+  if (configured) return configured;
+  const exe = process.platform === "win32" ? `${name}.exe` : name;
+  const fromSource = path.join(ctx.extensionPath, "..", ...devPath.slice(0, -1), exe);
+  const packaged = path.join(ctx.extensionPath, "bin", exe);
+  const developing = ctx.extensionMode === vscode.ExtensionMode.Development;
+  return developing && fs.existsSync(fromSource) ? fromSource : fs.existsSync(packaged) ? packaged : fromSource;
+}
+
+/** The running core, and the last structure it sent. */
+export class Core {
+  private client: LanguageClient | undefined;
+  /** Resolves when the core is running. Everything that talks to it awaits this first (S1: never block activate()). */
+  readonly ready: Promise<void>;
+
+  /** The last structure the core sent. The editor menus look the node at the cursor up here. */
+  tree: TreeNode | undefined;
+  /** The absolute path of the git root. Node ids and the paths in `vnoc/attach` start there. */
+  gitRoot: string | undefined;
+
+  private readonly structureArrived = new vscode.EventEmitter<StructureResult>();
+  /** Fires, before `structure()` returns, every time a structure arrives: what the session points at may be gone. */
+  readonly onStructure = this.structureArrived.event;
+
+  constructor(
+    ctx: vscode.ExtensionContext,
+    private readonly output: vscode.OutputChannel,
+    /** the core has a new index: ask for the structure again */
+    onIndexChanged: (revision: number) => void,
+  ) {
+    this.ready = this.start(ctx, onIndexChanged);
+    this.ready.catch((e) => {
+      output.appendLine(String(e));
+      vscode.window.showErrorMessage(String(e.message ?? e));
+    });
+  }
+
+  private async start(ctx: vscode.ExtensionContext, onIndexChanged: (revision: number) => void): Promise<void> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"]);
+    const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"]);
+    if (!fs.existsSync(core)) {
+      throw new Error(`The V-NOC core is not at ${core}. Build it: cargo build -p vnoc`);
+    }
+    this.client = new LanguageClient(
+      "vnoc",
+      "V-NOC core",
+      { command: core, transport: TransportKind.stdio },
+      // not a language server: no document selector. The driver's path and the opened folder travel to the core in `initializationOptions`.
+      { documentSelector: [], outputChannel: this.output, initializationOptions: { driverPath: driver, root: folder?.uri.fsPath } },
+    );
+    this.client.onNotification("vnoc/indexChanged", (p: { revision: number }) => onIndexChanged(p.revision));
+    await this.client.start();
+    this.output.appendLine(`core started: ${core}\ndriver: ${driver}`);
+  }
+
+  async request<T>(method: string, params?: object): Promise<T> {
+    await this.ready;
+    return this.client!.sendRequest<T>(method, params);
+  }
+
+  async notify(method: string, params?: object): Promise<void> {
+    await this.ready;
+    await this.client?.sendNotification(method, params);
+  }
+
+  /** The structure of the opened folder; the canvas, the docs tab and the sidebar all read it through here. It waits for the core's first build. */
+  async loadStructure(): Promise<StructureResult> {
+    if (!vscode.workspace.workspaceFolders?.[0]) throw new Error("Open a folder first: V-NOC shows the code of the folder you opened.");
+    const structure = await this.request<StructureResult>("vnoc/structure");
+    this.tree = structure.root;
+    this.gitRoot = structure.git_root;
+    this.structureArrived.fire(structure);
+    return structure;
+  }
+
+  /** Shows the V-NOC output channel (the "Show Log" button of the sidebar). */
+  showLog(): void {
+    this.output.show();
+  }
+
+  async stop(): Promise<void> {
+    await this.client?.stop();
+  }
+}
+
+/**
+ * Tells the core which files were touched. `.gitignore` is watched too: it changes which files are in scope. `.vnoc/**` and `.vnoc-id` are V-NOC's
+ * own files: a doc added by a teammate's `git pull` shows up like one added here. `onTouched` hears every path at once (the doc panel wants `.md` changes).
+ */
+export function watchFiles(core: Core, onTouched: (fsPath: string) => void): vscode.Disposable {
+  const watcher = vscode.workspace.createFileSystemWatcher("**/{*.py,.gitignore,.vnoc-id,.vnoc/**}");
+  const touched = new Set<string>();
+  let timer: NodeJS.Timeout | undefined;
+  const touch = (uri: vscode.Uri) => {
+    onTouched(uri.fsPath);
+    touched.add(uri.fsPath);
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const paths = [...touched];
+      touched.clear();
+      void core.notify("vnoc/filesChanged", { paths });
+    }, CHANGE_DEBOUNCE_MS);
+  };
+  return vscode.Disposable.from(watcher, watcher.onDidCreate(touch), watcher.onDidChange(touch), watcher.onDidDelete(touch), { dispose: () => clearTimeout(timer) });
+}
