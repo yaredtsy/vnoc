@@ -8,30 +8,36 @@ import type { DocInfo, MissingNode, MovePlan, TrashItem } from "@vnoc/shared/mes
 // open in a tab follows it. `moveToTrash` and `restoreEntry` have no questions in them: the commands wrap them with the conversation, and the test
 // suite calls them as they are.
 
-type Request = <T>(method: string, params?: object) => Promise<T>;
+/** What these flows need of the core. */
+export interface Link {
+  request<T>(method: string, params?: object): Promise<T>;
+  notify(method: string, params?: object): Promise<void>;
+}
 
 const nameOf = (m: MissingNode) => m.qualname || m.path;
 
 /** The node folder moves as a workspace edit. A refusal (or a failure) is an error: the core has written only an empty entry, which the next listing removes. */
-async function move(plan: MovePlan): Promise<void> {
+async function move(core: Link, plan: MovePlan): Promise<void> {
   const edit = new vscode.WorkspaceEdit();
   edit.renameFile(vscode.Uri.file(plan.from), vscode.Uri.file(plan.to));
   if (!(await vscode.workspace.applyEdit(edit))) throw new Error("VS Code did not move the docs. Nothing was removed.");
+  // `.vnoc/` is at the git root, which can be above the opened folder: then VS Code's file watcher never sees the move, so the core is told
+  await core.notify("vnoc/filesChanged", { paths: [plan.from, plan.to] });
 }
 
 /** Remove, without the question: the core's plan (it refuses an ID that is not Missing), then the move. */
-export async function moveToTrash(request: Request, id: string): Promise<void> {
-  await move(await request<MovePlan>("vnoc/trash", { id }));
+export async function moveToTrash(core: Link, id: string): Promise<void> {
+  await move(core, await core.request<MovePlan>("vnoc/trash", { id }));
 }
 
 /** Restore, without the question: the core works out where the node goes back to (and refuses when docs are there), then the move. */
-export async function restoreEntry(request: Request, entry: string): Promise<void> {
-  await move(await request<MovePlan>("vnoc/restorePlan", { entry }));
+export async function restoreEntry(core: Link, entry: string): Promise<void> {
+  await move(core, await core.request<MovePlan>("vnoc/restorePlan", { entry }));
 }
 
 /** Remove… on a Missing row. Resolves to whether the docs were removed. */
-export async function removeMissing(request: Request, missing: MissingNode): Promise<boolean> {
-  const docs = await request<DocInfo[]>("vnoc/docs", { id: missing.id });
+export async function removeMissing(core: Link, missing: MissingNode): Promise<boolean> {
+  const docs = await core.request<DocInfo[]>("vnoc/docs", { id: missing.id });
   const answer = await vscode.window.showWarningMessage(
     `Remove the docs of ${nameOf(missing)}?`,
     {
@@ -41,13 +47,13 @@ export async function removeMissing(request: Request, missing: MissingNode): Pro
     "Remove",
   );
   if (answer !== "Remove") return false;
-  await moveToTrash(request, missing.id);
+  await moveToTrash(core, missing.id);
   return true;
 }
 
 /** Restore Removed Doc…: pick one removed node. Resolves to whether it was restored. */
-export async function restoreRemoved(request: Request): Promise<boolean> {
-  const entries = await request<TrashItem[]>("vnoc/trashList");
+export async function restoreRemoved(core: Link): Promise<boolean> {
+  const entries = await core.request<TrashItem[]>("vnoc/trashList");
   if (entries.length === 0) {
     void vscode.window.showInformationMessage("V-NOC: nothing has been removed.");
     return false;
@@ -57,14 +63,14 @@ export async function restoreRemoved(request: Request): Promise<boolean> {
     { title: "Restore Removed Doc", placeHolder: "Which one?", matchOnDescription: true },
   );
   if (!picked) return false;
-  await restoreEntry(request, picked.entry.entry);
+  await restoreEntry(core, picked.entry.entry);
   void vscode.window.showInformationMessage(`V-NOC: the docs of ${picked.entry.name} are back. If the code is gone, they show under Missing.`);
   return true;
 }
 
 /** Empty Trash: the only permanent delete in V-NOC, and it goes to the OS trash where there is one. */
-export async function emptyTrash(request: Request, gitRoot: string): Promise<boolean> {
-  await request("vnoc/trashList"); // the listing removes the empty entries, so they are not counted
+export async function emptyTrash(core: Link, gitRoot: string): Promise<boolean> {
+  await core.request("vnoc/trashList"); // the listing removes the empty entries, so they are not counted
   const folder = path.join(gitRoot, ".vnoc", "local", "trash");
   const count = fs.existsSync(folder) ? fs.readdirSync(folder, { withFileTypes: true }).filter((e) => e.isDirectory()).length : 0;
   if (count === 0) {

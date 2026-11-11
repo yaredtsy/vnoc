@@ -139,8 +139,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** a request to the core (the suite attaches docs through it, without the input boxes) */
     request: <T>(method: string, params?: object) => c.request<T>(method, params),
     /** Remove and Restore without the questions (the commands add those) */
-    moveToTrash: (id: string) => moveToTrash((m, p) => c.request(m, p), id),
-    restoreEntry: (entry: string) => restoreEntry((m, p) => c.request(m, p), entry),
+    moveToTrash: (id: string) => moveToTrash(c, id),
+    restoreEntry: (entry: string) => restoreEntry(c, entry),
     ping: () => c.request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
     structure: () => c.request<any>("vnoc/structure"),
     /** selects a node's row in the sidebar tree, as a click would (the session hears it from `onDidChangeSelection`) */

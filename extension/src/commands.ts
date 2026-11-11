@@ -109,9 +109,9 @@ export class Commands {
         const tree = this.core.tree ?? (await this.core.loadStructure()).root;
         return relinkMissing(this.request, await this.root(), arg.node, tree);
       }),
-      on("vnoc.removeMissing", async (arg) => (isAttentionRow(arg, "missing") ? removeMissing(this.request, arg.node) : undefined)),
-      on("vnoc.restoreRemoved", () => restoreRemoved(this.request)),
-      on("vnoc.emptyTrash", async () => emptyTrash(this.request, await this.root())),
+      on("vnoc.removeMissing", async (arg) => (isAttentionRow(arg, "missing") ? removeMissing(this.core, arg.node) : undefined)),
+      on("vnoc.restoreRemoved", () => restoreRemoved(this.core)),
+      on("vnoc.emptyTrash", async () => emptyTrash(this.core, await this.root())),
       on("vnoc.attachMissingDocHere", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
         if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");

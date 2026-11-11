@@ -332,6 +332,16 @@
       "view/title": [
         {
           "command": "vnoc.restoreRemoved",
+          "when": "view == vnoc.structure",
+          "group": "1_trash@1"
+        },
+        {
+          "command": "vnoc.emptyTrash",
+          "when": "view == vnoc.structure",
+          "group": "1_trash@2"
+        },
+        {
+          "command": "vnoc.restoreRemoved",
           "when": "view == vnoc.attention",
           "group": "1_trash@1"
         },
