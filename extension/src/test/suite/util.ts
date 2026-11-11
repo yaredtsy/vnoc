@@ -13,6 +13,14 @@ export async function until(what: string, check: () => boolean, ms = 20_000) {
   }
 }
 
+/** Waits for an async check, polling every 200 ms. */
+export async function waitFor(what: string, check: () => Promise<boolean> | boolean, ms = 20_000) {
+  for (let waited = 0; !(await check()); waited += 200) {
+    assert.ok(waited < ms, `timed out waiting for ${what}`);
+    await sleep(200);
+  }
+}
+
 export async function closeCanvas() {
   await vscode.window.tabGroups.close(canvasTabs());
   await until("the canvas tab to close", () => canvasTabs().length === 0);

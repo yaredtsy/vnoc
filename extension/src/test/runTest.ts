@@ -1,3 +1,4 @@
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -14,6 +15,11 @@ async function main() {
   const workspace = path.join(tmp, "ws");
   fs.mkdirSync(workspace);
   fs.cpSync(path.join(repo, "crates/vnoc-domain/tests/fixtures"), workspace, { recursive: true });
+  // a git repository, so the refactor suite can `git mv` (the runners have no git identity: it is given here)
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace, stdio: "ignore" });
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-q", "-m", "fixture");
   await runTests({
     // the VS Code on this machine if there is one (or the one named in VSCODE_EXECUTABLE); otherwise the test runner downloads one (CI)
     vscodeExecutablePath: process.env.VSCODE_EXECUTABLE ?? (fs.existsSync(LOCAL_VSCODE) ? LOCAL_VSCODE : undefined),

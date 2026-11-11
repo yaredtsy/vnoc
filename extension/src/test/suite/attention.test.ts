@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 
 import type { Problem, StructureResult } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
-import { sleep, until } from "./util";
+import { sleep, until, waitFor } from "./util";
 
 // NEEDS ATTENTION in a real window (docs/11-missing-relink-remove.md §6): a deleted function shows under Missing and leaves when it is back;
 // a problem on a folder is revealed, not opened. The suite reads the view's rows through the extension's test API: it cannot see the tree itself.
@@ -36,12 +36,6 @@ suite("needs attention", () => {
 
   const functionsOf = async () => (await api.structure()).root.children.find((n) => n.name === "doomed.py")?.children ?? [];
   const nameFound = (name: string, docs: number) => async () => (await functionsOf()).some((n) => n.name === name && n.docs === docs);
-  const waitFor = async (what: string, check: () => Promise<boolean> | boolean) => {
-    for (let waited = 0; !(await check()); waited += 200) {
-      assert.ok(waited < 20_000, `timed out waiting for ${what}`);
-      await sleep(200);
-    }
-  };
 
   suiteSetup(async () => {
     fs.writeFileSync(file(), BOTH);
@@ -172,12 +166,6 @@ suite("write id", () => {
   let id: string;
 
   const marked = async () => (await api.structure()).root.children.find((n) => n.name === "marked.py")?.children.find((n) => n.name === "marked");
-  const waitFor = async (what: string, check: () => Promise<boolean>) => {
-    for (let waited = 0; !(await check()); waited += 200) {
-      assert.ok(waited < 20_000, `timed out waiting for ${what}`);
-      await sleep(200);
-    }
-  };
 
   suiteSetup(async () => {
     // the "needs attention" suite's first attach wrote `[ids] default = "none"` here: IDs are on for this one
