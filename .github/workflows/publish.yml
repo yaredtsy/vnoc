@@ -1,0 +1,40 @@
+# The first pre-release (docs/13-harden-and-publish.md §7.1): macOS arm64 only, by hand ("Run workflow"), with no stored token.
+# The Marketplace trusts THIS file name (the Trusted Publishing policy `vnoc-release`): do not rename it.
+name: publish
+on: workflow_dispatch
+jobs:
+  publish:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: shared logic (session, tree, focus stack)
+        run: pnpm --filter @vnoc/shared test
+      - name: webview (layout, keys, markers, markdown)
+        run: pnpm --filter vnoc-webview test
+      - name: extension unit tests
+        run: pnpm --filter vnoc unit
+      - name: core
+        run: cargo test -p vnoc-domain -p vnoc-driver-protocol
+      - name: python driver (own workspace, own toolchain)
+        working-directory: drivers/python
+        run: cargo build && cargo test
+      - name: core integration tests
+        run: cargo test -p vnoc
+      - name: build the webview and the extension (the extension suite loads them)
+        run: pnpm -r build
+      - name: extension suite in a real VS Code window
+        run: pnpm --filter vnoc test
+      # a red test above stops the publish
+      - name: package the pre-release
+        run: node scripts/package.mjs --target darwin-arm64 --pre-release
+      - name: publish (trusted publishing: the job's OIDC token, no secret)
+        working-directory: extension
+        run: npx --no @vscode/vsce publish --oidc --packagePath ../vnoc-darwin-arm64.vsix

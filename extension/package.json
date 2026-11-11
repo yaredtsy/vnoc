@@ -1,9 +1,14 @@
 {
   "name": "vnoc",
   "displayName": "V-NOC",
-  "description": "Browse code as a graph and attach docs to it (walking skeleton).",
+  "description": "Browse Python code as a tree and a canvas, and attach docs that stay with the code when it is renamed or moved.",
   "version": "0.0.1",
   "publisher": "vnoc",
+  "preview": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yaredtsy/vnoc.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
