@@ -167,8 +167,11 @@ impl Drop for DriverClient {
 }
 
 impl Wire {
-    /// Sends a request and waits `limit` for its answer. When this future is dropped, or the time runs out, and nobody has answered,
-    /// the driver is told to stop working on it (`$/cancelRequest`).
+    /// Sends a request and waits for its answer, `limit` in all: writing it counts too. When this future is dropped, or the time runs out,
+    /// and nobody has answered, the driver is told to stop working on it (`$/cancelRequest`).
+    ///
+    /// A request that cannot even be written in time means the driver has stopped reading its input: that is a broken connection
+    /// (`Closed`, so the host drops the driver), not a slow answer (`Timeout`, which keeps it).
     async fn request(self: &Arc<Self>, method: &'static str, params: &impl Serialize, limit: Duration) -> Reply {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
@@ -177,8 +180,12 @@ impl Wire {
             None => return Err(HostError::Closed("it is not running".into())),
         };
         let _pending = Pending { wire: self.clone(), id };
-        self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })).await?;
-        match tokio::time::timeout(limit, rx).await {
+        let deadline = tokio::time::Instant::now() + limit;
+        match tokio::time::timeout_at(deadline, self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))).await {
+            Ok(written) => written?,
+            Err(_) => return Err(HostError::Closed("it is not reading its input".into())),
+        }
+        match tokio::time::timeout_at(deadline, rx).await {
             Ok(Ok(reply)) => reply,
             Ok(Err(_)) => Err(HostError::Closed("it stopped answering".into())),
             Err(_) => Err(HostError::Timeout(method)),
@@ -511,6 +518,19 @@ mod tests {
         // the write may fail before the reader has seen the driver's output close: either way the connection is broken
         assert!(matches!(gone, Err(HostError::Closed(_) | HostError::Io(_))), "{gone:?}");
         assert!(host.client.lock().await.is_none(), "a driver that is gone is dropped, and the next request starts a new one");
+    }
+
+    #[tokio::test]
+    async fn a_driver_that_stops_reading_fails_the_request_in_time_and_is_dropped() {
+        let (client, _fake) = connected().await; // the fake never reads again, so a request bigger than the pipe cannot be written
+        let host = DriverHost::default();
+        *host.client.lock().await = Some(client);
+
+        let big = json!({ "pad": "x".repeat(200_000) });
+        let stuck = host.with_client(|client| async move { client.wire.request(method::OUTLINE, &big, Duration::from_millis(50)).await });
+        let stuck = tokio::time::timeout(Duration::from_secs(5), stuck).await.expect("the limit covers the write: it does not hang");
+        assert!(matches!(stuck, Err(HostError::Closed(_))), "{stuck:?}");
+        assert!(host.client.lock().await.is_none(), "nothing else would end a driver that is stuck");
     }
 
     #[test]

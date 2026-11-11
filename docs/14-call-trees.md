@@ -207,6 +207,8 @@ Built in `crates/vnoc/src/driver_host.rs`. What the table leaves open, as built:
 - A timeout **keeps the driver**: the cancel has been sent, and other requests (a call tree) may be running on it. Only `Closed`, `Io` and `Protocol`
   drop it. The price: a driver that hangs for good is not restarted by timeouts alone; each request just times out. Nothing hangs in 0.1's
   `outline`; if 7.6 finds a hang, add a restart after a few timeouts in a row.
+- The limit covers writing the request as well as waiting for the answer. A request that cannot be written in time (the driver has stopped
+  reading its input, the pipe is full) is `Closed`, not `Timeout`: it drops the driver, since nothing else would end one that is stuck.
 - `forget` drops a driver only if it is still the current one: a late failure of an old driver must not drop its replacement.
 - `DriverHost::call_tree` exists (capability `callTree`, 30 s) so the 30 s limit has a caller; the core's `vnoc/callTree` that uses it is 7.4.
 - The handshake now has the 10 s limit too. New error `HostError::Closed` for a driver that is gone.
