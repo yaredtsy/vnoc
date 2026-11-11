@@ -324,7 +324,7 @@ fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
     assert!(code.contains(&format!("def parse_order(self, raw):\n        \"\"\"ID: {id}\"\"\"\n")), "{code}");
 
     // .vnoc/ was set up and the node and doc are where the plan says
-    let (shard, node) = (&id[24..], root.join(".vnoc/nodes").join(&id[24..]).join(&id));
+    let (shard, node) = (&id[24..], root.join(".vnoc").join("nodes").join(&id[24..]).join(&id));
     assert!(root.join(".vnoc/vnoc.toml").is_file() && root.join(".vnoc/.gitignore").is_file(), "{shard}");
     let toml = std::fs::read_to_string(node.join("node.toml")).unwrap();
     assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"OrderService.parse_order\"") && toml.contains("id_in_code = \"yes\"") && toml.contains("kind = \"function\""), "{toml}");
