@@ -750,6 +750,48 @@ fn write_id_that_cannot_write_says_so_and_changes_nothing() {
 }
 
 #[test]
+fn write_id_does_not_take_a_node_whose_id_is_elsewhere_in_the_code_however_old_its_anchor() {
+    let (mut core, root) = orders_project("writeidelsewhere", Some("format = 1\n"));
+    // S still has its stored anchor at `other`, but its ID is in the code of `parse_order`
+    write_record(&root, S, "orders.py", "OrderService.other");
+    let moved = ORDERS.replace("def parse_order(self, raw):\n", &format!("def parse_order(self, raw):\n        \"\"\"ID: {S}\"\"\"\n"));
+    std::fs::write(root.join("orders.py"), &moved).unwrap();
+    tell_core_about_vnoc(&mut core, &root);
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    structure_when(&mut core, |s| find_node(&s["root"], &|n| n["name"] == "parse_order").is_some_and(|n| n["node_id"] == S));
+
+    let refused = message(core.request("vnoc/writeId", write_id_params(&root, "orders.py::OrderService.other")));
+    assert!(refused.contains("has no docs"), "{refused}");
+    assert!(core.edit_requests.is_empty());
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), moved);
+    core.finish();
+}
+
+#[test]
+fn relink_keeps_never_and_a_value_it_does_not_know_and_writes_no_id() {
+    let (mut core, root) = orders_project("relinknever", Some("format = 1\n"));
+    write_record(&root, R, "gone.py", "old");
+    write_record(&root, T, "gone.py", "older");
+    let toml = |id: &str| root.join(".vnoc/nodes").join(&id[24..]).join(id).join("node.toml");
+    for (id, value) in [(R, "never"), (T, "sometimes")] {
+        std::fs::write(toml(id), std::fs::read_to_string(toml(id)).unwrap().replace("\"no\"", &format!("\"{value}\""))).unwrap();
+    }
+    tell_core_about_vnoc(&mut core, &root);
+    missing_is(&mut core, &[R, T]);
+
+    for (id, to, value) in [(R, "orders.py::OrderService.other", "never"), (T, "orders.py::OrderService.parse_order", "sometimes")] {
+        let r = core.request("vnoc/relink", relink_params(&root, id, to)).expect("relink answers");
+        assert_eq!((r["written"].as_str(), r["notice"].is_null()), (Some("anchorOnly"), true), "{r}");
+        let text = std::fs::read_to_string(toml(id)).unwrap();
+        assert!(text.contains(&format!("id_in_code = \"{value}\"")), "the field is as it was: {text}");
+        assert!(text.contains("path = \"orders.py\""), "the place moved: {text}");
+    }
+    assert!(core.edit_requests.is_empty(), "the editor was not asked");
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS, "no ID line in the code");
+    core.finish();
+}
+
+#[test]
 fn trash_refuses_a_node_that_is_not_missing_and_remove_then_restore_gives_back_the_same_bytes() {
     let (mut core, root) = orders_project("trash", Some("format = 1\n"));
     write_record(&root, S, "orders.py", "OrderService.other"); // found by name: not Missing

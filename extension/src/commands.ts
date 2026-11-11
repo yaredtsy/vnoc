@@ -113,7 +113,7 @@ export class Commands {
       on("vnoc.removeMissing", async (arg) => (isAttentionRow(arg, "missing") ? removeMissing(this.core, arg.node) : undefined)),
       on("vnoc.restoreRemoved", () => restoreRemoved(this.core)),
       on("vnoc.removeAllMissing", () => removeAllMissing(this.core, this.core.missing)),
-      on("vnoc.emptyTrash", async () => emptyTrash(this.core, await this.root(), this.core.missing.length)),
+      on("vnoc.emptyTrash", () => emptyTrash(this.core, this.core.missing.length)),
       on("vnoc.attachMissingDocHere", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
         if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");

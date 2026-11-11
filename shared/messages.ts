@@ -87,6 +87,14 @@ export interface TrashItem {
   name: string;
 }
 
+/** `vnoc/trashInfo`: what Empty Trash asks about and deletes. */
+export interface TrashInfo {
+  /** absolute path of the trash folder */
+  folder: string;
+  entries: number;
+  bytes: number;
+}
+
 export interface DocInfo {
   file: string;
   title: string;

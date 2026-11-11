@@ -25,7 +25,7 @@ use crate::driver_host::DriverHost;
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
 use crate::identity::{self, Env};
-use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Trash, TrashItem, TrashList, TrashParams, MovePlan, Stats, Structure, StructureResult, WriteId, WriteIdParams, WriteIdResult};
+use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Trash, TrashItem, TrashList, TrashParams, MovePlan, Stats, Structure, StructureResult, TrashInfo, TrashInfoResult, WriteId, WriteIdParams, WriteIdResult};
 use crate::userdata::{TrashError, UserData};
 use vnoc_domain::NodeId;
 use crate::watchdog::timed;
@@ -145,6 +145,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<WriteId, _>(write_id)
         .request::<Trash, _>(trash)
         .request::<TrashList, _>(trash_list)
+        .request::<TrashInfo, _>(trash_info)
         .request::<RestorePlan, _>(restore_plan)
         .request::<Docs, _>(docs)
         .notification::<FilesChanged>(files_changed)
@@ -319,6 +320,17 @@ fn trash_list(core: &mut Core, _ignored: serde_json::Value) -> impl std::future:
         let data = UserData::new(project.git_root());
         let entries = tokio::task::spawn_blocking(move || data.trash_list()).await.map_err(internal)?;
         Ok(entries.into_iter().map(|e| TrashItem { entry: e.entry, id: e.id.to_string(), removed_at: e.removed_at, docs: e.docs, name: e.name }).collect())
+    })
+}
+
+/// `vnoc/trashInfo`: where the trash is, how many entries and how many bytes: what Empty Trash asks about and deletes.
+fn trash_info(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<TrashInfoResult, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("trashInfo", async move {
+        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let data = UserData::new(project.git_root());
+        let (folder, entries, bytes) = tokio::task::spawn_blocking(move || data.trash_info()).await.map_err(internal)?;
+        Ok(TrashInfoResult { folder: folder.to_string_lossy().into_owned(), entries, bytes })
     })
 }
 

@@ -101,10 +101,27 @@ impl UserData {
         Ok(MovePlan { from, to })
     }
 
-    /// The trash folder, for Empty Trash.
-    pub fn trash_folder(&self) -> PathBuf {
-        layout::trash_dir(&self.root)
+    /// For Empty Trash: the trash folder, how many entries are in it and how many bytes. The listing runs first (it removes the empty entries, so they are
+    /// not counted); then every folder counts, the skipped ones too, because Empty Trash deletes the whole folder. Links are not followed.
+    pub fn trash_info(&self) -> (PathBuf, usize, u64) {
+        let folder = layout::trash_dir(&self.root);
+        self.trash_list();
+        let entries = fs::read_dir(&folder).map_or(0, |dir| dir.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).count());
+        (folder.clone(), entries, bytes_under(&folder))
     }
+}
+
+/// The sizes of the files under `dir`, added up. `symlink_metadata`: a link is its own few bytes, not what it points to.
+fn bytes_under(dir: &Path) -> u64 {
+    let Ok(read_dir) = fs::read_dir(dir) else { return 0 };
+    read_dir
+        .flatten()
+        .map(|e| match e.path().symlink_metadata() {
+            Ok(m) if m.is_dir() => bytes_under(&e.path()),
+            Ok(m) => m.len(),
+            Err(_) => 0,
+        })
+        .sum()
 }
 
 enum Inspected {
@@ -191,6 +208,26 @@ mod tests {
     /// What VS Code does with a plan.
     fn mv(plan: &MovePlan) {
         fs::rename(&plan.from, &plan.to).unwrap();
+    }
+
+    #[test]
+    fn trash_info_counts_the_entries_and_their_bytes_and_drops_the_empty_ones() {
+        let data = fresh("info");
+        let (folder, entries, bytes) = data.trash_info();
+        assert_eq!((entries, bytes), (0, 0), "no trash folder at all");
+        assert!(folder.ends_with("local/trash"), "{folder:?}");
+
+        let id = node(&data, 1);
+        data.trash_plan(&id).unwrap();
+        let (_, entries, _) = data.trash_info();
+        assert_eq!(entries, 0, "an entry with no node folder in it is an empty one: it is removed, not counted");
+
+        let id = node(&data, 2);
+        let plan = data.trash_plan(&id).unwrap();
+        mv(&plan);
+        let (_, entries, bytes) = data.trash_info();
+        assert_eq!(entries, 1);
+        assert!(bytes > 0, "the node.toml, the doc and trashed.toml");
     }
 
     #[test]

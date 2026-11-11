@@ -28,12 +28,18 @@ pub enum WriteIdError {
 }
 
 pub async fn write_id(mut env: Env<'_>, params: WriteIdParams) -> Result<WriteIdResult, WriteIdError> {
-    let (location, target) = find_target(&env.index.read().unwrap(), &params.key)?;
-    if target.in_code().is_some() {
-        return Err(WriteIdError::AlreadyInCode);
-    }
+    // the index answers who is documented here, in the same lock as the target: a node whose ID is elsewhere in the code is not this one,
+    // however old its stored anchor is
+    let (location, target, id) = {
+        let index = env.index.read().unwrap();
+        let (location, target) = find_target(&index, &params.key)?;
+        if target.in_code().is_some() {
+            return Err(WriteIdError::AlreadyInCode);
+        }
+        let id = index.node_at(&location).ok_or(WriteIdError::NoDocs)?;
+        (location, target, id)
+    };
     let data = UserData::new(env.project.git_root());
-    let id = data.find_node_at(&location).ok_or(WriteIdError::NoDocs)?;
     let mut toml = data.node_toml(&id).ok_or(WriteIdError::NoRecord)?;
     if toml.id_in_code() == Some(IdInCode::Never) {
         return Err(WriteIdError::Never);

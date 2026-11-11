@@ -318,6 +318,24 @@ impl Request for TrashList {
     const METHOD: &'static str = "vnoc/trashList";
 }
 
+/// `vnoc/trashInfo`: what Empty Trash needs to ask and to delete: where the trash is, how many removed nodes it holds and how big it is. Empty entries
+/// are removed by the call, so they are not counted.
+pub enum TrashInfo {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TrashInfoResult {
+    /// absolute path of the trash folder
+    pub folder: String,
+    pub entries: usize,
+    pub bytes: u64,
+}
+
+impl Request for TrashInfo {
+    type Params = serde_json::Value;
+    type Result = TrashInfoResult;
+    const METHOD: &'static str = "vnoc/trashInfo";
+}
+
 /// `vnoc/restorePlan`: Restore, step 2. Where the entry's node folder goes back to, worked out from its ID; refused when a node folder is there.
 pub enum RestorePlan {}
 

@@ -1,8 +1,6 @@
-import * as fs from "fs";
-import * as path from "path";
 import * as vscode from "vscode";
 
-import type { DocInfo, MissingNode, MovePlan, TrashItem } from "@vnoc/shared/messages";
+import type { DocInfo, MissingNode, MovePlan, TrashInfo, TrashItem } from "@vnoc/shared/messages";
 
 // Remove, Restore and Empty Trash (docs/11-missing-relink-remove.md §5). The core plans and refuses; VS Code does the move, so a doc of that node
 // open in a tab follows it. `moveToTrash` and `restoreEntry` have no questions in them: the commands wrap them with the conversation, and the test
@@ -16,23 +14,40 @@ export interface Link {
 
 const nameOf = (m: MissingNode) => m.qualname || m.path;
 
-/** The node folder moves as a workspace edit. A refusal (or a failure) is an error: the core has written only an empty entry, which the next listing removes. */
-async function move(core: Link, plan: MovePlan): Promise<void> {
+/** The node folders move as one workspace edit. A refusal (or a failure) is an error: the core has written only empty entries, which the next listing removes. */
+async function move(core: Link, plans: MovePlan[]): Promise<void> {
   const edit = new vscode.WorkspaceEdit();
-  edit.renameFile(vscode.Uri.file(plan.from), vscode.Uri.file(plan.to));
+  for (const plan of plans) edit.renameFile(vscode.Uri.file(plan.from), vscode.Uri.file(plan.to));
   if (!(await vscode.workspace.applyEdit(edit))) throw new Error("VS Code did not move the docs. Nothing was removed.");
-  // `.vnoc/` is at the git root, which can be above the opened folder: then VS Code's file watcher never sees the move, so the core is told
-  await core.notify("vnoc/filesChanged", { paths: [plan.from, plan.to] });
+  // `.vnoc/` is at the git root, which can be above the opened folder: then VS Code's file watcher never sees the move, so the core is told, once
+  await core.notify("vnoc/filesChanged", { paths: plans.flatMap((plan) => [plan.from, plan.to]) });
 }
 
 /** Remove, without the question: the core's plan (it refuses an ID that is not Missing), then the move. */
 export async function moveToTrash(core: Link, id: string): Promise<void> {
-  await move(core, await core.request<MovePlan>("vnoc/trash", { id }));
+  await move(core, [await core.request<MovePlan>("vnoc/trash", { id })]);
+}
+
+/**
+ * Remove for several nodes, as one move and one message to the core (one index update, not one per node). A node that is not Missing any more is skipped.
+ * Resolves to how many moved.
+ */
+export async function moveAllToTrash(core: Link, ids: string[]): Promise<number> {
+  const plans: MovePlan[] = [];
+  for (const id of ids) {
+    try {
+      plans.push(await core.request<MovePlan>("vnoc/trash", { id }));
+    } catch {
+      // the core refused: it is not Missing any more
+    }
+  }
+  if (plans.length > 0) await move(core, plans);
+  return plans.length;
 }
 
 /** Restore, without the question: the core works out where the node goes back to (and refuses when docs are there), then the move. */
 export async function restoreEntry(core: Link, entry: string): Promise<void> {
-  await move(core, await core.request<MovePlan>("vnoc/restorePlan", { entry }));
+  await move(core, [await core.request<MovePlan>("vnoc/restorePlan", { entry })]);
 }
 
 /** Remove… on a Missing row. Resolves to whether the docs were removed. */
@@ -63,15 +78,8 @@ export async function removeAllMissing(core: Link, missing: MissingNode[]): Prom
     "Remove",
   );
   if (answer !== "Remove") return 0;
-  let removed = 0;
-  try {
-    for (const m of missing) {
-      await moveToTrash(core, m.id);
-      removed++;
-    }
-  } finally {
-    if (removed > 0) void vscode.window.showInformationMessage(`V-NOC: ${removed} removed. Restore Removed Doc… brings them back.`);
-  }
+  const removed = await moveAllToTrash(core, missing.map((m) => m.id));
+  if (removed > 0) void vscode.window.showInformationMessage(`V-NOC: ${removed} removed. Restore Removed Doc… brings them back.`);
   return removed;
 }
 
@@ -93,11 +101,9 @@ export async function restoreRemoved(core: Link): Promise<boolean> {
 }
 
 /** Empty Trash: the only permanent delete in V-NOC, and it goes to the OS trash where there is one. */
-export async function emptyTrash(core: Link, gitRoot: string, stillMissing = 0): Promise<boolean> {
-  await core.request("vnoc/trashList"); // the listing removes the empty entries, so they are not counted
-  const folder = path.join(gitRoot, ".vnoc", "local", "trash");
-  const count = fs.existsSync(folder) ? fs.readdirSync(folder, { withFileTypes: true }).filter((e) => e.isDirectory()).length : 0;
-  if (count === 0) {
+export async function emptyTrash(core: Link, stillMissing = 0): Promise<boolean> {
+  const { folder, entries, bytes } = await core.request<TrashInfo>("vnoc/trashInfo");
+  if (entries === 0) {
     void vscode.window.showInformationMessage(
       stillMissing > 0
         ? `V-NOC: nothing has been removed, so the trash is empty. ${stillMissing} Missing ${stillMissing === 1 ? "doc is" : "docs are"} still there: use Remove… on a row, or Remove All Missing….`
@@ -106,22 +112,21 @@ export async function emptyTrash(core: Link, gitRoot: string, stillMissing = 0):
     return false;
   }
   const answer = await vscode.window.showWarningMessage(
-    `Empty V-NOC's trash? ${count} removed ${count === 1 ? "node" : "nodes"}, ${size(folderBytes(folder))}.`,
+    `Empty V-NOC's trash? ${entries} removed ${entries === 1 ? "node" : "nodes"}, ${size(bytes)}.`,
     { modal: true, detail: "They go to the system trash if there is one. After that they cannot be restored from V-NOC." },
     "Empty Trash",
   );
   if (answer !== "Empty Trash") return false;
-  await vscode.workspace.fs.delete(vscode.Uri.file(folder), { recursive: true, useTrash: true });
-  return true;
-}
-
-function folderBytes(dir: string): number {
-  let total = 0;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const file = path.join(dir, entry.name);
-    total += entry.isDirectory() ? folderBytes(file) : entry.isFile() ? fs.statSync(file).size : 0;
+  const target = vscode.Uri.file(folder);
+  try {
+    await vscode.workspace.fs.delete(target, { recursive: true, useTrash: true });
+  } catch {
+    // no system trash here (a remote window, a container): ask once more, then delete for good
+    const sure = await vscode.window.showWarningMessage("There is no system trash here. Delete the removed docs for good?", { modal: true }, "Delete Permanently");
+    if (sure !== "Delete Permanently") return false;
+    await vscode.workspace.fs.delete(target, { recursive: true, useTrash: false });
   }
-  return total;
+  return true;
 }
 
 function size(bytes: number): string {

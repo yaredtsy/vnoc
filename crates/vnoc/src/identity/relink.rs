@@ -3,7 +3,7 @@
 //! The same order as attach: the ID is written at the new place first, then `node.toml` is moved, so stopping after any step leaves something
 //! harmless (an ID with no node moved to it is a copy of an ID: the node is still Missing, and Relink can be run again).
 
-use vnoc_domain::{NodeId, NodeKind};
+use vnoc_domain::{IdInCode, NodeId, NodeKind};
 
 use super::attach::{AttachError, Env, document_for, find_target, write_marker};
 use crate::protocol::{RelinkParams, RelinkResult, Written};
@@ -53,12 +53,14 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
         }
     }
     let document = document_for(&env, &target, &to, &params.to, params.document.as_ref())?;
+    // a node set to never have an ID in the code, or with a value a newer V-NOC wrote, gets none, and its field stays as it is
+    let may_write = matches!(toml.id_in_code(), None | Some(IdInCode::Yes | IdInCode::No));
 
-    // 1. the ID, when the project writes IDs and the place does not carry it already
+    // 1. the ID, when the project writes IDs, the node may have one, and the place does not carry it already
     let mut notice = None;
     let mut written = Written::Id;
     if target.in_code() != Some(id) {
-        if data.settings()?.markers {
+        if may_write && data.settings()?.markers {
             if let Err(reason) = write_marker(&mut env, &target, &to, &id, document).await {
                 notice = Some(format!("The ID could not be written ({reason}); the docs are attached by name."));
                 written = Written::AnchorOnly;
@@ -71,7 +73,9 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
     // 2. node.toml: the place, the kind, and whether the ID is in the code
     toml.set_location(&to);
     toml.set_kind(&new_kind);
-    toml.set_id_in_code(if written == Written::Id { vnoc_domain::IdInCode::Yes } else { vnoc_domain::IdInCode::No });
+    if may_write {
+        toml.set_id_in_code(if written == Written::Id { IdInCode::Yes } else { IdInCode::No });
+    }
     data.write_node_toml(&id, &toml)?;
     Ok(RelinkResult { written, notice })
 }

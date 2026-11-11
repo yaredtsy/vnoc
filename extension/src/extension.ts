@@ -12,7 +12,7 @@ import { CANVAS, DOCS, Panels } from "./panels";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
 import { type Row, StructureView } from "./structureView";
-import { moveToTrash, restoreEntry } from "./trash";
+import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 
 // Wires the pieces together: the core, the session, the two webview tabs, the sidebar, the commands. Nothing here decides anything.
 
@@ -140,6 +140,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     request: <T>(method: string, params?: object) => c.request<T>(method, params),
     /** Remove and Restore without the questions (the commands add those) */
     moveToTrash: (id: string) => moveToTrash(c, id),
+    moveAllToTrash: (ids: string[]) => moveAllToTrash(c, ids),
     restoreEntry: (entry: string) => restoreEntry(c, entry),
     ping: () => c.request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
     structure: () => c.request<any>("vnoc/structure"),

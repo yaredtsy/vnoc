@@ -17,6 +17,7 @@ interface Api {
   request<T>(method: string, params?: object): Promise<T>;
   webviewErrors(): string[];
   moveToTrash(id: string): Promise<void>;
+  moveAllToTrash(ids: string[]): Promise<number>;
   restoreEntry(entry: string): Promise<void>;
 }
 let api: Api;
@@ -155,6 +156,32 @@ suite("needs attention", () => {
     assert.strictEqual(await vscode.commands.executeCommand("vnoc.openProblem", { row: "problem", problem }), "opened");
     assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, file());
     assert.strictEqual(vscode.window.activeTextEditor?.selection.active.line, 4);
+  });
+
+  test("Remove All Missing moves every Missing node in one go, and Restore brings each back", async () => {
+    const batch = path.join(folder, "batch.py");
+    const both = "def first():\n    pass\n\n\ndef second():\n    pass\n";
+    fs.writeFileSync(batch, both);
+    const children = async () => (await api.structure()).root.children.find((n) => n.name === "batch.py")?.children ?? [];
+    await waitFor("batch.py in the structure", async () => (await children()).length === 2);
+    const ids: string[] = [];
+    for (const n of await children()) {
+      const r = await api.request<{ id: string }>("vnoc/attach", { key: n.id, title: `Why ${n.name}`, markers: false, document: { uri: vscode.Uri.file(batch).toString(), version: 1, text: both } });
+      ids.push(r.id);
+    }
+    await waitFor("both docs", async () => (await children()).every((n) => n.docs === 1));
+    fs.writeFileSync(batch, "X = 1\n");
+    await until("both under Missing", () => ids.every((i) => api.attention().missing.includes(i)));
+
+    assert.strictEqual(await api.moveAllToTrash(ids), 2);
+    await until("both to leave Missing", () => ids.every((i) => !api.attention().missing.includes(i)));
+    const removed = (await api.request<{ id: string; entry: string }[]>("vnoc/trashList")).filter((e) => ids.includes(e.id));
+    assert.strictEqual(removed.length, 2, "both are in the trash");
+    assert.strictEqual(await api.moveAllToTrash(ids), 0, "they are not Missing any more: nothing to move");
+
+    for (const e of removed) await api.restoreEntry(e.entry);
+    fs.rmSync(batch, { force: true });
+    await until("both restored, and Missing again without the file", () => ids.every((i) => api.attention().missing.includes(i)));
   });
 });
 
