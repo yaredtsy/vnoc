@@ -25,7 +25,7 @@ use crate::driver_host::DriverHost;
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
 use crate::identity::{self, Env};
-use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Trash, TrashItem, TrashList, TrashParams, MovePlan, Stats, Structure, StructureResult};
+use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Trash, TrashItem, TrashList, TrashParams, MovePlan, Stats, Structure, StructureResult, WriteId, WriteIdParams, WriteIdResult};
 use crate::userdata::{TrashError, UserData};
 use vnoc_domain::NodeId;
 use crate::watchdog::timed;
@@ -142,6 +142,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<ProjectInfo, _>(project_info)
         .request::<Attach, _>(attach)
         .request::<Relink, _>(relink)
+        .request::<WriteId, _>(write_id)
         .request::<Trash, _>(trash)
         .request::<TrashList, _>(trash_list)
         .request::<RestorePlan, _>(restore_plan)
@@ -261,6 +262,25 @@ fn relink(core: &mut Core, params: RelinkParams) -> impl std::future::Future<Out
             _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
         })?;
         core.spawn_update(Work::Files(vec![])); // node.toml moved: the tree shows the docs at the new place
+        Ok(result)
+    })
+}
+
+/// `vnoc/writeId`: see `identity::write_id`. A refusal is an `INVALID_PARAMS` answer with the reason.
+fn write_id(core: &mut Core, params: WriteIdParams) -> impl std::future::Future<Output = Result<WriteIdResult, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("writeId", async move {
+        // the same lock as attach: both write an ID and a node.toml
+        let _one_at_a_time = core.state.attaching.lock().await;
+        let project = core.state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let env = Env { project, index: &core.state.index, host: &core.host, client: core.client.clone() };
+        let result = identity::write_id(env, params).await.map_err(|e| match e {
+            identity::WriteIdError::UserData(_) => internal(e),
+            _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
+        })?;
+        if result.written {
+            core.spawn_update(Work::Files(vec![])); // node.toml changed: the node is found by its ID from now on
+        }
         Ok(result)
     })
 }

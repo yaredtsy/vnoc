@@ -94,6 +94,28 @@ An action on a node **found by name** (the tree already says so: `link: "name"`)
 the ID line was deleted from the code, and the ID could not be written at attach (a syntax error). It writes the ID the same way Relink step 1 does,
 then sets `id_in_code = "yes"`.
 
+One core call, `vnoc/writeId { key, document? }`. `key` is the node's place (its `id` in `vnoc/structure`, as for `vnoc/attach`), not its permanent
+ID: the core looks the permanent ID up itself (`index.node_at`), so the two can never disagree. `document` is the open document, as for attach and
+Relink (a folder has none).
+
+```
+writeId(key):
+  refuse, with the reason, when                         (the editor's submenu cannot know how the node was found, so the core holds the rules)
+    · `key` is not in the index                          the attach error
+    · no node resolves to `key`                          "this node has no docs, so there is no ID to write"
+    · the code at `key` carries this node's ID           "the ID is already in the code"
+    · the code at `key` carries another ID               "this code already carries another ID"
+    · `[ids] default = "none"`                           "this project does not write IDs into the code ([ids] default = "none" in .vnoc/vnoc.toml)"
+    · `id_in_code = "never"` in its node.toml            "this node is set to never get an ID (id_in_code = "never" in its node.toml)"
+  1  write the ID at `key` (`write_marker`, the same call attach and Relink make)
+       it fails (the syntax error is still there, the editor refused the edit)
+         → { written: false, notice: "The ID could not be written (<reason>); the docs stay attached by name." }   node.toml is not touched
+  2  node.toml: id_in_code = "yes"   (toml_edit keeps unknown keys)   → { written: true, notice: null }
+```
+
+A refusal writes nothing, in the code or in `.vnoc/`. The ID first, then `node.toml`, as everywhere: stopping between the two leaves the ID in the
+code with `id_in_code = "no"`, and the node is found by its ID anyway.
+
 ## 5. Remove · Restore · Empty trash
 
 **Remove is only for Missing nodes in 0.1** (as `04-storage/03` §4 says). To drop a doc from a node that still exists, delete its `.md` file.
@@ -168,7 +190,8 @@ drops a selected or focused node that went Missing. Add a session test for it.
 | Restore Removed Doc… · Empty Trash | view title | | | ✓ |
 
 The row + card actions follow [`10-ui-rework/04-menus.md`](10-ui-rework/04-menus.md): both lists, the same commands, `category: "V-NOC"`, and
-`menus.test.ts` grows with them. Actions on the Missing view are not in the parity test (there is no card for them); add them to its exceptions list.
+`menus.test.ts` grows with them. Actions on the Missing view are not in the parity test: it only reads rows of `view == vnoc.structure`, so there
+is nothing to add to its exceptions list (an entry there that is not on a structure row fails the test).
 
 ## 7. Messages
 
@@ -178,7 +201,7 @@ Add each to the typed map in `shared/messages.ts` (and its Rust twin in `crates/
 |---|---|---|
 | `vnoc/structure` | extension → core | + `missing`, + `problems` (§2) |
 | `vnoc/relink` | extension → core | `{ id, to }` → `{ written: "id" \| "anchorOnly", notice? }` or an error with the reason |
-| `vnoc/writeId` | extension → core | `{ id }` → `{ notice? }` |
+| `vnoc/writeId` | extension → core | `{ key, document? }` → `{ written: boolean, notice? }` or an error with the reason (§4) |
 | `vnoc/trash` | extension → core | `{ id }` → `{ from, to }`, or an error when the ID is not Missing |
 | `vnoc/trashList` | extension → core | `{}` → `[{ entry, id, removedAt, docs }]` |
 | `vnoc/restorePlan` | extension → core | `{ entry }` → `{ from, to }` or an error |
@@ -197,7 +220,47 @@ Each step leaves a working extension and runs the full test list from [`10-ui-re
 | **5.2** | the Needs Attention view, `vnoc.hasAttention`, `vnoc.hasMissing`, clicks (a problem on a folder is revealed, not opened) | window test: **delete** a documented function (a rename is followed by its ID, so it would not go Missing), and it shows under Missing; put it back and it leaves · session test: a selected node that goes Missing is dropped |
 | **5.3** | Relink from both ways in, with all three refusals | Rust: each refusal · the anchor and `kind` rewritten, unknown keys kept · window test: relink a Missing function to another, and its badge appears there |
 | **5.4** | Remove · Restore · Empty Trash, the empty-entry cleanup | Rust: the plans, `vnoc/trash` refuses an ID that is not Missing, the derived `to`, the refusal on an existing folder, an entry that disagrees with itself is skipped · window test: **Remove → Restore gives back the same bytes** (the Step 6 no-data-loss test, written now) |
-| **5.5** | Write ID · every new command in its menus · `menus.test.ts` | window test: delete an `ID:` line, run Write ID, and the node is found by marker again · `menus.test.ts` passes |
+| **5.5** | Write ID (§4) in the row, card and editor menus · `menus.test.ts` grows (details below) | Rust: the write, each refusal, the failed write · window test: delete an `ID:` line, run Write ID, and the node is found by marker again · `menus.test.ts` passes |
+
+### Step 5.5 in detail
+
+Already there, do not build again: "Attach a Missing Doc Here…" is in all three menus (5.3), and `extension/src/menus.test.ts` exists and runs in
+the `unit` script (`node --test`). Do not add it to the `test` script: that one bundles the mocha window suites.
+
+**Core (Rust)**
+
+| File | Change |
+|---|---|
+| `crates/vnoc/src/protocol.rs` | `WriteId`, `WriteIdParams { key, document: Option<Document> }` (`#[serde(default)]` on `document`), `WriteIdResult { written: bool, notice: Option<String> }`, `METHOD = "vnoc/writeId"`. Put it after `Relink`, with a doc comment in the same style |
+| `crates/vnoc/src/identity/write_id.rs` (new) | `write_id(env, params)` and `WriteIdError`, following §4 line by line. Reuse `find_target`, `document_for` and `write_marker` from `attach.rs` (as `relink.rs` does); do not copy them. Model the file on `relink.rs` |
+| `crates/vnoc/src/identity/mod.rs` | `mod write_id;` and `pub use write_id::{WriteIdError, write_id};` |
+| `crates/vnoc/src/server.rs` | a `write_id` handler like `relink`: the same `attaching` lock, `UserData` errors are internal, every other error is `INVALID_PARAMS` with the reason. Call `core.spawn_update(Work::Files(vec![]))` only when `written` is true |
+
+**Extension and webview**
+
+| File | Change |
+|---|---|
+| `extension/src/relink.ts` | move the lines of `relinkTo` that open the node's document and build the `document` param into one exported helper; `relinkTo` uses it |
+| `extension/src/writeId.ts` (new) | `writeId(request, gitRoot, node)`: sends `vnoc/writeId { key: node.id, document }` with that helper. When `written` and the document was not dirty before, save it (as `relinkTo` does). Show `notice` as a warning; on success say `V-NOC: the ID of <name> is in the code again.` The result type is a local interface, as in `relink.ts` |
+| `extension/src/commands.ts` | `on("vnoc.writeId", …)` beside `vnoc.attachMissingDocHere`: `nodeFor(arg, selected)`, then throw a plain message before calling the core when `node.node_id === null` ("… has no docs, so there is no ID to write.") or `node.link === "marker"` ("The ID of … is already in the code."). The core checks again |
+| `extension/src/structureView.ts` | the row's `contextValue` gets the flag `byName` when `node.link === "name"` |
+| `webview/src/node-card/nodeContext.ts` | `byName: f.node.link === "name"` |
+| `extension/package.json` | the command `vnoc.writeId`, title `Write ID`, category `V-NOC` · `view/item/context`: `view == vnoc.structure && viewItem =~ /\\bnode\\b/ && viewItem =~ /\\bbyName\\b/`, group `4_docs@4` · `webview/context`: `webviewId == 'vnoc.canvas' && webviewSection == 'node' && byName`, group `4_docs@4` · `vnoc.editorMenu`: group `3_docs@4`, no `when` · `commandPalette`: `when: false`. Check that `@4` is free in both `4_docs` lists; the row and the card must use the same group |
+
+There is no context key for `[ids] default`. Write ID stays in the menu when IDs are off, and the core's refusal says why.
+
+**Tests**
+
+| Where | Test |
+|---|---|
+| `crates/vnoc/tests/lifecycle.rs` | **the write**: `orders_project` with `format = 1`, `write_record(S, "orders.py", "OrderService.other")` plus an unknown key in its `node.toml`, wait until `other` has `link == "name"`. `vnoc/writeId` answers `written: true`, no notice; the editor was asked once; the code has the `ID:` line; `node.toml` has `id_in_code = "yes"`, the same `path` and `qualname`, and the unknown key. After `vnoc/filesChanged` for the file, `link == "marker"` |
+| | **the refusals**, one assert each with its message: a key not in the index · a node with no docs · a node whose ID is in the code (attach with markers on, then read the file again) · `[ids] default = "none"` (rewrite `vnoc.toml`: the settings are read on every call) · `id_in_code = "never"`. After all of them the code, `node.toml` and `core.edit_requests.len()` are unchanged |
+| | **the failed write**: `core.editor_applies_edits = false` (as in `a_marker_that_cannot_be_written_does_not_stop_the_attach`): `written: false`, the notice says "could not be written", the code is untouched, `node.toml` still says `id_in_code = "no"` |
+| `extension/src/menus.test.ts` | one new test: `vnoc.writeId` is on the row and on the card, and both `when` clauses test `byName`. The parity test and the `nodeContext()` key test cover the rest by themselves. Leave `ROW_ONLY` and `CARD_ONLY` as they are |
+| `extension/src/test/suite/attention.test.ts` | a second suite, "write id", with its own file (`marked.py`), removed in `suiteTeardown`. **Turn IDs on first**: the "needs attention" suite's first attach wrote `[ids] default = "none"` into the workspace's `.vnoc/vnoc.toml`, so write `format = 1\n` there and put the old text back in `suiteTeardown`. Then: open the file as a VS Code document, attach with that document's `version` and text, save, wait for `link == "marker"`. Delete the `ID:` line with a `WorkspaceEdit` and save (not `fs.writeFileSync`: the open document would be stale), wait for `link == "name"`. Run `vnoc.writeId` with the tree node, wait for `link == "marker"`, and check that the file has `ID: <id>` again and that `docs` is still 1 |
+
+**Done when** the full test list of [`10-ui-rework/05-build-order.md`](10-ui-rework/05-build-order.md) §4 passes, with the `unit` script and the window suite. One commit:
+`step 5.5: Write ID for a node found by name, on the row, the card and the editor menu`.
 
 ## 9. What you decided
 

@@ -673,6 +673,82 @@ fn relink_with_ids_off_moves_only_the_stored_place() {
     core.finish();
 }
 
+const T: &str = "0000000000000000000000000T";
+
+fn write_id_params(root: &std::path::Path, key: &str) -> Value {
+    let file = root.join("orders.py");
+    json!({ "key": key, "document": { "uri": format!("file://{}", file.display()), "version": 5, "text": std::fs::read_to_string(&file).unwrap() } })
+}
+
+/// The structure once `name` is drawn with this `link`.
+fn link_of_is(core: &mut Core, name: &str, link: &str) -> Value {
+    structure_when(core, |s| find_node(&s["root"], &|n| n["name"] == name).is_some_and(|n| n["link"] == link))
+}
+
+#[test]
+fn write_id_puts_the_id_back_in_the_code_of_a_node_found_by_name() {
+    let (mut core, root) = orders_project("writeid", Some("format = 1\n"));
+    write_record(&root, S, "orders.py", "OrderService.other");
+    let toml = root.join(".vnoc/nodes").join(&S[24..]).join(S).join("node.toml");
+    std::fs::write(&toml, format!("{}future = 7\n", std::fs::read_to_string(&toml).unwrap())).unwrap();
+    tell_core_about_vnoc(&mut core, &root);
+    link_of_is(&mut core, "other", "name");
+
+    let r = core.request("vnoc/writeId", write_id_params(&root, "orders.py::OrderService.other")).expect("writeId answers");
+    assert_eq!((r["written"].as_bool(), r["notice"].is_null()), (Some(true), true), "{r}");
+    assert_eq!(core.edit_requests.len(), 1, "the editor was asked once");
+    assert!(std::fs::read_to_string(root.join("orders.py")).unwrap().contains(&format!("def other(self):\n        \"\"\"ID: {S}\"\"\"")));
+    let text = std::fs::read_to_string(&toml).unwrap();
+    assert!(text.contains("path = \"orders.py\"") && text.contains("qualname = \"OrderService.other\"") && text.contains("id_in_code = \"yes\"") && text.contains("future = 7"), "{text}");
+
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    link_of_is(&mut core, "other", "marker");
+    core.finish();
+}
+
+#[test]
+fn write_id_refuses_what_has_no_docs_has_its_id_or_is_not_allowed_one_and_changes_nothing() {
+    let (mut core, root) = orders_project("writeidrefuse", None);
+    core.request("vnoc/attach", attach_params(&root, "orders.py::OrderService.parse_order", "Why", Some(true))).unwrap(); // its ID is in the code
+    write_record(&root, S, "orders.py", "OrderService.other");
+    write_record(&root, T, "orders.py", "OrderService");
+    let record = |id: &str| root.join(".vnoc/nodes").join(&id[24..]).join(id).join("node.toml");
+    std::fs::write(record(S), std::fs::read_to_string(record(S)).unwrap().replace("\"no\"", "\"never\"")).unwrap();
+    tell_core_about_vnoc(&mut core, &root);
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    link_of_is(&mut core, "parse_order", "marker");
+    link_of_is(&mut core, "other", "name");
+    let (code, edits, s_toml, t_toml) = (std::fs::read_to_string(root.join("orders.py")).unwrap(), core.edit_requests.len(), std::fs::read_to_string(record(S)).unwrap(), std::fs::read_to_string(record(T)).unwrap());
+
+    let ask = |core: &mut Core, key: &str| message(core.request("vnoc/writeId", write_id_params(&root, key)));
+    assert!(ask(&mut core, "orders.py::Nope").contains("not in the index"));
+    assert_eq!(ask(&mut core, "orders.py"), "that node has no docs, so there is no ID to write");
+    assert_eq!(ask(&mut core, "orders.py::OrderService.parse_order"), "the ID of that node is already in the code");
+    assert_eq!(ask(&mut core, "orders.py::OrderService.other"), "this node was set to never have an ID in the code");
+    std::fs::write(root.join(".vnoc/vnoc.toml"), "format = 1\n[ids]\ndefault = \"none\"\n").unwrap(); // the settings are read on every call
+    assert!(ask(&mut core, "orders.py::OrderService").contains("does not write IDs"));
+
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), code);
+    assert_eq!((std::fs::read_to_string(record(S)).unwrap(), std::fs::read_to_string(record(T)).unwrap()), (s_toml, t_toml));
+    assert_eq!(core.edit_requests.len(), edits);
+    core.finish();
+}
+
+#[test]
+fn write_id_that_cannot_write_says_so_and_changes_nothing() {
+    let (mut core, root) = orders_project("writeidfail", Some("format = 1\n"));
+    write_record(&root, S, "orders.py", "OrderService.other");
+    tell_core_about_vnoc(&mut core, &root);
+    link_of_is(&mut core, "other", "name");
+    core.editor_applies_edits = false;
+    let r = core.request("vnoc/writeId", write_id_params(&root, "orders.py::OrderService.other")).unwrap();
+    assert_eq!(r["written"], false);
+    assert!(r["notice"].as_str().unwrap().contains("could not be written"), "{r}");
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS, "the code is untouched");
+    assert!(std::fs::read_to_string(root.join(".vnoc/nodes").join(&S[24..]).join(S).join("node.toml")).unwrap().contains("id_in_code = \"no\""));
+    core.finish();
+}
+
 #[test]
 fn trash_refuses_a_node_that_is_not_missing_and_remove_then_restore_gives_back_the_same_bytes() {
     let (mut core, root) = orders_project("trash", Some("format = 1\n"));

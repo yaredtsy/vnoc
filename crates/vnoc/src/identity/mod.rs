@@ -4,7 +4,9 @@ mod attach;
 pub mod folder_marker;
 mod relink;
 mod resolve;
+mod write_id;
 
 pub use attach::{AttachError, Env, attach};
 pub use relink::{RelinkError, relink};
 pub use resolve::{FoundBy, Markers, Resolved, resolve};
+pub use write_id::{WriteIdError, write_id};

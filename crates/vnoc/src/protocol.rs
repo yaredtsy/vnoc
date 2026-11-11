@@ -247,6 +247,33 @@ impl Request for Relink {
     const METHOD: &'static str = "vnoc/relink";
 }
 
+/// `vnoc/writeId`: a node found by name gets its ID written into the code again (`docs/11` §4): a deleted `ID:` line, or an ID that could not be written
+/// at attach. Refused, with the reason, when the node has no docs, already has its ID in the code, or the project does not write IDs.
+pub enum WriteId {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WriteIdParams {
+    /// the node's `id` from `vnoc/structure` (`path::qualname[#n]` for a function or class, the repo path for a file or folder)
+    pub key: String,
+    /// the open document of the node, as for `vnoc/attach`: needed for a function, class or file
+    #[serde(default)]
+    pub document: Option<Document>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WriteIdResult {
+    /// the ID is in the code now
+    pub written: bool,
+    /// something the user should hear (the ID could not be written)
+    pub notice: Option<String>,
+}
+
+impl Request for WriteId {
+    type Params = WriteIdParams;
+    type Result = WriteIdResult;
+    const METHOD: &'static str = "vnoc/writeId";
+}
+
 /// `vnoc/trash`: Remove, step 1 (`docs/11` §5). Writes the entry's `trashed.toml` and says where the node folder moves; the editor moves it.
 /// Refused unless the node is in the index's Missing list now: the core holds the rule, not only the menu.
 pub enum Trash {}
