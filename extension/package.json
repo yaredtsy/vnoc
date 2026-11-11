@@ -52,6 +52,16 @@
     },
     "commands": [
       {
+        "command": "vnoc.relink",
+        "title": "Relink…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.attachMissingDocHere",
+        "title": "Attach a Missing Doc Here…",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.openMissingDocs",
         "title": "Open Docs",
         "category": "V-NOC"
@@ -219,6 +229,11 @@
           "group": "1_docs@1"
         },
         {
+          "command": "vnoc.relink",
+          "when": "view == vnoc.attention && viewItem == missing",
+          "group": "2_fix@1"
+        },
+        {
           "command": "vnoc.focus",
           "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "inline@1"
@@ -284,6 +299,11 @@
           "group": "4_docs@2"
         },
         {
+          "command": "vnoc.attachMissingDocHere",
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/ && vnoc.hasMissing",
+          "group": "4_docs@3"
+        },
+        {
           "command": "vnoc.copyPath",
           "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "9_copy@1"
@@ -312,6 +332,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "vnoc.relink",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.attachMissingDocHere",
+          "when": "false"
+        },
         {
           "command": "vnoc.openMissingDocs",
           "when": "false"
@@ -448,6 +476,11 @@
         {
           "command": "vnoc.addDoc",
           "group": "3_docs@2"
+        },
+        {
+          "command": "vnoc.attachMissingDocHere",
+          "when": "vnoc.hasMissing",
+          "group": "3_docs@3"
         }
       ],
       "editor/title": [
@@ -517,6 +550,11 @@
           "command": "vnoc.addDoc",
           "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && nodeKey != '/'",
           "group": "4_docs@2"
+        },
+        {
+          "command": "vnoc.attachMissingDocHere",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && nodeKey != '/' && vnoc.hasMissing",
+          "group": "4_docs@3"
         },
         {
           "command": "vnoc.copyPath",

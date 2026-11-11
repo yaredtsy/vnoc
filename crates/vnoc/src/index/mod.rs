@@ -93,6 +93,17 @@ impl Index {
         self.missing.clone()
     }
 
+    /// The documented node found at this location, if any (by its ID in the code or by its stored place).
+    pub fn node_at(&self, location: &LocationKey) -> Option<NodeId> {
+        self.attached.get(&location.to_string()).map(|a| a.id)
+    }
+
+    /// Whether this node is in the Missing list (looked for and not found).
+    pub fn is_missing(&self, id: &NodeId) -> bool {
+        let id = id.to_string();
+        self.missing.iter().any(|m| m.id == id)
+    }
+
     /// What the user should look at: broken files first, then IDs written twice. `git_root` makes the files absolute.
     pub fn problems(&self, git_root: &std::path::Path) -> Vec<Problem> {
         let absolute = |repo_path: &str| git_root.join(repo_path).to_string_lossy().into_owned();

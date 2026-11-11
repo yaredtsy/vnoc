@@ -10,6 +10,7 @@ import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
 import type { Panels } from "./panels";
 import type { SessionStore } from "./session";
+import { attachMissingHere, relinkMissing } from "./relink";
 import { searchNodes } from "./search";
 import { type Row, absolute, selectionOf } from "./structureView";
 
@@ -48,6 +49,13 @@ export class Commands {
     /** selects the node's row in the sidebar tree and brings the V-NOC side bar up */
     private readonly revealRow: (id: string) => Promise<void>,
   ) {}
+
+  private readonly request = <T>(method: string, params?: object) => this.core.request<T>(method, params);
+
+  /** The git root: node ids and the core's paths start there. */
+  private async root(): Promise<string> {
+    return this.core.gitRoot ?? (await this.core.loadStructure()).git_root;
+  }
 
   /** Registers every command, and the cursor follower. */
   register(): vscode.Disposable[] {
@@ -95,6 +103,16 @@ export class Commands {
       // the NEEDS ATTENTION rows (a row is `{ row: "missing" | "problem", … }`; nothing here changes the session)
       on("vnoc.openMissingDocs", (arg) => (isAttentionRow(arg, "missing") ? this.panels.showDocs(MISSING_PIN + arg.node.id) : undefined)),
       on("vnoc.openProblem", (arg) => (isAttentionRow(arg, "problem") ? goToProblem(arg.problem) : undefined)),
+      on("vnoc.relink", async (arg) => {
+        if (!isAttentionRow(arg, "missing")) return;
+        const tree = this.core.tree ?? (await this.core.loadStructure()).root;
+        return relinkMissing(this.request, await this.root(), arg.node, tree);
+      }),
+      on("vnoc.attachMissingDocHere", async (arg, selected) => {
+        const node = await this.nodeFor(arg, selected);
+        if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");
+        return attachMissingHere(this.request, await this.root(), this.core.missing, node);
+      }),
       on("vnoc.addDoc", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
         if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");

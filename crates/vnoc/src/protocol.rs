@@ -209,3 +209,40 @@ impl Request for Docs {
     type Result = Vec<DocInfo>;
     const METHOD: &'static str = "vnoc/docs";
 }
+
+/// `vnoc/relink`: a Missing node's docs go to another place in the code (`docs/11` §3). The ID is written there first (as attach does),
+/// then `node.toml` is moved. Refused, with the reason, when the place has another node's ID, another node resolves there, or the kind differs.
+pub enum Relink {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RelinkParams {
+    /// the permanent ID of the Missing node
+    pub id: String,
+    /// the new place: a node's `id` from `vnoc/structure` (`path::qualname[#n]` for a function or class, the repo path for a file or folder)
+    pub to: String,
+    /// the open document of the new place, as for `vnoc/attach`: needed for a function, class or file when the ID is to be written
+    #[serde(default)]
+    pub document: Option<Document>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Written {
+    /// the ID is in the code at the new place: the docs follow the code from now on
+    Id,
+    /// only the stored place was moved (IDs are off, or the ID could not be written)
+    AnchorOnly,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RelinkResult {
+    pub written: Written,
+    /// something the user should hear (the ID could not be written)
+    pub notice: Option<String>,
+}
+
+impl Request for Relink {
+    type Params = RelinkParams;
+    type Result = RelinkResult;
+    const METHOD: &'static str = "vnoc/relink";
+}

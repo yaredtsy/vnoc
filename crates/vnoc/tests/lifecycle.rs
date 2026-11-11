@@ -586,3 +586,89 @@ fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() 
     assert_eq!(after["missing"].as_array().unwrap().iter().map(|m| m["path"].as_str().unwrap()).collect::<Vec<_>>(), ["gone.py", "ignored/x.py"]);
     core.finish();
 }
+
+const R: &str = "0000000000000000000000000R";
+const S: &str = "0000000000000000000000000S";
+
+fn relink_params(root: &std::path::Path, id: &str, to: &str) -> Value {
+    let file = root.join("orders.py");
+    json!({ "id": id, "to": to, "document": { "uri": format!("file://{}", file.display()), "version": 4, "text": std::fs::read_to_string(&file).unwrap() } })
+}
+
+/// The structure once it lists exactly these Missing IDs.
+fn missing_is(core: &mut Core, ids: &[&str]) -> Value {
+    structure_when(core, |s| s["missing"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>() == ids)
+}
+
+fn tell_core_about_vnoc(core: &mut Core, root: &std::path::Path) {
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join(".vnoc/nodes")] }));
+}
+
+fn message(error: Result<Value, Value>) -> String {
+    error.expect_err("the core refuses")["message"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn relink_writes_the_id_at_the_new_place_then_moves_the_node_and_keeps_what_it_does_not_know() {
+    let (mut core, root) = orders_project("relink", Some("format = 1\n"));
+    write_record(&root, R, "gone.py", "old");
+    let toml = root.join(".vnoc/nodes").join(&R[24..]).join(R).join("node.toml");
+    std::fs::write(&toml, format!("{}future = 7\n", std::fs::read_to_string(&toml).unwrap())).unwrap();
+    tell_core_about_vnoc(&mut core, &root);
+    missing_is(&mut core, &[R]);
+
+    let r = core.request("vnoc/relink", relink_params(&root, R, "orders.py::OrderService.other")).expect("relink answers");
+    assert_eq!((r["written"].as_str(), r["notice"].is_null()), (Some("id"), true));
+    assert_eq!(core.edit_requests.len(), 1, "the editor was asked once, as for attach");
+    assert!(std::fs::read_to_string(root.join("orders.py")).unwrap().contains(&format!("def other(self):\n        \"\"\"ID: {R}\"\"\"")));
+    let text = std::fs::read_to_string(&toml).unwrap();
+    assert!(text.contains("path = \"orders.py\"") && text.contains("qualname = \"OrderService.other\"") && text.contains("kind = \"function\"") && text.contains("id_in_code = \"yes\"") && text.contains("future = 7"), "{text}");
+
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    // found by name as soon as node.toml moved; by its ID once the saved file is read again
+    let s = structure_when(&mut core, |s| find_node(&s["root"], &|n| n["name"] == "other").is_some_and(|n| n["link"] == "marker"));
+    assert!(s["missing"].as_array().unwrap().is_empty());
+    let other = find_node(&s["root"], &|n| n["name"] == "other").unwrap();
+    assert_eq!((other["node_id"].as_str(), other["link"].as_str(), other["docs"].as_u64()), (Some(R), Some("marker"), Some(1)));
+    core.finish();
+}
+
+#[test]
+fn relink_refuses_a_place_with_another_nodes_id_a_node_found_by_name_the_wrong_kind_and_a_node_that_is_not_missing() {
+    let (mut core, root) = orders_project("refuse", None);
+    // X: a documented function with its ID in the code. S: a node found by name at `other`. R: Missing.
+    core.request("vnoc/attach", attach_params(&root, "orders.py::OrderService.parse_order", "Why", Some(true))).unwrap();
+    write_record(&root, S, "orders.py", "OrderService.other");
+    write_record(&root, R, "gone.py", "old");
+    tell_core_about_vnoc(&mut core, &root);
+    missing_is(&mut core, &[R]);
+    let code = std::fs::read_to_string(root.join("orders.py")).unwrap();
+    let edits = core.edit_requests.len();
+
+    let ask = |core: &mut Core, id: &str, to: &str| message(core.request("vnoc/relink", relink_params(&root, id, to)));
+    assert_eq!(ask(&mut core, R, "orders.py::OrderService.parse_order"), "that node already has its own docs", "the place carries another ID");
+    assert_eq!(ask(&mut core, R, "orders.py::OrderService.other"), "that node already has its own docs", "found by name: no ID in the code to see");
+    assert_eq!(ask(&mut core, R, "orders.py"), "this is a file, and the docs belong to a function");
+    assert!(ask(&mut core, S, "orders.py::OrderService").contains("not Missing"));
+    assert!(ask(&mut core, R, "nowhere.py::f").contains("not in the index"));
+
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), code, "a refusal writes nothing into the code");
+    assert_eq!(core.edit_requests.len(), edits);
+    let record = std::fs::read_to_string(root.join(".vnoc/nodes").join(&R[24..]).join(R).join("node.toml")).unwrap();
+    assert!(record.contains("path = \"gone.py\""), "and nothing in .vnoc/: {record}");
+    core.finish();
+}
+
+#[test]
+fn relink_with_ids_off_moves_only_the_stored_place() {
+    let (mut core, root) = orders_project("relinkoff", Some("format = 1\n[ids]\ndefault = \"none\"\n"));
+    write_record(&root, R, "gone.py", "old");
+    tell_core_about_vnoc(&mut core, &root);
+    missing_is(&mut core, &[R]);
+    let r = core.request("vnoc/relink", relink_params(&root, R, "orders.py::OrderService.other")).unwrap();
+    assert_eq!((r["written"].as_str(), r["notice"].is_null()), (Some("anchorOnly"), true), "off is a choice, not a failure");
+    assert!(core.edit_requests.is_empty());
+    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS);
+    assert!(std::fs::read_to_string(root.join(".vnoc/nodes").join(&R[24..]).join(R).join("node.toml")).unwrap().contains("id_in_code = \"no\""));
+    core.finish();
+}

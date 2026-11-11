@@ -97,6 +97,22 @@ suite("needs attention", () => {
     await until("the problem to go", () => api.attention().problems.every((p) => p.file !== broken));
   });
 
+  test("relinking a Missing function to another puts its docs there, and it leaves Missing", async () => {
+    const only = "def stays():\n    pass\n";
+    fs.writeFileSync(file(), only);
+    await until("the function under Missing", () => api.attention().missing.includes(id));
+    const stays = (await functionsOf()).find((n) => n.name === "stays")!;
+    assert.strictEqual(stays.docs, 0);
+
+    const document = { uri: vscode.Uri.file(file()).toString(), version: 2, text: only };
+    const result = await api.request<{ written: string }>("vnoc/relink", { id, to: stays.id, document });
+    assert.strictEqual(result.written, "anchorOnly", "this project writes no IDs (the first attach said so)");
+    await until("the docs on the other function", () => !api.attention().missing.includes(id));
+    const after = (await functionsOf()).find((n) => n.name === "stays")!;
+    assert.deepStrictEqual([after.node_id, after.docs, after.link], [id, 1, "name"], "the badge is on the function it was moved to");
+    fs.writeFileSync(file(), BOTH);
+  });
+
   test("a problem on a file opens it at the line", async () => {
     const problem: Problem = { text: "x", file: file(), line: 4 };
     assert.strictEqual(await vscode.commands.executeCommand("vnoc.openProblem", { row: "problem", problem }), "opened");

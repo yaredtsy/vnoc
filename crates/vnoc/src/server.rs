@@ -25,7 +25,7 @@ use crate::driver_host::DriverHost;
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
 use crate::identity::{self, Env};
-use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Stats, Structure, StructureResult};
+use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, Stats, Structure, StructureResult};
 use crate::userdata::UserData;
 use vnoc_domain::NodeId;
 use crate::watchdog::timed;
@@ -141,6 +141,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<Structure, _>(structure)
         .request::<ProjectInfo, _>(project_info)
         .request::<Attach, _>(attach)
+        .request::<Relink, _>(relink)
         .request::<Docs, _>(docs)
         .notification::<FilesChanged>(files_changed)
         .notification::<Rebuild>(|core, _| {
@@ -240,6 +241,23 @@ fn attach(core: &mut Core, params: AttachParams) -> impl std::future::Future<Out
         let env = Env { project, index: &core.state.index, host: &core.host, client: core.client.clone() };
         let result = identity::attach(env, params).await.map_err(internal)?;
         core.spawn_update(Work::Files(vec![])); // the new node and doc are in `.vnoc/` now: the tree shows them
+        Ok(result)
+    })
+}
+
+/// `vnoc/relink`: see `identity::relink`. A refusal is an `INVALID_PARAMS` answer with the reason.
+fn relink(core: &mut Core, params: RelinkParams) -> impl std::future::Future<Output = Result<RelinkResult, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("relink", async move {
+        // the same lock as attach: both write an ID and a node.toml
+        let _one_at_a_time = core.state.attaching.lock().await;
+        let project = core.state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let env = Env { project, index: &core.state.index, host: &core.host, client: core.client.clone() };
+        let result = identity::relink(env, params).await.map_err(|e| match e {
+            identity::RelinkError::UserData(_) => internal(e),
+            _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
+        })?;
+        core.spawn_update(Work::Files(vec![])); // node.toml moved: the tree shows the docs at the new place
         Ok(result)
     })
 }

@@ -98,6 +98,21 @@ impl UserData {
         Ok(())
     }
 
+    /// The `node.toml` of a node, as the file holds it. `None` when there is no readable one.
+    pub fn node_toml(&self, id: &NodeId) -> Option<NodeToml> {
+        NodeToml::parse(&std::fs::read_to_string(layout::node_file(&self.root, id)).ok()?).ok()
+    }
+
+    /// Replaces the `node.toml` of a node that exists (one atomic write). The node folder is never created here.
+    pub fn write_node_toml(&self, id: &NodeId, toml: &NodeToml) -> Result<(), UserDataError> {
+        let file = layout::node_file(&self.root, id);
+        if !file.exists() {
+            return Err(io::Error::new(io::ErrorKind::NotFound, format!("node {id} has no node.toml")).into());
+        }
+        atomic::write_atomic(&file, toml.to_string().as_bytes())?;
+        Ok(())
+    }
+
     /// Creates a new Markdown doc in the node's folder and returns its path. `hint` is for people reading a pull request.
     pub fn create_doc(&self, id: &NodeId, title: &str, hint: &str) -> Result<PathBuf, UserDataError> {
         let folder = layout::node_dir(&self.root, id);

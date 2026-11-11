@@ -3,7 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, TransportKind } from "vscode-languageclient/node";
 
-import type { StructureResult, TreeNode } from "@vnoc/shared/messages";
+import type { MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messages";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio client here, we use
 // its custom-request API and none of the language features). The extension never starts a driver: the core owns the drivers.
@@ -37,6 +37,8 @@ export class Core {
 
   /** The last structure the core sent. The editor menus look the node at the cursor up here. */
   tree: TreeNode | undefined;
+  /** The Missing nodes of the last structure: "Attach a Missing Doc Here…" lists them. */
+  missing: MissingNode[] = [];
   /** The absolute path of the git root. Node ids and the paths in `vnoc/attach` start there. */
   gitRoot: string | undefined;
 
@@ -92,6 +94,7 @@ export class Core {
     const structure = await this.request<StructureResult>("vnoc/structure");
     this.tree = structure.root;
     this.gitRoot = structure.git_root;
+    this.missing = structure.missing;
     this.structureArrived.fire(structure);
     return structure;
   }

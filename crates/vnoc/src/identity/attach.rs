@@ -48,14 +48,14 @@ pub struct Env<'a> {
 }
 
 /// What the doc is attached to, with what the index knows of its ID.
-enum Target {
+pub(super) enum Target {
     Def { in_code: Option<NodeId>, kind: DefKind },
     File { in_code: Option<NodeId> },
     Folder { in_code: Option<NodeId> },
 }
 
 impl Target {
-    fn kind(&self) -> NodeKind {
+    pub(super) fn kind(&self) -> NodeKind {
         match self {
             Target::Def { kind: DefKind::Class, .. } => NodeKind::Class,
             Target::Def { kind: DefKind::Function, .. } => NodeKind::Function,
@@ -64,7 +64,7 @@ impl Target {
         }
     }
 
-    fn in_code(&self) -> Option<NodeId> {
+    pub(super) fn in_code(&self) -> Option<NodeId> {
         match self {
             Target::Def { in_code, .. } | Target::File { in_code } | Target::Folder { in_code } => *in_code,
         }
@@ -72,7 +72,7 @@ impl Target {
 }
 
 /// A key with `::` names a def; a bare repo path names a file or a folder (the tree's ids, `index::Node::id`).
-fn find_target(index: &Index, key: &str) -> Result<(LocationKey, Target), AttachError> {
+pub(super) fn find_target(index: &Index, key: &str) -> Result<(LocationKey, Target), AttachError> {
     let not_in_index = || AttachError::NotInIndex(key.to_string());
     if key.contains("::") {
         let location: LocationKey = key.parse()?;
@@ -93,17 +93,7 @@ fn find_target(index: &Index, key: &str) -> Result<(LocationKey, Target), Attach
 
 pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResult, AttachError> {
     let (location, target) = find_target(&env.index.read().unwrap(), &params.key)?;
-    // a function, class or file marker is an edit of the open document
-    let document = match (&target, params.document.as_ref()) {
-        (Target::Folder { .. }, _) => None,
-        (_, Some(document)) => {
-            if document.uri.to_file_path().ok() != Some(env.project.git_root().join(location.path().as_str())) {
-                return Err(AttachError::WrongDocument(params.key));
-            }
-            Some(document)
-        }
-        (_, None) => return Err(AttachError::MissingDocument(params.key)),
-    };
+    let document = document_for(&env, &target, &location, &params.key, params.document.as_ref())?;
 
     let data = UserData::new(env.project.git_root());
     let settings = data.settings()?;
@@ -122,12 +112,7 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
     let mut notice = None;
     let mut id_in_code = in_code.is_some();
     if is_new && markers_on {
-        let written = match (&target, document) {
-            (Target::Def { .. }, Some(document)) => write_def_marker(&mut env, &location, &id, document).await,
-            (Target::File { .. }, Some(document)) => write_file_marker(&mut env, &id, document).await,
-            _ => write_folder_marker(env.project.git_root(), location.path(), &id),
-        };
-        match written {
+        match write_marker(&mut env, &target, &location, &id, document).await {
             Ok(()) => id_in_code = true,
             Err(reason) => notice = Some(format!("The ID could not be written ({reason}); this doc is attached by name.")),
         }
@@ -143,6 +128,30 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
     let doc: PathBuf = data.create_doc(&id, &params.title, &hint)?;
 
     Ok(AttachResult { id: id.to_string(), doc: doc.to_string_lossy().into_owned(), id_in_code, notice })
+}
+
+/// A function, class or file marker is an edit of the open document: it must be the node's own file. A folder has no document.
+pub(super) fn document_for<'a>(env: &Env<'_>, target: &Target, location: &LocationKey, key: &str, document: Option<&'a Document>) -> Result<Option<&'a Document>, AttachError> {
+    match (target, document) {
+        (Target::Folder { .. }, _) => Ok(None),
+        (_, Some(document)) => {
+            if document.uri.to_file_path().ok() != Some(env.project.git_root().join(location.path().as_str())) {
+                return Err(AttachError::WrongDocument(key.to_string()));
+            }
+            Ok(Some(document))
+        }
+        (_, None) => Err(AttachError::MissingDocument(key.to_string())),
+    }
+}
+
+/// Writes the ID where the node is: the driver plans a def's or a file's line and the editor applies it; the core writes a folder's `.vnoc-id`.
+/// `Err` says why not, in words for the user.
+pub(super) async fn write_marker(env: &mut Env<'_>, target: &Target, location: &LocationKey, id: &NodeId, document: Option<&Document>) -> Result<(), String> {
+    match (target, document) {
+        (Target::Def { .. }, Some(document)) => write_def_marker(env, location, id, document).await,
+        (Target::File { .. }, Some(document)) => write_file_marker(env, id, document).await,
+        _ => write_folder_marker(env.project.git_root(), location.path(), id),
+    }
 }
 
 /// Plans the `ID:` line with the driver and has the editor apply it. `Err` says why not, in words for the user.

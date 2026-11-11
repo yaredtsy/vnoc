@@ -2,7 +2,9 @@
 
 mod attach;
 pub mod folder_marker;
+mod relink;
 mod resolve;
 
 pub use attach::{AttachError, Env, attach};
+pub use relink::{RelinkError, relink};
 pub use resolve::{FoundBy, Markers, Resolved, resolve};
