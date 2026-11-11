@@ -10,7 +10,7 @@ vnoc-driver-protocol = { path = "../vnoc-driver-protocol" }
 
 # The core's transport is async-lsp on tokio (VS-D67). Use async_lsp::lsp_types: a second lsp-types crate gives a second, incompatible Request trait.
 async-lsp = { version = "0.2", features = ["tokio"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-std", "io-util", "sync", "time", "fs"] }
 tower = "0.5"
 pin-project-lite = "0.2"
 serde = { version = "1", features = ["derive"] }
