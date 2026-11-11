@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+use async_lsp::lsp_types::Url;
 use serde_json::{Value, json};
 
 fn repo_root() -> PathBuf {
@@ -135,10 +136,15 @@ impl Core {
     }
 }
 
+/// A file's URI as an editor sends it (`file:///C:/…` on Windows: a path glued after `file://` is not one there).
+fn file_uri(file: &std::path::Path) -> String {
+    Url::from_file_path(file).unwrap().to_string()
+}
+
 /// Applies a `documentChanges` list of text edits to the files on disk (ASCII text: a character is a byte).
 fn apply_document_changes(changes: &Value) {
     for change in changes.as_array().unwrap() {
-        let path = PathBuf::from(change["textDocument"]["uri"].as_str().unwrap().strip_prefix("file://").unwrap());
+        let path = Url::parse(change["textDocument"]["uri"].as_str().unwrap()).unwrap().to_file_path().unwrap();
         let mut text = std::fs::read_to_string(&path).unwrap();
         let starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
         let offset = |p: &Value| starts[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize;
@@ -297,7 +303,7 @@ fn orders_project(label: &str, vnoc_toml: Option<&str>) -> (Core, PathBuf) {
 
 fn attach_params(root: &std::path::Path, key: &str, title: &str, markers: Option<bool>) -> Value {
     let file = root.join("orders.py");
-    json!({ "key": key, "title": title, "markers": markers, "document": { "uri": format!("file://{}", file.display()), "version": 3, "text": std::fs::read_to_string(&file).unwrap() } })
+    json!({ "key": key, "title": title, "markers": markers, "document": { "uri": file_uri(&file), "version": 3, "text": std::fs::read_to_string(&file).unwrap() } })
 }
 
 #[test]
@@ -576,7 +582,7 @@ fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() 
     let problems = s["problems"].as_array().unwrap();
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert_eq!(problems[0]["text"], ".vnoc/nodes/zz/not-an-id: the folder name is not a node ID");
-    assert_eq!(problems[0]["file"], json!(root.join(".vnoc/nodes/zz/not-an-id")));
+    assert_eq!(problems[0]["file"], json!(root.join(".vnoc").join("nodes").join("zz").join("not-an-id")));
     assert_eq!(problems[0]["line"], Value::Null);
 
     // the ignored file goes: now the name was looked for, and the node is Missing
@@ -592,7 +598,7 @@ const S: &str = "0000000000000000000000000S";
 
 fn relink_params(root: &std::path::Path, id: &str, to: &str) -> Value {
     let file = root.join("orders.py");
-    json!({ "id": id, "to": to, "document": { "uri": format!("file://{}", file.display()), "version": 4, "text": std::fs::read_to_string(&file).unwrap() } })
+    json!({ "id": id, "to": to, "document": { "uri": file_uri(&file), "version": 4, "text": std::fs::read_to_string(&file).unwrap() } })
 }
 
 /// The structure once it lists exactly these Missing IDs.
@@ -677,7 +683,7 @@ const T: &str = "0000000000000000000000000T";
 
 fn write_id_params(root: &std::path::Path, key: &str) -> Value {
     let file = root.join("orders.py");
-    json!({ "key": key, "document": { "uri": format!("file://{}", file.display()), "version": 5, "text": std::fs::read_to_string(&file).unwrap() } })
+    json!({ "key": key, "document": { "uri": file_uri(&file), "version": 5, "text": std::fs::read_to_string(&file).unwrap() } })
 }
 
 /// The structure once `name` is drawn with this `link`.
