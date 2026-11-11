@@ -14,7 +14,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn driver_path() -> PathBuf {
-    std::env::var_os("VNOC_DRIVER").map(PathBuf::from).unwrap_or_else(|| repo_root().join("drivers/python/target/debug/vnoc-driver-python"))
+    std::env::var_os("VNOC_DRIVER").map(PathBuf::from).unwrap_or_else(|| repo_root().join("drivers/python/target/debug").join(format!("vnoc-driver-python{}", std::env::consts::EXE_SUFFIX)))
 }
 
 /// A copy of the fixtures in a fresh temp folder (a folder inside this repository would be inside its git repo, and ids would carry that path).
