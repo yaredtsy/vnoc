@@ -286,12 +286,13 @@ impl DriverHost {
         self.with_client(|client| async move { client.call_tree(params).await }).await
     }
 
-    /// Runs `request` on the driver. An error from the driver about this request is returned as is; anything else means the
-    /// connection is broken, so the driver is dropped (its process dies with it) and the next request starts a new one.
+    /// Runs `request` on the driver. An error from the driver about this request is returned as is, and so is a timeout (the driver has been
+    /// told to cancel, and other requests may be running on it). A broken connection drops the driver (its process dies with it) and the next
+    /// request starts a new one.
     async fn with_client<T, Fut: std::future::Future<Output = Result<T, HostError>>>(&self, request: impl FnOnce(Arc<DriverClient>) -> Fut) -> Result<T, HostError> {
         let client = self.client().await?;
         let result = request(client.clone()).await;
-        if matches!(&result, Err(e) if !matches!(e, HostError::Remote { .. } | HostError::MissingCapability(_))) {
+        if matches!(&result, Err(HostError::Io(_) | HostError::Protocol(_) | HostError::Closed(_))) {
             self.forget(&client).await;
         }
         result
@@ -478,6 +479,38 @@ mod tests {
         assert!(host.client.lock().await.is_some());
         host.forget(&new).await;
         assert!(host.client.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_timeout_keeps_the_driver_and_a_broken_connection_drops_it() {
+        let (client, mut fake) = connected().await;
+        let host = DriverHost::default();
+        *host.client.lock().await = Some(client);
+
+        let slow = host.with_client(|client| async move { client.wire.request(method::OUTLINE, &asked(1), Duration::from_millis(50)).await }).await;
+        assert!(matches!(slow, Err(HostError::Timeout(_))), "{slow:?}");
+        assert!(host.client.lock().await.is_some(), "other requests may be running on it: it stays");
+
+        // the same driver answers the next request
+        let next = host.with_client(|client| async move { client.call::<Value>(method::OUTLINE, &asked(2)).await });
+        let answer = async {
+            // the first request, its cancel and the second request arrive in no fixed order: answer the second
+            loop {
+                let frame = fake.read().await;
+                if frame["method"] == method::OUTLINE && frame["params"]["n"] == 2 {
+                    fake.answer(&frame["id"], json!("still here")).await;
+                    break fake;
+                }
+            }
+        };
+        let (next, fake) = tokio::join!(next, answer);
+        assert_eq!(next.unwrap(), json!("still here"));
+
+        drop(fake);
+        let gone = host.with_client(|client| async move { client.call::<Value>(method::OUTLINE, &asked(3)).await }).await;
+        // the write may fail before the reader has seen the driver's output close: either way the connection is broken
+        assert!(matches!(gone, Err(HostError::Closed(_) | HostError::Io(_))), "{gone:?}");
+        assert!(host.client.lock().await.is_none(), "a driver that is gone is dropped, and the next request starts a new one");
     }
 
     #[test]

@@ -204,9 +204,9 @@ Built in `crates/vnoc/src/driver_host.rs`. What the table leaves open, as built:
   Python or shell is needed, so the tests are the same on all four CI systems. The tests are in that file.
 - A request is dropped from `waiting` and cancelled by one rule: when its future ends with the entry still there. That covers a timeout and a
   caller that went away. Each frame is written by its own task, so a caller that goes away halfway never leaves half a frame in the pipe.
-- A timeout **still drops the driver**, as before (`forget`): the plan does not say otherwise. With call trees in flight, one timed-out
-  `outline` then fails them too. If that hurts in 7.4, make `Timeout` keep the driver (the cancel has been sent) and only drop on `Closed`,
-  `Io` and `Protocol`.
+- A timeout **keeps the driver**: the cancel has been sent, and other requests (a call tree) may be running on it. Only `Closed`, `Io` and `Protocol`
+  drop it. The price: a driver that hangs for good is not restarted by timeouts alone; each request just times out. Nothing hangs in 0.1's
+  `outline`; if 7.6 finds a hang, add a restart after a few timeouts in a row.
 - `forget` drops a driver only if it is still the current one: a late failure of an old driver must not drop its replacement.
 - `DriverHost::call_tree` exists (capability `callTree`, 30 s) so the 30 s limit has a caller; the core's `vnoc/callTree` that uses it is 7.4.
 - The handshake now has the 10 s limit too. New error `HostError::Closed` for a driver that is gone.
