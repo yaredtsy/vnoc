@@ -88,6 +88,9 @@ V-NOC
 ├── FIX: THE TREE AND THE SESSION CHASE EACH OTHER ─ 12-tree-selection-mirror.md
 │   └── the echo of a reveal · the mirror rule · treeMirror · tests
 │
+├── STEP 6: HARDEN AND PUBLISH ──────────────────── 13-harden-and-publish.md
+│   └── accounts and keys · refactor suite · CI on three systems · the listing · the release workflow · exit checks
+│
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
 │
 └── LATER (ideas, not scheduled) ────────────────── futureplan/

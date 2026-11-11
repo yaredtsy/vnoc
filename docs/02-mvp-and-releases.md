@@ -124,7 +124,7 @@ A `.vnoc-id` that exists but cannot be read is listed as a problem and is **neve
 - [ ] "ID was removed from code" → a "Write ID again" action on the node
 - [ ] "Attach a Missing Doc Here…" on a node: the same Relink, started from the new code
 
-**Step 6. Harden and publish**
+**Step 6. Harden and publish**: build plan in [`13-harden-and-publish.md`](13-harden-and-publish.md) (it wins where it is more exact)
 - [ ] the refactor test suite: rename function · move function · rename file · rename folder (in VS Code **and** with `git mv`) → the doc stays attached every time
 - [ ] the no-data-loss suite: Remove → Restore gives back the same bytes
 - [ ] CI builds four VSIX files; publish 0.1 as **pre-release**
