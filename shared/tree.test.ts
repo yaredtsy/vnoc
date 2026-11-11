@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { TreeNode } from "./messages";
-import { MISSING_PIN, allNodes, chainAt, docTarget, findNode, missingAsNode, nodeAtPath, pathTo } from "./tree.ts";
+import { MISSING_PIN, allNodes, chainAt, docTarget, findNode, missingAsNode, repoPathOfId, nodeAtPath, pathTo } from "./tree.ts";
 
 const range = (from: number, to: number) => ({ start: { line: from, character: 0 }, end: { line: to, character: 0 } });
 const node = (id: string, kind: TreeNode["kind"], children: TreeNode[] = [], more: Partial<TreeNode> = {}): TreeNode => ({
@@ -62,4 +62,10 @@ test("a Missing node is drawn with its stored name and place, and pinned by its 
   assert.equal(missingAsNode({ id: "ID2", kind: "folder", path: "src/billing", qualname: "", docs: 1 }).name, "src/billing");
   assert.equal(missingAsNode({ id: "ID3", kind: null, path: "a.py", qualname: "f", docs: 1 }).kind, "function", "a file that does not say its kind: a name means a def");
   assert.equal(missingAsNode({ id: "ID4", kind: null, path: "a.py", qualname: "", docs: 1 }).kind, "file");
+});
+
+test("the file of a node is read from its id (from the git root), not from its path (from the opened folder)", () => {
+  // the opened folder is crates/x inside the repo: the card says `nested.py`, the id says where it is
+  assert.equal(repoPathOfId("crates/x/nested.py::Outer.inner#2"), "crates/x/nested.py");
+  assert.equal(repoPathOfId("crates/x/nested.py"), "crates/x/nested.py");
 });

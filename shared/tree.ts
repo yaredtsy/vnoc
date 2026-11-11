@@ -61,3 +61,9 @@ export function missingAsNode(m: MissingNode): TreeNode {
   const kind = m.kind === "class" || m.kind === "folder" || m.kind === "file" ? m.kind : m.qualname ? "function" : "file";
   return { id: MISSING_PIN + m.id, kind, name: m.qualname || m.path, path: m.path, qualname: m.qualname || null, range: null, syntax_error: false, node_id: m.id, docs: m.docs, link: null, children: [] };
 }
+
+/**
+ * The file a node's `id` names, as a path from the **git root** (not from the opened folder: `TreeNode.path` is that, and the two differ when
+ * the opened folder is a subfolder of the repo). A def's id is `path::qualname[#n]`; a file's or folder's is the path itself.
+ */
+export const repoPathOfId = (id: string): string => id.split("::")[0];

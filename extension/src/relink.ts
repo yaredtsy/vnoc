@@ -2,7 +2,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 import type { MissingNode, TreeNode } from "@vnoc/shared/messages";
-import { allNodes } from "@vnoc/shared/tree";
+import { allNodes, repoPathOfId } from "@vnoc/shared/tree";
 
 // Relink (docs/11-missing-relink-remove.md §3): a Missing node's docs go to another place. Two ways in, both ending in `vnoc/relink`:
 //   · on a Missing row: pick the new place (every node of the same kind that has no docs yet)
@@ -54,8 +54,10 @@ export async function attachMissingHere(request: Request, gitRoot: string, missi
 
 /** The core call, with the open document the ID is written into (as `addDoc` sends it). */
 async function relinkTo(request: Request, gitRoot: string, missing: MissingNode, node: TreeNode): Promise<boolean> {
-  // a folder has no document: the core writes its `.vnoc-id` itself
-  const document = node.kind === "folder" ? undefined : await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(gitRoot, node.path)));
+  // a folder has no document: the core writes its `.vnoc-id` itself. The file is named by the node's `id`, which starts at the git root
+  // (`node.path` is relative to the opened folder, which can be a subfolder of the repo).
+  const file = repoPathOfId(node.id);
+  const document = node.kind === "folder" ? undefined : await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(gitRoot, file)));
   const wasDirty = document?.isDirty ?? false;
   const result = await request<RelinkResult>("vnoc/relink", { id: missing.id, to: node.id, document: document && { uri: document.uri.toString(), version: document.version, text: document.getText() } });
   // the ID is in the editor's buffer now: save it so the core's index sees it, unless the user had unsaved work of their own
