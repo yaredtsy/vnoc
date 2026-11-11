@@ -75,3 +75,11 @@ test("every key a card's `when` clause tests is a key nodeContext() writes", () 
     }
   }
 });
+
+test("Write ID is on the row and on the card, and both only show it for a node found by name", () => {
+  for (const [name, menu] of [["row", rowMenu], ["card", cardMenu]] as const) {
+    const entry = menu.find((e) => e.command === "vnoc.writeId");
+    assert.ok(entry, `Write ID is in the ${name} menu`);
+    assert.match(entry.when ?? "", /byName/, `the ${name} entry tests byName`);
+  }
+});

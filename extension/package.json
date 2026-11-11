@@ -77,6 +77,11 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.writeId",
+        "title": "Write ID",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.openMissingDocs",
         "title": "Open Docs",
         "category": "V-NOC"
@@ -324,6 +329,11 @@
           "group": "4_docs@3"
         },
         {
+          "command": "vnoc.writeId",
+          "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/ && viewItem =~ /\\bbyName\\b/",
+          "group": "4_docs@4"
+        },
+        {
           "command": "vnoc.copyPath",
           "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "9_copy@1"
@@ -382,6 +392,10 @@
         },
         {
           "command": "vnoc.attachMissingDocHere",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.writeId",
           "when": "false"
         },
         {
@@ -525,6 +539,10 @@
           "command": "vnoc.attachMissingDocHere",
           "when": "vnoc.hasMissing",
           "group": "3_docs@3"
+        },
+        {
+          "command": "vnoc.writeId",
+          "group": "3_docs@4"
         }
       ],
       "editor/title": [
@@ -599,6 +617,11 @@
           "command": "vnoc.attachMissingDocHere",
           "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && nodeKey != '/' && vnoc.hasMissing",
           "group": "4_docs@3"
+        },
+        {
+          "command": "vnoc.writeId",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && byName",
+          "group": "4_docs@4"
         },
         {
           "command": "vnoc.copyPath",

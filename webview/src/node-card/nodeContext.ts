@@ -18,5 +18,6 @@ export function nodeContext(f: { node: Placed; contextId: string; isFocusRoot: b
     hasCode: f.node.range !== null,
     codeOpen: f.node.codeOpen,
     docs: f.node.docs,
+    byName: f.node.link === "name",
   });
 }

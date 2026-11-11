@@ -52,14 +52,20 @@ export async function attachMissingHere(request: Request, gitRoot: string, missi
   return picked ? relinkTo(request, gitRoot, picked.missing, node) : false;
 }
 
-/** The core call, with the open document the ID is written into (as `addDoc` sends it). */
+/**
+ * The node's open document, and the `document` param the core takes with it (as `addDoc` sends it): the file the ID is written into.
+ * A folder has no document: the core writes its `.vnoc-id` itself. The file is named by the node's `id`, which starts at the git root
+ * (`node.path` is relative to the opened folder, which can be a subfolder of the repo).
+ */
+export async function documentOf(gitRoot: string, node: TreeNode) {
+  const document = node.kind === "folder" ? undefined : await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(gitRoot, repoPathOfId(node.id))));
+  return { document, param: document && { uri: document.uri.toString(), version: document.version, text: document.getText() }, wasDirty: document?.isDirty ?? false };
+}
+
+/** The core call, with the open document the ID is written into. */
 async function relinkTo(request: Request, gitRoot: string, missing: MissingNode, node: TreeNode): Promise<boolean> {
-  // a folder has no document: the core writes its `.vnoc-id` itself. The file is named by the node's `id`, which starts at the git root
-  // (`node.path` is relative to the opened folder, which can be a subfolder of the repo).
-  const file = repoPathOfId(node.id);
-  const document = node.kind === "folder" ? undefined : await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(gitRoot, file)));
-  const wasDirty = document?.isDirty ?? false;
-  const result = await request<RelinkResult>("vnoc/relink", { id: missing.id, to: node.id, document: document && { uri: document.uri.toString(), version: document.version, text: document.getText() } });
+  const { document, param, wasDirty } = await documentOf(gitRoot, node);
+  const result = await request<RelinkResult>("vnoc/relink", { id: missing.id, to: node.id, document: param });
   // the ID is in the editor's buffer now: save it so the core's index sees it, unless the user had unsaved work of their own
   if (result.written === "id" && !wasDirty) await document?.save();
   if (result.notice) void vscode.window.showWarningMessage(`V-NOC: ${result.notice}`);

@@ -163,3 +163,59 @@ suite("needs attention", () => {
     assert.strictEqual(vscode.window.activeTextEditor?.selection.active.line, 4);
   });
 });
+
+suite("write id", () => {
+  const file = () => path.join(folder, "marked.py");
+  const settings = () => path.join(folder, ".vnoc", "vnoc.toml");
+  const SOURCE = "def marked():\n    pass\n";
+  let before: string | null;
+  let id: string;
+
+  const marked = async () => (await api.structure()).root.children.find((n) => n.name === "marked.py")?.children.find((n) => n.name === "marked");
+  const waitFor = async (what: string, check: () => Promise<boolean>) => {
+    for (let waited = 0; !(await check()); waited += 200) {
+      assert.ok(waited < 20_000, `timed out waiting for ${what}`);
+      await sleep(200);
+    }
+  };
+
+  suiteSetup(async () => {
+    // the "needs attention" suite's first attach wrote `[ids] default = "none"` here: IDs are on for this one
+    before = fs.existsSync(settings()) ? fs.readFileSync(settings(), "utf8") : null;
+    fs.mkdirSync(path.dirname(settings()), { recursive: true });
+    fs.writeFileSync(settings(), "format = 1\n");
+    fs.writeFileSync(file(), SOURCE);
+    await waitFor("marked.py in the structure", async () => (await marked()) !== undefined);
+  });
+
+  suiteTeardown(async () => {
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    fs.rmSync(file(), { force: true });
+    if (before === null) fs.rmSync(settings(), { force: true });
+    else fs.writeFileSync(settings(), before);
+  });
+
+  test("a node whose ID line was deleted is found by name, and Write ID makes it found by marker again", async () => {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+    const r = await api.request<{ id: string }>("vnoc/attach", { key: (await marked())!.id, title: "Why marked", markers: true, document: { uri: document.uri.toString(), version: document.version, text: document.getText() } });
+    id = r.id;
+    assert.ok(await document.save()); // the ID is in the buffer: the core reads the saved file
+    await waitFor("the ID in the code", async () => (await marked())?.link === "marker");
+    assert.ok(fs.readFileSync(file(), "utf8").includes(`ID: ${id}`), "attach wrote the ID line");
+
+    // delete the line through the document, not the file: the open document would go stale (and the core's edit would be refused)
+    const edit = new vscode.WorkspaceEdit();
+    const lines = document.getText().split("\n");
+    const at = lines.findIndex((l) => l.includes("ID:"));
+    edit.delete(document.uri, new vscode.Range(at, 0, at + 1, 0));
+    assert.ok(await vscode.workspace.applyEdit(edit));
+    assert.ok(await document.save());
+    await waitFor("the node found by name", async () => (await marked())?.link === "name");
+
+    await vscode.commands.executeCommand("vnoc.writeId", await marked());
+    await waitFor("the node found by its marker", async () => (await marked())?.link === "marker");
+    assert.ok(fs.readFileSync(file(), "utf8").includes(`ID: ${id}`), "the ID line is back in the file");
+    const after = (await marked())!;
+    assert.deepStrictEqual([after.node_id, after.docs], [id, 1]);
+  });
+});

@@ -11,6 +11,7 @@ import type { Core } from "./core";
 import type { Panels } from "./panels";
 import type { SessionStore } from "./session";
 import { attachMissingHere, relinkMissing } from "./relink";
+import { writeId } from "./writeId";
 import { searchNodes } from "./search";
 import { emptyTrash, removeMissing, restoreRemoved } from "./trash";
 import { type Row, absolute, selectionOf } from "./structureView";
@@ -116,6 +117,12 @@ export class Commands {
         const node = await this.nodeFor(arg, selected);
         if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");
         return attachMissingHere(this.request, await this.root(), this.core.missing, node);
+      }),
+      on("vnoc.writeId", async (arg, selected) => {
+        const node = await this.nodeFor(arg, selected);
+        if (node.node_id === null) throw new Error(`${node.name} has no docs, so there is no ID to write.`);
+        if (node.link === "marker") throw new Error(`The ID of ${node.name} is already in the code.`);
+        return writeId(this.request, await this.root(), node);
       }),
       on("vnoc.addDoc", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);

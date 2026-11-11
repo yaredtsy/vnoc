@@ -117,7 +117,7 @@ export class StructureView implements vscode.TreeDataProvider<Row> {
     const item = new vscode.TreeItem(node.name, state);
     item.id = node.id;
     // the flags the menus need, as words (`when` clauses test them with =~ /\bfunction\b/)
-    item.contextValue = ["node", node.kind, node.docs > 0 ? "docs" : "", node.range ? "hasCode" : ""].filter(Boolean).join(" ");
+    item.contextValue = ["node", node.kind, node.docs > 0 ? "docs" : "", node.range ? "hasCode" : "", node.link === "name" ? "byName" : ""].filter(Boolean).join(" ");
     if (node.kind === "folder" || node.kind === "file") {
       // a resourceUri makes VS Code draw the file icon of the user's icon theme, as in the explorer
       item.resourceUri = absolute(node.path);
