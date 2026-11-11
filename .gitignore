@@ -7,3 +7,4 @@ extension/bin/*
 *.vsix
 .DS_Store
 extension/out/
+.vscode-test/

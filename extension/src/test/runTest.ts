@@ -2,11 +2,28 @@ import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { runTests } from "@vscode/test-electron";
+import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
 
 // Runs the suite inside a real VS Code extension host, with a throwaway profile (nothing of the user's is touched), on a copy
 // of the domain crate's Python fixture as the opened folder. Needs the core, the driver and the webview built first.
 const LOCAL_VSCODE = "/Applications/Visual Studio Code.app/Contents/MacOS/Code";
+
+/**
+ * The VS Code the suite runs in: the one named in VSCODE_EXECUTABLE, else the one on this machine, else a download (CI).
+ * The downloaded macOS app names its program `Contents/MacOS/Code` since VS Code 1.14x, and a test-electron that does not know says `MacOS/Electron`: use the one that exists.
+ */
+async function vscodeExecutable(): Promise<string> {
+  if (process.env.VSCODE_EXECUTABLE) return process.env.VSCODE_EXECUTABLE;
+  if (fs.existsSync(LOCAL_VSCODE)) return LOCAL_VSCODE;
+  const downloaded = await downloadAndUnzipVSCode();
+  if (fs.existsSync(downloaded)) return downloaded;
+  const electron = path.join("MacOS", "Electron");
+  if (downloaded.endsWith(electron)) {
+    const code = path.join(path.dirname(downloaded), "Code");
+    if (fs.existsSync(code)) return code;
+  }
+  throw new Error(`The downloaded VS Code has no program at ${downloaded}${downloaded.endsWith(electron) ? " or beside it as Code" : ""}.`);
+}
 
 async function main() {
   const root = path.resolve(__dirname, "../..");
@@ -21,8 +38,7 @@ async function main() {
   git("add", "-A");
   git("commit", "-q", "-m", "fixture");
   await runTests({
-    // the VS Code on this machine if there is one (or the one named in VSCODE_EXECUTABLE); otherwise the test runner downloads one (CI)
-    vscodeExecutablePath: process.env.VSCODE_EXECUTABLE ?? (fs.existsSync(LOCAL_VSCODE) ? LOCAL_VSCODE : undefined),
+    vscodeExecutablePath: await vscodeExecutable(),
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(root, "out/test/suite/index"),
     launchArgs: [workspace, "--disable-extensions", `--user-data-dir=${path.join(tmp, "user")}`, `--extensions-dir=${path.join(tmp, "ext")}`, "--disable-workspace-trust"],
