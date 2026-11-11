@@ -57,6 +57,11 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.removeAllMissing",
+        "title": "Remove All Missing…",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.restoreRemoved",
         "title": "Restore Removed Doc…",
         "category": "V-NOC"
@@ -346,18 +351,13 @@
           "group": "1_trash@1"
         },
         {
-          "command": "vnoc.emptyTrash",
-          "when": "view == vnoc.structure",
-          "group": "1_trash@2"
-        },
-        {
           "command": "vnoc.restoreRemoved",
           "when": "view == vnoc.attention",
           "group": "1_trash@1"
         },
         {
-          "command": "vnoc.emptyTrash",
-          "when": "view == vnoc.attention",
+          "command": "vnoc.removeAllMissing",
+          "when": "view == vnoc.attention && vnoc.hasMissing",
           "group": "1_trash@2"
         },
         {

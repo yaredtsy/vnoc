@@ -148,7 +148,11 @@ Restore ("V-NOC: Restore Removed Doc…" → pick)
 - If an ID line is still in the code, leave it. Restore then finds the node again at once.
 
 ```
+Remove All Missing ("V-NOC: Remove All Missing…")
+  confirm once, with the number of nodes; then `vnoc/trash` and the move for each Missing node, one after the other. Restore brings each back.
+
 Empty Trash ("V-NOC: Empty Trash")
+  nothing in the trash while nodes are Missing → say so, and point to Remove… and Remove All Missing…
   confirm, with the number of entries and the size
   workspace.fs.delete(trash, { recursive: true, useTrash: true })   → the OS trash where there is one: one more chance
   the ONLY permanent delete in V-NOC
@@ -173,7 +177,7 @@ NEEDS ATTENTION
 |---|---|---|
 | Missing | opens its docs: the docs tab pinned to the ID (`vnoc/docs` takes any ID), titled with the stored name | Relink… · Remove… · Open Docs |
 | Problem | goes to the place: the other copy for a duplicate, the broken file for a broken file. When `file` is a folder, reveal it in the Explorer; do not open it as a document | — |
-| Missing (group title) | — | view title `…` menu: Restore Removed Doc… · Empty Trash |
+| Missing (group title) | — | view title `…` menu: Remove All Missing… · Restore Removed Doc… |
 
 A Missing node is not in the tree, so it can never be selected, focused or shown on the canvas. The session does not change; `treeChanged` already
 drops a selected or focused node that went Missing. Add a session test for it.
@@ -187,7 +191,9 @@ drops a selected or focused node that went Missing. Add a session test for it.
 | Open Docs | ✓ | (already there) | | |
 | Attach a Missing Doc Here… | | ✓ when `vnoc.hasMissing` | ✓ | |
 | Write ID | | ✓ on rows found by name (`contextValue` flag `byName`, card `nodeContext().byName`) | ✓ | |
-| Restore Removed Doc… · Empty Trash | view title | | | ✓ |
+| Remove All Missing… | view title (Needs Attention, while something is Missing) | | | ✓ |
+| Restore Removed Doc… | view title | | | ✓ |
+| Empty Trash | | | | ✓ (not in a title bar: it reads like "clear the list", and it only deletes what Remove already moved) |
 
 The row + card actions follow [`10-ui-rework/04-menus.md`](10-ui-rework/04-menus.md): both lists, the same commands, `category: "V-NOC"`, and
 `menus.test.ts` grows with them. Actions on the Missing view are not in the parity test: it only reads rows of `view == vnoc.structure`, so there

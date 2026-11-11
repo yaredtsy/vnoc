@@ -51,6 +51,30 @@ export async function removeMissing(core: Link, missing: MissingNode): Promise<b
   return true;
 }
 
+/** Remove All Missing…: one question, then every Missing node goes to the trash. Resolves to how many were removed. */
+export async function removeAllMissing(core: Link, missing: MissingNode[]): Promise<number> {
+  if (missing.length === 0) {
+    void vscode.window.showInformationMessage("V-NOC: nothing is Missing.");
+    return 0;
+  }
+  const answer = await vscode.window.showWarningMessage(
+    `Remove the docs of ${missing.length} Missing ${missing.length === 1 ? "node" : "nodes"}?`,
+    { modal: true, detail: "Their docs move to V-NOC's trash. Restore Removed Doc… brings them back." },
+    "Remove",
+  );
+  if (answer !== "Remove") return 0;
+  let removed = 0;
+  try {
+    for (const m of missing) {
+      await moveToTrash(core, m.id);
+      removed++;
+    }
+  } finally {
+    if (removed > 0) void vscode.window.showInformationMessage(`V-NOC: ${removed} removed. Restore Removed Doc… brings them back.`);
+  }
+  return removed;
+}
+
 /** Restore Removed Doc…: pick one removed node. Resolves to whether it was restored. */
 export async function restoreRemoved(core: Link): Promise<boolean> {
   const entries = await core.request<TrashItem[]>("vnoc/trashList");
@@ -69,12 +93,16 @@ export async function restoreRemoved(core: Link): Promise<boolean> {
 }
 
 /** Empty Trash: the only permanent delete in V-NOC, and it goes to the OS trash where there is one. */
-export async function emptyTrash(core: Link, gitRoot: string): Promise<boolean> {
+export async function emptyTrash(core: Link, gitRoot: string, stillMissing = 0): Promise<boolean> {
   await core.request("vnoc/trashList"); // the listing removes the empty entries, so they are not counted
   const folder = path.join(gitRoot, ".vnoc", "local", "trash");
   const count = fs.existsSync(folder) ? fs.readdirSync(folder, { withFileTypes: true }).filter((e) => e.isDirectory()).length : 0;
   if (count === 0) {
-    void vscode.window.showInformationMessage("V-NOC: the trash is empty.");
+    void vscode.window.showInformationMessage(
+      stillMissing > 0
+        ? `V-NOC: nothing has been removed, so the trash is empty. ${stillMissing} Missing ${stillMissing === 1 ? "doc is" : "docs are"} still there: use Remove… on a row, or Remove All Missing….`
+        : "V-NOC: the trash is empty.",
+    );
     return false;
   }
   const answer = await vscode.window.showWarningMessage(

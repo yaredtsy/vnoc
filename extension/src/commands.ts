@@ -13,7 +13,7 @@ import type { SessionStore } from "./session";
 import { attachMissingHere, relinkMissing } from "./relink";
 import { writeId } from "./writeId";
 import { searchNodes } from "./search";
-import { emptyTrash, removeMissing, restoreRemoved } from "./trash";
+import { emptyTrash, removeAllMissing, removeMissing, restoreRemoved } from "./trash";
 import { type Row, absolute, selectionOf } from "./structureView";
 
 // Every `vnoc.*` command: what a sidebar row, a card's right-click menu, the Explorer and the editor's menu run. Each one turns its argument into a
@@ -112,7 +112,8 @@ export class Commands {
       }),
       on("vnoc.removeMissing", async (arg) => (isAttentionRow(arg, "missing") ? removeMissing(this.core, arg.node) : undefined)),
       on("vnoc.restoreRemoved", () => restoreRemoved(this.core)),
-      on("vnoc.emptyTrash", async () => emptyTrash(this.core, await this.root())),
+      on("vnoc.removeAllMissing", () => removeAllMissing(this.core, this.core.missing)),
+      on("vnoc.emptyTrash", async () => emptyTrash(this.core, await this.root(), this.core.missing.length)),
       on("vnoc.attachMissingDocHere", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
         if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");
