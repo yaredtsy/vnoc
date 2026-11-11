@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 
 import type { Notes } from "@vnoc/shared/messages";
 import type { ContextState } from "@vnoc/shared/session.ts";
+import { AttentionView } from "./attentionView";
 import { Commands } from "./commands";
 import { Core, watchFiles } from "./core";
 import { CursorMark } from "./cursorMark";
@@ -29,6 +30,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   let sidebarView: vscode.TreeView<Row>;
   const focusView = new FocusView();
   const cursorMark = new CursorMark();
+  const attention = new AttentionView();
   let commands: Commands;
 
   /** The core has a new index: the sidebar redraws, and every open tab asks for the new structure. */
@@ -74,6 +76,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   sidebar = new StructureView(async () => (await c.loadStructure()).root);
   sidebarView = vscode.window.createTreeView("vnoc.structure", { treeDataProvider: sidebar, showCollapseAll: true });
   const focusTree = vscode.window.createTreeView("vnoc.focusStack", { treeDataProvider: focusView });
+  const attentionTree = vscode.window.createTreeView("vnoc.attention", { treeDataProvider: attention });
   showFocusInSidebar(); // the focus saved with the workspace
 
   // Registered synchronously, before anything is awaited: on restart VS Code waits for these serializers (S1).
@@ -82,6 +85,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.window.registerWebviewPanelSerializer(DOCS, { deserializeWebviewPanel: async (panel) => panels.restore("docs", panel) }),
     sidebarView,
     focusTree,
+    attentionTree,
     vscode.window.registerFileDecorationProvider(cursorMark),
     // the sidebar's four states: loading and error say so in the view, empty and error also show the welcome text (package.json `viewsWelcome`)
     sidebar.onDidChangeState((state) => {
@@ -108,7 +112,11 @@ export function activate(ctx: vscode.ExtensionContext) {
       }
     }),
     // what the session points at may be gone (a focused node you deleted: you are one step back, not looking at nothing)
-    c.onStructure(() => {
+    c.onStructure((structure) => {
+      if (attention.update(structure)) {
+        void vscode.commands.executeCommand("setContext", "vnoc.hasAttention", attention.hasAttention);
+        void vscode.commands.executeCommand("setContext", "vnoc.hasMissing", attention.hasMissing);
+      }
       store.dispatch({ type: "treeChanged" });
       commands.syncCursor();
     }),
@@ -125,6 +133,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     webviewErrors: () => webviewErrors,
     /** what the next window restart would read back */
     saved: () => ctx.workspaceState.get<{ contexts: Record<string, ContextState> }>("vnoc.session.v1"),
+    /** the rows of NEEDS ATTENTION: the Missing IDs and the Problems */
+    attention: () => attention.snapshot(),
+    /** a request to the core (the suite attaches docs through it, without the input boxes) */
+    request: <T>(method: string, params?: object) => c.request<T>(method, params),
     ping: () => c.request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
     structure: () => c.request<any>("vnoc/structure"),
     /** selects a node's row in the sidebar tree, as a click would (the session hears it from `onDidChangeSelection`) */

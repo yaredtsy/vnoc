@@ -9,7 +9,7 @@ import { IconPin, IconPinFilled } from "@tabler/icons-react";
 
 import { Toggle } from "@/components/ui/toggle.tsx";
 import type { StructureResult } from "@vnoc/shared/messages.ts";
-import { docTarget, findNode, pathTo } from "@vnoc/shared/tree.ts";
+import { MISSING_PIN, docTarget, findNode, missingAsNode, pathTo } from "@vnoc/shared/tree.ts";
 import { on, post, request } from "../host.ts";
 import { useSession } from "../state/session.ts";
 import { pin, useView } from "../state/view.ts";
@@ -46,7 +46,9 @@ export function DocsApp() {
     if (!seen.cursor) return null;
     return docTarget((pathTo(structure.root, seen.cursor) ?? []).filter((n) => n.kind !== "folder")) ?? null;
   }, [structure, seen]);
-  const node = (structure && pinned ? findNode(structure.root, pinned) : null) ?? followed;
+  // a Missing node is not in the tree: its pin carries the permanent ID, and the structure lists it
+  const pinnedNode = !structure || !pinned ? null : pinned.startsWith(MISSING_PIN) ? ((m) => (m ? missingAsNode(m) : null))(structure.missing.find((m) => MISSING_PIN + m.id === pinned)) : findNode(structure.root, pinned);
+  const node = pinnedNode ?? followed;
   const addDoc = (key: string) => void request("addDoc", { key }).catch(() => {});
 
   return (

@@ -1,6 +1,6 @@
 // Looking things up in the tree. Pure, so the extension and the webview use the same code and it is tested without either.
 
-import type { TreeNode } from "./messages";
+import type { MissingNode, TreeNode } from "./messages";
 
 /** The node with this id, or undefined. */
 export function findNode(root: TreeNode, id: string): TreeNode | undefined {
@@ -51,4 +51,13 @@ export function docTarget(chain: TreeNode[]): TreeNode | undefined {
 export function nodeAtPath(root: TreeNode, relativePath: string): TreeNode | undefined {
   if (relativePath === "") return root;
   return allNodes(root).find((n) => (n.kind === "folder" || n.kind === "file") && n.path === relativePath);
+}
+
+/** The docs tab's pin for a Missing node: it is not in the tree, so it has no location key. The permanent ID follows the prefix. */
+export const MISSING_PIN = "missing:";
+
+/** A Missing node drawn as a node, so the doc panel can show its docs: titled with the stored name, shown at the stored place. */
+export function missingAsNode(m: MissingNode): TreeNode {
+  const kind = m.kind === "class" || m.kind === "folder" || m.kind === "file" ? m.kind : m.qualname ? "function" : "file";
+  return { id: MISSING_PIN + m.id, kind, name: m.qualname || m.path, path: m.path, qualname: m.qualname || null, range: null, syntax_error: false, node_id: m.id, docs: m.docs, link: null, children: [] };
 }

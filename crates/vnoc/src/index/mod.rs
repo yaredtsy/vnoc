@@ -105,7 +105,7 @@ impl Index {
                 (true, true) => format!("{}/{}", d.copy.path(), crate::identity::folder_marker::FILE_NAME),
                 _ => d.copy.path().to_string(),
             };
-            let text = format!("`{}`: its ID is also at `{}`", place(&d.winner), place(&d.copy));
+            let text = format!("{}: its ID is also at {}", place(&d.winner), place(&d.copy));
             Problem { text, file: Some(absolute(&file)), line }
         });
         broken.chain(markers).chain(duplicates).collect()
@@ -347,7 +347,7 @@ mod tests {
         // the anchor says a.py::f, so a.py wins
         let at_anchor = index(&files, vec![(id(1), record(&at("a.py", "f"), None, 1))]);
         let problems = at_anchor.problems(std::path::Path::new("/repo"));
-        assert_eq!(problems, [Problem { text: "`a.py::f`: its ID is also at `copy.py::parse_order`".into(), file: Some("/repo/copy.py".into()), line: Some(7) }]);
+        assert_eq!(problems, [Problem { text: "a.py::f: its ID is also at copy.py::parse_order".into(), file: Some("/repo/copy.py".into()), line: Some(7) }]);
         assert_eq!(at_anchor.attached.get("a.py::f").map(|a| a.id), Some(id(1)));
 
         // the anchor is gone: the first by path still wins, and it is the same winner
@@ -363,7 +363,7 @@ mod tests {
     fn a_copy_on_the_second_of_two_same_named_defs_ends_in_its_number() {
         let files = [("a.py", vec![def("f", 3, Some(id(1)))]), ("copy.py", vec![def("g", 0, None), def("g", 5, Some(id(1)))])];
         let index = index(&files, vec![(id(1), record(&at("a.py", "f"), None, 1))]);
-        assert_eq!(index.problems(std::path::Path::new("/repo"))[0].text, "`a.py::f`: its ID is also at `copy.py::g#2`");
+        assert_eq!(index.problems(std::path::Path::new("/repo"))[0].text, "a.py::f: its ID is also at copy.py::g#2");
     }
 
     /// `a.py` is outlined; `bad.py` failed in the driver; `out/x.py` is outside the scan (or ignored, or past the cap): the same to the index.

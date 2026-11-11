@@ -109,6 +109,14 @@ test("treeChanged prunes every context, and what the session points at", () => {
   assert.equal(reduce(next, "main", { type: "treeChanged" }, smaller), next, "nothing left to drop: the same object");
 });
 
+test("a selected node that goes Missing is dropped; the rest of the session stays", () => {
+  const s = run(emptySession(), { type: "focus", id: "pkg" }, { type: "select", id: "m" }, { type: "expand", ids: ["pkg"] });
+  const withoutM = node("/", "folder", [node("pkg", "folder", [node("a.py", "file", [node("C", "class")])]), node("b.py", "file", [node("f", "function")])]);
+  const next = reduce(s, "main", { type: "treeChanged" }, withoutM);
+  assert.equal(main(next).selected, null);
+  assert.deepEqual([main(next).focus, main(next).expanded], [["pkg"], ["pkg"]], "the focus and the open cards are untouched");
+});
+
 test("an intent that changes nothing, or names a context that does not exist, returns the same object; arrays that did not move are kept", () => {
   const s = run(emptySession(), { type: "focus", id: "pkg" }, { type: "expand", ids: ["pkg"] });
   assert.equal(run(s, { type: "select", id: "pkg" }), s);

@@ -4,7 +4,9 @@ import * as vscode from "vscode";
 import type { Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
 import type { Events } from "@vnoc/shared/messages";
+import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
+import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
 import type { Panels } from "./panels";
 import type { SessionStore } from "./session";
@@ -18,6 +20,8 @@ const isTreeNode = (arg: unknown): arg is TreeNode => typeof arg === "object" &&
 /** What the native tree gives a menu command: the row. */
 const isNodeRow = (arg: unknown): arg is Row & { row: "node" } => typeof arg === "object" && arg !== null && "row" in arg && (arg as Row).row === "node";
 
+const isAttentionRow = <R extends AttentionRow["row"]>(arg: unknown, row: R): arg is Extract<AttentionRow, { row: R }> => typeof arg === "object" && arg !== null && (arg as AttentionRow).row === row;
+
 /** Cursor moves come in bursts; look at where it rests. */
 const CURSOR_DEBOUNCE_MS = 200;
 
@@ -30,7 +34,7 @@ const cursorEditor = () => vscode.window.activeTextEditor ?? vscode.window.visib
 /** Runs a command and shows what went wrong as a message: menu clicks have nowhere else to report. */
 const command = (run: (arg: unknown, selected?: unknown) => Promise<unknown> | unknown) => async (arg: unknown, selected?: unknown) => {
   try {
-    await run(arg, selected);
+    return await run(arg, selected);
   } catch (e) {
     void vscode.window.showErrorMessage(`V-NOC: ${(e as Error).message ?? e}`);
   }
@@ -88,6 +92,9 @@ export class Commands {
       on("vnoc.focusClear", () => this.store.dispatch({ type: "focusJump", depth: 0 })),
       on("vnoc.goToCode", async (arg, selected) => this.goToCode(await this.nodeFor(arg, selected))),
       on("vnoc.showDocs", (arg, selected) => this.showDocsBeside(arg, selected)),
+      // the NEEDS ATTENTION rows (a row is `{ row: "missing" | "problem", … }`; nothing here changes the session)
+      on("vnoc.openMissingDocs", (arg) => (isAttentionRow(arg, "missing") ? this.panels.showDocs(MISSING_PIN + arg.node.id) : undefined)),
+      on("vnoc.openProblem", (arg) => (isAttentionRow(arg, "problem") ? goToProblem(arg.problem) : undefined)),
       on("vnoc.addDoc", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
         if (node.id === "/") throw new Error("Docs go on a folder inside the opened folder, not on the opened folder itself.");

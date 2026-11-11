@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { TreeNode } from "./messages";
-import { allNodes, chainAt, docTarget, findNode, nodeAtPath, pathTo } from "./tree.ts";
+import { MISSING_PIN, allNodes, chainAt, docTarget, findNode, missingAsNode, nodeAtPath, pathTo } from "./tree.ts";
 
 const range = (from: number, to: number) => ({ start: { line: from, character: 0 }, end: { line: to, character: 0 } });
 const node = (id: string, kind: TreeNode["kind"], children: TreeNode[] = [], more: Partial<TreeNode> = {}): TreeNode => ({
@@ -54,4 +54,12 @@ test("pathTo goes from the root down to the node, and is null when the node is n
 
 test("allNodes lists every node once, parents before children", () => {
   assert.deepEqual(ids(allNodes(root)), ["/", "pkg", "pkg/a.py", "C", "m", "top", "b.py"]);
+});
+
+test("a Missing node is drawn with its stored name and place, and pinned by its permanent ID", () => {
+  const def = missingAsNode({ id: "ID1", kind: "function", path: "src/orders.py", qualname: "OrderService.parse_order", docs: 2 });
+  assert.deepEqual([def.id, def.node_id, def.name, def.path, def.docs, def.kind], [MISSING_PIN + "ID1", "ID1", "OrderService.parse_order", "src/orders.py", 2, "function"]);
+  assert.equal(missingAsNode({ id: "ID2", kind: "folder", path: "src/billing", qualname: "", docs: 1 }).name, "src/billing");
+  assert.equal(missingAsNode({ id: "ID3", kind: null, path: "a.py", qualname: "f", docs: 1 }).kind, "function", "a file that does not say its kind: a name means a def");
+  assert.equal(missingAsNode({ id: "ID4", kind: null, path: "a.py", qualname: "", docs: 1 }).kind, "file");
 });

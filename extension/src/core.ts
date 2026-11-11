@@ -14,7 +14,7 @@ const CHANGE_DEBOUNCE_MS = 200;
 /**
  * A binary path: the setting if set; else, when running from source (F5), the build folder of this repository
  * (`extension/` sits next to `target/` and `drivers/`); else `<extension>/bin/` (the installed VSIX).
- * From source the build folder wins, because `bin/` may hold a stale copy left by an earlier packaging run.
+ * From source (F5 or the window suite) the build folder wins, because `bin/` may hold a stale copy left by an earlier packaging run.
  * In Restricted Mode VS Code hands us the default instead of a workspace value (`restrictedConfigurations` in package.json),
  * so a cloned repo cannot choose which program we run.
  */
@@ -24,7 +24,8 @@ function binary(ctx: vscode.ExtensionContext, setting: string, name: string, dev
   const exe = process.platform === "win32" ? `${name}.exe` : name;
   const fromSource = path.join(ctx.extensionPath, "..", ...devPath.slice(0, -1), exe);
   const packaged = path.join(ctx.extensionPath, "bin", exe);
-  const developing = ctx.extensionMode === vscode.ExtensionMode.Development;
+  // the window test suite runs in Test mode: it must use the build folder too, or it would test a stale `bin/`
+  const developing = ctx.extensionMode !== vscode.ExtensionMode.Production;
   return developing && fs.existsSync(fromSource) ? fromSource : fs.existsSync(packaged) ? packaged : fromSource;
 }
 

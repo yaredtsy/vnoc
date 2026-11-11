@@ -42,10 +42,25 @@
         {
           "id": "vnoc.structure",
           "name": "Structure"
+        },
+        {
+          "id": "vnoc.attention",
+          "name": "Needs Attention",
+          "when": "vnoc.hasAttention"
         }
       ]
     },
     "commands": [
+      {
+        "command": "vnoc.openMissingDocs",
+        "title": "Open Docs",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.openProblem",
+        "title": "Go There",
+        "category": "V-NOC"
+      },
       {
         "command": "vnoc.openCanvas",
         "title": "Open Canvas",
@@ -194,6 +209,16 @@
     "menus": {
       "view/item/context": [
         {
+          "command": "vnoc.openMissingDocs",
+          "when": "view == vnoc.attention && viewItem == missing",
+          "group": "inline@1"
+        },
+        {
+          "command": "vnoc.openMissingDocs",
+          "when": "view == vnoc.attention && viewItem == missing",
+          "group": "1_docs@1"
+        },
+        {
           "command": "vnoc.focus",
           "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "inline@1"
@@ -287,6 +312,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "vnoc.openMissingDocs",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.openProblem",
+          "when": "false"
+        },
         {
           "command": "vnoc.focus",
           "when": "resourceExtname in vnoc.extensions"
@@ -637,7 +670,7 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
+    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
     "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts"
   },
   "dependencies": {
