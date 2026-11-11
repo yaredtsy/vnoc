@@ -8,6 +8,14 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
+      - uses: Swatinem/rust-cache@v2
+        with: { cache-on-failure: true }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: "drivers/python -> target", key: driver, cache-on-failure: true }
+      - uses: actions/cache@v4
+        with:
+          path: extension/.vscode-test
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - name: shared logic (session, tree, focus stack)
