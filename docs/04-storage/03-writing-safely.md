@@ -99,15 +99,19 @@ The opposite order (files first, marker second) would leave a `node.toml` that s
 
 ## 4. Remove and restore
 
+**Revised 2026-11-11** ([`../11-missing-relink-remove.md`](../11-missing-relink-remove.md) §5): `trashed.toml` is written **before** the move, and
+Restore works out where the node goes from its ID.
+
 ```
 Remove (on a Missing node, after a confirmation that lists the files)
-  1  any doc of this node open with unsaved changes? → the move below carries the unsaved text along (S3)
+  1  core: write .vnoc/local/trash/<timestamp>_<id>/trashed.toml (atomic)       a crash after this leaves an empty entry, the node untouched
   2  VS Code: rename  .vnoc/nodes/<shard>/<id>/  →  .vnoc/local/trash/<timestamp>_<id>/nodes/<shard>/<id>/
-  3  core: write trashed.toml next to it (atomic)
-  4  index: drop the record
+       a doc of this node open with unsaved changes moves with it (S3)
+  3  index: drop the record
 
-Restore (command "V-NOC: Restore removed doc" → pick from the list)
-  1  target folder exists again? → stop, say so, leave the trash copy alone   (never overwrite)
+Restore (command "V-NOC: Restore removed doc" → pick from the list; empty entries are removed when the list is made)
+  1  target = nodes/<shard>/<id>, from the ID, never from trashed.toml
+     target folder exists again? → stop, say so, leave the trash copy alone   (never overwrite)
   2  VS Code: rename back
   3  index: load the record; it resolves to Found or Missing like any other
 

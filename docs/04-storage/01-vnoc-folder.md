@@ -133,11 +133,12 @@ Written once, when `.vnoc/` is created. V-NOC never edits the repo's root `.giti
 
 ### `node.toml`
 
-Already implemented in `crates/vnoc-domain/src/node_toml.rs`. I suggest **one** added field before 0.1 freezes: `kind`.
+Already implemented in `crates/vnoc-domain/src/node_toml.rs`. **One** added field before 0.1 freezes: `kind` (S1, accepted 2026-11-11, built in
+Step 5: [`../11-missing-relink-remove.md`](../11-missing-relink-remove.md) §2).
 
 ```toml
 # .vnoc/nodes/7K/0Q8V5W4T2F7KX9M3B6D1RZ4H7K/node.toml
-kind       = "function"                  # NEW (suggested): "function" | "class" | "file" | "folder"
+kind       = "function"                  # NEW: "function" | "class" | "file" | "folder"; a method is "function"
 path       = "src/orders.py"             # anchor: where it was last seen (repo-relative)
 qualname   = "OrderService.parse_order"  # anchor: the language's own name; "" for a file or folder
 id_in_code = "yes"                       # "yes" | "no" | "never": is there a marker?
@@ -152,7 +153,8 @@ folders in the Relink picker. It is also the field a second language will need (
 `IdInCode::Other` does: keep them, show a generic icon.
 
 Adding it is not a format change (rule 1 in your own file: readers ignore unknown fields). Old files without `kind` are read as "unknown, work it out from
-the disk".
+the disk", and are **never rewritten by themselves**: `kind` is written on attach and on Relink only. `kind` is for display and the Relink list; matching
+(`resolve`) does not compare it.
 
 What is **not** in `node.toml`, on purpose: Missing (computed), hashes (index), timestamps of "last seen" (would change on every sync and dirty git).
 

@@ -99,7 +99,7 @@ Worse, on a branch switch V-NOC could "fix" anchors back and forth. The plan has
 |---|---|
 | Is a stale anchor a problem? | Not while the marker exists: step 1 wins and the anchor is not consulted. |
 | When does it matter? | Only if the marker is later lost. Then the node goes Missing instead of "found by name". |
-| How does it get fresh? | **Relink** rewrites it. So does a command **"V-NOC: Update stored locations"**, which rewrites every stale anchor at once and tells the user to commit the result. |
+| How does it get fresh? | **Relink** rewrites it. So does a command **"V-NOC: Update stored locations"**, which rewrites every stale anchor at once and tells the user to commit the result. **The command waits for 0.1.x** (decided 2026-11-11). |
 | What about a node with no marker (`"no"`)? | Its anchor is all it has, and it changes only by Relink. |
 
 The command gives the same end state as the plan's automatic rules, with the user choosing the moment. Automatic rewriting can be added in 0.4 without
@@ -115,9 +115,13 @@ Missing ▸ parse_order (src/orders.py) ▸ Relink
          └── pick  src/order_parsing.py::parse_payload
                ├── node.toml: path, qualname, occurrence ← the new location           (atomic write)
                ├── markers on, target has no marker → write this ID there, id_in_code = "yes"
-               └── target already has a DIFFERENT V-NOC ID → stop: "that node already has its own docs".
+               └── target already has a DIFFERENT V-NOC ID, or another node already resolves to it (found by name)
+                   → stop: "that node already has its own docs".
                    (merging two nodes is a 0.4 item; in 0.1 the user moves the .md files by hand if they want that)
 ```
+
+It can also start from the new code: **Attach a Missing Doc Here…** on a node lists the Missing nodes of its kind and makes the same call. The ID is
+written before `node.toml`, as in attach. Build plan: [`../11-missing-relink-remove.md`](../11-missing-relink-remove.md) §3.
 
 `kind` in `node.toml` ([`../04-storage/01-vnoc-folder.md`](../04-storage/01-vnoc-folder.md) §3) is what lets the picker show the right list when the node
 itself no longer exists.

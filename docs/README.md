@@ -82,6 +82,9 @@ V-NOC
 │   ├── build order               where the files go · nine steps · the webview sidebar later
 │   └── how it looks              selected · highlighted · cursor · revealed · focused
 │
+├── STEP 5: MISSING, RELINK, REMOVE ─────────────── 11-missing-relink-remove.md
+│   └── kind in node.toml · Needs Attention view · Relink both ways · trash order · messages · build order
+│
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
 │
 └── LATER (ideas, not scheduled) ────────────────── futureplan/

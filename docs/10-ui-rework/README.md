@@ -46,7 +46,7 @@ ui rework
 | **U5** | Open / closed nodes are **not** shared between the tree and the canvas in 0.1. "Reveal" opens the ancestors on both. | A native tree cannot be told to close one item from code, so sharing would only work in one direction. Comes back with the webview sidebar. | [`02-sidebar.md`](02-sidebar.md) §8 |
 | **U6** | The node menu is VS Code's own menu on both surfaces: two lists in `package.json` (`view/item/context`, `webview/context`) that run **the same commands**, and a test that fails when they drift. | The native tree and a webview use different contribution points; one list is only possible when both are webviews. | [`04-menus.md`](04-menus.md) §1 |
 | **U8** | ~~Three webview entry files~~ **dropped**: one bundle stays for the canvas and the docs tab. | There is no sidebar webview to keep light. Comes back with it. | |
-| **U9** | Missing is a second native view under Structure. | A flat list with two actions. | [`02-sidebar.md`](02-sidebar.md) §9 |
+| **U9** | Missing is a second native view under Structure. **Now "Needs Attention", with a Problems group too** ([`../11-missing-relink-remove.md`](../11-missing-relink-remove.md) §6). | A flat list with two actions. | [`02-sidebar.md`](02-sidebar.md) §9 |
 | **U10** | The focus stack is shown twice in the sidebar: a **focus bar row** at the top of Structure (one line, Back and Clear), and a **FOCUS view** above Structure with every step, which you can resize. | The row is where you are already looking, like the web's bar. The view is the resizable stack you asked for, and VS Code resizes views for free. | [`02-sidebar.md`](02-sidebar.md) §3 |
 
 ## 4. What is kept from `07-ui/`

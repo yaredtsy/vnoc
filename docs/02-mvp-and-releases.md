@@ -116,11 +116,13 @@ If `planFileId` turns out slow to port, ship files with **no marker** in 0.1 (fo
 Folders and files are nodes with an empty `qualname` in `node.toml`; the core finds them by marker, then by path (`identity/resolve.rs`).
 A `.vnoc-id` that exists but cannot be read is listed as a problem and is **never overwritten**: that attach falls back to path only, with a notice.
 
-**Step 5. Missing, Relink, Remove**
-- [ ] a "Missing" group in the sidebar
+**Step 5. Missing, Relink, Remove**: build plan in [`11-missing-relink-remove.md`](11-missing-relink-remove.md) (it wins where it is more exact)
+- [ ] `kind` in `node.toml` (S1, accepted)
+- [ ] a "Needs Attention" view in the sidebar: a Missing group and a Problems group (duplicate IDs, broken files)
 - [ ] Relink: pick a node in the tree → the anchor in `node.toml` is rewritten (and a marker is written at the new place if markers are on)
 - [ ] Remove: move the node folder to `.vnoc/local/trash/` (port from S3); commands "Restore removed doc" and "Empty trash"
 - [ ] "ID was removed from code" → a "Write ID again" action on the node
+- [ ] "Attach a Missing Doc Here…" on a node: the same Relink, started from the new code
 
 **Step 6. Harden and publish**
 - [ ] the refactor test suite: rename function · move function · rename file · rename folder (in VS Code **and** with `git mv`) → the doc stays attached every time
