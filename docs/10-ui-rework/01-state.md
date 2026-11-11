@@ -354,5 +354,8 @@ what no longer exists: one renamed node is closed again, or one focus entry is g
 5. A message that is not in `shared/messages.ts` does not exist.
 6. `retainContextWhenHidden` is a convenience. Each webview must come back correctly from `request("session")` + `request("structure")` +
    `vscode.getState()` alone. Test it with *Developer: Reload Window*.
+7. A surface is a mirror: what the session writes to it is never read back as the user's input. The native tree fires its selection event for
+   our own `reveal` too, so it goes through `extension/src/treeMirror.ts` and nothing else calls `sidebarView.reveal`
+   ([`../12-tree-selection-mirror.md`](../12-tree-selection-mirror.md)).
 
 Next: [`02-sidebar.md`](02-sidebar.md)

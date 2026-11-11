@@ -1,0 +1,5 @@
+path = "crates/vnoc-domain/tests/fixtures/nested.py"
+qualname = "flyers"
+id_in_code = "yes"
+status = "active"
+kind = "function"

@@ -85,6 +85,9 @@ V-NOC
 ├── STEP 5: MISSING, RELINK, REMOVE ─────────────── 11-missing-relink-remove.md
 │   └── kind in node.toml · Needs Attention view · Relink both ways · trash order · messages · build order
 │
+├── FIX: THE TREE AND THE SESSION CHASE EACH OTHER ─ 12-tree-selection-mirror.md
+│   └── the echo of a reveal · the mirror rule · treeMirror · tests
+│
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
 │
 └── LATER (ideas, not scheduled) ────────────────── futureplan/
