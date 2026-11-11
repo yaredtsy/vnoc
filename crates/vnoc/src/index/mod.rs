@@ -352,13 +352,18 @@ mod tests {
         assert_eq!(index.tree("r", "").counts()[3], 1, "the found one is in the tree, the missing ones are not");
     }
 
+    /// A repo path made absolute the way `problems` does it: on Windows the join puts a `\` after the root (the editor opens either spelling).
+    fn under_repo(repo_path: &str) -> String {
+        std::path::Path::new("/repo").join(repo_path).to_string_lossy().into_owned()
+    }
+
     #[test]
     fn an_id_in_two_places_is_one_problem_and_the_winner_does_not_change() {
         let files = [("a.py", vec![def("f", 3, Some(id(1)))]), ("copy.py", vec![def("x", 0, None), def("parse_order", 7, Some(id(1)))])];
         // the anchor says a.py::f, so a.py wins
         let at_anchor = index(&files, vec![(id(1), record(&at("a.py", "f"), None, 1))]);
         let problems = at_anchor.problems(std::path::Path::new("/repo"));
-        assert_eq!(problems, [Problem { text: "a.py::f: its ID is also at copy.py::parse_order".into(), file: Some("/repo/copy.py".into()), line: Some(7) }]);
+        assert_eq!(problems, [Problem { text: "a.py::f: its ID is also at copy.py::parse_order".into(), file: Some(under_repo("copy.py")), line: Some(7) }]);
         assert_eq!(at_anchor.attached.get("a.py::f").map(|a| a.id), Some(id(1)));
 
         // the anchor is gone: the first by path still wins, and it is the same winner
@@ -412,6 +417,6 @@ mod tests {
         index.problems.push(LoadProblem { text: "x/node.toml: bad".into(), file: "/repo/.vnoc/nodes/ab/X/node.toml".into() });
         index.marker_problems.push(("pkg/.vnoc-id: bad".into(), "pkg/.vnoc-id".into()));
         let problems = index.problems(std::path::Path::new("/repo"));
-        assert_eq!(problems.iter().map(|p| p.file.as_deref()).collect::<Vec<_>>(), [Some("/repo/.vnoc/nodes/ab/X/node.toml"), Some("/repo/pkg/.vnoc-id")]);
+        assert_eq!(problems.iter().map(|p| p.file.clone()).collect::<Vec<_>>(), [Some("/repo/.vnoc/nodes/ab/X/node.toml".to_string()), Some(under_repo("pkg/.vnoc-id"))]);
     }
 }
