@@ -37,7 +37,6 @@ if sys.platform == "win32":  # not a constant, so the compiler cannot drop eithe
         return 7
 else:
     def cond():  # the same qualname twice, through if / else
-        """ID: 4GQMD4DAV0VRFB8HC2Q05RTG7R"""
         return 8
 
 
@@ -45,3 +44,6 @@ else:
 def decorated():
     return 9
 
+
+async def coro():
+    return 10
