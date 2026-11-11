@@ -24,7 +24,13 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).with_ansi(false).init();
 
     let (conn, io) = Connection::stdio();
-    handshake(&conn)?;
+    if let Err(refused) = handshake(&conn) {
+        // The reason is still on its way out: the writer thread holds stdout's lock until it has written it, so taking the lock
+        // waits for the whole reply. (`io.join()` would wait for stdin to close as well, and the core is still holding it open.)
+        drop(conn);
+        drop(std::io::stdout().lock());
+        return Err(refused);
+    }
 
     // The main loop only dispatches (VS-D68). Each request runs on its own thread with a cancel flag, so a cancel, a
     // shutdown or stdin EOF is handled while an analysis runs.
