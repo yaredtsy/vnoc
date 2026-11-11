@@ -46,7 +46,7 @@ Microsoft retires those tokens on 2026-12-01.
 | the policy | `vnoc-release` |
 | the repo | `yaredtsy/vnoc` |
 | the workflow file | **`publish.yml`**: the file must have exactly this name, in `.github/workflows/`, and the `vsce publish` step must be **in this file**, not in a workflow it calls |
-| state | **inactive.** It becomes active at the first successful publish from that workflow. **Deadline: 2026-11-13, 17:56 local time** (§7.1) |
+| state | **Active since 2026-11-11**: the first publish from `publish.yml` went through (`0.0.1`, pre-release, macOS arm64). The deadline is gone |
 | what the workflow needs | `permissions: id-token: write` on the publish job · Node 22 or newer · `@vscode/vsce` 4.1.0 or newer (the repo has `^4.1.0`) · `vsce publish --oidc` |
 | the **publisher ID** | **`vnoc`** (the page shows `vnoc(vnoc)`: name, then ID). It is already in `extension/package.json` (`"publisher"`), and it is the first half of the extension's ID: `vnoc.vnoc` |
 
@@ -175,6 +175,9 @@ One file, **`.github/workflows/publish.yml`** (the name the policy trusts, §2).
 before its deadline, and the full one at the end of Step 6.
 
 ### 7.1 The first run, before 2026-11-13 17:56 (step 6.0)
+
+**Done 2026-11-11.** The policy is Active. `--oidc` with `--packagePath` works. Two things had to be fixed on the way: step names with `: ` in them made both
+workflow files invalid (CI had not run since `39548f2`), and `@vscode/test-electron` 2.x looked for `MacOS/Electron` where VS Code now has `MacOS/Code`.
 
 **What it is:** the first public pre-release, for macOS arm64 only, of what is on `main` after Step 5.6. It is honest about what it is:
 `"preview": true`, a pre-release, a README of ten lines. It exists so that the policy becomes active and so that every later release goes the

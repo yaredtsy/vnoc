@@ -2,12 +2,34 @@ name: ci
 on: [push, pull_request]
 jobs:
   build-test:
-    runs-on: macos-latest
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # one broken system must not hide the other two
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+            extra-target: darwin-x64
+          - os: ubuntu-22.04 # not `latest`: the programs then run on older Linux too (an older glibc)
+            target: linux-x64
+            window: xvfb-run -a # VS Code needs a display
+          - os: windows-latest
+            target: win32-x64
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
+      # two toolchains (rust-toolchain.toml: 1.94.1 in the root, 1.98.0 in drivers/python): do not rely on rustup installing them by itself
+      - name: rust toolchains
+        run: |
+          rustup toolchain install
+          (cd drivers/python && rustup toolchain install)
       - uses: Swatinem/rust-cache@v2
         with: { cache-on-failure: true }
       - uses: Swatinem/rust-cache@v2
@@ -33,9 +55,19 @@ jobs:
         run: cargo test -p vnoc
       - name: build the webview and the extension (the extension suite loads them)
         run: pnpm -r build
-      - name: "extension suite in a real VS Code window (downloads VS Code; not run locally on CI before: watch the first run)"
-        run: pnpm --filter vnoc test
-      - name: package
-        run: node scripts/package.mjs
+      - name: extension suite in a real VS Code window (downloads VS Code)
+        run: ${{ matrix.window }} pnpm --filter vnoc test
+      - name: package ${{ matrix.target }}
+        run: node scripts/package.mjs --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
-        with: { name: vsix, path: "*.vsix" }
+        with: { name: "vsix-${{ matrix.target }}", path: "vnoc-${{ matrix.target }}.vsix" }
+      # the Intel Mac build is cross-built on the arm64 runner: packaged, not tested
+      - name: package ${{ matrix.extra-target }}
+        if: matrix.extra-target
+        run: |
+          rustup target add x86_64-apple-darwin
+          (cd drivers/python && rustup target add x86_64-apple-darwin)
+          node scripts/package.mjs --target ${{ matrix.extra-target }}
+      - uses: actions/upload-artifact@v4
+        if: matrix.extra-target
+        with: { name: "vsix-${{ matrix.extra-target }}", path: "vnoc-${{ matrix.extra-target }}.vsix" }
