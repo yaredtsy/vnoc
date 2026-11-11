@@ -8,3 +8,4 @@ extension/bin/*
 .DS_Store
 extension/out/
 .vscode-test/
+extension/LICENSE

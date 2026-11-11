@@ -41,5 +41,8 @@ for (const f of readdirSync(bin)) if (f !== ".gitkeep") rmSync(join(bin, f));
 copyFileSync(join(root, "target", triple, "release", exe("vnoc")), join(bin, exe("vnoc")));
 copyFileSync(join(root, "drivers/python/target", triple, "release", exe("vnoc-driver-python")), join(bin, exe("vnoc-driver-python")));
 
+// the licence is one file, at the root of the repository: the VSIX gets a copy (extension/LICENSE is not in git)
+copyFileSync(join(root, "LICENSE"), join(root, "extension/LICENSE"));
+
 // vsce does not understand pnpm workspaces; the extension is bundled by esbuild, so it needs no node_modules at run time.
-run("npx", ["--no", "@vscode/vsce", "package", "--no-dependencies", "--target", target, "--allow-missing-repository", "--skip-license", ...(preRelease ? ["--pre-release"] : []), "--out", join(root, `vnoc-${target}.vsix`)], join(root, "extension"));
+run("npx", ["--no", "@vscode/vsce", "package", "--no-dependencies", "--target", target, ...(preRelease ? ["--pre-release"] : []), "--out", join(root, `vnoc-${target}.vsix`)], join(root, "extension"));

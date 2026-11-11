@@ -2,12 +2,25 @@
   "name": "vnoc",
   "displayName": "V-NOC",
   "description": "Browse Python code as a tree and a canvas, and attach docs that stay with the code when it is renamed or moved.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "vnoc",
+  "license": "Apache-2.0",
+  "icon": "media/icon.png",
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "docs",
+    "graph",
+    "python",
+    "documentation",
+    "canvas"
+  ],
   "preview": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/yaredtsy/vnoc.git"
+    "url": "https://github.com/yaredtsy/vnoc"
   },
   "engines": {
     "vscode": "^1.90.0"
