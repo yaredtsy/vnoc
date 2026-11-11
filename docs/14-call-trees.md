@@ -74,8 +74,7 @@ Keep `target_qname`, `target_id`, `call_count`, `contexts`: the parity differ an
       with one qualname give no way to pick (the first one wins for the last name; the last one wins for a name in the middle); a class is never an entry (the last name must be a `def`).
       → **Added** `Sem::entry_at(file, qualname, nth)` and `interp::call_wire_at(db, file, qualname, nth, opts)`: `qualname` is the outline's
       `__qualname__`, `nth` is the outline's occurrence (1-based, source order). `call_wire` and `--entry` stay as they were.
-      `pylspt-dev calls … --entry <qualname> --nth <n>` reaches it. A class is still not an entry: `no function` (a class node on the canvas
-      needs a decision in 7.2: the driver could take the class's `__init__`; this step does not).
+      `pylspt-dev calls … --entry <qualname> --nth <n>` reaches it. A class is still not an entry of `call_wire_at`: the driver builds a class's tree from its `__init__`'s calls (§5).
 - [x] **Code outside the project** is **dropped**, not in the wire. `sites_union` skips `Target::External` and `Unresolved`, and `shown()` skips any
       def whose file is not in the project. On the fixture, `Store.save` calls `os.getcwd()` and has `children: []`. So the driver's
       `target.file: null` (§5) cannot come from pylspt today: it can only happen for a project that includes files outside the root. The driver's
@@ -130,8 +129,23 @@ only adds `callTree`.
 | `marks` | `recursive`, `cut`, `incomplete`, as pylspt's `Mark` serialises them |
 | not sent | `call_count` (the core counts), `contexts`, `target_qname` |
 
-**Errors:** no such def in the file → `InvalidParams` with the message `no function <qualname> in <file>`. A file that cannot be read →
+**Errors:** no function and no class with that qualname and occurrence in the file → `InvalidParams` with the message `no function <qualname> in <file>`. A file that cannot be read →
 `InternalError`, as `outline` does.
+
+**A class as the entry.** pylspt's `call_wire_at` takes functions only (7.1 check), so the driver builds this one itself. It finds the def of
+`(qualname, occurrence)` in the file's outline; when it is a class, the response is:
+
+```
+Service                  the class: kind "class", call_site null
+└── …                    what Service.__init__ calls (no node for `__init__` itself: the class stands for it)
+```
+
+| Rule | |
+|---|---|
+| which `__init__` | the last `def __init__` in the class's own body (the one Python runs; earlier ones are `@overload`s or replaced). It is run as an ordinary `call_wire_at(<qualname>.__init__, nth)`; its root is dropped and its children become the class's children, with their `call_site`s as pylspt gave them. The root's marks (`cut`, `incomplete`) are copied to the class root. |
+| no `__init__` in the class body | the root with **no children**, not an error. An inherited `__init__` is not followed in 0.2. |
+| `depth` | applies to the `__init__` tree as it does for a function; the class root is not counted. |
+| `vnoc/expand` | a class node expanded is the same request: its entry is that class. |
 
 **Cancel.** The driver already runs each request on its own thread with a cancel flag, and drops the answer of a cancelled request. That is
 enough for 0.2. Also set `Limits::deadline` to 20 seconds so a runaway solve ends by itself; the tree then carries `incomplete` marks.
@@ -144,6 +158,10 @@ enough for 0.2. Also set `Limits::deadline` to 20 seconds so a runaway solve end
 | `drivers/python/src/call_tree.rs` | new: open the project (`pylspt::db::open_project`), `call_wire` with `Mode::Summary`, `require_ids: false`; convert `FrameJson` → `CallNode` |
 | `drivers/python/src/main.rs` | the `method::CALL_TREE` arm; `("callTree", true)` |
 | `drivers/python/tests/call_tree.rs` | new, with a fixture project of three files |
+| `drivers/python/src/positions.rs` | `Lines::position_1based`: pylspt's 1-based line and character column → the wire's position |
+| `drivers/python/Cargo.toml` | `ruff_db` (same `rev`), only to turn a path into the `SystemPath` that `open_project` takes: the fourth `ruff_*` line the facade (06 §7) will remove |
+| `drivers/python/tests/fixtures/call_tree/` | the fixture project: `pkg/calc.py`, `pkg/db.py`, `pkg/app.py` |
+| `drivers/python/tests/outline.rs` | its handshake test no longer says `callTree: false` (the new test checks `true`) |
 
 **Tests** (through the real binary, as `tests/outline.rs` does)
 
@@ -155,6 +173,9 @@ enough for 0.2. Also set `Limits::deadline` to 20 seconds so a runaway solve end
 | a method and a nested def as the entry | both resolve |
 | direct recursion | the inner node has the `recursive` mark and no children |
 | a def with a docstring `ID:` | `target.id` is that text, no prefix |
+| a class with `__init__` as the entry | root is the class; its children are what `__init__` calls, in source order; no node named `__init__` |
+| a class with no `__init__` | the root, no children |
+| a class with two `__init__` defs | the children are those of the second |
 | an unknown entry | `InvalidParams` |
 | `initialize` | `callTree: true` |
 

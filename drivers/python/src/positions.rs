@@ -22,6 +22,14 @@ impl<'a> Lines<'a> {
         Position { line: line as u32, character: character as u32 }
     }
 
+    /// pylspt's own positions: 1-based line, 1-based column counted in characters. A column past the end of its line stops at the end.
+    pub fn position_1based(&self, (line, column): (u32, u32)) -> Position {
+        let line = (line.saturating_sub(1) as usize).min(self.starts.len() - 1);
+        let rest = self.text[self.starts[line]..].chars().take_while(|&c| c != '\n');
+        let character = rest.take(column.saturating_sub(1) as usize).map(char::len_utf16).sum::<usize>();
+        Position { line: line as u32, character: character as u32 }
+    }
+
     pub fn range(&self, range: TextRange) -> Range {
         Range { start: self.position(range.start()), end: self.position(range.end()) }
     }

@@ -188,3 +188,62 @@ pub struct PlanFileIdResult {
     /// blake3 of the new text, lowercase hex
     pub text_hash: String,
 }
+
+/// The def a call tree starts at: named by `qualname` and which same-named definition it is (`occurrence`, 1-based), as in a location key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallEntry {
+    pub qualname: String,
+    pub occurrence: u32,
+}
+
+/// `vnoc/callTree` (capability `callTree`): the calls made by one function, or by a class's `__init__`. `root` is the project folder,
+/// `file` the entry's file relative to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallTreeParams {
+    pub root: String,
+    pub file: String,
+    pub entry: CallEntry,
+    /// shortens the tree only: nodes deeper than this are marked `cut`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallMark {
+    /// the callee is already above it on this path: shown, not entered
+    Recursive,
+    /// its calls are not in the tree: the depth or the node budget ran out
+    Cut,
+    /// the analysis gave up on part of it (a limit, the deadline)
+    Incomplete,
+}
+
+/// The def a node stands for, named the way the outline names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallTarget {
+    /// relative to `root`, `/` separators; `null` when the def is outside `root`
+    pub file: Option<String>,
+    pub qualname: String,
+    pub occurrence: u32,
+    pub kind: DefKind,
+    /// the ID text as written in the docstring, without a `FunctionSchema/` / `ClassSchema/` prefix; `null` when it has none
+    pub id: Option<String>,
+}
+
+/// One call site: the tree is not merged, so one node per call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallNode {
+    pub target: CallTarget,
+    /// in the caller's file (the parent node's `target.file`); `null` on the root
+    pub call_site: Option<Range>,
+    #[serde(default)]
+    pub marks: Vec<CallMark>,
+    #[serde(default)]
+    pub children: Vec<CallNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallTreeResult {
+    pub root: CallNode,
+}
