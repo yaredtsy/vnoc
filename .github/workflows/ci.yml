@@ -25,6 +25,12 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
+      # pylspt vendors ruff, whose test snapshots have paths longer than Windows' 260 characters: cargo's own git library cannot check them out, the git program can
+      - name: long paths for the git checkout of pylspt
+        if: runner.os == 'Windows'
+        run: |
+          git config --system core.longpaths true
+          echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
       # two toolchains (rust-toolchain.toml: 1.94.1 in the root, 1.98.0 in drivers/python): do not rely on rustup installing them by itself
       - name: rust toolchains
         run: |
