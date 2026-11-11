@@ -25,8 +25,8 @@ use crate::driver_host::DriverHost;
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
 use crate::identity::{self, Env};
-use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, Stats, Structure, StructureResult};
-use crate::userdata::UserData;
+use crate::protocol::{Attach, AttachParams, AttachResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Trash, TrashItem, TrashList, TrashParams, MovePlan, Stats, Structure, StructureResult};
+use crate::userdata::{TrashError, UserData};
 use vnoc_domain::NodeId;
 use crate::watchdog::timed;
 
@@ -142,6 +142,9 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<ProjectInfo, _>(project_info)
         .request::<Attach, _>(attach)
         .request::<Relink, _>(relink)
+        .request::<Trash, _>(trash)
+        .request::<TrashList, _>(trash_list)
+        .request::<RestorePlan, _>(restore_plan)
         .request::<Docs, _>(docs)
         .notification::<FilesChanged>(files_changed)
         .notification::<Rebuild>(|core, _| {
@@ -259,6 +262,54 @@ fn relink(core: &mut Core, params: RelinkParams) -> impl std::future::Future<Out
         })?;
         core.spawn_update(Work::Files(vec![])); // node.toml moved: the tree shows the docs at the new place
         Ok(result)
+    })
+}
+
+fn move_plan(plan: crate::userdata::MovePlan) -> MovePlan {
+    MovePlan { from: plan.from.to_string_lossy().into_owned(), to: plan.to.to_string_lossy().into_owned() }
+}
+
+fn trash_error(e: TrashError) -> ResponseError {
+    match e {
+        TrashError::UserData(_) => internal(e),
+        _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
+    }
+}
+
+/// `vnoc/trash`: Remove, step 1. Only a Missing node: a node that still has its code keeps its docs (to drop one, delete its `.md` file).
+fn trash(core: &mut Core, params: TrashParams) -> impl std::future::Future<Output = Result<MovePlan, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("trash", async move {
+        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let id = NodeId::parse(&params.id).map_err(|e| ResponseError::new(ErrorCode::INVALID_PARAMS, e))?;
+        if !state.index.read().unwrap().is_missing(&id) {
+            return Err(ResponseError::new(ErrorCode::INVALID_PARAMS, "that node is not Missing: only a node whose code is gone can be removed"));
+        }
+        let data = UserData::new(project.git_root());
+        let plan = tokio::task::spawn_blocking(move || data.trash_plan(&id)).await.map_err(internal)?.map_err(trash_error)?;
+        Ok(move_plan(plan))
+    })
+}
+
+/// `vnoc/trashList`: the removed nodes, newest first.
+fn trash_list(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<Vec<TrashItem>, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("trashList", async move {
+        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let data = UserData::new(project.git_root());
+        let entries = tokio::task::spawn_blocking(move || data.trash_list()).await.map_err(internal)?;
+        Ok(entries.into_iter().map(|e| TrashItem { entry: e.entry, id: e.id.to_string(), removed_at: e.removed_at, docs: e.docs, name: e.name }).collect())
+    })
+}
+
+/// `vnoc/restorePlan`: Restore, step 2.
+fn restore_plan(core: &mut Core, params: RestorePlanParams) -> impl std::future::Future<Output = Result<MovePlan, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("restorePlan", async move {
+        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let data = UserData::new(project.git_root());
+        let plan = tokio::task::spawn_blocking(move || data.restore_plan(&params.entry)).await.map_err(internal)?.map_err(trash_error)?;
+        Ok(move_plan(plan))
     })
 }
 

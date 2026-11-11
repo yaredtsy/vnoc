@@ -16,6 +16,8 @@ interface Api {
   attention(): { missing: string[]; problems: Problem[] };
   request<T>(method: string, params?: object): Promise<T>;
   webviewErrors(): string[];
+  moveToTrash(id: string): Promise<void>;
+  restoreEntry(entry: string): Promise<void>;
 }
 let api: Api;
 let folder: string;
@@ -95,6 +97,47 @@ suite("needs attention", () => {
       fs.rmSync(path.join(folder, ".vnoc", "nodes", "zz"), { recursive: true, force: true });
     }
     await until("the problem to go", () => api.attention().problems.every((p) => p.file !== broken));
+  });
+
+  test("Remove then Restore gives back the same bytes, and an open doc follows the move", async () => {
+    // a node that still has its code cannot be removed: the core refuses
+    await assert.rejects(api.moveToTrash(id), /not Missing/);
+
+    fs.writeFileSync(file(), "def stays():\n    pass\n");
+    await until("the function under Missing", () => api.attention().missing.includes(id));
+    const docs = await api.request<{ path: string }[]>("vnoc/docs", { id });
+    const nodeFolder = path.dirname(docs[0].path);
+    const bytes = (dir: string) => fs.readdirSync(dir).sort().map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]);
+    const before = bytes(nodeFolder);
+    assert.ok(before.length >= 2, "node.toml and a doc");
+    await vscode.window.showTextDocument(vscode.Uri.file(docs[0].path));
+
+    await api.moveToTrash(id);
+    assert.ok(!fs.existsSync(nodeFolder), "the node folder moved");
+    await until("the node to leave Missing (the index dropped the record)", () => !api.attention().missing.includes(id));
+    const entries = await api.request<{ entry: string; id: string; docs: number }[]>("vnoc/trashList");
+    const entry = entries.find((e) => e.id === id)!;
+    assert.ok(entry, "it is in the trash list");
+    assert.ok(
+      vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t) => t.input instanceof vscode.TabInputText && t.input.uri.fsPath.includes(`${path.sep}local${path.sep}trash${path.sep}`)),
+      "the open doc followed the move (spike S3)",
+    );
+
+    await api.restoreEntry(entry.entry);
+    assert.deepStrictEqual(bytes(nodeFolder), before, "the same bytes");
+    await until("the node to be Missing again", () => api.attention().missing.includes(id));
+    assert.ok(!(await api.request<{ id: string }[]>("vnoc/trashList")).some((e) => e.id === id), "the emptied entry is gone");
+    // restoring over docs that are there is refused (never overwritten): remove again, make the folder, restore
+    await api.moveToTrash(id);
+    const again = (await api.request<{ entry: string; id: string }[]>("vnoc/trashList")).find((e) => e.id === id)!;
+    fs.mkdirSync(nodeFolder, { recursive: true });
+    await assert.rejects(api.restoreEntry(again.entry), /already has docs/);
+    fs.rmSync(nodeFolder, { recursive: true });
+    await api.restoreEntry(again.entry);
+    assert.deepStrictEqual(bytes(nodeFolder), before);
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    fs.writeFileSync(file(), BOTH);
+    await until("the function to leave Missing", () => !api.attention().missing.includes(id));
   });
 
   test("relinking a Missing function to another puts its docs there, and it leaves Missing", async () => {

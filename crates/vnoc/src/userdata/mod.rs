@@ -6,6 +6,7 @@
 pub(crate) mod atomic;
 mod layout;
 mod read;
+mod trash;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use toml_edit::{DocumentMut, value};
 use vnoc_domain::{LocationKey, NodeId, NodeToml};
 
 pub use read::{DocInfo, LoadProblem, LoadReport, NodeRecord};
+pub use trash::{MovePlan, TrashEntry, TrashError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum UserDataError {

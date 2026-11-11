@@ -72,7 +72,7 @@ fn dirs_in(dir: &Path) -> Vec<std::path::PathBuf> {
     dirs
 }
 
-fn markdown_files(folder: &Path) -> Vec<String> {
+pub(super) fn markdown_files(folder: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(folder) else { return vec![] };
     let mut names: Vec<String> = entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".md")).collect();
     names.sort();

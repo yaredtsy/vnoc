@@ -52,6 +52,21 @@
     },
     "commands": [
       {
+        "command": "vnoc.removeMissing",
+        "title": "Remove…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.restoreRemoved",
+        "title": "Restore Removed Doc…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.emptyTrash",
+        "title": "Empty Trash",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.relink",
         "title": "Relink…",
         "category": "V-NOC"
@@ -234,6 +249,11 @@
           "group": "2_fix@1"
         },
         {
+          "command": "vnoc.removeMissing",
+          "when": "view == vnoc.attention && viewItem == missing",
+          "group": "2_fix@2"
+        },
+        {
           "command": "vnoc.focus",
           "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "inline@1"
@@ -311,6 +331,16 @@
       ],
       "view/title": [
         {
+          "command": "vnoc.restoreRemoved",
+          "when": "view == vnoc.attention",
+          "group": "1_trash@1"
+        },
+        {
+          "command": "vnoc.emptyTrash",
+          "when": "view == vnoc.attention",
+          "group": "1_trash@2"
+        },
+        {
           "command": "vnoc.search",
           "when": "view == vnoc.structure",
           "group": "navigation@0"
@@ -332,6 +362,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "vnoc.removeMissing",
+          "when": "false"
+        },
         {
           "command": "vnoc.relink",
           "when": "false"

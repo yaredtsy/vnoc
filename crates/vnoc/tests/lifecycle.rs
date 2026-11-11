@@ -672,3 +672,38 @@ fn relink_with_ids_off_moves_only_the_stored_place() {
     assert!(std::fs::read_to_string(root.join(".vnoc/nodes").join(&R[24..]).join(R).join("node.toml")).unwrap().contains("id_in_code = \"no\""));
     core.finish();
 }
+
+#[test]
+fn trash_refuses_a_node_that_is_not_missing_and_remove_then_restore_gives_back_the_same_bytes() {
+    let (mut core, root) = orders_project("trash", Some("format = 1\n"));
+    write_record(&root, S, "orders.py", "OrderService.other"); // found by name: not Missing
+    write_record(&root, R, "gone.py", "old");
+    tell_core_about_vnoc(&mut core, &root);
+    missing_is(&mut core, &[R]);
+    let folder = |id: &str| root.join(".vnoc/nodes").join(&id[24..]).join(id);
+
+    let refused = message(core.request("vnoc/trash", json!({ "id": S })));
+    assert!(refused.contains("not Missing"), "{refused}");
+    assert!(folder(S).is_dir(), "a refusal changes nothing");
+
+    let before = std::fs::read(folder(R).join("notes.md")).unwrap();
+    let plan = core.request("vnoc/trash", json!({ "id": R })).expect("a Missing node can be removed");
+    let (from, to) = (PathBuf::from(plan["from"].as_str().unwrap()), PathBuf::from(plan["to"].as_str().unwrap()));
+    assert_eq!(from, folder(R));
+    assert!(from.is_dir(), "the core only plans: the editor moves");
+    std::fs::rename(&from, &to).unwrap(); // what WorkspaceEdit.renameFile does
+    core.notify("vnoc/filesChanged", json!({ "paths": [from.join("node.toml")] }));
+    missing_is(&mut core, &[]);
+
+    let list = core.request("vnoc/trashList", Value::Null).unwrap();
+    assert_eq!((list.as_array().unwrap().len(), list[0]["id"].as_str(), list[0]["docs"].as_u64(), list[0]["name"].as_str()), (1, Some(R), Some(1), Some("old")));
+    let back = core.request("vnoc/restorePlan", json!({ "entry": list[0]["entry"] })).unwrap();
+    assert_eq!(PathBuf::from(back["to"].as_str().unwrap()), folder(R), "worked out from the ID");
+    std::fs::rename(back["from"].as_str().unwrap(), back["to"].as_str().unwrap()).unwrap();
+    assert_eq!(std::fs::read(folder(R).join("notes.md")).unwrap(), before, "the same bytes");
+    core.notify("vnoc/filesChanged", json!({ "paths": [folder(R).join("node.toml")] }));
+    missing_is(&mut core, &[R]);
+    assert!(core.request("vnoc/trashList", Value::Null).unwrap().as_array().unwrap().is_empty(), "the emptied entry is gone");
+    assert!(message(core.request("vnoc/restorePlan", json!({ "entry": "../../nodes" }))).contains("not in the trash"));
+    core.finish();
+}

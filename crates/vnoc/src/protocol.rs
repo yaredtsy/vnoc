@@ -246,3 +246,61 @@ impl Request for Relink {
     type Result = RelinkResult;
     const METHOD: &'static str = "vnoc/relink";
 }
+
+/// `vnoc/trash`: Remove, step 1 (`docs/11` §5). Writes the entry's `trashed.toml` and says where the node folder moves; the editor moves it.
+/// Refused unless the node is in the index's Missing list now: the core holds the rule, not only the menu.
+pub enum Trash {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TrashParams {
+    /// the permanent ID of the Missing node
+    pub id: String,
+}
+
+/// Where a node folder moves from and to (absolute paths): the editor does the move.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MovePlan {
+    pub from: String,
+    pub to: String,
+}
+
+impl Request for Trash {
+    type Params = TrashParams;
+    type Result = MovePlan;
+    const METHOD: &'static str = "vnoc/trash";
+}
+
+/// `vnoc/trashList`: the removed nodes that can be restored, newest first. Empty entries are removed by the call.
+pub enum TrashList {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TrashItem {
+    pub entry: String,
+    /// the permanent ID
+    pub id: String,
+    /// UTC, `2026-11-11T10:30:00Z`
+    pub removed_at: String,
+    pub docs: usize,
+    /// where the node was (its qualname, or its path for a file or folder): what the user recognises it by
+    pub name: String,
+}
+
+impl Request for TrashList {
+    type Params = serde_json::Value;
+    type Result = Vec<TrashItem>;
+    const METHOD: &'static str = "vnoc/trashList";
+}
+
+/// `vnoc/restorePlan`: Restore, step 2. Where the entry's node folder goes back to, worked out from its ID; refused when a node folder is there.
+pub enum RestorePlan {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RestorePlanParams {
+    pub entry: String,
+}
+
+impl Request for RestorePlan {
+    type Params = RestorePlanParams;
+    type Result = MovePlan;
+    const METHOD: &'static str = "vnoc/restorePlan";
+}

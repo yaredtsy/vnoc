@@ -68,6 +68,25 @@ export interface StructureResult {
   problems: Problem[];
 }
 
+/** `vnoc/trash` and `vnoc/restorePlan`: where a node folder moves from and to (absolute paths). The extension does the move. */
+export interface MovePlan {
+  from: string;
+  to: string;
+}
+
+/** `vnoc/trashList`: one removed node that can be restored. */
+export interface TrashItem {
+  /** the entry's folder name in the trash */
+  entry: string;
+  /** the permanent ID */
+  id: string;
+  /** UTC, `2026-11-11T10:30:00Z` */
+  removed_at: string;
+  docs: number;
+  /** where the node was: its qualname, or its path for a file or folder */
+  name: string;
+}
+
 export interface DocInfo {
   file: string;
   title: string;

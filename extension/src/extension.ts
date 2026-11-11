@@ -12,6 +12,7 @@ import { CANVAS, DOCS, Panels } from "./panels";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
 import { type Row, StructureView } from "./structureView";
+import { moveToTrash, restoreEntry } from "./trash";
 
 // Wires the pieces together: the core, the session, the two webview tabs, the sidebar, the commands. Nothing here decides anything.
 
@@ -137,6 +138,9 @@ export function activate(ctx: vscode.ExtensionContext) {
     attention: () => attention.snapshot(),
     /** a request to the core (the suite attaches docs through it, without the input boxes) */
     request: <T>(method: string, params?: object) => c.request<T>(method, params),
+    /** Remove and Restore without the questions (the commands add those) */
+    moveToTrash: (id: string) => moveToTrash((m, p) => c.request(m, p), id),
+    restoreEntry: (entry: string) => restoreEntry((m, p) => c.request(m, p), entry),
     ping: () => c.request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
     structure: () => c.request<any>("vnoc/structure"),
     /** selects a node's row in the sidebar tree, as a click would (the session hears it from `onDidChangeSelection`) */
