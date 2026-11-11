@@ -198,6 +198,19 @@ would block every outline behind it. Build the reader-task pattern of [`06-drive
 Tests: with a fake driver script, two requests answered in reverse order each get their own answer; a timeout sends `$/cancelRequest`; a dead
 driver fails all waiting requests.
 
+Built in `crates/vnoc/src/driver_host.rs`. What the table leaves open, as built:
+
+- The fake driver is **in the test process**, over `tokio::io::duplex` pipes (`DriverClient::connect` takes any pair of pipes), not a script: no
+  Python or shell is needed, so the tests are the same on all four CI systems. The tests are in that file.
+- A request is dropped from `waiting` and cancelled by one rule: when its future ends with the entry still there. That covers a timeout and a
+  caller that went away. Each frame is written by its own task, so a caller that goes away halfway never leaves half a frame in the pipe.
+- A timeout **still drops the driver**, as before (`forget`): the plan does not say otherwise. With call trees in flight, one timed-out
+  `outline` then fails them too. If that hurts in 7.4, make `Timeout` keep the driver (the cancel has been sent) and only drop on `Closed`,
+  `Io` and `Protocol`.
+- `forget` drops a driver only if it is still the current one: a late failure of an old driver must not drop its replacement.
+- `DriverHost::call_tree` exists (capability `callTree`, 30 s) so the 30 s limit has a caller; the core's `vnoc/callTree` that uses it is 7.4.
+- The handshake now has the 10 s limit too. New error `HostError::Closed` for a driver that is gone.
+
 ### 6.2 The merge
 
 `crates/vnoc/src/calls.rs`, a pure function over the driver's tree: no I/O, no index.

@@ -1,22 +1,40 @@
 //! Starts a language driver and talks to it (the wire in plan_vs/07-drivers/01-driver-protocol.md).
 //!
-//! One driver, one request at a time, found by an explicit path. A driver that fails or hangs is dropped (its process dies
-//! with it) and the next request starts a new one. Concurrent requests, several drivers and lookup in a drivers folder come later.
+//! One driver, found by an explicit path, with many requests in flight at once (06-drivers.md §4): one task reads every frame and
+//! hands each answer to the request with that `id`. A request that times out, or whose caller goes away, is cancelled with
+//! `$/cancelRequest`. A driver that fails or hangs is dropped (its process dies with it) and the next request starts a new one.
+//! Several drivers and lookup in a drivers folder come later.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use serde::de::DeserializeOwned;
-use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, OutlineResult, PROTOCOL_VERSION, PlanFileIdParams, PlanFileIdResult, PlanIdsParams, PlanIdsResult, method};
+use serde_json::{Value, json};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+use vnoc_driver_protocol::{
+    CallTreeParams, CallTreeResult, InitializeParams, InitializeResult, OutlineParams, OutlineResult, PROTOCOL_VERSION, PlanFileIdParams, PlanFileIdResult, PlanIdsParams, PlanIdsResult, method,
+};
 
-/// How long the driver may take to answer one request before it is treated as broken (review C4).
+/// How long the driver may take to answer `outline`, `planIds`, `planFileId` and the handshake before the request is given up (review C4).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A call tree is a real analysis: the driver itself stops one after 20 seconds, and this gives it time to answer.
+const CALL_TREE_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn timeout_of(method: &str) -> Duration {
+    match method {
+        method::CALL_TREE | method::EXPAND => CALL_TREE_TIMEOUT,
+        _ => REQUEST_TIMEOUT,
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
@@ -36,22 +54,34 @@ pub enum HostError {
     Io(#[from] std::io::Error),
     #[error("the driver sent something that is not the protocol: {0}")]
     Protocol(String),
+    #[error("the driver stopped: {0}")]
+    Closed(String),
     #[error("the driver did not answer `{0}` in time")]
     Timeout(&'static str),
     #[error("the driver answered with an error ({code}): {message}")]
     Remote { code: i64, message: String },
 }
 
-struct Io {
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
+type Reply = Result<Value, HostError>;
+
+/// The requests waiting for an answer, by id. `None` once the driver is gone: nothing can wait any more.
+type Waiting = Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Reply>>>>>;
+
+/// The driver's stdin. The lock is held while one frame is written, never while waiting for an answer.
+type Writer = Arc<tokio::sync::Mutex<Box<dyn AsyncWrite + Send + Unpin>>>;
+
+/// The driver's two pipes, shared by every request in flight.
+struct Wire {
+    writer: Writer,
+    waiting: Waiting,
+    next_id: AtomicU64,
 }
 
 pub struct DriverClient {
-    io: tokio::sync::Mutex<Io>,
+    wire: Arc<Wire>,
+    reader: JoinHandle<()>,
     pub info: InitializeResult,
-    _child: Child, // kill_on_drop: the driver never outlives the core
+    _child: Option<Child>, // kill_on_drop: the driver never outlives the core
 }
 
 impl DriverClient {
@@ -62,10 +92,26 @@ impl DriverClient {
         }
         let mut child = Command::new(path).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).kill_on_drop(true).spawn().map_err(HostError::Spawn)?;
         let stdin = child.stdin.take().expect("piped");
-        let stdout = BufReader::new(child.stdout.take().expect("piped"));
-        let mut io = Io { stdin, stdout, next_id: 0 };
+        let stdout = child.stdout.take().expect("piped");
+        DriverClient::connect(stdin, stdout, Some(child)).await
+    }
 
-        let reply = request(&mut io, "initialize", &InitializeParams { protocol: PROTOCOL_VERSION }).await.map_err(|e| match e {
+    /// The handshake over any pair of pipes: the driver's process is `child`, or none for a stand-in in a test.
+    async fn connect(stdin: impl AsyncWrite + Send + Unpin + 'static, stdout: impl AsyncRead + Send + Unpin + 'static, child: Option<Child>) -> Result<DriverClient, HostError> {
+        let waiting: Waiting = Arc::new(Mutex::new(Some(HashMap::new())));
+        let wire = Arc::new(Wire { writer: Arc::new(tokio::sync::Mutex::new(Box::new(stdin))), waiting: waiting.clone(), next_id: AtomicU64::new(0) });
+        let reader = tokio::spawn(read_replies(BufReader::new(stdout), waiting));
+        match DriverClient::handshake(&wire).await {
+            Ok(info) => Ok(DriverClient { wire, reader, info, _child: child }),
+            Err(e) => {
+                reader.abort();
+                Err(e)
+            }
+        }
+    }
+
+    async fn handshake(wire: &Arc<Wire>) -> Result<InitializeResult, HostError> {
+        let reply = wire.request("initialize", &InitializeParams { protocol: PROTOCOL_VERSION }, REQUEST_TIMEOUT).await.map_err(|e| match e {
             HostError::Remote { message, .. } => HostError::Handshake(message),
             other => other,
         })?;
@@ -76,8 +122,8 @@ impl DriverClient {
         if !info.capabilities.get("outline").copied().unwrap_or(false) {
             return Err(HostError::MissingCapability("outline"));
         }
-        send(&mut io.stdin, &json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} })).await?;
-        Ok(DriverClient { io: tokio::sync::Mutex::new(io), info, _child: child })
+        wire.send(&json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} })).await?;
+        Ok(info)
     }
 
     /// The defs of a file the driver reads itself.
@@ -100,11 +146,111 @@ impl DriverClient {
         self.call(method::PLAN_FILE_ID, params).await
     }
 
-    /// One request, answered within `REQUEST_TIMEOUT`.
+    pub async fn call_tree(&self, params: &CallTreeParams) -> Result<CallTreeResult, HostError> {
+        if !self.info.capabilities.get("callTree").copied().unwrap_or(false) {
+            return Err(HostError::MissingCapability("callTree"));
+        }
+        self.call(method::CALL_TREE, params).await
+    }
+
+    /// One request, answered within the time its method is given (`timeout_of`).
     async fn call<R: DeserializeOwned>(&self, method: &'static str, params: &impl Serialize) -> Result<R, HostError> {
-        let mut io = self.io.lock().await;
-        let reply = tokio::time::timeout(REQUEST_TIMEOUT, request(&mut io, method, params)).await.map_err(|_| HostError::Timeout(method))??;
+        let reply = self.wire.request(method, params, timeout_of(method)).await?;
         serde_json::from_value(reply).map_err(|e| HostError::Protocol(e.to_string()))
+    }
+}
+
+impl Drop for DriverClient {
+    fn drop(&mut self) {
+        self.reader.abort();
+    }
+}
+
+impl Wire {
+    /// Sends a request and waits `limit` for its answer. When this future is dropped, or the time runs out, and nobody has answered,
+    /// the driver is told to stop working on it (`$/cancelRequest`).
+    async fn request(self: &Arc<Self>, method: &'static str, params: &impl Serialize, limit: Duration) -> Reply {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let (tx, rx) = oneshot::channel();
+        match self.waiting.lock().unwrap().as_mut() {
+            Some(waiting) => waiting.insert(id, tx),
+            None => return Err(HostError::Closed("it is not running".into())),
+        };
+        let _pending = Pending { wire: self.clone(), id };
+        self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })).await?;
+        match tokio::time::timeout(limit, rx).await {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(_)) => Err(HostError::Closed("it stopped answering".into())),
+            Err(_) => Err(HostError::Timeout(method)),
+        }
+    }
+
+    /// Writes one whole frame. It runs as its own task: a caller that goes away halfway through must not leave half a frame in the pipe.
+    async fn send(&self, message: &Value) -> Result<(), HostError> {
+        let body = serde_json::to_vec(message).map_err(|e| HostError::Protocol(e.to_string()))?;
+        let mut frame = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
+        frame.extend(body);
+        let writer = self.writer.clone();
+        tokio::spawn(async move {
+            let mut stdin = writer.lock().await;
+            stdin.write_all(&frame).await?;
+            stdin.flush().await
+        })
+        .await
+        .map_err(|e| HostError::Closed(e.to_string()))??;
+        Ok(())
+    }
+}
+
+/// A request that has been sent and not yet answered. When it goes out of scope with its entry still in `waiting`, nobody answered:
+/// the entry is removed (a late answer is ignored) and the driver is told to cancel.
+struct Pending {
+    wire: Arc<Wire>,
+    id: u64,
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        let unanswered = self.wire.waiting.lock().unwrap().as_mut().is_some_and(|waiting| waiting.remove(&self.id).is_some());
+        if !unanswered {
+            return;
+        }
+        // there may be no runtime left (the core is shutting down): then the driver is going away too
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let (wire, id) = (self.wire.clone(), self.id);
+            runtime.spawn(async move {
+                let _ = wire.send(&json!({ "jsonrpc": "2.0", "method": "$/cancelRequest", "params": { "id": id } })).await;
+            });
+        }
+    }
+}
+
+/// The one reader of the driver's output: each response goes to the request with its `id`. It ends when the driver closes its output or
+/// sends something that is not a frame; everyone still waiting then gets the reason, and so does every later request.
+async fn read_replies(mut stdout: impl AsyncBufRead + Unpin, waiting: Waiting) {
+    let reason = loop {
+        let msg = match read_frame(&mut stdout).await {
+            Ok(msg) => msg,
+            Err(HostError::Closed(reason)) => break reason,
+            Err(other) => break other.to_string(),
+        };
+        // a notification or a request from the driver: not part of protocol 1
+        let Some(id) = msg.get("id").and_then(Value::as_u64).filter(|_| msg.get("method").is_none()) else { continue };
+        let waiter = waiting.lock().unwrap().as_mut().and_then(|waiting| waiting.remove(&id));
+        if let Some(tx) = waiter {
+            let _ = tx.send(reply_of(&msg));
+        } // else: an answer to a request that timed out or was cancelled
+    };
+    let gone = waiting.lock().unwrap().take();
+    for (_, tx) in gone.into_iter().flatten() {
+        let _ = tx.send(Err(HostError::Closed(reason.clone())));
+    }
+}
+
+fn reply_of(msg: &Value) -> Reply {
+    match msg.get("error") {
+        Some(e) => Err(HostError::Remote { code: e["code"].as_i64().unwrap_or(0), message: e["message"].as_str().unwrap_or("").to_string() }),
+        None => Ok(msg["result"].clone()),
     }
 }
 
@@ -135,15 +281,28 @@ impl DriverHost {
         self.with_client(|client| async move { client.plan_file_id(params).await }).await
     }
 
+    /// The calls made by one function, or by a class's `__init__`: unmerged, as the driver gives them.
+    pub async fn call_tree(&self, params: &CallTreeParams) -> Result<CallTreeResult, HostError> {
+        self.with_client(|client| async move { client.call_tree(params).await }).await
+    }
+
     /// Runs `request` on the driver. An error from the driver about this request is returned as is; anything else means the
     /// connection is broken, so the driver is dropped (its process dies with it) and the next request starts a new one.
     async fn with_client<T, Fut: std::future::Future<Output = Result<T, HostError>>>(&self, request: impl FnOnce(Arc<DriverClient>) -> Fut) -> Result<T, HostError> {
         let client = self.client().await?;
-        let result = request(client).await;
+        let result = request(client.clone()).await;
         if matches!(&result, Err(e) if !matches!(e, HostError::Remote { .. } | HostError::MissingCapability(_))) {
-            *self.client.lock().await = None;
+            self.forget(&client).await;
         }
         result
+    }
+
+    /// Drops `broken`, unless another request has already replaced it with a new driver.
+    async fn forget(&self, broken: &Arc<DriverClient>) {
+        let mut slot = self.client.lock().await;
+        if slot.as_ref().is_some_and(|current| Arc::ptr_eq(current, broken)) {
+            *slot = None;
+        }
     }
 
     async fn client(&self) -> Result<Arc<DriverClient>, HostError> {
@@ -159,20 +318,12 @@ impl DriverHost {
     }
 }
 
-async fn send(stdin: &mut ChildStdin, message: &Value) -> Result<(), HostError> {
-    let body = serde_json::to_vec(message).map_err(|e| HostError::Protocol(e.to_string()))?;
-    stdin.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).await?;
-    stdin.write_all(&body).await?;
-    stdin.flush().await?;
-    Ok(())
-}
-
-async fn read_frame(stdout: &mut BufReader<ChildStdout>) -> Result<Value, HostError> {
+async fn read_frame(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Value, HostError> {
     let mut len: Option<usize> = None;
     loop {
         let mut line = String::new();
         if stdout.read_line(&mut line).await? == 0 {
-            return Err(HostError::Protocol("the driver closed its output".into()));
+            return Err(HostError::Closed("it closed its output".into()));
         }
         let line = line.trim_end();
         if line.is_empty() {
@@ -189,19 +340,150 @@ async fn read_frame(stdout: &mut BufReader<ChildStdout>) -> Result<Value, HostEr
     serde_json::from_slice(&buf).map_err(|e| HostError::Protocol(e.to_string()))
 }
 
-/// Lockstep: send one request, read until its response. (Notifications from the driver are not part of protocol 1.)
-async fn request(io: &mut Io, method: &str, params: &impl Serialize) -> Result<Value, HostError> {
-    io.next_id += 1;
-    let id = io.next_id;
-    send(&mut io.stdin, &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })).await?;
-    loop {
-        let msg = read_frame(&mut io.stdout).await?;
-        if msg.get("id") != Some(&json!(id)) {
-            continue;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{DuplexStream, ReadHalf, WriteHalf, split};
+
+    /// The driver's side of the pipes: a stand-in that reads the core's frames and answers as the test says.
+    struct Fake {
+        from_core: BufReader<ReadHalf<DuplexStream>>,
+        to_core: WriteHalf<DuplexStream>,
+    }
+
+    impl Fake {
+        async fn read(&mut self) -> Value {
+            read_frame(&mut self.from_core).await.expect("the core sent a frame")
         }
-        if let Some(e) = msg.get("error") {
-            return Err(HostError::Remote { code: e["code"].as_i64().unwrap_or(0), message: e["message"].as_str().unwrap_or("").to_string() });
+
+        async fn write(&mut self, message: Value) {
+            let body = serde_json::to_vec(&message).unwrap();
+            self.to_core.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+            self.to_core.write_all(&body).await.unwrap();
+            self.to_core.flush().await.unwrap();
         }
-        return Ok(msg["result"].clone());
+
+        async fn answer(&mut self, id: &Value, result: Value) {
+            self.write(json!({ "jsonrpc": "2.0", "id": id, "result": result })).await;
+        }
+
+        /// `initialize`, then `initialized`.
+        async fn handshake(&mut self) {
+            let init = self.read().await;
+            assert_eq!(init["method"], "initialize");
+            let capabilities = json!({ "outline": true, "ids.plan": true, "ids.file": true, "callTree": true });
+            self.answer(&init["id"], json!({ "protocol": PROTOCOL_VERSION, "name": "fake", "version": "0", "capabilities": capabilities })).await;
+            assert_eq!(self.read().await["method"], "initialized");
+        }
+    }
+
+    async fn connected() -> (Arc<DriverClient>, Fake) {
+        let (core_out, fake_in) = tokio::io::duplex(64 * 1024);
+        let (fake_out, core_in) = tokio::io::duplex(64 * 1024);
+        let (from_core, _) = split(fake_in);
+        let (_, to_core) = split(fake_out);
+        let mut fake = Fake { from_core: BufReader::new(from_core), to_core };
+        let (client, ()) = tokio::join!(async { DriverClient::connect(core_out, core_in, None).await.expect("the handshake works") }, fake.handshake());
+        (Arc::new(client), fake)
+    }
+
+    fn asked(n: u32) -> Value {
+        json!({ "n": n })
+    }
+
+    #[tokio::test]
+    async fn two_requests_answered_in_reverse_order_each_get_their_own_answer() {
+        let (client, mut fake) = connected().await;
+        let ask = |n: u32| {
+            let client = client.clone();
+            tokio::spawn(async move { client.call::<Value>(method::OUTLINE, &asked(n)).await })
+        };
+        let (one, two) = (ask(1), ask(2));
+
+        let (first, second) = (fake.read().await, fake.read().await);
+        assert_ne!(first["id"], second["id"]);
+        // the later request is answered first; each answer carries the `n` of the request it belongs to
+        for request in [&second, &first] {
+            fake.answer(&request["id"], json!({ "echo": request["params"]["n"] })).await;
+        }
+
+        assert_eq!(one.await.unwrap().unwrap(), json!({ "echo": 1 }));
+        assert_eq!(two.await.unwrap().unwrap(), json!({ "echo": 2 }));
+    }
+
+    #[tokio::test]
+    async fn a_request_that_times_out_is_cancelled_and_its_late_answer_is_ignored() {
+        let (client, mut fake) = connected().await;
+        let slow = client.wire.request(method::OUTLINE, &asked(1), Duration::from_millis(50)).await;
+        assert!(matches!(slow, Err(HostError::Timeout(m)) if m == method::OUTLINE), "{slow:?}");
+
+        let request = fake.read().await;
+        let cancel = fake.read().await;
+        assert_eq!((cancel["method"].as_str(), &cancel["params"]["id"], cancel.get("id")), (Some("$/cancelRequest"), &request["id"], None), "a notification naming the request");
+        assert!(client.wire.waiting.lock().unwrap().as_ref().unwrap().is_empty(), "nothing is waiting any more");
+
+        // the answer comes anyway, then the answer to the next request: only the second is used
+        fake.answer(&request["id"], json!("late")).await;
+        let next = tokio::spawn({
+            let client = client.clone();
+            async move { client.call::<Value>(method::OUTLINE, &asked(2)).await }
+        });
+        let second = fake.read().await;
+        fake.answer(&second["id"], json!("on time")).await;
+        assert_eq!(next.await.unwrap().unwrap(), json!("on time"));
+    }
+
+    #[tokio::test]
+    async fn a_request_whose_caller_goes_away_is_cancelled() {
+        let (client, mut fake) = connected().await;
+        let task = tokio::spawn({
+            let client = client.clone();
+            async move { client.call::<Value>(method::CALL_TREE, &asked(1)).await }
+        });
+        let request = fake.read().await;
+        task.abort();
+        let _ = task.await;
+
+        let cancel = fake.read().await;
+        assert_eq!((cancel["method"].as_str(), &cancel["params"]["id"]), (Some("$/cancelRequest"), &request["id"]));
+    }
+
+    #[tokio::test]
+    async fn a_driver_that_dies_fails_every_waiting_request_and_the_next_one() {
+        let (client, mut fake) = connected().await;
+        let ask = |n: u32| {
+            let client = client.clone();
+            tokio::spawn(async move { client.call::<Value>(method::OUTLINE, &asked(n)).await })
+        };
+        let (one, two) = (ask(1), ask(2));
+        fake.read().await;
+        fake.read().await;
+
+        drop(fake); // the driver's process ends: its output closes
+        for waiting in [one, two] {
+            assert!(matches!(waiting.await.unwrap(), Err(HostError::Closed(_))));
+        }
+        let after = client.call::<Value>(method::OUTLINE, &asked(3)).await;
+        assert!(matches!(after, Err(HostError::Closed(_))), "{after:?}");
+    }
+
+    #[tokio::test]
+    async fn only_the_driver_that_broke_is_forgotten() {
+        let (old, _fake_old) = connected().await;
+        let (new, _fake_new) = connected().await;
+        let host = DriverHost::default();
+        *host.client.lock().await = Some(new.clone());
+
+        host.forget(&old).await; // a late failure of the old driver must not drop the new one
+        assert!(host.client.lock().await.is_some());
+        host.forget(&new).await;
+        assert!(host.client.lock().await.is_none());
+    }
+
+    #[test]
+    fn a_call_tree_is_given_more_time_than_an_outline() {
+        let limits: Vec<_> = [method::OUTLINE, method::PLAN_IDS, method::PLAN_FILE_ID, method::CALL_TREE].map(timeout_of).into();
+        assert_eq!(limits, [REQUEST_TIMEOUT, REQUEST_TIMEOUT, REQUEST_TIMEOUT, CALL_TREE_TIMEOUT]);
+        assert_eq!((REQUEST_TIMEOUT.as_secs(), CALL_TREE_TIMEOUT.as_secs()), (10, 30));
     }
 }
