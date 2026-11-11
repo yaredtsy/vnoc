@@ -112,13 +112,21 @@ export class Core {
 /**
  * Tells the core which files were touched. `.gitignore` is watched too: it changes which files are in scope. `.vnoc/**` and `.vnoc-id` are V-NOC's
  * own files: a doc added by a teammate's `git pull` shows up like one added here. `onTouched` hears every path at once (the doc panel wants `.md` changes).
+ *
+ * A folder that appears or goes is reported too (a path with no extension: a deleted one cannot be asked). The `.py` pattern misses a folder moved
+ * with `git mv` (one event, for the folder), and on Linux a file written into a folder in the first moments after it was made. The core walks the whole
+ * project on any report, so the folder's own event is enough to find what is inside.
  */
 export function watchFiles(core: Core, onTouched: (fsPath: string) => void): vscode.Disposable {
   const watcher = vscode.workspace.createFileSystemWatcher("**/{*.py,.gitignore,.vnoc-id,.vnoc/**}");
+  const folders = vscode.workspace.createFileSystemWatcher("**/*", false, true, false); // created and deleted: a folder's content is not its own change
   const touched = new Set<string>();
   let timer: NodeJS.Timeout | undefined;
   const touch = (uri: vscode.Uri) => {
     onTouched(uri.fsPath);
+    report(uri);
+  };
+  const report = (uri: vscode.Uri) => {
     touched.add(uri.fsPath);
     clearTimeout(timer);
     timer = setTimeout(() => {
@@ -127,5 +135,17 @@ export function watchFiles(core: Core, onTouched: (fsPath: string) => void): vsc
       void core.notify("vnoc/filesChanged", { paths });
     }, CHANGE_DEBOUNCE_MS);
   };
-  return vscode.Disposable.from(watcher, watcher.onDidCreate(touch), watcher.onDidChange(touch), watcher.onDidDelete(touch), { dispose: () => clearTimeout(timer) });
+  const folder = (uri: vscode.Uri) => {
+    if (path.extname(uri.fsPath) === "" && !/[\\/](\.git|node_modules)[\\/]/.test(uri.fsPath)) report(uri);
+  };
+  return vscode.Disposable.from(
+    watcher,
+    watcher.onDidCreate(touch),
+    watcher.onDidChange(touch),
+    watcher.onDidDelete(touch),
+    folders,
+    folders.onDidCreate(folder),
+    folders.onDidDelete(folder),
+    { dispose: () => clearTimeout(timer) },
+  );
 }
