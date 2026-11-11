@@ -1,48 +1,74 @@
-# The first pre-release (docs/13-harden-and-publish.md §7.1): macOS arm64 only, by hand ("Run workflow"), with no stored token.
-# The Marketplace trusts THIS file name (the Trusted Publishing policy `vnoc-release`): do not rename it.
+# The release (docs/13-harden-and-publish.md §7.2). Runs on a tag `v*`, and by hand ("Run workflow") with `publish: false` as a dry run.
+# The Marketplace trusts THIS file name (the Trusted Publishing policy `vnoc-release`): do not rename it, and keep the `vsce publish` step in it.
 name: publish
-on: workflow_dispatch
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish (needs a tag as the ref). Off: build and test the four files, publish nothing"
+        type: boolean
+        default: false
+permissions:
+  contents: read
 jobs:
-  publish:
-    runs-on: macos-latest
-    permissions:
-      contents: read
-      id-token: write
+  # 1. The tag is on main, and "v" + the extension's version is the tag. A mistake here stops everything before anything is built.
+  check:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+        with: { fetch-depth: 0 }
+      - name: the tag and the version
+        run: |
+          version=$(node -p "require('./extension/package.json').version")
+          echo "extension/package.json version: $version"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::the tag is $GITHUB_REF_NAME but extension/package.json says $version: the tag must be v$version"; exit 1; }
+            git fetch origin main
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::the tag $GITHUB_REF_NAME is not on main"; exit 1; }
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "true" ]; then
+            echo "::error::publishing needs a tag as the ref: pick the tag in 'Use workflow from', or turn 'publish' off"
+            exit 1
+          fi
+
+  # 2. The matrix of ci.yml, tests included: the four VSIX files (vsix-darwin-arm64, vsix-darwin-x64, vsix-linux-x64, vsix-win32-x64), packaged as pre-releases.
+  build:
+    needs: check
+    uses: ./.github/workflows/ci.yml
+    with:
+      pre-release: true
+
+  # 3. Once, on one system. The step that publishes is in THIS file: the policy trusts it, not a workflow it calls.
+  publish:
+    needs: build
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-22.04
+    environment: release # Settings → Environments → release → Required reviewers: your approval before this job runs
+    permissions:
+      contents: write # the GitHub release
+      id-token: write # Trusted Publishing: the job's OIDC token, no stored secret
+    env:
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/checkout@v4 # the tag, for the release notes
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm }
-      - uses: Swatinem/rust-cache@v2
-        with: { cache-on-failure: true }
-      - uses: Swatinem/rust-cache@v2
-        with: { workspaces: "drivers/python -> target", key: driver, cache-on-failure: true }
-      - uses: actions/cache@v4
-        with:
-          path: extension/.vscode-test
-          key: vscode-test-${{ runner.os }}-${{ runner.arch }}
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - name: shared logic (session, tree, focus stack)
-        run: pnpm --filter @vnoc/shared test
-      - name: webview (layout, keys, markers, markdown)
-        run: pnpm --filter vnoc-webview test
-      - name: extension unit tests
-        run: pnpm --filter vnoc unit
-      - name: core
-        run: cargo test -p vnoc-domain -p vnoc-driver-protocol
-      - name: python driver (own workspace, own toolchain)
-        working-directory: drivers/python
-        run: cargo build && cargo test
-      - name: core integration tests
-        run: cargo test -p vnoc
-      - name: build the webview and the extension (the extension suite loads them)
-        run: pnpm -r build
-      - name: extension suite in a real VS Code window
-        run: pnpm --filter vnoc test
-      # a red test above stops the publish
-      - name: package the pre-release
-        run: node scripts/package.mjs --target darwin-arm64 --pre-release
-      - name: "publish (trusted publishing: the job's OIDC token, no secret)"
-        working-directory: extension
-        run: npx --no @vscode/vsce publish --oidc --packagePath ../vnoc-darwin-arm64.vsix
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "vsix-*", merge-multiple: true, path: vsix }
+      - name: the four files are there
+        run: |
+          ls -l vsix
+          [ "$(ls vsix/*.vsix | wc -l)" = "4" ] || { echo "::error::expected four VSIX files"; exit 1; }
+      # the login lasts 15 minutes: nothing slow before this step
+      - name: "publish to the Marketplace (trusted publishing: the job's OIDC token, no secret)"
+        run: npx --yes @vscode/vsce@^4.1.0 publish --oidc --skip-duplicate --packagePath vsix/*.vsix
+      # Open VSX (Cursor, Windsurf, VSCodium): skipped until the OVSX_PAT secret exists (the namespace `vnoc` has to be approved first)
+      - name: publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: for f in vsix/*.vsix; do npx --yes ovsx publish "$f" --skip-duplicate -p "$OVSX_PAT"; done
+      - name: the GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" vsix/*.vsix --prerelease --notes-from-tag

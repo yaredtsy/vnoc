@@ -1,5 +1,13 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+    branches: ["**"] # a tag push runs publish.yml, which calls this file: not twice
+  pull_request:
+  workflow_call: # publish.yml: the same build and tests, and its VSIX files packaged as pre-releases
+    inputs:
+      pre-release:
+        type: boolean
+        default: false
 jobs:
   build-test:
     name: ${{ matrix.os }}
@@ -64,7 +72,7 @@ jobs:
       - name: extension suite in a real VS Code window (downloads VS Code)
         run: ${{ matrix.window }} pnpm --filter vnoc test
       - name: package ${{ matrix.target }}
-        run: node scripts/package.mjs --target ${{ matrix.target }}
+        run: node scripts/package.mjs --target ${{ matrix.target }} ${{ inputs.pre-release && '--pre-release' || '' }}
       - uses: actions/upload-artifact@v4
         with: { name: "vsix-${{ matrix.target }}", path: "vnoc-${{ matrix.target }}.vsix" }
       # the Intel Mac build is cross-built on the arm64 runner: packaged, not tested
@@ -73,7 +81,7 @@ jobs:
         run: |
           rustup target add x86_64-apple-darwin
           (cd drivers/python && rustup target add x86_64-apple-darwin)
-          node scripts/package.mjs --target ${{ matrix.extra-target }}
+          node scripts/package.mjs --target ${{ matrix.extra-target }} ${{ inputs.pre-release && '--pre-release' || '' }}
       - uses: actions/upload-artifact@v4
         if: matrix.extra-target
         with: { name: "vsix-${{ matrix.extra-target }}", path: "vnoc-${{ matrix.extra-target }}.vsix" }
