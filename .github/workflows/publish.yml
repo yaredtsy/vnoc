@@ -35,6 +35,6 @@ jobs:
       # a red test above stops the publish
       - name: package the pre-release
         run: node scripts/package.mjs --target darwin-arm64 --pre-release
-      - name: publish (trusted publishing: the job's OIDC token, no secret)
+      - name: "publish (trusted publishing: the job's OIDC token, no secret)"
         working-directory: extension
         run: npx --no @vscode/vsce publish --oidc --packagePath ../vnoc-darwin-arm64.vsix

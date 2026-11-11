@@ -25,7 +25,7 @@ jobs:
         run: cargo test -p vnoc
       - name: build the webview and the extension (the extension suite loads them)
         run: pnpm -r build
-      - name: extension suite in a real VS Code window (downloads VS Code; not run locally on CI before: watch the first run)
+      - name: "extension suite in a real VS Code window (downloads VS Code; not run locally on CI before: watch the first run)"
         run: pnpm --filter vnoc test
       - name: package
         run: node scripts/package.mjs
