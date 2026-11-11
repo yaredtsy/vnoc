@@ -66,7 +66,7 @@ jobs:
       # Open VSX (Cursor, Windsurf, VSCodium): skipped until the OVSX_PAT secret exists (the namespace `vnoc` has to be approved first)
       - name: publish to Open VSX
         if: env.OVSX_PAT != ''
-        run: for f in vsix/*.vsix; do npx --yes ovsx publish "$f" --skip-duplicate -p "$OVSX_PAT"; done
+        run: for f in vsix/*.vsix; do npx --yes ovsx publish "$f" --skip-duplicate; done # the token: OVSX_PAT, which ovsx reads itself
       - name: the GitHub release
         if: github.ref_type == 'tag'
         env:
