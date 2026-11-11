@@ -59,6 +59,9 @@ pub struct Index {
     problems: Vec<LoadProblem>,
     /// where each record was found, by location key text. Computed from `files` and `records` at the end of every update.
     attached: HashMap<String, Attached>,
+    /// anchor paths of records that exist on disk although the scan did not read them (outside the opened folder, git-ignored, past the
+    /// cap, a file the driver failed on). Looked up by `refresh` off the lock; see "Missing means looked for" in `docs/11`.
+    on_disk: BTreeSet<RepoPath>,
     /// records no code matches. Computed with `attached`.
     missing: Vec<MissingNode>,
     /// an ID written in more than one place: one entry per copy that is **not** the node. Computed with `attached`.
@@ -67,6 +70,8 @@ pub struct Index {
 
 /// A copy of an ID that is not where the node was found. Nothing is changed for it: the user is told.
 struct Duplicate {
+    /// where the node is shown
+    winner: LocationKey,
     copy: LocationKey,
 }
 
@@ -100,7 +105,7 @@ impl Index {
                 (true, true) => format!("{}/{}", d.copy.path(), crate::identity::folder_marker::FILE_NAME),
                 _ => d.copy.path().to_string(),
             };
-            let text = format!("this ID is also at {}", place(&d.copy));
+            let text = format!("`{}`: its ID is also at `{}`", place(&d.winner), place(&d.copy));
             Problem { text, file: Some(absolute(&file)), line }
         });
         broken.chain(markers).chain(duplicates).collect()
@@ -116,6 +121,11 @@ impl Index {
         let defs = self.files.get(location.path())?;
         let which = occurrences(defs.iter().map(|d| d.qualname.as_str()));
         defs.iter().zip(which).find(|(d, n)| d.qualname == location.qualname() && *n == location.occurrence()).map(|(d, _)| d.clone())
+    }
+
+    /// The paths of the files the driver outlined.
+    fn outlined_paths(&self) -> impl Iterator<Item = &RepoPath> {
+        self.files.keys()
     }
 
     /// Whether this path is a file in scope (outlined or not).
@@ -215,6 +225,7 @@ impl Index {
         let folder_ids = self.folders.iter().filter_map(|(path, id)| Some((path.clone(), (*id)?))).collect();
         let markers = Markers::read(&self.files, &self.file_ids, &folder_ids);
         let mut attached = HashMap::new();
+        let scanned: BTreeSet<String> = self.files.keys().chain(self.folders.keys()).map(|p| p.as_str().to_lowercase()).collect();
         let mut missing = Vec::new();
         let mut duplicates = Vec::new();
         for (id, record) in &self.records {
@@ -222,13 +233,16 @@ impl Index {
             match resolve(id, anchor.as_ref(), &markers, |location| self.exists(location)) {
                 Resolved::Found { at, by } => {
                     if by == FoundBy::Marker {
-                        duplicates.extend(markers.places(id).iter().filter(|copy| **copy != at).map(|copy| Duplicate { copy: copy.clone() }));
+                        duplicates.extend(markers.places(id).iter().filter(|copy| **copy != at).map(|copy| Duplicate { winner: at.clone(), copy: copy.clone() }));
                     }
                     attached.insert(at.to_string(), Attached { id: *id, docs: record.docs.len(), by });
                 }
                 Resolved::Missing => {
                     // an unreadable anchor cannot be here: `NodeToml::parse` checked it
                     let Some(anchor) = anchor else { continue };
+                    if !self.looked_for(anchor.path(), &scanned) {
+                        continue;
+                    }
                     missing.push(MissingNode { id: id.to_string(), kind: record.toml.kind().map(|k| k.as_str().to_string()), path: anchor.path().to_string(), qualname: anchor.qualname().to_string(), docs: record.docs.len() });
                 }
             }
@@ -237,6 +251,20 @@ impl Index {
         self.attached = attached;
         self.missing = missing;
         self.duplicates = duplicates;
+    }
+
+    /// Whether V-NOC looked for a node with this anchor path: the path was scanned (an outline, or a folder the walk found; a path that
+    /// differs only by case counts, as the old spelling of a renamed file still "exists" on macOS and Windows), or it is gone from disk.
+    /// `scanned`: the lower-cased paths of `files` and `folders`.
+    fn looked_for(&self, path: &RepoPath, scanned: &BTreeSet<String>) -> bool {
+        scanned.contains(&path.as_str().to_lowercase()) || !self.on_disk.contains(path)
+    }
+
+    /// The anchor paths `refresh` found on disk. Returns whether that differs.
+    fn set_on_disk(&mut self, on_disk: BTreeSet<RepoPath>) -> bool {
+        let changed = self.on_disk != on_disk;
+        self.on_disk = on_disk;
+        changed
     }
 
     fn set_truncated(&mut self, truncated: bool) -> bool {
@@ -248,9 +276,14 @@ impl Index {
     }
 }
 
-/// A location for people: `src/orders.py::parse_order`, or the bare path for a file or a folder.
+/// A location for people: `src/orders.py::parse_order` (`#2` on the second of two same-named defs), or the bare path for a file or a folder.
 fn place(location: &LocationKey) -> String {
-    if location.qualname().is_empty() { location.path().to_string() } else { format!("{}::{}", location.path(), location.qualname()) }
+    if location.qualname().is_empty() { location.path().to_string() } else { location.to_string() }
+}
+
+/// What a record's anchor path is: the paths `refresh` must look up on disk are the anchors of `records` that the scan did not read.
+pub fn anchors_to_check(records: &[(NodeId, NodeRecord)], read: &BTreeSet<RepoPath>) -> BTreeSet<RepoPath> {
+    records.iter().filter_map(|(_, r)| r.toml.location().ok()).map(|l| l.path().clone()).filter(|p| !read.contains(p)).collect()
 }
 
 #[cfg(test)]
@@ -314,7 +347,7 @@ mod tests {
         // the anchor says a.py::f, so a.py wins
         let at_anchor = index(&files, vec![(id(1), record(&at("a.py", "f"), None, 1))]);
         let problems = at_anchor.problems(std::path::Path::new("/repo"));
-        assert_eq!(problems, [Problem { text: "this ID is also at copy.py::parse_order".into(), file: Some("/repo/copy.py".into()), line: Some(7) }]);
+        assert_eq!(problems, [Problem { text: "`a.py::f`: its ID is also at `copy.py::parse_order`".into(), file: Some("/repo/copy.py".into()), line: Some(7) }]);
         assert_eq!(at_anchor.attached.get("a.py::f").map(|a| a.id), Some(id(1)));
 
         // the anchor is gone: the first by path still wins, and it is the same winner
@@ -324,6 +357,42 @@ mod tests {
 
         // an ID written once is not a problem
         assert!(index(&files[..1], vec![(id(1), record(&at("a.py", "f"), None, 1))]).problems(std::path::Path::new("/repo")).is_empty());
+    }
+
+    #[test]
+    fn a_copy_on_the_second_of_two_same_named_defs_ends_in_its_number() {
+        let files = [("a.py", vec![def("f", 3, Some(id(1)))]), ("copy.py", vec![def("g", 0, None), def("g", 5, Some(id(1)))])];
+        let index = index(&files, vec![(id(1), record(&at("a.py", "f"), None, 1))]);
+        assert_eq!(index.problems(std::path::Path::new("/repo"))[0].text, "`a.py::f`: its ID is also at `copy.py::g#2`");
+    }
+
+    /// `a.py` is outlined; `bad.py` failed in the driver; `out/x.py` is outside the scan (or ignored, or past the cap): the same to the index.
+    fn looked_for(anchor: &str, on_disk: &[&str], failed: &[&str]) -> bool {
+        let mut index = index(&[("a.py", vec![def("f", 0, None)])], vec![(id(1), record(&at(anchor, "gone"), Some(NodeKind::Function), 1))]);
+        index.failed = failed.iter().map(|p| (path(p), "boom".to_string())).collect();
+        index.folders.insert(path("pkg"), None);
+        index.on_disk = on_disk.iter().map(|p| path(p)).collect();
+        index.resolve_all();
+        !index.missing().is_empty()
+    }
+
+    #[test]
+    fn a_record_whose_code_was_not_scanned_is_listed_only_when_its_path_is_gone() {
+        // outside the opened folder, git-ignored, past the cap: not read, on disk -> unknown; gone -> listed
+        assert!(!looked_for("out/x.py", &["out/x.py"], &[]));
+        assert!(looked_for("out/x.py", &[], &[]));
+        // a file the driver failed on: nothing was looked for
+        assert!(!looked_for("bad.py", &["bad.py"], &["bad.py"]));
+        assert!(looked_for("bad.py", &[], &["bad.py"]));
+        // a scanned file or folder: the ID and the name were looked for and are not there
+        assert!(looked_for("a.py", &[], &[]));
+        assert!(looked_for("pkg", &["pkg"], &[]));
+    }
+
+    #[test]
+    fn a_path_that_differs_only_by_case_counts_as_scanned() {
+        // `A.py` was renamed to `a.py`; on macOS the old spelling "exists", and the node must still show as Missing, not turn unknown
+        assert!(looked_for("A.py", &["A.py"], &[]));
     }
 
     #[test]

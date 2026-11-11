@@ -45,17 +45,23 @@ pub fn load_all(root: &Path) -> LoadReport {
             let name = folder.file_name().unwrap_or_default().to_string_lossy().into_owned();
             // folder names are IDs in canonical form: 26 characters, upper case
             let Some(id) = NodeId::parse(&name).ok().filter(|id| id.to_string() == name) else {
-                report.problems.push(LoadProblem { text: format!("{}: the folder name is not a node ID", folder.display()), file: folder.clone() });
+                report.problems.push(LoadProblem { text: format!("{}: the folder name is not a node ID", shown(root, &folder)), file: folder.clone() });
                 continue;
             };
             let file = folder.join("node.toml");
             match fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|text| NodeToml::parse(&text).map_err(|e| e.to_string())) {
                 Ok(toml) => report.records.push((id, NodeRecord { toml, docs: markdown_files(&folder) })),
-                Err(e) => report.problems.push(LoadProblem { text: format!("{}: {e}", file.display()), file: file.clone() }),
+                Err(e) => report.problems.push(LoadProblem { text: format!("{}: {e}", shown(root, &file)), file: file.clone() }),
             }
         }
     }
     report
+}
+
+/// A path for people: relative to the repo (`.vnoc/nodes/ab/ID/node.toml`), never the absolute one.
+fn shown(root: &Path, path: &Path) -> String {
+    let inside = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+    format!("{}/{inside}", layout::FOLDER)
 }
 
 /// The sub-folders of `dir` that are real folders (a symlink is not followed out of `.vnoc/`); none when `dir` is missing.

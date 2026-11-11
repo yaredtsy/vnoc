@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use vnoc_domain::RepoPath;
 
-use super::Index;
+use super::{Index, anchors_to_check};
 use crate::driver_host::{DriverHost, HostError};
 use crate::project::Project;
 use crate::scan;
@@ -81,11 +81,26 @@ pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>
         tracing::warn!("{}", problem.text);
     }
 
+    // "Missing means looked for": a record whose code the scan did not read is Missing only when its path is gone from disk.
+    // What was read: the outlines held or about to be applied, and the folders the walk found.
+    let to_check = {
+        let known = index.read().unwrap();
+        let mut read: BTreeSet<RepoPath> = known.outlined_paths().filter(|p| in_scope.contains(*p)).cloned().collect();
+        for (path, outcome) in &outlined {
+            if outcome.is_ok() { read.insert(path.clone()) } else { read.remove(path) };
+        }
+        read.extend(scan.folders.iter().map(|f| f.path.clone()));
+        anchors_to_check(&report.records, &read)
+    };
+    let git_root = project.git_root().to_path_buf();
+    let on_disk = tokio::task::spawn_blocking(move || to_check.into_iter().filter(|p| git_root.join(p.as_str()).symlink_metadata().is_ok()).collect::<BTreeSet<_>>()).await?;
+
     let read = outlined.len();
     let changed = {
         let mut index = index.write().unwrap();
         let mut changed = index.retain_only(&in_scope);
         changed |= index.set_records(report);
+        changed |= index.set_on_disk(on_disk);
         changed |= index.set_folders(scan.folders);
         changed |= index.set_truncated(scan.truncated);
         for (path, outcome) in outlined {

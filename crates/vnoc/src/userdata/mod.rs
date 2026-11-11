@@ -234,5 +234,7 @@ mod tests {
         let report = data.load_all();
         assert_eq!(report.records.len(), 1);
         assert_eq!(report.problems.len(), 2, "{:?}", report.problems);
+        let temp = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(report.problems.iter().all(|p| p.text.starts_with(".vnoc/nodes/") && !p.text.contains(&temp)), "paths in the text are relative to the repo: {:?}", report.problems);
     }
 }

@@ -544,3 +544,45 @@ fn attach_to_a_file_needs_its_document() {
     assert!(e["message"].as_str().unwrap().contains("needs the open document"), "{e}");
     core.finish();
 }
+
+/// Writes a record by hand: a node folder with a `node.toml` that anchors the node at `path::qualname` (no docs needed to be listed).
+fn write_record(root: &std::path::Path, id: &str, path: &str, qualname: &str) {
+    let dir = root.join(".vnoc/nodes").join(&id[24..]).join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("node.toml"), format!("path = \"{path}\"\nqualname = \"{qualname}\"\nid_in_code = \"no\"\nkind = \"function\"\n")).unwrap();
+    std::fs::write(dir.join("notes.md"), "# Notes\n").unwrap();
+}
+
+#[test]
+fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() {
+    let root = std::env::temp_dir().join(format!("vnoc-missing-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("ignored")).unwrap();
+    std::fs::write(root.join("orders.py"), ORDERS).unwrap();
+    std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
+    std::fs::write(root.join("ignored/x.py"), "def f():\n    pass\n").unwrap();
+    // not valid UTF-8: the driver cannot outline it
+    std::fs::write(root.join("bad.py"), [0xff, 0xfe, 0xfd]).unwrap();
+    let (gone, ignored, failed) = ("0000000000000000000000000A", "0000000000000000000000000B", "0000000000000000000000000C");
+    write_record(&root, gone, "gone.py", "parse_order");
+    write_record(&root, ignored, "ignored/x.py", "f");
+    write_record(&root, failed, "bad.py", "g");
+    std::fs::create_dir_all(root.join(".vnoc/nodes/zz/not-an-id")).unwrap();
+
+    let mut core = Core::start(Some(driver_path()), &root);
+    let s = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(s["failed"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect::<Vec<_>>(), ["bad.py"], "the driver failed on it");
+    assert_eq!(s["missing"], json!([{ "id": gone, "kind": "function", "path": "gone.py", "qualname": "parse_order", "docs": 1 }]), "the others were not looked for");
+    let problems = s["problems"].as_array().unwrap();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0]["text"], ".vnoc/nodes/zz/not-an-id: the folder name is not a node ID");
+    assert_eq!(problems[0]["file"], json!(root.join(".vnoc/nodes/zz/not-an-id")));
+    assert_eq!(problems[0]["line"], Value::Null);
+
+    // the ignored file goes: now the name was looked for, and the node is Missing
+    std::fs::remove_file(root.join("ignored/x.py")).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("ignored/x.py")] }));
+    let after = structure_when(&mut core, |s| s["missing"].as_array().unwrap().len() == 2);
+    assert_eq!(after["missing"].as_array().unwrap().iter().map(|m| m["path"].as_str().unwrap()).collect::<Vec<_>>(), ["gone.py", "ignored/x.py"]);
+    core.finish();
+}
