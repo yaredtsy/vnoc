@@ -831,3 +831,88 @@ fn trash_refuses_a_node_that_is_not_missing_and_remove_then_restore_gives_back_t
     assert!(message(core.request("vnoc/restorePlan", json!({ "entry": "../../nodes" }))).contains("not in the trash"));
     core.finish();
 }
+
+const CALLS_LIB: &str = "def leaf():\n    return 1\n\n\ndef twice():\n    leaf()\n    leaf()\n";
+const CALLS_APP: &str = "import os\n\nfrom lib import leaf, twice\n\n\nclass Box:\n    def __init__(self):\n        leaf()\n\n\ndef main():\n    leaf()\n    twice()\n    leaf()\n    os.getcwd()\n";
+
+/// A folder with `lib.py` and `app.py` (what each calls is above), opened in a core whose first build is done.
+fn calls_project(folder: &std::path::Path, open: &std::path::Path) -> Core {
+    std::fs::create_dir_all(folder).unwrap();
+    std::fs::write(folder.join("lib.py"), CALLS_LIB).unwrap();
+    std::fs::write(folder.join("app.py"), CALLS_APP).unwrap();
+    let mut core = Core::start(Some(driver_path()), open);
+    core.request("vnoc/structure", Value::Null).expect("structure answers");
+    core
+}
+
+/// `(line, start, end)` of each call site of a call-tree node.
+fn sites(node: &Value) -> Vec<(u64, u64, u64)> {
+    node["call_sites"].as_array().unwrap().iter().map(|r| (r["start"]["line"].as_u64().unwrap(), r["start"]["character"].as_u64().unwrap(), r["end"]["character"].as_u64().unwrap())).collect()
+}
+
+#[test]
+fn a_call_tree_comes_back_merged_and_mapped_to_the_structure() {
+    let root = std::env::temp_dir().join(format!("vnoc-calltree-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let mut core = calls_project(&root, &root);
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+
+    let result = core.request("vnoc/callTree", json!({ "key": "app.py::main" })).expect("the call tree answers (is the driver built? `cd drivers/python && cargo build`)");
+    assert_eq!(result["revision"], structure["revision"], "the keys were mapped against the index the editor shows");
+
+    let main = &result["root"];
+    assert_eq!((main["key"].as_str(), main["name"].as_str(), main["qualname"].as_str(), main["path"].as_str(), main["kind"].as_str()), (Some("app.py::main"), Some("main"), Some("main"), Some("app.py"), Some("function")));
+    assert_eq!((main["call_count"].as_u64(), sites(main), main["marks"].clone()), (Some(1), vec![], json!([])));
+
+    // `main` calls leaf, twice, leaf, and `os.getcwd()`: two nodes (the library call is not in the tree), `leaf` merged from two calls
+    let kids = main["children"].as_array().unwrap();
+    assert_eq!(kids.iter().map(|k| k["name"].as_str().unwrap()).collect::<Vec<_>>(), ["leaf", "twice"]);
+    let (leaf, twice) = (&kids[0], &kids[1]);
+    assert_eq!((leaf["key"].as_str(), leaf["path"].as_str(), leaf["call_count"].as_u64()), (Some("lib.py::leaf"), Some("lib.py"), Some(2)));
+    assert_eq!(sites(leaf), [(11, 4, 10), (13, 4, 10)], "both calls, in app.py, in source order");
+    assert_eq!((twice["key"].as_str(), twice["call_count"].as_u64(), sites(twice)), (Some("lib.py::twice"), Some(1), vec![(12, 4, 11)]));
+
+    // `twice` calls `leaf` twice from lib.py: one node, two sites, in the PARENT's file (lib.py)
+    let inner = &twice["children"][0];
+    assert_eq!((inner["key"].as_str(), inner["call_count"].as_u64(), sites(inner)), (Some("lib.py::leaf"), Some(2), vec![(5, 4, 10), (6, 4, 10)]));
+    assert_eq!(inner["children"], json!([]));
+    core.finish();
+}
+
+#[test]
+fn a_class_is_the_root_with_what_its_init_calls_and_a_bad_key_is_refused() {
+    let root = std::env::temp_dir().join(format!("vnoc-calltree-class-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let mut core = calls_project(&root, &root);
+
+    let result = core.request("vnoc/callTree", json!({ "key": "app.py::Box" })).unwrap();
+    let boxed = &result["root"];
+    assert_eq!((boxed["key"].as_str(), boxed["kind"].as_str(), boxed["name"].as_str()), (Some("app.py::Box"), Some("class"), Some("Box")));
+    let kids = boxed["children"].as_array().unwrap();
+    assert_eq!(kids.iter().map(|k| k["key"].as_str().unwrap()).collect::<Vec<_>>(), ["lib.py::leaf"], "there is no node for __init__ itself");
+    assert_eq!(sites(&kids[0]), [(7, 8, 14)]);
+
+    // not a function or a class, or not in the index: INVALID_PARAMS, and the core goes on
+    for key in ["app.py", "app.py::nope", "nowhere.py::main", "::"] {
+        let error = core.request("vnoc/callTree", json!({ "key": key })).unwrap_err();
+        assert_eq!(error["code"], -32602, "{key}: {error}");
+    }
+    assert_eq!(core.request("vnoc/callTree", json!({ "key": "app.py::main" })).unwrap()["root"]["children"].as_array().unwrap().len(), 2);
+    core.finish();
+}
+
+#[test]
+fn a_call_tree_of_a_subfolder_has_keys_from_the_git_root_and_paths_from_the_folder() {
+    let repo = std::env::temp_dir().join(format!("vnoc-calltree-sub-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let sub = repo.join("services/api");
+    let mut core = calls_project(&sub, &sub);
+
+    let result = core.request("vnoc/callTree", json!({ "key": "services/api/app.py::main" })).unwrap();
+    let main = &result["root"];
+    assert_eq!((main["key"].as_str(), main["path"].as_str()), (Some("services/api/app.py::main"), Some("app.py")), "the key starts at the git root, the path at the opened folder");
+    let leaf = &main["children"][0];
+    assert_eq!((leaf["key"].as_str(), leaf["path"].as_str()), (Some("services/api/lib.py::leaf"), Some("lib.py")));
+    core.finish();
+}

@@ -252,6 +252,20 @@ CallTreeNode {
 - `revision` is the index revision the mapping was made against; the extension drops an answer older than the structure it shows.
 - A key that is not a function or class → `INVALID_PARAMS`. A driver without the `callTree` capability → an error that says so.
 
+Built in `crates/vnoc/src/calls.rs` (the merge), `protocol.rs` (`CallTree`, `CallTreeNode`) and `server.rs` (`call_tree`). What the text leaves open, as built:
+
+- **The driver gets the opened folder as `root`**, not the git root, and the entry's path below it. That is the project the user sees and what its imports
+  resolve against (`from lib import x` in `services/api/` works). Its paths come back relative to the folder, so `path` is the driver's `target.file`
+  as is, and the key is the folder's prefix plus that path (the index's keys start at the git root).
+- **`key` is set when `Index::def_at` finds the target**, not `node_at`: `node_at` answers only for a documented node, and every def in the tree has a key.
+- A key without `::` (a file or a folder), one that does not parse, or one the index does not have → `INVALID_PARAMS`, as the driver's `no function …`
+  is. A driver without `callTree` → `REQUEST_FAILED` with the host's message.
+- **Merge:** a site that two merged parents both give (their children are the same calls of one body) is listed **once**, in source order; `call_count`
+  still counts the calls (2). Without that the "who calls" menu would list one place twice. An `id` that is not an ID is no ID (T4 falls to
+  the place). One ID in two places (a copied function) merges, as T4 says.
+- A request the editor cancels is dropped by `ConcurrencyLayer`, which drops the driver request under it (7.3 sends the cancel). Not tested end to end
+  here: it needs a slow driver.
+
 ## 7. Extension and canvas
 
 Kept small on purpose: the first version draws the tree. The EXPLORE contexts of `10-ui-rework/03` come after it works.

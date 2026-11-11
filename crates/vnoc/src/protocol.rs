@@ -3,6 +3,7 @@
 use async_lsp::lsp_types::notification::Notification;
 use async_lsp::lsp_types::request::Request;
 use serde::{Deserialize, Serialize};
+use vnoc_driver_protocol::{CallMark, DefKind, Range};
 
 use crate::index::Node;
 
@@ -348,4 +349,46 @@ impl Request for RestorePlan {
     type Params = RestorePlanParams;
     type Result = MovePlan;
     const METHOD: &'static str = "vnoc/restorePlan";
+}
+
+/// `vnoc/callTree`: what a function calls (or what a class's `__init__` calls), as a tree, with calls to one function merged (`docs/14` §6).
+/// Waits for the first build. A request that is cancelled (`$/cancelRequest`) cancels the driver's work too.
+pub enum CallTree {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallTreeParams {
+    /// the node's `id` from `vnoc/structure`: `path::qualname[#n]`, as `vnoc/attach` takes it. A function or a class.
+    pub key: String,
+}
+
+/// One function or class in the tree; calls to it from one place are merged into one node.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallTreeNode {
+    /// the node's `id` from `vnoc/structure`, when the index has it; `null` for code the index does not know (a library, an ignored file)
+    pub key: Option<String>,
+    /// the last part of `qualname`
+    pub name: String,
+    pub qualname: String,
+    /// relative to the opened folder, as in `vnoc/structure`; `null` when the code is not under it
+    pub path: Option<String>,
+    pub kind: DefKind,
+    /// how many calls were merged into this node; 1 for the root
+    pub call_count: u32,
+    /// where it is called, in the **parent's** file, in source order; empty for the root
+    pub call_sites: Vec<Range>,
+    pub marks: Vec<CallMark>,
+    pub children: Vec<CallTreeNode>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallTreeResult {
+    /// the index's revision the keys were mapped against; an answer older than the structure the editor shows is dropped
+    pub revision: u64,
+    pub root: CallTreeNode,
+}
+
+impl Request for CallTree {
+    type Params = CallTreeParams;
+    type Result = CallTreeResult;
+    const METHOD: &'static str = "vnoc/callTree";
 }
