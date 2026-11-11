@@ -18,10 +18,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # pylspt and the ruff crates come from one pinned commit (plan_vs 02-07 §1). For local work, put a `[patch]` section in an
 # uncommitted .cargo/config.toml pointing at ../../../pylspt.
 # TODO(M1): drop the three ruff_* lines when pylspt has a facade (S2 finding: it re-exports nothing, so the adapter names ruff crates).
-pylspt = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "670ae79a15" }
-ruff_python_parser = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "670ae79a15" }
-ruff_python_ast = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "670ae79a15" }
-ruff_text_size = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "670ae79a15" }
+pylspt = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "c395dde15b" }
+ruff_python_parser = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "c395dde15b" }
+ruff_python_ast = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "c395dde15b" }
+ruff_text_size = { git = "https://github.com/yaredtsy/rust_python_parser", rev = "c395dde15b" }
 
 # The wire types are shared with the core (D1): a renamed field breaks the build on both sides, not at run time.
 vnoc-driver-protocol = { path = "../../crates/vnoc-driver-protocol" }

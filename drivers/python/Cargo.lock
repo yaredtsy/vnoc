@@ -1182,7 +1182,7 @@ dependencies = [
 [[package]]
 name = "pylspt"
 version = "0.1.0"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "anyhow",
  "rpds",
@@ -1383,7 +1383,7 @@ dependencies = [
 [[package]]
 name = "ruff_annotate_snippets"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "anstyle",
  "memchr",
@@ -1393,7 +1393,7 @@ dependencies = [
 [[package]]
 name = "ruff_cache"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "char_str",
  "filetime",
@@ -1407,7 +1407,7 @@ dependencies = [
 [[package]]
 name = "ruff_db"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "anstyle",
  "arc-swap",
@@ -1450,7 +1450,7 @@ dependencies = [
 [[package]]
 name = "ruff_diagnostics"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "get-size2",
  "is-macro",
@@ -1461,7 +1461,7 @@ dependencies = [
 [[package]]
 name = "ruff_index"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "get-size2",
  "ruff_macros",
@@ -1471,7 +1471,7 @@ dependencies = [
 [[package]]
 name = "ruff_macros"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "heck",
  "itertools",
@@ -1485,7 +1485,7 @@ dependencies = [
 [[package]]
 name = "ruff_memory_usage"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "get-size2",
 ]
@@ -1493,7 +1493,7 @@ dependencies = [
 [[package]]
 name = "ruff_notebook"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "anyhow",
  "rand 0.10.2",
@@ -1509,12 +1509,12 @@ dependencies = [
 [[package]]
 name = "ruff_options_metadata"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 
 [[package]]
 name = "ruff_python_ast"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "aho-corasick",
  "arrayvec",
@@ -1538,7 +1538,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_edits"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "ruff_python_ast",
  "ruff_source_file",
@@ -1548,7 +1548,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_literal"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "bitflags 2.13.1",
  "icu_properties",
@@ -1559,7 +1559,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_parser"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "bitflags 2.13.1",
  "bstr",
@@ -1581,7 +1581,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_stdlib"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "bitflags 2.13.1",
  "unicode-ident",
@@ -1590,7 +1590,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_trivia"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "itertools",
  "ruff_source_file",
@@ -1602,7 +1602,7 @@ dependencies = [
 [[package]]
 name = "ruff_ranged_value"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "get-size2",
  "ruff_db",
@@ -1615,7 +1615,7 @@ dependencies = [
 [[package]]
 name = "ruff_source_file"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "get-size2",
  "memchr",
@@ -1626,7 +1626,7 @@ dependencies = [
 [[package]]
 name = "ruff_text_size"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "get-size2",
  "serde",
@@ -2111,7 +2111,7 @@ checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
 [[package]]
 name = "ty_combine"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "ordermap",
  "ruff_db",
@@ -2122,7 +2122,7 @@ dependencies = [
 [[package]]
 name = "ty_module_resolver"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "anyhow",
  "camino",
@@ -2146,7 +2146,7 @@ dependencies = [
 [[package]]
 name = "ty_project"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "anyhow",
  "bitvec",
@@ -2192,7 +2192,7 @@ dependencies = [
 [[package]]
 name = "ty_python_core"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "bitflags 2.13.1",
  "bitvec",
@@ -2223,7 +2223,7 @@ dependencies = [
 [[package]]
 name = "ty_python_semantic"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "bitflags 2.13.1",
  "char_str",
@@ -2266,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "ty_site_packages"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "camino",
  "colored",
@@ -2287,7 +2287,7 @@ dependencies = [
 [[package]]
 name = "ty_static"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "ruff_macros",
 ]
@@ -2295,7 +2295,7 @@ dependencies = [
 [[package]]
 name = "ty_vendored"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/rust_python_parser?rev=670ae79a15#670ae79a157d1899c0484a9aff69a9193d8d2685"
+source = "git+https://github.com/yaredtsy/rust_python_parser?rev=c395dde15b#c395dde15bac456afc64e9a1c2a292a531a1cbf1"
 dependencies = [
  "path-slash",
  "ruff_db",
