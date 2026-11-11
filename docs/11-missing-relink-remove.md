@@ -15,7 +15,8 @@ Step 5
 ├── 7. messages
 ├── 8. order of work, each with its test
 ├── 9. what you decided
-└── 10. draft rows for your decision log
+├── 10. draft rows for your decision log
+└── 11. Step 5.6: fixes from the review before the merge
 ```
 
 ## 1. The goal
@@ -72,10 +73,11 @@ relink(id, to):
     · `to` carries a different V-NOC ID             "that node already has its own docs"
     · another node already resolves to `to`         same message (a node found by name has no ID in the code, so the first check misses it)
     · `kind` is known and `to` is another kind      (the lists below never offer it; the core checks anyway)
-  1  markers on? write the ID at `to`, the same way attach does it:
+  1  markers on, and id_in_code is "yes", "no" or not there? write the ID at `to`, the same way attach does it:
        function / class / file → the driver plans it, the editor applies it
        folder                  → the core writes .vnoc-id
      a failed write does not block: id_in_code = "no", and the user is told (same as attach)
+     id_in_code = "never", or a value this version does not know → no ID is written and the field is left as it is (§11.2)
   2  node.toml: path, qualname, occurrence, kind ← `to`   (one atomic write, toml_edit keeps unknown keys)
 ```
 
@@ -149,12 +151,14 @@ Restore ("V-NOC: Restore Removed Doc…" → pick)
 
 ```
 Remove All Missing ("V-NOC: Remove All Missing…")
-  confirm once, with the number of nodes; then `vnoc/trash` and the move for each Missing node, one after the other. Restore brings each back.
+  confirm once, with the number of nodes; then `vnoc/trash` for each Missing node, and ONE move for all of them (§11.3). Restore brings each back.
 
 Empty Trash ("V-NOC: Empty Trash")
+  core  vnoc/trashInfo → { folder, entries, bytes }   (the core knows where the trash is; the extension does not build the path, §11.4)
   nothing in the trash while nodes are Missing → say so, and point to Remove… and Remove All Missing…
   confirm, with the number of entries and the size
-  workspace.fs.delete(trash, { recursive: true, useTrash: true })   → the OS trash where there is one: one more chance
+  workspace.fs.delete(folder, { recursive: true, useTrash: true })   → the OS trash where there is one: one more chance
+    it throws (no OS trash: a remote window, a container) → ask again, "Delete Permanently", then delete with useTrash: false
   the ONLY permanent delete in V-NOC
 ```
 
@@ -211,6 +215,7 @@ Add each to the typed map in `shared/messages.ts` (and its Rust twin in `crates/
 | `vnoc/trash` | extension → core | `{ id }` → `{ from, to }`, or an error when the ID is not Missing |
 | `vnoc/trashList` | extension → core | `{}` → `[{ entry, id, removedAt, docs }]` |
 | `vnoc/restorePlan` | extension → core | `{ entry }` → `{ from, to }` or an error |
+| `vnoc/trashInfo` | extension → core | `{}` → `{ folder, entries, bytes }` (§11.4) |
 
 Remove and Restore do the move in the extension: the core plans, VS Code moves (`04-storage/03` §1). The core's Rust tests cover the plans and the
 refusals. The real-window suite covers the moves.
@@ -227,6 +232,7 @@ Each step leaves a working extension and runs the full test list from [`10-ui-re
 | **5.3** | Relink from both ways in, with all three refusals | Rust: each refusal · the anchor and `kind` rewritten, unknown keys kept · window test: relink a Missing function to another, and its badge appears there |
 | **5.4** | Remove · Restore · Empty Trash, the empty-entry cleanup | Rust: the plans, `vnoc/trash` refuses an ID that is not Missing, the derived `to`, the refusal on an existing folder, an entry that disagrees with itself is skipped · window test: **Remove → Restore gives back the same bytes** (the Step 6 no-data-loss test, written now) |
 | **5.5** | Write ID (§4) in the row, card and editor menus · `menus.test.ts` grows (details below) | Rust: the write, each refusal, the failed write · window test: delete an `ID:` line, run Write ID, and the node is found by marker again · `menus.test.ts` passes |
+| **5.6** | the four fixes from the review before the merge (§11) | Rust: Write ID refuses a node whose ID is elsewhere · Relink keeps `"never"` and an unknown value · `vnoc/trashInfo` · window test: two Missing nodes removed in one move |
 
 ### Step 5.5 in detail
 
@@ -291,3 +297,105 @@ Paste what you accept into [`08-decisions-to-log.md`](08-decisions-to-log.md); I
 | **M5c** | Remove is for Missing nodes only in 0.1 | — |
 | **M5d** | "Update stored locations" waits for 0.1.x | `05-identity/05` §4 (0.1) |
 | **M5e** | A record is Missing only when its anchor path was scanned or is gone from disk; otherwise it is unknown and not listed. `vnoc/trash` refuses an ID that is not Missing | — |
+
+## 11. Step 5.6: fixes from the review before the merge
+
+Written 2026-11-11, after the review of the whole branch. Four fixes, one commit. The safety design of Step 5 is unchanged.
+
+### 11.1 Write ID asks the index, not the disk
+
+**Now** `write_id.rs` finds the node with `data.find_node_at(&location)`. That reads every `node.toml` from disk and compares the **stored anchor**.
+Two things are wrong with it:
+
+- A node whose ID is somewhere else in the code, with an old anchor that still names this place, is returned. Write ID would then write a
+  second copy of its ID here. Old anchors are normal (M5d: "Update stored locations" is later). Only the extension's check stops it today.
+- It reads all of `.vnoc/nodes/` on the async runtime, while holding the `attaching` lock.
+
+**Fix** (`crates/vnoc/src/identity/write_id.rs`): look the node up in the index, in the same read lock as `find_target`, as §4 says.
+
+```
+let (location, target, id) = {
+    let index = env.index.read().unwrap();
+    let (location, target) = find_target(&index, &params.key)?;
+    if target.in_code().is_some() { return Err(AlreadyInCode) }
+    let id = index.node_at(&location).ok_or(NoDocs)?;
+    (location, target, id)
+};
+```
+
+Leave `UserData::find_node_at` alone: `attach.rs` still calls it (attach has no index answer for a node that is not in the code yet).
+
+### 11.2 Relink keeps `id_in_code = "never"` and a value it does not know
+
+**Now** `relink.rs` writes the ID whenever markers are on, and always sets `id_in_code` to `"yes"` or `"no"`. Write ID refuses a `"never"` node;
+Relink does not. A value a newer V-NOC wrote (`IdInCode::Other`) is replaced by `"no"`, against rule 3 in `node_toml.rs`.
+
+**Fix** (`crates/vnoc/src/identity/relink.rs`):
+
+| `id_in_code` in the node's `node.toml` | Step 1 (the ID) | Step 2 (`node.toml`) |
+|---|---|---|
+| `"yes"`, `"no"`, or not there | as today | as today: `"yes"` or `"no"` |
+| `"never"` or an unknown value | **no ID is written**, no notice, `written: anchorOnly` | the place and `kind` are set; **`id_in_code` is not touched** |
+
+Read the field once, before step 1 (`let may_write = matches!(toml.id_in_code(), None | Some(IdInCode::Yes | IdInCode::No));`), and use it in
+both steps. Import `IdInCode` at the top of the file instead of writing `vnoc_domain::IdInCode` inline.
+
+### 11.3 Remove All Missing is one move
+
+**Now** `removeAllMissing` calls `moveToTrash` in a loop. Each call renames one folder and sends `vnoc/filesChanged`, and the core does not
+merge `Work::Files` updates. With N Missing nodes: N walks of the repo, N reads of `.vnoc/`, N `indexChanged`, N structure reloads.
+
+**Fix** (`extension/src/trash.ts`):
+
+| What | Change |
+|---|---|
+| `moveAllToTrash(core, ids): Promise<number>` (new, exported) | ask `vnoc/trash` for each ID, one after the other, and keep the plans. A refusal (the node is not Missing any more) skips that ID; go on with the rest. Then **one** `WorkspaceEdit` with a `renameFile` per plan, **one** `applyEdit`, **one** `vnoc/filesChanged` with every `from` and `to`. Returns how many moved. No plans → no edit, returns 0 |
+| `move` | takes a list of plans; `moveToTrash` and `restoreEntry` pass a list of one |
+| `removeAllMissing` | calls `moveAllToTrash` instead of the loop; the `try / finally` goes away |
+| `extension/src/extension.ts` | the test API gets `moveAllToTrash: (ids) => moveAllToTrash(c, ids)` beside `moveToTrash` |
+
+If `applyEdit` says no, nothing moved: the entries are empty and the next listing removes them, as for one node.
+
+### 11.4 Empty Trash asks the core where the trash is, and works without an OS trash
+
+**Now** `emptyTrash` builds `.vnoc/local/trash` itself (the core's `trash_folder()` is never called), walks it with `readdirSync` and `statSync`
+on the extension host, and deletes with `useTrash: true` only. Where there is no OS trash (a remote window, a container) that delete can throw,
+and the trash could never be emptied. I did not try it on a remote window.
+
+**Fix**
+
+| File | Change |
+|---|---|
+| `crates/vnoc/src/protocol.rs` | `TrashInfo`, params `serde_json::Value` (as `TrashList`), result `TrashInfoResult { folder: String, entries: usize, bytes: u64 }`, `METHOD = "vnoc/trashInfo"`. After `RestorePlan`, doc comment in the same style |
+| `crates/vnoc/src/userdata/trash.rs` | `trash_info(&self) -> (PathBuf, usize, u64)`: call `trash_list()` first (it removes the empty entries), then count the folders in the trash folder (all of them, the skipped ones too: Empty Trash deletes the whole folder) and add up the sizes of the files under it. Do not follow symlinks (`symlink_metadata`). A trash folder that is not there is `0, 0`. Remove `trash_folder()` |
+| `crates/vnoc/src/server.rs` | a `trash_info` handler like `trash_list` (`spawn_blocking`), registered in `router` |
+| `shared/messages.ts` | `TrashInfo { folder: string; entries: number; bytes: number }` |
+| `extension/src/trash.ts` | `emptyTrash(core, stillMissing)`: no `gitRoot` param. It asks `vnoc/trashInfo` and uses `folder`, `entries`, `bytes`. `folderBytes` and the `fs` and `path` imports go away. The delete: try `useTrash: true`; when it throws, ask with a modal warning "There is no system trash here. Delete the removed docs for good?" and the button `Delete Permanently`, then delete with `useTrash: false`. A "no" returns false |
+| `extension/src/commands.ts` | `vnoc.emptyTrash` no longer passes the git root |
+
+### 11.5 Tests
+
+| Where | Test |
+|---|---|
+| `crates/vnoc/tests/lifecycle.rs` | **Write ID, the ID is elsewhere**: `orders_project` with `format = 1`. `write_record(S, "orders.py", "OrderService.other")`, and put `ID: S` in the code of **another** def of `orders.py` before the core starts. Wait until that other def has `node_id == S`. `vnoc/writeId` with the key of `OrderService.other` is refused with "has no docs"; `core.edit_requests.len()` and the file are unchanged |
+| | **Relink keeps "never"**: as `relink_writes_the_id_at_the_new_place…`, with `id_in_code = "never"` in the Missing node's `node.toml`, markers on. The answer is `written: "anchorOnly"`, no notice; the editor was not asked; the code has no `ID:` line; `node.toml` has the new `path` and `qualname` and still `id_in_code = "never"`. One more assert with `id_in_code = "sometimes"`: it is still `"sometimes"` after |
+| `crates/vnoc/src/userdata/trash.rs` | **trash_info**: no trash folder → `(…, 0, 0)` · one removed node → 1 entry, bytes > 0 · an empty entry is not counted (and is gone after the call) |
+| `extension/src/test/suite/attention.test.ts` | in the "needs attention" suite: the suite documents only `doomed`, so attach a second function (`markers: false`, as its `suiteSetup` does) and make both Missing, then `api.moveAllToTrash([id1, id2])` answers 2, both leave `attention().missing`, and `vnoc/trashList` has both. Restore both in the teardown of the test |
+
+**Done when** the full test list of [`10-ui-rework/05-build-order.md`](10-ui-rework/05-build-order.md) §4 passes, with the `unit` script and the window suite. One commit:
+`step 5.6: Write ID asks the index, Relink keeps "never", one move for Remove All Missing, Empty Trash asks the core`.
+
+### 11.6 Not in 5.6: after the merge
+
+Found in the same review. None of them loses data; they are about cost and tidiness.
+
+| What | Where | Fix |
+|---|---|---|
+| Every `resolve_all` lower-cases every file and folder path | `index/mod.rs`, `scanned` | build the set only when `on_disk` is not empty: a path that is not in `on_disk` was looked for anyway |
+| Every refresh clones every outlined path into a set | `index/build.rs`, `read` | go over the records' anchors and ask the index about each one |
+| The index keeps the wire type `MissingNode`, so `is_missing` makes a string and scans the list | `index/mod.rs` | keep the Missing nodes by `NodeId`; make `MissingNode` in `missing()`, as `failed()` does |
+| `trash_list` deletes empty entries, and `restore_plan` calls it: a listing between `vnoc/trash` and the move removes the entry the move needs | `userdata/trash.rs` | remove an empty entry only when it is older than a minute |
+| The object `activate` returns gives `request` and `moveToTrash` to any other extension | `extension/src/extension.ts` | return it only when `extensionMode` is not Production |
+| `RelinkResult` and `WriteIdResult` are local interfaces | `extension/src/relink.ts`, `writeId.ts` | move them to `shared/messages.ts`, beside their Rust twins |
+| `relink` and `write_id` read and write files on the async runtime | `identity/` | `spawn_blocking`, as the trash handlers do |
+| The driver waits for its refused handshake by taking stdout's lock: it relies on `lsp_server` holding that lock for the writer thread's whole life | `drivers/python/src/main.rs` | pin the `lsp-server` version, and say so in the comment |
