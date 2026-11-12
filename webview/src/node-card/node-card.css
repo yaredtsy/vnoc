@@ -44,3 +44,22 @@
 .node-header .hidden-dot.cursor { color: var(--card-cursor); }
 /* the edges down to the selection are thicker (Canvas.tsx marks them) */
 .react-flow__edge.on-path .react-flow__edge-path { stroke: var(--card-selected); stroke-width: 2px; }
+
+/* the "Calls" section of the card a call tree was made for (docs/14 §7). Its height is layout.ts's `callsHeight`: header 24 px, rows 20 px, ten rows at most. */
+.node-calls { flex: none; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--card-border); }
+.node-calls .calls-head { display: flex; align-items: center; gap: 6px; flex: none; height: 24px; padding: 0 8px; font-size: 11px; }
+.node-calls .calls-title { font-weight: 600; flex: 1; }
+.node-calls .calls-stale { opacity: .8; font-style: italic; }
+.node-calls .calls-rows { flex: 1; min-height: 0; margin: 0; padding: 0; list-style: none; overflow-y: auto; }
+.node-calls .call-row { min-height: 20px; font-size: 11px; line-height: 20px; }
+.node-calls .call-line { display: flex; align-items: center; gap: 5px; height: 20px; }
+.node-calls .call-kind { flex: none; width: 12px; text-align: center; opacity: .7; }
+.node-calls .call-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.node-calls button.call-name { cursor: pointer; }
+.node-calls button.call-name:hover { text-decoration: underline; }
+.node-calls .call-row.unknown .call-name { opacity: .5; cursor: default; }
+.node-calls .call-mark { flex: none; font-size: 10px; padding: 0 5px; border-radius: 8px; background: var(--card-badge-bg); color: var(--card-badge-fg); }
+.node-calls .call-sites-toggle { flex: none; margin-left: auto; padding: 0 6px 0 0; border: 0; background: none; color: inherit; font-size: 10px; opacity: .7; cursor: pointer; }
+.node-calls .call-sites { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 0 2px 18px; }
+.node-calls .call-sites button { padding: 0 6px; border: 1px solid var(--card-border); border-radius: 8px; background: none; color: inherit; font-size: 10px; cursor: pointer; }
+.node-calls .call-empty { padding: 0 6px; opacity: .6; font-size: 11px; line-height: 20px; }

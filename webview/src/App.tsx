@@ -8,9 +8,11 @@ import { findNode } from "@vnoc/shared/tree.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
 import { canvasKey } from "./canvas/keys.ts";
 import { SelectionStrip } from "./canvas/SelectionStrip.tsx";
+import { callRows } from "./canvas/calls.ts";
 import { layout } from "./canvas/layout.ts";
 import { DocPanel } from "./docs/DocPanel.tsx";
 import { post, request } from "./host.ts";
+import { useCalls } from "./state/calls.ts";
 import { refresh, useData } from "./state/data.ts";
 import { dispatch, useSession } from "./state/session.ts";
 import { setDocsOpen, setHover, useView } from "./state/view.ts";
@@ -31,11 +33,15 @@ export function App() {
   const openList = useSession((s) => s.contexts[s.active].expanded);
   const expanded = useMemo<ReadonlySet<string>>(() => new Set(openList), [openList]);
 
+  // how many rows each card's "Calls" section has: the layout makes the card as tall as its rows
+  const trees = useCalls((s) => s.trees);
+  const rowCounts = useMemo(() => new Map(Object.entries(trees).map(([key, tree]) => [key, callRows(tree.root).length])), [trees]);
+
   const root = structure?.root ?? null;
   const crumbs = useMemo(() => (root ? focus.map((id) => ({ id, node: findNode(root, id) })) : []), [root, focus]);
   const top = crumbs.length > 0 ? crumbs[crumbs.length - 1].node ?? null : null;
   // zoomed in: the focused node is the root of what is drawn (and the root of a drawing is always open)
-  const laid = useMemo(() => (root ? layout(top ?? root, expanded, codeOpen) : null), [root, expanded, top, codeOpen]);
+  const laid = useMemo(() => (root ? layout(top ?? root, expanded, codeOpen, rowCounts) : null), [root, expanded, top, codeOpen, rowCounts]);
   // the doc panel shows the selected card, else the focused node
   const selectedNode = root && selected ? findNode(root, selected) ?? null : null;
   const docNode = selectedNode ?? top;

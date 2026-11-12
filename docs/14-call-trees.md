@@ -282,6 +282,21 @@ Kept small on purpose: the first version draws the tree. The EXPLORE contexts of
 | a row | click selects that node when `key` is set · a row with `key: null` is grey and does nothing · the row's menu lists its call sites, each opens the parent's file at that range |
 | stale | when `vnoc/indexChanged` arrives, the section shows "the code changed · Refresh" and does not re-run by itself |
 
+Built in `extension/src/callTree.ts`, `commands.ts`, `webview/src/node-card/NodeCalls.tsx`, `canvas/calls.ts`, `state/calls.ts`. What the table leaves open, as built:
+
+- **"Enabled only when the driver has `callTree`"**: `vnoc/structure` now carries `capabilities` (the running driver's, from its handshake), and the
+  extension sets the context key `vnoc.callTree` from each structure. The row and the card menu test it; the palette does not offer the command.
+- **Where the trees live**: in the extension (`CallTrees`, the latest per entry, 50 at most), not in the session: they are large and mean nothing after
+  a restart. A canvas that opens later asks for them (`callTrees`); an open one hears each new one (`callTree` event).
+- **The card**: the section is under the body, before the footer, ten rows high at most (more scroll inside it); the layout makes the card that
+  much taller (`callsHeight`). An entry that calls nothing in the project still gets the section, with one line saying so. The root's own marks
+  are in the section's header.
+- **A row's menu** is a "N sites" toggle on the row that lists the call sites as `line N` buttons, not VS Code's right-click menu: that menu is
+  static (package.json), and the list is not. A row with no known parent file has no toggle.
+- **A row click is `select`**, as written: the node may not be drawn on the canvas; the doc panel and the sidebar follow the selection.
+- **Stale** is computed in the page: the tree's `revision` is older than the structure's. Refresh runs the same request again without moving the canvas.
+- Cancel is the progress notification's button: `sendRequest` with its token sends `$/cancelRequest`, the core drops the handler, 7.3 cancels the driver.
+
 ## 8. Order of work
 
 Each row is one commit on `0.2-call-trees` and leaves the branch green. `main` takes 0.1 fixes only; merge `main` into the branch after each.

@@ -8,5 +8,6 @@ export function run(): Promise<void> {
   mocha.addFile(path.resolve(__dirname, "sidebar.test.js"));
   mocha.addFile(path.resolve(__dirname, "attention.test.js"));
   mocha.addFile(path.resolve(__dirname, "refactor.test.js"));
+  mocha.addFile(path.resolve(__dirname, "calls.test.js"));
   return new Promise((resolve, reject) => mocha.run((failures) => (failures ? reject(new Error(`${failures} tests failed`)) : resolve())));
 }

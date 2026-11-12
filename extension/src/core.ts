@@ -78,9 +78,10 @@ export class Core {
     this.output.appendLine(`core started: ${core}\ndriver: ${driver}`);
   }
 
-  async request<T>(method: string, params?: object): Promise<T> {
+  /** `token`: cancelling it sends `$/cancelRequest` for this request, and the core stops the work under it. */
+  async request<T>(method: string, params?: object, token?: vscode.CancellationToken): Promise<T> {
     await this.ready;
-    return this.client!.sendRequest<T>(method, params);
+    return token ? this.client!.sendRequest<T>(method, params, token) : this.client!.sendRequest<T>(method, params);
   }
 
   async notify(method: string, params?: object): Promise<void> {

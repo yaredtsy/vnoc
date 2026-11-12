@@ -207,19 +207,21 @@ fn files_changed(core: &mut Core, params: FilesChangedParams) -> ControlFlow<asy
 
 /// `vnoc/structure`: the tree, from the index. Waits for the first build.
 fn structure(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<StructureResult, ResponseError>> + Send + use<> {
-    let state = core.state.clone();
+    let (state, host) = (core.state.clone(), core.host.clone());
     timed("structure", async move {
         let status = state.status.subscribe().wait_for(|s| !matches!(s, Status::Building)).await.map_err(internal)?.clone();
         if let Status::Failed(message) = status {
             return Err(internal(message));
         }
         let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let capabilities = host.capabilities().await;
         let index = state.index.read().unwrap();
         let root = index.tree(&project.name(), project.prefix());
         let [folders, files, classes, functions] = root.counts();
         Ok(StructureResult {
             revision: index.revision(),
             git_root: project.git_root().to_string_lossy().into_owned(),
+            capabilities,
             root,
             stats: Stats { folders: folders.saturating_sub(1), files, classes, functions }, // the opened folder is not a folder under itself
             truncated: index.truncated(),

@@ -269,6 +269,11 @@ pub struct DriverHost {
 }
 
 impl DriverHost {
+    /// What the running driver says it can do; empty when none is running.
+    pub async fn capabilities(&self) -> std::collections::BTreeMap<String, bool> {
+        self.client.lock().await.as_ref().map(|client| client.info.capabilities.clone()).unwrap_or_default()
+    }
+
     pub fn set_path(&self, path: Option<PathBuf>) {
         *self.path.lock().unwrap() = path;
     }

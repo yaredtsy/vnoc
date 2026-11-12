@@ -59,6 +59,8 @@ export interface StructureResult {
   /** which version of the index this answer is from; a lower number than the one shown is a late answer */
   revision: number;
   git_root: string;
+  /** which optional methods the driver has (`callTree`, …); the extension shows a command only when its method is there */
+  capabilities: Record<string, boolean>;
   root: TreeNode;
   stats: { folders: number; files: number; classes: number; functions: number };
   truncated: boolean;
@@ -102,6 +104,31 @@ export interface DocInfo {
   path: string;
 }
 
+export type CallMark = "recursive" | "cut" | "incomplete";
+
+/** One function or class in a call tree; calls to it from one place are merged into one node (`crates/vnoc/src/protocol.rs` has the Rust side). */
+export interface CallTreeNode {
+  /** the node's `id` in the structure; null for code the index does not know (a library, an ignored file) */
+  key: string | null;
+  name: string;
+  qualname: string;
+  /** relative to the opened folder; null when the code is not under it */
+  path: string | null;
+  kind: "function" | "class";
+  /** how many calls were merged into this node; 1 for the root */
+  call_count: number;
+  /** where it is called, in the PARENT node's file, in source order; empty for the root */
+  call_sites: Range[];
+  marks: CallMark[];
+  children: CallTreeNode[];
+}
+
+/** `vnoc/callTree`: the tree of one entry, and the index revision its keys were mapped against. */
+export interface CallTreeResult {
+  revision: number;
+  root: CallTreeNode;
+}
+
 /** webview → extension, with an answer. One line per request: its parameters and its result. */
 export interface Requests {
   structure: { params: void; result: StructureResult };
@@ -113,6 +140,12 @@ export interface Requests {
   openDoc: { params: { path: string }; result: void };
   openLink: { params: { href: string; from: string }; result: void };
   goToCode: { params: { key: string }; result: void };
+  /** the call trees the host holds, by the key of their entry: a canvas that opens later asks once, then listens for the `callTree` event */
+  callTrees: { params: void; result: Record<string, CallTreeResult> };
+  /** run Show Call Tree on this node again (the Refresh of a stale "Calls" section); the answer arrives as a `callTree` event */
+  showCallTree: { params: { key: string }; result: void };
+  /** open a file below the opened folder at a range (a call site) */
+  openAt: { params: { path: string; range: Range }; result: void };
   /** the session as it is now; a webview asks once when it starts, and after that it listens for the `session` event */
   session: { params: void; result: Session };
 }
@@ -125,6 +158,8 @@ export interface Events {
   session: Session;
   /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view */
   viewCommand: { name: "showCode" | "hideCode" | "fitView"; key?: string };
+  /** a call tree arrived: the entry's card shows it in its "Calls" section */
+  callTree: { key: string; result: CallTreeResult };
   /** the docs tab beside an editor is already open: show this node and stay on it (pinned) */
   showNode: { id: string };
 }
@@ -133,6 +168,7 @@ export interface Events {
 export type Notes =
   | { type: "intent"; context: ContextId; intent: Intent } // the one way a webview changes the session
   | { type: "rendered"; visible: number; hidden: number } // the extension's test suite uses it
+  | { type: "callsDrawn"; key: string; rows: number; stale: boolean } // a card drew its "Calls" section: the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 

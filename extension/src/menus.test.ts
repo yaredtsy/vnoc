@@ -59,7 +59,7 @@ test("every key a card's `when` clause tests is a key nodeContext() writes", () 
     Object.keys(
       JSON.parse(
         nodeContext({
-          node: { id: "a.py::f", kind: "function", name: "f", path: "a.py", line: 1, range: null, codeOpen: false, depth: 0, x: 0, y: 0, childCount: 0, collapsed: false, syntaxError: false, docs: 0, link: null },
+          node: { id: "a.py::f", kind: "function", name: "f", path: "a.py", line: 1, range: null, codeOpen: false, depth: 0, x: 0, y: 0, childCount: 0, collapsed: false, syntaxError: false, docs: 0, link: null, callRows: null },
           contextId: "main",
           isFocusRoot: false,
         }),

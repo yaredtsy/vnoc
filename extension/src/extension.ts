@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import type { Notes } from "@vnoc/shared/messages";
 import type { ContextState } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
+import { CallTrees } from "./callTree";
 import { Commands } from "./commands";
 import { Core, watchFiles } from "./core";
 import { CursorMark } from "./cursorMark";
@@ -19,6 +20,10 @@ import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 /** What the webview last said it drew (for the test suite). */
 let rendered: { visible: number; hidden: number } | undefined;
 const renderWaiters: ((r: { visible: number; hidden: number }) => void)[] = [];
+
+/** The "Calls" section each card last drew, by entry key: how many rows, and whether it said the code changed (for the test suite). */
+const callsDrawn: Record<string, { rows: number; stale: boolean }> = {};
+const callsWaiters: (() => void)[] = [];
 
 let core: Core | undefined;
 /** Pages that crashed while drawing (for the test suite). */
@@ -57,6 +62,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   const c = new Core(ctx, output, indexChanged);
   core = c;
   const store = new SessionStore(ctx.workspaceState, () => c.tree);
+  const callTrees = new CallTrees(c, (key, result) => panels.emit("callTree", { key, result }));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // what a webview may ask of the extension (`shared/messages.ts` lists it, `relay.ts` serves it)
   const handlers = createHandlers({
@@ -66,13 +72,16 @@ export function activate(ctx: vscode.ExtensionContext) {
     docs,
     code: (path, range) => commands.codeOf(path, range),
     goToCode: (key) => commands.goToCodeOf(key),
+    callTrees: () => callTrees.all(),
+    refreshCallTree: (key) => commands.refreshCallTree(key),
+    openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
   });
   panels = new Panels(ctx, handlers, (note) => onNote(note, store, output));
   commands = new Commands(c, store, panels, async (id) => {
     const row = sidebar.rowForId(id);
     if (row) await sidebarView.reveal(row, { select: true, focus: true, expand: false }); // shows the V-NOC side bar too
-  });
+  }, callTrees);
 
   sidebar = new StructureView(async () => (await c.loadStructure()).root);
   sidebarView = vscode.window.createTreeView("vnoc.structure", { treeDataProvider: sidebar, showCollapseAll: true });
@@ -118,6 +127,8 @@ export function activate(ctx: vscode.ExtensionContext) {
         void vscode.commands.executeCommand("setContext", "vnoc.hasAttention", attention.hasAttention);
         void vscode.commands.executeCommand("setContext", "vnoc.hasMissing", attention.hasMissing);
       }
+      // the command is offered only when the driver that read the code has the method
+      void vscode.commands.executeCommand("setContext", "vnoc.callTree", structure.capabilities?.callTree === true);
       store.dispatch({ type: "treeChanged" });
       commands.syncCursor();
     }),
@@ -136,6 +147,19 @@ export function activate(ctx: vscode.ExtensionContext) {
     saved: () => ctx.workspaceState.get<{ contexts: Record<string, ContextState> }>("vnoc.session.v1"),
     /** the rows of NEEDS ATTENTION: the Missing IDs and the Problems */
     attention: () => attention.snapshot(),
+    /** the "Calls" section a card last drew, by entry key: the rows it showed */
+    callsDrawn: () => callsDrawn,
+    /** resolves when a card has drawn a "Calls" section for `key` that satisfies `ready` */
+    waitCallsDrawn: (key: string, ready: (drawn: { rows: number; stale: boolean }) => boolean, timeoutMs: number) =>
+      new Promise<{ rows: number; stale: boolean }>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`no "Calls" section was drawn for ${key}`)), timeoutMs);
+        const check = () => {
+          const drawn = callsDrawn[key];
+          if (drawn !== undefined && ready(drawn)) return clearTimeout(t), resolve(drawn);
+          callsWaiters.push(check);
+        };
+        check();
+      }),
     /** a request to the core (the suite attaches docs through it, without the input boxes) */
     request: <T>(method: string, params?: object) => c.request<T>(method, params),
     /** Remove and Restore without the questions (the commands add those) */
@@ -169,6 +193,10 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel) 
       rendered = { visible: note.visible, hidden: note.hidden };
       output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
+      break;
+    case "callsDrawn":
+      callsDrawn[note.key] = { rows: note.rows, stale: note.stale };
+      callsWaiters.splice(0).forEach((w) => w());
       break;
     case "error":
       webviewErrors.push(note.message);

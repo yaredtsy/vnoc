@@ -79,6 +79,8 @@ pub struct StructureResult {
     pub truncated: bool,
     /// files the driver could not outline (the rest of the structure is still there)
     pub failed: Vec<FailedFile>,
+    /// which optional methods the driver that read the code has (`"callTree"`, …): the editor shows a command only when its method is there
+    pub capabilities: std::collections::BTreeMap<String, bool>,
     /// documented nodes that are not in the code now, sorted by path
     pub missing: Vec<MissingNode>,
     /// broken `.vnoc/` files and `.vnoc-id` files, and an ID written in two places

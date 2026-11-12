@@ -856,6 +856,7 @@ fn a_call_tree_comes_back_merged_and_mapped_to_the_structure() {
     let _ = std::fs::remove_dir_all(&root);
     let mut core = calls_project(&root, &root);
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(structure["capabilities"]["callTree"], true, "the editor shows its command because the structure says the driver can");
 
     let result = core.request("vnoc/callTree", json!({ "key": "app.py::main" })).expect("the call tree answers (is the driver built? `cd drivers/python && cargo build`)");
     assert_eq!(result["revision"], structure["revision"], "the keys were mapped against the index the editor shows");

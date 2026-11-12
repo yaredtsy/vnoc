@@ -6,6 +6,7 @@ import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
 import type { Events } from "@vnoc/shared/messages";
 import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
+import type { CallTrees } from "./callTree";
 import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
 import type { Panels } from "./panels";
@@ -50,6 +51,7 @@ export class Commands {
     private readonly panels: Panels,
     /** selects the node's row in the sidebar tree and brings the V-NOC side bar up */
     private readonly revealRow: (id: string) => Promise<void>,
+    private readonly callTrees: CallTrees,
   ) {}
 
   private readonly request = <T>(method: string, params?: object) => this.core.request<T>(method, params);
@@ -102,6 +104,7 @@ export class Commands {
       on("vnoc.focusClear", () => this.store.dispatch({ type: "focusJump", depth: 0 })),
       on("vnoc.goToCode", async (arg, selected) => this.goToCode(await this.nodeFor(arg, selected))),
       on("vnoc.showDocs", (arg, selected) => this.showDocsBeside(arg, selected)),
+      on("vnoc.showCallTree", async (arg, selected) => this.showCallTree(await this.nodeFor(arg, selected))),
       // the NEEDS ATTENTION rows (a row is `{ row: "missing" | "problem", … }`; nothing here changes the session)
       on("vnoc.openMissingDocs", (arg) => (isAttentionRow(arg, "missing") ? this.panels.showDocs(MISSING_PIN + arg.node.id) : undefined)),
       on("vnoc.openProblem", (arg) => (isAttentionRow(arg, "problem") ? goToProblem(arg.problem) : undefined)),
@@ -250,6 +253,30 @@ export class Commands {
     const node = findNode(tree, key);
     if (!node) throw new Error("That node is not in the structure any more.");
     await this.goToCode(node);
+  }
+
+  /** Show Call Tree: the core's tree for a function or class, in the "Calls" section of its card. The canvas comes up on that card once the tree is here. */
+  async showCallTree(node: TreeNode) {
+    if (node.kind !== "function" && node.kind !== "class") throw new Error("A call tree starts at a function or a class.");
+    if (await this.callTrees.run(node.id, node.name)) this.openCanvasAt(node.id);
+  }
+
+  /** The same tree again, for the Refresh of a section that went stale: the canvas is open, so it is not brought up again. */
+  async refreshCallTree(key: string) {
+    const tree = this.core.tree ?? (await this.core.loadStructure()).root;
+    const node = findNode(tree, key);
+    if (!node) throw new Error("That node is not in the structure any more.");
+    await this.callTrees.run(node.id, node.name);
+  }
+
+  /** A file below the opened folder, at a range (a call site). Beside the canvas when it is in front, as Go to Code does. */
+  async openAt(relative: string, r: Range) {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) throw new Error("Open a folder first.");
+    const file = path.resolve(folder.uri.fsPath, relative);
+    if (!file.startsWith(folder.uri.fsPath + path.sep)) throw new Error(`${relative} is outside the opened folder`);
+    const selection = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+    await vscode.window.showTextDocument(vscode.Uri.file(file), { selection, ...(this.panels.canvas?.active ? { viewColumn: vscode.ViewColumn.Beside } : {}) });
   }
 
   /** Opens (or reuses) the docs tab beside the editor. From a card or a row it shows that node; from the editor's menu it follows the cursor. */

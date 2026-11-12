@@ -1,4 +1,4 @@
-import type { Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
+import type { CallTreeResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
 
 import type { Docs } from "./docs";
@@ -18,6 +18,12 @@ export interface Deps {
   /** the text of a definition, from VS Code's document */
   code(path: string, range: Range): Promise<string>;
   goToCode(key: string): Promise<void>;
+  /** the call trees held, by entry key */
+  callTrees(): Record<string, CallTreeResult>;
+  /** asks for the call tree of this node again; resolves when it has arrived or was cancelled */
+  refreshCallTree(key: string): Promise<void>;
+  /** opens a file below the opened folder at a range */
+  openAt(path: string, range: Range): Promise<void>;
   session(): Session;
 }
 
@@ -31,6 +37,9 @@ export function createHandlers(d: Deps): Handlers {
     openDoc: ({ path }) => d.docs.open(path),
     openLink: ({ href, from }) => d.docs.openLink(href, from),
     goToCode: ({ key }) => d.goToCode(key),
+    callTrees: async () => d.callTrees(),
+    showCallTree: ({ key }) => d.refreshCallTree(key),
+    openAt: ({ path, range }) => d.openAt(path, range),
     session: async () => d.session(),
   };
 }

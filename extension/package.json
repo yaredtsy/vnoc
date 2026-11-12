@@ -149,6 +149,12 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.showCallTree",
+        "title": "Show Call Tree",
+        "icon": "$(type-hierarchy)",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.focusBack",
         "title": "Focus Back",
         "icon": "$(arrow-left)",
@@ -360,6 +366,11 @@
           "command": "vnoc.copyPath",
           "when": "view == vnoc.structure && viewItem =~ /\\bnode\\b/",
           "group": "9_copy@1"
+        },
+        {
+          "command": "vnoc.showCallTree",
+          "when": "view == vnoc.structure && viewItem =~ /\\b(class|function)\\b/ && vnoc.callTree",
+          "group": "5_calls@1"
         }
       ],
       "view/title": [
@@ -515,6 +526,10 @@
         {
           "command": "vnoc.focusSelection",
           "when": "false"
+        },
+        {
+          "command": "vnoc.showCallTree",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -645,6 +660,11 @@
           "command": "vnoc.copyPath",
           "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node'",
           "group": "9_copy@1"
+        },
+        {
+          "command": "vnoc.showCallTree",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && (kind == class || kind == function) && vnoc.callTree",
+          "group": "5_calls@1"
         },
         {
           "command": "vnoc.fitView",
@@ -793,7 +813,7 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
+    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
     "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts"
   },
   "dependencies": {
