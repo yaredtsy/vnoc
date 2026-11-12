@@ -33,7 +33,7 @@ project knows (it is in the STRUCTURE tree) opens, shows its docs and jumps to i
 
 | # | Decision | Why |
 |---|---|---|
-| **T1** | The driver returns the **wire tree** (`pylspt::interp::call_wire`): one node per call site. The graph is not requested, stored or sent. | The tree is what is drawn. The graph has no user yet. |
+| **T1** | The driver returns the **wire tree** (`python_analysis::call_wire`, since [`15-leave-pylspt.md`](15-leave-pylspt.md); it was `pylspt::interp::call_wire`): one node per call site. The graph is not requested, stored or sent. | The tree is what is drawn. The graph has no user yet. |
 | **T2** | **The core merges** siblings. Not the driver, not the extension. | It is V-NOC policy, not Python knowledge (06 §7's rule). One function serves every driver, and the CLI / MCP paths get the same tree. pylspt already assumes it: `call_count` is "always 0 from pylspt". |
 | **T3** | A merged node keeps **every call site**, as `call_sites: [Range]`. | `merge_for_output` keeps only the first; the canvas needs all of them to jump. |
 | **T4** | The merge key is the target's **ID when it has one, else `(file, qualname, occurrence)`**. Never the qualname alone. | Two functions with one qualname in two files must stay two nodes. |
@@ -43,13 +43,17 @@ project knows (it is in the STRUCTURE tree) opens, shows its docs and jumps to i
 ## 3. Who does what
 
 ```
-webview ◄─ extension ◄── core (vnoc) ◄────────── drivers/python ◄──────── pylspt
-draws      command,      merges siblings (T2)    1-based → 0-based         call_wire
-the tree   relays        maps targets to nodes   module path → repo path   + file, qualname,
-                         many requests, cancel   strips `FunctionSchema/`    occurrence (§4)
+webview ◄─ extension ◄── core (vnoc) ◄────────── drivers/python ◄──────── python-analysis
+draws      command,      merges siblings (T2)    1-based → 0-based         call_wire, Frame:
+the tree   relays        maps targets to nodes   occurrence 0-based → 1    file, qualname,
+                         many requests, cancel   reads call_site_file      occurrence (D20)
+                                                 (python-syntax: outline, markers)
 ```
 
 ## 4. pylspt: what the wire needs
+
+> **Replaced by [`15-leave-pylspt.md`](15-leave-pylspt.md) §4** (2026-11-12): the driver no longer uses pylspt, and the fields this section asks of it
+> are `Frame`'s own in `language_driver_rs` (E1–E5). What follows is the history of the request.
 
 `FrameJson` today (rev `670ae79a15`) names a target by `target_qname` (module-qualified, as `sem.qname` gives it) and `target_id`
 (`FunctionSchema/<id>`, empty with no ID). The core cannot find a node from that: it looks nodes up by **file + `__qualname__` + occurrence**
@@ -142,8 +146,8 @@ Service                  the class: kind "class", call_site null
 
 | Rule | |
 |---|---|
-| which `__init__` | the last `def __init__` in the class's own body (the one Python runs; earlier ones are `@overload`s or replaced). It is run as an ordinary `call_wire_at(<qualname>.__init__, nth)`; its root is dropped and its children become the class's children, with their `call_site`s as pylspt gave them. The root's marks (`cut`, `incomplete`) are copied to the class root. |
-| no `__init__` in the class body | the root with **no children**, not an error. An inherited `__init__` is not followed in 0.2. |
+| which `__init__` | the analyzer's constructor lookup: a class is an entry of `call_wire` (E5), its root frame is the class, and its children are what the constructor calls, inherited ones included (the call site is then in the base class's file: `call_site_file`). The driver picks nothing. |
+| no constructor in project code | the root with **no children**, not an error. |
 | `depth` | applies to the `__init__` tree as it does for a function; the class root is not counted. |
 | `vnoc/expand` | a class node expanded is the same request: its entry is that class. |
 
@@ -155,11 +159,11 @@ enough for 0.2. Also set `Limits::deadline` to 20 seconds so a runaway solve end
 | File | Change |
 |---|---|
 | `crates/vnoc-driver-protocol/src/lib.rs` | `CallTreeParams`, `CallEntry`, `CallTreeResult`, `CallNode`, `CallTarget`, `CallMark`. `Serialize` + `Deserialize` on all. |
-| `drivers/python/src/call_tree.rs` | new: open the project (`pylspt::db::open_project`), `call_wire` with `Mode::Summary`, `require_ids: false`; convert `FrameJson` → `CallNode` |
+| `drivers/python/src/call_tree.rs` | new: open the project (`python_analysis::Project::open`), `call_wire` with the default options and a 20 s deadline; convert `Frame` → `CallNode` (15 §4.3; it was `pylspt::db::open_project` and `FrameJson`) |
 | `drivers/python/src/main.rs` | the `method::CALL_TREE` arm; `("callTree", true)` |
 | `drivers/python/tests/call_tree.rs` | new, with a fixture project of three files |
 | `drivers/python/src/positions.rs` | `Lines::position_1based`: pylspt's 1-based line and character column → the wire's position |
-| `drivers/python/Cargo.toml` | `ruff_db` (same `rev`), only to turn a path into the `SystemPath` that `open_project` takes: the fourth `ruff_*` line the facade (06 §7) will remove |
+| `drivers/python/Cargo.toml` | `python-syntax`, `python-analysis`, `analyzer-core`, all at one `rev` of `language_driver_rs` (15 §4.1). No `ruff_*` line: `Project::open` takes a plain path, so the `ruff_db` line this row once asked for is gone |
 | `drivers/python/tests/fixtures/call_tree/` | the fixture project: `pkg/calc.py`, `pkg/db.py`, `pkg/app.py` |
 | `drivers/python/tests/outline.rs` | its handshake test no longer says `callTree: false` (the new test checks `true`) |
 
@@ -289,7 +293,7 @@ Each row is one commit on `0.2-call-trees` and leaves the branch green. `main` t
 | **7.3** | the host: reader task, per-method timeout, cancel (§6.1) | the three host tests · the existing lifecycle test still passes |
 | **7.4** | the merge and the core's `vnoc/callTree` (§6.2, §6.3) | the merge tests · a lifecycle test: the method on a fixture project returns a merged, mapped tree |
 | **7.5** | the command and the "Calls" section (§7) | in the window suite: the command on a fixture function shows the rows · by hand on this repo's Python fixtures |
-| **7.6** | measure on pylspt's own tests folder and on httpx: time of the first and of a second request on one entry | the numbers written here; decide T6 (cache or not) and whether `expand` needs anything more than a new `callTree` |
+| **7.6** | measure the new analyzer (`python-analysis`, 15 §4) on its own tests folder (`language_driver_rs`) and on httpx: time of the first and of a second request on one entry, with **opening the project timed apart from the walk** | the numbers written here; decide T6 (cache or not) and whether `expand` needs anything more than a new `callTree`. A cache follows the steps of [`04-storage/02-index.md`](04-storage/02-index.md) §6.4 in order: keep the project open in the driver, memo dropped on any change → the core saves merged trees in SQLite → the analyzer saves summaries. Take a step only when the one before it is measured too slow |
 
 7.1 is in the pylspt repo and comes first: 7.2 cannot be tested without it.
 

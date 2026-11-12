@@ -247,6 +247,17 @@ fn plan_ids_puts_the_id_line_in_the_docstring_and_says_what_it_did() {
 }
 
 #[test]
+fn plan_ids_with_occurrence_zero_is_invalid_params() {
+    // the protocol counts same-named defs from 1: 0 is a malformed request, and no def is touched for it
+    let (mut d, _) = Driver::start();
+    let ask = |occurrence: u32| json!({ "qualname": "f", "occurrence": occurrence, "id": "AAAA", "replace_existing": false });
+    let err = d.request("vnoc/planIds", json!({ "text": "def f():\n    return 1\n", "version": 1, "ids": [ask(1), ask(0)] })).unwrap_err();
+    assert_eq!(err["code"], -32602);
+    assert_eq!(err["message"], "occurrence of f starts at 1, not 0");
+    d.finish();
+}
+
+#[test]
 fn plan_file_id_writes_the_header_comment_and_outline_reads_it_back() {
     let (mut d, init) = Driver::start();
     assert_eq!(init["capabilities"]["ids.file"], true);

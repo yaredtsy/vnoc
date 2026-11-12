@@ -104,7 +104,7 @@ fn respond(req: Request, cancel: &AtomicBool) -> Response {
         method::CALL_TREE => call_tree_request(req.params.clone()),
         other => return Response::new_err(req.id, ErrorCode::MethodNotFound as i32, format!("unknown method {other}")),
     };
-    // A running analysis cannot be interrupted (pylspt has no cancel flag, VS-D69): its answer is dropped.
+    // A running analysis cannot be interrupted (the analyzer has no cancel flag, VS-D69): its answer is dropped.
     if cancel.load(Ordering::Relaxed) {
         return cancelled(req.id);
     }
@@ -140,7 +140,7 @@ fn outline_request(params: &Value) -> Result<Value, Failure> {
 
 fn plan_ids_request(params: Value) -> Result<Value, Failure> {
     let params: PlanIdsParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
-    serde_json::to_value(plan_ids::plan(params)).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
+    serde_json::to_value(plan_ids::plan(params)?).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
 }
 
 fn plan_file_id_request(params: Value) -> Result<Value, Failure> {

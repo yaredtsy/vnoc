@@ -188,6 +188,16 @@ fn an_unknown_entry_is_invalid_params() {
 }
 
 #[test]
+fn occurrence_zero_is_invalid_params_and_says_why() {
+    // not "no function": the def may well exist, the request is what is wrong
+    let (mut d, _) = Driver::start();
+    let err = d.call_tree("pkg/db.py", "helper", 0, None).unwrap_err();
+    assert_eq!(err["code"], -32602);
+    assert_eq!(err["message"], "occurrence of helper starts at 1, not 0");
+    d.finish();
+}
+
+#[test]
 fn a_file_that_cannot_be_read_is_an_internal_error() {
     let (mut d, _) = Driver::start();
     let err = d.call_tree("pkg/missing.py", "f", 1, None).unwrap_err();
@@ -226,6 +236,19 @@ fn a_class_with_two_inits_shows_the_second() {
     // the first calls `helper()`, the second `a()`: the second is the one Python runs
     let twice = tree("pkg/app.py", "Twice");
     assert_eq!(names(children(&twice)), ["a"]);
+}
+
+#[test]
+fn a_class_that_inherits_its_init_has_the_call_site_in_the_base_file() {
+    // `Child` has no `__init__`: it runs `Base.__init__`, in another file, which calls `a()`
+    let child = tree("pkg/child.py", "Child");
+    assert_eq!((child["target"]["kind"].as_str(), child["target"]["file"].as_str()), (Some("class"), Some("pkg/child.py")));
+    let [a] = &children(&child)[..] else { panic!("one call: {child}") };
+    assert_eq!((a["target"]["qualname"].as_str(), a["target"]["file"].as_str()), (Some("a"), Some("pkg/calc.py")));
+    // the range is in base.py, not in child.py (which has only five lines): cut the call out of base.py with it
+    let base = std::fs::read_to_string(format!("{}/pkg/base.py", fixture())).unwrap();
+    let (line, start, end) = site(a);
+    assert_eq!(&base.lines().nth(line as usize).unwrap()[start as usize..end as usize], "a()");
 }
 
 #[test]

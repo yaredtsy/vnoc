@@ -1,6 +1,6 @@
 //! Positions on the wire: **0-based line, UTF-16 code-unit `character`** (as LSP and VS Code), converted from byte offsets.
 
-use ruff_text_size::{TextRange, TextSize};
+use python_syntax::Span;
 use vnoc_driver_protocol::{Position, Range};
 
 pub struct Lines<'a> {
@@ -15,14 +15,14 @@ impl<'a> Lines<'a> {
         Lines { text, starts }
     }
 
-    pub fn position(&self, offset: TextSize) -> Position {
-        let off = offset.to_usize().min(self.text.len());
+    pub fn position(&self, offset: u32) -> Position {
+        let off = (offset as usize).min(self.text.len());
         let line = self.starts.partition_point(|&s| s <= off) - 1;
         let character = self.text[self.starts[line]..off].encode_utf16().count();
         Position { line: line as u32, character: character as u32 }
     }
 
-    /// pylspt's own positions: 1-based line, 1-based column counted in characters. A column past the end of its line stops at the end.
+    /// The analyzer's own positions: 1-based line, 1-based column counted in characters. A column past the end of its line stops at the end.
     pub fn position_1based(&self, (line, column): (u32, u32)) -> Position {
         let line = (line.saturating_sub(1) as usize).min(self.starts.len() - 1);
         let rest = self.text[self.starts[line]..].chars().take_while(|&c| c != '\n');
@@ -30,7 +30,7 @@ impl<'a> Lines<'a> {
         Position { line: line as u32, character: character as u32 }
     }
 
-    pub fn range(&self, range: TextRange) -> Range {
-        Range { start: self.position(range.start()), end: self.position(range.end()) }
+    pub fn range(&self, span: Span) -> Range {
+        Range { start: self.position(span.start), end: self.position(span.end) }
     }
 }
