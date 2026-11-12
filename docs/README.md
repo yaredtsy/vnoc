@@ -91,6 +91,12 @@ V-NOC
 ├── STEP 6: HARDEN AND PUBLISH ──────────────────── 13-harden-and-publish.md
 │   └── accounts and keys · refactor suite · CI on three systems · the listing · the release workflow · exit checks
 │
+├── RELEASE 0.2: CALL TREES ─────────────────────── 14-call-trees.md
+│   └── the wire · driver callTree · the host · the merge · command and canvas · order of work
+│
+├── THE PYTHON DRIVER LEAVES pylspt ─────────────── 15-leave-pylspt.md
+│   └── what blocks it · the switch in one commit · file by file · tests · disk rules
+│
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
 │
 └── LATER (ideas, not scheduled) ────────────────── futureplan/
