@@ -1,0 +1,1086 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V-NOC UI redesign: mockup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Static mockup of docs/16-ui-redesign. Fake project ("minicart"), fake call trees, plain JS, no build step.
+  Open it in a browser. Icons are VS Code's codicons, loaded from a CDN (needs a network).
+  The strip at the bottom is NOT part of the design: it flips theme and the four states (03 §8).
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@vscode/codicons@0.0.36/dist/codicon.css">
+<style>
+:root {
+  --bg: #1e1e1e; --side: #252526; --activity: #333333; --border: #3c3c3c; --fg: #cccccc; --dim: #9d9d9d;
+  --widget: #252526; --widget-border: #454545; --focus: #007fd4; --sel-active: #04395e; --sel-inactive: #37373d;
+  --hover: #2a2d2e; --btn2: #3a3d41; --blue: #3794ff; --err: #f48771; --warn: #cca700; --toolbar-hover: #5a5d5e50;
+  --folder: #dcb67a; --file: #75beff; --class: #ee9d28; --function: #b180d7;
+  --menu-bg: #252526; --menu-sel: #04395e; --hover-card: #252526; --status: #007acc; --status-fg: #fff;
+  --code-kw: #569cd6; --code-str: #ce9178; --code-com: #6a9955; --code-fn: #dcdcaa; --cursor: #aeafad;
+  --dot-grid: #333;
+}
+body.light {
+  --bg: #ffffff; --side: #f3f3f3; --activity: #2c2c2c; --border: #d4d4d4; --fg: #3b3b3b; --dim: #717171;
+  --widget: #ffffff; --widget-border: #c8c8c8; --focus: #0090f1; --sel-active: #0060c0; --sel-inactive: #e4e6f1;
+  --hover: #e8e8e8; --btn2: #e0e0e0; --blue: #0066bf; --err: #e51400; --warn: #bf8803; --toolbar-hover: #b8b8b850;
+  --folder: #b8860b; --file: #1a7fc4; --class: #c27a05; --function: #8250c8;
+  --menu-bg: #ffffff; --menu-sel: #0060c0; --hover-card: #f3f3f3; --status: #007acc;
+  --code-kw: #0000ff; --code-str: #a31515; --code-com: #008000; --code-fn: #795e26; --cursor: #000;
+  --dot-grid: #e2e2e2;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+.mono { font-family: "SF Mono", Menlo, Consolas, monospace; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.codicon { font-size: 16px; line-height: 1; vertical-align: middle; }
+.k-folder, .k-project { color: var(--folder); } .k-file { color: var(--file); } .k-class { color: var(--class); } .k-function, .k-method { color: var(--function); }
+
+#app { display: grid; grid-template-columns: 48px 300px minmax(260px, 0.55fr) 2.6fr; grid-template-rows: minmax(0, 1fr) 22px; height: 100vh; }   /* minmax(0, …): a tall sidebar must not stretch the window (it pushed NEEDS ATTENTION off the screen) */
+#activity { background: var(--activity); display: flex; flex-direction: column; align-items: center; padding-top: 4px; gap: 2px; }
+#activity .a { width: 48px; height: 48px; display: grid; place-items: center; color: #858585; position: relative; }
+#activity .a .codicon { font-size: 24px; }
+#activity .a.on { color: #fff; } #activity .a.on::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #fff; }
+#status { grid-column: 1 / -1; background: var(--status); color: var(--status-fg); display: flex; align-items: center; padding: 0 10px; gap: 14px; font-size: 12px; }
+#status .sp { flex: 1; } #status .mockup { background: #0003; padding: 0 6px; border-radius: 3px; display: flex; gap: 4px; align-items: center; height: 18px; }
+#status button { padding: 0 6px; border-radius: 3px; height: 16px; line-height: 16px; } #status button.on { background: #fff3; }
+
+/* ---------- sidebar ---------- */
+#side { background: var(--side); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--border); position: relative; }
+.sec-title { height: 35px; padding: 0 8px 0 20px; display: flex; align-items: center; text-transform: uppercase; font-size: 11px; letter-spacing: .3px; color: var(--dim); }
+.sec-title .sp { flex: 1; } .sec-title .name { color: var(--fg); }
+.tb { display: flex; gap: 2px; } .tb button, .ib { width: 22px; height: 22px; border-radius: 4px; display: grid; place-items: center; color: var(--fg); }
+.tb button:hover, .ib:hover { background: var(--toolbar-hover); }
+.ib.pressed { background: var(--toolbar-hover); } .ib[disabled] { opacity: .35; pointer-events: none; }
+#search { margin: 0 8px 6px; display: flex; align-items: center; gap: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 2px; padding: 0 6px; height: 24px; }
+#search:focus-within { border-color: var(--focus); }
+#search input { flex: 1; background: none; border: 0; outline: 0; color: var(--fg); font: inherit; min-width: 0; }
+#panels { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }   /* 06 §4: more panels than fit → this scrolls; NEEDS ATTENTION below it never moves */
+.panel { display: flex; flex-direction: column; min-height: 90px; border-top: 1px solid var(--border); position: relative; flex: 1 1 0; }
+.panel:first-child { border-top: 0; } .panel.explore { flex: 0 0 45%; }
+/* 06 §4.1: the splitter on the top edge of every panel after the first (VS Code's sash: 4 px, the hover colour after 300 ms) */
+.sash { position: absolute; left: 0; right: 0; top: -3px; height: 4px; cursor: row-resize; z-index: 3; }
+.sash:hover { transition: background-color .1s .3s; background: var(--focus); } .sash.drag { background: var(--focus); }
+body.sashing, body.sashing * { cursor: row-resize !important; user-select: none; }
+.panel.active::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--focus); z-index: 2; }
+.panel-head { height: 22px; display: flex; align-items: center; padding: 0 6px 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; cursor: pointer; color: var(--fg); background: #ffffff08; flex: none; }
+.panel-head .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .panel.active .panel-head .t { font-weight: 700; } .panel-head.preview .t { font-style: italic; }
+.panel-head .from { color: var(--dim); text-transform: none; font-weight: 400; }
+.focusbar { height: 24px; display: flex; align-items: center; gap: 2px; padding: 0 6px 0 10px; font-size: 12px; flex: none; border-bottom: 1px solid transparent; white-space: nowrap; overflow: hidden; }
+.focusbar .codicon { font-size: 14px; color: var(--dim); } .focusbar .crumb { padding: 0 3px; border-radius: 3px; cursor: pointer; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.focusbar .crumb:hover { background: var(--hover); color: var(--fg); } .focusbar .crumb.last { color: var(--fg); font-weight: 700; cursor: default; } .focusbar .crumb.last:hover { background: none; }
+.focusbar .sep { color: var(--dim); font-size: 11px; } .focusbar .sp { flex: 1; }
+.tree { flex: 1; overflow: auto; outline: 0; padding-bottom: 6px; }
+.row { height: 22px; display: flex; align-items: center; cursor: pointer; padding-right: 6px; white-space: nowrap; position: relative; outline: 0; }
+.row:hover { background: var(--hover); } .row.hl { background: var(--hover); }
+.row.sel { background: var(--sel-inactive); } #side:focus-within .row.sel { background: var(--sel-active); color: #fff; }
+#side:focus-within .row.sel .desc, #side:focus-within .row.sel .chev { color: #ffffffb0; }
+.row:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+.row.unknown { opacity: .6; } .row.err .label { color: var(--err); }
+.row .chev { width: 16px; height: 22px; display: grid; place-items: center; flex: none; color: var(--dim); }
+.row .chev .codicon { font-size: 16px; }
+.row .ic { margin-right: 5px; flex: none; display: grid; place-items: center; } .row .ic .codicon { font-size: 16px; }
+.row .label { overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 70%; } .row .label b { color: var(--blue); font-weight: 700; }
+.row .desc { color: var(--dim); font-size: 12px; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.row .dot { color: var(--cursor); font-size: 10px; margin-left: 6px; flex: none; }
+.row .acts { display: none; position: absolute; right: 4px; top: 0; height: 22px; align-items: center; gap: 1px; background: inherit; padding-left: 6px; }
+.row:hover .acts, .row.sel .acts { display: flex; } .row .acts .ib { width: 20px; height: 20px; } .row .acts .ib .codicon { font-size: 14px; }
+.row.loading-row { color: var(--dim); cursor: default; font-style: italic; } .row.loading-row:hover { background: none; }
+.guides { position: absolute; top: 0; bottom: 0; left: 0; pointer-events: none; }
+.guides i { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); opacity: .6; }
+.skel { height: 12px; margin: 6px 12px; border-radius: 3px; background: linear-gradient(90deg, var(--hover), var(--sel-inactive), var(--hover)); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+#attention { border-top: 1px solid var(--border); flex: none; }
+#attention .sec-title { height: 22px; cursor: pointer; padding-left: 8px; } #attention .badge { background: var(--status); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 11px; margin-left: 8px; text-transform: none; }
+#attention .items .row { height: 22px; padding-left: 20px; } #attention.flash { animation: flash 1s 2; }
+@keyframes flash { 50% { background: var(--sel-active); } }
+.msg { padding: 20px 16px; color: var(--dim); text-align: center; } .msg .btn { margin-top: 12px; }
+.btn { background: var(--status); color: #fff; padding: 4px 12px; border-radius: 2px; } .btn.sec { background: var(--btn2); color: var(--fg); }
+.progress { position: absolute; left: 0; right: 0; height: 2px; overflow: hidden; z-index: 5; display: none; } .progress.on { display: block; }
+.progress::before { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; background: var(--status); animation: slide 1.1s infinite ease-in-out; }
+@keyframes slide { from { left: -30%; } to { left: 100%; } }
+
+/* ---------- editor ---------- */
+#editor { background: var(--bg); display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+.tabs { height: 35px; background: var(--side); display: flex; flex: none; }
+.tab { padding: 0 14px; display: flex; align-items: center; gap: 6px; background: var(--bg); border-top: 1px solid var(--focus); color: var(--fg); }
+.tab.preview span { font-style: italic; }
+.code { flex: 1; overflow: auto; padding: 6px 0; font-size: 12.5px; line-height: 19px; }
+.code .ln { display: flex; } .code .n { width: 48px; text-align: right; padding-right: 16px; color: var(--dim); flex: none; user-select: none; }
+.code .t { white-space: pre; } .code .ln.cur { background: #ffffff0d; } .code .ln.tgt { background: #ffd33d30; outline: 1px solid #ffd33d50; }
+.kw { color: var(--code-kw); } .str { color: var(--code-str); } .com { color: var(--code-com); } .fn { color: var(--code-fn); }
+
+/* ---------- canvas ---------- */
+#canvasGroup { display: flex; flex-direction: column; min-width: 0; background: var(--bg); position: relative; }
+#bar { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 6px; border-bottom: 1px solid var(--border); background: var(--bg); flex: none; position: relative; }
+#bar .vr { width: 1px; height: 16px; background: var(--border); }
+.chips { display: flex; gap: 4px; align-items: center; }
+.chip { height: 20px; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 8px; border: 1px solid var(--widget-border); border-radius: 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.chip.on { background: var(--btn2); border-color: transparent; font-weight: 600; } .chip .x { display: grid; place-items: center; border-radius: 50%; } .chip .x:hover { background: var(--toolbar-hover); } .chip .codicon { font-size: 13px; }
+.crumbs { flex: 1; display: flex; align-items: center; gap: 1px; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 12px; }
+.crumbs .crumb { padding: 1px 4px; border-radius: 3px; cursor: pointer; color: var(--dim); } .crumbs .crumb:hover { background: var(--hover); color: var(--fg); }
+.crumbs .crumb.last { color: var(--fg); font-weight: 700; cursor: default; } .crumbs .crumb.last:hover { background: none; }
+.crumbs .sep { color: var(--dim); font-size: 12px; opacity: .7; }
+#bar .warn { color: var(--warn); }
+#canvasBody { flex: 1; position: relative; display: flex; min-height: 0; }
+#viewport { flex: 1; position: relative; overflow: hidden; cursor: grab; outline: 0;
+  background-image: radial-gradient(var(--dot-grid) 1px, transparent 1px); background-size: 20px 20px; }
+#viewport.panning { cursor: grabbing; }
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+#edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.edge { fill: none; stroke: var(--widget-border); stroke-width: 1; } .edge.call { stroke: var(--blue); stroke-opacity: .7; stroke-width: 1.5; stroke-dasharray: 4 3; }
+.edge.path { stroke: var(--focus); stroke-opacity: 1; stroke-width: 2; }
+#controls { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; background: var(--widget); border: 1px solid var(--widget-border); border-radius: 4px; overflow: hidden; z-index: 3; }
+#controls button { width: 26px; height: 26px; display: grid; place-items: center; } #controls button:hover { background: var(--hover); } #controls button + button { border-top: 1px solid var(--widget-border); }
+#minimap { position: absolute; right: 10px; bottom: 10px; width: 170px; height: 110px; background: var(--widget); border: 1px solid var(--widget-border); border-radius: 4px; z-index: 3; display: none; }
+#minimap.on { display: block; } #minimap svg { width: 100%; height: 100%; }
+.center-msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--dim); z-index: 2; background: var(--bg); } .center-msg .btn { margin: 12px 4px 0; }
+
+/* card */
+.card { position: absolute; width: 260px; height: 72px; display: flex; flex-direction: column; background: var(--widget); border: 1px solid var(--widget-border); border-radius: 4px; cursor: pointer; user-select: none; box-shadow: 0 1px 3px #0003; }
+.card::before { content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 3px; border-radius: 4px 0 0 4px; background: var(--folder); }
+.card.kind-file::before { background: var(--file); } .card.kind-class::before { background: var(--class); } .card.kind-function::before, .card.kind-method::before { background: var(--function); }
+.card.syn { box-shadow: inset 0 0 0 2px #f4877166; }
+.card.sel { outline: 2px solid var(--focus); outline-offset: -1px; } .card.sel .hd { background: #0078d422; border-radius: 3px 3px 0 0; }
+.card.hl:not(.sel) { outline: 2px dotted var(--focus); outline-offset: -1px; }
+.card.cursor::after { content: ""; position: absolute; inset: 3px; border: 1px dashed var(--cursor); pointer-events: none; border-radius: 2px; }
+.card.unknown { opacity: .6; } .card.pulse { animation: pulse .5s 2; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px #0078d455; } }
+.card .hd { height: 30px; flex: none; display: flex; align-items: center; padding: 0 6px 0 8px; gap: 4px; position: relative; }
+.card .chev { width: 18px; height: 22px; display: grid; place-items: center; color: var(--dim); border-radius: 3px; flex: none; } .card .chev:hover { background: var(--toolbar-hover); }
+.card .chev.none { visibility: hidden; } .card .chev .codicon { font-size: 16px; } .card .chev.root { color: var(--focus); cursor: default; }
+.card .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }   /* cut at the end; the full name is the tooltip */
+/* the buttons: always in the header, dim at rest, lit under the pointer and on the selected card (04 §3). Nothing appears or moves on hover. */
+.card .strip { display: flex; flex: none; align-items: center; gap: 0; margin-left: 2px; }
+.card .strip .ib { width: 22px; height: 22px; color: var(--dim); } .card .strip .ib:hover { color: var(--fg); background: var(--toolbar-hover); } .card.sel .strip .ib { color: var(--fg); }
+.card .strip .ib .codicon { font-size: 14px; }
+/* the footer: the counts, always there (blank when empty), each with a tooltip */
+.card .foot { height: 20px; flex: none; margin-top: auto; padding: 0 8px 0 33px; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--dim); }
+.card .foot .cnt { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; height: 16px; border-radius: 3px; } .card .foot .cnt.act { cursor: pointer; } .card .foot .cnt.act:hover { background: var(--toolbar-hover); color: var(--fg); }
+.card .foot .codicon { font-size: 12px; }
+.card .meta { height: 22px; flex: none; padding: 0 8px 0 33px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--dim); font-family: "SF Mono", Menlo, Consolas, monospace; white-space: nowrap; overflow: hidden; }
+.card .meta .l { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; } .card.call .meta .l { flex: none; }   /* a call card's sites always win the room */
+.card .meta .r { flex: none; margin-left: auto; white-space: nowrap; } .card .meta .file { color: var(--dim); }   /* the callee's file: dim, no :line, shown whole or not at all (JS hides it) */
+.card .meta .site, .card .srow .site { cursor: pointer; color: var(--blue); } .card .meta .site:hover, .card .srow:hover .site { text-decoration: underline; }
+.card .meta .codicon { font-size: 12px; vertical-align: -2px; }
+.card .meta .err { color: var(--err); } .card .meta .mark { color: var(--dim); }   /* nothing is wrong: not the warning colour */
+.card .sitelist { flex: none; margin: 4px 8px 0; font: 11px/18px "SF Mono", Menlo, Consolas, monospace; border-top: 1px solid var(--border); padding-top: 4px; }
+.card .srow { display: flex; gap: 10px; height: 18px; padding: 0 4px; border-radius: 3px; cursor: pointer; overflow: hidden; white-space: nowrap; } .card .srow:hover { background: var(--hover); }
+.card .srow .site { flex: none; min-width: 52px; } .card .srow .txt { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.card .codebox { flex: none; margin: 4px 8px 0; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); padding: 6px 8px; height: 190px; overflow: auto; font-size: 11.5px; line-height: 17px; cursor: text; }
+.card.skeleton { display: block; pointer-events: none; opacity: .5; } .card.skeleton .sk { height: 10px; border-radius: 3px; margin: 14px 12px 0 24px; background: linear-gradient(90deg, var(--hover), var(--sel-inactive), var(--hover)); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+
+/* docs panel */
+/* docs panel: the 0.1 panel's insides, unchanged (07-ui/02 §3, webview/src/docs/DocPanel.tsx); 16 adds only "follows the active context" and the call line */
+#docs { width: 340px; border-left: 1px solid var(--border); background: var(--bg); display: none; flex-direction: column; flex: none; position: relative; }
+#docs.on { display: flex; }
+#docs .dsash { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; z-index: 3; } #docs .dsash:hover, #docs .dsash.drag { background: var(--focus); opacity: .6; }
+#docs .dhead { display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--border); flex: none; }
+#docs .who { flex: 1; min-width: 0; } #docs .who .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#docs .who .sub { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#docs .pick { display: flex; align-items: center; gap: 4px; max-width: 45%; min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--border); border-radius: 2px; background: var(--widget); color: var(--fg); font-weight: 500; font-size: 12px; }
+#docs .pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #docs .pick:hover { border-color: var(--focus); }
+#docs .callline { color: var(--blue); font-size: 12px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex: none; }
+#docs .inner { padding: 16px; overflow: auto; flex: 1; font-size: 13px; line-height: 1.55; }
+#docs .md h1 { font-size: 18px; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); } #docs .md p { margin: 0 0 10px; }
+#docs .md code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; background: var(--hover); padding: 1px 4px; border-radius: 3px; }
+#docs .empty { margin-top: 40px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; color: var(--dim); } #docs .empty .codicon { font-size: 28px; opacity: .6; }
+
+/* menus, toasts, tooltips */
+#menu { position: fixed; z-index: 50; background: var(--menu-bg); border: 1px solid var(--widget-border); border-radius: 5px; box-shadow: 0 4px 16px #0006; padding: 4px 0; min-width: 230px; display: none; font-size: 13px; }
+#menu .mi { padding: 3px 12px 3px 24px; display: flex; gap: 20px; cursor: pointer; position: relative; margin: 0 4px; border-radius: 3px; } #menu .mi:hover { background: var(--menu-sel); color: #fff; }
+#menu .mi .hint { margin-left: auto; color: var(--dim); } #menu .mi:hover .hint { color: #fffb; } #menu .mi.off { opacity: .4; pointer-events: none; }
+#menu .mi.head { font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: var(--dim); pointer-events: none; padding-left: 12px; opacity: 1; }
+#menu .mi .ck { position: absolute; left: 6px; } #menu .sepl { height: 1px; background: var(--border); margin: 4px 8px; }
+#qp { position: fixed; top: 36px; left: 50%; transform: translateX(-50%); width: 560px; max-width: 90vw; background: var(--menu-bg); border: 1px solid var(--widget-border); border-radius: 5px; box-shadow: 0 6px 24px #0008; z-index: 70; display: none; padding-bottom: 4px; }
+#qp.on { display: block; } #qp .qt { padding: 7px 12px; border-bottom: 1px solid var(--border); margin-bottom: 4px; color: var(--dim); font-size: 12px; }
+#qp .qi { display: flex; gap: 14px; padding: 2px 12px; margin: 0 4px; border-radius: 3px; cursor: pointer; height: 22px; align-items: center; white-space: nowrap; overflow: hidden; } #qp .qi.on { background: var(--menu-sel); color: #fff; }
+#qp .qi .l { flex: none; min-width: 84px; } #qp .qi .t { color: var(--dim); overflow: hidden; text-overflow: ellipsis; } #qp .qi.on .t { color: #fffb; }
+#toast { position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%); background: var(--widget); border: 1px solid var(--widget-border); border-radius: 4px; padding: 6px 14px; box-shadow: 0 4px 16px #0006; z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 560px; }
+#toast.on { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .card.pulse, .spin, .skel, .progress::before { animation: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="activity">
+    <div class="a"><i class="codicon codicon-files"></i></div>
+    <div class="a"><i class="codicon codicon-search"></i></div>
+    <div class="a"><i class="codicon codicon-source-control"></i></div>
+    <div class="a on" title="V-NOC"><i class="codicon codicon-type-hierarchy"></i></div>
+  </div>
+
+  <div id="side">
+    <div class="progress" id="sideProgress"></div>
+    <div class="sec-title"><span class="name">V-NOC &nbsp;·&nbsp; Structure</span><span class="sp"></span>
+      <div class="tb">
+        <button title="Open Canvas" data-top="openCanvas"><i class="codicon codicon-split-horizontal"></i></button>
+        <button title="Collapse All" data-top="collapseAll"><i class="codicon codicon-collapse-all"></i></button>
+        <button title="More…" data-top="more"><i class="codicon codicon-ellipsis"></i></button>
+      </div>
+    </div>
+    <div id="search"><i class="codicon codicon-search" style="color:var(--dim);font-size:14px"></i><input id="q" placeholder="Search nodes…" spellcheck="false" autocomplete="off"></div>
+    <div id="panels"></div>
+    <div id="attention">
+      <div class="sec-title" id="attHead"><i class="codicon codicon-chevron-down" style="font-size:14px;margin-right:2px"></i><span class="name">Needs attention</span><span class="badge">2</span></div>
+      <div class="items" id="attItems">
+        <div class="row" data-att="1"><span class="ic"><i class="codicon codicon-warning" style="color:var(--warn)"></i></span><span class="label">docs/checkout.md</span><span class="desc">lost its function</span></div>
+        <div class="row" data-att="2"><span class="ic"><i class="codicon codicon-error" style="color:var(--err)"></i></span><span class="label">legacy/old_billing.py</span><span class="desc">syntax error</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="editor">
+    <div class="tabs" id="tabs"></div>
+    <div class="code mono" id="code"></div>
+  </div>
+
+  <div id="canvasGroup">
+    <div class="tabs"><div class="tab"><i class="codicon codicon-type-hierarchy"></i><span>V-NOC canvas</span></div></div>
+    <div id="bar"></div>
+    <div class="progress" id="barProgress" style="top:65px"></div>
+    <div id="canvasBody">
+      <div id="viewport" tabindex="0">
+        <div id="world"><svg id="edges" width="1" height="1"></svg><div id="cards"></div></div>
+        <div id="controls">
+          <button title="Zoom in" data-z="in"><i class="codicon codicon-add"></i></button>
+          <button title="Zoom out" data-z="out"><i class="codicon codicon-remove"></i></button>
+          <button title="Fit view" data-z="fit"><i class="codicon codicon-screen-full"></i></button>
+        </div>
+        <div id="minimap"><svg></svg></div>
+        <div id="centerMsg" class="center-msg" style="display:none"></div>
+      </div>
+      <div id="docs"></div>
+    </div>
+  </div>
+
+  <div id="status">
+    <span><i class="codicon codicon-git-branch" style="font-size:13px"></i> 0.2-call-trees</span>
+    <span id="stText">Ln 11, Col 1</span>
+    <span class="sp"></span>
+    <span class="mockup">mockup controls:
+      <button data-theme="dark" class="on">Dark</button><button data-theme="light">Light</button> ·
+      <button data-state="ready" class="on">ready</button><button data-state="loading">loading</button><button data-state="empty">empty</button><button data-state="error">error</button>
+    </span>
+  </div>
+</div>
+<div id="qp"><div class="qt" id="qpTitle"></div><div id="qpList"></div></div>
+<div id="menu"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   1. fake project: structure, call trees, docs, code
+   ===================================================================== */
+const N = {}, P = {};                                     // nodes by key, parent key by key
+function def(key, kind, name, path, line, o = {}) { N[key] = { key, kind, name, path, line, children: [], docs: 0, link: null, ...o }; return N[key]; }
+function add(parent, key) { N[parent].children.push(key); P[key] = parent; }
+def("", "project", "minicart", "", null);
+[["app", "app"], ["tests", "tests"]].forEach(([k, n]) => { def(k, "folder", n, k + "/", null); add("", k); });
+N["app"].docs = 1;
+const files = [["app/api.py", "app"], ["app/order.py", "app"], ["app/inventory.py", "app"], ["app/payment.py", "app"], ["app/models.py", "app"], ["tests/test_checkout.py", "tests"]];
+files.forEach(([k, p]) => { def(k, "file", k.split("/").pop(), k, null); add(p, k); });
+N["app/api.py"].docs = 1;
+const fns = [
+  ["app/api.py", "checkout", 11, 1, "id"], ["app/api.py", "health", 24, 0], ["app/api.py", "refund", 29, 0],
+  ["app/order.py", "checkout_order", 24, 2, "id"], ["app/order.py", "cancel_checkout", 58, 0], ["app/order.py", "create_order", 66, 0],
+  ["app/inventory.py", "check_stock", 12, 0], ["app/inventory.py", "reserve_stock", 40, 1, "name"],
+  ["app/payment.py", "charge_payment", 18, 1, "id"], ["app/payment.py", "retry_charge", 44, 0],
+  ["tests/test_checkout.py", "test_checkout_ok", 9, 0],
+];
+fns.forEach(([f, n, line, docs, link]) => { const k = f + "::" + n; def(k, "function", n, f, line, { docs, link: link || null }); add(f, k); });
+def("legacy", "folder", "legacy", "legacy/", null); add("", "legacy");                // a file that did not parse (09 §2)
+def("legacy/old_billing.py", "file", "old_billing.py", "legacy/old_billing.py", null, { syntaxError: true }); add("legacy", "legacy/old_billing.py");
+def("app/base.py", "file", "base.py", "app/base.py", null); add("app", "app/base.py");
+def("app/base.py::helper", "function", "helper", "app/base.py", 12); add("app/base.py", "app/base.py::helper");
+def("app/models.py::Order", "class", "Order", "app/models.py", 8, { docs: 1, link: "id" }); add("app/models.py", "app/models.py::Order");
+def("app/models.py::Order.__init__", "function", "__init__", "app/models.py", 10, { method: true }); add("app/models.py::Order", "app/models.py::Order.__init__");
+def("app/models.py::Order.total", "function", "total", "app/models.py", 18, { method: true }); add("app/models.py::Order", "app/models.py::Order.total");
+def("app/models.py::CompletedOrder", "class", "CompletedOrder", "app/models.py", 32); add("app/models.py", "app/models.py::CompletedOrder");
+
+/* a site is { line, file? }; no file = the caller's. The core keeps EVERY site of a merged call (04 §2.1) */
+const C = (key, name, sites, o = {}) => ({ key, name, sites: sites.map(s => typeof s === "number" ? { line: s } : s), kind: "function", ...o });
+const checkoutOrderCalls = [
+  C("app/inventory.py::check_stock", "check_stock", [26]),
+  C("app/inventory.py::reserve_stock", "reserve_stock", [31, 44, 56, 60, 68], { children: [C("app/inventory.py::check_stock", "check_stock", [47])] }),
+  C("app/payment.py::charge_payment", "charge_payment", [52], { children: [C("app/payment.py::retry_charge", "retry_charge", [27], { children: [C("app/payment.py::charge_payment", "charge_payment", [49], { mark: "recursive" })] })] }),
+  C("app/order.py::cancel_checkout", "cancel_checkout", [61]),
+  C("app/order.py::create_order", "create_order", [64], { mark: "cut" }),
+  C("app/models.py::CompletedOrder", "CompletedOrder", [70], { kind: "class" }),
+];
+const TREES = {                                           // what `vnoc/callTree` returns, by owner key; absent = calls nothing
+  "app/api.py::checkout": [C("app/order.py::checkout_order", "checkout_order", [16], { children: checkoutOrderCalls }), C(null, "log_event", [18], { file: "lib/log.py" })],
+  "app/api.py::refund": [C("app/payment.py::charge_payment", "charge_payment", [30])],
+  "app/order.py::checkout_order": checkoutOrderCalls,
+  "app/order.py::create_order": [C("app/models.py::Order", "Order", [71], { kind: "class", children: [   // Order() = what its __init__ calls (R7); Order(Base): helper() is in base.py, so one site is in another file (14 §10)
+    C("app/base.py::helper", "helper", [8, { file: "app/base.py", line: 12 }])] }), C("app/models.py::CompletedOrder", "CompletedOrder", [72], { kind: "class" })],
+  "app/inventory.py::reserve_stock": [C("app/inventory.py::check_stock", "check_stock", [47])],
+  "app/payment.py::charge_payment": [C("app/payment.py::retry_charge", "retry_charge", [27])],
+  "tests/test_checkout.py::test_checkout_ok": [C("app/api.py::checkout", "checkout", [12])],
+};
+const DOCS = {
+  "": [], "app": [["Application package", "Everything the HTTP layer needs: routes, the order flow, stock and payments."]],
+  "app/api.py": [["HTTP routes", "FastAPI router. One route per user action; each calls into order.py."]],
+  "app/api.py::checkout": [["checkout", "Charges the cart and returns the order. Idempotent: the same cart_id never charges twice."]],
+  "app/order.py::checkout_order": [["checkout_order", "The order flow: check stock, reserve, charge, create the order. Cancels on failure."], ["Failure modes", "A failed charge cancels the reservation and returns a failed order."]],
+  "app/inventory.py::reserve_stock": [["reserve_stock", "Holds stock for 15 minutes. Raises OutOfStock when the hold cannot be made."]],
+  "app/payment.py::charge_payment": [["charge_payment", "Calls the payment provider and retries once on a timeout."]],
+  "app/models.py::Order": [["Order", "A cart that has been paid for. Immutable once created."]],
+};
+const API_SRC = `from fastapi import APIRouter
+from lib.log import log_event
+from .order import checkout_order
+
+router = APIRouter()
+
+
+@router.post("/checkout")
+# idempotent: the same cart_id
+# never charges twice
+def checkout(cart_id: str):
+    """Charge the cart and return the order."""
+    cart = load_cart(cart_id)
+    if not cart.items:
+        return {"error": "empty"}
+    order = checkout_order(cart)
+    if order.failed:
+        log_event("checkout_failed", cart_id)
+        return {"error": order.reason}
+    return {"order": order.id}
+
+
+@router.get("/health")
+def health():
+    return {"ok": True}
+
+
+@router.post("/refund")
+def refund(order_id: str):
+    return charge_payment(order_id, -1)`.split("\n");
+
+/* =====================================================================
+   2. tree helpers, lineage, call ids
+   ===================================================================== */
+const lineage = key => { const out = []; for (let k = key; k; k = P[k]) out.unshift(k); return out; };      // without the project root
+const isUnder = (key, anc) => !anc || key === anc || lineage(key).includes(anc);
+const fileOf = key => { const n = N[key]; return n ? (n.kind === "file" ? key : n.kind === "function" || n.kind === "class" ? n.path : null) : null; };
+const stepOf = c => c.key || "?" + c.name;
+
+const TS = {};                                            // tree state by owner key: "loading" | "known" | "failed"
+const FAILS = new Set(["app/api.py::refund"]), TRIED = new Set();   // refund's first fetch fails, Retry works (05 §4)
+function ensureTree(key) {
+  if (!key || TS[key]) return;
+  TS[key] = "loading"; sideProgress(true); barProgress(true);
+  setTimeout(() => { TS[key] = FAILS.has(key) && !TRIED.has(key) ? "failed" : "known"; TRIED.add(key); const busy = Object.values(TS).includes("loading"); if (!busy) { sideProgress(false); barProgress(false); } render(); }, 520);
+}
+
+/* a "view node" is one place in a drawing: a structure node, or a call node at one place in a call tree */
+const VN = {};
+function mkNode(key, parentId) { const v = VN[key] = VN[key] || { id: key, role: "node", key, n: N[key] }; v.parent = parentId; return v; }
+function mkCall(owner, steps, cn, parentId) {
+  const id = "call:" + owner + ">" + steps.join(">");
+  const v = VN[id] = VN[id] || { id, role: "call", owner, steps, cn, key: cn.key, kind: cn.kind };
+  v.cn = cn; v.parent = parentId; return v;
+}
+function childrenOf(vn) {                                 // { kids, state } where state is "unknown" | "loading" | "known" | "n/a"
+  if (vn.role === "node") {
+    const kids = vn.n.children.map(k => mkNode(k, vn.id));
+    if (vn.n.kind !== "function") return { kids, state: "n/a" };
+    const state = TS[vn.key] || "unknown";
+    if (state === "known") (TREES[vn.key] || []).forEach(cn => kids.push(mkCall(vn.key, [stepOf(cn)], cn, vn.id)));
+    return { kids, state };
+  }
+  const cn = vn.cn;
+  if (cn.children) return { kids: cn.children.map(c => mkCall(vn.owner, [...vn.steps, stepOf(c)], c, vn.id)), state: "known" };
+  if (cn.mark === "cut" && cn.key) {
+    const state = TS[cn.key] || "unknown", kids = [];
+    if (state === "known") (TREES[cn.key] || []).forEach(c => kids.push(mkCall(vn.owner, [...vn.steps, "~" + stepOf(c)], c, vn.id)));
+    return { kids, state, treeKey: cn.key };
+  }
+  return { kids: [], state: "n/a" };
+}
+function hasChevron(vn) {
+  if (vn.role === "node") {
+    if (vn.n.children.length) return true;
+    if (vn.n.kind === "function") return TS[vn.key] !== "known" || (TREES[vn.key] || []).length > 0;
+    return false;
+  }
+  const cn = vn.cn;
+  if (cn.mark === "recursive") return false;
+  return !!(cn.children ? cn.children.length : cn.mark === "cut" && (TS[cn.key] !== "known" || (TREES[cn.key] || []).length));
+}
+function hiddenCount(vn) {                                // the "+N" of a closed card; null when unknown
+  if (vn.role === "node") {
+    if (vn.n.kind === "function") return TS[vn.key] === "known" ? vn.n.children.length + (TREES[vn.key] || []).length : null;
+    return vn.n.children.length;
+  }
+  const cn = vn.cn; if (cn.children) return cn.children.length;
+  if (cn.mark === "cut") return TS[cn.key] === "known" ? (TREES[cn.key] || []).length : null;
+  return 0;
+}
+const sbChevron = vn => vn.role === "node" && vn.n.children.length > 0;   // the sidebar has no call rows (07 §2): every chevron there is exact
+const callerFile = vn => { const p = VN[vn.parent]; return p ? fileOf(p.key) : null; };
+const siteLabel = (vn, s) => s.file && s.file !== callerFile(vn) ? s.file.split("/").pop() + ":" + s.line : "line " + s.line;
+const siteText = (vn, s) => {                             // the line's text, as the host's `code` request reads it (04 §2.1)
+  const f = s.file || callerFile(vn), n = vn.cn.name;
+  if (f === "app/api.py" && API_SRC[s.line - 1]) return API_SRC[s.line - 1].trim();
+  return [`stock = ${n}(item, qty)`, `${n}(order.id)`, `if not ${n}(cart):`, `await ${n}(cart, retry=True)`, `result = ${n}(order, force=False)`][s.line % 5];
+};
+const siteInfo = (vn, i = 0) => ({ file: vn.cn.sites[i].file || callerFile(vn), line: vn.cn.sites[i].line });
+const SITE_ROW = 18, siteListH = vn => vn.role === "call" && vn.cn.sites.length > 2 && S.sitesOpen.has(vn.id) ? 10 + vn.cn.sites.length * SITE_ROW : 0;
+const stats = () => { const k = {}; Object.values(N).forEach(n => k[n.kind] = (k[n.kind] || 0) + 1); return `${k.folder} folders · ${k.file} files · ${k.class} classes · ${k.function} functions`; };
+const callsNothing = vn =>vn.role === "node" && vn.n.kind === "function" && TS[vn.key] === "known" && !(TREES[vn.key] || []).length;
+const shown = (vn, ctx) => {                              // children of an OPEN node; asks for what it needs
+  const r = childrenOf(vn);
+  if (r.state === "unknown") ensureTree(vn.role === "node" ? vn.key : r.treeKey);
+  return { ...r, state: r.state === "unknown" ? "loading" : r.state };
+};
+const calleeNode = vn => vn.role === "call" ? (vn.key ? N[vn.key] : null) : vn.n;
+const docsOf = vn => (calleeNode(vn) || {}).docs || 0;
+const nameOf = vn => vn.role === "call" ? vn.cn.name : vn.n.name;
+
+/* =====================================================================
+   3. session: contexts, intents (shared/session.ts in the real thing)
+   ===================================================================== */
+const S = {
+  order: ["main"], active: "main", cursor: "app/api.py::checkout", highlight: null, view: "ready",
+  docsOpen: false, minimap: false, codeOpen: new Set(), sitesOpen: new Set(), seq: 0, search: "", searchIdx: 0, reveal: null, scrollSide: false, kbFocus: null,
+  editor: { file: "app/api.py", line: 11, preview: false }, vp: {}, attOpen: true, sizes: {}, docPick: {}, docW: 340,   // sizes: a panel's share of the height, by depth (06 §4.1)
+  ctx: { main: { id: "main", title: "Main", kind: "main", parent: null, call: null, focus: ["app", "app/api.py"], selected: "app/api.py::checkout", expanded: new Set(), preview: false } },
+};
+TS["app/api.py::checkout"] = "known";                     // the host prefetched the selected function
+S.ctx.main.expanded.add("app/api.py::checkout"); S.ctx.main.expanded.add("call:app/api.py::checkout>app/order.py::checkout_order");
+
+const ctxOf = id => S.ctx[id], act = () => S.ctx[S.active];
+const rootKey = c => c.focus.length ? c.focus[c.focus.length - 1] : "";
+const childCtx = id => S.order.map(i => S.ctx[i]).filter(c => c.parent === id);
+function closeCtx(id) {
+  const c = S.ctx[id]; if (!c || c.kind === "main") return;
+  childCtx(id).forEach(k => closeCtx(k.id));
+  S.order = S.order.filter(i => i !== id); delete S.ctx[id]; delete S.vp[id];
+  if (S.active === id) S.active = c.parent;
+}
+function openExplore(parentId, vn, activate) {
+  const parent = VN[vn.parent], ex = childCtx(parentId).find(k => k.call === vn.id);
+  if (ex) { if (activate) { S.active = ex.id; ex.preview = false; } return; }
+  const id = "x" + (++S.seq), key = vn.key;
+  S.ctx[id] = { id, title: vn.cn.name, kind: "explore", parent: parentId, call: vn.id, fromName: parent ? nameOf(parent) : "", site: vn.cn.sites[0].line, focus: lineage(key), selected: key, expanded: new Set(), preview: !activate };
+  S.order.splice(S.order.indexOf(parentId) + 1, 0, id);
+  if (activate) S.active = id;
+}
+function select(ctxId, id) {                               // the web's handleNodeSelection (R4)
+  const c = S.ctx[ctxId]; c.selected = id;
+  const vn = VN[id], kids = childCtx(ctxId);
+  if (vn && vn.role === "call" && vn.key) { kids.filter(k => k.call !== id).forEach(k => closeCtx(k.id)); openExplore(ctxId, vn, false); }
+  else kids.forEach(k => closeCtx(k.id));
+  const f = vn && vn.role === "node" ? fileOf(vn.key) : vn && vn.key ? fileOf(vn.key) : null;
+  if (f) S.editor = { file: f, line: (calleeNode(vn) || {}).line || 1, preview: S.editor.file !== f ? true : S.editor.preview };
+}
+function fixSelection(c) {
+  const root = rootKey(c), sel = c.selected, sk = sel && VN[sel] ? (VN[sel].role === "call" ? VN[sel].owner : VN[sel].key) : sel;
+  if (!(sk && isUnder(sk, root))) c.selected = root || null;
+}
+function focus(ctxId, id) {
+  const vn = VN[id]; if (vn && vn.role === "call") return explore(ctxId, id, true);
+  const c = S.ctx[ctxId]; c.focus = lineage(id); select(ctxId, id);
+}
+function explore(ctxId, id, activate) { const vn = VN[id]; if (!vn || !vn.key) return; select(ctxId, id); openExplore(ctxId, vn, activate); }
+function back(ctxId) { const c = S.ctx[ctxId]; if (!c.focus.length) return; c.focus = c.focus.slice(0, -1); fixSelection(c); }
+function jump(ctxId, n) { const c = S.ctx[ctxId]; c.focus = c.focus.slice(0, n); fixSelection(c); }
+function toggle(ctxId, id, force) {
+  const e = S.ctx[ctxId].expanded; const open = force === undefined ? !e.has(id) : force;
+  open ? e.add(id) : e.delete(id);
+}
+function reveal(ctxId, key, opts = {}) {                   // structure keys only
+  const c = S.ctx[ctxId]; if (!N[key]) return;
+  while (c.focus.length && !isUnder(key, rootKey(c))) c.focus.pop();
+  const root = rootKey(c); let on = !root;
+  lineage(key).slice(0, -1).forEach(a => { if (a === root) on = true; else if (on) c.expanded.add(a); });
+  if (root && key !== root) c.expanded.add(root);
+  select(ctxId, key); S.active = ctxId; S.reveal = { ctx: ctxId, id: key }; S.scrollSide = true;
+}
+function expandAllBelow(ctxId, key) {
+  const e = S.ctx[ctxId].expanded; let n = 0;
+  (function walk(k) { if (n > 500) return; N[k].children.forEach(c => { if (N[c].children.length) { e.add(c); n++; walk(c); } }); })(key); e.add(key);
+}
+
+/* =====================================================================
+   4. actions (every button, key and menu entry ends up here)
+   ===================================================================== */
+function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2200); }
+function goToCode(vn) { const n = calleeNode(vn); if (!n || n.kind === "project") return; const f = fileOf(n.key); if (f) { S.editor = { file: f, line: n.line || 1, preview: false, target: n.line || 1 }; } toast("Go to Code → " + (f || "") + (n.line ? ":" + n.line : "")); }
+function goToSite(vn, i, ctxId) {                          // one site: there; several: the QuickPick (04 §2.1)
+  if (i === undefined && vn.cn.sites.length > 1) return quickPickSites(vn, ctxId);
+  const s = siteInfo(vn, i || 0); if (s.file) S.editor = { file: s.file, line: s.line, preview: false, target: s.line };
+  toast("Go to Call Site → " + s.file + ":" + s.line);
+}
+/* Go to Call Site… on a merged call: a QuickPick; moving through it previews each site in the editor (04 §2.1) */
+const QP = { vn: null, ctx: null, i: 0, saved: null };
+const qpOpen = () => document.getElementById("qp").classList.contains("on");
+function quickPickSites(vn, ctxId) {
+  QP.vn = vn; QP.ctx = ctxId || S.active; QP.i = 0; QP.saved = { ...S.editor };
+  document.getElementById("qpTitle").textContent = `Go to Call Site · ${nameOf(vn)} is called ${vn.cn.sites.length} times from ${nameOf(VN[vn.parent])}  (↑↓ preview · Enter go · Esc cancel)`;
+  document.getElementById("qp").classList.add("on"); qpDraw(); qpPreview();
+}
+function qpDraw() {
+  document.getElementById("qpList").innerHTML = QP.vn.cn.sites.map((st, i) => `<div class="qi ${i === QP.i ? "on" : ""}" data-qi="${i}"><span class="l">${esc(siteLabel(QP.vn, st))}</span><span class="t mono">${esc(siteText(QP.vn, st))}</span></div>`).join("");
+}
+function qpPreview() { const s = siteInfo(QP.vn, QP.i); S.editor = { file: s.file, line: s.line, preview: true, target: s.line }; renderEditor(); }
+function qpClose(go) {
+  document.getElementById("qp").classList.remove("on"); const { vn, ctx, i, saved } = QP;
+  if (go) { const s = siteInfo(vn, i); S.editor = { file: s.file, line: s.line, preview: false, target: s.line }; select(ctx, vn.id); S.scrollSide = true; toast("Go to Call Site → " + s.file + ":" + s.line); }
+  else S.editor = saved;
+  render();
+}
+document.getElementById("qp").addEventListener("click", e => { const it = e.target.closest("[data-qi]"); if (it) { QP.i = +it.dataset.qi; qpClose(true); } });
+document.addEventListener("mousedown", e => { if (qpOpen() && !e.target.closest("#qp")) qpClose(false); });
+document.addEventListener("keydown", e => {
+  if (!qpOpen()) return; e.preventDefault(); e.stopPropagation(); const n = QP.vn.cn.sites.length;
+  if (e.key === "ArrowDown") { QP.i = (QP.i + 1) % n; qpDraw(); qpPreview(); } else if (e.key === "ArrowUp") { QP.i = (QP.i + n - 1) % n; qpDraw(); qpPreview(); }
+  else if (e.key === "Enter") qpClose(true); else if (e.key === "Escape") qpClose(false);
+}, true);
+
+function openDocs(on) { S.docsOpen = on === undefined ? !S.docsOpen : on; }
+function run(name, ctxId, id, extra = {}) {
+  const vn = VN[id] || (id === "" ? mkNode("", null) : null);
+  switch (name) {
+    case "focus": focus(ctxId, id); break;
+    case "back": back(ctxId); break;
+    case "explore": explore(ctxId, id, true); break;
+    case "toggle": toggle(ctxId, id); break;
+    case "expand": toggle(ctxId, id, true); break;
+    case "collapse": toggle(ctxId, id, false); break;
+    case "expandAll": expandAllBelow(ctxId, vn.key); toast("Expanded up to 500 structure nodes (calls are never opened in bulk)"); break;
+    case "showCalls": { const k = vn.key; if (N[k].kind === "class") { const init = N[k].children.find(c => N[c].name === "__init__"); if (!init) { toast(N[k].name + " has no __init__; open a method to see its calls."); break; } reveal(ctxId, init); toggle(ctxId, init, true); break; } reveal(ctxId, k); toggle(ctxId, k, true); break; }
+    case "openInCanvas": if (vn.role === "node") reveal(ctxId, vn.key); else { S.active = ctxId; S.reveal = { ctx: ctxId, id }; } break;
+    case "revealInSidebar": if (vn.role === "node") reveal(ctxId, vn.key); S.scrollSide = true; S.active = ctxId; flash(document.getElementById("side")); break;
+    case "goToCode": goToCode(vn); break;
+    case "goToSite": if (!vn.cn.sites.length) break; goToSite(vn, extra.i, ctxId); break;
+    case "moreSites": S.sitesOpen.has(id) ? S.sitesOpen.delete(id) : S.sitesOpen.add(id); break;
+    case "retry": delete TS[vn.key]; break;
+    case "codeInCard": S.codeOpen.has(id) ? S.codeOpen.delete(id) : S.codeOpen.add(id); break;
+    case "docs": select(ctxId, id); openDocs(true); break;
+    case "showDocs": openDocs(true); break;
+    case "addDoc": toast("Add Doc… for " + nameOf(vn) + " (an input box in the real thing)"); break;
+    case "attach": toast("Attach a Missing Doc Here… (a QuickPick of docs without a function)"); break;
+    case "writeId": toast("Write ID: the doc's id is written above " + nameOf(vn) + " in the code"); break;
+    case "revealExplorer": toast("Reveal in Explorer → " + (fileOf(vn.key) || vn.key)); break;
+    case "copyPath": { const n = calleeNode(vn); const t = n.path + (n.line ? ":" + n.line : ""); navigator.clipboard && navigator.clipboard.writeText(t).catch(() => {}); toast("Copied " + t); break; }
+    case "collapseAll": S.ctx[ctxId].expanded.clear(); break;
+    case "clearFocus": jump(ctxId, 0); break;
+    case "clearSelection": S.ctx[ctxId].selected = null; childCtx(ctxId).forEach(k => closeCtx(k.id)); break;
+    case "closeCtx": closeCtx(extra.target || ctxId); break;
+    case "closeOthers": S.order.slice().forEach(i => { if (i !== ctxId && S.ctx[i] && S.ctx[i].kind !== "main") closeCtx(i); }); break;
+    case "fit": delete S.vp[S.active]; break;
+    case "refresh": toast("Refresh Structure: re-reading the code…"); S.view = "loading"; setView("loading"); setTimeout(() => { setView("ready"); }, 1100); return;
+  }
+  render();
+}
+function flash(el) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2200); }
+
+/* =====================================================================
+   5. menus (08-menus.md: one list for a card and a row)
+   ===================================================================== */
+function nodeMenu(ctxId, vn, surface) {
+  const c = S.ctx[ctxId], items = [], call = vn.role === "call", id = vn.id;
+  const known = !call || !!vn.key, open = c.expanded.has(id), kind = call ? vn.kind : vn.n.kind;
+  const isRoot = !call && id === rootKey(c) && c.focus.length > 0;
+  const hasKids = surface === "sidebar" ? sbChevron(vn) : hasChevron(vn);
+  const M = (label, a, hint, o = {}) => items.push({ label, a, hint, ...o });
+  if (call) {                                              // 08 §3: canvas only, there are no call rows
+    if (known) M("Explore", "explore", "Enter");
+    if (hasKids) M(open ? "Collapse" : "Expand", open ? "collapse" : "expand", "Space");
+    items.push("-");
+    M(vn.cn.sites.length > 1 ? "Go to Call Site…" : "Go to Call Site", "goToSite", "⌘↵");
+    if (known) { M("Go to Code", "goToCode"); if (surface === "canvas") M(S.codeOpen.has(id) ? "Hide Code in Card" : "Show Code in Card", "codeInCard"); items.push("-"); M("Show Docs", "showDocs"); M("Add Doc…", "addDoc"); items.push("-"); M("Copy Path", "copyPath"); }
+    return items;
+  }
+  M(isRoot ? "Back" : "Focus", isRoot ? "back" : "focus", isRoot ? "Alt+←" : "⌘↵");
+  M(surface === "sidebar" ? "Open in Canvas" : "Reveal in Sidebar", surface === "sidebar" ? "openInCanvas" : "revealInSidebar");
+  items.push("-");
+  if (hasKids && !isRoot) M(open ? "Collapse" : "Expand", open ? "collapse" : "expand", "Space");
+  if (kind !== "function" && hasKids) M("Expand All Below", "expandAll");
+  if (kind === "function" || kind === "class") { items.push("-"); M("Show Calls", "showCalls"); }
+  items.push("-");
+  if (kind !== "folder" && kind !== "project") M("Go to Code", "goToCode");
+  if (surface === "canvas" && (kind === "function" || kind === "class")) M(S.codeOpen.has(id) ? "Hide Code in Card" : "Show Code in Card", "codeInCard");
+  if (kind === "file" || kind === "folder") M("Reveal in Explorer", "revealExplorer");
+  items.push("-"); M("Show Docs", "showDocs");
+  if (vn.key) { M("Add Doc…", "addDoc"); M("Attach a Missing Doc Here…", "attach"); if (vn.n.link === "name") M("Write ID", "writeId"); }
+  items.push("-"); if (vn.key) M("Copy Path", "copyPath");
+  return items;
+}
+function showMenu(x, y, items, onPick) {
+  const m = document.getElementById("menu");
+  m.innerHTML = items.map((it, i) => it === "-" ? `<div class="sepl"></div>` : `<div class="mi ${it.off ? "off" : ""} ${it.head ? "head" : ""}" data-i="${i}">${it.check ? `<i class="codicon codicon-check ck"></i>` : ""}<span>${it.label}</span>${it.hint ? `<span class="hint">${it.hint}</span>` : ""}</div>`).join("");
+  m.style.display = "block";
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.min(x, innerWidth - w - 4) + "px"; m.style.top = Math.min(y, innerHeight - h - 4) + "px";
+  m.onclick = e => { const el = e.target.closest(".mi"); if (!el) return; hideMenu(); onPick(items[+el.dataset.i]); };
+}
+function hideMenu() { document.getElementById("menu").style.display = "none"; }
+document.addEventListener("mousedown", e => { if (!e.target.closest("#menu")) hideMenu(); });
+
+/* =====================================================================
+   6. icons and small renderers
+   ===================================================================== */
+const ic = (n, extra = "") => `<i class="codicon codicon-${n} ${extra}"></i>`;
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+function kindIcon(vn) {
+  if (vn.role === "call" && !vn.key) return ic(vn.kind === "class" ? "symbol-class" : "symbol-function", "k-" + (vn.kind === "class" ? "class" : "function"));   // unknown callee: its kind from the call
+  const n = vn.role === "call" ? N[vn.key] : vn.n,   // a call card shows the callee's own icon; `call-outgoing` is only the ↳ on the meta line (04 §2)
+ k = n.kind === "project" ? "folder" : n.kind;
+  const name = { folder: "folder", file: "file-code", class: "symbol-class", function: n.method ? "symbol-method" : "symbol-function" }[k];
+  return ic(name, "k-" + (n.method ? "method" : k));
+}
+function kindClass(vn) { return vn.role === "call" ? (vn.kind === "class" ? "class" : "function") : (vn.n.method ? "method" : vn.n.kind === "project" ? "folder" : vn.n.kind); }
+function actionsFor(vn) {                                  // 04 §3 / 07 §2: the same buttons on a card and on a row
+  const B = { focus: ["target", "Focus (⌘↵)"], code: ["link-external", "Go to Code"], card: ["code", "Show Code in Card"], doc: ["add", "Add Doc…"], explore: ["compass", "Explore (Enter)"] };
+  let keys;
+  if (vn.role === "call") keys = vn.key ? ["explore", "code", "card"] : [];   // no Go to Call Site button: the sites on the meta line are the buttons (04 §2.1)
+  else keys = { project: [], folder: ["focus", "doc"], file: ["focus", "code", "doc"], class: ["focus", "code", "card", "doc"], function: ["focus", "code", "card", "doc"] }[vn.n.kind];
+  return keys.map(k => ({ k, icon: B[k][0], tip: B[k][1] }));
+}
+const ACT = { focus: "focus", code: "goToCode", card: "codeInCard", doc: "addDoc", explore: "explore" };
+function marksText(cn) { return cn.mark === "recursive" ? "↻ recursive" : cn.mark === "cut" ? "… calls not loaded" : ""; }
+function fakeCode(vn) {
+  const n = calleeNode(vn); if (!n) return "";
+  if (n.key === "app/api.py::checkout") return API_SRC.slice(10, 20).map(highlight).join("\n");
+  const sig = n.kind === "class" ? `<span class="kw">class</span> <span class="fn">${esc(n.name)}</span>:` : `<span class="kw">def</span> <span class="fn">${esc(n.name)}</span>(…):`;
+  return sig + `\n    <span class="com"># …body of ${esc(n.name)}…</span>\n    <span class="kw">return</span> …`;
+}
+function highlight(line) {
+  return esc(line).replace(/(#.*$)|(&quot;.*?&quot;)|\b(def|return|if|from|import|class|not)\b|\b([a-z_]+)(?=\()/g, (m, com, str, kw, fn) => com ? `<span class="com">${m}</span>` : str ? `<span class="str">${m}</span>` : kw ? `<span class="kw">${m}</span>` : `<span class="fn">${m}</span>`);
+}
+
+/* =====================================================================
+   7. sidebar
+   ===================================================================== */
+function flattenPanel(c) {                                 // structure only: the sidebar shows where code lives, the canvas what it calls (07 §2, C1)
+  const rows = [];
+  (function walk(vn, depth) {
+    const root = depth === 0, open = root || c.expanded.has(vn.id);   // call ids in `expanded` are skipped: they have no row here
+    rows.push({ vn, depth, open, root });
+    if (open) vn.n.children.forEach(k => walk(mkNode(k, vn.id), depth + 1));
+  })(mkNode(rootKey(c), null), 0);
+  return rows;
+}
+function matchHtml(name, q) {
+  if (!q) return esc(name); const i = name.toLowerCase().indexOf(q.toLowerCase());
+  return i < 0 ? esc(name) : esc(name.slice(0, i)) + "<b>" + esc(name.slice(i, i + q.length)) + "</b>" + esc(name.slice(i + q.length));
+}
+function rowHtml(c, r) {
+  const vn = r.vn, n = vn.n, pad = 8 + r.depth * 16, sel = c.selected === vn.id;   // when the selection is a call, no row of this panel is selected
+  const chev = !r.root && sbChevron(vn) ? ic(r.open ? "chevron-down" : "chevron-right") : "";
+  const desc = [n.docs ? "📄 " + n.docs : "", n.syntaxError ? "syntax error" : ""].filter(Boolean).join("  ");
+  const cur = vn.key === S.cursor ? `<span class="dot">●</span>` : "";
+  const acts = actionsFor(vn).filter(a => a.k !== "card").map(a => `<button class="ib" title="${a.tip}" data-act="${ACT[a.k]}">${ic(a.icon)}</button>`).join("");   // no `</>`: a row has no card
+  const tip = `${n.name} · ${n.method ? "method" : n.kind}${n.kind === "folder" || n.kind === "project" ? "" : " · " + n.path + (n.line ? ":" + n.line : "")}${n.docs ? " · " + n.docs + " doc" + (n.docs > 1 ? "s" : "") : ""}${n.link ? " · " + (n.link === "id" ? "ID in the code" : "found by name only") : ""}`;
+  return `<div class="row ${sel ? "sel" : ""} ${n.syntaxError ? "err" : ""}" role="treeitem" tabindex="-1" title="${esc(tip)}" data-ctx="${c.id}" data-id="${esc(vn.id)}" aria-level="${r.depth + 1}" aria-expanded="${chev ? r.open : ""}" aria-selected="${sel}" style="padding-left:${pad}px">
+    <span class="chev" ${chev ? `data-act="toggle"` : ""}>${chev}</span><span class="ic">${kindIcon(vn)}</span>
+    <span class="label">${esc(n.name)}</span><span class="desc">${esc(desc)}</span>${cur}<span class="acts">${acts}</span></div>`;
+}
+function focusBarHtml(c) {
+  if (!c.focus.length) return "";
+  const steps = c.focus.map((k, i) => `<span class="sep">›</span><span class="crumb ${i === c.focus.length - 1 ? "last" : ""}" data-jump="${i + 1}" title="${esc(c.focus.slice(0, i + 1).map(x => N[x].name).join(" › "))}">${esc(N[k].name)}</span>`).join("");
+  return `<div class="focusbar">${ic("target")}<span class="crumb" data-jump="0">minicart</span>${steps}<span class="sp"></span>
+    <button class="ib" data-fb="back" title="Back (Alt+←)" style="width:20px;height:20px">${ic("arrow-left")}</button><button class="ib" data-fb="clear" title="Clear focus" style="width:20px;height:20px">${ic("close")}</button></div>`;
+}
+function searchResults(q) {
+  const ql = q.toLowerCase(), out = [];
+  Object.values(N).forEach(n => { if (!n.key) return; const nm = n.name.toLowerCase(), p = n.path.toLowerCase(); let score = nm.startsWith(ql) ? 0 : nm.includes(ql) ? 1 : p.includes(ql) ? 2 : -1; if (score >= 0) out.push({ n, score }); });
+  return out.sort((a, b) => a.score - b.score || a.n.name.localeCompare(b.n.name)).slice(0, 200).map(o => o.n);
+}
+function depthOf(c) { let d = 0; for (let x = c; x.parent; x = S.ctx[x.parent]) d++; return d; }   // 1 = an Explore of Main
+const PANEL_MIN = 22 + 24 + 3 * 22;                        // header + focus bar + 3 rows
+function renderSidebar() {
+  const el = document.getElementById("panels");
+  if (S.view === "loading") { el.innerHTML = [60, 80, 50, 70, 40].map(w => `<div class="skel" style="width:${w}%"></div>`).join(""); return; }
+  if (S.view === "empty") { el.innerHTML = `<div class="msg">No Python files here yet.</div>`; return; }
+  if (S.view === "error") { el.innerHTML = `<div class="msg">The core stopped while reading the code.<br><button class="btn" data-retry>Try Again</button> <button class="btn sec" data-log>Show Log</button></div>`; return; }
+  if (S.search) {
+    const res = searchResults(S.search); S.searchIdx = Math.min(S.searchIdx, Math.max(0, res.length - 1));
+    el.innerHTML = `<div class="tree" id="results">` + (res.length ? res.map((n, i) => {
+      const vn = mkNode(n.key, null);
+      return `<div class="row ${i === S.searchIdx ? "sel" : ""}" data-res="${esc(n.key)}" style="padding-left:12px"><span class="ic">${kindIcon(vn)}</span><span class="label">${matchHtml(n.name, S.search)}</span><span class="desc">${esc(n.path)}</span></div>`;
+    }).join("") : `<div class="msg">No node matches “${esc(S.search)}”.</div>`) + `</div>`;
+    return;
+  }
+  const multi = S.order.length > 1;
+  el.innerHTML = S.order.map(id => {
+    const c = S.ctx[id], rows = flattenPanel(c), on = id === S.active, ex = c.kind === "explore";
+    const head = multi ? `<div class="panel-head ${c.preview ? "preview" : ""}" data-head="${id}" title="${ex ? esc(c.fromName + " calls " + c.title + " at line " + c.site) : "Main"}"><span class="t">${ex ? "◇ Explore: " + esc(c.title) + ` <span class="from">· from ${esc(c.fromName)}</span>` : "Main"}</span>${ex ? `<button class="ib" data-close="${id}" title="Close">${ic("close")}</button>` : ""}</div>` : "";
+    const d = depthOf(c), size = ex ? `flex: 0 0 ${(S.sizes[d] ?? 0.45) * 100}%` : "";
+    const sash = ex ? `<div class="sash" data-sash="${d}"></div>` : "";
+    return `<div class="panel ${ex ? "explore" : ""} ${on && multi ? "active" : ""}" data-panel="${id}" style="${size}">${sash}${head}${focusBarHtml(c)}<div class="tree" role="tree" data-tree="${id}">${rows.map(r => rowHtml(c, r)).join("")}</div></div>`;
+  }).join("");
+}
+
+// the splitter (06 §4.1): drag moves the panel below it; live, no re-render; the share is kept per depth; double-click resets
+document.getElementById("panels").addEventListener("mousedown", e => {
+  const sash = e.target.closest(".sash"); if (!sash) return;
+  e.preventDefault(); e.stopPropagation();
+  const panel = sash.parentElement, box = document.getElementById("panels"), total = box.clientHeight;
+  const others = [...box.children].filter(p => p !== panel), startY = e.clientY, startH = panel.getBoundingClientRect().height;
+  const max = total - others.length * PANEL_MIN;
+  sash.classList.add("drag"); document.body.classList.add("sashing");
+  const move = ev => { const h = Math.max(PANEL_MIN, Math.min(max, startH - (ev.clientY - startY))); panel.style.flex = `0 0 ${h}px`; };
+  const up = () => {
+    removeEventListener("mousemove", move); removeEventListener("mouseup", up);
+    sash.classList.remove("drag"); document.body.classList.remove("sashing");
+    S.sizes[sash.dataset.sash] = panel.getBoundingClientRect().height / total; renderSidebar();
+  };
+  addEventListener("mousemove", move); addEventListener("mouseup", up);
+}, true);
+document.getElementById("panels").addEventListener("click", e => { if (e.target.closest(".sash")) e.stopPropagation(); }, true);   // only moves the line
+document.getElementById("panels").addEventListener("dblclick", e => {
+  const sash = e.target.closest(".sash"); if (!sash) return;
+  e.stopPropagation(); delete S.sizes[sash.dataset.sash]; renderSidebar();
+}, true);
+
+/* =====================================================================
+   8. canvas
+   ===================================================================== */
+const CW = 260, CH = 72, GAPX = 70, GAPY = 16, CODEH = 200;
+function buildLayout(c) {
+  const hOf = vn => CH + (S.codeOpen.has(vn.id) ? CODEH : 0) + siteListH(vn);
+  function build(vn, depth) {
+    const open = depth === 0 || c.expanded.has(vn.id);
+    const node = { vn, depth, open, h: hOf(vn), kids: [] };
+    if (open) {
+      const r = shown(vn, c);
+      r.kids.forEach(k => node.kids.push(build(k, depth + 1)));
+      if (r.state === "loading") node.kids.push({ skeleton: true, depth: depth + 1, h: CH, kids: [], vn });
+    }
+    return node;
+  }
+  const root = build(mkNode(rootKey(c), null), 0);
+  const sh = n => n.kids.length ? Math.max(n.h + GAPY, n.kids.reduce((s, k) => s + sh(k), 0)) : n.h + GAPY;
+  (function place(n, top) {
+    const block = sh(n), kidsH = n.kids.reduce((s, k) => s + sh(k), 0);
+    n.x = n.depth * (CW + GAPX); n.y = top + (block - n.h - GAPY) / 2;
+    let t = top + (block - kidsH) / 2; n.kids.forEach(k => { place(k, t); t += sh(k); });
+  })(root, 0);
+  return root;
+}
+function flatLayout(n, out = []) { if (!n.skeleton) out.push(n); n.kids.forEach(k => flatLayout(k, out)); return out; }
+function cardHtml(c, n) {
+  const vn = n.vn;
+  if (n.skeleton) return `<div class="card skeleton kind-function" style="left:${n.x}px;top:${n.y}px"><div class="sk" style="width:60%"></div><div class="sk" style="width:40%;margin-top:10px"></div></div>`;
+  const call = vn.role === "call", known = !call || !!vn.key, kind = kindClass(vn);
+  const sel = c.selected === vn.id, root = n.depth === 0, open = n.open;
+  const sk = c.selected && VN[c.selected] ? (VN[c.selected].role === "call" ? VN[c.selected].owner : VN[c.selected].key) : c.selected;
+  const cursorHere = (vn.key || null) === S.cursor && !!vn.key;
+  const hiddenSel = !open && !call && sk && sk !== vn.key && isUnder(sk, vn.key), hiddenCur = !open && !call && S.cursor && S.cursor !== vn.key && isUnder(S.cursor, vn.key) && vn.key !== "";
+  const loading = open && !root && childrenOf(vn).state === "loading";
+  const cnt = !open ? hiddenCount(vn) : 0;
+  let chev = root ? `<span class="chev root" title="Focus root">${ic("target")}</span>` : hasChevron(vn) ? `<span class="chev" data-act="toggle">${loading ? ic("loading", "spin") : ic(open ? "chevron-down" : "chevron-right")}</span>` : `<span class="chev none"></span>`;
+  const cn = vn.cn;
+  const foot = [];                                         // 04 §1: the counts, each a tooltip; `+N` and `📄 N` are buttons
+  if (call && cn.sites.length > 1) foot.push(`<span class="cnt" title="${esc(nameOf(VN[vn.parent]))} calls it ${cn.sites.length} times: ${cn.sites.map(x => "line " + x.line).join(", ")}">×${cn.sites.length}</span>`);
+  if (cnt) foot.push(`<span class="cnt act" data-act="toggle" title="${cnt} hidden: open to see them">+${cnt}</span>`);
+  const d = docsOf(vn); if (d) foot.push(`<span class="cnt act" data-act="docs" title="${d} doc${d > 1 ? "s" : ""}: click to read">${ic("book")}${d}</span>`);
+  if (!call && vn.n.link) foot.push(`<span class="cnt" style="opacity:${vn.n.link === "id" ? 1 : .55}" title="${vn.n.link === "id" ? "ID in the code" : "found by name only: Write ID to keep it on renames"}">${ic("link")}</span>`);
+  if (hiddenSel) foot.push(`<span class="cnt" style="color:var(--focus)" title="the selection is inside">●</span>`);
+  if (hiddenCur) foot.push(`<span class="cnt" style="color:var(--focus)" title="the cursor is inside">○</span>`);
+  const acts = actionsFor(vn), strip = acts.map(a => `<button class="ib" title="${a.tip}" data-act="${ACT[a.k]}">${ic(a.icon)}</button>`).join("");
+  let metaL, metaR = "";
+  if (call) {
+    const sitesOpen = siteListH(vn) > 0;                  // every site is its own link: a click goes to THAT line (04 §2.1)
+    const shownSites = cn.sites.slice(0, 2).map((s, i) => `<span class="site" data-act="goToSite" data-i="${i}" title="Go to ${esc(siteLabel(vn, s))}">${esc(siteLabel(vn, s))}</span>`).join(" · ")
+      + (cn.sites.length > 2 ? ` · <span class="site" data-act="moreSites" title="List every site">${cn.sites.length - 2} more ${sitesOpen ? "▴" : "▾"}</span>` : "");
+    metaL = `${ic("call-outgoing")} ${shownSites}`;
+    metaR = cn.mark ? `<span class="mark" title="${cn.mark === "cut" ? `The analysis stopped here. Open to load what ${cn.name} calls.` : "Already above on this path: it calls itself"}">${marksText(cn)}</span>` : known ? `<span class="file">${esc((N[vn.key].path || "").split("/").pop())}</span>` : "not in the index";
+  } else {
+    const n = vn.n; const path = n.kind === "project" ? "minicart/" : n.kind === "folder" ? n.path : n.kind === "file" ? n.path : n.path + ":" + n.line;
+    metaL = `<span class="path" data-path="${esc(path)}" title="${esc(path)}">${esc(path)}</span>`;
+    if (callsNothing(vn)) metaR = "calls nothing";
+    if (n.syntaxError) metaR = `<span class="err">syntax error</span>`;
+    if (n.kind === "function" && TS[vn.key] === "failed") metaR = `<span class="err">couldn't read calls · <span class="site" data-act="retry">Retry</span></span>`;
+  }
+  const codeOpen = S.codeOpen.has(vn.id);
+  const list = siteListH(vn) ? `<div class="sitelist">${cn.sites.map((s, i) => `<div class="srow" data-act="goToSite" data-i="${i}"><span class="site">${esc(siteLabel(vn, s))}</span><span class="txt">${esc(siteText(vn, s))}</span></div>`).join("")}</div>` : "";
+  return `<div class="card kind-${kind} ${call ? "call" : ""} ${sel ? "sel" : ""} ${cursorHere ? "cursor" : ""} ${known ? "" : "unknown"} ${vn.role === "node" && vn.n.syntaxError ? "syn" : ""} ${codeOpen ? "has-code" : ""}" data-ctx="${c.id}" data-id="${esc(vn.id)}" style="left:${n.x}px;top:${n.y}px;${n.h !== CH ? "height:" + n.h + "px" : ""}">
+    <div class="hd">${chev}<span class="ic">${kindIcon(vn)}</span><span class="name" title="${esc(call && known ? nameOf(vn) + " · " + N[vn.key].path : nameOf(vn))}">${esc(nameOf(vn))}</span>${acts.length ? `<div class="strip">${strip}</div>` : ""}</div>
+    <div class="meta"><span class="l">${metaL}</span><span class="r">${metaR}</span></div>
+    ${list}${codeOpen ? `<div class="codebox mono">${fakeCode(vn)}</div>` : ""}<div class="foot">${foot.join("")}</div></div>`;
+}
+function renderCanvas() {
+  const c = act(), msg = document.getElementById("centerMsg");
+  const states = { loading: `Reading the code…`, empty: `No Python files here yet.`, error: `The core stopped while reading the code.<br><button class="btn" data-retry>Try Again</button><button class="btn sec" data-log>Show Log</button>` };
+  if (S.view !== "ready") { msg.style.display = "grid"; msg.innerHTML = `<div>${states[S.view]}</div>`; document.getElementById("cards").innerHTML = ""; document.getElementById("edges").innerHTML = ""; return; }
+  msg.style.display = "none";
+  const root = buildLayout(c), all = flatLayout(root);
+  S.layout = { root, all };
+  const selId = c.selected, onPath = new Set();
+  if (selId) { let v = VN[selId]; while (v) { onPath.add(v.id); v = VN[v.parent]; } }
+  let edges = "";
+  (function walk(n) {
+    n.kids.forEach(k => {
+      if (k.skeleton) return;
+      const x1 = n.x + CW, y1 = n.y + 36, x2 = k.x, y2 = k.y + 36, mx = (x1 + x2) / 2;
+      const path = onPath.has(k.vn.id) && onPath.has(n.vn.id) && selId ? " path" : "";
+      edges += `<path class="edge ${k.vn.role === "call" ? "call" : ""}${path}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`; walk(k);
+    });
+  })(root);
+  document.getElementById("edges").innerHTML = edges;
+  const cardsEl = document.getElementById("cards");
+  cardsEl.innerHTML = (function all_(n) { return cardHtml(c, n) + n.kids.map(all_).join(""); })(root);
+  cardsEl.querySelectorAll(".meta .path").forEach(sp => {                                       // a long path loses its LEFT end: …/inventory.py:40
+    const m = sp.parentElement, full = sp.dataset.path, parts = full.split("/"); let i = 0;
+    while (m.scrollWidth > m.clientWidth + 1 && i < parts.length - 1) { i++; sp.textContent = "…/" + parts.slice(i).join("/"); }
+  });
+  cardsEl.querySelectorAll(".card.call .meta").forEach(m => { const f = m.querySelector(".file"); if (f && m.scrollWidth > m.clientWidth + 1) f.style.display = "none"; });   // whole or not at all, never `payme…`
+  if (!S.vp[c.id]) fit(); else applyVp();
+  renderMinimap(all);
+}
+function bounds() { const a = S.layout.all; let x2 = 0, y2 = 0, y1 = 1e9; a.forEach(n => { x2 = Math.max(x2, n.x + CW); y2 = Math.max(y2, n.y + n.h); y1 = Math.min(y1, n.y); }); return { x1: 0, y1, x2, y2 }; }
+function fit() {
+  const v = document.getElementById("viewport"), b = bounds(), W = v.clientWidth, H = v.clientHeight, pad = 50;
+  const k = Math.max(0.7, Math.min(1.1, (W - pad * 2) / (b.x2 - b.x1), (H - pad * 2) / (b.y2 - b.y1)));
+  const w = (b.x2 - b.x1) * k;                           // too wide for the pane: align left instead of cutting both sides
+  S.vp[S.active] = { k, x: w > W - pad * 2 ? pad : (W - w) / 2, y: (H - (b.y2 + b.y1) * k) / 2 }; applyVp();
+}
+function applyVp() { const p = S.vp[S.active]; if (p) document.getElementById("world").style.transform = `translate(${p.x}px,${p.y}px) scale(${p.k})`; renderMinimapView(); }
+function centerOn(id) {
+  const n = S.layout.all.find(n => n.vn.id === id); if (!n) return;
+  const v = document.getElementById("viewport"), p = S.vp[S.active] || { k: 1, x: 0, y: 0 };
+  p.x = v.clientWidth / 2 - (n.x + CW / 2) * p.k; p.y = v.clientHeight / 2 - (n.y + n.h / 2) * p.k; S.vp[S.active] = p; applyVp();
+}
+function renderMinimap(all) {
+  const mm = document.getElementById("minimap"); mm.classList.toggle("on", S.minimap); if (!S.minimap) return;
+  const b = bounds(), svg = mm.querySelector("svg"), w = 170, h = 110, k = Math.min(w / (b.x2 + 40), h / (b.y2 - b.y1 + 40));
+  svg.innerHTML = all.map(n => `<rect x="${n.x * k + 4}" y="${(n.y - b.y1) * k + 4}" width="${CW * k}" height="${Math.max(2, n.h * k)}" rx="1" fill="${n.vn.id === act().selected ? "var(--focus)" : "var(--widget-border)"}"/>`).join("");
+}
+function renderMinimapView() {}
+
+/* top bar (02-top-bar.md) */
+function renderBar() {
+  const c = act(), bar = document.getElementById("bar"), multi = S.order.length > 1;
+  const last = c.focus.length ? N[c.focus[c.focus.length - 1]] : null, parentName = c.focus.length > 1 ? N[c.focus[c.focus.length - 2]].name : "minicart";
+  const chips = multi ? `<div class="chips">${S.order.map(id => { const x = S.ctx[id], on = id === S.active, ex = x.kind === "explore";
+    return `<span class="chip ${on ? "on" : ""}" data-chip="${id}" title="${ex ? esc("Explore: " + x.title + ", from " + x.fromName + " (line " + x.site + ")") : "Main"}">${ex ? ic("compass") : ""}${esc(x.title)}${ex ? `<span class="x" data-close="${id}" title="Close">${ic("close")}</span>` : ""}</span>`; }).join("")}</div><span class="vr"></span>` : "";
+  const crumbs = [`<span class="crumb ${c.focus.length ? "" : "last"}" data-jump="0" title="minicart: ${stats()}">minicart</span>`]
+    .concat(c.focus.map((k, i) => `<span class="sep">›</span><span class="crumb ${i === c.focus.length - 1 ? "last" : ""}" data-jump="${i + 1}">${esc(N[k].name)}</span>`)).join("");
+  bar.innerHTML = `<button class="ib" data-bar="back" ${c.focus.length ? "" : "disabled"} title="${c.focus.length ? "Back to " + parentName + " (Alt+←)" : "Back"}">${ic("arrow-left")}</button><span class="vr"></span>
+    ${chips}<div class="crumbs">${crumbs}</div>
+    <button class="ib warn" data-bar="warn" title="1 file could not be read">${ic("warning")}</button>
+    <button class="ib" data-bar="reveal" ${c.selected ? "" : "disabled"} title="Reveal selection">${ic("target")}</button>
+    <button class="ib ${S.docsOpen ? "pressed" : ""}" data-bar="docs" title="Docs">${ic("info")}</button>
+    <button class="ib" data-bar="more" title="More">${ic("ellipsis")}</button>`;
+}
+function renderDocs() {                                   // 07-ui/02 §3: header (who · picker · Edit · close), the doc rendered, read-only
+  const el = document.getElementById("docs"); el.classList.toggle("on", S.docsOpen); if (!S.docsOpen) return;
+  el.style.width = S.docW + "px";
+  const c = act(), vn = c.selected ? VN[c.selected] : null, sash = `<div class="dsash" title="Drag to resize"></div>`;
+  const close = `<button class="ib" data-bar="docs" title="Close the doc panel">${ic("close")}</button>`;
+  if (!vn) { el.innerHTML = `${sash}<div class="dhead"><div class="who"><div class="nm">Docs</div></div>${close}</div><div class="inner"><div class="empty">${ic("inspect")}<p>Select a node to see its docs.</p></div></div>`; return; }
+  const n = calleeNode(vn), docs = n ? DOCS[n.key] || [] : [];
+  const parent = vn.role === "call" ? VN[vn.parent] : null;
+  const i = Math.min(S.docPick[n ? n.key : ""] || 0, Math.max(0, docs.length - 1)), d = docs[i];
+  const pick = docs.length ? `<button class="pick" data-docpick title="This node's docs">${ic("book")}<span>${esc(d[0])}</span>${ic("chevron-down")}</button>` : "";
+  const edit = d ? `<button class="ib" data-docedit title="Edit this doc (opens the .md in a tab beside the canvas)">${ic("edit")}</button>` : "";
+  el.innerHTML = `${sash}<div class="dhead"><div class="who"><div class="nm">${esc(nameOf(vn))}</div><div class="sub mono">${n ? esc(n.path + (n.line ? ":" + n.line : "")) : "not in the index"}</div></div>${pick}${edit}${close}</div>
+    ${parent ? `<div class="callline">called by ${esc(nameOf(parent))} · ${vn.cn.sites.length > 1 ? "lines " : "line "}${vn.cn.sites.map(x => x.line).join(", ")}</div>` : ""}
+    <div class="inner">${d ? `<div class="md"><h1>${esc(d[0])}</h1><p>${esc(d[1])}</p></div>`
+      : n ? `<div class="empty">${ic("book")}<p>No docs on <b>${esc(n.name)}</b> yet.</p><button class="btn" data-act="addDoc">Write the First Doc</button></div>`
+      : `<div class="empty"><p>This call is not in the index, so it has no docs.</p></div>`}</div>`;
+}
+function renderEditor() {
+  const e = S.editor, f = e.file;
+  document.getElementById("tabs").innerHTML = `<div class="tab ${e.preview ? "preview" : ""}">${ic("file-code", "k-file")}<span>${esc(f.split("/").pop())}</span></div>`;
+  let lines;
+  if (f === "app/api.py") lines = API_SRC;
+  else { lines = []; const fs = N[f].children.map(k => N[k]).sort((a, b) => a.line - b.line); fs.forEach(n => { while (lines.length < n.line - 1) lines.push(""); lines.push(n.kind === "class" ? `class ${n.name}:` : `def ${n.name}(…):`); lines.push(`    # …body of ${n.name}…`, `    ...`); N[n.key].children.forEach(() => {}); }); }
+  const tgt = e.target; while (lines.length < Math.max(e.line, tgt || 0) + 3) lines.push("    ...");
+  document.getElementById("code").innerHTML = lines.map((l, i) => `<div class="ln ${i + 1 === e.line ? "cur" : ""} ${i + 1 === tgt ? "tgt" : ""}" data-n="${i + 1}"><span class="n">${i + 1}</span><span class="t">${highlight(l)}</span></div>`).join("");
+  const codeEl = document.getElementById("code"), el = codeEl.querySelector(`.ln[data-n="${e.line}"]`); if (el) codeEl.scrollTop += el.getBoundingClientRect().top - codeEl.getBoundingClientRect().top - codeEl.clientHeight / 2;
+  document.getElementById("stText").textContent = `Ln ${e.line}, Col 1`;
+}
+function sideProgress(on) { document.getElementById("sideProgress").classList.toggle("on", on); }
+function barProgress(on) { document.getElementById("barProgress").classList.toggle("on", on); }
+
+/* =====================================================================
+   9. render, and the event wiring
+   ===================================================================== */
+function render() {
+  const hadFocus = document.activeElement && document.activeElement.closest && document.activeElement.closest("#panels") && S.kbFocus;
+  renderSidebar(); renderBar(); renderCanvas(); renderDocs(); renderEditor();
+  const attH = document.getElementById("attItems"); attH.style.display = S.attOpen ? "" : "none";
+  if (S.scrollSide) { const r = document.querySelector(`.panel[data-panel="${S.active}"] .row.sel`); if (r) { const t = r.closest(".tree"), dy = r.getBoundingClientRect().top - t.getBoundingClientRect().top; if (dy < 0) t.scrollTop += dy; else if (dy + 22 > t.clientHeight) t.scrollTop += dy + 22 - t.clientHeight; } S.scrollSide = false; }
+  if (hadFocus) { const r = document.querySelector(`.row[data-ctx="${S.kbFocus.ctx}"][data-id="${CSS.escape(S.kbFocus.id)}"]`); if (r) r.focus({ preventScroll: true }); }
+  if (S.reveal) { const rv = S.reveal; S.reveal = null; if (rv.ctx === S.active) { centerOn(rv.id); const el = document.querySelector(`.card[data-id="${CSS.escape(rv.id)}"]`); if (el) { el.classList.add("pulse"); setTimeout(() => el.classList.remove("pulse"), 1100); } } }
+}
+function setView(v) { S.view = v; document.querySelectorAll("[data-state]").forEach(b => b.classList.toggle("on", b.dataset.state === v)); sideProgress(v === "loading"); barProgress(v === "loading"); render(); }
+
+/* sidebar events */
+const side = document.getElementById("side");
+side.addEventListener("click", e => {
+  const T = e.target;
+  if (T.closest("[data-top]")) { const k = T.closest("[data-top]").dataset.top; const r = T.closest("[data-top]").getBoundingClientRect();
+    if (k === "openCanvas") toast("Open Canvas: the canvas is already open in this mockup"); else if (k === "collapseAll") run("collapseAll", S.active, "");
+    else showMenu(r.left, r.bottom + 2, [{ label: "Refresh Structure", a: "refresh" }, { label: "Search…", a: "search", hint: "⌃⌥N" }, "-", { label: "Restore Removed Doc…", a: "x" }, { label: "Empty Trash", a: "x" }], it => it.a === "refresh" ? run("refresh") : it.a === "search" ? document.getElementById("q").focus() : toast(it.label)); return; }
+  if (T.closest("[data-retry]")) return setView("ready"); if (T.closest("[data-log]")) return toast("Show Log: opens the V-NOC output channel");
+  if (T.closest("#attHead")) { S.attOpen = !S.attOpen; return render(); }
+  const att = T.closest("[data-att]"); if (att) return toast("Needs attention → " + att.querySelector(".label").textContent);
+  const res = T.closest("[data-res]"); if (res) return pickResult(res.dataset.res);
+  const close = T.closest("[data-close]"); if (close) { closeCtx(close.dataset.close); return render(); }
+  const jumpEl = T.closest("[data-jump]"); if (jumpEl) { const p = T.closest(".panel").dataset.panel; S.active = p; jump(p, +jumpEl.dataset.jump); return render(); }
+  const fb = T.closest("[data-fb]"); if (fb) { const p = T.closest(".panel").dataset.panel; S.active = p; fb.dataset.fb === "back" ? back(p) : jump(p, 0); return render(); }
+  const head = T.closest("[data-head]"); if (head) { S.active = head.dataset.head; S.ctx[S.active].preview = false; return render(); }
+  const row = T.closest(".row[data-id]"); if (!row) { const p = T.closest(".panel"); if (p) { S.active = p.dataset.panel; render(); } return; }
+  const ctxId = row.dataset.ctx, id = row.dataset.id, vn = VN[id];
+  S.kbFocus = { ctx: ctxId, id };
+  const btn = T.closest("[data-act]");
+  if (btn && btn.dataset.act === "toggle") { toggle(ctxId, id); return render(); }
+  if (btn) { S.active = ctxId; return run(btn.dataset.act, ctxId, id); }
+  if (e.detail >= 2) { if (vn.role === "node" && vn.n.kind === "folder") toggle(ctxId, id); else goToCode(vn); return render(); }
+  S.active = ctxId; S.ctx[ctxId].preview = false;                // click in a panel activates it first; the click rule: canvas open -> reveal there
+  select(ctxId, id); S.reveal = { ctx: ctxId, id }; render();
+});
+side.addEventListener("contextmenu", e => {
+  const head = e.target.closest("[data-head]"), row = e.target.closest(".row[data-id]");
+  if (head) { e.preventDefault(); const id = head.dataset.head, ex = S.ctx[id].kind === "explore";            // 08 §5: panel header
+    return showMenu(e.clientX, e.clientY, [{ label: "Close", a: "closeCtx", off: !ex }, { label: "Close Others", a: "closeOthers", off: S.order.length < 2 }], it => run(it.a, id, "", { target: id })); }
+  if (!row) { if (!e.target.closest("#panels")) return; e.preventDefault();                                   // 08 §5: sidebar empty space
+    return showMenu(e.clientX, e.clientY, [{ label: "Collapse All", a: "collapseAll" }, { label: "Clear Focus", a: "clearFocus", off: !act().focus.length }, { label: "Refresh Structure", a: "refresh" }], it => run(it.a, S.active, "")); }
+  e.preventDefault();
+  const ctxId = row.dataset.ctx, id = row.dataset.id; select(ctxId, id); S.active = ctxId; render();
+  showMenu(e.clientX, e.clientY, nodeMenu(ctxId, VN[id], "sidebar"), it => run(it.a, ctxId, id));
+});
+side.addEventListener("mouseover", e => { const r = e.target.closest(".row[data-id]"); const id = r ? r.dataset.id : null; if (id === S.highlight) return; setHighlight(id); });
+side.addEventListener("mouseleave", () => setHighlight(null));
+function setHighlight(id) { S.highlight = id; document.querySelectorAll(".card.hl").forEach(x => x.classList.remove("hl")); if (id) { const el = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`); if (el) el.classList.add("hl"); } }
+
+/* search box */
+const q = document.getElementById("q");
+q.addEventListener("input", () => { S.search = q.value.trim(); S.searchIdx = 0; renderSidebar(); hl(); });
+function hl() { if (!S.search) return setHighlight(null); const r = searchResults(S.search)[S.searchIdx]; setHighlight(r ? r.key : null); }
+function pickResult(key) { q.value = ""; S.search = ""; reveal(S.active, key); render(); }
+q.addEventListener("keydown", e => {
+  const res = S.search ? searchResults(S.search) : [];
+  if (e.key === "ArrowDown") { S.searchIdx = Math.min(res.length - 1, S.searchIdx + 1); renderSidebar(); hl(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { S.searchIdx = Math.max(0, S.searchIdx - 1); renderSidebar(); hl(); e.preventDefault(); }
+  else if (e.key === "Enter" && res[S.searchIdx]) pickResult(res[S.searchIdx].key);
+  else if (e.key === "Escape") { q.value = ""; S.search = ""; render(); }
+});
+
+/* sidebar keyboard (06 §7): arrows move AND select */
+side.addEventListener("keydown", e => {
+  const row = e.target.closest(".row[data-id]"); if (!row || e.target === q) return;
+  const ctxId = row.dataset.ctx, id = row.dataset.id, c = S.ctx[ctxId], rows = flattenPanel(c), i = rows.findIndex(r => r.vn.id === id), cur = rows[i]; if (!cur) return;
+  const sel = r => { if (!r) return; S.active = ctxId; select(ctxId, r.vn.id); S.kbFocus = { ctx: ctxId, id: r.vn.id }; S.reveal = null; render(); };
+  const k = e.key;
+  if (k === "ArrowDown") sel(rows[i + 1]); else if (k === "ArrowUp") sel(rows[i - 1]); else if (k === "Home") sel(rows[0]); else if (k === "End") sel(rows[rows.length - 1]);
+  else if (k === "ArrowRight") { if (sbChevron(cur.vn) && !cur.open) { toggle(ctxId, id, true); render(); } else sel(rows[i + 1] && rows[i + 1].depth > cur.depth ? rows[i + 1] : null); }
+  else if (k === "ArrowLeft" && !e.altKey) { if (cur.open && !cur.root) { toggle(ctxId, id, false); render(); } else { for (let j = i - 1; j >= 0; j--) if (rows[j].depth < cur.depth) { sel(rows[j]); break; } } }
+  else if (k === " ") { toggle(ctxId, id); render(); }
+  else if (k === "Enter" && (e.metaKey || e.ctrlKey)) run("focus", ctxId, id);
+  else if (k === "Enter") { S.active = ctxId; select(ctxId, id); S.reveal = { ctx: ctxId, id }; render(); }
+  else if (k === "ArrowLeft" && e.altKey) { back(ctxId); render(); }
+  else if (k.length === 1 && /\S/.test(k) && !e.metaKey && !e.ctrlKey) { sideKey.buf = (Date.now() - sideKey.t < 500 ? sideKey.buf : "") + k.toLowerCase(); sideKey.t = Date.now(); sel(rows.slice(i + 1).concat(rows.slice(0, i)).find(r => r.vn.n.name.toLowerCase().startsWith(sideKey.buf))); }
+  else return; e.preventDefault();
+});
+const sideKey = { buf: "", t: 0 };
+document.addEventListener("keydown", e => {
+  if (e.target === q && e.key !== "Escape") return;
+  if ((e.metaKey || e.ctrlKey) && e.key === "f" && side.contains(e.target)) { q.focus(); e.preventDefault(); }
+  if (e.key === "/" && side.contains(e.target) && e.target !== q) { q.focus(); e.preventDefault(); }
+  if (e.altKey && e.key === "ArrowLeft") { back(S.active); render(); e.preventDefault(); }
+  if (e.key === "Escape") { hideMenu(); if (act().selected && !side.contains(e.target)) { run("clearSelection", S.active, ""); } }
+});
+
+/* canvas events */
+const vp = document.getElementById("viewport");
+vp.addEventListener("click", e => {
+  const T = e.target;
+  if (T.closest("[data-retry]")) return setView("ready"); if (T.closest("[data-log]")) return toast("Show Log: opens the V-NOC output channel");
+  if (T.closest("#controls")) { const z = T.closest("[data-z]").dataset.z; const p = S.vp[S.active]; if (z === "fit") fit(); else { zoomAt(vp.clientWidth / 2, vp.clientHeight / 2, z === "in" ? 1.2 : 1 / 1.2); } return; }
+  const card = T.closest(".card[data-id]"); if (!card) { if (!panMoved) { /* background click: keep the selection (Esc clears) */ } return; }
+  const ctxId = card.dataset.ctx, id = card.dataset.id, vn = VN[id]; vp.focus({ preventScroll: true });
+  const btn = T.closest("[data-act]");
+  if (btn) {
+    const a = btn.dataset.act;
+    if (a === "toggle") { toggle(ctxId, id); return render(); }
+    if (a === "goToSite") { select(ctxId, id); S.scrollSide = true; return run(a, ctxId, id, { i: +btn.dataset.i }); }   // that site, never "the first one"
+    S.scrollSide = a === "docs"; return run(a, ctxId, id);
+  }
+  if (e.detail >= 2) return run(vn.role === "call" ? "explore" : "focus", ctxId, id);
+  select(ctxId, id); S.scrollSide = true; render();
+});
+vp.addEventListener("contextmenu", e => {
+  e.preventDefault(); const card = e.target.closest(".card[data-id]"), c = act();
+  if (card) { const ctxId = card.dataset.ctx, id = card.dataset.id; select(ctxId, id); S.scrollSide = true; render(); return showMenu(e.clientX, e.clientY, nodeMenu(ctxId, VN[id], "canvas"), it => run(it.a, ctxId, id)); }
+  const ex = c.kind === "explore";
+  showMenu(e.clientX, e.clientY, [{ label: "Fit View", a: "fit" }, { label: "Collapse All", a: "collapseAll" }, "-", { label: "Back", a: "back", off: !c.focus.length }, { label: "Clear Focus", a: "clearFocus", off: !c.focus.length }, { label: "Clear Selection", a: "clearSelection", off: !c.selected }, ...(ex ? ["-", { label: "Close Explore", a: "closeCtx" }] : [])], it => run(it.a, S.active, ""));
+});
+vp.addEventListener("mouseover", e => { const r = e.target.closest(".card[data-id]"); document.querySelectorAll(".row.hl").forEach(x => x.classList.remove("hl")); if (r) { const row = document.querySelector(`.row[data-id="${CSS.escape(r.dataset.id)}"]`); if (row) row.classList.add("hl"); } });
+/* pan and zoom */
+let pan = null, panMoved = false;
+vp.addEventListener("mousedown", e => { if (e.target.closest(".card, #controls, #minimap, .center-msg")) return; const p = S.vp[S.active]; if (!p) return; pan = { x: e.clientX, y: e.clientY, px: p.x, py: p.y }; panMoved = false; vp.classList.add("panning"); });
+addEventListener("mousemove", e => { if (!pan) return; const p = S.vp[S.active]; if (Math.abs(e.clientX - pan.x) + Math.abs(e.clientY - pan.y) > 3) panMoved = true; p.x = pan.px + e.clientX - pan.x; p.y = pan.py + e.clientY - pan.y; applyVp(); });
+addEventListener("mouseup", () => { pan = null; vp.classList.remove("panning"); });
+function zoomAt(cx, cy, f) { const p = S.vp[S.active]; if (!p) return; const k = Math.max(.25, Math.min(2, p.k * f)); p.x = cx - (cx - p.x) * (k / p.k); p.y = cy - (cy - p.y) * (k / p.k); p.k = k; applyVp(); }
+vp.addEventListener("wheel", e => { e.preventDefault(); const r = vp.getBoundingClientRect(); if (e.ctrlKey || e.metaKey) zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.01)); else { const p = S.vp[S.active]; if (!p) return; p.x -= e.deltaX; p.y -= e.deltaY; applyVp(); } }, { passive: false });
+/* canvas keys (03 §7) */
+vp.addEventListener("keydown", e => {
+  const c = act(), all = S.layout ? S.layout.all : [], i = all.findIndex(n => n.vn.id === c.selected), cur = all[i], k = e.key;
+  const pick = n => { if (n) { select(c.id, n.vn.id); S.scrollSide = true; S.reveal = { ctx: c.id, id: n.vn.id }; render(); } };
+  if (k === "ArrowDown") pick(all[i + 1] || all[0]); else if (k === "ArrowUp") pick(all[i - 1]);
+  else if (k === "ArrowRight" && cur) { if (hasChevron(cur.vn) && !cur.open) { toggle(c.id, cur.vn.id, true); render(); } else pick(cur.kids[0]); }
+  else if (k === "ArrowLeft" && cur && !e.altKey) { const par = all.find(n => n.kids.includes(cur)); pick(par); }
+  else if (k === " " && cur) { toggle(c.id, cur.vn.id); render(); }
+  else if (k === "Enter" && cur && (e.metaKey || e.ctrlKey)) run(cur.vn.role === "call" ? "goToSite" : "goToCode", c.id, cur.vn.id);   // a call with several sites: the QuickPick
+  else if (k === "Enter" && cur) run(cur.vn.role === "call" ? "explore" : "focus", c.id, cur.vn.id);
+  else return; e.preventDefault();
+});
+/* top bar */
+document.getElementById("canvasGroup").addEventListener("click", e => {
+  const T = e.target, c = act();
+  const close = T.closest("#bar [data-close]"); if (close) { closeCtx(close.dataset.close); return render(); }
+  const chip = T.closest("[data-chip]"); if (chip) { S.active = chip.dataset.chip; S.ctx[S.active].preview = false; return render(); }
+  const jp = T.closest("#bar [data-jump]"); if (jp) { jump(S.active, +jp.dataset.jump); return render(); }
+  const b = T.closest("[data-bar]"); if (!b) return; const k = b.dataset.bar, r = b.getBoundingClientRect();
+  if (k === "back") { back(S.active); render(); }
+  else if (k === "warn") { flash(document.getElementById("attention")); toast("1 file could not be read → NEEDS ATTENTION"); }
+  else if (k === "reveal") { S.reveal = { ctx: S.active, id: c.selected }; render(); }
+  else if (k === "docs") { openDocs(); render(); }
+  else if (k === "more") showMenu(r.right - 220, r.bottom + 2, [{ label: "Fit View", a: "fit" }, { label: "Collapse All", a: "collapseAll" }, { label: "Show Minimap", a: "mm", check: S.minimap }, "-", { label: "Refresh Structure", a: "refresh" }], it => it.a === "mm" ? (S.minimap = !S.minimap, render()) : run(it.a, S.active, ""));
+});
+document.getElementById("bar").addEventListener("mouseover", e => { const j = e.target.closest("#bar .crumb[data-jump]"); setHighlight(j ? (+j.dataset.jump ? act().focus[+j.dataset.jump - 1] : null) : null); });
+document.getElementById("docs").addEventListener("click", e => {
+  const c = act(), vn = c.selected ? VN[c.selected] : null, n = vn && calleeNode(vn);
+  const p = e.target.closest("[data-docpick]");
+  if (p && n) { const r = p.getBoundingClientRect(), docs = DOCS[n.key] || [];            // the picker: this node's docs by title, then New doc…
+    return showMenu(r.left, r.bottom + 2, [...docs.map((d, i) => ({ label: d[0], a: i, check: i === (S.docPick[n.key] || 0) })), "-", { label: "New Doc…", a: "new" }],
+      it => it.a === "new" ? run("addDoc", S.active, c.selected) : (S.docPick[n.key] = it.a, renderDocs())); }
+  if (e.target.closest("[data-docedit]")) return toast("Opens " + (n ? n.name : "") + "'s doc in a Markdown tab beside the canvas; this panel is its live preview");
+  const b = e.target.closest("[data-act]"); if (b) run(b.dataset.act, S.active, c.selected || "");
+});
+document.getElementById("docs").addEventListener("mousedown", e => {      // drag the left edge: 280 – 800 px, kept in setState
+  const sash = e.target.closest(".dsash"); if (!sash) return; e.preventDefault();
+  sash.classList.add("drag"); document.body.style.cursor = "col-resize";
+  const move = ev => { S.docW = Math.max(280, Math.min(800, innerWidth - ev.clientX)); document.getElementById("docs").style.width = S.docW + "px"; };
+  const up = () => { removeEventListener("mousemove", move); removeEventListener("mouseup", up); sash.classList.remove("drag"); document.body.style.cursor = ""; };
+  addEventListener("mousemove", move); addEventListener("mouseup", up);
+});
+/* the code editor's V-NOC submenu (08 §4): the node is the one at the cursor */
+document.getElementById("editor").addEventListener("contextmenu", e => {
+  e.preventDefault(); const key = S.cursor, vn = mkNode(key, null), c = act(), byName = vn.n.link === "name", fn = vn.n.kind === "function" || vn.n.kind === "class";
+  showMenu(e.clientX, e.clientY, [{ label: "V-NOC ▸", head: true }, { label: "Reveal in Sidebar", a: "revealInSidebar" }, { label: "Open in Canvas", a: "openInCanvas" }, { label: "Focus", a: "focus" }, "-",
+    ...(fn ? [{ label: "Show Calls", a: "showCalls" }, "-"] : []), { label: "Show Docs", a: "showDocs" }, { label: "Add Doc…", a: "addDoc" }, { label: "Attach a Missing Doc Here…", a: "attach" }, ...(byName ? [{ label: "Write ID", a: "writeId" }] : [])],
+    it => run(it.a, c.id, key));
+});
+/* mockup controls */
+document.getElementById("status").addEventListener("click", e => {
+  const t = e.target.closest("[data-theme]"); if (t) { document.body.classList.toggle("light", t.dataset.theme === "light"); document.querySelectorAll("[data-theme]").forEach(b => b.classList.toggle("on", b === t)); }
+  const s = e.target.closest("[data-state]"); if (s) setView(s.dataset.state);
+});
+addEventListener("resize", () => { if (S.view === "ready") fit(); });
+render(); setTimeout(() => { fit(); }, 0);
+</script>
+</body>
+</html>

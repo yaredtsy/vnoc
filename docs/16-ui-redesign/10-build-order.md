@@ -1,0 +1,164 @@
+# 16.10 Build order
+
+```
+build order
+├── 1. rules for every step
+├── 2. the steps (8.0 – 8.8)
+├── 3. what each step leaves working
+└── 4. later
+```
+
+On the branch `0.2-call-trees`, after 7.8. Each step is one commit (or a few with the same prefix) and leaves the branch green: `pnpm -r test`,
+`cargo test`, and the window suite.
+
+## 1. Rules for every step
+
+- The **R** decisions marked **ask** in the README are answered before 8.1. If one is answered "no", the step that builds it says what changes.
+- `tokens.css` stays the only file that names a `--vscode-*` variable: 09's colours are added there as tokens (`--row-selected`, `--edge-call`, …)
+  and the components use the tokens.
+- No `vscode` import in `shared/`; no state in a page that the session should own (10/01's rules, kept).
+- Each step updates the doc it builds when the code settles something the doc left open, as 14 did ("as built" notes), and adds its row to
+  `../README.md`'s tree when the folder is done.
+
+## 2. The steps
+
+### 8.0 Three checks (no product change)
+
+| Check | How | Write the answer into |
+|---|---|---|
+| does `webview/context` reach a **webview view**? | a throwaway webview view with one `data-vscode-context` element and one menu entry; F5; right-click | 08 §7 (and drop the fallback if yes) |
+| is `focusedView == <id>` set for a webview view? | *Developer: Inspect Context Keys* with the throwaway view focused | 06 §10 |
+| codicons in a webview under the panel's CSP | load `@vscode/codicons/dist/codicon.css` from `media/`, `font-src ${webview.cspSource}` | 04 §5 |
+
+Proof: the three answers in the docs. Commit: `step 8.0: three checks for the webview sidebar (context menu, focusedView, codicons)`.
+
+### 8.1 The session: focus is a path, contexts, call ids
+
+| Files | What |
+|---|---|
+| `shared/tree.ts` | `lineage(tree, id)` |
+| `shared/calls.ts` (new) | `CallId`, `callId`, `parseCallId`, `isCallId`, `stepOf`; `siteText`, `listedSites`, `markBadge`, `isStale` moved here from `webview/src/canvas/calls.ts` |
+| `shared/session.ts` | `ContextState.kind`, `.call`; `focus` = lineage; intents `explore`, `activate`, `closeContext`; `select` of a call opens / closes EXPLORE children (03 §4); `reduce(…, calls: CallLookup)`; the 0.1 history → lineage on the first `treeChanged`; `reveal` is canvas-only |
+| `extension/src/session.ts` | passes the lookup (from `CallTrees`) to `reduce` |
+
+Tests (`shared/session.test.ts`, `shared/calls.test.ts`, `shared/tree.test.ts`):
+
+- focus on a deep node gives its lineage; Back walks up it; a crumb jumps; focusing the last step does nothing
+- a saved 0.1 history `[a, x]` becomes `lineage(x)` on the first `treeChanged`
+- select a call in MAIN → an EXPLORE child, not active, focus = the callee's lineage, selected = the callee; select another call → the first child
+  closes, a second opens; select a non-call → the child closes; `explore` with `activate` → active; `closeContext` closes the children too and
+  hands `active` back to the parent; an unknown callee opens nothing
+- call ids: stable when a call is inserted above; `#2` for twin steps; JSON survives `::`, `#`, `>` and spaces in paths
+
+Proof: `pnpm -r test`. The UI still runs (the canvas ignores the new fields). Commit: `step 8.1: the focus is a path; EXPLORE contexts; call ids`.
+
+### 8.2 The host fetches what is open
+
+| Files | What |
+|---|---|
+| `shared/calls.ts` | `callsOf`, `wantedCalls`, `resolveCall` |
+| `shared/session.ts` | `callsChanged` (05 §5) |
+| `shared/messages.ts` | event `callTreeState`; request `showCallTree` removed; `rendered` gains `calls` |
+| `extension/src/callTree.ts` | asks for `wantedCalls` after each session or structure change, two at a time, the prefetch last; cancels what is no longer wanted; emits `callTreeState`; refetches stale wanted trees 800 ms after the last index change; `KEEP` counts only unwanted trees; progress on the view, no notification |
+| `extension/src/commands.ts` | `vnoc.showCalls` (05 §7) replaces `vnoc.showCallTree` and `refreshCallTree` |
+
+Tests: `shared/calls.test.ts` (`callsOf` through `cut`; `wantedCalls` with two contexts, a focus step, the prefetch; stale and unwanted is not
+asked for); window suite `calls.test.ts`: `showCalls` on the fixture → the function in `expanded`, a tree arrives, `callTreeState` went
+`loading` → `idle`; collapse before the answer → cancelled.
+
+Proof: the tests; by hand, the old "Calls" section still fills (it reads the same trees). Commit: `step 8.2: the host fetches the calls of what is open; Show Calls`.
+
+### 8.3 Calls are cards; the new card
+
+| Files | What |
+|---|---|
+| `webview/src/canvas/layout.ts` | call cards after nested defs (03 §1), `Placed` of 04 §6, 72 px cards, no Calls heights |
+| `webview/src/canvas/Canvas.tsx` | dashed call edges (03 §6) |
+| `webview/src/node-card/*` | 04 §1–§5: `NodeHeader`, `NodeMeta` (new), `ActionStrip` (new), `NodeFooter` (rewritten: the counts), `nodeContext` (08 §6); delete `NodeCalls.tsx`, `NodeBody.tsx`, `canvas/calls.ts`'s `callRows` |
+| `webview/src/canvas/keys.ts` | `Enter` / `Ctrl+Enter` on a call (03 §7) |
+| `webview/package.json`, `webview/src/node-card/kinds.ts` | codicons |
+
+Tests: `layout.test.ts` (a function open with calls known → call cards after its defs, edges marked `call`; calls unknown → chevron, no `+N`;
+`recursive` → no chevron; heights 72 / +220); `keys.test.ts`.
+
+Proof: by hand on `minicart`: focus `checkout` → one call card; open it → six; open `reserve_stock` → its own. Commit:
+`step 8.3: calls are cards on the canvas, one level at a time; the card is header and one meta line`.
+
+### 8.4 The canvas's one bar; contexts on one canvas
+
+| Files | What |
+|---|---|
+| `webview/src/canvas/TopBar.tsx` (new), `webview/src/App.tsx` | 02 §2–§5; delete `SelectionStrip.tsx` |
+| `webview/src/canvas/Canvas.tsx` | draws `session.active`; per-context viewport; minimap off by default, toggled from `⋯` |
+| `webview/src/docs/DocPanel.tsx` | follows the active context; the "called by" line for a call |
+
+Proof: by hand, the four states of 02 §4, and switching contexts keeps each one's pan and zoom. Commit:
+`step 8.4: one bar on the canvas (back, contexts, crumbs, reveal, docs, more)`.
+
+### 8.5 The sidebar becomes a webview (structure rows)
+
+| Files | What |
+|---|---|
+| `extension/package.json` | `vnoc.structure` becomes `"type": "webview"`; `vnoc.focusStack` view removed; title buttons of 06 §9; `viewsWelcome` for the view removed |
+| `extension/src/sidebarView.ts` (new) | the provider (06 §10) |
+| `extension/src/panels.ts` → `surfaces.ts` | `emit` reaches the sidebar |
+| `webview/vite.config.ts` | a second entry, `src/sidebar/main.tsx` → `assets/sidebar.js` |
+| `webview/src/sidebar/` (new) | `Sidebar`, `FocusBar`, `Tree` (flatten + virtualise + keys + type-ahead), `Row` (structure rows), `SearchResults`, the four states |
+| `extension/src/commands.ts`, `shared/messages.ts` | `rowClick` (07 §3) |
+| removed | `structureView.ts`, `focusView.ts`, `cursorMark.ts`, the tree-mirror code of 12, `vnoc.focusDrop`, `vnoc.focusSelection` |
+
+Tests: `webview/src/sidebar/tree.test.ts` (flatten with open set and focus; type-ahead), `keys.test.ts` (06 §7 map); the window suite's
+`sidebar.test.ts` rewritten on notes: a click with the canvas open reveals and opens no code tab; with it closed opens a preview tab; the selected
+row is reported after a card click.
+
+Proof: the tests; by hand with a 1,000-file folder (scrolls smoothly, opens in under a second). Commit:
+`step 8.5: the STRUCTURE view is a webview: search, focus bar, keyboard, the click rule`.
+
+### 8.6 Context panels in the sidebar
+
+| Files | What |
+|---|---|
+| `webview/src/sidebar/ContextPanel.tsx` (new), `Sidebar.tsx` | panels, splitters (06 §4.1: drag, limits, double-click, sizes per depth), headers, activate on click, preview italics (09 §4) |
+
+Proof: the J3 and J4 walk by hand, both surfaces side by side: select the `reserve_stock` card under `checkout_order` → an EXPLORE panel opens, not
+active; double-click it → active, the canvas shows `inventory.py › reserve_stock`; `←` twice → `app`; select another call in MAIN → the panel
+closes; the sidebar never shows a call row. Commit: `step 8.6: EXPLORE panels in the sidebar`.
+
+### 8.7 Menus
+
+| Files | What |
+|---|---|
+| `extension/package.json` | 08 §2–§5 and §8: one `webview/context` list, the slimmer editor and Explorer submenus, new / removed commands, `contributes.keybindings` |
+| `extension/src/commands.ts` | `openInCanvas`, `explore`, `goToCallSite`, `closeContext`, `closeOtherContexts`; `callFor(arg)` |
+| `extension/src/menus.test.ts` | 08 §9 |
+| `extension/CHANGELOG.md` | the removed commands |
+
+Proof: `menus.test.ts`; by hand, right-click a card, a row, a call card, the canvas background, a panel header, the editor, a tab,
+the Explorer. Commit: `step 8.7: one menu list for cards and rows; the editor's V-NOC menu has five entries`.
+
+### 8.8 States, themes, words
+
+09 §6's checks, the README's screenshots, `../README.md`'s tree gets `16-ui-redesign/`, and `../10-ui-rework/README.md` points here. Commit:
+`step 8.8: states checked in four themes; docs point to the redesign`.
+
+## 3. What each step leaves working
+
+| After | The user sees |
+|---|---|
+| 8.1 | nothing new; Back goes up one level |
+| 8.2 | the old Calls section, filled by the new fetching |
+| 8.3 | calls as cards, one level at a time; the new card |
+| 8.4 | one bar on the canvas |
+| 8.5 | the webview sidebar (structure only) |
+| 8.6 | EXPLORE panels in the sidebar |
+| 8.7 | the new menus |
+
+## 4. Later
+
+| Step | When | What |
+|---|---|---|
+| **exact chevrons** (05 §3 B) | after the driver keeps the project open (T6's cache) | `vnoc/hasCalls { keys }` for the functions drawn; `calls: "unknown"` stops happening |
+| **a summary on the card** | when the driver's outline returns the docstring's first line | a `summary` field in `vnoc/structure`; the card's meta line becomes two lines (summary, then path), as the web's card |
+| **callers** | its own plan | "who calls this", as a second kind of call node |
+
+Next: back to [`README.md`](README.md)
