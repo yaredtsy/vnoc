@@ -44,7 +44,7 @@ pub fn call_tree(params: CallTreeParams) -> Result<CallTreeResult, Failure> {
 }
 
 /// The text of every file a call is made from: a node's `call_site` is read in `call_site_file`, which is not always its parent's file
-/// (a call made in an inherited constructor is in the base class's file).
+/// (a call made in an inherited constructor is in the base class's file), and the node says so on the wire.
 struct Callers {
     texts: Vec<(String, String)>,
 }
@@ -54,7 +54,10 @@ impl Callers {
         let mut files = BTreeSet::new();
         fn collect(node: &Frame, files: &mut BTreeSet<String>) {
             if let (Some(file), Some(_)) = (&node.call_site_file, &node.call_site) {
-                files.insert(file.clone());
+                // a file outside `root` is not read: `Convert::node` drops its sites
+                if !Path::new(file).is_absolute() {
+                    files.insert(file.clone());
+                }
             }
             node.children.iter().for_each(|c| collect(c, files));
         }
@@ -77,10 +80,16 @@ struct Convert<'a> {
 
 impl Convert<'_> {
     fn node(&self, frame: &Frame) -> CallNode {
-        let call_site = frame.call_site.as_ref().zip(frame.call_site_file.as_deref()).and_then(|(span, file)| {
+        // the position and the file come from one place, so a site never has a position from one file and the name of another
+        let site = frame.call_site.as_ref().zip(frame.call_site_file.as_deref()).and_then(|(span, file)| {
+            // a site in a file outside `root` is no site: "a site with no file" then means only a driver from before 7.7 (docs/14 §10.3)
+            if Path::new(file).is_absolute() {
+                return None;
+            }
             let lines = self.lines.get(file)?;
-            Some(vnoc_driver_protocol::Range { start: lines.position_1based(span.start), end: lines.position_1based(span.end) })
+            Some((vnoc_driver_protocol::Range { start: lines.position_1based(span.start), end: lines.position_1based(span.end) }, file.to_string()))
         });
+        let (call_site, call_site_file) = site.unzip();
         // a mark this driver's protocol has no word for is left out
         let marks = frame
             .marks
@@ -92,7 +101,7 @@ impl Convert<'_> {
                 _ => None,
             })
             .collect();
-        CallNode { target: self.target(frame), call_site, marks, children: frame.children.iter().map(|c| self.node(c)).collect() }
+        CallNode { target: self.target(frame), call_site, call_site_file, marks, children: frame.children.iter().map(|c| self.node(c)).collect() }
     }
 
     fn target(&self, frame: &Frame) -> CallTarget {

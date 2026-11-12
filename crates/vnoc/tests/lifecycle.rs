@@ -917,3 +917,37 @@ fn a_call_tree_of_a_subfolder_has_keys_from_the_git_root_and_paths_from_the_fold
     assert_eq!((leaf["key"].as_str(), leaf["path"].as_str()), (Some("services/api/lib.py::leaf"), Some("lib.py")));
     core.finish();
 }
+
+/// `src` and everything under it, copied to `dst`.
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let to = dst.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &to);
+        } else {
+            std::fs::copy(entry.path(), to).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_call_site_in_an_inherited_constructor_names_the_base_file() {
+    // `class Child(Base)` is in pkg/child.py and has no `__init__`; `Base.__init__` in pkg/base.py calls `a()` from pkg/calc.py
+    let folder = std::env::temp_dir().join(format!("vnoc-calltree-inherit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    copy_tree(&repo_root().join("drivers/python/tests/fixtures/call_tree"), &folder);
+    let mut core = Core::start(Some(driver_path()), &folder);
+    core.request("vnoc/structure", Value::Null).expect("structure answers");
+
+    let result = core.request("vnoc/callTree", json!({ "key": "pkg/child.py::Child" })).expect("the call tree answers (is the driver built? `cd drivers/python && cargo build`)");
+    let child = &result["root"];
+    assert_eq!((child["path"].as_str(), child["kind"].as_str()), (Some("pkg/child.py"), Some("class")));
+    let [a] = &child["children"].as_array().unwrap()[..] else { panic!("one call: {child}") };
+    assert_eq!((a["qualname"].as_str(), a["path"].as_str()), (Some("a"), Some("pkg/calc.py")));
+    let sites = a["call_sites"].as_array().unwrap();
+    assert_eq!(sites.len(), 1, "{a}");
+    assert_eq!(sites[0]["path"], "pkg/base.py", "the call is written in the base class's file, not in child.py");
+    core.finish();
+}

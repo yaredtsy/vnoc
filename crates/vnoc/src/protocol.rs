@@ -363,6 +363,16 @@ pub struct CallTreeParams {
     pub key: String,
 }
 
+/// One place a node is called.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallSite {
+    /// relative to the opened folder, as `CallTreeNode.path`; `null` when the file is not under it
+    pub path: Option<String>,
+    /// the range's fields sit beside `path`, so a site still reads as a range (`site.start.line`)
+    #[serde(flatten)]
+    pub range: Range,
+}
+
 /// One function or class in the tree; calls to it from one place are merged into one node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallTreeNode {
@@ -376,8 +386,8 @@ pub struct CallTreeNode {
     pub kind: DefKind,
     /// how many calls were merged into this node; 1 for the root
     pub call_count: u32,
-    /// where it is called, in the **parent's** file, in source order; empty for the root
-    pub call_sites: Vec<Range>,
+    /// where it is called, each with the file it is written in, by file and then in source order; empty for the root
+    pub call_sites: Vec<CallSite>,
     pub marks: Vec<CallMark>,
     pub children: Vec<CallTreeNode>,
 }

@@ -14,7 +14,9 @@ call trees
 ├── 6. core: the host, the merge, the method
 ├── 7. extension and canvas
 ├── 8. order of work
-└── 9. what is not part of this
+├── 9. what is not part of this
+├── 10. a call site names its file (step 7.7)
+└── 11. measurements (step 7.6)
 ```
 
 ## 1. What 0.2 ships
@@ -38,7 +40,7 @@ project knows (it is in the STRUCTURE tree) opens, shows its docs and jumps to i
 | **T3** | A merged node keeps **every call site**, as `call_sites: [Range]`. | `merge_for_output` keeps only the first; the canvas needs all of them to jump. |
 | **T4** | The merge key is the target's **ID when it has one, else `(file, qualname, occurrence)`**. Never the qualname alone. | Two functions with one qualname in two files must stay two nodes. |
 | **T5** | `require_ids` is **off**. | In V-NOC only nodes with a doc carry an ID; with the filter on, the tree would be almost empty. |
-| **T6** | The driver opens the project **per request** at first. No cache. | Simplest. Step 7.6 measured it (§10): **kept for 0.2**, no cache. |
+| **T6** | The driver opens the project **per request** at first. No cache. | Simplest. Step 7.6 measured it (§11): **kept for 0.2**, no cache. |
 
 ## 3. Who does what
 
@@ -121,6 +123,7 @@ only adds `callTree`.
     "children": [
       { "target": { "file": "src/db.py", "qualname": "Db.save", "occurrence": 1, "kind": "function", "id": "abc123" },
         "call_site": { "start": { "line": 11, "character": 8 }, "end": { "line": 11, "character": 25 } },
+        "call_site_file": "src/app.py",
         "marks": ["recursive"],
         "children": [] } ] } }
 ```
@@ -129,7 +132,8 @@ only adds `callTree`.
 |---|---|
 | `target.file` | relative to `root`, `/` separators. **`null` when the def is outside `root`** (library code): the core shows it, and never looks it up. |
 | `target.id` | the ID text as written in the docstring, without the `FunctionSchema/` / `ClassSchema/` prefix. `null` when empty. The core classifies it. |
-| `call_site` | in the caller's file (the parent node's `target.file`). 0-based line, UTF-16 `character`: convert from pylspt's 1-based line and character-counted column with the existing `positions.rs` helpers, reading the caller's text. `null` on the root. |
+| `call_site` | where the call is written, in `call_site_file`. 0-based line, UTF-16 `character`: convert from pylspt's 1-based line and character-counted column with the existing `positions.rs` helpers, reading that file's text. `null` on the root, and for a call written in a file outside `root` (§10.3). |
+| `call_site_file` | the file `call_site` is in: relative to `root`, `/` separators. The parent's `target.file` for an ordinary call, the base class's file for a call made in an inherited constructor. Absent on the root, and from a driver older than 7.7 (§10.3). |
 | `marks` | `recursive`, `cut`, `incomplete`, as pylspt's `Mark` serialises them |
 | not sent | `call_count` (the core counts), `contexts`, `target_qname` |
 
@@ -146,7 +150,7 @@ Service                  the class: kind "class", call_site null
 
 | Rule | |
 |---|---|
-| which `__init__` | the analyzer's constructor lookup: a class is an entry of `call_wire` (E5), its root frame is the class, and its children are what the constructor calls, inherited ones included (the call site is then in the base class's file: `call_site_file`). The driver picks nothing. |
+| which `__init__` | the analyzer's constructor lookup: a class is an entry of `call_wire` (E5), its root frame is the class, and its children are what the constructor calls, inherited ones included (the call site is then in the base class's file: `call_site_file`, §10). The driver picks nothing. |
 | no constructor in project code | the root with **no children**, not an error. |
 | `depth` | applies to the `__init__` tree as it does for a function; the class root is not counted. |
 | `vnoc/expand` | a class node expanded is the same request: its entry is that class. |
@@ -224,7 +228,7 @@ Built in `crates/vnoc/src/driver_host.rs`. What the table leaves open, as built:
 | Rule | |
 |---|---|
 | key | `id` when present, else `(file, qualname, occurrence)` (T4). Two targets with `file: null` merge on `(qualname, occurrence)`. |
-| siblings with one key | one node: `call_count` = how many there were, `call_sites` = every site in source order, `marks` = the union |
+| siblings with one key | one node: `call_count` = how many there were, `call_sites` = every site (a file and a range, §10.4) by file and then in source order, `marks` = the union |
 | their children | concatenated, then merged the same way, recursively |
 | order | the order of each key's first appearance |
 | the root | `call_count: 1`, `call_sites: []` |
@@ -246,7 +250,7 @@ CallTreeNode {
   "path":       "src/db.py" | null,             relative to the opened folder, as in vnoc/structure
   "kind":       "function" | "class",
   "call_count": 2,
-  "call_sites": [Range],                        in the PARENT node's file
+  "call_sites": [CallSite],                     each a Range plus the "path" it is written in (§10.5)
   "marks":      ["recursive"],
   "children":   [CallTreeNode]
 }
@@ -264,7 +268,7 @@ Built in `crates/vnoc/src/calls.rs` (the merge), `protocol.rs` (`CallTree`, `Cal
 - **`key` is set when `Index::def_at` finds the target**, not `node_at`: `node_at` answers only for a documented node, and every def in the tree has a key.
 - A key without `::` (a file or a folder), one that does not parse, or one the index does not have → `INVALID_PARAMS`, as the driver's `no function …`
   is. A driver without `callTree` → `REQUEST_FAILED` with the host's message.
-- **Merge:** a site that two merged parents both give (their children are the same calls of one body) is listed **once**, in source order; `call_count`
+- **Merge:** a site that two merged parents both give (their children are the same calls of one body) is listed **once**, in source order (the key is the file and the range, §10.4); `call_count`
   still counts the calls (2). Without that the "who calls" menu would list one place twice. An `id` that is not an ID is no ID (T4 falls to
   the place). One ID in two places (a copied function) merges, as T4 says.
 - A request the editor cancels is dropped by `ConcurrencyLayer`, which drops the driver request under it (7.3 sends the cancel). Not tested end to end
@@ -279,7 +283,7 @@ Kept small on purpose: the first version draws the tree. The EXPLORE contexts of
 | command | `vnoc.showCallTree` "Show Call Tree", on function and class nodes (tree row menu, card menu). Enabled only when the driver has `callTree`. |
 | extension | sends `vnoc/callTree`, shows progress with a Cancel button (cancel drops the request: the core then cancels the driver), relays the result to the canvas |
 | canvas | the entry's card gets a "Calls" section: the merged tree as indented rows, `name ×N` when `call_count > 1`, a mark badge (`↻ recursive`, `✂ cut`, `… incomplete`) |
-| a row | click selects that node when `key` is set · a row with `key: null` is grey and does nothing · the row's menu lists its call sites, each opens the parent's file at that range |
+| a row | click selects that node when `key` is set · a row with `key: null` is grey and does nothing · the row's menu lists its call sites, each opens the file the site names, at that range |
 | stale | when `vnoc/indexChanged` arrives, the section shows "the code changed · Refresh" and does not re-run by itself |
 
 Built in `extension/src/callTree.ts`, `commands.ts`, `webview/src/node-card/NodeCalls.tsx`, `canvas/calls.ts`, `state/calls.ts`. What the table leaves open, as built:
@@ -292,7 +296,7 @@ Built in `extension/src/callTree.ts`, `commands.ts`, `webview/src/node-card/Node
   much taller (`callsHeight`). An entry that calls nothing in the project still gets the section, with one line saying so. The root's own marks
   are in the section's header.
 - **A row's menu** is a "N sites" toggle on the row that lists the call sites as `line N` buttons, not VS Code's right-click menu: that menu is
-  static (package.json), and the list is not. A row with no known parent file has no toggle.
+  static (package.json), and the list is not. A site is labelled `line N` in the parent's file and `name.py:N` in another (§10.5); a site with no file is not listed, and a row with none has no toggle.
 - **A row click is `select`**, as written: the node may not be drawn on the canvas; the doc panel and the sidebar follow the selection.
 - **Stale** is computed in the page: the tree's `revision` is older than the structure's. Refresh runs the same request again without moving the canvas.
 - Cancel is the progress notification's button: `sendRequest` with its token sends `$/cancelRequest`, the core drops the handler, 7.3 cancels the driver.
@@ -312,7 +316,155 @@ Each row is one commit on `0.2-call-trees` and leaves the branch green. `main` t
 
 7.1 is in the pylspt repo and comes first: 7.2 cannot be tested without it.
 
-## 10. Measurements (step 7.6)
+## 9. What is not part of this
+
+- The graph, in any form.
+- A cache across requests, unsaved-buffer text for call trees, SQLite: decided by 7.6.
+- EXPLORE contexts and "Explore in New Context" (`10-ui-rework/03`): after 7.5, in its own plan.
+- Callers ("who calls this").
+
+## 10. A call site names its file (step 7.7)
+
+Written 2026-11-12 from reading the code at `499bee6`. **Built in step 7.7**, as written; what the code settled that the text left open is at the end of this section. It is the step [`15-leave-pylspt.md`](15-leave-pylspt.md) §7 put off.
+
+### 10.1 What is wrong
+
+Every hop says a call site is "in the parent node's file". That is false for a call made in an inherited constructor:
+
+```python
+# pkg/base.py
+class Base:
+    def __init__(self):
+        helper()          # the site is here
+
+# pkg/child.py
+class Child(Base):        # the parent node is Child, in child.py
+    pass
+```
+
+The analyzer says which file (`Frame.call_site_file`), and since 15 §4.3 the driver reads the position in that file. Then the driver drops the
+name: `CallNode` has no place for it. The canvas opens `pkg/child.py` at a line of `pkg/base.py`.
+
+It is also false in the merge: two copies of one function with one ID, in two files, merge into one node (T4). Their children are called
+from two files, and `call_sites` keeps one `Range` for both (`dedup` by range).
+
+### 10.2 The rule
+
+**A site is a file and a range, on every hop. Nothing after the core works out a site's file from the tree.**
+
+| Hop | Today | After |
+|---|---|---|
+| driver protocol, `CallNode` | `call_site: Option<Range>` | plus `call_site_file: Option<String>` |
+| merge, `Merged` | `call_sites: Vec<Range>` | `call_sites: Vec<Site>`, `Site { file: Option<String>, range: Range }` |
+| core protocol, `CallTreeNode` | `call_sites: Vec<Range>` | `call_sites: Vec<CallSite>`, a range with a `path` |
+| `shared/messages.ts` | `call_sites: Range[]` | `call_sites: CallSite[]`, `interface CallSite extends Range { path: string \| null }` |
+| canvas | opens `row.parentPath` | opens `site.path` |
+
+### 10.3 The driver protocol
+
+```rust
+pub struct CallNode {
+    pub target: CallTarget,
+    /// where the call is written; `null` on the root
+    pub call_site: Option<Range>,
+    /// the file `call_site` is in: relative to `root`, `/` separators. Absent: the parent node's `target.file` (a driver from before 7.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_file: Option<String>,
+    …
+}
+```
+
+- The Python driver fills both from one place (the `zip` in `Convert::node`), so a site never has a position from one file and the name of
+  another. `call_site_file` is the analyzer's string as is: it is already relative to the root with `/`, on Windows too (EW).
+- A site in a file outside `root` (an absolute path): the driver sends `call_site: null` **and** no file. So "a site with no file" has one
+  meaning only, an older driver. The analyzer enters project code only, so this is a guard; say in the report whether a test could reach it.
+- No capability and no version changes: the field is optional, and a core from before 7.7 ignores it (serde drops unknown fields).
+
+**Rust note.** `#[serde(default)]` lets the field be missing when reading; `skip_serializing_if = "Option::is_none"` leaves it out when
+writing `None`. Together they make the field additive: old JSON still parses and `None` adds no bytes.
+
+### 10.4 The merge
+
+`Site { file, range }` in `calls.rs`.
+
+| Rule | |
+|---|---|
+| a site's file | the node's `call_site_file`; when absent, the `target.file` of **that node's own parent** in the driver's tree. Resolved before grouping: after a merge by ID the parents of two children can be in two files |
+| a node with no `call_site` | no site (as today) |
+| the same site twice | listed once. The key is `(file, range)`, no longer the range alone |
+| order | by file, then by position. Inside one file that is source order, as today; the order of two files means nothing and is only stable |
+| the root | no sites (as today) |
+
+This is the one place the fallback lives. `file` is `None` only when the node gave none and its parent is outside the root.
+
+### 10.5 The core's answer, and the canvas
+
+```rust
+/// One place a node is called.
+pub struct CallSite {
+    /// relative to the opened folder, as `CallTreeNode.path`; `null` when the file is not under it
+    pub path: Option<String>,
+    #[serde(flatten)]
+    pub range: Range,
+}
+```
+
+JSON: `{ "path": "pkg/base.py", "start": {…}, "end": {…} }`.
+
+**Rust note.** `#[serde(flatten)]` writes the fields of `range` beside `path` instead of under a `"range"` key. So a site is still read as a
+range (`site.start.line`), and code that only wants the position does not change.
+
+- `path` is the driver's file as is, for the reason `CallTreeNode.path` is (§6.3: the driver's root is the opened folder).
+- **Canvas.** A row lists the sites whose `path` is not `null`; with none, no toggle. A site opens `openAt({ path: site.path, range })`.
+  The label is `line 12` when the site is in the file of the row's parent, else `base.py:12` (the file's name), so a jump to another file
+  is not a surprise. `CallRow.parentPath` stays, for the label only.
+
+### 10.6 Tests
+
+Order (a signature change does not fail a test, it stops the crate compiling): **(1)** add the field and the two types, with every site's
+file taken from the parent as today, and make the mechanical edits below: everything green, behaviour unchanged. **(2)** add the tests,
+see them red. **(3)** the driver fills the field, the merge prefers it and keys on `(file, range)`: green.
+
+| # | Where | Test | Red in (2) because |
+|---|---|---|---|
+| a | `vnoc-driver-protocol` | a `CallNode` JSON without `call_site_file` parses to `None`; a node with `None` writes no such key | green from (1): it pins the additive shape |
+| b | `drivers/python/tests/call_tree.rs` | entry `Child` (`pkg/child.py`): the child's `call_site_file` is `pkg/base.py`. Entry a plain function: its child's is the entry's file. The root has none | the driver sends none |
+| c | `calls.rs` | a node with `call_site_file: b.py` under a parent in `a.py`: the site's file is `b.py` | the merge takes the parent's |
+| d | `calls.rs` | a node without the field: the site's file is its parent's | green from (1): it pins the fallback |
+| e | `calls.rs` | two siblings with one ID, in `a.py` and `b.py`, each with one child `helper` at the same range and no field: `helper` has **two** sites, one per file | `dedup` by range leaves one |
+| f | `crates/vnoc/tests/lifecycle.rs` | a copy of `drivers/python/tests/fixtures/call_tree/` in a temp folder (there `Base.__init__` in `pkg/base.py` calls `a()` from `pkg/calc.py`; `class Child(Base)` is in `pkg/child.py`): `vnoc/callTree` on `pkg/child.py::Child` gives `a` one site whose `path` is `pkg/base.py` | the path is the child's file |
+| g | `webview/src/canvas/calls.test.ts` | the label of a site in the parent's file is `line N`, in another file `name.py:N`; a site with `path: null` is not listed | the label and the filter do not exist |
+
+(f) needs the driver built from this tree (`cd drivers/python && cargo build`): the lifecycle test runs that binary.
+
+**Mechanical edits to existing tests, allowed in (1). Anything else: stop and report.**
+
+- every `CallNode { … }` literal gains `call_site_file: None`
+- `calls.rs`: an expected `call_sites` value becomes sites in the parent's file (one helper, `sites(file, [..])`)
+- `calls.test.ts`: the `call_sites` of its fixture nodes gain a `path`
+
+The lifecycle helper that reads `start.line` of a site, the window suite and the driver's existing tests do not change: if one has to,
+that is a finding.
+
+### 10.7 Docs in the same commit
+
+§5 (the `CallNode` shape), §6.2 (the merge table), §6.3 (`call_sites` in the JSON), §7 (the row's sites), the comments in
+`shared/messages.ts` and `protocol.rs` that say "the parent's file", and 15 §7's first row ("done in step 7.7": a commit cannot name its own hash; the hash goes in with the next commit that touches the file).
+
+### 10.8 As built
+
+What the text leaves open, as built in 7.7:
+
+- **The guard of §10.3 is in `Convert::node`** (`drivers/python/src/call_tree.rs`), and `Callers::read` does not read such a file. No test reaches it: `Frame` is
+  `#[non_exhaustive]` and has a `Drop`, so a test outside the analyzer cannot build one, and a symlinked module under the root is named by its project path
+  (`ext.py`), not by its real one. The analyzer reports project files only, as §10.3 says.
+- **The order** of two files in `call_sites` is `Option<String>` order: a site with no file first, then by file name.
+- **The merge** carries the parent's file down with each call (`Call { node, parent_file }`), so the fallback is worked out before grouping, as §10.4 says.
+- **The webview**: `siteLabel` is unchanged (`line N`); `siteText(site, parentPath)` adds the file's name, and `listedSites(node)` is the filter. The jump sends the site's
+  `start` and `end` as the range, not the site, so `path` does not travel as a part of a range.
+- `vnoc-driver-protocol` has `serde_json` as a dev-dependency, for test (a).
+
+## 11. Measurements (step 7.6)
 
 Taken 2026-11-12 with `drivers/python/examples/measure_call_tree.rs` (`cargo run --example measure_call_tree -- <root> <file::qualname>… | --sweep`),
 which times `Project::open` apart from `call_wire`, and with two small scripts that send real requests (to the driver, and to the core) and time
@@ -381,10 +533,3 @@ The core's first build of httpx (60 files, outline of each) took 141 ms.
 - **A gap, not a measurement**: §1 lists "expand a node that was cut". 7.5 shows the `✂ cut` badge, but a row has no button that runs Show Call Tree on
   its node (the menu on the node's own card does the same). The core never sends `depth` today, so a cut appears only at the node budget (100,000). Add the
   row button when something sends `depth`.
-
-## 9. What is not part of this
-
-- The graph, in any form.
-- A cache across requests, unsaved-buffer text for call trees, SQLite: decided by 7.6.
-- EXPLORE contexts and "Explore in New Context" (`10-ui-rework/03`): after 7.5, in its own plan.
-- Callers ("who calls this").

@@ -7,14 +7,22 @@ use std::collections::HashMap;
 use vnoc_domain::NodeId;
 use vnoc_driver_protocol::{CallMark, CallNode, CallTarget, Range};
 
+/// One place a node is called: a file and a range in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Site {
+    /// relative to the driver's root, `/` separators; `None` when no file is known (the driver gave none and the parent is outside the root)
+    pub file: Option<String>,
+    pub range: Range,
+}
+
 /// A node of the merged tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Merged {
     pub target: CallTarget,
     /// how many calls were merged into it; the root is 1
     pub call_count: u32,
-    /// every place it is called, in source order, in the parent's file; empty on the root
-    pub call_sites: Vec<Range>,
+    /// every place it is called, by file and then in source order; empty on the root
+    pub call_sites: Vec<Site>,
     pub marks: Vec<CallMark>,
     pub children: Vec<Merged>,
 }
@@ -34,40 +42,60 @@ fn key_of(target: &CallTarget) -> Key<'_> {
     }
 }
 
+/// A call, and the file of the node it is a child of: a site that names no file of its own is in that file (docs/14 §10.4). It is worked
+/// out before grouping, because after a merge by ID the parents of two children can be in two files.
+#[derive(Clone, Copy)]
+struct Call<'a> {
+    node: &'a CallNode,
+    parent_file: Option<&'a str>,
+}
+
+/// The calls a node makes, each with the file of that node.
+fn calls_of(parent: &CallNode) -> impl Iterator<Item = Call<'_>> {
+    parent.children.iter().map(|node| Call { node, parent_file: parent.target.file.as_deref() })
+}
+
 pub fn merge(root: &CallNode) -> Merged {
-    let children: Vec<&CallNode> = root.children.iter().collect();
+    let children: Vec<Call<'_>> = calls_of(root).collect();
     Merged { target: root.target.clone(), call_count: 1, call_sites: Vec::new(), marks: root.marks.clone(), children: merge_siblings(&children) }
 }
 
 /// One node per key, in the order each key first appears.
-fn merge_siblings(nodes: &[&CallNode]) -> Vec<Merged> {
-    let mut groups: Vec<Vec<&CallNode>> = Vec::new();
+fn merge_siblings(calls: &[Call<'_>]) -> Vec<Merged> {
+    let mut groups: Vec<Vec<Call<'_>>> = Vec::new();
     let mut at: HashMap<Key<'_>, usize> = HashMap::new();
-    for &node in nodes {
-        let group = *at.entry(key_of(&node.target)).or_insert_with(|| {
+    for &call in calls {
+        let group = *at.entry(key_of(&call.node.target)).or_insert_with(|| {
             groups.push(Vec::new());
             groups.len() - 1
         });
-        groups[group].push(node);
+        groups[group].push(call);
     }
     groups.iter().map(|group| merge_group(group)).collect()
 }
 
 /// `group`: calls of one function, never empty. Their children are put together and merged the same way.
-fn merge_group(group: &[&CallNode]) -> Merged {
+fn merge_group(group: &[Call<'_>]) -> Merged {
     let mut marks = Vec::new();
-    for mark in group.iter().flat_map(|node| &node.marks) {
+    for mark in group.iter().flat_map(|call| &call.node.marks) {
         if !marks.contains(mark) {
             marks.push(*mark);
         }
     }
-    // The children of calls to one function are calls from one body: the same sites again for each call, so a site is listed once.
+    // The children of calls to one function are calls from one body: the same sites again for each call, so a site is listed once. A site is
+    // a file and a range: two copies of one function in two files have the same range in two places.
     let position = |r: &Range| (r.start.line, r.start.character, r.end.line, r.end.character);
-    let mut call_sites: Vec<Range> = group.iter().filter_map(|node| node.call_site).collect();
-    call_sites.sort_by_key(position);
+    let mut call_sites: Vec<Site> = group
+        .iter()
+        .filter_map(|call| {
+            let file = call.node.call_site_file.as_deref().or(call.parent_file);
+            call.node.call_site.map(|range| Site { file: file.map(str::to_string), range })
+        })
+        .collect();
+    call_sites.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| position(&a.range).cmp(&position(&b.range))));
     call_sites.dedup();
-    let children: Vec<&CallNode> = group.iter().flat_map(|node| &node.children).collect();
-    Merged { target: group[0].target.clone(), call_count: group.len() as u32, call_sites, marks, children: merge_siblings(&children) }
+    let children: Vec<Call<'_>> = group.iter().flat_map(|call| calls_of(call.node)).collect();
+    Merged { target: group[0].node.target.clone(), call_count: group.len() as u32, call_sites, marks, children: merge_siblings(&children) }
 }
 
 #[cfg(test)]
@@ -82,17 +110,22 @@ mod tests {
         Range { start: Position { line, character }, end: Position { line, character: character + 3 } }
     }
 
+    /// Sites in `file`, at the given ranges.
+    fn sites(file: &str, ranges: impl IntoIterator<Item = Range>) -> Vec<Site> {
+        ranges.into_iter().map(|range| Site { file: Some(file.to_string()), range }).collect()
+    }
+
     fn target(file: Option<&str>, qualname: &str, occurrence: u32, id: Option<&str>) -> CallTarget {
         CallTarget { file: file.map(str::to_string), qualname: qualname.to_string(), occurrence, kind: DefKind::Function, id: id.map(str::to_string) }
     }
 
     /// A call to `qualname` in `src/m.py`, made at `line`.
     fn call(qualname: &str, line: u32, children: Vec<CallNode>) -> CallNode {
-        CallNode { target: target(Some("src/m.py"), qualname, 1, None), call_site: Some(at(line, 4)), marks: vec![], children }
+        CallNode { target: target(Some("src/m.py"), qualname, 1, None), call_site: Some(at(line, 4)), call_site_file: None, marks: vec![], children }
     }
 
     fn root(children: Vec<CallNode>) -> CallNode {
-        CallNode { target: target(Some("src/m.py"), "a", 1, None), call_site: None, marks: vec![], children }
+        CallNode { target: target(Some("src/m.py"), "a", 1, None), call_site: None, call_site_file: None, marks: vec![], children }
     }
 
     fn names(nodes: &[Merged]) -> Vec<&str> {
@@ -104,8 +137,8 @@ mod tests {
         let merged = merge(&root(vec![call("b", 3, vec![]), call("c", 4, vec![]), call("b", 5, vec![])]));
         assert_eq!(names(&merged.children), ["b", "c"]);
         let (b, c) = (&merged.children[0], &merged.children[1]);
-        assert_eq!((b.call_count, b.call_sites.clone()), (2, vec![at(3, 4), at(5, 4)]));
-        assert_eq!((c.call_count, c.call_sites.clone()), (1, vec![at(4, 4)]));
+        assert_eq!((b.call_count, b.call_sites.clone()), (2, sites("src/m.py", [at(3, 4), at(5, 4)])));
+        assert_eq!((c.call_count, c.call_sites.clone()), (1, sites("src/m.py", [at(4, 4)])));
     }
 
     #[test]
@@ -119,7 +152,7 @@ mod tests {
     fn the_sites_of_a_node_are_in_source_order() {
         // the driver gives them in source order; two merged calls from different parents are put in order too
         let merged = merge(&root(vec![call("b", 9, vec![]), call("b", 2, vec![]), call("b", 5, vec![])]));
-        assert_eq!(merged.children[0].call_sites, [at(2, 4), at(5, 4), at(9, 4)]);
+        assert_eq!(merged.children[0].call_sites, sites("src/m.py", [at(2, 4), at(5, 4), at(9, 4)]));
     }
 
     #[test]
@@ -143,8 +176,8 @@ mod tests {
         let b = &merged.children[0];
         assert_eq!(names(&b.children), ["c", "d"]);
         // c: two calls, but one place in the code; d was written at two places
-        assert_eq!((b.children[0].call_count, b.children[0].call_sites.clone()), (2, vec![at(20, 4)]));
-        assert_eq!((b.children[1].call_count, b.children[1].call_sites.clone()), (2, vec![at(21, 4), at(22, 4)]));
+        assert_eq!((b.children[0].call_count, b.children[0].call_sites.clone()), (2, sites("src/m.py", [at(20, 4)])));
+        assert_eq!((b.children[1].call_count, b.children[1].call_sites.clone()), (2, sites("src/m.py", [at(21, 4), at(22, 4)])));
     }
 
     #[test]
@@ -157,27 +190,27 @@ mod tests {
         let mid = &top.children[0];
         let leaf = &mid.children[0];
         assert_eq!((top.call_count, mid.call_count, leaf.call_count), (2, 4, 8));
-        assert_eq!(leaf.call_sites, [at(30, 4), at(31, 4)]);
+        assert_eq!(leaf.call_sites, sites("src/m.py", [at(30, 4), at(31, 4)]));
         assert_eq!((merged.children.len(), top.children.len(), mid.children.len()), (1, 1, 1));
     }
 
     #[test]
     fn one_qualname_in_two_files_stays_two_nodes() {
-        let in_file = |file: &str| CallNode { target: target(Some(file), "helper", 1, None), call_site: Some(at(1, 4)), marks: vec![], children: vec![] };
+        let in_file = |file: &str| CallNode { target: target(Some(file), "helper", 1, None), call_site: Some(at(1, 4)), call_site_file: None, marks: vec![], children: vec![] };
         let merged = merge(&root(vec![in_file("src/a.py"), in_file("src/b.py"), in_file("src/a.py")]));
         assert_eq!(merged.children.iter().map(|n| (n.target.file.clone().unwrap(), n.call_count)).collect::<Vec<_>>(), [("src/a.py".to_string(), 2), ("src/b.py".to_string(), 1)]);
     }
 
     #[test]
     fn two_definitions_with_one_qualname_in_a_file_stay_two_nodes() {
-        let nth = |occurrence| CallNode { target: target(Some("src/m.py"), "f", occurrence, None), call_site: Some(at(occurrence, 4)), marks: vec![], children: vec![] };
+        let nth = |occurrence| CallNode { target: target(Some("src/m.py"), "f", occurrence, None), call_site: Some(at(occurrence, 4)), call_site_file: None, marks: vec![], children: vec![] };
         let merged = merge(&root(vec![nth(1), nth(2), nth(1)]));
         assert_eq!(merged.children.iter().map(|n| (n.target.occurrence, n.call_count)).collect::<Vec<_>>(), [(1, 2), (2, 1)]);
     }
 
     #[test]
     fn the_id_is_the_key_when_the_target_has_one() {
-        let with_id = |id: &str, qualname: &str| CallNode { target: target(Some("src/m.py"), qualname, 1, Some(id)), call_site: Some(at(1, 4)), marks: vec![], children: vec![] };
+        let with_id = |id: &str, qualname: &str| CallNode { target: target(Some("src/m.py"), qualname, 1, Some(id)), call_site: Some(at(1, 4)), call_site_file: None, marks: vec![], children: vec![] };
         // one ID is one function, wherever the code says it is; two IDs are two
         let merged = merge(&root(vec![with_id(ID_A, "old_name"), with_id(ID_B, "old_name"), with_id(ID_A, "new_name")]));
         assert_eq!(merged.children.iter().map(|n| (n.target.qualname.as_str(), n.call_count)).collect::<Vec<_>>(), [("old_name", 2), ("old_name", 1)]);
@@ -185,15 +218,42 @@ mod tests {
 
     #[test]
     fn text_that_is_not_an_id_is_no_id() {
-        let text = |id: &str, qualname: &str| CallNode { target: target(Some("src/m.py"), qualname, 1, Some(id)), call_site: Some(at(1, 4)), marks: vec![], children: vec![] };
+        let text = |id: &str, qualname: &str| CallNode { target: target(Some("src/m.py"), qualname, 1, Some(id)), call_site: Some(at(1, 4)), call_site_file: None, marks: vec![], children: vec![] };
         let merged = merge(&root(vec![text("not-an-id", "f"), text("not-an-id", "g"), text("not-an-id", "f")]));
         assert_eq!(merged.children.iter().map(|n| (n.target.qualname.as_str(), n.call_count)).collect::<Vec<_>>(), [("f", 2), ("g", 1)]);
     }
 
     #[test]
     fn two_targets_outside_the_project_merge_on_qualname_and_occurrence() {
-        let library = |qualname: &str| CallNode { target: target(None, qualname, 1, None), call_site: Some(at(1, 4)), marks: vec![], children: vec![] };
+        let library = |qualname: &str| CallNode { target: target(None, qualname, 1, None), call_site: Some(at(1, 4)), call_site_file: None, marks: vec![], children: vec![] };
         let merged = merge(&root(vec![library("dumps"), library("loads"), library("dumps")]));
         assert_eq!(merged.children.iter().map(|n| (n.target.qualname.as_str(), n.call_count)).collect::<Vec<_>>(), [("dumps", 2), ("loads", 1)]);
+    }
+
+    /// `Child` is in `a.py`; its `__init__` is inherited from `b.py`, and the call is written there.
+    #[test]
+    fn a_site_is_in_the_file_the_driver_names() {
+        let from_b = CallNode { call_site_file: Some("b.py".to_string()), ..call("helper", 3, vec![]) };
+        let merged = merge(&CallNode { target: target(Some("a.py"), "Child", 1, None), ..root(vec![from_b]) });
+        assert_eq!(merged.children[0].call_sites, sites("b.py", [at(3, 4)]));
+    }
+
+    #[test]
+    fn a_site_with_no_file_is_in_its_parents_file() {
+        let merged = merge(&CallNode { target: target(Some("a.py"), "main", 1, None), ..root(vec![call("helper", 3, vec![])]) });
+        assert_eq!(merged.children[0].call_sites, sites("a.py", [at(3, 4)]));
+    }
+
+    #[test]
+    fn two_copies_of_one_function_in_two_files_keep_a_site_for_each_file() {
+        // one ID in two files merges into one node (T4); each copy calls `helper` at the same line and column of its own file
+        let copy = |file: &str| CallNode { target: target(Some(file), "f", 1, Some(ID_A)), call_site: Some(at(1, 4)), call_site_file: None, marks: vec![], children: vec![call("helper", 5, vec![])] };
+        let merged = merge(&root(vec![copy("src/a.py"), copy("src/b.py")]));
+        let f = &merged.children[0];
+        assert_eq!(f.call_count, 2);
+        let helper = &f.children[0];
+        assert_eq!(helper.call_count, 2);
+        let expected: Vec<Site> = sites("src/a.py", [at(5, 4)]).into_iter().chain(sites("src/b.py", [at(5, 4)])).collect();
+        assert_eq!(helper.call_sites, expected);
     }
 }

@@ -235,8 +235,11 @@ pub struct CallTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallNode {
     pub target: CallTarget,
-    /// in the caller's file (the parent node's `target.file`); `null` on the root
+    /// where the call is written; `null` on the root
     pub call_site: Option<Range>,
+    /// the file `call_site` is in: relative to `root`, `/` separators. Absent: the parent node's `target.file` (a driver from before 7.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_file: Option<String>,
     #[serde(default)]
     pub marks: Vec<CallMark>,
     #[serde(default)]
@@ -246,4 +249,25 @@ pub struct CallNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallTreeResult {
     pub root: CallNode,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TARGET: &str = r#"{ "file": "a.py", "qualname": "f", "occurrence": 1, "kind": "function", "id": null }"#;
+
+    #[test]
+    fn a_call_node_from_a_driver_before_7_7_has_no_site_file() {
+        let node: CallNode = serde_json::from_str(&format!(r#"{{ "target": {TARGET}, "call_site": null }}"#)).unwrap();
+        assert_eq!(node.call_site_file, None);
+    }
+
+    #[test]
+    fn a_site_file_is_written_when_there_is_one_and_left_out_when_there_is_not() {
+        let node: CallNode = serde_json::from_str(&format!(r#"{{ "target": {TARGET}, "call_site": null }}"#)).unwrap();
+        assert!(serde_json::to_value(&node).unwrap().get("call_site_file").is_none(), "None adds no key");
+        let named = CallNode { call_site_file: Some("pkg/base.py".to_string()), ..node };
+        assert_eq!(serde_json::to_value(&named).unwrap()["call_site_file"], "pkg/base.py");
+    }
 }

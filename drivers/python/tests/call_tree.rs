@@ -252,6 +252,18 @@ fn a_class_that_inherits_its_init_has_the_call_site_in_the_base_file() {
 }
 
 #[test]
+fn a_node_names_the_file_its_call_is_written_in() {
+    // an inherited constructor: `Child` is in child.py, the call `a()` is written in base.py
+    let child = tree("pkg/child.py", "Child");
+    assert!(child.get("call_site_file").is_none(), "the root is not called from anywhere: {child}");
+    assert_eq!(children(&child)[0]["call_site_file"], "pkg/base.py");
+    // an ordinary function: its calls are in its own file
+    let a = tree("pkg/calc.py", "a");
+    assert!(a.get("call_site_file").is_none());
+    assert!(children(&a).iter().all(|c| c["call_site_file"] == "pkg/calc.py"), "{a}");
+}
+
+#[test]
 fn depth_shortens_the_tree_and_marks_the_cut() {
     let (mut d, _) = Driver::start();
     let run = d.call_tree("pkg/app.py", "Service.run", 1, Some(1)).unwrap();

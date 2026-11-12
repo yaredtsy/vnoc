@@ -26,7 +26,7 @@ use crate::driver_host::{DriverHost, HostError};
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
 use crate::identity::{self, Env};
-use crate::protocol::{Attach, AttachParams, AttachResult, CallTree, CallTreeNode, CallTreeParams, CallTreeResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Trash, TrashItem, TrashList, TrashParams, MovePlan, Stats, Structure, StructureResult, TrashInfo, TrashInfoResult, WriteId, WriteIdParams, WriteIdResult};
+use crate::protocol::{Attach, AttachParams, AttachResult, CallSite, CallTree, CallTreeNode, CallTreeParams, CallTreeResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Trash, TrashItem, TrashList, TrashParams, MovePlan, Stats, Structure, StructureResult, TrashInfo, TrashInfoResult, WriteId, WriteIdParams, WriteIdResult};
 use crate::userdata::{TrashError, UserData};
 use vnoc_domain::{LocationKey, NodeId};
 use vnoc_driver_protocol::CallEntry;
@@ -421,7 +421,7 @@ fn tree_node(node: &Merged, known: &dyn Fn(&vnoc_driver_protocol::CallTarget) ->
         path: target.file.clone(), // already relative to the opened folder, `null` outside it
         kind: target.kind,
         call_count: node.call_count,
-        call_sites: node.call_sites.clone(),
+        call_sites: node.call_sites.iter().map(|site| CallSite { path: site.file.clone(), range: site.range }).collect(),
         marks: node.marks.clone(),
         children: node.children.iter().map(|child| tree_node(child, known)).collect(),
     }

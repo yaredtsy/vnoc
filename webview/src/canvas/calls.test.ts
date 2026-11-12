@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { CallMark, CallTreeNode, CallTreeResult, Range } from "@vnoc/shared/messages.ts";
-import { callLabel, callRows, isStale, siteLabel } from "./calls.ts";
+import { callLabel, callRows, isStale, listedSites, siteLabel, siteText } from "./calls.ts";
 
 const at = (line: number): Range => ({ start: { line, character: 4 }, end: { line, character: 7 } });
+const siteAt = <P extends string | null>(line: number, path: P): Range & { path: P } => ({ ...at(line), path });
 const node = (name: string, over: Partial<CallTreeNode> = {}, children: CallTreeNode[] = []): CallTreeNode => ({
   key: `${name}.py::${name}`,
   name,
@@ -12,7 +13,7 @@ const node = (name: string, over: Partial<CallTreeNode> = {}, children: CallTree
   path: `${name}.py`,
   kind: "function",
   call_count: 1,
-  call_sites: [at(1)],
+  call_sites: [siteAt(1, "app.py")],
   marks: [],
   children,
   ...over,
@@ -20,7 +21,7 @@ const node = (name: string, over: Partial<CallTreeNode> = {}, children: CallTree
 
 // main ├ b ×2 ├ c        ├ d (recursive)
 //      └ e (a library: no key, no path)
-const tree = node("main", { path: "app.py", call_sites: [] }, [node("b", { call_count: 2, call_sites: [at(3), at(5)] }, [node("c")]), node("d", { marks: ["recursive"] }), node("e", { key: null, path: null })]);
+const tree = node("main", { path: "app.py", call_sites: [] }, [node("b", { call_count: 2, call_sites: [siteAt(3, "app.py"), siteAt(5, "app.py")] }, [node("c")]), node("d", { marks: ["recursive"] }), node("e", { key: null, path: null })]);
 
 test("one row for each node under the entry, parents before children, with their depth", () => {
   const rows = callRows(tree);
@@ -75,4 +76,16 @@ test("a tree is stale when the index has moved on since its keys were mapped", (
 
 test("an entry that calls nothing has no rows", () => {
   assert.deepEqual(callRows(node("main")), []);
+});
+
+test("a site in the parent's file is named by its line, in another file by the file's name and the line", () => {
+  assert.equal(siteText(siteAt(11, "pkg/child.py"), "pkg/child.py"), "line 12");
+  assert.equal(siteText(siteAt(11, "pkg/base.py"), "pkg/child.py"), "base.py:12");
+  assert.equal(siteText(siteAt(0, "base.py"), "pkg/child.py"), "base.py:1", "a file at the top of the folder has no directory to cut");
+});
+
+test("a site with no file is not listed, because there is nowhere to open it", () => {
+  const b = node("b", { call_sites: [siteAt(3, "app.py"), siteAt(4, null), siteAt(5, "lib/x.py")] });
+  assert.deepEqual(listedSites(b).map((s) => s.start.line), [3, 5]);
+  assert.deepEqual(listedSites(node("c", { call_sites: [siteAt(1, null)] })), [], "no site is left: no toggle");
 });

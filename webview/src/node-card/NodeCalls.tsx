@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
-import { type CallRow, callRows, isStale, markBadge, siteLabel } from "../canvas/calls.ts";
+import { type CallRow, callRows, isStale, listedSites, markBadge, siteText } from "../canvas/calls.ts";
 import type { Placed } from "../canvas/layout.ts";
 import { post, request } from "../host.ts";
 import { useCalls } from "../state/calls.ts";
@@ -12,7 +12,7 @@ import { KINDS } from "./kinds.ts";
 
 /**
  * The "Calls" section of the card a call tree was made for: what the entry calls, as indented rows (docs/14 §7). A row whose node the project knows
- * selects it when clicked; one the project does not know (a library) is grey and does nothing. A row's call sites open the parent's file at that line.
+ * selects it when clicked; one the project does not know (a library) is grey and does nothing. A row's call sites open the file each one names, at that line.
  * When the index has moved on since the tree was made it says so and offers Refresh; it never runs again by itself.
  */
 export function NodeCalls({ node }: { node: Placed }) {
@@ -66,7 +66,7 @@ export function NodeCalls({ node }: { node: Placed }) {
 function Row({ row, open, onSites }: { row: CallRow; open: boolean; onSites: () => void }) {
   const { node } = row;
   const known = node.key !== null;
-  const sites = row.parentPath === null ? [] : node.call_sites;
+  const sites = listedSites(node);
   return (
     <li className={cn("call-row", !known && "unknown")} style={{ paddingLeft: 6 + row.depth * 12 }}>
       <div className="call-line">
@@ -94,8 +94,11 @@ function Row({ row, open, onSites }: { row: CallRow; open: boolean; onSites: () 
       {open && (
         <div className="call-sites">
           {sites.map((site) => (
-            <button key={`${site.start.line}:${site.start.character}`} onClick={() => void request("openAt", { path: row.parentPath!, range: site }).catch(() => {})}>
-              {siteLabel(site)}
+            <button
+              key={`${site.path}:${site.start.line}:${site.start.character}`}
+              onClick={() => void request("openAt", { path: site.path, range: { start: site.start, end: site.end } }).catch(() => {})}
+            >
+              {siteText(site, row.parentPath)}
             </button>
           ))}
         </div>

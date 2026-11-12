@@ -106,6 +106,12 @@ export interface DocInfo {
 
 export type CallMark = "recursive" | "cut" | "incomplete";
 
+/** One place a node is called: a range, and the file it is in. */
+export interface CallSite extends Range {
+  /** relative to the opened folder, as `CallTreeNode.path`; null when the file is not under it */
+  path: string | null;
+}
+
 /** One function or class in a call tree; calls to it from one place are merged into one node (`crates/vnoc/src/protocol.rs` has the Rust side). */
 export interface CallTreeNode {
   /** the node's `id` in the structure; null for code the index does not know (a library, an ignored file) */
@@ -117,8 +123,8 @@ export interface CallTreeNode {
   kind: "function" | "class";
   /** how many calls were merged into this node; 1 for the root */
   call_count: number;
-  /** where it is called, in the PARENT node's file, in source order; empty for the root */
-  call_sites: Range[];
+  /** where it is called, each with the file it is written in, by file and then in source order; empty for the root */
+  call_sites: CallSite[];
   marks: CallMark[];
   children: CallTreeNode[];
 }

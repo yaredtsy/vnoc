@@ -215,7 +215,7 @@ On 2026-11-12 the disk was full. One build of ruff and ty is about 5 GB.
 
 | Thing | Where it goes |
 |---|---|
-| `call_site_file` in the protocol's `CallNode`. Today the core opens a call site in the parent's `target.file`; for a call made inside an inherited constructor that is the wrong file. After B the driver sends the right **position**, and the core still opens the parent's file | its own step after B: a protocol field, the core's merge, the extension's jump |
+| `call_site_file` in the protocol's `CallNode`. Today the core opens a call site in the parent's `target.file`; for a call made inside an inherited constructor that is the wrong file. After B the driver sends the right **position**, and the core still opens the parent's file | **done in step 7.7** ([`14-call-trees.md`](14-call-trees.md) §10): a protocol field, the core's merge, the extension's jump |
 | a cancel flag inside the analyzer | `language_driver_rs`, after TS5 |
 | a bigger stack for the request thread | its own driver fix |
 | a project kept open between requests | step 7.6 decides |
