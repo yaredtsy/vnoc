@@ -61,7 +61,11 @@ impl Driver {
     }
 
     fn call_tree(&mut self, file: &str, qualname: &str, occurrence: u32, depth: Option<u32>) -> Result<Value, Value> {
-        let mut params = json!({ "root": fixture(), "file": file, "entry": { "qualname": qualname, "occurrence": occurrence } });
+        self.call_tree_in(&fixture(), file, qualname, occurrence, depth)
+    }
+
+    fn call_tree_in(&mut self, root: &str, file: &str, qualname: &str, occurrence: u32, depth: Option<u32>) -> Result<Value, Value> {
+        let mut params = json!({ "root": root, "file": file, "entry": { "qualname": qualname, "occurrence": occurrence } });
         if let Some(depth) = depth {
             params["depth"] = json!(depth);
         }
@@ -270,5 +274,37 @@ fn depth_shortens_the_tree_and_marks_the_cut() {
     let inner = &children(&run)[1];
     assert_eq!(inner["marks"], json!(["cut"]));
     assert!(children(inner).is_empty());
+    d.finish();
+}
+
+/// `tests/fixtures/root/<case>`: `inner/app.py` has `main`, which calls `work` in `inner/helper.py`; the config file of each case is above `inner`
+/// (or, in `own-config`, in `inner` too).
+const ROOT_CASES: [&str; 3] = ["above-pyproject", "above-ty", "own-config"];
+
+fn root_case(case: &str) -> String {
+    format!("{}/tests/fixtures/root/{case}", env!("CARGO_MANIFEST_DIR"))
+}
+
+#[test]
+fn a_config_file_above_the_folder_does_not_move_the_root() {
+    // the root is the folder the core gave, whatever `pyproject.toml` or `ty.toml` sits above it: the paths come back relative to it, as they are
+    let (mut d, _) = Driver::start();
+    for case in ROOT_CASES {
+        let main = d.call_tree_in(&format!("{}/inner", root_case(case)), "app.py", "main", 1, None).unwrap_or_else(|e| panic!("{case}: {e}"));
+        assert_eq!(main["target"]["file"], "app.py", "{case}");
+        let [work] = &children(&main)[..] else { panic!("{case}: one call: {main}") };
+        assert_eq!((work["target"]["qualname"].as_str(), work["target"]["file"].as_str()), (Some("work"), Some("helper.py")), "{case}");
+        assert_eq!(work["call_site_file"], "app.py", "{case}");
+    }
+    d.finish();
+}
+
+#[test]
+fn the_folder_above_is_a_root_of_its_own_when_it_is_the_one_given() {
+    // opened itself, the parent is the root, and its paths start there: the driver does not translate them
+    let (mut d, _) = Driver::start();
+    let main = d.call_tree_in(&root_case("above-pyproject"), "inner/app.py", "main", 1, None).unwrap();
+    assert_eq!(main["target"]["file"], "inner/app.py");
+    assert_eq!(children(&main)[0]["target"]["file"], "inner/helper.py");
     d.finish();
 }
