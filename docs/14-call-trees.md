@@ -38,7 +38,7 @@ project knows (it is in the STRUCTURE tree) opens, shows its docs and jumps to i
 | **T3** | A merged node keeps **every call site**, as `call_sites: [Range]`. | `merge_for_output` keeps only the first; the canvas needs all of them to jump. |
 | **T4** | The merge key is the target's **ID when it has one, else `(file, qualname, occurrence)`**. Never the qualname alone. | Two functions with one qualname in two files must stay two nodes. |
 | **T5** | `require_ids` is **off**. | In V-NOC only nodes with a doc carry an ID; with the filter on, the tree would be almost empty. |
-| **T6** | The driver opens the project **per request** at first. No cache. | Simplest. Step 7.6 measures it; a cache is added only if the numbers ask. |
+| **T6** | The driver opens the project **per request** at first. No cache. | Simplest. Step 7.6 measured it (§10): **kept for 0.2**, no cache. |
 
 ## 3. Who does what
 
@@ -311,6 +311,76 @@ Each row is one commit on `0.2-call-trees` and leaves the branch green. `main` t
 | **7.6** | measure the new analyzer (`python-analysis`, 15 §4) on its own tests folder (`language_driver_rs`) and on httpx: time of the first and of a second request on one entry, with **opening the project timed apart from the walk** | the numbers written here; decide T6 (cache or not) and whether `expand` needs anything more than a new `callTree`. A cache follows the steps of [`04-storage/02-index.md`](04-storage/02-index.md) §6.4 in order: keep the project open in the driver, memo dropped on any change → the core saves merged trees in SQLite → the analyzer saves summaries. Take a step only when the one before it is measured too slow |
 
 7.1 is in the pylspt repo and comes first: 7.2 cannot be tested without it.
+
+## 10. Measurements (step 7.6)
+
+Taken 2026-11-12 with `drivers/python/examples/measure_call_tree.rs` (`cargo run --example measure_call_tree -- <root> <file::qualname>… | --sweep`),
+which times `Project::open` apart from `call_wire`, and with two small scripts that send real requests (to the driver, and to the core) and time
+the answers. Analyzer: `python-analysis` at the pinned rev. Machine: an Apple-silicon Mac.
+
+**What was measured, and what that leaves out**
+
+- **Debug profile of the driver, dependencies at `opt-level 2`** (the driver's own `[profile.dev.package."*"]`). Not the release binary: a release build
+  needs about 5 GB more and the disk had 6 GB. The analyzer and ty are the same speed in both; the driver's own conversion and JSON are slower here than in release.
+- **No Python environment was set, and none was found**: no `.venv` in the project, `VIRTUAL_ENV` unset, and the analyzer does not configure one (ty's own
+  discovery runs). Which interpreter ty then used was **not checked**. `httpcore`, `certifi`, `anyio` and the rest were library code either way: the tree
+  drops it. A project whose environment resolves can be slower; none of these numbers say by how much.
+- Two projects: `language_driver_rs/languages/python/crates/python-analysis/tests` (64 files, 569 functions, small fixtures) and `encode/httpx`
+  (shallow clone, 60 files, 1,134 functions).
+
+**One request, with opening the project apart from the walk** (ms; "2nd walk" is the same entry again on the *same* open project; "fresh again" is
+what the next request costs the driver today: a new project, then the walk)
+
+| Project and entry | nodes (unmerged) | open | 1st walk | 2nd walk | fresh again |
+|---|---:|---:|---:|---:|---:|
+| tests: `chains.py::fanout` | 19 | 1.7 | 31.6 | 0.5 | 25.8 |
+| tests: `callbacks.py::uses_stdlib` | 1 | 0.7 | 25.0 | 0.4 | 25.5 |
+| tests: `annotated.py::Handler.handle` | 1 | 0.7 | 17.5 | 0.1 | 17.9 |
+| httpx: `_api.py::request` | 3,083 | 4.2 | 288 | 26 | 237 |
+| httpx: `_api.py::get` | 3,084 | 1.5 | 247 | 26 | 407 |
+| httpx: `_client.py::Client.request` | 1,588 | 0.9 | 190 | 19 | 195 |
+| httpx: `_client.py::Client.send` | 1,038 | 0.9 | 189 | 17 | 237 |
+| httpx: `_client.py::AsyncClient.send` | 1,038 | 0.9 | 200 | 17 | 179 |
+| httpx: `_urls.py::URL.copy_with` | 112 | 0.8 | 63 | 3.6 | 62 |
+| httpx: `_models.py::Response.json` | 1 | 0.9 | 39 | 1.1 | 35 |
+
+Every def of a project, one after the other on **one** open project (`--sweep`): the tests folder, 569 functions in 152 ms (median 0.14 ms, slowest 26 ms,
+the first, which pays the start-up); httpx, 1,134 functions in 9.7 s (median 3.6 ms, p90 26 ms, p99 34 ms, slowest 224 ms, the first big one).
+
+**A request through the real driver, and through the real core** (httpx; the first and the second request in one process)
+
+| Entry | driver alone: 1st / 2nd, response | core: `vnoc/callTree` 1st / 2nd, merged nodes, response |
+|---|---|---|
+| `_api.py::request` | 356 / 333 ms, 3,083 nodes, 653 KB | 557 / 395 ms, 995 nodes, 296 KB |
+| `_client.py::Client.send` | 227 / 218 ms, 1,038 nodes, 220 KB | 259 / 259 ms, 373 nodes, 107 KB |
+| `_api.py::get` | | 417 / 399 ms, 996 nodes, 296 KB |
+| `_models.py::Response.json` | | 40 / 41 ms, 1 node |
+
+The core's first build of httpx (60 files, outline of each) took 141 ms.
+
+**What the numbers say**
+
+1. **Opening is not the cost.** `Project::open` is 1–4 ms: the project is read lazily. The cost is the first walk on a project: about 17–30 ms for a
+   small one (a floor that the smallest entries also pay), and 190–290 ms for httpx's biggest entries.
+2. **The second request is not faster today**, because every request opens a new project (core: 557 then 395 ms; driver: 356 then 333). The memo
+   that a kept-open project holds would make the walk about 10 times faster (httpx `request`: 288 → 26 ms; `Client.send`: 189 → 17 ms).
+3. **A kept-open project would not make the request 10 times faster.** About 100–150 ms of the 395 ms is not the walk: the driver converting and
+   writing 3,083 nodes (653 KB, in a debug build), and the core merging them, mapping keys and writing 296 KB. On the biggest entry, step 1 of the cache
+   (`04-storage/02-index.md` §6.4) takes 395 ms to roughly 150–200 ms; on a typical entry (`Client.send`, `copy_with`) the request is already 60–260 ms.
+4. **The merge does its job**: 3,083 calls become 995 rows (`_api.py::request`), 1,038 become 373.
+
+**Decisions**
+
+- **T6 stays: no cache for 0.2.** The slowest request measured is 0.56 s end to end, with a progress notification and a Cancel button on screen, and
+  most are under 0.3 s. The rule is to take a cache step only when the step before is measured too slow, and none of these is. The first step, a
+  project kept open in the driver with the memo dropped on any change, is the one to take if a real project is slow. What would make it worth taking:
+  a request on a project that resolves its environment (not measured), or a release build that is still over a second on a big entry.
+- **`expand` needs no more than a new `callTree`** whose entry is the callee: its cost is that callee's own (112 nodes: 62 ms; 1,038 nodes: 190–260 ms),
+  and `render_depth` does not make the walk cheaper (the solver walks the whole function either way), only the answer smaller. So a depth-limited first
+  request plus an expand would save bytes, not time; nothing in the driver or the core changes.
+- **A gap, not a measurement**: §1 lists "expand a node that was cut". 7.5 shows the `✂ cut` badge, but a row has no button that runs Show Call Tree on
+  its node (the menu on the node's own card does the same). The core never sends `depth` today, so a cut appears only at the node budget (100,000). Add the
+  row button when something sends `depth`.
 
 ## 9. What is not part of this
 
