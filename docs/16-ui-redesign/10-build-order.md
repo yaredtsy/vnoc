@@ -162,6 +162,22 @@ the core's lifecycle tests (a 70-function chain: the full tree comes back cut at
 `shared/calls.test.ts` (probed → chevron and `+N`; pending → the empty slot). Proof: by hand on httpx, a file of 30 functions gets its chevrons
 in well under a second, and none disappears on opening. Commit: `step 8.2b: exact chevrons from a depth-1 probe (vnoc/hasCalls)`.
 
+**As built (2026-11-14).** Everything in the table, plus:
+
+| Decision | Why |
+|---|---|
+| `vnoc/hasCalls { key } → { revision, count }`, one key per request; the core's `call_tree` and `has_calls` share `driver_tree(core, key, depth)`; `calls::count_calls` is the merge's children; `calls::DEPTH_CAP = 32` is the one constant every full tree carries | one path for both, so the count is exactly what opening shows |
+| **The depth cap is proved by removing it**: with `depth: None` the 70-function chain test fails with *"the driver stopped: … recursion limit exceeded at line 1 column 7532"*. A parse error in a driver's answer is treated as the driver **dying** (the core drops it), so the failure for the user is worse than "failed": the driver goes away | the cap is not just a size bound |
+| **Scheduler: probes are the lowest work**: one at a time, started only when no tree is in flight and none waits for a place; **a probe in flight is cancelled when a tree becomes wanted** (beyond the design: otherwise a click queues behind it on the driver's one worker) and asked again afterwards; a failed probe is not asked again until the code settles; a held probe for an old revision is asked again 800 ms after the last change while its card is drawn (the old count stays until then) and dropped when it is not; a restart drops them all | 13 + 9 scheduler tests (25 in all) |
+| The **page tells the host what it draws**: note `cardsDrawn { keys }` (function and class cards with no structure children, the selected one first, then reading order). A page that opens later is sent the probes the host already holds for those keys | the layout lives in the page; the host cannot know |
+| Page: `Calls` gains `probed`; `callsLook(calls, open)` is the one rule (unknown: empty slot; probed or known with calls: chevron, `+N` while closed; 0: *calls nothing*; loading / failed: the chevron stays); `Placed` gains `callsChevron`, `plus`, `callsNothing`, and `footerChips` counts `plus` (structure children **or** calls). A class **with methods** keeps its structure chevron: a probe does not change it | the function card's chevron opens through the same `toggle` as any card; the host then fetches the tree and the old "Calls" section draws it (call cards are 8.3 part 2) |
+| `keys.ts`: `→` on an open card goes to its first child only when a card one level deeper is drawn right after it | a function open with its calls not drawn as cards used to select its next sibling |
+| `core.ts`: from source it **never falls back to `bin/`**; `chooseBinary` (pure, `shared/binaryChoice.ts`, 8 rows) gives an error that says how to build (`cargo build` in `drivers/python`); the driver is checked too (it was not before) | the stale copy from 11 November made the window suite fail with "the driver has no call trees" |
+
+Tests: core 76 unit + 33 lifecycle (`has_calls_counts_what_opening_would_show…`, `a_function_that_calls_only_library_code…`, `a_deep_chain_comes_back_cut_at_the_cap…`); `shared/` 214; webview 90; window suite 40 (a file's function cards get their chevrons from probes, `leaf` does not; opening a card with a chevron fetches its tree and a card draws it).
+
+**Proof, honestly scoped.** Not by hand in a real window. Measured at the driver (debug build, httpx): the first 30 functions of a file as depth-1 probes, one after the other: `_client.py` 345 ms (first 147 ms, median 2.0), `_models.py` 200 ms, `_urls.py` 132 ms. A click is never behind more than the one probe in flight, and the scheduler cancels that one (tested with fakes, not timed end to end). Held probes are not bounded until they go stale.
+
 ### 8.3 Calls are cards; the new card
 
 | Files | What |

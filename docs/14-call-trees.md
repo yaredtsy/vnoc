@@ -565,5 +565,8 @@ What it says, and what it does not:
 2. **Opening is still not the cost**; the first walk is (240 ms against 4 ms to open, §11).
 3. The 46 ms is the *driver*. The core still merges (3,140 nodes to about 1,000 rows) and the extension draws one level at a time, so what the user waits for after a
    click on a big function is the core's merge plus this; not measured end to end here.
-4. **Not measured:** memory held by a kept project (it keeps the engine's memo for every root until the driver exits); an environment that resolves; a project
+4. **Probes (step 8.2b), debug build, driver level:** the first 30 functions of a file as `depth: 1` requests in a row take 132 ms (`_urls.py`), 200 ms (`_models.py`) and
+   345 ms (`_client.py`, whose first request pays 147 ms of start-up); the median is 1–2 ms. A depth-1 answer is as expensive as the full tree (Python walks the whole
+   function either way) but small, so a file's chevrons arrive in well under a second.
+5. **Not measured:** memory held by a kept project (it keeps the engine's memo for every root until the driver exits); an environment that resolves; a project
    with files being edited while requests run (the tests cover correctness: `tests/kept_project.rs`).
