@@ -36,6 +36,14 @@ On the branch `0.2-call-trees`, after 7.8. Each step is one commit (or a few wit
 
 Proof: the three answers in the docs. Commit: `step 8.0: three checks for the webview sidebar (context menu, focusedView, codicons)`.
 
+**Answers so far (2026-11-13).** Only the third check could run without a person:
+
+| Check | Answer |
+|---|---|
+| codicons in a webview under the panel's CSP | **works.** The CSP already had `font-src ${webview.cspSource}`. What broke it was Vite's `base` (`/`): the CSS asked for `/assets/index.ttf`, which a webview resolves against its own root, a `NetworkError`. With `base: "./"` in `webview/vite.config.ts` the font loads in the real window (`document.fonts.load("16px codicon")` answered with the face, `check` true on the canvas page; measured with a throwaway probe, removed). The card uses codicons from step 8.3 part 1. |
+| `webview/context` reaches a webview **view** | **not answered**: a right-click needs a person with F5; nothing in the window suite can open a context menu. Still open for 8.5, which builds the sidebar webview. |
+| `focusedView == <id>` for a webview view | **not answered**: *Developer: Inspect Context Keys* is also manual. Still open for 8.5. |
+
 ### 8.1 The session: focus is a path, contexts, call ids
 
 | Files | What |
@@ -117,6 +125,18 @@ Tests: `layout.test.ts` (a function open with calls known → call cards after i
 Proof: by hand on `minicart`: focus `checkout` → one call card; open it → six; open `reserve_stock` → its own. Commit:
 `step 8.3: calls are cards on the canvas, one level at a time; the card is header and one meta line`.
 
+**As built, part 1 (2026-11-13, before 8.1 and 8.2).** In: the structure card of 04 §1 only: 260 × 72, header / meta line / footer, the buttons
+always shown (dim, full colour on the selected card), the footer counts, codicons (`kinds.ts`, `Codicon.tsx`), `NodeBody.tsx` deleted. Each rule is
+a pure function with a table test beside its component: `cardButtons.ts` (04 §3), `footerChips.ts` (04 §1, "1 doc" / "2 docs"), `whereOf.ts`; the
+components only draw. Also: `foldCrumbs.ts` and `app/pageBody.ts` (02 §4–§5) got the same treatment, and `warningOf` got two more cases.
+
+| Left | When |
+|---|---|
+| call cards, dashed call edges, `Placed.role` / `key` / `call`, `childCount: number \| null`, `+N` counting calls, `calls nothing`, call-card buttons (`◇ Explore`) | after 8.1 (call ids, contexts) and 8.2 (the host fetches what is open) |
+| `NodeCalls.tsx` and `canvas/calls.ts`'s `callRows` (the old "Calls" section, still drawn, 24 + 20 px rows added to the card) | deleted by 8.3 part 2 |
+| `symbol-method` for a function inside a class | 8.3 part 2 (needs the parent's kind in `Placed`) |
+| `@tabler/icons-react` | still used by the bar and the menus; goes when nothing uses it |
+
 ### 8.4 The canvas's one bar; contexts on one canvas
 
 | Files | What |
@@ -141,7 +161,8 @@ suite passes on it (32).
 | the progress line: VS Code's (2 px, indeterminate, `--vscode-progressBar-background` as a token), not a pulse in the accent colour | **done, part 2**: `ProgressLine.tsx`, `--progress` |
 | narrow canvas (02 §5): crumbs collapse into `… ›`, keeping the last two | **done, part 2**: under 520 px, `FoldedCrumbs.tsx` |
 | context chips; the canvas draws `session.active` with a viewport per context; the docs panel follows the active context and shows the "called by" line | after 8.1 (contexts) and 8.3 (call cards) |
-| Focus and Go to Code as buttons (the strip had them) | 8.3, on the card; until then the menu and double-click |
+| Focus and Go to Code as buttons (the strip had them) | **done in 8.3 part 1**, on the card |
+| the ⚠'s click for unread files goes to NEEDS ATTENTION, which is **hidden** when it has no Missing node and no Problem (`vnoc.hasAttention` ignores `structure.failed`); the click then does nothing visible | open: either list `failed` files in that view, or make the ⚠ open the log. Decide before 8.5 |
 
 ### 8.5 The sidebar becomes a webview (structure rows)
 
