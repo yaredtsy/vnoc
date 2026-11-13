@@ -37,6 +37,10 @@
   --card-cursor: var(--vscode-editorCursor-foreground, #aeafad);
   --card-badge-bg: var(--vscode-badge-background, #4d4d4d);
   --card-badge-fg: var(--vscode-badge-foreground, #fff);
+
+  /* the bar: the ⚠ when something is cut or unread, and VS Code's own progress line */
+  --warning: var(--vscode-editorWarning-foreground, #cca700);
+  --progress: var(--vscode-progressBar-background, #0e70c0);
 }
 
 /* React Flow draws its own pane, edges, controls and minimap in a dark or a light palette that it picks once, from the <body> class, when the canvas is

@@ -28,11 +28,10 @@ export function App() {
     <TooltipProvider>
       <ReactFlowProvider>
         <div className="flex h-screen flex-col">
-          <TopBar structure={structure} loading={status === "loading"} />
+          <TopBar structure={structure} status={status} message={message} />
           <div className="flex min-h-0 flex-1" data-vscode-context={PANE_CONTEXT}>
-            {status === "error" && <CanvasMessage status="error" message={message} />}
-            {status === "loading" && !laid && <CanvasMessage status="loading" message="" />}
-            {laid && <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} />}
+            {/* nothing drawn yet: the message alone. Once cards are drawn they stay, whatever a later refresh says (the bar's ⚠ tells) */}
+            {laid ? <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} /> : <CanvasMessage status={status === "error" ? "error" : "loading"} message={message} />}
             {docsOpen && (
               <DocPanel
                 node={docNode}

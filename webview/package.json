@@ -6,7 +6,7 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "typecheck": "tsc",
-    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/docs/markdown.test.ts src/canvas/marks.test.ts src/canvas/keys.test.ts src/canvas/calls.test.ts"
+    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/docs/markdown.test.ts src/canvas/marks.test.ts src/canvas/keys.test.ts src/canvas/calls.test.ts src/canvas/top-bar/warning.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

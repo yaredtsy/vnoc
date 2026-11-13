@@ -25,6 +25,10 @@ export interface Deps {
   /** opens a file below the opened folder at a range */
   openAt(path: string, range: Range): Promise<void>;
   session(): Session;
+  /** shows the NEEDS ATTENTION view */
+  focusAttention(): Promise<void>;
+  /** reveals the output channel */
+  showLog(): Promise<void>;
 }
 
 export function createHandlers(d: Deps): Handlers {
@@ -41,6 +45,8 @@ export function createHandlers(d: Deps): Handlers {
     showCallTree: ({ key }) => d.refreshCallTree(key),
     openAt: ({ path, range }) => d.openAt(path, range),
     session: async () => d.session(),
+    focusAttention: () => d.focusAttention(),
+    showLog: () => d.showLog(),
   };
 }
 

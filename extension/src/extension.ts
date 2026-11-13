@@ -21,6 +21,11 @@ import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 let rendered: { visible: number; hidden: number } | undefined;
 const renderWaiters: ((r: { visible: number; hidden: number }) => void)[] = [];
 
+/** What the bar's ⚠ last said (for the test suite). */
+type Warned = { level: "none" | "warning" | "error"; text: string };
+let warned: Warned | undefined;
+const warnedWaiters: (() => void)[] = [];
+
 /** The "Calls" section each card last drew, by entry key: how many rows, and whether it said the code changed (for the test suite). */
 const callsDrawn: Record<string, { rows: number; stale: boolean }> = {};
 const callsWaiters: (() => void)[] = [];
@@ -76,6 +81,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     refreshCallTree: (key) => commands.refreshCallTree(key),
     openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
+    focusAttention: async () => void (await vscode.commands.executeCommand("vnoc.attention.focus")),
+    showLog: async () => output.show(),
   });
   panels = new Panels(ctx, handlers, (note) => onNote(note, store, output));
   commands = new Commands(c, store, panels, async (id) => {
@@ -173,6 +180,16 @@ export function activate(ctx: vscode.ExtensionContext) {
       const row = sidebar.rowForId(id);
       if (row) await sidebarView.reveal(row, { select: true, focus: false });
     },
+    /** resolves when the bar's ⚠ says something that satisfies `ready` (immediately if it already does) */
+    waitWarned: (ready: (w: Warned) => boolean, timeoutMs: number) =>
+      new Promise<Warned>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`the bar's warning never said the expected thing (last: ${JSON.stringify(warned)})`)), timeoutMs);
+        const check = () => {
+          if (warned !== undefined && ready(warned)) return clearTimeout(t), resolve(warned);
+          warnedWaiters.push(check);
+        };
+        check();
+      }),
     /** Resolves when a webview reports that it drew the structure (immediately if one already has). */
     waitRendered: (timeoutMs: number) =>
       new Promise<{ visible: number; hidden: number }>((resolve, reject) => {
@@ -193,6 +210,10 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel) 
       rendered = { visible: note.visible, hidden: note.hidden };
       output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
+      break;
+    case "warned":
+      warned = { level: note.level, text: note.text };
+      warnedWaiters.splice(0).forEach((w) => w());
       break;
     case "callsDrawn":
       callsDrawn[note.key] = { rows: note.rows, stale: note.stale };
