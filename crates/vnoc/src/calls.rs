@@ -163,9 +163,10 @@ mod tests {
             marked(2, vec![]),
             marked(3, vec![CallMark::Cut, CallMark::Recursive]),
             marked(4, vec![CallMark::Incomplete]),
+            marked(5, vec![CallMark::Likely, CallMark::Cut]),
         ]));
-        assert_eq!(merged.children[0].marks, [CallMark::Recursive, CallMark::Cut, CallMark::Incomplete]);
-        assert_eq!(merged.children[0].call_count, 4);
+        assert_eq!(merged.children[0].marks, [CallMark::Recursive, CallMark::Cut, CallMark::Incomplete, CallMark::Likely]);
+        assert_eq!(merged.children[0].call_count, 5);
     }
 
     #[test]

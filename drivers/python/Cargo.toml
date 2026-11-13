@@ -17,9 +17,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # The analyzer comes from one pinned commit of language_driver_rs, all three at the same rev: two revs would build analyzer-core twice
 # and the types would not match. For local work, put a `[patch]` section in an uncommitted .cargo/config.toml pointing at the checkout.
-python-syntax = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "baae7235d9fbd71d4ea26a2727f73fe902769846" }
-python-analysis = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "baae7235d9fbd71d4ea26a2727f73fe902769846" }
-analyzer-core = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "baae7235d9fbd71d4ea26a2727f73fe902769846" }
+python-syntax = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c989c0f4a7ddb77ab0066f76061e4068acda73ab" }
+python-analysis = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c989c0f4a7ddb77ab0066f76061e4068acda73ab" }
+analyzer-core = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c989c0f4a7ddb77ab0066f76061e4068acda73ab" }
 
 # The wire types are shared with the core (D1): a renamed field breaks the build on both sides, not at run time.
 vnoc-driver-protocol = { path = "../../crates/vnoc-driver-protocol" }
@@ -27,6 +27,8 @@ serde = { version = "1", features = ["derive"] }
 blake3 = "1"
 
 [dev-dependencies]
+# the tests parse call trees deeper than serde_json's default limit of 128 levels (the analyzer goes to 256)
+serde_json = { version = "1", features = ["unbounded_depth"] }
 # Tests check the driver against the domain's golden IDs. The driver itself never depends on the domain (the core picks IDs).
 vnoc-domain = { path = "../../crates/vnoc-domain" }
 
@@ -34,8 +36,9 @@ vnoc-domain = { path = "../../crates/vnoc-domain" }
 [profile.dev.package."*"]
 opt-level = 2
 
+# `panic` is NOT "abort": the call-tree worker catches a panic inside one request, answers it with an error and serves the next one
+# (src/worker.rs). With "abort" one bad request would end the whole driver, and the core would have to start it again.
 [profile.release]
 strip = true
 lto = "fat"
 codegen-units = 1
-panic = "abort"

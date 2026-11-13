@@ -217,6 +217,8 @@ pub enum CallMark {
     Cut,
     /// the analysis gave up on part of it (a limit, the deadline)
     Incomplete,
+    /// the def is the engine's best guess for the one called, not a certainty (analyzer D28). Additive: a reader that does not know it drops the word.
+    Likely,
 }
 
 /// The def a node stands for, named the way the outline names it.
@@ -256,6 +258,12 @@ mod tests {
     use super::*;
 
     const TARGET: &str = r#"{ "file": "a.py", "qualname": "f", "occurrence": 1, "kind": "function", "id": null }"#;
+
+    #[test]
+    fn the_likely_mark_is_a_word_of_its_own() {
+        assert_eq!(serde_json::to_string(&CallMark::Likely).unwrap(), "\"likely\"");
+        assert_eq!(serde_json::from_str::<Vec<CallMark>>(r#"["recursive","likely"]"#).unwrap(), [CallMark::Recursive, CallMark::Likely]);
+    }
 
     #[test]
     fn a_call_node_from_a_driver_before_7_7_has_no_site_file() {

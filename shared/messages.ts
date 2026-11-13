@@ -106,7 +106,8 @@ export interface DocInfo {
   path: string;
 }
 
-export type CallMark = "recursive" | "cut" | "incomplete";
+/** `likely`: the engine's best guess for the callee, not a certainty (the Python driver sends it from analyzer D28) */
+export type CallMark = "recursive" | "cut" | "incomplete" | "likely";
 
 /** One place a node is called: a range, and the file it is in. */
 export interface CallSite extends Range {

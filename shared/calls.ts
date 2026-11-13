@@ -109,6 +109,7 @@ const MARKS: Record<CallMark, { text: string; title: string }> = {
   recursive: { text: "↻ recursive", title: "It is already above on this path: shown, not entered" },
   cut: { text: "✂ cut", title: "Its calls are not shown: the tree stopped here" },
   incomplete: { text: "… incomplete", title: "The analysis gave up on part of this" },
+  likely: { text: "≈ likely", title: "The engine's best guess for the function called here, not a certainty" },
 };
 
 export const markBadge = (mark: CallMark) => MARKS[mark];
