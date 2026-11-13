@@ -56,8 +56,10 @@ export interface Problem {
 }
 
 export interface StructureResult {
-  /** which version of the index this answer is from; a lower number than the one shown is a late answer */
+  /** which version of the index this answer is from. Compare two only when their `epoch` is the same: a restarted core counts from the start again */
   revision: number;
+  /** which run of the core this answer is from (the host adds it); 1 for the first, one more after each restart */
+  epoch?: number;
   git_root: string;
   /** which optional methods the driver has (`callTree`, …); the extension shows a command only when its method is there */
   capabilities: Record<string, boolean>;
@@ -132,6 +134,8 @@ export interface CallTreeNode {
 /** `vnoc/callTree`: the tree of one entry, and the index revision its keys were mapped against. */
 export interface CallTreeResult {
   revision: number;
+  /** which run of the core made it (the host adds it): see `StructureResult.epoch` */
+  epoch?: number;
   root: CallTreeNode;
 }
 
@@ -148,8 +152,6 @@ export interface Requests {
   goToCode: { params: { key: string }; result: void };
   /** the call trees the host holds, by the key of their entry: a canvas that opens later asks once, then listens for the `callTree` event */
   callTrees: { params: void; result: Record<string, CallTreeResult> };
-  /** run Show Call Tree on this node again (the Refresh of a stale "Calls" section); the answer arrives as a `callTree` event */
-  showCallTree: { params: { key: string }; result: void };
   /** open a file below the opened folder at a range (a call site) */
   openAt: { params: { path: string; range: Range }; result: void };
   /** the session as it is now; a webview asks once when it starts, and after that it listens for the `session` event */
@@ -170,6 +172,10 @@ export interface Events {
   viewCommand: { name: "showCode" | "hideCode" | "fitView"; key?: string };
   /** a call tree arrived: the entry's card shows it in its "Calls" section */
   callTree: { key: string; result: CallTreeResult };
+  /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
+  callTreeState: { key: string; state: "loading" | "failed" | "idle"; message?: string };
+  /** the core was restarted: every call tree the host held is gone, and so must be the page's (revisions before and after cannot be compared) */
+  callTreesReset: Record<string, never>;
   /** the docs tab beside an editor is already open: show this node and stay on it (pinned) */
   showNode: { id: string };
 }
@@ -177,8 +183,7 @@ export interface Events {
 /** webview → extension, no answer. */
 export type Notes =
   | { type: "intent"; context: ContextId; intent: Intent } // the one way a webview changes the session
-  | { type: "rendered"; visible: number; hidden: number } // the extension's test suite uses it
-  | { type: "callsDrawn"; key: string; rows: number; stale: boolean } // a card drew its "Calls" section: the extension's test suite uses it
+  | { type: "rendered"; visible: number; hidden: number; calls: number } // the extension's test suite uses it; `calls`: how many cards draw a "Calls" section
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it

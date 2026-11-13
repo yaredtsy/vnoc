@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { LanguageClient, TransportKind } from "vscode-languageclient/node";
+import { LanguageClient, State, TransportKind } from "vscode-languageclient/node";
 
 import type { MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messages";
 
@@ -42,6 +42,15 @@ export class Core {
   /** The absolute path of the git root. Node ids and the paths in `vnoc/attach` start there. */
   gitRoot: string | undefined;
 
+  /**
+   * Which run of the core this is: 1 for the first, one more each time it starts again (a crash, or `restart`). A restarted core counts the index
+   * revision from the start again, so a revision from one epoch must never be compared with one from another.
+   */
+  epoch = 0;
+  private readonly restartedEmitter = new vscode.EventEmitter<void>();
+  /** Fires when the core is running again after it was running before: everything held that came from the old one is meaningless. */
+  readonly onRestarted = this.restartedEmitter.event;
+
   private readonly structureArrived = new vscode.EventEmitter<StructureResult>();
   /** Fires, before `structure()` returns, every time a structure arrives: what the session points at may be gone. */
   readonly onStructure = this.structureArrived.event;
@@ -73,6 +82,11 @@ export class Core {
       // not a language server: no document selector. The driver's path and the opened folder travel to the core in `initializationOptions`.
       { documentSelector: [], outputChannel: this.output, initializationOptions: { driverPath: driver, root: folder?.uri.fsPath } },
     );
+    this.client.onDidChangeState(({ newState }) => {
+      if (newState !== State.Running) return;
+      this.epoch++;
+      if (this.epoch > 1) this.restartedEmitter.fire();
+    });
     this.client.onNotification("vnoc/indexChanged", (p: { revision: number }) => onIndexChanged(p.revision));
     await this.client.start();
     this.output.appendLine(`core started: ${core}\ndriver: ${driver}`);

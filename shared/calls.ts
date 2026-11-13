@@ -2,6 +2,7 @@
 // both the page and the host use to read a call tree. Pure: no `vscode`, no React, tested with `node --test`.
 
 import type { CallMark, CallSite, CallTreeNode, CallTreeResult, Range, TreeNode } from "./messages";
+import type { Session } from "./session.ts";
 import { findNode } from "./tree.ts";
 
 /** `call:` + the JSON of `[owner, step, step, …]`: the path of keys from the function that owns the tree to this node. */
@@ -74,15 +75,21 @@ export function resolveCall(trees: Readonly<Record<string, Pick<CallTreeResult, 
   return parsed.steps.length === 0 ? undefined : node;
 }
 
-/** What the session needs to know about a call: the callee (`key` null when the project does not know it), when its tree is known. */
-export type CallLookup = (call: CallId) => { key: string | null; name: string } | undefined;
+/**
+ * What the session needs to know about a call: the callee (`key` null when the project does not know it).
+ * `undefined`: the owner's tree is not held, so nothing is known (not loaded yet, failed, dropped): "unknown" is not "gone".
+ * `null`: the owner's tree is held and the call is not in it: gone.
+ */
+export type CallLookup = (call: CallId) => { key: string | null; name: string } | null | undefined;
 
 /** The lookup over the trees held. */
 export const callLookup =
   (trees: Readonly<Record<string, Pick<CallTreeResult, "root">>>): CallLookup =>
   (id) => {
+    const parsed = parseCallId(id);
+    if (!parsed || !trees[parsed.owner]) return undefined;
     const node = resolveCall(trees, id);
-    return node ? { key: node.key, name: node.name } : undefined;
+    return node ? { key: node.key, name: node.name } : null;
   };
 
 /**
@@ -121,3 +128,92 @@ export const siteText = (site: OpenableSite, parentPath: string | null): string 
 
 /** The code changed since this tree was made: the index is on a newer revision than the one its keys were mapped against. */
 export const isStale = (tree: CallTreeResult, indexRevision: number): boolean => tree.revision < indexRevision;
+
+/**
+ * `isStale` against a structure, and never across a core restart: a restarted core counts revisions from the start again, so a revision from before
+ * and one from after say nothing about which is newer. Different runs of the core are not stale; the host drops the old trees, and the page
+ * learns it from `callTreesReset`.
+ */
+export const isStaleIn = (tree: CallTreeResult, structure: { revision: number; epoch?: number }): boolean =>
+  (tree.epoch === undefined || structure.epoch === undefined || tree.epoch === structure.epoch) && isStale(tree, structure.revision);
+
+// ── what is under a function or a call node (05 §4) ─────────────────────────────────────────────────────────────────
+
+/** What the host holds about call trees: the trees, and what it is doing about each entry. */
+export interface TreeStore {
+  trees: Readonly<Record<string, Pick<CallTreeResult, "root">>>;
+  states?: Readonly<Record<string, { state: "loading" | "failed" | "idle"; message?: string }>>;
+}
+
+export type Calls =
+  | { state: "unknown" } // the owner's tree is not here: draw a chevron, no +N
+  | { state: "loading" }
+  | { state: "failed"; message: string }
+  | { state: "known"; children: CallTreeNode[] };
+
+/**
+ * The calls under a structure function (its key) or a call node (its id), as the canvas draws them one level at a time.
+ * A call node that is `cut` (the walk stopped there) and has no children shows the root children of its callee's own tree instead.
+ */
+export function callsOf(store: TreeStore, id: string): Calls {
+  const own = (key: string): Calls => {
+    const tree = store.trees[key];
+    if (tree) return { state: "known", children: tree.root.children };
+    const state = store.states?.[key];
+    if (state?.state === "loading") return { state: "loading" };
+    if (state?.state === "failed") return { state: "failed", message: state.message ?? "" };
+    return { state: "unknown" };
+  };
+  if (!isCallId(id)) return own(id);
+  const node = resolveCall(store.trees, id);
+  if (!node) {
+    // the owner's tree is held but the call is not in it: it is gone, nothing is under it. Not held: what the owner's state says
+    const owner = parseCallId(id)?.owner ?? id;
+    return store.trees[owner] ? { state: "known", children: [] } : own(owner);
+  }
+  if (node.children.length > 0 || !node.marks.includes("cut") || node.key === null) return { state: "known", children: node.children };
+  return own(node.key);
+}
+
+// ── what the host should have (05 §2) ───────────────────────────────────────────────────────────────────────────────
+
+export interface Wanted {
+  key: string;
+  /** `open`: an open card or the last focus step; `cut`: the callee of an open call node the walk stopped at; `prefetch`: the selected one, so a first click is instant */
+  reason: "open" | "cut" | "prefetch";
+}
+
+const isEntry = (n: TreeNode | undefined): n is TreeNode => n !== undefined && (n.kind === "function" || n.kind === "class");
+
+/**
+ * The call trees to have, in the order to fetch them: first what is drawn open (in every context, in the order of `session.order`), then the
+ * callees of open call nodes that were cut, then the selected function of the active context. Each key once; a closed card is no longer in it.
+ * Only a function or a class owns a tree.
+ */
+export function wantedCalls(session: Session, tree: TreeNode, trees: TreeStore["trees"]): Wanted[] {
+  const out: Wanted[] = [];
+  const seen = new Set<string>();
+  const add = (key: string | undefined, reason: Wanted["reason"]) => {
+    if (key === undefined || seen.has(key) || !isEntry(findNode(tree, key))) return;
+    seen.add(key);
+    out.push({ key, reason });
+  };
+  const cut: string[] = [];
+  for (const id of session.order) {
+    const c = session.contexts[id];
+    for (const open of c.expanded) {
+      if (!isCallId(open)) add(open, "open");
+      else {
+        const owner = parseCallId(open)?.owner;
+        add(owner, "open");
+        const node = resolveCall(trees, open);
+        if (node && node.key !== null && node.children.length === 0 && node.marks.includes("cut")) cut.push(node.key);
+      }
+    }
+    add(c.focus[c.focus.length - 1], "open");
+  }
+  cut.forEach((key) => add(key, "cut"));
+  const selected = session.contexts[session.active]?.selected;
+  if (selected !== null && selected !== undefined && !isCallId(selected)) add(selected, "prefetch");
+  return out;
+}

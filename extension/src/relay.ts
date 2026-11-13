@@ -20,8 +20,6 @@ export interface Deps {
   goToCode(key: string): Promise<void>;
   /** the call trees held, by entry key */
   callTrees(): Record<string, CallTreeResult>;
-  /** asks for the call tree of this node again; resolves when it has arrived or was cancelled */
-  refreshCallTree(key: string): Promise<void>;
   /** opens a file below the opened folder at a range */
   openAt(path: string, range: Range): Promise<void>;
   session(): Session;
@@ -42,7 +40,6 @@ export function createHandlers(d: Deps): Handlers {
     openLink: ({ href, from }) => d.docs.openLink(href, from),
     goToCode: ({ key }) => d.goToCode(key),
     callTrees: async () => d.callTrees(),
-    showCallTree: ({ key }) => d.refreshCallTree(key),
     openAt: ({ path, range }) => d.openAt(path, range),
     session: async () => d.session(),
     focusAttention: () => d.focusAttention(),

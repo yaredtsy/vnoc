@@ -55,6 +55,8 @@ export type Intent =
   | { type: "cursor"; id: string | null }
   | { type: "highlight"; id: string | null }
   | { type: "treeChanged" }
+  /** a new call tree arrived for the function `owner`: what no longer resolves in it is dropped (05 §5) */
+  | { type: "callsChanged"; owner: string }
   | { type: "explore"; call: CallId; activate: boolean }
   | { type: "activate"; id: ContextId }
   | { type: "closeContext"; id: ContextId };
@@ -153,6 +155,9 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
 
     case "treeChanged":
       return treeChanged(s, tree);
+
+    case "callsChanged":
+      return callsChanged(s, intent.owner, tree, calls);
   }
 }
 
@@ -234,6 +239,24 @@ function fixFocus(tree: TreeNode, focus: readonly string[]): readonly string[] {
   if (findNode(tree, focus[start.length]) === undefined) return keep(focus, start); // the step after the start is gone: a path that lost its end
   const last = [...focus].reverse().find((id) => findNode(tree, id) !== undefined)!;
   return lineage(tree, last) ?? start;
+}
+
+/**
+ * A new call tree arrived for `owner` (05 §5). Every call id of that owner that is no longer in it is dropped from `expanded`; a `selected` that
+ * was one falls back to the owner function; an EXPLORE context whose call is gone closes with its children. `calls` says `null` for gone and
+ * `undefined` for "its tree is not held": that is unknown, not gone, and nothing is touched (a tree that failed to load closes nothing).
+ */
+function callsChanged(s: Session, owner: string, tree: TreeNode, calls: CallLookup): Session {
+  const gone = (id: string | null): id is string => id !== null && isCallId(id) && parseCallId(id)?.owner === owner && calls(id) === null;
+  const lost = s.order.filter((id) => gone(s.contexts[id].call));
+  let next = lost.length === 0 ? s : removeContexts(s, lost);
+  const home = findNode(tree, owner) ? owner : null;
+  for (const id of next.order) {
+    const c = next.contexts[id];
+    next = change(next, id, { selected: gone(c.selected) ? home : c.selected, expanded: c.expanded.some(gone) ? c.expanded.filter((x) => !gone(x)) : c.expanded });
+  }
+  for (const id of [...next.order]) if (next.contexts[id]) next = closeStale(next, id);
+  return next;
 }
 
 /** The code changed: every context drops what no longer exists, an EXPLORE context whose call is gone closes. */

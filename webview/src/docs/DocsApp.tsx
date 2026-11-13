@@ -3,7 +3,7 @@
 // (`session.selected`, exactly that node). The pin holds it on one node. A tab opened by "Show Docs" on a row or a card starts pinned to that
 // node. The pin is this tab's own state: nothing else needs to know.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { IconPin, IconPinFilled } from "@tabler/icons-react";
 
@@ -29,9 +29,12 @@ export function DocsApp() {
   // the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; saved with the tab by state/view.ts)
   const pinned = useView((v) => v.pinned);
 
-  // The newest revision shown: two asks can cross, and the older answer must not replace the newer one.
+  // Only the newest ask speaks: two asks can cross, and the older answer must not replace the newer one. Not by index revision: a core that was
+  // restarted counts revisions from the start again, and its answers would be dropped for ever.
+  const latest = useRef(0);
   const refresh = useCallback(() => {
-    request("structure").then((data) => setStructure((current) => (current && data.revision < current.revision ? current : data)), () => {});
+    const ask = ++latest.current;
+    request("structure").then((data) => ask === latest.current && setStructure(data), () => {});
   }, []);
   useEffect(() => {
     refresh();

@@ -154,8 +154,8 @@
         "category": "V-NOC"
       },
       {
-        "command": "vnoc.showCallTree",
-        "title": "Show Call Tree",
+        "command": "vnoc.showCalls",
+        "title": "Show Calls",
         "icon": "$(type-hierarchy)",
         "category": "V-NOC"
       },
@@ -373,7 +373,7 @@
           "group": "9_copy@1"
         },
         {
-          "command": "vnoc.showCallTree",
+          "command": "vnoc.showCalls",
           "when": "view == vnoc.structure && viewItem =~ /\\b(class|function)\\b/ && vnoc.callTree",
           "group": "5_calls@1"
         }
@@ -537,7 +537,7 @@
           "when": "false"
         },
         {
-          "command": "vnoc.showCallTree",
+          "command": "vnoc.showCalls",
           "when": "false"
         }
       ],
@@ -671,7 +671,7 @@
           "group": "9_copy@1"
         },
         {
-          "command": "vnoc.showCallTree",
+          "command": "vnoc.showCalls",
           "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && (kind == class || kind == function) && vnoc.callTree",
           "group": "5_calls@1"
         },

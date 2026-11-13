@@ -458,3 +458,66 @@ test("restoreSession: an active that is not open is MAIN", () => {
   assert.equal(restoreSession(savedWith({}, ["main", "x"], "gone")).active, MAIN);
   assert.equal(restoreSession(savedWith({}, ["main", "x"], "x")).active, "x");
 });
+
+// ── callsChanged (05 §5): a new call tree arrived for an owner ────────────────────────────────────────────────────────
+
+/** `reduce` with a different call lookup, and the invariants checked after the step. */
+const callsChange = (s: Session, owner: string, trees: Parameters<typeof callLookup>[0]): Session => {
+  const next = reduce(s, MAIN, { type: "callsChanged", owner }, tree, callLookup(trees));
+  assert.deepEqual(sessionProblems(next, tree), [], "sound after callsChanged");
+  return next;
+};
+const treeOf = (...calls: CallTreeNode[]) => ({ f: { root: call("f", "f", calls) } });
+const callAt = (key: string, line: number, children: CallTreeNode[] = []): CallTreeNode => ({ ...call(key, key, children), call_sites: [{ start: { line, character: 0 }, end: { line, character: 3 }, path: "b.py" }] });
+
+test("callsChanged: a call removed from the code while both functions still exist closes its EXPLORE, and a selection on it falls back to the owner function", () => {
+  let s = run(emptySession(), { type: "explore", call: Cm, activate: true });
+  assert.equal(s.active, exploreId(Cm));
+  const next = callsChange(s, "f", treeOf(call("g", "g"))); // f no longer calls m (m and f are both still in the project)
+  assert.deepEqual(next.order, [MAIN]);
+  assert.equal(next.active, MAIN, "the canvas was on the closed context");
+  assert.equal(ctx(next).selected, "f", "the selected call fell back to the function that made it");
+  s = next;
+  assert.equal(callsChange(s, "f", treeOf(call("g", "g"))), s, "and again: nothing more to drop");
+});
+
+test("callsChanged: the same call moved to another line has the same id: nothing closes, nothing changes", () => {
+  const before = treeOf(callAt("m", 3), callAt("g", 5));
+  const s = run(emptySession(), { type: "select", id: Cm }, { type: "expand", ids: [Cm] });
+  assert.equal(callsChange(s, "f", before), s);
+  assert.equal(callsChange(s, "f", treeOf(callAt("m", 40), callAt("g", 5))), s, "m is now called on line 41: the same id");
+});
+
+test("callsChanged: a call inserted above another leaves the other's id as it was", () => {
+  const s = run(emptySession(), { type: "select", id: Cg }, { type: "expand", ids: [Cg] });
+  assert.equal(callsChange(s, "f", treeOf(callAt("m", 1), callAt("g", 5))), s);
+  assert.equal(callsChange(s, "f", treeOf(callAt("brand_new", 1), callAt("m", 2), callAt("g", 6))), s, "a new call above g");
+});
+
+test("callsChanged: expanded call ids that are gone are dropped, the others kept (structure keys are not touched)", () => {
+  const s = run(emptySession(), { type: "expand", ids: ["pkg", Cm, Cmg, Cg, "f"] });
+  const next = callsChange(s, "f", treeOf(call("g", "g"))); // m is gone, and Cmg with it
+  assert.deepEqual([...ctx(next).expanded], ["pkg", Cg, "f"]);
+});
+
+test("callsChanged: a call deeper than an EXPLORE goes: that context stays, its selection falls back, its child closes", () => {
+  const e1 = exploreId(Cm);
+  let s = run(emptySession(), { type: "select", id: Cm });
+  s = runIn(e1, s, { type: "select", id: Cmg });
+  assert.deepEqual(s.order, [MAIN, e1, exploreId(Cmg)]);
+  const next = callsChange(s, "f", treeOf(call("m", "m"), call("g", "g"))); // m still calls nothing: Cmg is gone, Cm is not
+  assert.deepEqual(next.order, [MAIN, e1]);
+  assert.equal(ctx(next, e1).selected, "f");
+});
+
+test("callsChanged: the owner's tree failed to load (or is not held): that is unknown, not gone: nothing is closed", () => {
+  const s = run(emptySession(), { type: "select", id: Cm }, { type: "expand", ids: [Cm, Cmg] });
+  const none = callsChange(s, "f", {}); // no tree for f
+  assert.equal(none, s, "the same object: nothing was touched");
+  assert.equal(none.order.length, 2);
+});
+
+test("callsChanged for one owner leaves the call ids of another owner alone", () => {
+  const s = run(emptySession(), { type: "select", id: Cm }, { type: "expand", ids: [Cm] });
+  assert.equal(callsChange(s, "m", treeOf(call("g", "g"))), s, "the tree that arrived is m's; Cm belongs to f");
+});

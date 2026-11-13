@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { callExists, callId, callLookup, callNodesIn, isCallId, isStale, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf } from "./calls.ts";
+import { callExists, callId, callLookup, callNodesIn, callsOf, isCallId, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
 import type { CallTreeNode, CallTreeResult, Range, TreeNode } from "./messages";
+import { type ContextState, type Session, emptySession, exploreId } from "./session.ts";
 
 const at = (line: number): Range => ({ start: { line, character: 4 }, end: { line, character: 7 } });
 const siteAt = <P extends string | null>(line: number, path: P): Range & { path: P } => ({ ...at(line), path });
@@ -81,11 +82,12 @@ test("resolveCall: a path that is not in the tree, an owner we do not hold, and 
   assert.equal(resolveCall(trees, "app/api.py"), undefined);
 });
 
-test("the lookup names the callee, key null for one the project does not know, and nothing for a tree we do not hold", () => {
+test("the lookup names the callee, key null for one the project does not know, undefined for a tree we do not hold, null for a call that is gone", () => {
   const lookup = callLookup({ [OWNER]: { root: tree } });
   assert.deepEqual(lookup(callId(OWNER, ["order.py::order"])), { key: "order.py::order", name: "order" });
   assert.deepEqual(lookup(callId(OWNER, ["?lib/x.py::lib"])), { key: null, name: "lib" });
-  assert.equal(lookup(callId("elsewhere", ["x"])), undefined);
+  assert.equal(lookup(callId("elsewhere", ["x"])), undefined, "the owner's tree is not held: unknown");
+  assert.equal(lookup(callId(OWNER, ["order.py::order", "nope"])), null, "the tree is held and the call is not in it: gone");
 });
 
 const node = (id: string, children: TreeNode[] = []): TreeNode => ({ id, kind: "function", name: id, path: id, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
@@ -125,3 +127,87 @@ test("a site with no file is not listed, because there is nowhere to open it", (
   assert.deepEqual(listedSites(b).map((s) => s.start.line), [3, 5]);
   assert.deepEqual(listedSites(call("c", { call_sites: [siteAt(1, null)] })), []);
 });
+
+test("isStaleIn: stale against a newer revision of the same run of the core, never across a restart", () => {
+  const t = (revision: number, epoch?: number): CallTreeResult => ({ revision, epoch, root: tree });
+  assert.equal(isStaleIn(t(3, 1), { revision: 4, epoch: 1 }), true);
+  assert.equal(isStaleIn(t(3, 1), { revision: 3, epoch: 1 }), false);
+  assert.equal(isStaleIn(t(40, 1), { revision: 3, epoch: 2 }), false, "revision 40 of the old core and 3 of the new one say nothing about which is newer");
+  assert.equal(isStaleIn(t(3, 2), { revision: 40, epoch: 1 }), false, "and the other way round");
+  assert.equal(isStaleIn(t(3), { revision: 4 }), true, "no epochs: as before");
+});
+
+// ── callsOf (05 §4) ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+const names = (c: ReturnType<typeof callsOf>) => (c.state === "known" ? c.children.map((n) => n.name) : c.state);
+const cutTree = call("checkout", { call_sites: [] }, [call("order", { marks: ["cut"] }), call("leaf", { marks: ["recursive"] }), call("lib", { key: null, marks: ["cut"] })]);
+const orderTree = call("order", { call_sites: [] }, [call("reserve"), call("charge")]);
+
+const callsOfTable: { name: string; store: Parameters<typeof callsOf>[0]; id: string; expect: string | string[] }[] = [
+  { name: "a function with its tree: the root's children", store: { trees: { [OWNER]: { root: tree } } }, id: OWNER, expect: ["order", "lib"] },
+  { name: "a function with no tree and nothing happening: unknown (a chevron, no +N)", store: { trees: {} }, id: OWNER, expect: "unknown" },
+  { name: "a function whose tree is being fetched: loading", store: { trees: {}, states: { [OWNER]: { state: "loading" } } }, id: OWNER, expect: "loading" },
+  { name: "a function whose fetch failed: failed", store: { trees: {}, states: { [OWNER]: { state: "failed", message: "boom" } } }, id: OWNER, expect: "failed" },
+  { name: "a call node: its own children in the owner's tree", store: { trees: { [OWNER]: { root: tree } } }, id: callId(OWNER, ["order.py::order"]), expect: ["reserve", "check"] },
+  { name: "a call node that is recursive: nothing under it", store: { trees: { [OWNER]: { root: cutTree } } }, id: callId(OWNER, ["leaf.py::leaf"]), expect: [] },
+  { name: "a call node cut by the walk, its callee's tree held: the callee's root children", store: { trees: { [OWNER]: { root: cutTree }, "order.py::order": { root: orderTree } } }, id: callId(OWNER, ["order.py::order"]), expect: ["reserve", "charge"] },
+  { name: "a cut call node, its callee's tree not held: unknown", store: { trees: { [OWNER]: { root: cutTree } } }, id: callId(OWNER, ["order.py::order"]), expect: "unknown" },
+  { name: "a cut call node, its callee's tree being fetched: loading", store: { trees: { [OWNER]: { root: cutTree } }, states: { "order.py::order": { state: "loading" } } }, id: callId(OWNER, ["order.py::order"]), expect: "loading" },
+  { name: "a cut call node the project does not know (no key): nothing to open", store: { trees: { [OWNER]: { root: cutTree } } }, id: callId(OWNER, ["?lib.py::lib"]), expect: [] },
+  { name: "a call that is gone from a held tree: nothing under it", store: { trees: { [OWNER]: { root: tree } } }, id: callId(OWNER, ["order.py::order", "gone"]), expect: [] },
+  { name: "a call whose owner's tree is not held: what the owner's state says", store: { trees: {}, states: { [OWNER]: { state: "loading" } } }, id: callId(OWNER, ["order.py::order"]), expect: "loading" },
+];
+for (const row of callsOfTable) test(`callsOf: ${row.name}`, () => assert.deepEqual(names(callsOf(row.store, row.id)), row.expect));
+
+test("callsOf: a failed fetch carries its message", () => {
+  assert.deepEqual(callsOf({ trees: {}, states: { [OWNER]: { state: "failed", message: "boom" } } }, OWNER), { state: "failed", message: "boom" });
+});
+
+// ── wantedCalls (05 §2) ─────────────────────────────────────────────────────────────────────────────────────────────
+
+const entry = (id: string, kind: TreeNode["kind"], children: TreeNode[] = []): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
+// / ├ app.py ├ f ├ g ├ K (class) ├ h          ├ other.py
+const project = entry("/", "folder", [entry("app.py", "file", [entry("f", "function"), entry("g", "function"), entry("K", "class"), entry("h", "function")]), entry("other.py", "file")]);
+
+const sessionWith = (main: Partial<ContextState>, ...more: ContextState[]): Session => {
+  const s = emptySession();
+  const contexts: Record<string, ContextState> = { main: { ...s.contexts.main, ...main }, ...Object.fromEntries(more.map((c) => [c.id, c])) };
+  return { ...s, contexts, order: ["main", ...more.map((c) => c.id)] };
+};
+const explore = (call: string, over: Partial<ContextState> = {}): ContextState => ({ id: exploreId(call), title: "x", kind: "explore", parent: "main", call, focus: [], selected: null, expanded: [], ...over });
+const Cfg = callId("f", ["g"]);
+const Chg = callId("h", ["g"]);
+const trees = {};
+const keys = (w: ReturnType<typeof wantedCalls>) => w.map((x) => `${x.key}:${x.reason}`);
+
+const wantedTable: { name: string; session: Session; trees?: Parameters<typeof wantedCalls>[2]; expect: string[] }[] = [
+  { name: "nothing open, nothing selected: nothing", session: sessionWith({}), expect: [] },
+  { name: "an open function", session: sessionWith({ expanded: ["f"] }), expect: ["f:open"] },
+  { name: "an open class (its constructor's calls)", session: sessionWith({ expanded: ["K"] }), expect: ["K:open"] },
+  { name: "a folder or a file that is open owns no calls", session: sessionWith({ expanded: ["app.py", "/"] }), expect: [] },
+  { name: "a key that is not in the structure is not wanted", session: sessionWith({ expanded: ["ghost"] }), expect: [] },
+  { name: "the last focus step, when it is a function", session: sessionWith({ focus: ["app.py", "f"] }), expect: ["f:open"] },
+  { name: "a focus that ends at a file wants nothing", session: sessionWith({ focus: ["app.py"] }), expect: [] },
+  { name: "an open call card wants its owner's tree", session: sessionWith({ expanded: [Cfg] }), expect: ["f:open"] },
+  { name: "open call cards in every context: each owner is wanted", session: sessionWith({ expanded: [Cfg], selected: Cfg }, explore(Cfg, { expanded: [Chg] })), expect: ["f:open", "h:open"] },
+  { name: "a focus step that is a call: the EXPLORE context focused on the callee wants the callee's tree", session: sessionWith({ expanded: [Cfg], selected: Cfg }, explore(Cfg, { focus: ["app.py", "g"] })), expect: ["f:open", "g:open"] },
+  { name: "the selected function of the active context is prefetched, last", session: sessionWith({ expanded: ["f"], selected: "h" }), expect: ["f:open", "h:prefetch"] },
+  { name: "a selected function that is also open is open, not prefetched, and not twice", session: sessionWith({ expanded: ["f"], selected: "f" }), expect: ["f:open"] },
+  { name: "a selected call or file is not prefetched", session: sessionWith({ selected: Cfg }), expect: [] },
+  { name: "only the active context's selection is prefetched", session: { ...sessionWith({ selected: "h" }, explore(Cfg, { selected: "g" })), active: "main" }, expect: ["h:prefetch"] },
+  { name: "nothing is wanted twice: the same function open in two contexts, and as a focus step", session: sessionWith({ expanded: ["f"], focus: ["app.py", "f"] }, explore(Cfg, { expanded: ["f", Cfg] })), expect: ["f:open"] },
+  { name: "a closed card stops being wanted", session: sessionWith({ expanded: [] }), expect: [] },
+  {
+    name: "an open call node the walk cut, with no children: its callee's own tree is wanted, after what is open and before the prefetch",
+    session: sessionWith({ expanded: [Cfg, "h"], selected: "K" }),
+    trees: { f: { root: call("f", { call_sites: [] }, [call("g", { key: "g", marks: ["cut"] })]) } },
+    expect: ["f:open", "h:open", "g:cut", "K:prefetch"],
+  },
+  {
+    name: "a cut call node that has children, or no key, or is not open, wants nothing more",
+    session: sessionWith({ expanded: [Cfg] }),
+    trees: { f: { root: call("f", { call_sites: [] }, [call("g", { key: "g", marks: ["cut"] }, [call("x")])]) } },
+    expect: ["f:open"],
+  },
+];
+for (const row of wantedTable) test(`wantedCalls: ${row.name}`, () => assert.deepEqual(keys(wantedCalls(row.session, project, row.trees ?? trees)), row.expect));

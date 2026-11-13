@@ -6,6 +6,6 @@
   "main": "messages.ts",
   "types": "messages.ts",
   "scripts": {
-    "test": "node --test --experimental-strip-types focusStack.test.ts tree.test.ts session.test.ts attention.test.ts calls.test.ts sessionInvariants.test.ts"
+    "test": "node --test --experimental-strip-types focusStack.test.ts tree.test.ts session.test.ts attention.test.ts calls.test.ts sessionInvariants.test.ts callScheduler.test.ts"
   }
 }

@@ -104,7 +104,7 @@ export class Commands {
       on("vnoc.focusClear", () => this.store.dispatch({ type: "focusJump", depth: 0 })),
       on("vnoc.goToCode", async (arg, selected) => this.goToCode(await this.nodeFor(arg, selected))),
       on("vnoc.showDocs", (arg, selected) => this.showDocsBeside(arg, selected)),
-      on("vnoc.showCallTree", async (arg, selected) => this.showCallTree(await this.nodeFor(arg, selected))),
+      on("vnoc.showCalls", async (arg, selected) => this.showCalls(await this.nodeFor(arg, selected), arg instanceof vscode.Uri)),
       // the NEEDS ATTENTION rows (a row is `{ row: "missing" | "problem", … }`; nothing here changes the session)
       on("vnoc.openMissingDocs", (arg) => (isAttentionRow(arg, "missing") ? this.panels.showDocs(MISSING_PIN + arg.node.id) : undefined)),
       on("vnoc.openNotRead", (arg) => (isAttentionRow(arg, "notRead") && arg.item.kind === "file" ? this.openAt(arg.item.path, { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }) : undefined)),
@@ -256,18 +256,19 @@ export class Commands {
     await this.goToCode(node);
   }
 
-  /** Show Call Tree: the core's tree for a function or class, in the "Calls" section of its card. The canvas comes up on that card once the tree is here. */
-  async showCallTree(node: TreeNode) {
-    if (node.kind !== "function" && node.kind !== "class") throw new Error("A call tree starts at a function or a class.");
-    if (await this.callTrees.run(node.id, node.name)) this.openCanvasAt(node.id);
-  }
-
-  /** The same tree again, for the Refresh of a section that went stale: the canvas is open, so it is not brought up again. */
-  async refreshCallTree(key: string) {
-    const tree = this.core.tree ?? (await this.core.loadStructure()).root;
-    const node = findNode(tree, key);
-    if (!node) throw new Error("That node is not in the structure any more.");
-    await this.callTrees.run(node.id, node.name);
+  /**
+   * Show Calls (docs/16-ui-redesign/05-calls-as-nodes.md §7): Open in Canvas on the function (beside the editor when run from one), then open it. The host
+   * sees it is open and fetches its calls. The answer decides what to say: a failure, or a class that calls nothing when it is created.
+   */
+  async showCalls(node: TreeNode, fromEditor = false) {
+    if (node.kind !== "function" && node.kind !== "class") throw new Error("Calls start at a function or a class.");
+    this.openCanvasAt(node.id, { beside: fromEditor });
+    this.store.dispatch({ type: "expand", ids: [node.id] });
+    void this.callTrees.settled(node.id).then((answer) => {
+      if (answer.state === "failed") return void vscode.window.showErrorMessage(`V-NOC could not read what ${node.name} calls: ${answer.message}`);
+      if (answer.result.root.children.length > 0) return;
+      void vscode.window.showInformationMessage(node.kind === "class" ? `${node.name} calls nothing when it is created; open a method to see its calls.` : `${node.name} calls nothing.`);
+    });
   }
 
   /** A file below the opened folder, at a range (a call site). Beside the canvas when it is in front, as Go to Code does. */

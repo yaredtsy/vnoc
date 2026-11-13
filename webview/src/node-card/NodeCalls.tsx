@@ -3,10 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Codicon } from "@/components/Codicon.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
-import { isStale, listedSites, markBadge, siteText } from "@vnoc/shared/calls.ts";
+import { isStaleIn, listedSites, markBadge, siteText } from "@vnoc/shared/calls.ts";
 import { type CallRow, callRows } from "../canvas/calls.ts";
 import type { Placed } from "../canvas/layout.ts";
-import { post, request } from "../host.ts";
+import { request } from "../host.ts";
 import { useCalls } from "../state/calls.ts";
 import { useData } from "../state/data.ts";
 import { dispatch } from "../state/session.ts";
@@ -15,28 +15,20 @@ import { KINDS } from "./kinds.ts";
 /**
  * The "Calls" section of the card a call tree was made for: what the entry calls, as indented rows (docs/14 §7). A row whose node the project knows
  * selects it when clicked; one the project does not know (a library) is grey and does nothing. A row's call sites open the file each one names, at that line.
- * When the index has moved on since the tree was made it says so and offers Refresh; it never runs again by itself.
+ * When the index has moved on since the tree was made it says so; the host fetches it again by itself (docs/16 05 §5), and the old rows stay until the new ones are here.
  */
 export function NodeCalls({ node }: { node: Placed }) {
   const tree = useCalls((s) => s.trees[node.id]);
-  const revision = useData((s) => s.structure?.revision ?? 0);
+  const structure = useData((s) => s.structure);
+  const fetching = useCalls((s) => s.states[node.id]);
   const rows = useMemo(() => (tree ? callRows(tree.root) : []), [tree]);
-  const stale = tree ? isStale(tree, revision) : false;
+  // never across a restart of the core: its revisions start over (isStaleIn)
+  const stale = tree && structure ? isStaleIn(tree, structure) : false;
   const [sitesOf, setSitesOf] = useState<string | null>(null); // the row whose call sites are listed
-  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => setRefreshing(false), [tree]);
   useEffect(() => setSitesOf(null), [tree]);
-  // tell the host what was drawn: the extension's test suite uses it
-  useEffect(() => {
-    if (tree) post({ type: "callsDrawn", key: node.id, rows: rows.length, stale });
-  }, [tree, rows.length, stale, node.id]);
 
   if (!tree) return null;
-  const refresh = () => {
-    setRefreshing(true);
-    request("showCallTree", { key: node.id }).catch(() => {}).finally(() => setRefreshing(false));
-  };
   return (
     <div className="node-calls nodrag nopan nowheel" aria-label={`Calls of ${node.name}`}>
       <div className="calls-head">
@@ -46,14 +38,7 @@ export function NodeCalls({ node }: { node: Placed }) {
             {markBadge(m).text}
           </span>
         ))}
-        {stale && (
-          <>
-            <span className="calls-stale">the code changed</span>
-            <Button variant="ghost" size="xs" className="h-[18px] px-1.5" disabled={refreshing} onClick={refresh}>
-              {refreshing ? "Refreshing…" : "Refresh"}
-            </Button>
-          </>
-        )}
+        {fetching?.state === "loading" ? <span className="calls-stale">updating…</span> : fetching?.state === "failed" ? <span className="calls-stale" title={fetching.message}>could not update</span> : stale ? <span className="calls-stale">the code changed</span> : null}
       </div>
       <ul className="calls-rows">
         {rows.length === 0 && <li className="call-empty">calls nothing in this project</li>}
