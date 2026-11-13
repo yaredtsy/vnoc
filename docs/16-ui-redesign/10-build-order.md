@@ -17,6 +17,10 @@ On the branch `0.2-call-trees`, after 7.8. Each step is one commit (or a few wit
 - `tokens.css` stays the only file that names a `--vscode-*` variable: 09's colours are added there as tokens (`--row-selected`, `--edge-call`, …)
   and the components use the tokens.
 - No `vscode` import in `shared/`; no state in a page that the session should own (10/01's rules, kept).
+- **Steps go in order** (8.1 → 8.8; 8.2a beside them). A step done early leaves holes the later steps were meant to fill, as 8.4 did (its
+  "as built" note).
+- The window suite needs `ELECTRON_RUN_AS_NODE` unset: a shell started from an Electron app (VS Code's terminal, an agent's tool) inherits it,
+  and VS Code then starts as Node and fails with *"Cannot find module …/ws"*. Run `env -u ELECTRON_RUN_AS_NODE pnpm -r test`.
 - Each step updates the doc it builds when the code settles something the doc left open, as 14 did ("as built" notes), and adds its row to
   `../README.md`'s tree when the folder is done.
 
@@ -123,6 +127,21 @@ Proof: by hand on `minicart`: focus `checkout` → one call card; open it → si
 
 Proof: by hand, the four states of 02 §4, and switching contexts keeps each one's pan and zoom. Commit:
 `step 8.4: one bar on the canvas (back, contexts, crumbs, reveal, docs, more)`.
+
+**As built, part 1 (`dd09633`, 2026-11-13, before 8.1–8.3).** In: the bar (Back, crumbs with the project crumb, Reveal, Docs, `⋯` with Fit View,
+Collapse All, Show Minimap, Refresh Structure), the minimap off and saved, the progress line, `CanvasMessage`, `SelectionStrip` deleted,
+`App.tsx` split into `webview/src/app/` hooks. Also in that commit: the webview moved to **React 19** (19.3.1), not planned here; the window
+suite passes on it (32).
+
+| Left | When |
+|---|---|
+| `⚠` (02 §3 #4): truncated / unread files are shown **nowhere** since part 1 | **done, part 2**: `Warning.tsx`; the click is `focusAttention` |
+| an error after a good load draws the message beside the canvas | **done, part 2**: 02 §4's two rows; `CanvasMessage` only when nothing is drawn, else the ⚠ turns red with Try Again · Show Log |
+| **Show Log** next to Try Again | **done, part 2**: request `showLog` |
+| the progress line: VS Code's (2 px, indeterminate, `--vscode-progressBar-background` as a token), not a pulse in the accent colour | **done, part 2**: `ProgressLine.tsx`, `--progress` |
+| narrow canvas (02 §5): crumbs collapse into `… ›`, keeping the last two | **done, part 2**: under 520 px, `FoldedCrumbs.tsx` |
+| context chips; the canvas draws `session.active` with a viewport per context; the docs panel follows the active context and shows the "called by" line | after 8.1 (contexts) and 8.3 (call cards) |
+| Focus and Go to Code as buttons (the strip had them) | 8.3, on the card; until then the menu and double-click |
 
 ### 8.5 The sidebar becomes a webview (structure rows)
 

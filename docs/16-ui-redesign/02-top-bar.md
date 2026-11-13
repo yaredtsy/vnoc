@@ -64,7 +64,8 @@ title, and the bar keeps one meaning. The web's "(promote)" is not needed: a sel
 | an EXPLORE context exists, MAIN active | `[←] [Main] [◇ reserve_stock ✕] │ minicart › app › api.py` |
 | the EXPLORE context active | `[←] [Main] [◇ reserve_stock ✕] │ minicart › app › inventory.py › reserve_stock` (the chip filled) |
 | calls loading for an open function | the progress line; the card itself shows its own loading row (05 §4) |
-| the core failed | `minicart` · the canvas shows the message with **Try Again** and **Show Log** (as the sidebar's welcome does today) |
+| the core failed, **nothing drawn yet** | `minicart` · the canvas shows the message, centred, with **Try Again** and **Show Log** (as the sidebar's welcome does today) |
+| the core failed on a **refresh**, the last structure still drawn | the canvas **stays** as it was (the structure is kept, `state/data.ts`); the bar shows `⚠` in `--vscode-errorForeground`, tooltip *"Could not read the code again: <message>"*; its click is a menu: **Try Again** · **Show Log**. Never the message and the canvas side by side |
 
 ## 5. Narrow canvas
 
@@ -85,6 +86,8 @@ become one chip with the active context's name and a `▾` menu. The four button
 | strip: Focus · Code | the card's own `⌖` and `↗`, and the menu |
 | strip: `✕` clear selection | `Esc` on the canvas (kept from 10/06 §7), and the pane menu's Clear Selection |
 
-Files: `webview/src/App.tsx` (the bar), a new `webview/src/canvas/TopBar.tsx`, delete `webview/src/canvas/SelectionStrip.tsx`.
+Files: `webview/src/App.tsx` (the layout), `webview/src/canvas/top-bar/` (one file per element: `TopBar`, `BackButton`, `Crumbs`, `RevealButton`, `DocsToggle`, `MoreMenu`, and `Warning` for 4), `webview/src/canvas/CanvasMessage.tsx`; `SelectionStrip.tsx` deleted.
+
+The `⚠` of 4 shows from the data the page already has (`structure.truncated`, `structure.failed`); only its **click** is new: a request `focusAttention` (no params) that the host answers with `vnoc.attention.focus`. **Show Log** is a request `showLog` that the host answers by showing the core's output channel.
 
 Next: [`03-canvas.md`](03-canvas.md)
