@@ -6,6 +6,7 @@ supersedes, my suggestions that still need your yes or no, and the open question
 ```
 for the log
 ├── 1. decided on 2026-11-10 (your answers)
+├── 1b. decided on 2026-11-12: editing in the canvas (E1–E7)
 ├── 2. suggestions waiting for your answer
 ├── 3. where this plan differs from plan_vs
 └── 4. open questions
@@ -29,6 +30,20 @@ Also from your message, taken as decided:
 | **F7** | **Doc panel in 0.1** (decided 2026-11-10, later the same day): on the right of the canvas, the doc rendered **read-only**, with a doc picker and a close button. **Edit** opens the `.md` in a VS Code tab and the panel is its live preview. Editing inside the panel is 0.3. | the doc panel of M3 is split: reading in 0.1, editing in 0.3 |
 | **F8** | **The project root is chosen by the user** when the opened folder sits inside a bigger git repository: repository root (recommended) or the opened folder, asked once at the first attach. An existing `.vnoc/` found by walking up always wins. One project per window in 0.1. | the rule "`.vnoc/` is at the git root"; draft VS-D79's "path as git records it" becomes "path relative to the project root" | 
 | **F9** | **UI additions for 0.1:** a "V-NOC" submenu in the code editor's right-click menu (Show on canvas, Focus on canvas, Show docs, Add doc) · the canvas starts with **one level open** · an **ⓘ** button opens the doc panel on the canvas · **docs beside the code**: an ⓘ in the editor title bar opens the doc panel as a tab next to the editor and follows the cursor. A tree click keeps jumping to the code (an editor cannot show a slice). | adds to M2/M3 |
+
+## 1b. Decided on 2026-11-12: editing in the canvas (0.3)
+
+From [`17-edit-in-canvas.md`](17-edit-in-canvas.md) §2. They replace "Monaco as a view of VS Code's document" in the 0.3 row of `02` §3.
+
+| Draft row | Decision | Supersedes / changes |
+|---|---|---|
+| **E1** | The card edits a **draft**. Nothing leaves the card until ⌘S. | the live view that spike S5 was to test |
+| **E2** | The index follows **saves only**. No outline, range or call tree of unsaved text. | 14 §9's "unsaved-buffer text for call trees" stays out |
+| **E3** | Save checks the document's version, then the function's text against the draft's start. A function changed in the editor is never overwritten. | — |
+| **E4** | Save writes a `WorkspaceEdit`, and saves the file only if it was not dirty before. | the rule `relink.ts` / `addDoc.ts` already follow, now for code too |
+| **E5** | Editing a file with unsaved changes is refused: "Save the file first" (with **Save and Edit**). | — |
+| **E6** | A draft lives in the webview (`vscode.setState`). It is lost if the window closes; the canvas shows how many drafts are open. | — |
+| **E7** | The live view is later, and not a format change. | S5 shrinks to three checks (17 §10, step 9.0) |
 
 ## 2. Suggestions waiting for your answer
 

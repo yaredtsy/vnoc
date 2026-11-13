@@ -56,6 +56,7 @@ export function Canvas({ laid }: { laid: Layout }) {
   const root = useData((s) => s.structure?.root ?? null);
   const selected = useSession((s) => s.contexts[s.active].selected);
   const cursor = useSession((s) => s.cursor);
+  const minimap = useView((v) => v.minimap);
 
   // The edges from the root of what is drawn down to the selection are thicker: you see where it sits in the tree at a glance.
   const drawnRoot = laid.nodes[0]?.id;
@@ -93,12 +94,13 @@ export function Canvas({ laid }: { laid: Layout }) {
       zoomOnDoubleClick={false}
       nodesConnectable={false}
       fitView
+      className="min-w-0 flex-1"
       minZoom={0.02}
       proOptions={{ hideAttribution: true }}
     >
       <Background />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable nodeColor={(node) => (node.id === selected ? "var(--card-selected)" : node.id === cursor ? "var(--card-cursor)" : "var(--muted-foreground)")} />
+      {minimap && <MiniMap pannable zoomable nodeColor={(node) => (node.id === selected ? "var(--card-selected)" : node.id === cursor ? "var(--card-cursor)" : "var(--muted-foreground)")} />}
       <CenterOn laid={laid} />
       <ViewCommands />
     </ReactFlow>

@@ -20,7 +20,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "analyzer-core"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "serde",
 ]
@@ -1140,7 +1140,7 @@ dependencies = [
 [[package]]
 name = "python-analysis"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "analyzer-core",
  "anyhow",
@@ -1168,7 +1168,7 @@ dependencies = [
 [[package]]
 name = "python-syntax"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "analyzer-core",
  "ruff_python_ast",
@@ -1347,7 +1347,7 @@ dependencies = [
 [[package]]
 name = "ruff_annotate_snippets"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "anstyle",
  "memchr",
@@ -1357,7 +1357,7 @@ dependencies = [
 [[package]]
 name = "ruff_cache"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "char_str",
  "filetime",
@@ -1371,7 +1371,7 @@ dependencies = [
 [[package]]
 name = "ruff_db"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "anstyle",
  "arc-swap",
@@ -1414,7 +1414,7 @@ dependencies = [
 [[package]]
 name = "ruff_diagnostics"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "get-size2",
  "is-macro",
@@ -1425,7 +1425,7 @@ dependencies = [
 [[package]]
 name = "ruff_index"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "get-size2",
  "ruff_macros",
@@ -1435,7 +1435,7 @@ dependencies = [
 [[package]]
 name = "ruff_macros"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "heck",
  "itertools",
@@ -1449,7 +1449,7 @@ dependencies = [
 [[package]]
 name = "ruff_memory_usage"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "get-size2",
 ]
@@ -1457,7 +1457,7 @@ dependencies = [
 [[package]]
 name = "ruff_notebook"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "anyhow",
  "rand 0.10.2",
@@ -1473,12 +1473,12 @@ dependencies = [
 [[package]]
 name = "ruff_options_metadata"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 
 [[package]]
 name = "ruff_python_ast"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "aho-corasick",
  "arrayvec",
@@ -1502,7 +1502,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_edits"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "ruff_python_ast",
  "ruff_source_file",
@@ -1512,7 +1512,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_literal"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "bitflags 2.13.1",
  "icu_properties",
@@ -1523,7 +1523,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_parser"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "bitflags 2.13.1",
  "bstr",
@@ -1545,7 +1545,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_stdlib"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "bitflags 2.13.1",
  "unicode-ident",
@@ -1554,7 +1554,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_trivia"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "itertools",
  "ruff_source_file",
@@ -1566,7 +1566,7 @@ dependencies = [
 [[package]]
 name = "ruff_ranged_value"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "get-size2",
  "ruff_db",
@@ -1579,7 +1579,7 @@ dependencies = [
 [[package]]
 name = "ruff_source_file"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "get-size2",
  "memchr",
@@ -1590,7 +1590,7 @@ dependencies = [
 [[package]]
 name = "ruff_text_size"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "get-size2",
  "serde",
@@ -2069,7 +2069,7 @@ checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
 [[package]]
 name = "ty_combine"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "ordermap",
  "ruff_db",
@@ -2080,7 +2080,7 @@ dependencies = [
 [[package]]
 name = "ty_module_resolver"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "anyhow",
  "camino",
@@ -2104,7 +2104,7 @@ dependencies = [
 [[package]]
 name = "ty_project"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "anyhow",
  "bitvec",
@@ -2150,7 +2150,7 @@ dependencies = [
 [[package]]
 name = "ty_python_core"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "bitflags 2.13.1",
  "bitvec",
@@ -2181,7 +2181,7 @@ dependencies = [
 [[package]]
 name = "ty_python_semantic"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "bitflags 2.13.1",
  "char_str",
@@ -2224,7 +2224,7 @@ dependencies = [
 [[package]]
 name = "ty_site_packages"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "camino",
  "colored",
@@ -2245,7 +2245,7 @@ dependencies = [
 [[package]]
 name = "ty_static"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "ruff_macros",
 ]
@@ -2253,7 +2253,7 @@ dependencies = [
 [[package]]
 name = "ty_vendored"
 version = "0.0.11"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cd3c50276efbdb229153152ecc66059e26755ec0#cd3c50276efbdb229153152ecc66059e26755ec0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=baae7235d9fbd71d4ea26a2727f73fe902769846#baae7235d9fbd71d4ea26a2727f73fe902769846"
 dependencies = [
  "path-slash",
  "ruff_db",

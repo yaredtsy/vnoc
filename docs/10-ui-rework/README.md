@@ -1,5 +1,8 @@
 # 10. UI rework: one state, the native tree with a focus bar, matching menus
 
+> **Partly replaced by [`../16-ui-redesign/`](../16-ui-redesign/README.md) (2026-11-12):** the sidebar becomes a webview (U1, U5, U6, U10 go),
+> the focus is a path inside a context, and contexts are built. Its README §3 lists what is kept from here.
+
 Written 2026-11-10 after reading `extension/src/`, `webview/src/`, `shared/` (commit `11b99ce`), the files in [`../07-ui/`](../07-ui/), and the web
 version's Dashboard (`ide/v-noc/src/frontend/src/features/Dashboard/`: store slices, Sidebar, `NodeContextMenu`, `useNodeHandlers`).
 

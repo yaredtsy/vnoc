@@ -68,6 +68,35 @@ asked for); window suite `calls.test.ts`: `showCalls` on the fixture → the fun
 
 Proof: the tests; by hand, the old "Calls" section still fills (it reads the same trees). Commit: `step 8.2: the host fetches the calls of what is open; Show Calls`.
 
+### 8.2a The driver keeps the project open (Python driver)
+
+Independent of the UI steps; it can go beside 8.1–8.3. From the analyzer's `docs/05-python-migration/11-driver-needs.md` §8.
+
+| Files | What |
+|---|---|
+| `drivers/python/Cargo.toml` | the analyzer's `rev` moves past PY9.4 (`c8d18aa` or later; all three crates at one rev) |
+| `drivers/python/src/call_tree.rs`, `main.rs` | **one worker thread** owns one `Project` per root (opened on first use, with the stack size of the analyzer's `ENGINE.md`); each `vnoc/callTree` calls `refresh()`, then the solve. Outline, `planIds`, `planFileId` stay on their own threads |
+| the same | cancel: the request's flag becomes the analyzer's `Cancel` (`with_deadline(received + 20 s)`), so a queued or cancelled request stops; a request cancelled while queued is answered `-32800` without running |
+| `crates/vnoc-driver-protocol` | `CallMark::Likely` (additive), mapped from `"likely"` instead of dropped |
+
+Proof: 14 §11's measurement again on httpx, written there: the project's open, the first request, then 20 functions warm; the lifecycle
+tests still pass. Commit: `step 8.2a: the Python driver keeps the project open; cancel stops the solve`.
+
+### 8.2b Exact chevrons: the probe (05 §3.1)
+
+After 8.2 and 8.2a.
+
+| Files | What |
+|---|---|
+| `crates/vnoc/src/protocol.rs` | `CallTreeParams` gains `depth: Option<u32>`, passed to the driver (which already maps it to `render_depth`, `drivers/python/src/call_tree.rs:36`); new `vnoc/hasCalls { keys } → { revision, calls: { key: n } }` |
+| `crates/vnoc/src/calls.rs` | `has_calls`: for each key, the depth-1 tree through the **same** merge and filter as `vnoc/callTree`; `n` = the children left. Its marks are dropped |
+| `extension/src/callTree.ts` | probes the function and class cards drawn whose calls are unknown, the selected first; cancels what is no longer drawn; drops answers on a new revision |
+| `shared/calls.ts` | `Calls` gains `{ state: "probed"; count: number }`: a chevron when `count > 0`, `+count` in the footer, *calls nothing* when 0. Opening a probed card fetches the full tree as before |
+
+Tests: `calls.rs` (a function that calls only a library → `0`; two calls to one callee → `1`; the depth-1 tree's `Cut` never reaches the answer);
+`shared/calls.test.ts` (probed → chevron and `+N`; pending → the empty slot). Proof: by hand on httpx, a file of 30 functions gets its chevrons
+in well under a second, and none disappears on opening. Commit: `step 8.2b: exact chevrons from a depth-1 probe (vnoc/hasCalls)`.
+
 ### 8.3 Calls are cards; the new card
 
 | Files | What |
@@ -147,6 +176,8 @@ the Explorer. Commit: `step 8.7: one menu list for cards and rows; the editor's 
 |---|---|
 | 8.1 | nothing new; Back goes up one level |
 | 8.2 | the old Calls section, filled by the new fetching |
+| 8.2a | nothing new; Show Calls is faster after the first request |
+| 8.2b | chevrons only on functions that call something; `+N` on closed function cards |
 | 8.3 | calls as cards, one level at a time; the new card |
 | 8.4 | one bar on the canvas |
 | 8.5 | the webview sidebar (structure only) |
@@ -157,7 +188,6 @@ the Explorer. Commit: `step 8.7: one menu list for cards and rows; the editor's 
 
 | Step | When | What |
 |---|---|---|
-| **exact chevrons** (05 §3 B) | after the driver keeps the project open (T6's cache) | `vnoc/hasCalls { keys }` for the functions drawn; `calls: "unknown"` stops happening |
 | **a summary on the card** | when the driver's outline returns the docstring's first line | a `summary` field in `vnoc/structure`; the card's meta line becomes two lines (summary, then path), as the web's card |
 | **callers** | its own plan | "who calls this", as a second kind of call node |
 

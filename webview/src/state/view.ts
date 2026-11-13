@@ -9,6 +9,7 @@ interface Saved {
   codeOpen?: string[];
   docsOpen?: boolean;
   docWidth?: number;
+  minimap?: boolean;
   pinned?: string;
 }
 
@@ -18,6 +19,8 @@ interface View {
   /** the canvas's doc panel, and its width */
   docsOpen: boolean;
   docWidth: number;
+  /** the canvas's minimap: off unless asked for (the bar's ⋯ menu) */
+  minimap: boolean;
   /** the docs tab: the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; the page carries it, as a message could be lost) */
   pinned: string | null;
   // not saved: how the canvas points at things (docs/10-ui-rework/06-how-it-looks.md)
@@ -36,6 +39,7 @@ export const useView = create<View>(() => ({
   codeOpen: new Set(saved.codeOpen),
   docsOpen: saved.docsOpen ?? false,
   docWidth: saved.docWidth ?? 380,
+  minimap: saved.minimap ?? false,
   pinned: document.getElementById("root")?.dataset.node ?? saved.pinned ?? null,
   hover: null,
   revealed: null,
@@ -70,10 +74,11 @@ export function setCodeOpen(id: string, open: boolean): void {
 }
 
 export const setDocsOpen = (docsOpen: boolean) => useView.setState({ docsOpen });
+export const setMinimap = (minimap: boolean) => useView.setState({ minimap });
 export const setDocWidth = (docWidth: number) => useView.setState({ docWidth });
 export const pin = (pinned: string | null) => useView.setState({ pinned });
 
 // the one place the view is saved
-useView.subscribe(({ codeOpen, docsOpen, docWidth, pinned }) => {
-  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, pinned: pinned ?? undefined });
+useView.subscribe(({ codeOpen, docsOpen, docWidth, minimap, pinned }) => {
+  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined });
 });

@@ -75,8 +75,31 @@ A function's chevron must show before its calls are fetched, or the user cannot 
 | B. a 1-level check | a new core method `vnoc/hasCalls { keys }`, sent for the functions **drawn** (a file's functions when the file opens), answered by the driver from one open project | about 9 ms per function on httpx (14 §11 sweep: 1,134 functions in 9.7 s), plus opening the project per request (T6): a file of 30 functions ≈ 0.3–0.5 s, on every file opened | exact chevrons; a new method in the core and the driver |
 | C. full prefetch | fetch the tree of every drawn function | the cost of B, but the trees are large | wasteful |
 
-**A now; B later**, when the driver keeps the project open between requests (the T6 cache, `04-storage/02-index.md` §6.4). Then B costs a
-few milliseconds per file and the chevrons become exact. A's UI does not change for B: `calls: "unknown"` just stops happening for drawn functions.
+**B, decided 2026-11-13**, as soon as the driver keeps the project open (steps 8.2a and 8.2b). Until then A stays, with the same UI:
+`calls: "unknown"` just stops happening for drawn functions. A fix from the analyzer's side made B cheap and exact; §3.1 is the contract.
+
+### 3.1 The probe: exact chevrons from one small answer
+
+| Rule | Why |
+|---|---|
+| **What is probed:** every function and class **card drawn** on the canvas whose calls are not known yet. The selected card first, then in reading order; cancelled when the card is no longer drawn | the canvas asks only for what it shows |
+| **The request:** the host sends `vnoc/hasCalls { keys }`. For each key the core asks the driver for `vnoc/callTree` with **`depth: 1`**, and runs the answer through the **same merge and filter** as `vnoc/callTree` (code outside the project and unresolved calls dropped, 14 §4) | the chevron must mean exactly "opening shows at least one card", whatever the analyzer's own options count |
+| **The answer:** `{ revision, calls: { [key]: n } }`, `n` = how many call cards opening would show (merged, filtered children) | `n = 0`: no chevron, the meta line says *calls nothing*. `n > 0`: a chevron, and `+n` in the closed card's footer (04 §1) |
+| **The probe's tree never reaches the page.** Its children are not drawn, and its marks are not shown | the analyzer marks a node `Cut` where `depth` stopped and it has children (`analyzer-core/src/render.rs`, the `max_depth` check). That `Cut` only means "the answer was shortened": it is not the *calls not loaded* of §6 |
+| **The children's `Cut` is not used for their chevrons** | a child is marked `Cut` when it calls anything, **including** calls the core then drops (a library, an unresolved call), so it could promise a chevron that opens nothing. The children's chevrons come from the full tree |
+| **Opening fetches the full tree** (no `depth`), once per opened function, as in §4. The canvas still shows **one level per click**; the levels below come from that same tree, with no new request | nothing opens by itself; a `Cut` in the **full** tree (the budget ran out) is a real one and shows *calls not loaded* (§6) |
+| **While a probe is pending** | the chevron's slot is empty and keeps its width (nothing shifts when it appears). A chevron that appears is better than one that disappears |
+| **When it is dropped** | on a new index revision; the drawn cards are probed again |
+
+What it costs (debug builds, on a kept project, from the analyzer's own measurements):
+
+| | the probe (`depth: 1`) | opening (the full tree) |
+|---|---|---|
+| **Python** | the same work as the full tree: `depth` only shortens the answer, the whole tree is still walked. ~6 ms warm. It saves size, not time | one more full solve, ~6 ms: each request builds a new solver. So about **12 ms per card you open** |
+| **TypeScript** | the depth limit really skips work (budget and frontier): cheaper | a new request for the opened node, until the analyzer's `more` tokens exist |
+
+**No paging for Python.** Python's walk cannot stop early: values flow back from callees, so a body left unwalked would change answers above it.
+If the analyzer ever pages its output, Python gets only that: a shorter answer, not less work.
 
 ## 4. Opening a call node, one level at a time
 
@@ -135,8 +158,17 @@ So the canvas follows the code without a Refresh button. Today's "the code chang
 ## 7. Show Calls (replaces Show Call Tree)
 
 `vnoc.showCalls` (title **Show Calls**, was `vnoc.showCallTree` "Show Call Tree"): on a function, **Open in Canvas** (beside the editor when run
-from one), then `expand` the function. The host fetches, the cards appear one level deep. On a class: the same on its `__init__`; a class
-without one gets *"Order has no __init__; open a method to see its calls."* Same `vnoc.callTree` context key as today.
+from one), then `expand` the function. The host fetches, the cards appear one level deep. On a class: the same; its tree is what creating
+it calls, through its own `__init__` **or an inherited one** (14 §10.1: `Child(Base)` with no `__init__` of its own still calls what
+`Base.__init__` calls). The message is decided by the **answer**, never by looking for an `__init__` among the class's children in the
+structure (that misses the inherited one):
+
+| The class's call tree | Shows |
+|---|---|
+| has children | the calls, as for a function |
+| comes back empty | *"Order calls nothing when it is created; open a method to see its calls."* (true with no `__init__` at all, and with one that calls nothing) |
+
+Same `vnoc.callTree` context key as today.
 
 ## 8. Messages (`shared/messages.ts`)
 

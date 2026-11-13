@@ -38,7 +38,7 @@ V-NOC
 ├── WHAT SHIPS WHEN ─────────────────────────────── 02-mvp-and-releases.md
 │   ├── 0.1  docs loop        tree · canvas · attach · find again · Missing
 │   ├── 0.2  call trees       (+ SQLite if startup is slow)
-│   ├── 0.3  edit in canvas   (after spike S5)
+│   ├── 0.3  edit in canvas   (a draft per card, written on ⌘S)
 │   ├── 0.4+ no-ID matching · private docs · settings UI · playground
 │   └── 1.0  hardened, protocol frozen, all platforms
 │
@@ -96,6 +96,17 @@ V-NOC
 │
 ├── THE PYTHON DRIVER LEAVES pylspt ─────────────── 15-leave-pylspt.md
 │   └── what blocks it · the switch in one commit · file by file · tests · disk rules
+│
+├── UI REDESIGN (wins over 10 and 14 §7) ───────── 16-ui-redesign/
+│   ├── layout · jobs · verbs        what each surface is for; Focus never opens anything
+│   ├── top bar · canvas · cards     one bar; calls are cards, one level at a time; focus is a path
+│   ├── calls as nodes               call ids · the host fetches what is open · the optimistic chevron
+│   ├── sidebar · rows               a webview view: search, EXPLORE panels, keyboard, the click rule
+│   ├── menus · states               one list for card and row; five editor entries; every state's look
+│   └── build order                  steps 8.0 – 8.8
+│
+├── RELEASE 0.3: EDIT IN THE CANVAS ─────────────── 17-edit-in-canvas.md
+│   └── a draft, not a live view · save checks first · the index follows saves · the doc panel the same way · steps 9.0 – 9.6
 │
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
 │

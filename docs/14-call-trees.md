@@ -276,6 +276,9 @@ Built in `crates/vnoc/src/calls.rs` (the merge), `protocol.rs` (`CallTree`, `Cal
 
 ## 7. Extension and canvas
 
+> **Replaced by [`16-ui-redesign/05-calls-as-nodes.md`](16-ui-redesign/05-calls-as-nodes.md) (2026-11-12):** calls become cards and sidebar rows
+> opened one level at a time, the host fetches what is open, and there is no notification and no Refresh. What follows is what 7.5 built.
+
 Kept small on purpose: the first version draws the tree. The EXPLORE contexts of `10-ui-rework/03` come after it works.
 
 | Piece | Change |
