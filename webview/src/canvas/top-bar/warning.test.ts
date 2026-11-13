@@ -27,3 +27,14 @@ test("a failed refresh with a structure drawn is an error that wins over the war
 test("a failed first read has no structure: the bar says nothing (the canvas does)", () => {
   assert.deepEqual(warningOf({ structure: null, status: "error", message: "core down" }), { level: "none", text: "" });
 });
+
+test("loading with a structure keeps the last reasons: the icon does not blink while it reads again", () => {
+  const w = warningOf({ structure: { truncated: false, failed: [1, 2] }, status: "loading", message: "" });
+  assert.deepEqual(w, { level: "warning", text: "2 files could not be read" });
+  assert.deepEqual(warningOf({ structure: ok, status: "loading", message: "" }), { level: "none", text: "" });
+});
+
+test("an error with an empty message still reads well", () => {
+  assert.equal(warningOf({ structure: ok, status: "error", message: "" }).text, "Could not read the code again");
+  assert.equal(warningOf({ structure: ok, status: "error", message: "  \n" }).text, "Could not read the code again");
+});

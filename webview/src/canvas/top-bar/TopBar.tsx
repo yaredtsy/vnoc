@@ -2,7 +2,7 @@ import type { StructureResult } from "@vnoc/shared/messages.ts";
 import { ProgressLine } from "@/components/ProgressLine.tsx";
 import { useSession } from "@/state/session.ts";
 import { BackButton } from "./BackButton.tsx";
-import { Crumbs, NARROW } from "./Crumbs.tsx";
+import { Crumbs } from "./Crumbs.tsx";
 import { DocsToggle } from "./DocsToggle.tsx";
 import { MoreMenu } from "./MoreMenu.tsx";
 import { RevealButton } from "./RevealButton.tsx";
@@ -22,7 +22,7 @@ export function TopBar({ structure, status, message }: { structure: StructureRes
   return (
     <header ref={ref} className="relative flex h-[30px] flex-none items-center gap-1 border-b border-border px-1.5">
       <BackButton crumbs={crumbs} />
-      <Crumbs project={structure?.root.name ?? "V-NOC"} stats={structure ? statsLine(structure) : ""} crumbs={crumbs} narrow={width < NARROW} />
+      <Crumbs project={structure?.root.name ?? "V-NOC"} stats={structure ? statsLine(structure) : ""} crumbs={crumbs} width={width} />
       <Warning structure={structure} status={status} message={message} />
       <RevealButton />
       <DocsToggle />

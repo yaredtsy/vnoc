@@ -6,7 +6,7 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "typecheck": "tsc",
-    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/docs/markdown.test.ts src/canvas/marks.test.ts src/canvas/keys.test.ts src/canvas/calls.test.ts src/canvas/top-bar/warning.test.ts"
+    "test": "node --test --experimental-strip-types src/canvas/layout.test.ts src/docs/markdown.test.ts src/canvas/marks.test.ts src/canvas/keys.test.ts src/canvas/calls.test.ts src/canvas/top-bar/warning.test.ts src/node-card/cardButtons.test.ts src/node-card/footerChips.test.ts src/node-card/whereOf.test.ts src/canvas/top-bar/foldCrumbs.test.ts src/app/pageBody.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -15,6 +15,7 @@
     "@shikijs/themes": "^4.6.0",
     "@tabler/icons-react": "^3.51.0",
     "@vnoc/shared": "workspace:*",
+    "@vscode/codicons": "0.0.46-24",
     "@xyflow/react": "^12.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

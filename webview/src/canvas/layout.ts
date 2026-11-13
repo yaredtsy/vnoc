@@ -3,19 +3,20 @@
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 
 export const COL_W = 300;
-/** One card (80 px, see node-card.css) plus a gap. Fixed until the code toggle makes cards grow and the layout has to measure them. */
-export const ROW_H = 96;
+/** One card: header 30 + meta 22 + footer 20 (docs/16-ui-redesign/04-node-cards.md §1). */
+export const CARD_H = 72;
+/** One card plus a gap. Cards that grow (code, calls) add their own height, so the layout never has to measure. */
+export const ROW_H = CARD_H + 16;
 /** A file's code is all of it: the host clamps a range that runs past the end of the document. */
 const WHOLE_FILE = { start: { line: 0, character: 0 }, end: { line: 10_000_000, character: 0 } };
 
-/** What an open code view adds to a card (80 + 220 = the 300 px of `.node-card.code-open`). */
+/** What an open code view adds to a card. */
 export const CODE_H = 220;
 
 /** A card's "Calls" section: a header line, then the rows, up to a limit (more scroll inside it). A tree with no rows still has one line, "calls nothing". */
 export const CALLS_HEAD_H = 24;
 export const CALL_ROW_H = 20;
 export const CALLS_MAX_ROWS = 10;
-const CARD_H = 80;
 
 /** What a "Calls" section with this many rows adds to a card; nothing for `null` (the card has no section). */
 export const callsHeight = (rows: number | null): number => (rows === null ? 0 : CALLS_HEAD_H + Math.min(Math.max(rows, 1), CALLS_MAX_ROWS) * CALL_ROW_H);

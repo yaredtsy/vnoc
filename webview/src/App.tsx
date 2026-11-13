@@ -3,6 +3,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { TooltipProvider } from "@/components/ui/tooltip.tsx";
 import { useCanvasKeys } from "./app/useCanvasKeys.ts";
 import { useFocusedView } from "./app/useFocusedView.ts";
+import { pageBody } from "./app/pageBody.ts";
 import { useRenderedReport } from "./app/useRenderedReport.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
 import { CanvasMessage } from "./canvas/CanvasMessage.tsx";
@@ -23,6 +24,7 @@ export function App() {
   const { root, top, laid, selected, docNode } = useFocusedView(structure);
   useCanvasKeys(laid, root, selected);
   useRenderedReport(laid);
+  const body = pageBody(status, laid !== null);
 
   return (
     <TooltipProvider>
@@ -31,7 +33,7 @@ export function App() {
           <TopBar structure={structure} status={status} message={message} />
           <div className="flex min-h-0 flex-1" data-vscode-context={PANE_CONTEXT}>
             {/* nothing drawn yet: the message alone. Once cards are drawn they stay, whatever a later refresh says (the bar's ⚠ tells) */}
-            {laid ? <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} /> : <CanvasMessage status={status === "error" ? "error" : "loading"} message={message} />}
+            {body === "canvas" && laid ? <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} /> : <CanvasMessage status={body === "error" ? "error" : "loading"} message={message} />}
             {docsOpen && (
               <DocPanel
                 node={docNode}

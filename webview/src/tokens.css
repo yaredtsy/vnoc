@@ -28,6 +28,12 @@
   --link: var(--vscode-textLink-foreground, #3794ff);
   --code-bg: var(--vscode-textCodeBlock-background, #ffffff14);
 
+  /* what a node is: the stripe and the icon of a card (the colours of the Outline view) */
+  --kind-folder: var(--vscode-symbolIcon-folderForeground, #4e94ce);
+  --kind-file: var(--vscode-symbolIcon-fileForeground, #7a7a7a);
+  --kind-class: var(--vscode-symbolIcon-classForeground, #ee9d28);
+  --kind-function: var(--vscode-symbolIcon-functionForeground, #b180d7);
+
   /* the card: how it looks in each state (06-how-it-looks.md §2) */
   --card-border: var(--vscode-editorWidget-border, #454545);
   --card-selected: var(--vscode-contrastActiveBorder, var(--vscode-focusBorder, #007fd4)); /* in High Contrast themes the contrast border is defined (and unset elsewhere) */

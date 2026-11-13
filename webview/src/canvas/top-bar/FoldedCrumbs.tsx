@@ -2,13 +2,7 @@ import { IconChevronRight } from "@tabler/icons-react";
 
 import { Button } from "@/components/ui/button.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
-
-export interface Step {
-  id: string;
-  label: string;
-  /** how many focus steps to keep when jumping to it (0 = the project) */
-  depth: number;
-}
+import type { Step } from "./foldCrumbs.ts";
 
 /** `… ›`: the steps that do not fit, as a menu. A step jumps there. */
 export function FoldedCrumbs({ steps, onJump }: { steps: Step[]; onJump: (depth: number) => void }) {

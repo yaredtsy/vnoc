@@ -6,7 +6,7 @@ export interface WarningInput {
   /** what the last structure said, or null before the first one */
   structure: { truncated: boolean; failed: readonly unknown[] } | null;
   status: "loading" | "ready" | "error";
-  /** why the last read failed, when `status` is "error" */
+  /** why the last read failed, when `status` is "error" (may be empty) */
   message: string;
 }
 
@@ -16,7 +16,7 @@ export interface WarningInput {
  */
 export function warningOf({ structure, status, message }: WarningInput): { level: Level; text: string } {
   if (!structure) return { level: "none", text: "" };
-  if (status === "error") return { level: "error", text: `Could not read the code again: ${message}` };
+  if (status === "error") return { level: "error", text: message.trim() ? `Could not read the code again: ${message.trim()}` : "Could not read the code again" };
   const reasons: string[] = [];
   if (structure.truncated) reasons.push("Too many files: the structure is cut");
   const n = structure.failed.length;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CALLS_HEAD_H, CALLS_MAX_ROWS, CALL_ROW_H, CODE_H, COL_W, ROW_H, callsHeight, cardHeight, layout } from "./layout.ts";
+import { CALLS_HEAD_H, CARD_H, CALLS_MAX_ROWS, CALL_ROW_H, CODE_H, COL_W, ROW_H, callsHeight, cardHeight, layout } from "./layout.ts";
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, node_id: null, docs: 0, link: null, children });
@@ -61,7 +61,7 @@ test("a card with a Calls section is as tall as its rows, and what is below it s
   const l = layout(t, new Set(["a.py"]), new Set(), new Map([["f", 3]]));
   const f = l.nodes.find((p) => p.id === "f")!;
   assert.equal(f.callRows, 3);
-  assert.equal(cardHeight(f), 80 + CALLS_HEAD_H + 3 * CALL_ROW_H);
+  assert.equal(cardHeight(f), CARD_H + CALLS_HEAD_H + 3 * CALL_ROW_H);
   assert.deepEqual(l.nodes.map((p) => p.y), [0, ROW_H, 2 * ROW_H, 3 * ROW_H + CALLS_HEAD_H + 3 * CALL_ROW_H]);
   assert.deepEqual(l.nodes.map((p) => p.callRows), [null, null, 3, null], "only the entry has a section");
 });
@@ -70,5 +70,5 @@ test("the Calls section stops growing at ten rows (the rest scroll), and an empt
   assert.equal(callsHeight(null), 0);
   assert.equal(callsHeight(0), CALLS_HEAD_H + CALL_ROW_H, "a line that says it calls nothing");
   assert.equal(callsHeight(CALLS_MAX_ROWS), callsHeight(CALLS_MAX_ROWS + 50));
-  assert.equal(cardHeight({ codeOpen: true, callRows: 2 }), 80 + CODE_H + CALLS_HEAD_H + 2 * CALL_ROW_H, "open code and calls add up");
+  assert.equal(cardHeight({ codeOpen: true, callRows: 2 }), CARD_H + CODE_H + CALLS_HEAD_H + 2 * CALL_ROW_H, "open code and calls add up");
 });

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { Codicon } from "@/components/Codicon.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
 import { type CallRow, callRows, isStale, listedSites, markBadge, siteText } from "../canvas/calls.ts";
@@ -67,10 +68,11 @@ function Row({ row, open, onSites }: { row: CallRow; open: boolean; onSites: () 
   const { node } = row;
   const known = node.key !== null;
   const sites = listedSites(node);
+  const { icon } = KINDS[node.kind];
   return (
     <li className={cn("call-row", !known && "unknown")} style={{ paddingLeft: 6 + row.depth * 12 }}>
       <div className="call-line">
-        <span className="call-kind">{KINDS[node.kind].icon}</span>
+        <span className="call-kind"><Codicon name={icon} className="text-[12px]" /></span>
         {known ? (
           <button className="call-name" title={`Select ${node.qualname}`} onClick={() => dispatch({ type: "select", id: node.key! })}>
             {row.label}

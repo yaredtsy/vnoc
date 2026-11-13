@@ -19,6 +19,8 @@ import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 
 /** What the webview last said it drew (for the test suite). */
 let rendered: { visible: number; hidden: number } | undefined;
+/** Every drawing a webview reported, in order (for the test suite). */
+const renderedPosts: { visible: number; hidden: number }[] = [];
 const renderWaiters: ((r: { visible: number; hidden: number }) => void)[] = [];
 
 /** What the bar's ⚠ last said (for the test suite). */
@@ -180,6 +182,12 @@ export function activate(ctx: vscode.ExtensionContext) {
       const row = sidebar.rowForId(id);
       if (row) await sidebarView.reveal(row, { select: true, focus: false });
     },
+    /** every drawing the pages reported, in order */
+    renderedPosts: () => renderedPosts,
+    /** stops the core process, as a crash would: the next request to it fails. The suite's last test uses it; nothing starts the core again. */
+    breakCore: () => c.stop(),
+    /** tells the open pages the index changed, so each reads the structure again (what a save does) */
+    emitIndexChanged: () => panels.emit("indexChanged", { revision: 0 }),
     /** resolves when the bar's ⚠ says something that satisfies `ready` (immediately if it already does) */
     waitWarned: (ready: (w: Warned) => boolean, timeoutMs: number) =>
       new Promise<Warned>((resolve, reject) => {
@@ -208,6 +216,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel) 
       break;
     case "rendered":
       rendered = { visible: note.visible, hidden: note.hidden };
+      renderedPosts.push(rendered);
       output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
       break;

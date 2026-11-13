@@ -1,3 +1,4 @@
+import "@vscode/codicons/dist/codicon.css";
 import "@xyflow/react/dist/style.css";
 import "./tokens.css";
 import "./style.css";
