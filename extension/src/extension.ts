@@ -79,6 +79,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       wantCalls(); // a cut call node may now want its callee's tree
     },
     state: (key, state, message) => panels.emit("callTreeState", { key, state, message }),
+    dropped: (key) => panels.emit("callTreeDropped", { key }),
     reset: () => panels.emit("callTreesReset", {}),
   });
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));

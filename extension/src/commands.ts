@@ -260,8 +260,11 @@ export class Commands {
    * Show Calls (docs/16-ui-redesign/05-calls-as-nodes.md §7): Open in Canvas on the function (beside the editor when run from one), then open it. The host
    * sees it is open and fetches its calls. The answer decides what to say: a failure, or a class that calls nothing when it is created.
    */
-  async showCalls(node: TreeNode, fromEditor = false) {
+  async showCalls(node: TreeNode, fromEditor = false): Promise<void> {
     if (node.kind !== "function" && node.kind !== "class") throw new Error("Calls start at a function or a class.");
+    // R7: a class's own calls are under its `__init__`. A class with one of its own shows those; one without (it may inherit one) is its own entry
+    const init = node.kind === "class" ? node.children.find((c) => c.name === "__init__") : undefined;
+    if (init) return this.showCalls(init, fromEditor);
     this.openCanvasAt(node.id, { beside: fromEditor });
     this.store.dispatch({ type: "expand", ids: [node.id] });
     void this.callTrees.settled(node.id).then((answer) => {

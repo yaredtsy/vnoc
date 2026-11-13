@@ -14,6 +14,8 @@ export interface CallTreeEvents {
   tree(key: string, result: CallTreeResult): void;
   /** the host's work on this entry changed: the canvases draw spinners and failures from it */
   state(key: string, state: "loading" | "failed" | "idle", message?: string): void;
+  /** the host dropped this tree: the canvases drop theirs */
+  dropped(key: string): void;
   /** every tree is gone (the core restarted): the canvases drop theirs */
   reset(): void;
 }
@@ -60,7 +62,10 @@ export class CallTrees {
         this.progress(key, state === "loading");
         if (state === "failed") this.settle(key, { state: "failed", message: message ?? "" });
       },
-      onDropped: (key) => this.note({ kind: "dropped", key }),
+      onDropped: (key) => {
+        this.note({ kind: "dropped", key });
+        this.events.dropped(key);
+      },
       onReset: () => {
         this.note({ kind: "reset" });
         this.loading.clear();

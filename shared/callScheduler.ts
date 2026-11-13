@@ -179,10 +179,18 @@ export class CallScheduler {
     }, this.debounceMs);
   }
 
-  /** A stale tree that is wanted is fetched again (the old one stays on screen); one nothing wants is dropped. */
+  /**
+   * The code settled. A stale tree that is wanted is fetched again (the old one stays on screen); one nothing wants is dropped. A wanted key whose
+   * last fetch failed is asked again, once: the code changed, so the failure may not repeat. If it fails again it stays failed until the code settles
+   * again (or `retry`); a key nothing wants is not retried.
+   */
   private settleStale(): void {
     if (this.revision === null) return;
     const wanted = new Set(this.wanted.map((w) => w.key));
+    for (const key of [...this.failed.keys()]) {
+      if (!wanted.has(key)) continue;
+      this.failed.delete(key); // `pump` asks again; a second failure puts it back
+    }
     for (const [key, tree] of [...this.held]) {
       if (tree.revision >= this.revision) continue;
       if (wanted.has(key)) this.refetch.add(key);

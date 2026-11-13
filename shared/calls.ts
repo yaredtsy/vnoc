@@ -183,12 +183,16 @@ export interface Wanted {
   reason: "open" | "cut" | "prefetch";
 }
 
-const isEntry = (n: TreeNode | undefined): n is TreeNode => n !== undefined && (n.kind === "function" || n.kind === "class");
+/**
+ * Who owns a call tree: a function, and a class only when it has no `__init__` of its own (R7: a class's own calls are under its `__init__` row; a class
+ * with an inherited `__init__` and no child of its own is its own entry, because its tree is what the inherited one calls, 14 §10.1).
+ */
+const isEntry = (n: TreeNode | undefined): n is TreeNode => n !== undefined && (n.kind === "function" || (n.kind === "class" && !n.children.some((c) => c.name === "__init__")));
 
 /**
  * The call trees to have, in the order to fetch them: first what is drawn open (in every context, in the order of `session.order`), then the
  * callees of open call nodes that were cut, then the selected function of the active context. Each key once; a closed card is no longer in it.
- * Only a function or a class owns a tree.
+ * Only a function, or a class without an `__init__` of its own, owns a tree (`isEntry`).
  */
 export function wantedCalls(session: Session, tree: TreeNode, trees: TreeStore["trees"]): Wanted[] {
   const out: Wanted[] = [];

@@ -108,6 +108,18 @@ suite("show calls", () => {
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
 
+  test("Show Calls on a class with its own __init__ shows the __init__'s calls (R7): the tree is the __init__'s, not the class's", async () => {
+    const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
+    fs.writeFileSync(path.join(folder, "calls_cls.py"), "from calls_lib import leaf\n\n\nclass Widget:\n    def __init__(self):\n        leaf()\n");
+    let widget: TreeNode | undefined;
+    await until("the class in the structure", () => (void api.structure().then((s) => (widget = find(s.root, "calls_cls.py::Widget"))), widget !== undefined), 20_000);
+    await vscode.commands.executeCommand("vnoc.showCalls", widget);
+    const init = "calls_cls.py::Widget.__init__";
+    await until("the __init__'s tree", () => api.callTrees()[init] !== undefined, 30_000);
+    assert.strictEqual(api.callTrees()["calls_cls.py::Widget"], undefined, "the class itself owns no tree");
+    assert.deepStrictEqual(api.callTrees()[init].root.children.map((c) => c.name), ["leaf"]);
+  });
+
   test("the command refuses a file: calls start at a function or a class", async () => {
     const file = find((await api.structure()).root, "calls_app.py")!;
     // the command shows the refusal as a message and does not throw; nothing is fetched for the file

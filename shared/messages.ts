@@ -174,6 +174,8 @@ export interface Events {
   callTree: { key: string; result: CallTreeResult };
   /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
   callTreeState: { key: string; state: "loading" | "failed" | "idle"; message?: string };
+  /** the host dropped a call tree (stale and nothing wants it, or the oldest unwanted one): the page drops its copy and what it knew of its state */
+  callTreeDropped: { key: string };
   /** the core was restarted: every call tree the host held is gone, and so must be the page's (revisions before and after cannot be compared) */
   callTreesReset: Record<string, never>;
   /** the docs tab beside an editor is already open: show this node and stay on it (pinned) */

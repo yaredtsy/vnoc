@@ -166,8 +166,13 @@ test("callsOf: a failed fetch carries its message", () => {
 // ── wantedCalls (05 §2) ─────────────────────────────────────────────────────────────────────────────────────────────
 
 const entry = (id: string, kind: TreeNode["kind"], children: TreeNode[] = []): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
-// / ├ app.py ├ f ├ g ├ K (class) ├ h          ├ other.py
-const project = entry("/", "folder", [entry("app.py", "file", [entry("f", "function"), entry("g", "function"), entry("K", "class"), entry("h", "function")]), entry("other.py", "file")]);
+// / ├ app.py ├ f ├ g ├ K (class, no __init__ of its own: it may inherit one) ├ h          ├ other.py
+//        └ W (class with its own __init__ ├ W.__init__ ├ W.run)
+const named = (n: TreeNode, name: string): TreeNode => ({ ...n, name });
+const project = entry("/", "folder", [
+  entry("app.py", "file", [entry("f", "function"), entry("g", "function"), entry("K", "class", [entry("K.run", "function")]), entry("h", "function"), entry("W", "class", [named(entry("W.__init__", "function"), "__init__"), entry("W.run", "function")])]),
+  entry("other.py", "file"),
+]);
 
 const sessionWith = (main: Partial<ContextState>, ...more: ContextState[]): Session => {
   const s = emptySession();
@@ -183,7 +188,10 @@ const keys = (w: ReturnType<typeof wantedCalls>) => w.map((x) => `${x.key}:${x.r
 const wantedTable: { name: string; session: Session; trees?: Parameters<typeof wantedCalls>[2]; expect: string[] }[] = [
   { name: "nothing open, nothing selected: nothing", session: sessionWith({}), expect: [] },
   { name: "an open function", session: sessionWith({ expanded: ["f"] }), expect: ["f:open"] },
-  { name: "an open class (its constructor's calls)", session: sessionWith({ expanded: ["K"] }), expect: ["K:open"] },
+  { name: "an open class without an __init__ of its own (it may inherit one: its tree is what that calls)", session: sessionWith({ expanded: ["K"] }), expect: ["K:open"] },
+  { name: "a class with its own __init__ is not wanted: its __init__ is, when open", session: sessionWith({ expanded: ["W", "W.__init__"] }), expect: ["W.__init__:open"] },
+  { name: "a class with its own __init__ is not wanted as the last focus step or the selection either", session: sessionWith({ focus: ["app.py", "W"], selected: "W" }), expect: [] },
+  { name: "an open __init__ is an ordinary function", session: sessionWith({ expanded: ["W.__init__"] }), expect: ["W.__init__:open"] },
   { name: "a folder or a file that is open owns no calls", session: sessionWith({ expanded: ["app.py", "/"] }), expect: [] },
   { name: "a key that is not in the structure is not wanted", session: sessionWith({ expanded: ["ghost"] }), expect: [] },
   { name: "the last focus step, when it is a function", session: sessionWith({ focus: ["app.py", "f"] }), expect: ["f:open"] },

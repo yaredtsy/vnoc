@@ -247,3 +247,50 @@ test("a restart cancels the stale-refetch timer: a revision from before it must 
   clock.advance(5000);
   assert.equal(requests.length, 2, "revision 2 is not stale against nothing");
 });
+
+test("a wanted key whose fetch failed is fetched again, once, when the code settles (800 ms after the last change)", async () => {
+  const { requests, scheduler, clock, log, settle } = setup();
+  scheduler.setWanted(open("a"));
+  requests[0].reject(new Error("the driver crashed"));
+  await settle();
+  assert.equal(scheduler.stateOf("a"), "failed");
+  scheduler.indexChanged(2);
+  clock.advance(799);
+  assert.equal(requests.length, 1, "not before the code has settled");
+  clock.advance(1);
+  assert.equal(requests.length, 2, "one new fetch");
+  requests[1].resolve(tree(2));
+  await settle();
+  assert.deepEqual([scheduler.stateOf("a"), scheduler.tree("a")?.revision], ["idle", 2]);
+  assert.deepEqual(log.slice(-3), ["loading a", "tree a@2", "idle a"]);
+});
+
+test("a retry that fails again stays failed: no loop until the code settles again", async () => {
+  const { requests, scheduler, clock, settle } = setup();
+  scheduler.setWanted(open("a"));
+  requests[0].reject(new Error("boom"));
+  await settle();
+  scheduler.indexChanged(2);
+  clock.advance(800);
+  requests[1].reject(new Error("boom again"));
+  await settle();
+  assert.equal(scheduler.stateOf("a"), "failed");
+  clock.advance(10_000);
+  scheduler.setWanted(open("a"));
+  assert.equal(requests.length, 2, "nothing more by itself");
+  scheduler.indexChanged(3); // the code settles again: one more try
+  clock.advance(800);
+  assert.equal(requests.length, 3);
+});
+
+test("a key that is not wanted is not retried when the code settles", async () => {
+  const { requests, scheduler, clock, settle } = setup();
+  scheduler.setWanted(open("a", "b"));
+  requests[0].reject(new Error("boom"));
+  requests[1].reject(new Error("boom"));
+  await settle();
+  scheduler.setWanted(open("b")); // a is no longer wanted (and forgets its failure)
+  scheduler.indexChanged(2);
+  clock.advance(800);
+  assert.deepEqual(requests.slice(2).map((r) => r.key), ["b"], "only b");
+});
