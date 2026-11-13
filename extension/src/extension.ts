@@ -10,6 +10,7 @@ import { CursorMark } from "./cursorMark";
 import { Docs } from "./docs";
 import { FocusView } from "./focusView";
 import { CANVAS, DOCS, Panels } from "./panels";
+import { callLookup } from "@vnoc/shared/calls.ts";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
 import { type Row, StructureView } from "./structureView";
@@ -68,7 +69,7 @@ export function activate(ctx: vscode.ExtensionContext) {
 
   const c = new Core(ctx, output, indexChanged);
   core = c;
-  const store = new SessionStore(ctx.workspaceState, () => c.tree);
+  const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   const callTrees = new CallTrees(c, (key, result) => panels.emit("callTree", { key, result }));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // what a webview may ask of the extension (`shared/messages.ts` lists it, `relay.ts` serves it)

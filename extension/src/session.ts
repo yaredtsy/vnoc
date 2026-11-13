@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 
+import type { CallLookup } from "@vnoc/shared/calls.ts";
 import type { TreeNode } from "@vnoc/shared/messages";
 import { type ContextId, type Intent, type Session, reduce, restoreSession, toSaved } from "@vnoc/shared/session.ts";
 
@@ -25,6 +26,8 @@ export class SessionStore {
     private readonly memento: vscode.Memento,
     /** the structure the intents are checked against; none before the first one arrives */
     private readonly tree: () => TreeNode | undefined,
+    /** what a call id points at, from the call trees the host holds (EXPLORE contexts open from calls) */
+    private readonly calls: CallLookup,
   ) {
     const old = memento.get<unknown>(OLD_FOCUS_KEY);
     this.state = restoreSession(memento.get<unknown>(SAVED_KEY), old);
@@ -43,7 +46,7 @@ export class SessionStore {
     const tree = this.tree();
     if (!tree) return; // nothing can be checked before the first structure arrives
     const prev = this.state;
-    const next = reduce(prev, context, intent, tree);
+    const next = reduce(prev, context, intent, tree, this.calls);
     if (next === prev) return;
     this.state = next;
     // the cursor, the highlight and a reveal are not saved: a cursor move must not write to disk

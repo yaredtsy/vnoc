@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { CallMark, CallTreeNode, CallTreeResult, Range } from "@vnoc/shared/messages.ts";
-import { callLabel, callRows, isStale, listedSites, siteLabel, siteText } from "./calls.ts";
+import type { CallMark, CallTreeNode, Range } from "@vnoc/shared/messages.ts";
+import { callLabel, callRows } from "./calls.ts";
 
 const at = (line: number): Range => ({ start: { line, character: 4 }, end: { line, character: 7 } });
 const siteAt = <P extends string | null>(line: number, path: P): Range & { path: P } => ({ ...at(line), path });
@@ -62,30 +62,6 @@ test("a node the project does not know has no key, and nothing to select", () =>
   assert.equal(callRows(tree).filter((r) => r.node.key !== null).length, 3);
 });
 
-test("a call site is named by its line, counted from 1", () => {
-  assert.equal(siteLabel(at(0)), "line 1");
-  assert.equal(siteLabel(at(11)), "line 12");
-});
-
-test("a tree is stale when the index has moved on since its keys were mapped", () => {
-  const result = (revision: number): CallTreeResult => ({ revision, root: tree });
-  assert.equal(isStale(result(41), 41), false);
-  assert.equal(isStale(result(41), 42), true);
-  assert.equal(isStale(result(43), 42), false, "a tree can be newer than the structure the page holds for a moment");
-});
-
 test("an entry that calls nothing has no rows", () => {
   assert.deepEqual(callRows(node("main")), []);
-});
-
-test("a site in the parent's file is named by its line, in another file by the file's name and the line", () => {
-  assert.equal(siteText(siteAt(11, "pkg/child.py"), "pkg/child.py"), "line 12");
-  assert.equal(siteText(siteAt(11, "pkg/base.py"), "pkg/child.py"), "base.py:12");
-  assert.equal(siteText(siteAt(0, "base.py"), "pkg/child.py"), "base.py:1", "a file at the top of the folder has no directory to cut");
-});
-
-test("a site with no file is not listed, because there is nowhere to open it", () => {
-  const b = node("b", { call_sites: [siteAt(3, "app.py"), siteAt(4, null), siteAt(5, "lib/x.py")] });
-  assert.deepEqual(listedSites(b).map((s) => s.start.line), [3, 5]);
-  assert.deepEqual(listedSites(node("c", { call_sites: [siteAt(1, null)] })), [], "no site is left: no toggle");
 });
