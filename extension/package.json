@@ -115,6 +115,11 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.openNotRead",
+        "title": "Open File",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.openCanvas",
         "title": "Open Canvas",
         "category": "V-NOC"
@@ -433,6 +438,10 @@
         },
         {
           "command": "vnoc.openProblem",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.openNotRead",
           "when": "false"
         },
         {

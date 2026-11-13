@@ -16,16 +16,22 @@ interface Data {
 
 export const useData = create<Data>(() => ({ status: "loading", message: "", structure: null, reloads: 0 }));
 
+/** The newest ask: an answer to an older one must not replace what a newer one brought (or its error). Not the index revision: a core that was
+ *  restarted counts revisions from the start again, and its answers would be dropped for ever. */
+let latest = 0;
+
 /** `quiet`: the index changed while the user is looking: swap the data without the loading state, and keep the view where it is. */
 export function refresh(quiet = false): void {
+  const ask = ++latest;
   if (!quiet) useData.setState({ status: "loading" });
   request("structure").then(
     (structure) => {
-      const current = useData.getState().structure;
-      if (current && structure.revision < current.revision) return; // two asks crossed: the older answer must not replace the newer one
-      useData.setState((s) => ({ status: "ready", structure, reloads: quiet ? s.reloads : s.reloads + 1 }));
+      if (ask !== latest) return; // two asks crossed: only the newest one speaks
+      useData.setState((s) => ({ status: "ready", message: "", structure, reloads: quiet ? s.reloads : s.reloads + 1 }));
     },
-    (e: Error) => useData.setState({ status: "error", message: e.message }),
+    (e: Error) => {
+      if (ask === latest) useData.setState({ status: "error", message: e.message });
+    },
   );
 }
 

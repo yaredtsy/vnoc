@@ -184,8 +184,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     },
     /** every drawing the pages reported, in order */
     renderedPosts: () => renderedPosts,
-    /** stops the core process, as a crash would: the next request to it fails. The suite's last test uses it; nothing starts the core again. */
+    /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
     breakCore: () => c.stop(),
+    /** starts it again, so the suites after the one that broke it still have a core */
+    restartCore: () => c.restart(),
     /** tells the open pages the index changed, so each reads the structure again (what a save does) */
     emitIndexChanged: () => panels.emit("indexChanged", { revision: 0 }),
     /** resolves when the bar's ⚠ says something that satisfies `ready` (immediately if it already does) */

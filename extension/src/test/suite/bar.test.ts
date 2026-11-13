@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import { canvasTabs, until } from "./util";
 
 // The canvas's bar in a real window (docs/16-ui-redesign/02-top-bar.md §3 #4, §4). The suite cannot see the page, so it listens to what the page
-// posts (`warned`, `rendered`), as the skeleton suite does. The second suite stops the core: it must stay the LAST one in index.ts.
+// posts (`warned`, `rendered`), as the skeleton suite does. The second suite stops the core on purpose and starts it again in its teardown, so it can sit anywhere.
 
 interface Warned {
   level: "none" | "warning" | "error";
@@ -17,7 +17,10 @@ let api: {
   webviewErrors(): string[];
   renderedPosts(): { visible: number; hidden: number }[];
   breakCore(): Promise<void>;
+  restartCore(): Promise<void>;
   emitIndexChanged(): void;
+  structure(): Promise<unknown>;
+  attention(): { missing: string[]; problems: unknown[]; notRead: string[]; hasAttention: boolean };
 };
 
 suiteSetup(async () => {
@@ -39,8 +42,15 @@ suite("the canvas bar", () => {
       const shown = await api.waitWarned((w) => w.level === "warning", 30_000);
       assert.match(shown.text, /1 file could not be read/);
 
+      // NEEDS ATTENTION lists it, and is shown for it: the ⚠'s click lands on a view that says why
+      await until("the Not read row", () => api.attention().notRead.includes("unreadable.py"));
+      assert.strictEqual(api.attention().hasAttention, true, "`vnoc.hasAttention` counts the Not read group");
+
       fs.writeFileSync(file(), "def fine():\n    pass\n");
       await api.waitWarned((w) => w.level === "none", 30_000);
+      await until("the Not read group to go", () => api.attention().notRead.length === 0);
+      const rest = api.attention();
+      assert.strictEqual(rest.hasAttention, rest.missing.length + rest.problems.length > 0, "nothing else holds the view open: it hides");
       assert.deepStrictEqual(api.webviewErrors(), [], "the page drew the bar without crashing");
     } finally {
       fs.rmSync(file(), { force: true });
@@ -52,7 +62,14 @@ suite("the canvas bar", () => {
   });
 });
 
-suite("the canvas bar when the core is gone (keep this suite last)", () => {
+suite("the canvas bar when the core is gone", () => {
+  suiteTeardown(async () => {
+    await api.restartCore();
+    await api.structure(); // answers once the new core has built its first index
+    api.emitIndexChanged();
+    await api.waitWarned((w) => w.level === "none", 30_000);
+  });
+
   test("a refresh that fails over a drawn canvas keeps the cards and turns the ⚠ red", async () => {
     await openCanvas();
     await api.waitWarned((w) => w.level === "none", 30_000);

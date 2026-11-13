@@ -107,6 +107,7 @@ export class Commands {
       on("vnoc.showCallTree", async (arg, selected) => this.showCallTree(await this.nodeFor(arg, selected))),
       // the NEEDS ATTENTION rows (a row is `{ row: "missing" | "problem", … }`; nothing here changes the session)
       on("vnoc.openMissingDocs", (arg) => (isAttentionRow(arg, "missing") ? this.panels.showDocs(MISSING_PIN + arg.node.id) : undefined)),
+      on("vnoc.openNotRead", (arg) => (isAttentionRow(arg, "notRead") && arg.item.kind === "file" ? this.openAt(arg.item.path, { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }) : undefined)),
       on("vnoc.openProblem", (arg) => (isAttentionRow(arg, "problem") ? goToProblem(arg.problem) : undefined)),
       on("vnoc.relink", async (arg) => {
         if (!isAttentionRow(arg, "missing")) return;

@@ -1,12 +1,20 @@
 import * as path from "path";
 import * as vscode from "vscode";
 
+import { type NotReadRow, notReadRows } from "@vnoc/shared/attention.ts";
 import type { MissingNode, Problem, StructureResult } from "@vnoc/shared/messages";
 
-// NEEDS ATTENTION: what V-NOC found wrong, under STRUCTURE. Two groups: documented nodes the code no longer matches (Missing), and files or IDs to look
-// at (Problems). It is there only while it has rows (`vnoc.hasAttention`). A Missing node is not in the tree, so nothing here touches the session.
+// NEEDS ATTENTION: what V-NOC found wrong, under STRUCTURE. Three groups: documented nodes the code no longer matches (Missing), files or IDs to look
+// at (Problems), and what was not read (files the driver failed on, a structure cut at the file limit). It is there only while it has rows (`vnoc.hasAttention`). A Missing node is not in the tree, so nothing here touches the session.
 
-export type AttentionRow = { row: "group"; which: "missing" | "problems"; count: number } | { row: "missing"; node: MissingNode } | { row: "problem"; problem: Problem };
+type Which = "missing" | "problems" | "notRead";
+const TITLES: Record<Which, string> = { missing: "Missing", problems: "Problems", notRead: "Not read" };
+
+export type AttentionRow =
+  | { row: "group"; which: Which; count: number }
+  | { row: "missing"; node: MissingNode }
+  | { row: "problem"; problem: Problem }
+  | { row: "notRead"; item: NotReadRow };
 
 const ICONS: Record<string, string> = { function: "symbol-function", class: "symbol-class", file: "file", folder: "folder" };
 
@@ -18,17 +26,21 @@ export class AttentionView implements vscode.TreeDataProvider<AttentionRow> {
 
   private missing: MissingNode[] = [];
   private problems: Problem[] = [];
+  private notRead: NotReadRow[] = [];
   /** one row object per entry, so the tree keeps its open groups and its selection across a redraw of equal data */
-  private readonly groups: Record<"missing" | "problems", AttentionRow> = { missing: { row: "group", which: "missing", count: 0 }, problems: { row: "group", which: "problems", count: 0 } };
+  private readonly groups: Record<Which, AttentionRow> = { missing: { row: "group", which: "missing", count: 0 }, problems: { row: "group", which: "problems", count: 0 }, notRead: { row: "group", which: "notRead", count: 0 } };
 
   /** A new structure arrived. Draws again only when what this view shows is different. Returns whether it was. */
-  update(structure: Pick<StructureResult, "missing" | "problems">): boolean {
-    const same = JSON.stringify([structure.missing, structure.problems]) === JSON.stringify([this.missing, this.problems]);
+  update(structure: Pick<StructureResult, "missing" | "problems" | "failed" | "truncated" | "stats">): boolean {
+    const notRead = notReadRows(structure);
+    const same = JSON.stringify([structure.missing, structure.problems, notRead]) === JSON.stringify([this.missing, this.problems, this.notRead]);
     if (same) return false;
     this.missing = structure.missing;
     this.problems = structure.problems;
+    this.notRead = notRead;
     this.groups.missing = { row: "group", which: "missing", count: this.missing.length };
     this.groups.problems = { row: "group", which: "problems", count: this.problems.length };
+    this.groups.notRead = { row: "group", which: "notRead", count: this.notRead.length };
     this.changed.fire();
     return true;
   }
@@ -38,24 +50,26 @@ export class AttentionView implements vscode.TreeDataProvider<AttentionRow> {
   }
 
   get hasAttention(): boolean {
-    return this.missing.length + this.problems.length > 0;
+    return this.missing.length + this.problems.length + this.notRead.length > 0;
   }
 
-  /** What the test suite looks at: the Missing IDs, and the Problems. */
-  snapshot(): { missing: string[]; problems: Problem[] } {
-    return { missing: this.missing.map((m) => m.id), problems: this.problems };
+  /** What the test suite looks at: the Missing IDs, the Problems, the labels of the Not read rows, and whether the view is shown. */
+  snapshot(): { missing: string[]; problems: Problem[]; notRead: string[]; hasAttention: boolean } {
+    return { missing: this.missing.map((m) => m.id), problems: this.problems, notRead: this.notRead.map((r) => r.label), hasAttention: this.hasAttention };
   }
 
   getChildren(row?: AttentionRow): AttentionRow[] {
-    if (!row) return [this.missing.length > 0 ? this.groups.missing : [], this.problems.length > 0 ? this.groups.problems : []].flat();
+    if (!row) return [this.missing.length > 0 ? this.groups.missing : [], this.problems.length > 0 ? this.groups.problems : [], this.notRead.length > 0 ? this.groups.notRead : []].flat();
     if (row.row !== "group") return [];
-    return row.which === "missing" ? this.missing.map((node) => ({ row: "missing" as const, node })) : this.problems.map((problem) => ({ row: "problem" as const, problem }));
+    if (row.which === "missing") return this.missing.map((node) => ({ row: "missing" as const, node }));
+    if (row.which === "problems") return this.problems.map((problem) => ({ row: "problem" as const, problem }));
+    return this.notRead.map((item) => ({ row: "notRead" as const, item }));
   }
 
   getTreeItem(row: AttentionRow): vscode.TreeItem {
     switch (row.row) {
       case "group": {
-        const item = new vscode.TreeItem(`${row.which === "missing" ? "Missing" : "Problems"} (${row.count})`, vscode.TreeItemCollapsibleState.Expanded);
+        const item = new vscode.TreeItem(`${TITLES[row.which]} (${row.count})`, vscode.TreeItemCollapsibleState.Expanded);
         item.id = `group:${row.which}`;
         item.contextValue = `${row.which}Group`;
         return item;
@@ -71,6 +85,22 @@ export class AttentionView implements vscode.TreeDataProvider<AttentionRow> {
         item.tooltip = `${isDef ? `${m.path}::${m.qualname}` : m.path} is not in the code any more. Its docs are kept.`;
         item.contextValue = "missing";
         item.command = { command: "vnoc.openMissingDocs", title: "Open Docs", arguments: [row] };
+        return item;
+      }
+      case "notRead": {
+        const r = row.item;
+        const item = new vscode.TreeItem(r.label, vscode.TreeItemCollapsibleState.None);
+        item.iconPath = new vscode.ThemeIcon("warning");
+        item.tooltip = r.tooltip;
+        if (r.kind === "file") {
+          item.id = `notRead:${r.path}`;
+          item.description = r.reason;
+          item.contextValue = "notRead";
+          item.command = { command: "vnoc.openNotRead", title: "Open File", arguments: [row] };
+        } else {
+          item.id = "notRead:truncated";
+          item.contextValue = "notReadTruncated";
+        }
         return item;
       }
       case "problem": {

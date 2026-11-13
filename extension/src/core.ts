@@ -105,6 +105,11 @@ export class Core {
     this.output.show();
   }
 
+  /** Stops the core and starts it again (the window suite's way back after it broke the core on purpose). */
+  async restart(): Promise<void> {
+    await this.client?.restart();
+  }
+
   async stop(): Promise<void> {
     await this.client?.stop();
   }
