@@ -150,12 +150,15 @@ After 8.2 and 8.2a.
 
 | Files | What |
 |---|---|
-| `crates/vnoc/src/protocol.rs` | `CallTreeParams` gains `depth: Option<u32>`, passed to the driver (which already maps it to `render_depth`, `drivers/python/src/call_tree.rs:36`); new `vnoc/hasCalls { keys } → { revision, calls: { key: n } }` |
-| `crates/vnoc/src/calls.rs` | `has_calls`: for each key, the depth-1 tree through the **same** merge and filter as `vnoc/callTree`; `n` = the children left. Its marks are dropped |
+| `crates/vnoc/src/protocol.rs` | `CallTreeParams` gains `depth: Option<u32>`, passed to the driver (which already maps it to `render_depth`, `drivers/python/src/call_tree.rs:36`); new `vnoc/hasCalls { key } → { revision, count }` (one key per request, 05 §3.1); every full `vnoc/callTree` the core sends the driver carries `depth: 32` (05 §3.1, the depth cap) |
+| `crates/vnoc/src/calls.rs` | `has_calls`: the key's depth-1 tree through the **same** merge and filter as `vnoc/callTree`; `count` = the children left. Its marks are dropped |
+| `shared/callScheduler.ts` | probes as the lowest kind of work: one in flight, started only while no open / cut / prefetch fetch is waiting; cancelled when the card is no longer drawn |
 | `extension/src/callTree.ts` | probes the function and class cards drawn whose calls are unknown, the selected first; cancels what is no longer drawn; drops answers on a new revision |
 | `shared/calls.ts` | `Calls` gains `{ state: "probed"; count: number }`: a chevron when `count > 0`, `+count` in the footer, *calls nothing* when 0. Opening a probed card fetches the full tree as before |
 
 Tests: `calls.rs` (a function that calls only a library → `0`; two calls to one callee → `1`; the depth-1 tree's `Cut` never reaches the answer);
+the core's lifecycle tests (a 70-function chain: the full tree comes back cut at 32 and parses; opening the cut node fetches the rest);
+`shared/callScheduler.test.ts` (a click while three probes wait goes first; never two probes at once; a probe for a card no longer drawn is cancelled);
 `shared/calls.test.ts` (probed → chevron and `+N`; pending → the empty slot). Proof: by hand on httpx, a file of 30 functions gets its chevrons
 in well under a second, and none disappears on opening. Commit: `step 8.2b: exact chevrons from a depth-1 probe (vnoc/hasCalls)`.
 
