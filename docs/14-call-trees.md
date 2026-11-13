@@ -40,7 +40,7 @@ project knows (it is in the STRUCTURE tree) opens, shows its docs and jumps to i
 | **T3** | A merged node keeps **every call site**, as `call_sites: [Range]`. | `merge_for_output` keeps only the first; the canvas needs all of them to jump. |
 | **T4** | The merge key is the target's **ID when it has one, else `(file, qualname, occurrence)`**. Never the qualname alone. | Two functions with one qualname in two files must stay two nodes. |
 | **T5** | `require_ids` is **off**. | In V-NOC only nodes with a doc carry an ID; with the filter on, the tree would be almost empty. |
-| **T6** | The driver opens the project **per request** at first. No cache. | Simplest. Step 7.6 measured it (§11): **kept for 0.2**, no cache. |
+| **T6** | The driver opens the project **per request** at first. No cache. | Simplest. Step 7.6 measured it (§11): **kept for 0.2**, no cache. Step 8.2a then took the first step of the cache ladder: the driver keeps the project open (§11.1). |
 
 ## 3. Who does what
 
@@ -536,3 +536,34 @@ The core's first build of httpx (60 files, outline of each) took 141 ms.
 - **A gap, not a measurement**: §1 lists "expand a node that was cut". 7.5 shows the `✂ cut` badge, but a row has no button that runs Show Call Tree on
   its node (the menu on the node's own card does the same). The core never sends `depth` today, so a cut appears only at the node budget (100,000). Add the
   row button when something sends `depth`.
+
+### 11.1 The project kept open (step 8.2a), release build
+
+Taken 2026-11-13 with `drivers/python/examples/measure_kept.py`, which talks to the real driver binary over stdio (`cargo build --release` of the
+driver, analyzer rev `c989c0f`, `lto = "fat"`), on the same `encode/httpx` checkout as above (`/tmp/vnoc71/httpx`, **400 functions** in `httpx/*.py`: the
+script lists the top-level package files only, not the 1,134 of the whole clone). Apple-silicon Mac. Times are the wall time of one request as the
+client sees it: the driver's walk, its conversion of the tree and its JSON, and the pipe. **No Python environment was set**, as in §11.
+
+| | Time | Nodes (unmerged) | Response |
+|---|---:|---:|---:|
+| **first request on a driver** (`_api.py::request`: the project is opened, then walked) | **240 ms** | 3,140 | 781 KB |
+| the same entry again (kept project) | **46 ms** | 3,140 | 781 KB |
+| `_client.py::Client.send`, first (the project is already open; its first walk of this code) / again | 22 / 22 ms | 1,084 | 270 KB |
+
+**20 more functions on the same driver, warm.** The first 20 functions (in file order) with at least one call: median **5.1 ms**, p90 59.6 ms, slowest
+62.9 ms. The slow ones are `_api.py`'s thin wrappers (`get`, `post`, …: 3,141 nodes, 781 KB each, 44–63 ms); the 12 functions of `_auth.py` are 0.9–5.9 ms.
+The worker's counters after all 31 requests: **1 open, 0 reopens, 31 solves**.
+
+**Nothing kept, for comparison** (a new driver process for each request; cold project each time): `request` 195 ms, `Client.send` 150 ms, `stream` 137 ms,
+`get` 422 ms, `options` 204 ms.
+
+What it says, and what it does not:
+
+1. **A kept project makes a request on a big entry about 4 to 7 times faster** (`request`: 195 ms cold, 46 ms kept; `Client.send`: 150 ms cold, 22 ms kept). Small entries are
+   1–6 ms on the kept project; **their cold time was not measured** (the cold rows above are all big entries), so no ratio is claimed for them. It is not the 10 times of
+   the walk alone (§11 point 2): at 781 KB the driver's own conversion and JSON are most of what is left of the 46 ms.
+2. **Opening is still not the cost**; the first walk is (240 ms against 4 ms to open, §11).
+3. The 46 ms is the *driver*. The core still merges (3,140 nodes to about 1,000 rows) and the extension draws one level at a time, so what the user waits for after a
+   click on a big function is the core's merge plus this; not measured end to end here.
+4. **Not measured:** memory held by a kept project (it keeps the engine's memo for every root until the driver exits); an environment that resolves; a project
+   with files being edited while requests run (the tests cover correctness: `tests/kept_project.rs`).

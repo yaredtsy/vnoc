@@ -128,6 +128,22 @@ Independent of the UI steps; it can go beside 8.1–8.3. From the analyzer's `do
 Proof: 14 §11's measurement again on httpx, written there: the project's open, the first request, then 20 functions warm; the lifecycle
 tests still pass. Commit: `step 8.2a: the Python driver keeps the project open; cancel stops the solve`.
 
+**As built (2026-11-13).** Everything in the table, and:
+
+| Decision | Why |
+|---|---|
+| **Pinned at `c989c0f`** (the tip of `origin/main` on GitHub today; `c8d18aa`, PY9.4, is 21 commits before it), all three crates; the only lockfile lines that changed are the analyzer's own source strings, no third-party version moved | one rev for the three crates; the driver built without any code change for the new rev |
+| **The wire version at this rev is 2, not 3.** `analyzer_core::wire::WIRE_FORMAT_VERSION` is 2 at `c989c0f`, at `origin/main` and at the analyzer's local `main` (7 unpushed commits further on); the analyzer's notes (11-driver-needs §8 item 5, the TS5 doc §8) say it becomes 3 after TS5 step 2, which has not landed in the constant yet | the driver **checks** it (`WIRE_FORMATS_READ = [2, 3]`, one test, and a log line at start): any other number fails the test, which is a prompt to read what changed. Nothing is *reported*: the driver protocol has no field for it (`initialize` capabilities are booleans), and none was added |
+| `CallMark::Likely` (additive, protocol crate) and `"likely"` mapped; the core's merge keeps it in the union; the page's `CallMark` has `likely` with a badge `≈ likely` (`shared/calls.ts`) | before, a guess looked like a certainty. The badge is there so the old section does not break on the new word; the call card's own look is 8.3 |
+| One **worker thread** (`worker.rs`), **8 MiB stack** (the analyzer's ENGINE.md: a 256-level chain needs just over 2 MiB, an overflow aborts the process; a test runs a 300-level chain through the worker). `Projects` holds one `Project` per root, keyed by the root string as given (two spellings of one folder would be two projects), `refresh()` before each solve | the engine is not shared between threads; refreshing is what makes an edit, a new file or a deleted one visible |
+| **Cancel is the analyzer's `Cancel`**, built when the request arrives with `with_deadline(received + 20 s)`: `$/cancelRequest` fires it, so a running solve stops and the tree it would have made is dropped (`-32800`); a request **cancelled while queued is answered `-32800` without being run** (the project is not even opened); the deadline counts the queue. `Limits::deadline` is no longer used | §8 item 2 |
+| A **panic inside a request** is caught on the worker, answered `-32603` "the analysis crashed: …", that root's project is dropped (it may be half way through a change) and the worker goes on. For that to work `[profile.release] panic = "abort"` is **removed**: with it one bad request would end the whole driver | tested through the same wrapper a call tree runs in |
+| **Test hooks** (`VNOC_TEST_HOOKS=1`; a driver in a user's window answers none): `vnoc/test/stats` (solves, opens, reopens, projects), `hold { ms }`, `panic { root? }`, `deadline { ms? }` | "the solver never ran", a queued request and a request past its deadline cannot be built any other way; they go through the worker's own queue, so they are ordered with the call trees |
+
+Tests: `drivers/python/tests/kept_project.rs` (8): an edit, a deleted and a new file, an environment input (`pyproject.toml`) reopening, two roots, a cancel while queued (solver count 0), a request past its deadline (answered, `incomplete`, the next one whole), a panic, a deep chain; unit tests for the mark words and the wire version. The driver crate has 47 tests, the core's 74, the window suite still 38.
+
+Proof: 14 §11.1 (release build, httpx). **Not done here:** `vnoc/environmentInputs` (§8 item 3, capability still `false`), and no memory measurement of a kept project. The debug build directory of the driver was deleted to make room for the release build (the disk had 2.6 GiB free); the next step starts with `cargo build` in `drivers/python`.
+
 ### 8.2b Exact chevrons: the probe (05 §3.1)
 
 After 8.2 and 8.2a.
