@@ -162,7 +162,7 @@ suite passes on it (32).
 | narrow canvas (02 §5): crumbs collapse into `… ›`, keeping the last two | **done, part 2**: under 520 px, `FoldedCrumbs.tsx` |
 | context chips; the canvas draws `session.active` with a viewport per context; the docs panel follows the active context and shows the "called by" line | after 8.1 (contexts) and 8.3 (call cards) |
 | Focus and Go to Code as buttons (the strip had them) | **done in 8.3 part 1**, on the card |
-| the ⚠'s click for unread files goes to NEEDS ATTENTION, which is **hidden** when it has no Missing node and no Problem (`vnoc.hasAttention` ignores `structure.failed`); the click then does nothing visible | open: either list `failed` files in that view, or make the ⚠ open the log. Decide before 8.5 |
+| the ⚠'s click for unread files goes to NEEDS ATTENTION, which is hidden when it has no Missing node and no Problem | **done, part 3**: the "Not read" group (`shared/attention.ts`, `attentionView.ts`; docs/11 §6); `hasAttention` counts it. Also fixed: the page's refresh dropped any answer with a lower revision, so a restarted core never recovered (`state/data.ts` now keeps only the newest ask); the window suite's core-break test restarts the core |
 
 ### 8.5 The sidebar becomes a webview (structure rows)
 
