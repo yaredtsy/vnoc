@@ -43,6 +43,11 @@ selected. Keys survive that. JSON, because a key may contain any character a pat
 Only **functions** own calls (R7). `__init__` owns a class's calls. A call node of kind class (`Store()`) has the children the driver gives it
 (what `__init__` calls).
 
+**A class with no `__init__` of its own** (none at all, or an inherited one, 14 §10.1) has no row to put its creation's calls under. Then, and only
+then, the **class** owns them: its card's children are its methods, then its creation's calls (call cards, dashed edges), and `wantedCalls`
+wants the class. A class that has its own `__init__` is never wanted: its calls are under that `__init__`, and fetching the class would only
+fetch the same calls twice (decided 2026-11-13, refines R7).
+
 ## 2. Where the trees live, and who asks
 
 The trees stay in the extension (`CallTrees`, `extension/src/callTree.ts`): large, not saved, the latest per owner. What changes is **who asks**.
@@ -141,6 +146,9 @@ A tree is stale when the structure's `revision` is newer than the tree's (`isSta
 1. A stale tree that is still wanted is fetched again, **800 ms after the last index change** (typing produces many), while the old one stays on
    screen. The progress lines show it.
 2. A stale tree nothing wants is dropped.
+2b. A wanted tree whose last fetch **failed** is fetched again, once, at the same moment: the code changed, so the failure may be gone (a syntax
+   error fixed, a file saved). A second failure stays failed until the next change or **Retry** (§4). Without this, a failure shown before the
+   Retry button exists (8.3 part 2) would stay for ever.
 3. When the new tree arrives, every call id in any context that no longer resolves is removed from `expanded`, and from `selected` (which falls
    back to the owner function). This is `reduce`'s `callsChanged` step, like `treeChanged`. An EXPLORE context whose call is gone closes.
 
