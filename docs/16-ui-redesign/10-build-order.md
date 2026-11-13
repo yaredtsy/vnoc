@@ -64,6 +64,21 @@ Tests (`shared/session.test.ts`, `shared/calls.test.ts`, `shared/tree.test.ts`):
 
 Proof: `pnpm -r test`. The UI still runs (the canvas ignores the new fields). Commit: `step 8.1: the focus is a path; EXPLORE contexts; call ids`.
 
+**As built (2026-11-13).** Everything in the table, plus decisions the doc left open:
+
+| Decision | Why |
+|---|---|
+| **An EXPLORE child exists only for its parent's selected call** (`closeStale` runs after every intent that can move the selection: select, focus, Back, a crumb, reveal, `treeChanged`) | R4 as one rule instead of a close in each intent. `shared/sessionInvariants.ts` checks it after every test step |
+| The id of an EXPLORE context is `explore:` + the call id: **one per call, wherever it was opened from**; a second request for it opens nothing | a stable id the sidebar and the bar can key on, and "no two EXPLORE contexts for one call" holds by construction |
+| `focus` on a call id is `explore` with `activate`; `explore` on a callee the project does not know (or whose tree is not held) returns the same session | 03 §3 row 2; 03 §4 last row |
+| `reveal` **keeps `canvas: boolean`** | the native sidebar still sends `canvas: false` (`vnoc.revealInSidebar`); the flag goes with the native sidebar in 8.5 |
+| The 0.1 history becomes a path on the first `treeChanged` by one rule: the longest start that is a chain from the root (`chainedPrefix`); if the step after it exists but is not a child, it is a history and the lineage of the last existing step wins; if it is gone, the path was cut | one rule covers a 0.1 history, a deleted step and a renamed file |
+| `restoreSession` accepts a context saved before EXPLORE (no `kind`, no `call`) as MAIN; an invalid EXPLORE (not a call id, parent missing or after it, a second one for the same call) is dropped **with MAIN and its focus kept**; no usable MAIN gives a fresh session | not losing MAIN for a broken panel. A call that was valid but is gone is closed by the first `treeChanged` (`callExists`: the keys inside the id against the structure; call trees are not saved, so they cannot be asked earlier) |
+| `shared/calls.ts` also has `callNodesIn`, `resolveCall`, `callLookup`, `callExists` (8.2 listed `resolveCall`; `callsOf` and `wantedCalls` stay for 8.2) | the lookup `reduce` needs is `resolveCall` over the trees the host holds |
+| `siteText`, `listedSites`, `markBadge`, `isStale`, `siteLabel` moved to `shared/calls.ts` with their tests; `webview/src/canvas/calls.ts` keeps `callRows` and `callLabel` | as planned |
+
+Tests: 125 in `shared/` (was 31). The reducer tests are tables from 03 §3 and §4 and run `sessionProblems` after every step; the checker has its own test that each way a session can be wrong is noticed. The window suite is unchanged (35).
+
 ### 8.2 The host fetches what is open
 
 | Files | What |
