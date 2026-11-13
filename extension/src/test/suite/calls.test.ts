@@ -21,7 +21,8 @@ interface Api {
   coreEpoch(): number;
   dispatch(intent: Intent, context?: string): void;
   restartCore(): Promise<void>;
-  renderedPosts(): { visible: number; hidden: number; calls: number }[];
+  renderedPosts(): { visible: number; hidden: number; calls: number; chevrons: number }[];
+  callProbes(): Record<string, { revision: number; count: number }>;
 }
 let api: Api;
 
@@ -55,6 +56,29 @@ suite("show calls", () => {
   });
 
   suiteTeardown(() => api.holdCallTrees(0));
+
+  test("the function cards of a file get their chevrons from probes: main and twice have one, leaf (it calls nothing) does not", async () => {
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await until("the canvas tab", () => canvasTabs().length === 1);
+    const before = api.callTreeLog().length; // the log holds what the suites before this one did too
+    api.dispatch({ type: "select", id: null });
+    api.dispatch({ type: "expand", ids: ["calls_app.py", "calls_lib.py"] }); // their function cards are drawn: the page says so, the host probes them
+    const probes = () => api.callProbes();
+    await until("the probes", () => [main.id, twice.id, "calls_lib.py::leaf"].every((k) => probes()[k] !== undefined), 30_000);
+    assert.deepStrictEqual([probes()[main.id].count, probes()[twice.id].count, probes()["calls_lib.py::leaf"].count], [2, 1, 0], "leaf and twice, merged; leaf twice, merged; nothing");
+    assert.strictEqual(api.callTrees()[main.id], undefined, "a probe is not a tree: nothing was fetched");
+    await until("the page to draw their chevrons", () => api.renderedPosts().at(-1)?.chevrons === 2, 30_000);
+    assert.ok(!api.callTreeLog().slice(before).some((e) => e.kind === "state" && e.state === "loading"), "no call tree was asked for: only probes ran");
+  });
+
+  test("opening a card that has a chevron fetches its tree and a card draws it", async () => {
+    api.dispatch({ type: "toggle", id: main.id });
+    await until("its tree", () => api.callTrees()[main.id] !== undefined, 30_000);
+    assert.strictEqual(api.callTrees()[main.id].root.children.length, 2, "what the probe counted");
+    await until("a card to draw what it calls", () => api.renderedPosts().some((r) => r.calls >= 1), 30_000);
+    api.dispatch({ type: "toggle", id: main.id }); // closed again for the tests after
+    api.dispatch({ type: "collapseAll" });
+  });
 
   test("Show Calls on a function opens the canvas on it and opens it: its tree arrives (loading, then idle) and a card draws it", async () => {
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");

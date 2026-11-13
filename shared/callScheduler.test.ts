@@ -43,14 +43,25 @@ interface Request {
   reject(e: Error): void;
 }
 
+interface ProbeRequest {
+  key: string;
+  signal: AbortSignal;
+  resolve(result: { revision: number; count: number }): void;
+  reject(e: Error): void;
+}
+
 function setup(options: { concurrency?: number; keep?: number } = {}) {
   const clock = new FakeClock();
   const requests: Request[] = [];
+  const probeRequests: ProbeRequest[] = [];
   const log: string[] = [];
   const scheduler = new CallScheduler({
     ...options,
     clock,
     fetch: (key, signal) => new Promise((resolve, reject) => requests.push({ key, signal, resolve, reject })),
+    probe: (key, signal) => new Promise((resolve, reject) => probeRequests.push({ key, signal, resolve, reject })),
+    onProbe: (key, r) => log.push(`probe ${key}=${r.count}@${r.revision}`),
+    onProbeDropped: (key) => log.push(`probe dropped ${key}`),
     onTree: (key, r) => log.push(`tree ${key}@${r.revision}`),
     onState: (key, state, message) => log.push(`${state} ${key}${message ? `: ${message}` : ""}`),
     onDropped: (key) => log.push(`dropped ${key}`),
@@ -59,7 +70,8 @@ function setup(options: { concurrency?: number; keep?: number } = {}) {
   const started = () => requests.map((r) => r.key);
   /** lets the promise callbacks run */
   const settle = () => new Promise((resolve) => setImmediate(resolve));
-  return { clock, requests, log, scheduler, started, settle };
+  const probed = () => probeRequests.map((r) => r.key);
+  return { clock, requests, probeRequests, log, scheduler, started, probed, settle };
 }
 const open = (...keys: string[]): Wanted[] => keys.map((key) => ({ key, reason: "open" as const }));
 const prefetch = (key: string): Wanted => ({ key, reason: "prefetch" });
@@ -293,4 +305,128 @@ test("a key that is not wanted is not retried when the code settles", async () =
   scheduler.indexChanged(2);
   clock.advance(800);
   assert.deepEqual(requests.slice(2).map((r) => r.key), ["b"], "only b");
+});
+
+// ── probes (05 §3.1): the lowest kind of work ────────────────────────────────────────────────────────────────────────
+
+test("probes run one at a time, in the order given", async () => {
+  const { probeRequests, scheduler, probed, settle } = setup();
+  scheduler.setWanted([], ["a", "b", "c"]);
+  assert.deepEqual(probed(), ["a"], "never two probes at once");
+  probeRequests[0].resolve({ revision: 1, count: 2 });
+  await settle();
+  assert.deepEqual(probed(), ["a", "b"]);
+  probeRequests[1].resolve({ revision: 1, count: 0 });
+  await settle();
+  assert.deepEqual(probed(), ["a", "b", "c"]);
+  assert.deepEqual(scheduler.allProbes(), { a: { revision: 1, count: 2 }, b: { revision: 1, count: 0 } });
+});
+
+test("a click while three probes wait goes first: no probe starts while a tree is wanted, and they follow it", async () => {
+  const { requests, probeRequests, scheduler, started, probed, settle } = setup();
+  scheduler.setWanted(open("click"), ["p1", "p2", "p3"]);
+  assert.deepEqual(started(), ["click"]);
+  assert.deepEqual(probed(), [], "the probes wait");
+  requests[0].resolve(tree(1));
+  await settle();
+  assert.deepEqual(probed(), ["p1"], "then they start, one");
+  assert.equal(probeRequests.length, 1);
+});
+
+test("no probe starts while a tree is waiting for a place either (the prefetch included)", async () => {
+  const { requests, scheduler, probed, settle } = setup({ concurrency: 1 });
+  scheduler.setWanted([...open("a"), prefetch("p")], ["x"]);
+  assert.deepEqual(probed(), [], "a is in flight and the prefetch waits behind it");
+  requests[0].resolve(tree(1));
+  await settle();
+  assert.deepEqual(probed(), [], "the prefetch is in flight now");
+  requests[1].resolve(tree(1));
+  await settle();
+  assert.deepEqual(probed(), ["x"], "only when nothing else is wanted");
+});
+
+test("a click while a probe is in flight cancels the probe so the click does not queue behind it; the probe is asked again after", async () => {
+  const { requests, probeRequests, scheduler, started, probed, settle } = setup();
+  scheduler.setWanted([], ["p1", "p2"]);
+  assert.equal(probeRequests[0].signal.aborted, false);
+  scheduler.setWanted(open("click"), ["p1", "p2"]);
+  assert.equal(probeRequests[0].signal.aborted, true, "the probe was in the way");
+  assert.deepEqual(started(), ["click"], "and the click started at once");
+  probeRequests[0].resolve({ revision: 1, count: 9 }); // too late
+  await settle();
+  assert.deepEqual(scheduler.allProbes(), {}, "its late answer is dropped");
+  requests[0].resolve(tree(1));
+  await settle();
+  assert.deepEqual(probed(), ["p1", "p1"], "p1 is probed again once the click is done");
+});
+
+test("a probe for a card no longer drawn is cancelled and its late answer is dropped", async () => {
+  const { probeRequests, scheduler, log, probed, settle } = setup();
+  scheduler.setWanted([], ["a", "b"]);
+  scheduler.setWanted([], ["b"]); // a scrolled out of the drawn set
+  assert.equal(probeRequests[0].signal.aborted, true);
+  assert.deepEqual(probed(), ["a", "b"], "b is next");
+  probeRequests[0].resolve({ revision: 1, count: 5 });
+  await settle();
+  assert.equal(scheduler.allProbes().a, undefined);
+  assert.ok(!log.some((l) => l.startsWith("probe a")), "never reported");
+});
+
+test("a function whose tree is held is not probed: the tree says what a probe would", async () => {
+  const { requests, scheduler, probed, settle } = setup();
+  scheduler.setWanted(open("a"), ["a", "b"]);
+  requests[0].resolve(tree(1));
+  await settle();
+  assert.deepEqual(probed(), ["b"]);
+});
+
+test("a probe that fails is not asked again by itself, and is asked once more when the code settles", async () => {
+  const { probeRequests, scheduler, clock, probed, settle } = setup();
+  scheduler.setWanted([], ["a"]);
+  probeRequests[0].reject(new Error("boom"));
+  await settle();
+  scheduler.setWanted([], ["a"]);
+  assert.deepEqual(probed(), ["a"], "no loop");
+  scheduler.indexChanged(2);
+  clock.advance(800);
+  assert.deepEqual(probed(), ["a", "a"], "the code changed: one more try");
+});
+
+test("a probe held for an old revision is asked again 800 ms after the last change while it is drawn; the old count stays until then, and an undrawn one is dropped", async () => {
+  const { probeRequests, scheduler, clock, log, probed, settle } = setup();
+  scheduler.setWanted([], ["a", "b"]);
+  probeRequests[0].resolve({ revision: 1, count: 3 });
+  await settle();
+  probeRequests[1].resolve({ revision: 1, count: 0 });
+  await settle();
+  scheduler.setWanted([], ["a"]); // b is no longer drawn
+  scheduler.indexChanged(2);
+  clock.advance(799);
+  assert.deepEqual(probed(), ["a", "b"], "not yet");
+  clock.advance(1);
+  assert.deepEqual(probed(), ["a", "b", "a"], "a is probed again");
+  assert.deepEqual(scheduler.allProbes().a, { revision: 1, count: 3 }, "the old count stays in place meanwhile");
+  assert.equal(scheduler.allProbes().b, undefined);
+  assert.ok(log.includes("probe dropped b"));
+  probeRequests[2].resolve({ revision: 2, count: 4 });
+  await settle();
+  assert.deepEqual(scheduler.allProbes().a, { revision: 2, count: 4 });
+});
+
+test("probes start over after a core restart: the old ones are dropped, the one in flight is cancelled, and what is drawn is probed again", async () => {
+  const { probeRequests, scheduler, log, probed, settle } = setup();
+  scheduler.setWanted([], ["a", "b"]);
+  probeRequests[0].resolve({ revision: 40, count: 3 });
+  await settle(); // a held (revision 40 of the old core); b in flight
+  scheduler.restarted();
+  assert.equal(probeRequests[1].signal.aborted, true);
+  assert.deepEqual(scheduler.allProbes(), {});
+  assert.ok(log.includes("reset"));
+  assert.deepEqual(probed(), ["a", "b", "a"], "a is probed again at once");
+  probeRequests[1].resolve({ revision: 41, count: 1 }); // the old b, too late
+  await settle();
+  assert.equal(scheduler.allProbes().b, undefined);
+  probeRequests[2].resolve({ revision: 2, count: 7 });
+  await settle();
+  assert.deepEqual(scheduler.allProbes().a, { revision: 2, count: 7 });
 });

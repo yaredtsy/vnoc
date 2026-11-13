@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { callExists, callId, callLookup, callNodesIn, callsOf, isCallId, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
+import { callExists, callId, callLookup, callNodesIn, callsLook, callsOf, isCallId, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
 import type { CallTreeNode, CallTreeResult, Range, TreeNode } from "./messages";
 import { type ContextState, type Session, emptySession, exploreId } from "./session.ts";
 
@@ -146,6 +146,11 @@ const orderTree = call("order", { call_sites: [] }, [call("reserve"), call("char
 const callsOfTable: { name: string; store: Parameters<typeof callsOf>[0]; id: string; expect: string | string[] }[] = [
   { name: "a function with its tree: the root's children", store: { trees: { [OWNER]: { root: tree } } }, id: OWNER, expect: ["order", "lib"] },
   { name: "a function with no tree and nothing happening: unknown (a chevron, no +N)", store: { trees: {} }, id: OWNER, expect: "unknown" },
+  { name: "a function a probe has answered for: probed, with its count", store: { trees: {}, probes: { [OWNER]: { count: 3 } } }, id: OWNER, expect: "probed" },
+  { name: "a probe of 0: probed, with nothing to open", store: { trees: {}, probes: { [OWNER]: { count: 0 } } }, id: OWNER, expect: "probed" },
+  { name: "its tree wins over its probe once it is here", store: { trees: { [OWNER]: { root: tree } }, probes: { [OWNER]: { count: 99 } } }, id: OWNER, expect: ["order", "lib"] },
+  { name: "being fetched wins over the probe: loading", store: { trees: {}, states: { [OWNER]: { state: "loading" } }, probes: { [OWNER]: { count: 3 } } }, id: OWNER, expect: "loading" },
+  { name: "a cut call node whose callee is probed: probed", store: { trees: { [OWNER]: { root: cutTree } }, probes: { "order.py::order": { count: 4 } } }, id: callId(OWNER, ["order.py::order"]), expect: "probed" },
   { name: "a function whose tree is being fetched: loading", store: { trees: {}, states: { [OWNER]: { state: "loading" } } }, id: OWNER, expect: "loading" },
   { name: "a function whose fetch failed: failed", store: { trees: {}, states: { [OWNER]: { state: "failed", message: "boom" } } }, id: OWNER, expect: "failed" },
   { name: "a call node: its own children in the owner's tree", store: { trees: { [OWNER]: { root: tree } } }, id: callId(OWNER, ["order.py::order"]), expect: ["reserve", "check"] },
@@ -219,3 +224,21 @@ const wantedTable: { name: string; session: Session; trees?: Parameters<typeof w
   },
 ];
 for (const row of wantedTable) test(`wantedCalls: ${row.name}`, () => assert.deepEqual(keys(wantedCalls(row.session, project, row.trees ?? trees)), row.expect));
+
+test("callsOf: a probe's count is what a probed function carries", () => {
+  assert.deepEqual(callsOf({ trees: {}, probes: { f: { count: 3 } } }, "f"), { state: "probed", count: 3 });
+});
+
+// ── what a card shows (04 §1, 05 §3.1) ─────────────────────────────────────────────────────────────────────────────
+
+const lookTable: { name: string; calls: Parameters<typeof callsLook>[0]; open: boolean; expect: ReturnType<typeof callsLook> }[] = [
+  { name: "pending (a probe is out): an empty slot, nothing said", calls: { state: "unknown" }, open: false, expect: { chevron: false, plus: null, callsNothing: false } },
+  { name: "probed with calls, closed: a chevron and +N", calls: { state: "probed", count: 3 }, open: false, expect: { chevron: true, plus: 3, callsNothing: false } },
+  { name: "probed with calls, open: a chevron, no +N", calls: { state: "probed", count: 3 }, open: true, expect: { chevron: true, plus: null, callsNothing: false } },
+  { name: "probed with 0: no chevron, calls nothing", calls: { state: "probed", count: 0 }, open: false, expect: { chevron: false, plus: null, callsNothing: true } },
+  { name: "known with children, closed: a chevron and +N", calls: { state: "known", children: [call("a"), call("b")] }, open: false, expect: { chevron: true, plus: 2, callsNothing: false } },
+  { name: "known and empty: calls nothing, and the chevron goes", calls: { state: "known", children: [] }, open: true, expect: { chevron: false, plus: null, callsNothing: true } },
+  { name: "loading: the chevron is there, nothing counted", calls: { state: "loading" }, open: true, expect: { chevron: true, plus: null, callsNothing: false } },
+  { name: "failed: the chevron stays, so there is a way to try again", calls: { state: "failed", message: "boom" }, open: true, expect: { chevron: true, plus: null, callsNothing: false } },
+];
+for (const row of lookTable) test(`callsLook: ${row.name}`, () => assert.deepEqual(callsLook(row.calls, row.open), row.expect));

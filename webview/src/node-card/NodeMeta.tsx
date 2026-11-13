@@ -12,7 +12,7 @@ export function NodeMeta({ node }: { node: Placed }) {
       <span className="min-w-0 flex-1 truncate text-left [direction:rtl]" title={where}>
         <bdi>{where}</bdi>
       </span>
-      {node.syntaxError && <span className="flex-none text-destructive">syntax error</span>}
+      {node.syntaxError ? <span className="flex-none text-destructive">syntax error</span> : node.callsNothing && <span className="flex-none">calls nothing</span>}
     </div>
   );
 }

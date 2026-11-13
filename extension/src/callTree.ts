@@ -7,13 +7,23 @@ import type { Session } from "@vnoc/shared/session.ts";
 import type { Core } from "./core";
 
 /** What happened to the call trees, for the window suite (`callTreeLog`): a state change, a tree, a reset. */
-export type CallLogEntry = { kind: "state"; key: string; state: "loading" | "failed" | "idle"; message?: string } | { kind: "tree"; key: string; revision: number; epoch?: number } | { kind: "dropped"; key: string } | { kind: "reset" };
+export type CallLogEntry =
+  | { kind: "state"; key: string; state: "loading" | "failed" | "idle"; message?: string }
+  | { kind: "tree"; key: string; revision: number; epoch?: number }
+  | { kind: "dropped"; key: string }
+  | { kind: "probe"; key: string; count: number; revision: number }
+  | { kind: "probeDropped"; key: string }
+  | { kind: "reset" };
 
 export interface CallTreeEvents {
   /** a tree arrived: tell the open canvases (and the session, which drops what no longer resolves) */
   tree(key: string, result: CallTreeResult): void;
   /** the host's work on this entry changed: the canvases draw spinners and failures from it */
   state(key: string, state: "loading" | "failed" | "idle", message?: string): void;
+  /** a probe answered: opening this function would show `count` call cards */
+  probe(key: string, count: number, revision: number, epoch: number): void;
+  /** the host dropped its probe of this function */
+  probeDropped(key: string): void;
   /** the host dropped this tree: the canvases drop theirs */
   dropped(key: string): void;
   /** every tree is gone (the core restarted): the canvases drop theirs */
@@ -31,11 +41,14 @@ export class CallTrees {
   private readonly loading = new Set<string>();
   private endProgress: (() => void) | undefined;
   private holdMs = 0;
+  private drawn: string[] = [];
+  private readonly core: Core;
   private readonly waiting = new Map<string, ((r: Settled) => void)[]>();
   /** what happened, newest last (the window suite reads it) */
   readonly log: CallLogEntry[] = [];
 
   constructor(core: Core, private readonly events: CallTreeEvents) {
+    this.core = core;
     this.scheduler = new CallScheduler({
       clock: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout) },
       fetch: async (key, signal) => {
@@ -50,6 +63,25 @@ export class CallTrees {
           signal.removeEventListener("abort", cancel);
           source.dispose();
         }
+      },
+      probe: async (key, signal) => {
+        const source = new vscode.CancellationTokenSource();
+        const cancel = () => source.cancel();
+        signal.addEventListener("abort", cancel);
+        try {
+          return await core.request<{ revision: number; count: number }>("vnoc/hasCalls", { key }, source.token);
+        } finally {
+          signal.removeEventListener("abort", cancel);
+          source.dispose();
+        }
+      },
+      onProbe: (key, result) => {
+        this.note({ kind: "probe", key, count: result.count, revision: result.revision });
+        this.events.probe(key, result.count, result.revision, core.epoch);
+      },
+      onProbeDropped: (key) => {
+        this.note({ kind: "probeDropped", key });
+        this.events.probeDropped(key);
       },
       onTree: (key, result) => {
         this.note({ kind: "tree", key, revision: result.revision, epoch: result.epoch });
@@ -79,9 +111,24 @@ export class CallTrees {
     return this.scheduler.all();
   }
 
-  /** What the session has open or selected changed, or a tree arrived: ask for what is wanted now. */
+  /** What the session has open or selected changed, or a tree arrived: ask for what is wanted now, and probe the cards that are drawn. */
   update(session: Session, tree: TreeNode): void {
-    this.scheduler.setWanted(wantedCalls(session, tree, this.scheduler.all()));
+    this.scheduler.setWanted(wantedCalls(session, tree, this.scheduler.all()), this.drawn);
+  }
+
+  /** The function and class cards the canvas draws, the one to look at first first. A page that opened later is told the probes already held for them. */
+  setDrawn(keys: readonly string[]): void {
+    this.drawn = [...keys];
+    const held = this.scheduler.allProbes();
+    for (const key of keys) {
+      const probe = held[key];
+      if (probe) this.events.probe(key, probe.count, probe.revision, this.core.epoch);
+    }
+  }
+
+  /** The probes held, by key. */
+  probes(): Record<string, { revision: number; count: number }> {
+    return this.scheduler.allProbes();
   }
 
   /** The core's index changed: stale trees are dealt with 800 ms after the last change. */

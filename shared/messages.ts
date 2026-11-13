@@ -175,6 +175,10 @@ export interface Events {
   callTree: { key: string; result: CallTreeResult };
   /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
   callTreeState: { key: string; state: "loading" | "failed" | "idle"; message?: string };
+  /** a probe answered: opening this function would show `count` call cards (0: it calls nothing). `revision` and `epoch` say which index and run of the core */
+  callProbe: { key: string; count: number; revision: number; epoch?: number };
+  /** the host dropped its probe of this function (a new revision, or nothing draws it any more) */
+  callProbeDropped: { key: string };
   /** the host dropped a call tree (stale and nothing wants it, or the oldest unwanted one): the page drops its copy and what it knew of its state */
   callTreeDropped: { key: string };
   /** the core was restarted: every call tree the host held is gone, and so must be the page's (revisions before and after cannot be compared) */
@@ -186,7 +190,8 @@ export interface Events {
 /** webview → extension, no answer. */
 export type Notes =
   | { type: "intent"; context: ContextId; intent: Intent } // the one way a webview changes the session
-  | { type: "rendered"; visible: number; hidden: number; calls: number } // the extension's test suite uses it; `calls`: how many cards draw a "Calls" section
+  | { type: "rendered"; visible: number; hidden: number; calls: number; chevrons: number } // the extension's test suite uses it; `calls`: cards that draw a "Calls" section; `chevrons`: function and class cards that show one
+  | { type: "cardsDrawn"; keys: string[] } // the function and class cards the canvas draws, in reading order: the host probes the ones whose calls it does not know
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it

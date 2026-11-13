@@ -2,7 +2,7 @@ import * as assert from "assert";
 import * as vscode from "vscode";
 
 const WS = process.env.VNOC_TEST_WORKSPACE!;
-let api: { ping(): Promise<any>; structure(): Promise<any>; waitRendered(ms: number): Promise<{ visible: number; hidden: number; calls: number }> };
+let api: { ping(): Promise<any>; structure(): Promise<any>; waitRendered(ms: number): Promise<{ visible: number; hidden: number; calls: number; chevrons: number }> };
 
 suiteSetup(async () => {
   const ext = vscode.extensions.getExtension("vnoc.vnoc")!;
@@ -36,6 +36,6 @@ suite("walking skeleton: extension host -> core -> Python driver -> structure ->
     // The webview asked the host for the structure (host -> core -> driver), laid it out and drew it, then reported back.
     // Files start collapsed: the folder and nested.py are drawn, the 15 defs are hidden behind it.
     const drew = await api.waitRendered(30_000);
-    assert.deepStrictEqual(drew, { visible: 2, hidden: 15, calls: 0 });
+    assert.deepStrictEqual(drew, { visible: 2, hidden: 15, calls: 0, chevrons: 0 });
   });
 });

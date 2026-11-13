@@ -55,6 +55,17 @@ fn calls_of(parent: &CallNode) -> impl Iterator<Item = Call<'_>> {
     parent.children.iter().map(|node| Call { node, parent_file: parent.target.file.as_deref() })
 }
 
+/// How deep a full `vnoc/callTree` goes (docs/16-ui-redesign/05-calls-as-nodes.md §3.1). The driver is asked for this many levels; a node at the cap comes back
+/// marked `cut`, and opening it asks for its own tree. Without a cap a deep chain breaks the core, which reads the driver's answer with `serde_json`'s
+/// nesting limit of 128 (a level costs two: the node and its list of children), and the size of an answer has no bound.
+pub const DEPTH_CAP: u32 = 32;
+
+/// What `vnoc/hasCalls` answers: how many nodes the merged tree has under its root. The marks of a probe's tree (every child is `cut`, because the
+/// probe stopped there) are not looked at and do not leave the core.
+pub fn count_calls(root: &CallNode) -> u32 {
+    merge(root).children.len() as u32
+}
+
 pub fn merge(root: &CallNode) -> Merged {
     let children: Vec<Call<'_>> = calls_of(root).collect();
     Merged { target: root.target.clone(), call_count: 1, call_sites: Vec::new(), marks: root.marks.clone(), children: merge_siblings(&children) }
@@ -153,6 +164,23 @@ mod tests {
         // the driver gives them in source order; two merged calls from different parents are put in order too
         let merged = merge(&root(vec![call("b", 9, vec![]), call("b", 2, vec![]), call("b", 5, vec![])]));
         assert_eq!(merged.children[0].call_sites, sites("src/m.py", [at(2, 4), at(5, 4), at(9, 4)]));
+    }
+
+    #[test]
+    fn a_probe_counts_the_nodes_opening_would_show() {
+        // calls nothing (or only library code, which the driver leaves out): no node
+        assert_eq!(count_calls(&root(vec![])), 0);
+        // two calls to one callee are one node, as they are in the tree
+        assert_eq!(count_calls(&root(vec![call("b", 3, vec![]), call("b", 9, vec![])])), 1);
+        assert_eq!(count_calls(&root(vec![call("b", 3, vec![]), call("c", 4, vec![]), call("b", 9, vec![])])), 2);
+    }
+
+    #[test]
+    fn the_cut_of_a_depth_one_probe_is_not_counted_as_anything() {
+        // the probe stops one level down, so every child is marked cut (and has no children); the count is the children, whatever their marks
+        let cut = |name, line| CallNode { marks: vec![CallMark::Cut], ..call(name, line, vec![]) };
+        assert_eq!(count_calls(&root(vec![cut("b", 1), cut("c", 2)])), 2);
+        assert_eq!(count_calls(&CallNode { marks: vec![CallMark::Cut], ..root(vec![]) }), 0, "and a root marked cut with nothing under it has none");
     }
 
     #[test]

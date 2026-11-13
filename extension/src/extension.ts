@@ -19,7 +19,7 @@ import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 // Wires the pieces together: the core, the session, the two webview tabs, the sidebar, the commands. Nothing here decides anything.
 
 /** What the webview last said it drew (for the test suite). */
-type Rendered = { visible: number; hidden: number; calls: number };
+type Rendered = { visible: number; hidden: number; calls: number; chevrons: number };
 let rendered: Rendered | undefined;
 /** Every drawing a webview reported, in order (for the test suite). */
 const renderedPosts: Rendered[] = [];
@@ -78,6 +78,8 @@ export function activate(ctx: vscode.ExtensionContext) {
       store.dispatch({ type: "callsChanged", owner: key }); // what no longer resolves in the new tree is dropped from the session
       wantCalls(); // a cut call node may now want its callee's tree
     },
+    probe: (key, count, revision, epoch) => panels.emit("callProbe", { key, count, revision, epoch }),
+    probeDropped: (key) => panels.emit("callProbeDropped", { key }),
     state: (key, state, message) => panels.emit("callTreeState", { key, state, message }),
     dropped: (key) => panels.emit("callTreeDropped", { key }),
     reset: () => panels.emit("callTreesReset", {}),
@@ -98,7 +100,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     focusAttention: async () => void (await vscode.commands.executeCommand("vnoc.attention.focus")),
     showLog: async () => output.show(),
   });
-  panels = new Panels(ctx, handlers, (note) => onNote(note, store, output));
+  panels = new Panels(ctx, handlers, (note) => onNote(note, store, output, (keys) => {
+    callTrees.setDrawn(keys); // what the canvas draws is what is probed
+    wantCalls();
+  }));
   commands = new Commands(c, store, panels, async (id) => {
     const row = sidebar.rowForId(id);
     if (row) await sidebarView.reveal(row, { select: true, focus: true, expand: false }); // shows the V-NOC side bar too
@@ -174,6 +179,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     attention: () => attention.snapshot(),
     /** the call trees the host holds, by entry key */
     callTrees: () => callTrees.all(),
+    /** the probes held (how many call cards opening each function would show), by key */
+    callProbes: () => callTrees.probes(),
     /** what happened to the call trees, newest last: states, trees, drops, resets */
     callTreeLog: () => callTrees.log,
     /** makes every call tree answer at least this slowly, so a test can cancel a request before it is made */
@@ -224,16 +231,19 @@ export function activate(ctx: vscode.ExtensionContext) {
 }
 
 /** What a webview says that needs no answer. */
-function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel) {
+function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[]) => void) {
   switch (note.type) {
     case "intent":
       store.dispatch(note.intent, note.context);
       break;
     case "rendered":
-      rendered = { visible: note.visible, hidden: note.hidden, calls: note.calls };
+      rendered = { visible: note.visible, hidden: note.hidden, calls: note.calls, chevrons: note.chevrons };
       renderedPosts.push(rendered);
       output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden, ${note.calls} with calls)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
+      break;
+    case "cardsDrawn":
+      cardsDrawn(note.keys);
       break;
     case "warned":
       warned = { level: note.level, text: note.text };

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import type { StructureResult } from "@vnoc/shared/messages.ts";
+import { callsOf } from "@vnoc/shared/calls.ts";
 import { findNode } from "@vnoc/shared/tree.ts";
 import { callRows } from "@/canvas/calls.ts";
 import { type Layout, layout } from "@/canvas/layout.ts";
@@ -15,6 +16,8 @@ export function useFocusedView(structure: StructureResult | null) {
   const openList = useSession((s) => s.contexts[s.active].expanded);
   const codeOpen = useView((v) => v.codeOpen);
   const trees = useCalls((s) => s.trees);
+  const probes = useCalls((s) => s.probes);
+  const states = useCalls((s) => s.states);
 
   const expanded = useMemo<ReadonlySet<string>>(() => new Set(openList), [openList]);
   // how many rows each card's "Calls" section has: the layout makes the card as tall as its rows
@@ -24,7 +27,9 @@ export function useFocusedView(structure: StructureResult | null) {
   const focusId = focus.length > 0 ? focus[focus.length - 1] : null;
   // zoomed in: the focused node is the root of what is drawn (and the root of a drawing is always open)
   const top = root && focusId ? findNode(root, focusId) ?? null : null;
-  const laid = useMemo<Layout | null>(() => (root ? layout(top ?? root, expanded, codeOpen, rowCounts) : null), [root, expanded, top, codeOpen, rowCounts]);
+  // what a function or class card knows about its calls: its tree, what the host is doing, or a probe's count (05 §3.1)
+  const callsFor = useMemo(() => (key: string) => callsOf({ trees, probes, states }, key), [trees, probes, states]);
+  const laid = useMemo<Layout | null>(() => (root ? layout(top ?? root, expanded, codeOpen, rowCounts, callsFor) : null), [root, expanded, top, codeOpen, rowCounts, callsFor]);
   // the doc panel shows the selected card, else the focused node
   const selectedNode = root && selected ? findNode(root, selected) ?? null : null;
 

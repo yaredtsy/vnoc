@@ -363,6 +363,31 @@ pub struct CallTreeParams {
     pub key: String,
 }
 
+/// `vnoc/hasCalls`: how many call cards opening this function would show, without sending the tree (`docs/16-ui-redesign/05-calls-as-nodes.md` §3.1).
+/// One key per request, so each is scheduled and cancelled on its own. The driver is asked for a tree one level deep and the answer goes through the
+/// same merge as `vnoc/callTree`; its marks never leave the core. Waits for the first build.
+pub enum HasCalls {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HasCallsParams {
+    /// as in `vnoc/callTree`
+    pub key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HasCallsResult {
+    /// the index's revision the answer is from (the editor compares it with the structure's, within one run of the core)
+    pub revision: u64,
+    /// how many nodes opening the function would show: the children of its merged tree
+    pub count: u32,
+}
+
+impl Request for HasCalls {
+    type Params = HasCallsParams;
+    type Result = HasCallsResult;
+    const METHOD: &'static str = "vnoc/hasCalls";
+}
+
 /// One place a node is called.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallSite {

@@ -1,7 +1,7 @@
 import { Codicon } from "@/components/Codicon.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
-import type { Placed } from "../canvas/layout.ts";
+import { type Placed, canOpen } from "../canvas/layout.ts";
 import { ActionStrip } from "./ActionStrip.tsx";
 import { KINDS } from "./kinds.ts";
 import { useNodeActions } from "./useNodeActions.ts";
@@ -16,7 +16,7 @@ export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Pla
         <span className="flex size-[18px] flex-none items-center justify-center text-[color:var(--card-selected)]" title="the canvas is focused on this node">
           <Codicon name="target" />
         </span>
-      ) : node.depth > 0 && node.childCount > 0 ? (
+      ) : node.depth > 0 && canOpen(node) ? (
         <Button
           variant="ghost"
           size="icon-xs"

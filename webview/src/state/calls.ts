@@ -17,5 +17,7 @@ request("callTrees").then(
 );
 on("callTree", ({ key, result }) => apply({ type: "tree", key, result }));
 on("callTreeState", ({ key, state, message }) => apply({ type: "state", key, state, message }));
+on("callProbe", ({ key, count, revision, epoch }) => apply({ type: "probe", key, count, revision, epoch }));
+on("callProbeDropped", ({ key }) => apply({ type: "probeDropped", key }));
 on("callTreeDropped", ({ key }) => apply({ type: "dropped", key }));
 on("callTreesReset", () => apply({ type: "reset" }));

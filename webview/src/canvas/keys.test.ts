@@ -35,3 +35,18 @@ test("enter focuses, space opens and closes, escape clears the selection", () =>
   assert.equal(canvasKey("Escape", laid, root, null), null);
   assert.equal(canvasKey("x", laid, root, "a.py"), null);
 });
+
+// a function whose calls a probe counted has a chevron: the keys open it like any card with something under it
+const withCalls = n("/", "folder", [n("a.py", "file", [n("f", "function"), n("g", "function")])]);
+const probed = (open: string[]) => layout(withCalls, new Set(["a.py", ...open]), new Set(), new Map(), (key) => (key === "f" ? { state: "probed", count: 2 } : { state: "unknown" })); // rows: / a.py f g
+
+test("→ opens a function that has calls, Space toggles it, and a function with none does nothing", () => {
+  assert.deepEqual(canvasKey("ArrowRight", probed([]), withCalls, "f"), { type: "expand", ids: ["f"] });
+  assert.deepEqual(canvasKey(" ", probed([]), withCalls, "f"), { type: "toggle", id: "f" });
+  assert.equal(canvasKey("ArrowRight", probed([]), withCalls, "g"), null, "g has no calls to open");
+  assert.equal(canvasKey(" ", probed([]), withCalls, "g"), null);
+});
+
+test("→ on an open function whose calls are not drawn as cards goes nowhere: the card below it is not its child", () => {
+  assert.equal(canvasKey("ArrowRight", probed(["f"]), withCalls, "f"), null);
+});

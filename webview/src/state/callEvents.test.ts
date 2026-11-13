@@ -5,7 +5,7 @@ import type { CallTreeResult } from "@vnoc/shared/messages.ts";
 import { type CallEvent, type CallState, applyCallEvent, noCalls } from "./callEvents.ts";
 
 const tree = (revision: number): CallTreeResult => ({ revision, root: { key: null, name: "x", qualname: "x", path: null, kind: "function", call_count: 1, call_sites: [], marks: [], children: [] } });
-const held = (...keys: string[]): CallState => ({ trees: Object.fromEntries(keys.map((k) => [k, tree(1)])), states: Object.fromEntries(keys.map((k) => [k, { state: "idle" as const }])) });
+const held = (...keys: string[]): CallState => ({ probes: {}, trees: Object.fromEntries(keys.map((k) => [k, tree(1)])), states: Object.fromEntries(keys.map((k) => [k, { state: "idle" as const }])) });
 
 // each row: the state before, the message, the keys of the trees and the states after
 const table: { name: string; before: CallState; event: CallEvent; trees: string[]; states: string[] }[] = [
@@ -13,8 +13,9 @@ const table: { name: string; before: CallState; event: CallEvent; trees: string[
   { name: "a state arrives", before: noCalls, event: { type: "state", key: "a", state: "loading" }, trees: [], states: ["a"] },
   { name: "a tree for a key that is held replaces it", before: held("a"), event: { type: "tree", key: "a", result: tree(2) }, trees: ["a"], states: ["a"] },
   { name: "dropped removes the tree and what was known of its state", before: held("a", "b"), event: { type: "dropped", key: "a" }, trees: ["b"], states: ["b"] },
-  { name: "dropped removes a state that has no tree (a failed key)", before: { trees: {}, states: { a: { state: "failed", message: "boom" } } }, event: { type: "dropped", key: "a" }, trees: [], states: [] },
+  { name: "dropped removes a state that has no tree (a failed key)", before: { probes: {}, trees: {}, states: { a: { state: "failed", message: "boom" } } }, event: { type: "dropped", key: "a" }, trees: [], states: [] },
   { name: "reset empties everything", before: held("a", "b"), event: { type: "reset" }, trees: [], states: [] },
+  { name: "a probe changes no tree and no state", before: held("a"), event: { type: "probe", key: "b", count: 3, revision: 1 }, trees: ["a"], states: ["a"] },
   { name: "the snapshot adds the trees the host held when the page asked", before: noCalls, event: { type: "snapshot", trees: { a: tree(1), b: tree(1) } }, trees: ["a", "b"], states: [] },
 ];
 for (const row of table) {
@@ -27,7 +28,7 @@ for (const row of table) {
 
 test("a tree replaces the older one, and the snapshot never replaces what an event already brought", () => {
   assert.equal(applyCallEvent(held("a"), { type: "tree", key: "a", result: tree(2) }).trees.a.revision, 2);
-  const newer: CallState = { trees: { a: tree(5) }, states: {} };
+  const newer: CallState = { probes: {}, trees: { a: tree(5) }, states: {} };
   assert.equal(applyCallEvent(newer, { type: "snapshot", trees: { a: tree(1) } }).trees.a.revision, 5, "an event that came first is newer than the list");
 });
 
@@ -49,4 +50,24 @@ test("reset then a tree from the new core: only the new one is there", () => {
   const after = [{ type: "reset" } as CallEvent, { type: "tree", key: "a", result: tree(3) } as CallEvent].reduce(applyCallEvent, held("a", "b"));
   assert.deepEqual(Object.keys(after.trees), ["a"]);
   assert.equal(after.trees.a.revision, 3);
+});
+
+test("a probe is kept by key and replaced by a newer one; dropped removes only it", () => {
+  const one = applyCallEvent(noCalls, { type: "probe", key: "a", count: 3, revision: 1, epoch: 1 });
+  assert.deepEqual(one.probes, { a: { count: 3, revision: 1, epoch: 1 } });
+  const two = applyCallEvent(one, { type: "probe", key: "a", count: 0, revision: 2, epoch: 1 });
+  assert.equal(two.probes.a.count, 0);
+  assert.deepEqual(applyCallEvent({ ...held("b"), probes: two.probes }, { type: "probeDropped", key: "a" }).probes, {});
+  assert.equal(applyCallEvent(noCalls, { type: "probeDropped", key: "ghost" }), noCalls, "a probe the page never had: the same object");
+});
+
+test("a reset takes the probes too: a count from before a restart means nothing after it", () => {
+  const before = applyCallEvent(held("a"), { type: "probe", key: "b", count: 5, revision: 40 });
+  assert.deepEqual(applyCallEvent(before, { type: "reset" }), { trees: {}, probes: {}, states: {} });
+});
+
+test("dropping a tree leaves the probe of that function (it still says what opening would show)", () => {
+  const before = applyCallEvent(held("a"), { type: "probe", key: "a", count: 2, revision: 1 });
+  const after = applyCallEvent(before, { type: "dropped", key: "a" });
+  assert.deepEqual([Object.keys(after.trees), Object.keys(after.probes)], [[], ["a"]]);
 });

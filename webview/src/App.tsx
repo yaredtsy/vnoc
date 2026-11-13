@@ -23,7 +23,7 @@ export function App() {
   const docsOpen = useView((v) => v.docsOpen);
   const { root, top, laid, selected, docNode } = useFocusedView(structure);
   useCanvasKeys(laid, root, selected);
-  useRenderedReport(laid);
+  useRenderedReport(laid, selected);
   const body = pageBody(status, laid !== null);
 
   return (

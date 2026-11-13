@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CALLS_HEAD_H, CARD_H, CALLS_MAX_ROWS, CALL_ROW_H, CODE_H, COL_W, ROW_H, callsHeight, cardHeight, layout } from "./layout.ts";
+import { CALLS_HEAD_H, CARD_H, CALLS_MAX_ROWS, CALL_ROW_H, CODE_H, COL_W, ROW_H, callsHeight, canOpen, cardHeight, layout } from "./layout.ts";
+import type { Calls } from "@vnoc/shared/calls.ts";
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, node_id: null, docs: 0, link: null, children });
@@ -71,4 +72,56 @@ test("the Calls section stops growing at ten rows (the rest scroll), and an empt
   assert.equal(callsHeight(0), CALLS_HEAD_H + CALL_ROW_H, "a line that says it calls nothing");
   assert.equal(callsHeight(CALLS_MAX_ROWS), callsHeight(CALLS_MAX_ROWS + 50));
   assert.equal(cardHeight({ codeOpen: true, callRows: 2 }), CARD_H + CODE_H + CALLS_HEAD_H + 2 * CALL_ROW_H, "open code and calls add up");
+});
+
+// ── a function or class card whose calls a probe (or its tree) counted (docs/16-ui-redesign/05-calls-as-nodes.md §3.1) ──────────────────────────────
+
+const fn = (id: string): TreeNode => n(id, "function");
+const project = n("/", "folder", [n("a.py", "file", [fn("f"), fn("g"), fn("h"), n("C", "class", [fn("m")])])]);
+const calls = (table: Record<string, Calls>) => (key: string): Calls => table[key] ?? { state: "unknown" };
+const card = (l: ReturnType<typeof layout>, id: string) => l.nodes.find((p) => p.id === id)!;
+
+test("a function a probe counted: closed, a chevron, +N behind it, and it is not calls-nothing", () => {
+  const l = layout(project, new Set(["a.py"]), new Set(), new Map(), calls({ f: { state: "probed", count: 3 } }));
+  assert.deepEqual([card(l, "f").callsChevron, card(l, "f").collapsed, card(l, "f").plus, card(l, "f").callsNothing, card(l, "f").childCount], [true, true, 3, false, 0]);
+});
+
+test("a probe of 0: no chevron, nothing behind it, and the meta line says calls nothing", () => {
+  const f = card(layout(project, new Set(["a.py"]), new Set(), new Map(), calls({ f: { state: "probed", count: 0 } })), "f");
+  assert.deepEqual([f.callsChevron, f.collapsed, f.plus, f.callsNothing], [false, false, 0, true]);
+});
+
+test("a probe not answered yet: an empty slot, nothing said, and the card is as it was", () => {
+  const f = card(layout(project, new Set(["a.py"])), "f");
+  assert.deepEqual([f.callsChevron, f.collapsed, f.plus, f.callsNothing], [false, false, 0, false]);
+});
+
+test("open, a function with calls has its chevron turned and no +N", () => {
+  const f = card(layout(project, new Set(["a.py", "f"]), new Set(), new Map(), calls({ f: { state: "probed", count: 3 } })), "f");
+  assert.deepEqual([f.callsChevron, f.collapsed, f.plus], [true, false, 0]);
+});
+
+test("a function whose tree is known counts its children; one that is loading has a chevron and no count", () => {
+  const known: Calls = { state: "known", children: [{ key: null, name: "x", qualname: "x", path: null, kind: "function", call_count: 1, call_sites: [], marks: [], children: [] }] };
+  const l = layout(project, new Set(["a.py"]), new Set(), new Map(), calls({ f: known, g: { state: "loading" } }));
+  assert.deepEqual([card(l, "f").callsChevron, card(l, "f").plus], [true, 1]);
+  assert.deepEqual([card(l, "g").callsChevron, card(l, "g").plus, card(l, "g").collapsed], [true, 0, true]);
+});
+
+test("a class with methods keeps its structure children: its count is the methods, and a probe does not change it", () => {
+  const c = card(layout(project, new Set(["a.py"]), new Set(), new Map(), calls({ C: { state: "probed", count: 9 } })), "C");
+  assert.deepEqual([c.callsChevron, c.plus, c.collapsed, c.childCount], [false, 1, true, 1]);
+});
+
+test("the focused function is the root of the view: always open, never a chevron, but it can say it calls nothing", () => {
+  const f = card(layout(fn("f"), new Set(), new Set(), new Map(), calls({ f: { state: "probed", count: 0 } })), "f");
+  assert.deepEqual([f.collapsed, f.callsNothing], [false, true]);
+  const g = card(layout(fn("g"), new Set(), new Set(), new Map(), calls({ g: { state: "probed", count: 4 } })), "g");
+  assert.deepEqual([g.collapsed, g.callsChevron, g.plus], [false, true, 0]);
+});
+
+test("canOpen: structure, or calls", () => {
+  assert.equal(canOpen({ childCount: 2, callsChevron: false }), true);
+  assert.equal(canOpen({ childCount: 0, callsChevron: true }), true);
+  assert.equal(canOpen({ childCount: 0, callsChevron: false }), false);
 });

@@ -15,9 +15,9 @@ export interface Chip {
 export const docsCount = (n: number): string => `${n} ${n === 1 ? "doc" : "docs"}`;
 
 /** The chips in the footer's order. `hides`: whether this card, closed, holds the selection or the text cursor inside it. */
-export function footerChips(node: Pick<Placed, "collapsed" | "childCount" | "docs" | "link">, hides: { selected: boolean; cursor: boolean }): Chip[] {
+export function footerChips(node: Pick<Placed, "collapsed" | "plus" | "docs" | "link">, hides: { selected: boolean; cursor: boolean }): Chip[] {
   const chips: Chip[] = [];
-  if (node.collapsed && node.childCount > 0) chips.push({ kind: "hidden", text: `+${node.childCount}`, tip: `${node.childCount} hidden: open to see them`, faded: false });
+  if (node.collapsed && node.plus > 0) chips.push({ kind: "hidden", text: `+${node.plus}`, tip: `${node.plus} hidden: open to see them`, faded: false });
   if (node.docs > 0) {
     chips.push({ kind: "docs", text: String(node.docs), tip: `${docsCount(node.docs)}: click to read`, faded: false });
     if (node.link) {

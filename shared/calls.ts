@@ -143,11 +143,14 @@ export const isStaleIn = (tree: CallTreeResult, structure: { revision: number; e
 /** What the host holds about call trees: the trees, and what it is doing about each entry. */
 export interface TreeStore {
   trees: Readonly<Record<string, Pick<CallTreeResult, "root">>>;
+  /** how many call cards opening each function would show, from the host's probes (05 §3.1) */
+  probes?: Readonly<Record<string, { count: number }>>;
   states?: Readonly<Record<string, { state: "loading" | "failed" | "idle"; message?: string }>>;
 }
 
 export type Calls =
-  | { state: "unknown" } // the owner's tree is not here: draw a chevron, no +N
+  | { state: "unknown" } // nothing is known yet (no tree, no probe answer): the chevron's slot is empty, so nothing shifts when it appears
+  | { state: "probed"; count: number } // a probe says opening would show `count` cards: a chevron when above 0, `+count` in the footer
   | { state: "loading" }
   | { state: "failed"; message: string }
   | { state: "known"; children: CallTreeNode[] };
@@ -163,7 +166,8 @@ export function callsOf(store: TreeStore, id: string): Calls {
     const state = store.states?.[key];
     if (state?.state === "loading") return { state: "loading" };
     if (state?.state === "failed") return { state: "failed", message: state.message ?? "" };
-    return { state: "unknown" };
+    const probe = store.probes?.[key];
+    return probe ? { state: "probed", count: probe.count } : { state: "unknown" };
   };
   if (!isCallId(id)) return own(id);
   const node = resolveCall(store.trees, id);
@@ -174,6 +178,35 @@ export function callsOf(store: TreeStore, id: string): Calls {
   }
   if (node.children.length > 0 || !node.marks.includes("cut") || node.key === null) return { state: "known", children: node.children };
   return own(node.key);
+}
+
+/** What a card shows about its calls (docs/16-ui-redesign/04-node-cards.md §1, 05 §3.1). */
+export interface CallsLook {
+  /** a chevron to open them */
+  chevron: boolean;
+  /** `+N` in the footer of a closed card */
+  plus: number | null;
+  /** the meta line says it calls nothing */
+  callsNothing: boolean;
+}
+
+/**
+ * Unknown: an empty slot (no chevron, nothing said). Probed or known: a chevron when there is something to open, `+N` while closed, and *calls nothing* when
+ * the answer is 0. Loading: the chevron is there (the user opened it); failed: it stays, so there is a way to try again. `open`: the card is open.
+ */
+export function callsLook(calls: Calls, open: boolean): CallsLook {
+  const some = (n: number): CallsLook => (n > 0 ? { chevron: true, plus: open ? null : n, callsNothing: false } : { chevron: false, plus: null, callsNothing: true });
+  switch (calls.state) {
+    case "unknown":
+      return { chevron: false, plus: null, callsNothing: false };
+    case "loading":
+    case "failed":
+      return { chevron: true, plus: null, callsNothing: false };
+    case "probed":
+      return some(calls.count);
+    case "known":
+      return some(calls.children.length);
+  }
 }
 
 // ── what the host should have (05 §2) ───────────────────────────────────────────────────────────────────────────────

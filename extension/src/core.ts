@@ -3,6 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, State, TransportKind } from "vscode-languageclient/node";
 
+import { chooseBinary } from "@vnoc/shared/binaryChoice.ts";
 import type { MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messages";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio client here, we use
@@ -12,21 +13,25 @@ import type { MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messag
 const CHANGE_DEBOUNCE_MS = 200;
 
 /**
- * A binary path: the setting if set; else, when running from source (F5), the build folder of this repository
- * (`extension/` sits next to `target/` and `drivers/`); else `<extension>/bin/` (the installed VSIX).
- * From source (F5 or the window suite) the build folder wins, because `bin/` may hold a stale copy left by an earlier packaging run.
- * In Restricted Mode VS Code hands us the default instead of a workspace value (`restrictedConfigurations` in package.json),
- * so a cloned repo cannot choose which program we run.
+ * A binary path: the setting if set; from source (F5 or the window suite) the build folder of this repository (`extension/` sits next to `target/` and
+ * `drivers/`) and nothing else; installed, `<extension>/bin/`. From source it never falls back to `bin/`: that may hold a copy from an old packaging run,
+ * and running it fails with a message about the wrong thing. In Restricted Mode VS Code hands us the default instead of a workspace value
+ * (`restrictedConfigurations` in package.json), so a cloned repo cannot choose which program we run.
  */
-function binary(ctx: vscode.ExtensionContext, setting: string, name: string, devPath: string[]): string {
-  const configured = vscode.workspace.getConfiguration("vnoc").get<string>(setting);
-  if (configured) return configured;
+function binary(ctx: vscode.ExtensionContext, setting: string, name: string, devPath: string[], label: string, buildHint: string): string {
   const exe = process.platform === "win32" ? `${name}.exe` : name;
-  const fromSource = path.join(ctx.extensionPath, "..", ...devPath.slice(0, -1), exe);
-  const packaged = path.join(ctx.extensionPath, "bin", exe);
-  // the window test suite runs in Test mode: it must use the build folder too, or it would test a stale `bin/`
-  const developing = ctx.extensionMode !== vscode.ExtensionMode.Production;
-  return developing && fs.existsSync(fromSource) ? fromSource : fs.existsSync(packaged) ? packaged : fromSource;
+  const chosen = chooseBinary({
+    configured: vscode.workspace.getConfiguration("vnoc").get<string>(setting),
+    // the window test suite runs in Test mode: it must use the build folder too, or it would test a stale `bin/`
+    developing: ctx.extensionMode !== vscode.ExtensionMode.Production,
+    fromSource: path.join(ctx.extensionPath, "..", ...devPath.slice(0, -1), exe),
+    packaged: path.join(ctx.extensionPath, "bin", exe),
+    exists: fs.existsSync,
+    buildHint,
+    label,
+  });
+  if ("error" in chosen) throw new Error(chosen.error);
+  return chosen.path;
 }
 
 /** The running core, and the last structure it sent. */
@@ -70,11 +75,8 @@ export class Core {
 
   private async start(ctx: vscode.ExtensionContext, onIndexChanged: (revision: number) => void): Promise<void> {
     const folder = vscode.workspace.workspaceFolders?.[0];
-    const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"]);
-    const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"]);
-    if (!fs.existsSync(core)) {
-      throw new Error(`The V-NOC core is not at ${core}. Build it: cargo build -p vnoc`);
-    }
+    const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"], "The V-NOC core", "build it: `cargo build -p vnoc`");
+    const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"], "The Python driver", "build it: `cargo build` in drivers/python");
     this.client = new LanguageClient(
       "vnoc",
       "V-NOC core",

@@ -17,6 +17,15 @@ export interface SchedulerOptions {
   onTree(key: string, result: CallTreeResult): void;
   /** what is happening for this entry: `loading` (a request is out, an older tree may still be held), `failed`, or `idle` */
   onState(key: string, state: "loading" | "failed" | "idle", message?: string): void;
+  /**
+   * The probe of one function: how many call cards opening it would show (`vnoc/hasCalls`). The lowest kind of work: one at a time, and only while
+   * no tree is being fetched or waits for a place, because the driver solves on one worker and a probe in front of a click delays the click.
+   */
+  probe(key: string, signal: AbortSignal): Promise<{ revision: number; count: number }>;
+  /** a probe answered */
+  onProbe(key: string, result: { revision: number; count: number }): void;
+  /** a held probe was dropped: its function is not drawn and the code moved on */
+  onProbeDropped(key: string): void;
   /** a held tree was dropped: it was stale and nothing wanted it, or it was the oldest unwanted one */
   onDropped(key: string): void;
   /** the core was restarted: every tree is gone */
@@ -46,6 +55,14 @@ export class CallScheduler {
   private revision: number | null = null;
   private timer: unknown;
   private nextId = 0;
+  // probes (see `SchedulerOptions.probe`)
+  private probeWanted: string[] = [];
+  private readonly probes = new Map<string, { revision: number; count: number }>();
+  private probing: { key: string; id: number; controller: AbortController; revisionAtStart: number | null } | null = null;
+  /** held probes that are stale and still drawn: asked again, the old count stays in place until the new one is here */
+  private readonly probeRefetch = new Set<string>();
+  /** probes that failed since the code last settled: not asked again until it does */
+  private readonly probeFailed = new Set<string>();
 
   private readonly o: SchedulerOptions;
 
@@ -76,9 +93,21 @@ export class CallScheduler {
     return this.running.has(key) ? "loading" : this.failed.has(key) ? "failed" : "idle";
   }
 
-  /** What is wanted now (after every session or structure change). Cancels what is in flight for a key no longer wanted; fetches what is missing. */
-  setWanted(list: readonly Wanted[]): void {
+  /** The probes held, by key. */
+  allProbes(): Record<string, { revision: number; count: number }> {
+    return Object.fromEntries(this.probes);
+  }
+
+  /**
+   * What is wanted now (after every session or structure change). Cancels what is in flight for a key no longer wanted; fetches what is missing.
+   * `probeKeys`: the function and class cards drawn, the one to look at first first; each is probed unless its tree is held.
+   */
+  setWanted(list: readonly Wanted[], probeKeys: readonly string[] = []): void {
     this.wanted = [...list];
+    this.probeWanted = [...new Set(probeKeys)];
+    if (this.probing && !this.probeWanted.includes(this.probing.key)) this.cancelProbe(); // no longer drawn: its late answer is dropped
+    for (const key of [...this.probeFailed]) if (!this.probeWanted.includes(key)) this.probeFailed.delete(key);
+    for (const key of [...this.probeRefetch]) if (!this.probeWanted.includes(key)) this.probeRefetch.delete(key);
     const keys = new Set(list.map((w) => w.key));
     for (const key of [...this.running.keys()]) if (!keys.has(key)) this.cancel(key);
     for (const key of [...this.failed.keys()]) {
@@ -110,6 +139,11 @@ export class CallScheduler {
     this.held.clear();
     this.failed.clear();
     this.refetch.clear();
+    this.probing?.controller.abort();
+    this.probing = null;
+    this.probes.clear();
+    this.probeRefetch.clear();
+    this.probeFailed.clear();
     this.revision = null;
     if (this.timer !== undefined) this.o.clock.clearTimeout(this.timer);
     this.timer = undefined;
@@ -119,15 +153,63 @@ export class CallScheduler {
 
   // ── inside ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  /** Starts what is missing, up to `concurrency`: first what is open, the prefetch last. */
+  /**
+   * Starts what is missing, up to `concurrency`: first what is open, the prefetch last. A probe is started only when nothing else is in flight or
+   * waits for a place; a probe that is running when a tree is wanted is cancelled, so the tree never queues behind it (it is asked again after).
+   */
   private pump(): void {
     const order = [...this.wanted.filter((w) => w.reason !== "prefetch"), ...this.wanted.filter((w) => w.reason === "prefetch")];
+    let waiting = false;
     for (const { key } of order) {
-      if (this.running.size >= this.concurrency) return;
       if (this.running.has(key) || this.failed.has(key)) continue;
       if (this.held.has(key) && !this.refetch.has(key)) continue;
+      if (this.running.size >= this.concurrency) {
+        waiting = true;
+        break;
+      }
+      this.cancelProbe();
       this.start(key);
     }
+    if (waiting || this.running.size > 0 || this.probing) return;
+    for (const key of this.probeWanted) {
+      if (this.probeFailed.has(key)) continue;
+      if (this.held.has(key) && !this.refetch.has(key)) continue; // its tree is here: it says what a probe would
+      if (this.probes.has(key) && !this.probeRefetch.has(key)) continue;
+      this.startProbe(key);
+      return;
+    }
+  }
+
+  private startProbe(key: string): void {
+    const id = ++this.nextId;
+    const controller = new AbortController();
+    this.probing = { key, id, controller, revisionAtStart: this.revision };
+    const still = () => this.probing?.id === id;
+    this.o.probe(key, controller.signal).then(
+      (result) => {
+        if (!still()) return;
+        const { revisionAtStart } = this.probing!;
+        this.probing = null;
+        this.probeRefetch.delete(key);
+        this.probes.set(key, result);
+        this.o.onProbe(key, result);
+        if (this.revision !== null && revisionAtStart !== this.revision) this.arm();
+        this.pump();
+      },
+      () => {
+        if (!still()) return;
+        this.probing = null;
+        this.probeFailed.add(key); // not asked again until the code settles: no loop of failing probes
+        this.pump();
+      },
+    );
+  }
+
+  /** Stops the probe in flight, if any. Its key stays wanted and is asked again when nothing else is. */
+  private cancelProbe(): void {
+    if (!this.probing) return;
+    this.probing.controller.abort();
+    this.probing = null;
   }
 
   private start(key: string): void {
@@ -190,6 +272,15 @@ export class CallScheduler {
     for (const key of [...this.failed.keys()]) {
       if (!wanted.has(key)) continue;
       this.failed.delete(key); // `pump` asks again; a second failure puts it back
+    }
+    this.probeFailed.clear();
+    for (const [key, probe] of [...this.probes]) {
+      if (probe.revision >= this.revision) continue;
+      if (this.probeWanted.includes(key)) this.probeRefetch.add(key);
+      else {
+        this.probes.delete(key);
+        this.o.onProbeDropped(key);
+      }
     }
     for (const [key, tree] of [...this.held]) {
       if (tree.revision >= this.revision) continue;

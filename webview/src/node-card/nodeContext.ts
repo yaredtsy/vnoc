@@ -1,4 +1,4 @@
-import type { Placed } from "../canvas/layout.ts";
+import { type Placed, canOpen } from "../canvas/layout.ts";
 
 /**
  * What a card tells VS Code about itself for its right-click menu. On a right-click VS Code collects `data-vscode-context` from the clicked
@@ -12,8 +12,8 @@ export function nodeContext(f: { node: Placed; contextId: string; isFocusRoot: b
     nodeKey: f.node.id,
     contextId: f.contextId,
     kind: f.node.kind,
-    hasChildren: f.node.childCount > 0,
-    open: f.node.childCount > 0 && !f.node.collapsed,
+    hasChildren: canOpen(f.node),
+    open: canOpen(f.node) && !f.node.collapsed,
     isFocusRoot: f.isFocusRoot,
     hasCode: f.node.range !== null,
     codeOpen: f.node.codeOpen,
