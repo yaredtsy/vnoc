@@ -95,6 +95,23 @@ asked for); window suite `calls.test.ts`: `showCalls` on the fixture → the fun
 
 Proof: the tests; by hand, the old "Calls" section still fills (it reads the same trees). Commit: `step 8.2: the host fetches the calls of what is open; Show Calls`.
 
+**As built (2026-11-13).** Everything in the table, and these decisions:
+
+| Decision | Why |
+|---|---|
+| The scheduler is **`shared/callScheduler.ts`**, a plain class given `fetch(key, signal)` and a clock; `extension/src/callTree.ts` only gives it the core, `setTimeout`, the progress on the STRUCTURE view and the events | it is tested with a fake of each (13 tests) and no VS Code: two at a time with the prefetch last, a cancelled request's signal and its dropped late answer, out-of-order answers, failure and retry, one refetch 800 ms after the **last** of three index changes, KEEP over unwanted trees only, a restart in the middle of a fetch |
+| **`CallLookup` is three-valued**: an object (the callee), `undefined` (the owner's tree is not held: unknown), `null` (the tree is held and the call is not in it: gone) | `callsChanged` must not close anything for a tree that failed to load. 8.1's code treated both falsy values alike, so nothing there changed |
+| **`callsChanged { owner }`** is dispatched by the host when a tree arrives; it only looks at call ids of that owner | gone ids leave `expanded`, a gone selection falls back to the owner function, an EXPLORE whose call is gone closes with its children |
+| **Core epochs.** `Core.epoch` (1, then one more after each restart, from the language client's state change), `StructureResult.epoch` (added by the `structure` handler) and `CallTreeResult.epoch`; `isStaleIn` is never stale across epochs; the new event **`callTreesReset`** makes every page drop its trees and states | a restarted core counts revisions from the start again: a tree of revision 40 against a structure of revision 3 looked fresh (or, the other way round, stale for ever). The scheduler also drops its trees and cancels its timer on `restarted()` |
+| `wantedCalls` wants an **open class or a class that is the last focus step**, like a function | 05 §7 has Show Calls on a class, and its message is decided by the answer. Whether 8.3 draws a class's calls (R7 says they are under `__init__`) is 8.3's question |
+| **Interim look**: a selected function is prefetched, so the old "Calls" section now appears under a selected, opened or focused function without Show Calls; its Refresh button is gone (it says *updating…*, *could not update* or *the code changed* while the host works) | 8.3 replaces the section with call cards. A failed fetch has `retry` in the scheduler but no button until the call card has a place for it |
+| `rendered` carries `calls` (how many cards draw a Calls section); `callsDrawn` and the window suite's `waitCallsDrawn` are gone; the window suite reads the host's own `callTreeLog` | the host is the one that fetches, so the test asks it |
+| `vnoc.showCallTree` is now `vnoc.showCalls` (**Show Calls**) and no longer waits for the answer; `refreshCallTree` and the `showCallTree` request are gone | cancelling by closing must be possible while the command is "done" |
+
+Fixed in the same step: the docs tab (`DocsApp.tsx`) dropped answers by revision, so after a core restart it never updated again (now the newest ask speaks, as `state/data.ts` does); `extension.ts` creates `callTrees` before the `SessionStore` that reads them.
+
+Tests: `shared/` 177 (was 125): `callsOf` (12 rows, through a `cut` node), `wantedCalls` (17 rows), `isStaleIn`, the scheduler, `callsChanged` (7). Window suite 37 (was 35): Show Calls (loading → idle, a card draws it), close before the answer (no tree kept), refetch after a code change, a core restart with a function open. **Not tested**: that a page really empties its copy on `callTreesReset` (the webview stores have no test harness; the host side is covered).
+
 ### 8.2a The driver keeps the project open (Python driver)
 
 Independent of the UI steps; it can go beside 8.1–8.3. From the analyzer's `docs/05-python-migration/11-driver-needs.md` §8.
