@@ -47,6 +47,8 @@ set of states ([`09-states.md`](09-states.md)).
 | `🔗` | it has docs: solid = ID in the code, faded = found by name only (kept from today) | *"ID in the code"* / *"found by name only: Write ID to keep it on renames"* |
 | `●` / `○` | a closed card hides the selection / the cursor (kept from 10/06) | *"the selection is inside"* / *"the cursor is inside"* |
 
+The meta line and the footer start **under the name's first letter**, not under the chevron: their left padding is the chevron's and the kind icon's width (as the mockup's `padding-left: 33px`), so the three rows read as one column.
+
 An empty footer stays (blank). The cards keep one height, so a count that appears (a new doc) moves nothing on the canvas.
 
 Gone: the `⌖ focus` chip (the bar's crumbs and the `⌖` in place of the chevron say it), the cursor `▌` (the dashed inset line says it, 09),

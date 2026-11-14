@@ -27,7 +27,19 @@ button is a primary blue button for an action you should almost never need (the 
 
 ## 2. The one bar
 
-30 px, `--vscode-editor-background`, a 1 px bottom border `--vscode-panel-border`. Left to right:
+35 px (the height of VS Code's own tab row and editor title bar, so the bar lines up with the tabs above it), `--vscode-editor-background`,
+a 1 px bottom border `--vscode-panel-border`.
+
+**Sizes** (decided 2026-11-14, after the first look in a real window: 12 px icons and 12 px crumbs read as tiny next to VS Code's own bars):
+
+| Thing | Size | As in VS Code |
+|---|---|---|
+| icon buttons (← ⚠ ⌖ ⓘ ⋯) | **codicons, 16 px**, in a **22 px** square hit area, 4 px apart; hover `--vscode-toolbar-hoverBackground`, radius 5 px | every view's title actions and the editor's action bar |
+| crumbs | **13 px** (`--vscode-font-size`, as a token), `--vscode-descriptionForeground`; the last one `--vscode-foreground` and weight 600; the `›` separators 16 px codicon `chevron-right`, dim | the editor's breadcrumbs |
+| the page's base font | `--vscode-font-size` / `--vscode-font-family` on `body`, as tokens; no component falls back to the browser's 16 px or to a 12 px preset | — |
+| the bar's padding | 8 px left and right | — |
+
+The kit's `icon-xs` / `xs` presets (24 px button, 12 px icon, 12 px text) are not used in the bar. Left to right:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
