@@ -24,6 +24,8 @@
 
   /* text and surfaces */
   --font: var(--vscode-font-family, sans-serif);
+  --font-size: var(--vscode-font-size, 13px); /* the page's base size, and the crumbs' */
+  --toolbar-hover: var(--vscode-toolbar-hoverBackground, #5a5d5e50); /* under the pointer on a bar button */
   --editor-font: var(--vscode-editor-font-family, monospace);
   --link: var(--vscode-textLink-foreground, #3794ff);
   --code-bg: var(--vscode-textCodeBlock-background, #ffffff14);

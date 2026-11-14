@@ -34,7 +34,7 @@ function DropdownMenuContent({
 }
 
 const itemClass =
-  "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1 text-xs outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5"
+  "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1 text-[length:var(--font-size)] outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5"
 
 function DropdownMenuItem({ className, ...props }: MenuPrimitive.Item.Props) {
   return <MenuPrimitive.Item data-slot="dropdown-menu-item" className={cn(itemClass, className)} {...props} />

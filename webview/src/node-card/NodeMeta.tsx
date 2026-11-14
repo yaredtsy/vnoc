@@ -1,4 +1,5 @@
 import type { Placed } from "../canvas/layout.ts";
+import { NAME_X } from "./rows.ts";
 import { whereOf } from "./whereOf.ts";
 
 /**
@@ -8,7 +9,7 @@ import { whereOf } from "./whereOf.ts";
 export function NodeMeta({ node }: { node: Placed }) {
   const where = whereOf(node);
   return (
-    <div className="flex h-[22px] flex-none items-center gap-2 px-3 font-mono text-[11px] text-muted-foreground">
+    <div className="flex h-[22px] flex-none items-center gap-2 pr-3 font-mono text-[11px] text-muted-foreground" style={{ paddingLeft: NAME_X }}>
       <span className="min-w-0 flex-1 truncate text-left [direction:rtl]" title={where}>
         <bdi>{where}</bdi>
       </span>

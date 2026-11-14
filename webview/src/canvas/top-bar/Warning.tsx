@@ -1,8 +1,6 @@
 import { useEffect } from "react";
 
-import { IconAlertTriangle } from "@tabler/icons-react";
-
-import { IconButton } from "@/components/IconButton.tsx";
+import { BarButton } from "@/components/BarButton.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
 import { post, request } from "@/host.ts";
 import { cn } from "@/lib/utils.ts";
@@ -19,17 +17,11 @@ export function Warning(props: WarningInput) {
   useEffect(() => post({ type: "warned", level, text }), [level, text]);
   if (level === "none") return null;
 
-  const icon = <IconAlertTriangle className={cn(level === "error" ? "text-destructive" : "text-warning")} />;
-  if (level === "warning") {
-    return (
-      <IconButton label={text} onClick={() => void request("focusAttention").catch(() => {})}>
-        {icon}
-      </IconButton>
-    );
-  }
+  const colour = cn(level === "error" ? "text-destructive" : "text-warning");
+  if (level === "warning") return <BarButton icon="warning" iconClassName={colour} label={text} onClick={() => void request("focusAttention").catch(() => {})} />;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<IconButton label={text} />}>{icon}</DropdownMenuTrigger>
+      <DropdownMenuTrigger render={<BarButton icon="warning" iconClassName={colour} label={text} />} />
       <DropdownMenuContent>
         <DropdownMenuItem onClick={() => refresh()}>Try Again</DropdownMenuItem>
         <DropdownMenuItem onClick={() => void request("showLog").catch(() => {})}>Show Log</DropdownMenuItem>

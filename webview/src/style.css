@@ -18,6 +18,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-warning: var(--warning);
+  --color-toolbar-hover: var(--toolbar-hover);
   --color-progress: var(--progress);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -31,7 +32,8 @@
 @keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
 
 html, body, #root { height: 100%; margin: 0; }
-body { background: var(--background); color: var(--foreground); font-family: var(--font); }
+/* VS Code's own font and size: nothing falls back to the browser's 16 px or to a 12 px preset of the kit */
+body { background: var(--background); color: var(--foreground); font-family: var(--font); font-size: var(--font-size); }
 
 .markdown { font-size: 13px; line-height: 1.6; }
 .markdown > :first-child { margin-top: 0; }

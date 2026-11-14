@@ -1,7 +1,6 @@
 import { useReactFlow } from "@xyflow/react";
-import { IconDots } from "@tabler/icons-react";
 
-import { IconButton } from "@/components/IconButton.tsx";
+import { BarButton } from "@/components/BarButton.tsx";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
 import { refresh } from "@/state/data.ts";
 import { dispatch } from "@/state/session.ts";
@@ -13,9 +12,7 @@ export function MoreMenu() {
   const minimap = useView((v) => v.minimap);
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<IconButton label="More" />}>
-        <IconDots />
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger render={<BarButton icon="ellipsis" label="More" />} />
       <DropdownMenuContent>
         <DropdownMenuItem onClick={() => void fitView({ duration: 300 })}>Fit View</DropdownMenuItem>
         <DropdownMenuItem onClick={() => dispatch({ type: "collapseAll" })}>Collapse All</DropdownMenuItem>

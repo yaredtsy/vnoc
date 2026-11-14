@@ -20,7 +20,7 @@ export function TopBar({ structure, status, message }: { structure: StructureRes
   const crumbs = useCrumbs(structure?.root ?? null, focus);
   const [ref, width] = useElementWidth<HTMLElement>();
   return (
-    <header ref={ref} className="relative flex h-[30px] flex-none items-center gap-1 border-b border-border px-1.5">
+    <header ref={ref} className="relative flex h-[35px] flex-none items-center gap-1 border-b border-border px-2">
       <BackButton crumbs={crumbs} />
       <Crumbs project={structure?.root.name ?? "V-NOC"} stats={structure ? statsLine(structure) : ""} crumbs={crumbs} width={width} />
       <Warning structure={structure} status={status} message={message} />

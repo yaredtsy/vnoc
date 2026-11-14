@@ -1,5 +1,4 @@
-import { IconChevronRight } from "@tabler/icons-react";
-
+import { Codicon } from "@/components/Codicon.tsx";
 import { dispatch } from "@/state/session.ts";
 import { setHover } from "@/state/view.ts";
 import { CrumbButton } from "./CrumbButton.tsx";
@@ -19,11 +18,11 @@ export function Crumbs({ project, stats, crumbs, width }: { project: string; sta
   const { folded, shown } = foldCrumbs(steps, width);
   const jump = (depth: number) => dispatch({ type: "focusJump", depth });
   return (
-    <nav aria-label="Focus" className="flex min-w-0 flex-1 items-center overflow-hidden text-xs">
+    <nav aria-label="Focus" className="flex min-w-0 flex-1 items-center overflow-hidden">
       {folded.length > 0 && <FoldedCrumbs steps={folded} onJump={jump} />}
       {shown.map((s, i) => (
         <span key={s.id} className="flex items-center">
-          {i > 0 && <IconChevronRight className="size-3 flex-none opacity-50" />}
+          {i > 0 && <Codicon name="chevron-right" className="flex-none text-[16px] text-muted-foreground" />}
           <CrumbButton label={s.label} title={s.title} current={s.depth === crumbs.length} onHover={s.hover ? (on) => setHover(on ? s.hover! : null) : undefined} onClick={() => jump(s.depth)} />
         </span>
       ))}

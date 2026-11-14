@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils.ts";
 import type { Placed } from "../canvas/layout.ts";
 import { useView } from "../state/view.ts";
 import { type Chip, footerChips } from "./footerChips.ts";
+import { CHIP_PAD, NAME_X } from "./rows.ts";
 import { useNodeActions } from "./useNodeActions.ts";
 
 /** One count with its tooltip. A button when `onClick` is given; otherwise it only says a fact. */
@@ -56,5 +57,5 @@ export function NodeFooter({ node, contextId }: { node: Placed; contextId: strin
         return <ChipView key={c.kind} tip={c.tip} className="text-[color:var(--card-cursor)]">{c.text}</ChipView>;
     }
   };
-  return <div className="flex h-5 flex-none items-center gap-0.5 px-1.5 text-muted-foreground">{footerChips(node, { selected: hidesSelected, cursor: hidesCursor }).map(draw)}</div>;
+  return <div className="flex h-5 flex-none items-center gap-0.5 pr-1.5 text-muted-foreground" style={{ paddingLeft: NAME_X - CHIP_PAD }}>{footerChips(node, { selected: hidesSelected, cursor: hidesCursor }).map(draw)}</div>;
 }

@@ -1,6 +1,6 @@
 /* How a card shows its state (docs/10-ui-rework/06-how-it-looks.md §2). Outlines and insets do not change the card's size, so ROW_H and CODE_H
    in layout.ts stay right. The colours are tokens.css. */
-.node-card { position: relative; display: flex; flex-direction: column; width: 260px; box-sizing: border-box; overflow: hidden; border-radius: 4px; font-size: 12px; cursor: default;
+.node-card { position: relative; display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; border-radius: 4px; font-size: 12px; cursor: default;
   background: var(--card); border: 1px solid var(--card-border); border-left-width: 3px; }
 .node-card.selected { outline: 2px solid var(--card-selected); outline-offset: 1px; }
 .node-card.selected .node-header { background: var(--card-selected-bg); color: var(--card-selected-fg); }

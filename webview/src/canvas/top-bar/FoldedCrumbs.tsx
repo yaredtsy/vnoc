@@ -1,5 +1,4 @@
-import { IconChevronRight } from "@tabler/icons-react";
-
+import { Codicon } from "@/components/Codicon.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
 import type { Step } from "./foldCrumbs.ts";
@@ -9,7 +8,7 @@ export function FoldedCrumbs({ steps, onJump }: { steps: Step[]; onJump: (depth:
   return (
     <span className="flex flex-none items-center">
       <DropdownMenu>
-        <DropdownMenuTrigger render={<Button variant="ghost" size="xs" className="px-1.5" aria-label="Earlier steps" title="Earlier steps" />}>…</DropdownMenuTrigger>
+        <DropdownMenuTrigger render={<Button variant="ghost" className="h-[22px] rounded-[5px] px-1.5 text-[length:var(--font-size)] font-normal text-muted-foreground hover:bg-toolbar-hover" aria-label="Earlier steps" title="Earlier steps" />}>…</DropdownMenuTrigger>
         <DropdownMenuContent align="start">
           {steps.map((s) => (
             <DropdownMenuItem key={s.id} onClick={() => onJump(s.depth)}>
@@ -18,7 +17,7 @@ export function FoldedCrumbs({ steps, onJump }: { steps: Step[]; onJump: (depth:
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      <IconChevronRight className="size-3 flex-none opacity-50" />
+      <Codicon name="chevron-right" className="flex-none text-[16px] text-muted-foreground" />
     </span>
   );
 }

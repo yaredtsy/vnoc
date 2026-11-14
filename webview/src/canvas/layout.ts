@@ -3,7 +3,10 @@
 import { type Calls, callsLook } from "@vnoc/shared/calls.ts";
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 
-export const COL_W = 300;
+/** A card's width (04 §1): names get about 160 px beside four always-visible buttons. */
+export const CARD_W = 300;
+/** One column: a card and the room for its edge. */
+export const COL_W = CARD_W + 40;
 /** One card: header 30 + meta 22 + footer 20 (docs/16-ui-redesign/04-node-cards.md §1). */
 export const CARD_H = 72;
 /** One card plus a gap. Cards that grow (code, calls) add their own height, so the layout never has to measure. */

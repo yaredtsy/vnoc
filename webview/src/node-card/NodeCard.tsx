@@ -4,7 +4,7 @@ import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { memo } from "react";
 
 import { cn } from "@/lib/utils.ts";
-import { type Placed, cardHeight } from "../canvas/layout.ts";
+import { CARD_W, type Placed, cardHeight } from "../canvas/layout.ts";
 import { dispatch } from "../state/session.ts";
 import { docsCount } from "./footerChips.ts";
 import { KINDS } from "./kinds.ts";
@@ -24,7 +24,7 @@ export const NodeCard = memo(function NodeCard({ data }: NodeProps<Node<Placed>>
     <div
       className={cn("node-card", data.syntaxError && "broken", selected && "selected", highlighted && "highlighted", cursor && "cursor", revealed && "revealed")}
       // the stripe says what the node IS, never a state
-      style={{ height: cardHeight(data), borderLeftColor: KINDS[data.kind].color }}
+      style={{ width: CARD_W, height: cardHeight(data), borderLeftColor: KINDS[data.kind].color }}
       aria-selected={selected}
       aria-label={`${data.kind} ${data.name}${selected ? ", selected" : ""}${cursor ? ", cursor here" : ""}${data.docs > 0 ? `, ${docsCount(data.docs)}` : ""}`}
       // a right-click selects the card first, so the ring shows what the menu is about (as in the Explorer); selecting never opens anything
