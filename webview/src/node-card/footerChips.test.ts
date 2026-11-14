@@ -68,8 +68,6 @@ test("×N is the number of sites, whatever the core counted: 2 sites → ×2, 1 
 const callsRows: { name: string; footer: Parameters<typeof footerChips>[0]["callsFooter"]; expect: unknown }[] = [
   { name: "nothing to say: no chip", footer: null, expect: [] },
   { name: "calls nothing", footer: { state: "nothing" }, expect: [{ kind: "calls", calls: "nothing", text: "calls nothing", tip: "opening it shows nothing: it calls no function in this project", faded: false }] },
-  { name: "probed, not opened: calls 4", footer: { state: "count", n: 4 }, expect: [{ kind: "calls", calls: "count", text: "calls 4", tip: "opening it shows 4 calls", faded: false }] },
-  { name: "one call", footer: { state: "count", n: 1 }, expect: [{ kind: "calls", calls: "count", text: "calls 1", tip: "opening it shows 1 call", faded: false }] },
   { name: "fetching: a spinner, no text", footer: { state: "loading" }, expect: [{ kind: "calls", calls: "loading", text: "", tip: "reading what it calls…", faded: false }] },
   { name: "failed: couldn't read calls (Retry is drawn beside it), with the reason", footer: { state: "failed", message: "boom" }, expect: [{ kind: "calls", calls: "failed", text: "couldn't read calls", tip: "couldn't read calls: boom", faded: false }] },
   { name: "failed with no reason", footer: { state: "failed", message: "" }, expect: [{ kind: "calls", calls: "failed", text: "couldn't read calls", tip: "couldn't read calls", faded: false }] },
@@ -77,6 +75,11 @@ const callsRows: { name: string; footer: Parameters<typeof footerChips>[0]["call
 for (const row of callsRows) test(`calls state: ${row.name}`, () => assert.deepEqual(footerChips({ ...base, callsFooter: row.footer }, none), row.expect));
 
 test("the calls' state comes after every other chip", () => {
-  const all = footerChips({ ...base, collapsed: true, plus: 4, docs: 1, link: "marker", callsFooter: { state: "count", n: 4 } }, { selected: true, cursor: true });
+  const all = footerChips({ ...base, collapsed: true, plus: 4, docs: 1, link: "marker", callsFooter: { state: "nothing" } }, { selected: true, cursor: true });
   assert.deepEqual(all.map((c) => c.kind), ["hidden", "docs", "link", "selected", "cursor", "calls"]);
+});
+
+test("no `calls 4`: a closed card with calls says its number once, in the +N, and has no calls chip", () => {
+  const kinds = footerChips({ ...base, collapsed: true, plus: 4, callsFooter: null }, none).map((c) => [c.kind, c.text]);
+  assert.deepEqual(kinds, [["hidden", "+4"]]);
 });

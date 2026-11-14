@@ -1,21 +1,23 @@
 // The graph view. It draws a layout; a click is an intent for the session. It knows nothing about the host or where the tree came from.
 
-import { Background, Controls, MiniMap, type Node, ReactFlow, useNodesState, useReactFlow } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
+import { Background, Controls, MiniMap, type Node, ReactFlow, useNodesState, useReactFlow, useStore } from "@xyflow/react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { NodeCard } from "../node-card/NodeCard.tsx";
-import { on } from "../host.ts";
+import { on, post } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
 import { rememberViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
+import { SETTLE_MS, onScreenIds } from "./onScreen.ts";
 import { holderOf, pathEdges } from "./marks.ts";
-import type { Layout, Placed } from "./layout.ts";
+import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
 
 const nodeTypes = { card: NodeCard };
 
-const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p }));
+// the size is known from the layout, so a card off screen can be left out of the page before it was ever measured (`onlyRenderVisibleElements`)
+const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p, width: CARD_W, height: cardHeight(p) }));
 
 /** Brings the requested node to the middle of the view once it is drawn. Inside `<ReactFlow>` so it can reach the view. */
 function CenterOn({ laid, context }: { laid: Layout; context: string }) {
@@ -34,6 +36,33 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
     }, 60);
     return () => clearTimeout(timer);
   }, [fitView, target, laid]);
+  return null;
+}
+
+/**
+ * Tells the host which function and class cards are on screen (the viewport and a screen of margin), the selected one first, once a pan or zoom has
+ * stayed still for SETTLE_MS. The host probes those and no others (03 §6.1). Inside `<ReactFlow>` to read its viewport.
+ */
+function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | null }) {
+  const x = useStore((s) => s.transform[0]);
+  const y = useStore((s) => s.transform[1]);
+  const zoom = useStore((s) => s.transform[2]);
+  const width = useStore((s) => s.width);
+  const height = useStore((s) => s.height);
+  const last = useRef("");
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const visible = new Set(onScreenIds(laid.nodes.map((p) => ({ id: p.id, x: p.x, y: p.y, h: cardHeight(p) })), { x, y, zoom }, { width, height }));
+      // a function or class card that shows nothing about its calls yet is what a probe is for
+      const keys = laid.nodes.filter((p) => p.role === "node" && (p.kind === "function" || p.kind === "class") && p.childCount === 0 && visible.has(p.id)).map((p) => p.id);
+      const ordered = selected !== null && keys.includes(selected) ? [selected, ...keys.filter((k) => k !== selected)] : keys;
+      const same = ordered.join("\n");
+      if (same === last.current) return;
+      last.current = same;
+      post({ type: "cardsDrawn", keys: ordered });
+    }, SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [laid, selected, x, y, zoom, width, height]);
   return null;
 }
 
@@ -99,6 +128,7 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
       onNodesChange={onNodesChange}
       onNodeClick={onNodeClick}
       onNodeDoubleClick={onNodeDoubleClick}
+      onlyRenderVisibleElements // a card or edge off screen is not in the page (03 §6.1)
       elementsSelectable={false} // the session decides what is selected, not React Flow
       zoomOnDoubleClick={false}
       nodesConnectable={false}
@@ -113,6 +143,7 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
       <Controls showInteractive={false} />
       {minimap && <MiniMap pannable zoomable nodeColor={(node) => (node.id === selected ? "var(--card-selected)" : node.id === cursor ? "var(--card-cursor)" : "var(--muted-foreground)")} />}
       <CenterOn laid={laid} context={context} />
+      <OnScreenReport laid={laid} selected={selected} />
       <ViewCommands />
     </ReactFlow>
   );

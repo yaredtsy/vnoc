@@ -372,6 +372,23 @@ test("a probe for a card no longer drawn is cancelled and its late answer is dro
   assert.ok(!log.some((l) => l.startsWith("probe a")), "never reported");
 });
 
+test("on screen is what is probed: a card scrolled off stops being probed, one scrolled on is probed (8.4b: the page reports only the cards on screen)", async () => {
+  const { probeRequests, scheduler, probed, settle } = setup();
+  scheduler.setWanted([], ["a", "b"]); // a and b are on screen
+  probeRequests[0].resolve({ revision: 1, count: 2 });
+  await settle();
+  assert.deepEqual(probed(), ["a", "b"]);
+  scheduler.setWanted([], ["b", "c"]); // a scrolled off, c scrolled on
+  probeRequests[1].resolve({ revision: 1, count: 0 });
+  await settle();
+  assert.deepEqual(probed(), ["a", "b", "c"], "c is probed, a is not asked again");
+  assert.deepEqual(Object.keys(scheduler.allProbes()).sort(), ["a", "b"], "what a probe said stays until the code moves on");
+  scheduler.setWanted([], []); // everything scrolled off: nothing is in flight to be asked about
+  probeRequests[2].resolve({ revision: 1, count: 1 });
+  await settle();
+  assert.equal(scheduler.allProbes().c, undefined, "c's answer came after it went off screen: dropped");
+});
+
 test("a function whose tree is held is not probed: the tree says what a probe would", async () => {
   const { requests, scheduler, probed, settle } = setup();
   scheduler.setWanted(open("a"), ["a", "b"]);

@@ -21,6 +21,8 @@ export const FOOTER_H = 23;
 export const CARD_H = HEADER_H + META_H + LINE_H + FOOTER_H;
 /** One card plus a gap. Cards that grow (code, the site list) add their own height, so the layout never has to measure. */
 export const ROW_H = CARD_H + 16;
+/** One drawing never holds more cards than this (docs/16-ui-redesign/03-canvas.md §6.1): a bigger one draws its open cards closed, from the first that does not fit on. */
+export const MAX_CARDS = 200;
 /** A file's code is all of it: the host clamps a range that runs past the end of the document. */
 const WHOLE_FILE = { start: { line: 0, character: 0 }, end: { line: 10_000_000, character: 0 } };
 
@@ -112,6 +114,8 @@ export interface Layout {
   edges: Edge[];
   /** structure nodes in the tree that are not drawn because an ancestor is closed */
   hidden: number;
+  /** how many cards there would be without the budget (MAX_CARDS); more than `nodes.length` when some open cards were drawn closed */
+  total: number;
 }
 
 const noContents: Contents = { folders: 0, files: 0, classes: 0, functions: 0 };
@@ -148,7 +152,30 @@ export function layout(
   callsOf: (id: string) => Calls = unknownCalls,
   sitesOpen: ReadonlySet<string> = new Set(),
 ): Layout {
+  const drawn = build(MAX_CARDS, root, expanded, codeOpen, callsOf, sitesOpen);
+  // when the budget held something back, a second walk with none says how many cards there would have been
+  return { ...drawn, total: drawn.capped ? build(Infinity, root, expanded, codeOpen, callsOf, sitesOpen).nodes.length : drawn.nodes.length };
+}
+
+/**
+ * One walk of the drawing, depth first in reading order. `budget`: when the children of the next open card (its structure children and its first level of
+ * calls, together: a family) do not all fit, that card is drawn closed with its `+N`, and so is every open card after it. The root is always drawn.
+ */
+function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, codeOpen: ReadonlySet<string>, callsOf: (id: string) => Calls, sitesOpen: ReadonlySet<string>): Omit<Layout, "total"> & { capped: boolean } {
   const nodes: Placed[] = [];
+  let capped = false;
+  /** The cards drawn or promised: the root, and every family accepted so far (its cards are drawn when the walk gets to them). */
+  let committed = 1;
+  /** Whether a card asked to be open, with `family` children, may be: they fit in what is left. A family that does not fit is refused, and so is every one after it. */
+  const fits = (family: number): boolean => {
+    if (capped) return false;
+    if (committed + family > budget) {
+      capped = true;
+      return false;
+    }
+    committed += family;
+    return true;
+  };
   const edges: Edge[] = [];
   let y = 0; // an open code view or site list makes a card taller, so rows are stacked by their heights
   const place = (p: Placed) => {
@@ -168,12 +195,14 @@ export function layout(
     // classes and functions have a range; a file's code is all of it; a folder has none
     const range = n.kind === "file" ? WHOLE_FILE : n.range;
     const structural = n.children.length > 0;
-    const open = n === root || expanded.has(n.id);
     const calls = ownsCalls(n) ? callsOf(n.id) : null;
+    // asked to be open (the root always is), and its whole family fits: the structure children, then the first level of its calls
+    const family = n.children.length + (calls?.state === "known" ? calls.children.length : 0);
+    const open = (n === root || expanded.has(n.id)) && fits(family);
     const look = calls ? callsLook(calls, open) : null;
     // a class that has methods is not "calls nothing": its methods are what is under it
-    const footer = calls ? callsFooter(calls, open) : null;
-    const isCollapsed = (structural || look?.chevron === true) && n !== root && !expanded.has(n.id);
+    const footer = calls ? callsFooter(calls) : null;
+    const isCollapsed = (structural || look?.chevron === true) && !open;
     place({
       id: n.id, role: "node", key: n.id, kind: n.kind, name: n.name, path: n.path, line: n.range ? n.range.start.line + 1 : null, range,
       codeOpen: range !== null && codeOpen.has(n.id), depth, x: depth * COL_W, y, parentId, inClass: n.kind === "function" && parentKind === "class",
@@ -194,8 +223,9 @@ export function layout(
       const way = [...steps, stepOf(c, children)];
       const id = callId(owner, way);
       const callee = c.key !== null ? index.get(c.key) : undefined;
-      const open = expanded.has(id);
       const calls = callsOf(id);
+      // a call card that is asked to be open and whose own calls fit; a recursive one is never entered
+      const open = expanded.has(id) && fits(calls.state === "known" && !c.marks.includes("recursive") ? calls.children.length : 0);
       const look = callLook({ key: c.key, marks: c.marks, calls }, open);
       const collapsed = look.chevron && !open;
       const range = callee?.node.range ?? null;
@@ -203,7 +233,7 @@ export function layout(
       place({
         id, role: "call", key: c.key, kind: c.kind, name: c.name, path: c.path ?? "", line: range ? range.start.line + 1 : null, range,
         codeOpen: range !== null && codeOpen.has(id), depth, x: depth * COL_W, y, parentId, inClass: c.kind === "function" && callee?.parentKind === "class",
-        childCount: 0, callsChevron: look.chevron, plus: look.plus ?? 0, callsFooter: look.unknown || c.marks.includes("recursive") ? null : callsFooter(calls, open), contents: noContents, collapsed, syntaxError: callee?.node.syntax_error ?? false,
+        childCount: 0, callsChevron: look.chevron, plus: look.plus ?? 0, callsFooter: look.unknown || c.marks.includes("recursive") ? null : callsFooter(calls), contents: noContents, collapsed, syntaxError: callee?.node.syntax_error ?? false,
         docs: callee?.node.docs ?? 0, link: callee?.node.link ?? null,
         call: { count: c.call_count, sites: c.call_sites, lines: c.call_sites.map((s) => s.start.line + 1), callerName: caller.name, callerPath: caller.path, look },
         siteRows,
@@ -217,5 +247,5 @@ export function layout(
   };
 
   walk(root, 0, null, null);
-  return { nodes, edges, hidden: size(root) - nodes.filter((p) => p.role === "node").length };
+  return { nodes, edges, hidden: size(root) - nodes.filter((p) => p.role === "node").length, capped };
 }

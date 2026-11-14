@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type CallId, callId, callLookup } from "./calls.ts";
 import type { CallTreeNode, TreeNode } from "./messages";
-import { type ContextState, type Intent, MAIN, type Session, emptySession, exploreId, keepEqual, reduce, restoreSession, toSaved } from "./session.ts";
+import { type ContextState, type Intent, MAIN, type Session, emptySession, exploreId, keepEqual, openOf, reduce, restoreSession, toSaved } from "./session.ts";
 import { sessionProblems } from "./sessionInvariants.ts";
 
 const node = (id: string, kind: TreeNode["kind"], children: TreeNode[] = []): TreeNode => ({
@@ -279,7 +279,7 @@ test("a selected node that goes Missing is dropped; the rest of the session stay
   const s = run(emptySession(), { type: "focus", id: "pkg" }, { type: "select", id: "m" }, { type: "expand", ids: ["pkg"] });
   const next = changed(s, without("m"));
   assert.equal(ctx(next).selected, null);
-  assert.deepEqual([[...ctx(next).focus], [...ctx(next).expanded]], [["pkg"], ["pkg"]], "the focus and the open cards are untouched");
+  assert.deepEqual([[...ctx(next).focus], [...openOf(ctx(next))]], [["pkg"], ["pkg"]], "the focus and the open cards are untouched");
 });
 
 test("treeChanged drops what the cursor, the highlight and a reveal point at when it is gone", () => {
@@ -290,17 +290,17 @@ test("treeChanged drops what the cursor, the highlight and a reveal point at whe
 
 test("open call ids stay open while their keys exist, and go when they do not", () => {
   const s = run(emptySession(), { type: "expand", ids: ["pkg", Cm, Cmg] });
-  assert.deepEqual([...ctx(changed(s, tree)).expanded], ["pkg", Cm, Cmg]);
-  assert.deepEqual([...ctx(changed(s, without("g"))).expanded], ["pkg", Cm], "Cmg names g");
+  assert.deepEqual([...openOf(ctx(changed(s, tree)))], ["pkg", Cm, Cmg]);
+  assert.deepEqual([...openOf(ctx(changed(s, without("g"))))], ["pkg", Cm], "Cmg names g");
 });
 
 // ── the rest of the reducer, as before ────────────────────────────────────────────────────────────────────────────────
 
 test("toggle, expand and collapseAll change only the open nodes", () => {
   const s = run(emptySession(), { type: "toggle", id: "pkg" }, { type: "expand", ids: ["a.py", "pkg"] });
-  assert.deepEqual([...ctx(s).expanded], ["pkg", "a.py"]);
-  assert.deepEqual([...ctx(run(s, { type: "toggle", id: "pkg" })).expanded], ["a.py"]);
-  assert.deepEqual([...ctx(run(s, { type: "collapseAll" })).expanded], []);
+  assert.deepEqual([...openOf(ctx(s))], ["pkg", "a.py"]);
+  assert.deepEqual([...openOf(ctx(run(s, { type: "toggle", id: "pkg" })))], ["a.py"]);
+  assert.deepEqual([...openOf(ctx(run(s, { type: "collapseAll" })))], []);
   const nothingOpen = emptySession();
   assert.equal(run(nothingOpen, { type: "collapseAll" }), nothingOpen, "nothing to close: the same object");
 });
@@ -308,10 +308,10 @@ test("toggle, expand and collapseAll change only the open nodes", () => {
 test("reveal opens the ancestors and selects; it asks the canvas only when told to", () => {
   const s = run(emptySession(), { type: "focus", id: "a.py" });
   const shown = run(s, { type: "reveal", id: "f", canvas: true });
-  assert.deepEqual([...ctx(shown).expanded], ["/", "b.py"], "every ancestor of f, not f itself");
+  assert.deepEqual([...openOf(ctx(shown))], ["b.py"], "every ancestor of f under the root of what is drawn, not f itself: the project is always open");
   assert.deepEqual(shown.reveal, { context: "main", id: "f", n: shown.seq });
   const inside = run(s, { type: "reveal", id: "m", canvas: false });
-  assert.deepEqual([...ctx(inside).expanded], ["/", "pkg", "a.py", "C"]);
+  assert.deepEqual([...openOf(ctx(inside))], ["C"], "inside the focus on a.py: only what is between a.py and m");
   assert.equal(inside.reveal, null, "the sidebar's reveal leaves nothing for the canvas");
   assert.equal(run(s, { type: "reveal", id: "gone", canvas: true }), s, "a node that is not in the tree");
 });
@@ -349,7 +349,7 @@ test("an intent that changes nothing, or names a context that does not exist, re
   assert.equal(reduce(s, "nope", { type: "focus", id: "b.py" }, tree, lookup), s);
   const selected = run(s, { type: "select", id: "m" });
   assert.equal(ctx(selected).focus, ctx(s).focus, "only the selection moved: focus is the same array");
-  assert.equal(ctx(selected).expanded, ctx(s).expanded);
+  assert.equal(ctx(selected).open, ctx(s).open);
   assert.equal(run(s, { type: "expand", ids: ["pkg"] }), s);
 });
 
@@ -359,7 +359,7 @@ test("keepEqual reuses the arrays whose contents did not change", () => {
   assert.notEqual(arrived.contexts.main.focus, old.contexts.main.focus, "a message has brand-new arrays");
   const kept = keepEqual(old, arrived);
   assert.equal(kept.contexts.main.focus, old.contexts.main.focus);
-  assert.equal(kept.contexts.main.expanded, old.contexts.main.expanded);
+  assert.equal(kept.contexts.main.open, old.contexts.main.open);
   assert.equal(kept.order, old.order);
   assert.equal(kept.cursor, "m");
   const asked = run(old, { type: "reveal", id: "m", canvas: true });
@@ -497,7 +497,7 @@ test("callsChanged: a call inserted above another leaves the other's id as it wa
 test("callsChanged: expanded call ids that are gone are dropped, the others kept (structure keys are not touched)", () => {
   const s = run(emptySession(), { type: "expand", ids: ["pkg", Cm, Cmg, Cg, "f"] });
   const next = callsChange(s, "f", treeOf(call("g", "g"))); // m is gone, and Cmg with it
-  assert.deepEqual([...ctx(next).expanded], ["pkg", Cg, "f"]);
+  assert.deepEqual([...openOf(ctx(next))], ["pkg", Cg, "f"]);
 });
 
 test("callsChanged: a call deeper than an EXPLORE goes: that context stays, its selection falls back, its child closes", () => {
@@ -520,4 +520,119 @@ test("callsChanged: the owner's tree failed to load (or is not held): that is un
 test("callsChanged for one owner leaves the call ids of another owner alone", () => {
   const s = run(emptySession(), { type: "select", id: Cm }, { type: "expand", ids: [Cm] });
   assert.equal(callsChange(s, "m", treeOf(call("g", "g"))), s, "the tree that arrived is m's; Cm belongs to f");
+});
+
+// ── 8.4b / 03 §2.1: what is open belongs to the focus root ─────────────────────────────────────────────────────────
+
+/** The set of each root, by root ("" = no focus), as plain lists. */
+const sets = (s: Session, id: string = MAIN) => Object.fromEntries(Object.entries(ctx(s, id).open).map(([root, ids]) => [root, [...ids]]));
+
+test("focus on X for the first time: the open ids under X carry in, the others stay with the root they were opened in", () => {
+  const s = run(emptySession(), { type: "expand", ids: ["pkg", "a.py", "C", "b.py"] }, { type: "focus", id: "a.py" });
+  assert.deepEqual([...openOf(ctx(s))], ["a.py", "C"], "a.py and C are under a.py; pkg and b.py are not");
+  assert.deepEqual(sets(s)[""], ["pkg", "a.py", "C", "b.py"], "the project's own set is as it was");
+});
+
+test("what is opened inside a focus stays inside it: clearing the focus gives the project as it was left", () => {
+  let s = run(emptySession(), { type: "expand", ids: ["pkg"] });
+  s = run(s, { type: "focus", id: "a.py" }, { type: "expand", ids: ["C", "a.py"] }, { type: "focusJump", depth: 0 });
+  assert.deepEqual([...openOf(ctx(s))], ["pkg"], "the opening done inside a.py did not come out with it");
+  s = run(s, { type: "focus", id: "a.py" });
+  assert.deepEqual([...openOf(ctx(s))], ["C", "a.py"], "focus on a.py again: its set as it was left, not carried in again");
+});
+
+test("Back and a crumb go to the parent root's own set, as it was left", () => {
+  let s = run(emptySession(), { type: "focus", id: "a.py" }, { type: "expand", ids: ["a.py"] }, { type: "focus", id: "C" }, { type: "expand", ids: ["C", "m"] });
+  assert.deepEqual([...openOf(ctx(s))], ["C", "m"]);
+  s = run(s, { type: "focusBack" });
+  assert.deepEqual([ctx(s).focus.at(-1), [...openOf(ctx(s))]], ["a.py", ["a.py"]], "Back: a.py's set");
+  s = run(s, { type: "focus", id: "C" }, { type: "focusJump", depth: 1 });
+  assert.deepEqual([ctx(s).focus.at(-1), [...openOf(ctx(s))]], ["pkg", ["C", "m"]], "a crumb to a root that never had a set: what was open in the root it leaves, under pkg, carries in");
+});
+
+test("toggle, expand and Collapse All change the current root's set only; the others keep theirs", () => {
+  let s = run(emptySession(), { type: "expand", ids: ["pkg", "b.py"] }, { type: "focus", id: "a.py" }, { type: "expand", ids: ["C"] });
+  s = run(s, { type: "toggle", id: "a.py" });
+  assert.deepEqual(sets(s), { "": ["pkg", "b.py"], "a.py": ["C", "a.py"] });
+  s = run(s, { type: "collapseAll" });
+  assert.deepEqual(sets(s), { "": ["pkg", "b.py"], "a.py": [] }, "only the current root empties");
+});
+
+test("Reveal while focused: only the current root's set grows, and with the ancestors between the root and the node", () => {
+  const before = run(emptySession(), { type: "expand", ids: ["b.py"] }, { type: "focus", id: "pkg" });
+  const shown = run(before, { type: "reveal", id: "m", canvas: true });
+  assert.deepEqual([ctx(shown).focus.at(-1), [...openOf(ctx(shown))]], ["pkg", ["a.py", "C"]], "a.py and C: between pkg and m; pkg is the root, always open");
+  assert.deepEqual(sets(shown)[""], ["b.py"], "the project's set did not grow with the ancestors");
+  // revealing outside the focus drops steps, and the ancestors go into the root it lands on
+  const far = run(before, { type: "reveal", id: "f", canvas: true });
+  assert.deepEqual([[...ctx(far).focus], [...openOf(ctx(far))]], [[], ["b.py"]]);
+});
+
+test("clearing the focus after opening many things and revealing deep nodes draws the project as it was, nothing more", () => {
+  let s = run(emptySession(), { type: "expand", ids: ["pkg"] });
+  s = run(s, { type: "focus", id: "m" }, { type: "reveal", id: "m", canvas: true }, { type: "expand", ids: ["a.py", "C"] }, { type: "reveal", id: "f", canvas: true });
+  s = run(s, { type: "focusJump", depth: 0 });
+  assert.deepEqual(sets(s)[""], ["pkg", "b.py"], "pkg was open before; b.py is what the reveal of f opened at the project; a.py and C, opened inside the focus, are not here");
+  assert.deepEqual([...openOf(ctx(s))], ["pkg", "b.py"]);
+});
+
+test("a 21st root drops the one used longest ago; a root used again moves to the end", () => {
+  const files = Array.from({ length: 22 }, (_, i) => node(`f${i}.py`, "file", [node(`f${i}`, "function")]));
+  const wide = node("/", "folder", files);
+  let s = emptySession();
+  const go = (...intents: Intent[]) => {
+    for (const intent of intents) {
+      s = reduce(s, MAIN, intent, wide, lookup);
+      assert.deepEqual(sessionProblems(s, wide), [], `after ${JSON.stringify(intent)}`);
+    }
+  };
+  for (let i = 0; i < 20; i++) go({ type: "focus", id: `f${i}.py` }, { type: "expand", ids: [`f${i}`] });
+  assert.equal(ctx(s).recent.length, 20);
+  go({ type: "focus", id: "f0.py" }); // f0 is used again: it is now the newest
+  go({ type: "focus", id: "f20.py" }); // the 21st root (its set is new): f1 is the one used longest ago
+  assert.equal(ctx(s).recent.length, 20);
+  assert.ok(!("f1.py" in ctx(s).open) && "f0.py" in ctx(s).open && "f20.py" in ctx(s).open, `kept ${Object.keys(ctx(s).open)}`);
+  assert.deepEqual(ctx(s).recent.slice(-2), ["f0.py", "f20.py"]);
+  go({ type: "focus", id: "f1.py" }); // a dropped root comes back empty (carried in from the root it left: nothing under it)
+  assert.deepEqual([...openOf(ctx(s))], []);
+});
+
+test("the code changed: ids that are gone leave every set, and a root that is gone loses its set", () => {
+  let s = run(emptySession(), { type: "expand", ids: ["pkg", "b.py", "g"] }, { type: "focus", id: "f" });
+  s = run(s, { type: "focusBack" }, { type: "focus", id: "g" }, { type: "expand", ids: ["g"] });
+  assert.deepEqual(Object.keys(sets(s)).sort(), ["", "f", "g", "b.py"].sort());
+  const next = changed(s, without("g"));
+  assert.deepEqual(Object.keys(sets(next)).sort(), ["", "b.py", "f"].sort(), "g is gone, and so is its root");
+  assert.deepEqual(sets(next)[""], ["pkg", "b.py"], "g left the project's set too");
+  assert.deepEqual([...ctx(next).recent].sort(), Object.keys(ctx(next).open).sort());
+});
+
+test("a session saved before 8.4b (one `expanded` list) becomes the set of the root it was saved at", () => {
+  const old = { contexts: { main: { id: "main", title: "Main", kind: "main", parent: null, call: null, focus: ["pkg", "a.py"], selected: null, expanded: ["a.py", "C"] } }, order: ["main"], active: "main" };
+  const back = restoreSession(old);
+  assert.deepEqual(sets(back), { "a.py": ["a.py", "C"] });
+  assert.deepEqual([...ctx(back).recent], ["a.py"]);
+  assert.deepEqual(sessionProblems(back, tree), []);
+  assert.deepEqual(sets(restoreSession({ ...old, contexts: { main: { ...old.contexts.main, expanded: [] } } })), {}, "nothing open: no set");
+});
+
+test("a saved session round-trips its sets and their order; a `recent` that does not match is rebuilt", () => {
+  const s = run(emptySession(), { type: "expand", ids: ["pkg"] }, { type: "focus", id: "a.py" }, { type: "expand", ids: ["C"] });
+  const back = restoreSession(JSON.parse(JSON.stringify(toSaved(s))));
+  assert.deepEqual([sets(back), [...ctx(back).recent]], [sets(s), [...ctx(s).recent]]);
+  const broken = JSON.parse(JSON.stringify(toSaved(s)));
+  broken.contexts.main.recent = ["nonsense"];
+  assert.deepEqual([...ctx(restoreSession(broken)).recent].sort(), Object.keys(ctx(s).open).sort());
+});
+
+test("keepEqual keeps each set that did not change, and the whole record when none did", () => {
+  const old = run(emptySession(), { type: "expand", ids: ["pkg"] }, { type: "focus", id: "a.py" }, { type: "expand", ids: ["C"] });
+  const arrived: Session = JSON.parse(JSON.stringify({ ...old, seq: old.seq + 1 }));
+  const kept = keepEqual(old, arrived);
+  assert.equal(kept.contexts.main.open, old.contexts.main.open);
+  assert.equal(kept.contexts.main.recent, old.contexts.main.recent);
+  const moved: Session = JSON.parse(JSON.stringify({ ...old, contexts: { main: { ...old.contexts.main, open: { ...old.contexts.main.open, "a.py": ["C", "m"] } } } }));
+  const partly = keepEqual(old, moved);
+  assert.equal(partly.contexts.main.open[""], old.contexts.main.open[""], "the set that did not change is the same array");
+  assert.notEqual(partly.contexts.main.open, old.contexts.main.open);
 });

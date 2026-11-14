@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 
 import { callNodesIn } from "@vnoc/shared/calls.ts";
 import type { CallTreeResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
-import type { Intent, Session } from "@vnoc/shared/session.ts";
+import { type Intent, type Session, openOf } from "@vnoc/shared/session.ts";
 import { canvasTabs, sleep, until } from "./util";
 
 // Show Calls in a real window (docs/16-ui-redesign/05-calls-as-nodes.md §2, §5, §7): the host fetches the call trees of what is open, cancels what stops
@@ -87,7 +87,7 @@ suite("show calls", () => {
     await vscode.commands.executeCommand("vnoc.showCalls", main);
     await until("the canvas tab", () => canvasTabs().length === 1);
     assert.strictEqual(api.session().contexts.main.selected, main.id, "the entry is selected");
-    assert.ok(api.session().contexts.main.expanded.includes(main.id), "and open: that is what makes the host fetch it");
+    assert.ok(openOf(api.session().contexts.main).includes(main.id), "and open: that is what makes the host fetch it");
     await until("its tree", () => api.callTrees()[main.id] !== undefined, 30_000);
     assert.deepStrictEqual(statesOf(main.id).slice(0, 2), ["loading", "idle"]);
     // main calls leaf twice (merged: one node) and twice once, which calls leaf: three nodes
@@ -129,7 +129,7 @@ suite("show calls", () => {
     await until("the tree from the new core", () => api.callTrees()[main.id]?.epoch === api.coreEpoch(), 60_000);
     assert.ok(api.coreEpoch() > epoch);
     assert.ok(api.callTreeLog().some((e) => e.kind === "reset"), "the host said so, so the pages drop theirs too");
-    assert.ok(api.session().contexts.main.expanded.includes(main.id), "it is still open");
+    assert.ok(openOf(api.session().contexts.main).includes(main.id), "it is still open");
     await sleep(500);
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
@@ -171,7 +171,7 @@ suite("show calls", () => {
     const [leaf] = callNodesIn(main.id, api.callTrees()[main.id].root);
     const explore = `explore:${leaf.id}`;
     const drewContext = () => api.renderedPosts().at(-1)?.context;
-    assert.deepStrictEqual(api.chips(), [], "one context: no chips");
+    await until("the previous test's chip to go (one context: no chips)", () => api.chips().length === 0);
 
     api.dispatch({ type: "explore", call: leaf.id, activate: true }); // the double-click
     await until("a chip for it, filled", () => api.chips().some((c) => c.id === explore && c.active));
@@ -215,6 +215,42 @@ suite("show calls", () => {
     await until("the cut node's own tree", () => api.callTrees()[cutNode.node.key!] !== undefined, 30_000);
     await until("more call cards than the cap", () => (api.renderedPosts().at(-1)?.callCards ?? 0) > 33, 30_000);
     api.dispatch({ type: "collapseAll" });
+  });
+
+  test("what is opened inside a focus stays inside it: clearing the focus gives the project's set as it was left, and the canvas draws it", async () => {
+    api.dispatch({ type: "focusJump", depth: 0 });
+    api.dispatch({ type: "collapseAll" });
+    const before = [...openOf(api.session().contexts.main)];
+    api.dispatch({ type: "focus", id: twice.id });
+    api.dispatch({ type: "expand", ids: [twice.id] }); // opened inside the focus on `twice`
+    assert.ok(openOf(api.session().contexts.main).includes(twice.id));
+    api.dispatch({ type: "focusJump", depth: 0 });
+    assert.deepStrictEqual([...openOf(api.session().contexts.main)], before, "the project's own set is as it was left: what was opened in the focus did not come out");
+    await until("the canvas to draw the project again", () => api.renderedPosts().at(-1)?.context === "main" && (api.renderedPosts().at(-1)?.visible ?? 0) > 1);
+    api.dispatch({ type: "focus", id: twice.id });
+    assert.ok(openOf(api.session().contexts.main).includes(twice.id), "focus on it again: its set as it was left");
+    api.dispatch({ type: "focusJump", depth: 0 });
+    api.dispatch({ type: "collapseAll" });
+  });
+
+  test("a big file opened draws at most 200 cards, and what it held back is hidden, not lost (03 §6.1)", async () => {
+    const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
+    const file = path.join(folder, "calls_big.py");
+    fs.writeFileSync(file, Array.from({ length: 250 }, (_, i) => `def big${i}():\n    return ${i}\n`).join("\n\n"));
+    try {
+      let big: TreeNode | undefined;
+      await until("the big file in the structure", () => (void api.structure().then((s) => (big = find(s.root, "calls_big.py"))), big !== undefined && big.children.length === 250), 30_000);
+      const seen = api.renderedPosts().length;
+      api.dispatch({ type: "expand", ids: [big!.id] }); // what Expand All Below does
+      await until("a drawing that held the file's functions back", () => api.renderedPosts().length > seen && (api.renderedPosts().at(-1)?.hidden ?? 0) >= 250, 30_000);
+      assert.ok((api.renderedPosts().at(-1)?.visible ?? 999) <= 200, `visible ${api.renderedPosts().at(-1)?.visible}`);
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      api.dispatch({ type: "collapseAll" });
+      fs.rmSync(file, { force: true });
+      let left = false;
+      await until("the file to leave the structure", () => (void api.structure().then((st) => (left = find(st.root, "calls_big.py") === undefined)), left), 30_000);
+    }
   });
 
   test("the command refuses a file: calls start at a function or a class", async () => {

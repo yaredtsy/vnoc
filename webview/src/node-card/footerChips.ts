@@ -15,7 +15,7 @@ export interface Chip {
   /** drawn dim: a link that was found by name only */
   faded: boolean;
   /** `calls` only: which state it says; `failed` is drawn with a Retry beside it, `loading` as a spinner */
-  calls?: "nothing" | "count" | "loading" | "failed";
+  calls?: "nothing" | "loading" | "failed";
 }
 
 /** "1 doc", "2 docs". */
@@ -51,8 +51,6 @@ function callsChip(calls: CallsFooter): Chip[] {
   switch (calls.state) {
     case "nothing":
       return [{ kind: "calls", calls: "nothing", text: "calls nothing", tip: "opening it shows nothing: it calls no function in this project", faded: false }];
-    case "count":
-      return [{ kind: "calls", calls: "count", text: `calls ${calls.n}`, tip: `opening it shows ${calls.n} ${calls.n === 1 ? "call" : "calls"}`, faded: false }];
     case "loading":
       return [{ kind: "calls", calls: "loading", text: "", tip: "reading what it calls…", faded: false }];
     case "failed":

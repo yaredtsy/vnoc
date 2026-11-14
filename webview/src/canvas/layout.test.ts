@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type Calls, callId } from "@vnoc/shared/calls.ts";
 import type { CallMark, CallSite, CallTreeNode, Kind, TreeNode } from "@vnoc/shared/messages.ts";
-import { CARD_H, CODE_H, COL_W, FOOTER_H, HEADER_H, LINE_H, META_H, ROW_H, SITE_LIST_PAD, SITE_ROW_H, canOpen, cardHeight, layout, siteListHeight } from "./layout.ts";
+import { CARD_H, CODE_H, COL_W, FOOTER_H, HEADER_H, LINE_H, MAX_CARDS, META_H, ROW_H, SITE_LIST_PAD, SITE_ROW_H, canOpen, cardHeight, layout, siteListHeight } from "./layout.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, node_id: null, docs: 0, link: null, children });
 
@@ -64,9 +64,9 @@ const project = n("/", "folder", [n("a.py", "file", [fn("f"), fn("g"), fn("h"), 
 const calls = (table: Record<string, Calls>) => (key: string): Calls => table[key] ?? { state: "unknown" };
 const card = (l: ReturnType<typeof layout>, id: string) => l.nodes.find((p) => p.id === id)!;
 
-test("a function a probe counted: closed, a chevron, +N behind it, and the footer says calls 3", () => {
+test("a function a probe counted: closed, a chevron, +N behind it, and the footer has no number: the +N says it", () => {
   const l = layout(project, new Set(["a.py"]), new Set(), calls({ f: { state: "probed", count: 3 } }));
-  assert.deepEqual([card(l, "f").callsChevron, card(l, "f").collapsed, card(l, "f").plus, card(l, "f").callsFooter, card(l, "f").childCount], [true, true, 3, { state: "count", n: 3 }, 0]);
+  assert.deepEqual([card(l, "f").callsChevron, card(l, "f").collapsed, card(l, "f").plus, card(l, "f").callsFooter, card(l, "f").childCount], [true, true, 3, null, 0]);
 });
 
 test("a probe of 0: no chevron, nothing behind it, and the footer says calls nothing", () => {
@@ -262,9 +262,9 @@ test("two calls to one callee from one parent are one card (the merge), and the 
 
 // ── the footer's calls state, and what a folder or file holds (04 §1) ───────────────────────────────────────────────
 
-test("the footer's calls state: a spinner while fetching, a failure with its reason, a count when closed and none when open", () => {
+test("the footer's calls state: a spinner while fetching, a failure with its reason; a count is the +N, not a footer chip", () => {
   const l = layout(project, new Set(["a.py"]), new Set(), calls({ f: { state: "loading" }, g: { state: "failed", message: "boom" }, h: { state: "probed", count: 2 } }));
-  assert.deepEqual([card(l, "f").callsFooter, card(l, "g").callsFooter, card(l, "h").callsFooter], [{ state: "loading" }, { state: "failed", message: "boom" }, { state: "count", n: 2 }]);
+  assert.deepEqual([card(l, "f").callsFooter, card(l, "g").callsFooter, card(l, "h").callsFooter], [{ state: "loading" }, { state: "failed", message: "boom" }, null]);
   const open = layout(project, new Set(["a.py", "h"]), new Set(), calls({ h: { state: "probed", count: 2 } }));
   assert.equal(card(open, "h").callsFooter, null, "open: the calls are the cards");
 });
@@ -284,9 +284,66 @@ test("a file and a folder know what they hold directly, by kind; a function hold
 test("a call card's footer says what its callee calls, except a recursive call or a callee the project does not know", () => {
   const open = new Set(["app.py", "checkout"]);
   const footerOf = (id: string, children: CallTreeNode[], table: Record<string, Calls>) => layout(app, open, new Set(), callsTable({ checkout: { state: "known", children }, ...table })).nodes.find((p) => p.id === id)!.callsFooter;
-  assert.deepEqual(footerOf(Corder, [call("order", "order")], { [Corder]: known(orderCall.children) }), { state: "count", n: 2 }, "closed, its tree known");
+  assert.equal(footerOf(Corder, [call("order", "order")], { [Corder]: known(orderCall.children) }), null, "closed, its tree known: the +N says it");
   assert.deepEqual(footerOf(Corder, [call("order", "order")], { [Corder]: known([]) }), { state: "nothing" });
   assert.equal(footerOf(Corder, [call("order", "order", { marks: ["recursive"] })], { [Corder]: known([]) }), null, "it calls itself: not nothing");
   assert.equal(footerOf(Corder, [call("order", "order")], {}), null, "nothing known");
   assert.deepEqual(footerOf(Corder, [call("order", "order", { marks: ["cut"] })], { [Corder]: { state: "failed", message: "x" } }), { state: "failed", message: "x" }, "a cut call whose callee's tree failed: Retry");
+});
+
+// ── 8.4b / 03 §6.1: a drawing never holds more than MAX_CARDS; an open card whose family does not fit is drawn closed ──
+
+const files = (count: number, prefix = "f") => Array.from({ length: count }, (_, i) => n(`${prefix}${i}`, "file"));
+const folder = (id: string, count: number) => n(id, "folder", files(count, `${id}/`));
+
+test("the budget: 198 files under the root are 199 cards, 199 are 200, and 200 do not fit as a family, so the root is drawn alone", () => {
+  for (const [count, drawn, total] of [[198, 199, 199], [199, 200, 200], [200, 1, 201]] as const) {
+    const l = layout(n("/", "folder", files(count)), new Set());
+    assert.deepEqual([l.nodes.length, l.total], [drawn, total], `${count} files`);
+  }
+  assert.equal(MAX_CARDS, 200);
+  const alone = layout(n("/", "folder", files(200)), new Set());
+  assert.deepEqual([alone.nodes[0].id, alone.nodes[0].collapsed, alone.nodes[0].plus], ["/", true, 200], "the root is always drawn, closed, with its +N");
+});
+
+test("an open card whose children do not all fit is drawn closed with its +N, and so is every open card after it; what fits before it stays whole", () => {
+  const project = n("/", "folder", [folder("a", 90), folder("b", 90), folder("c", 5)]);
+  const l = layout(project, new Set(["a", "b", "c"]));
+  const by = (id: string) => l.nodes.find((p) => p.id === id)!;
+  // /, a, b, c = 4; a's 90 = 94; b's 90 = 184; c's 5 would be 189: fits. A fourth family is what does not
+  assert.equal(l.nodes.length, 189);
+  const tight = layout(n("/", "folder", [folder("a", 90), folder("b", 90), folder("c", 30), folder("d", 2)]), new Set(["a", "b", "c", "d"]));
+  const t = (id: string) => tight.nodes.find((p) => p.id === id)!;
+  assert.deepEqual([t("a").collapsed, t("b").collapsed], [false, false], "the first two fit (5 + 90 + 90 = 185 promised)");
+  assert.deepEqual([t("c").collapsed, t("c").plus], [true, 30], "c's 30 would be 215: drawn closed, with its +30");
+  assert.deepEqual([t("d").collapsed, t("d").plus], [true, 2], "d would fit (187), but it is after the first refusal: closed too");
+  assert.equal(tight.nodes.filter((p) => p.id.startsWith("c/") || p.id.startsWith("d/")).length, 0, "none of their children is drawn: never half a family");
+  assert.equal(tight.total, 5 + 90 + 90 + 30 + 2);
+  assert.equal(by("a").collapsed, false);
+});
+
+test("the cards a family has not drawn yet count: a second open card cannot spend what its siblings were promised", () => {
+  // the root's 150 children are accepted (151); the first of them, open with 100 more, would make 251: refused, though only 2 cards are placed when it is asked
+  const project = n("/", "folder", [folder("first", 100), ...files(149)]);
+  const l = layout(project, new Set(["first"]));
+  assert.equal(l.nodes.length, 150 + 1);
+  assert.deepEqual([l.nodes.find((p) => p.id === "first")!.collapsed, l.nodes.find((p) => p.id === "first")!.plus], [true, 100]);
+  assert.equal(l.total, 251);
+});
+
+test("total is the card count without the budget; with room it equals what is drawn; the root's own family counts", () => {
+  const small = layout(n("/", "folder", [folder("a", 3)]), new Set(["a"]));
+  assert.deepEqual([small.nodes.length, small.total], [5, 5]);
+});
+
+test("the call cards of an open function are part of its family: they count against the budget, in the same card", () => {
+  const callee = (i: number): CallTreeNode => ({ key: null, name: `c${i}`, qualname: `c${i}`, path: null, kind: "function", call_count: 1, call_sites: [], marks: [], children: [] });
+  const f = n("f", "function");
+  const project = n("/", "folder", [n("a.py", "file", [f])]);
+  const callsOf = (n: number) => (id: string): Calls => (id === "f" ? { state: "known", children: Array.from({ length: n }, (_, i) => callee(i)) } : { state: "unknown" });
+  const fits = layout(project, new Set(["a.py", "f"]), new Set(), callsOf(197)); // 3 + 197 = 200
+  assert.deepEqual([fits.nodes.length, fits.total], [200, 200]);
+  const over = layout(project, new Set(["a.py", "f"]), new Set(), callsOf(198));
+  assert.deepEqual([over.nodes.length, over.total], [3, 201], "f is drawn closed, with its +198");
+  assert.deepEqual([over.nodes.at(-1)!.collapsed, over.nodes.at(-1)!.plus], [true, 198]);
 });

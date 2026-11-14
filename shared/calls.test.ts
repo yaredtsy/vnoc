@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { callExists, callFacts, callId, linesText, callLookup, callNodesIn, callsLook, callsOf, isCallId, markBadge, MARK_ORDER, ownsCalls, siteChoice, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
+import { callExists, callFacts, callId, linesText, callLookup, callNodesIn, callsLook, callsOf, isCallId, markBadge, MARK_ORDER, ownsCalls, siteChoice, wantedOnScreen, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
 import type { CallTreeNode, CallTreeResult, Range, TreeNode } from "./messages";
-import { type ContextState, type Session, emptySession, exploreId } from "./session.ts";
+import { type ContextState, type Session, emptySession, exploreId, rootOf } from "./session.ts";
 
 const at = (line: number): Range => ({ start: { line, character: 4 }, end: { line, character: 7 } });
 const siteAt = <P extends string | null>(line: number, path: P): Range & { path: P } => ({ ...at(line), path });
@@ -195,12 +195,19 @@ const project = entry("/", "folder", [
   entry("other.py", "file"),
 ]);
 
-const sessionWith = (main: Partial<ContextState>, ...more: ContextState[]): Session => {
+/** A context's fields, with `expanded` as shorthand for "these ids are open at the root of its focus". */
+type Over = Partial<ContextState> & { expanded?: string[] };
+const withOpen = ({ expanded, ...rest }: Over): Partial<ContextState> => {
+  if (!expanded) return rest;
+  const root = rootOf(rest.focus ?? []);
+  return { ...rest, open: { [root]: expanded }, recent: [root] };
+};
+const sessionWith = (main: Over, ...more: ContextState[]): Session => {
   const s = emptySession();
-  const contexts: Record<string, ContextState> = { main: { ...s.contexts.main, ...main }, ...Object.fromEntries(more.map((c) => [c.id, c])) };
+  const contexts: Record<string, ContextState> = { main: { ...s.contexts.main, ...withOpen(main) }, ...Object.fromEntries(more.map((c) => [c.id, c])) };
   return { ...s, contexts, order: ["main", ...more.map((c) => c.id)] };
 };
-const explore = (call: string, over: Partial<ContextState> = {}): ContextState => ({ id: exploreId(call), title: "x", kind: "explore", parent: "main", call, focus: [], selected: null, expanded: [], ...over });
+const explore = (call: string, over: Over = {}): ContextState => ({ id: exploreId(call), title: "x", kind: "explore", parent: "main", call, focus: [], selected: null, open: {}, recent: [], ...withOpen(over) });
 const Cfg = callId("f", ["g"]);
 const Chg = callId("h", ["g"]);
 const trees = {};
@@ -226,6 +233,8 @@ const wantedTable: { name: string; session: Session; trees?: Parameters<typeof w
   { name: "only the active context's selection is prefetched", session: { ...sessionWith({ selected: "h" }, explore(Cfg, { selected: "g" })), active: "main" }, expect: ["h:prefetch"] },
   { name: "nothing is wanted twice: the same function open in two contexts, and as a focus step", session: sessionWith({ expanded: ["f"], focus: ["app.py", "f"] }, explore(Cfg, { expanded: ["f", Cfg] })), expect: ["f:open"] },
   { name: "a closed card stops being wanted", session: sessionWith({ expanded: [] }), expect: [] },
+  { name: "an open function under another focus root is not wanted: only the current root's set is drawn", session: sessionWith({ focus: ["app.py", "f"], open: { "": ["g", "h"], "app.py": ["K"], f: [] }, recent: ["", "app.py", "f"] }), expect: ["f:open"] },
+  { name: "the same sets, focus cleared: the project's set is wanted, the others' are not", session: sessionWith({ focus: [], open: { "": ["g"], f: ["h"] }, recent: ["", "f"] }), expect: ["g:open"] },
   {
     name: "an open call node the walk cut, with no children: its callee's own tree is wanted, after what is open and before the prefetch",
     session: sessionWith({ expanded: [Cfg, "h"], selected: "K" }),
@@ -278,4 +287,11 @@ test("a call site as a choice of the list: the line, the file only when it is no
   const site = { ...at(39), path: "app/inventory.py" };
   assert.deepEqual(siteChoice(site, "app/inventory.py", "    stock = reserve_stock(item, qty)  "), { label: "line 40", description: "", detail: "stock = reserve_stock(item, qty)" });
   assert.deepEqual(siteChoice(site, "app/api.py", "x"), { label: "line 40", description: "app/inventory.py", detail: "x" });
+});
+
+test("wantedOnScreen: the prefetch of a selected card that is off screen is dropped; what is open or cut stays", () => {
+  const wanted: Parameters<typeof wantedOnScreen>[0] = [{ key: "a", reason: "open" }, { key: "b", reason: "cut" }, { key: "c", reason: "prefetch" }];
+  assert.deepEqual(wantedOnScreen(wanted, []).map((w) => w.key), ["a", "b"], "c is not on screen");
+  assert.deepEqual(wantedOnScreen(wanted, ["c"]).map((w) => w.key), ["a", "b", "c"], "scrolled on: asked for");
+  assert.deepEqual(wantedOnScreen([], ["c"]), []);
 });

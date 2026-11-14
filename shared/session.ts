@@ -5,6 +5,7 @@
 import type { TreeNode } from "./messages";
 import { type CallId, type CallLookup, callExists, isCallId, parseCallId } from "./calls.ts";
 import { jump, pop } from "./focusStack.ts";
+import { MAX_ROOTS, NONE, openOf, rootOf } from "./open.ts";
 import { chainedPrefix, findNode, lineage, pathTo } from "./tree.ts";
 
 export type ContextId = string;
@@ -22,9 +23,16 @@ export interface ContextState {
   focus: readonly string[];
   /** a structure key or a call id */
   selected: string | null;
-  /** structure keys and call ids open on the canvas */
-  expanded: readonly string[];
+  /**
+   * What is open, per focus root (`rootOf(focus)`; "" with no focus): structure keys and call ids. Only the current root's set is drawn, asked about and
+   * changed (03 §2.1): opening things inside a focus stays inside it, and clearing the focus draws the project as it was left.
+   */
+  open: Readonly<Record<string, readonly string[]>>;
+  /** the roots that have a set in `open`, the one used longest ago first; at most MAX_ROOTS (`open` is a record, and its key order is not ours to rely on) */
+  recent: readonly string[];
 }
+
+export { MAX_ROOTS, openOf, rootOf } from "./open.ts";
 
 export interface Session {
   contexts: Readonly<Record<ContextId, ContextState>>;
@@ -67,7 +75,7 @@ export const MAIN: ContextId = "main";
 export const exploreId = (call: CallId): ContextId => `explore:${call}`;
 
 export function emptySession(): Session {
-  const main: ContextState = { id: MAIN, title: "Main", kind: "main", parent: null, call: null, focus: [], selected: null, expanded: [] };
+  const main: ContextState = { id: MAIN, title: "Main", kind: "main", parent: null, call: null, focus: [], selected: null, open: {}, recent: [] };
   return { contexts: { [MAIN]: main }, order: [MAIN], active: MAIN, cursor: null, highlight: null, reveal: null, seq: 0 };
 }
 
@@ -75,6 +83,50 @@ const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.
 
 /** `old` itself when `next` has the same items, so a caller that compares by identity sees no change. */
 const keep = (old: readonly string[], next: readonly string[]) => (sameList(old, next) ? old : next);
+
+// ── what is open, per focus root (03 §2.1) ─────────────────────────────────────────────────────────────────────────────
+
+/** Puts `root` last in the list of roots in use, once. The same array when it already is. */
+const touch = (recent: readonly string[], root: string): readonly string[] => (recent[recent.length - 1] === root ? recent : [...recent.filter((r) => r !== root), root]);
+
+/** `open` and `recent` with `root` in use and its set `ids`; the root used longest ago goes when there are more than MAX_ROOTS (never `root`, which is last). */
+function withRoot(c: Pick<ContextState, "open" | "recent">, root: string, ids: readonly string[]): Pick<ContextState, "open" | "recent"> {
+  let recent = touch(c.recent, root);
+  let open = c.open[root] === ids ? c.open : { ...c.open, [root]: ids };
+  if (recent.length > MAX_ROOTS) {
+    const drop = new Set(recent.slice(0, recent.length - MAX_ROOTS));
+    recent = recent.slice(recent.length - MAX_ROOTS);
+    open = Object.fromEntries(Object.entries(open).filter(([r]) => !drop.has(r)));
+  }
+  return { open, recent };
+}
+
+/** The patch that makes `ids` the open set of the current root. Nothing changes when they are what is already open. */
+function setOpen(c: ContextState, ids: readonly string[]): Pick<ContextState, "open" | "recent"> {
+  const root = rootOf(c.focus);
+  const now = c.open[root];
+  // no set yet and nothing to put in it, or the same list: nothing changes
+  if (now === undefined ? ids.length === 0 : sameList(now, ids)) return { open: c.open, recent: c.recent };
+  return withRoot(c, root, ids);
+}
+
+/** Whether a node is `top` or under it: a call id by its owner (the function whose tree it is in). */
+function under(top: TreeNode, id: string): boolean {
+  const key = isCallId(id) ? parseCallId(id)?.owner : id;
+  return key !== undefined && findNode(top, key) !== undefined;
+}
+
+/**
+ * The patch that moves a context to `focus`: the set of the new root as it was left, or, the first time, the ids of the set it leaves that are under
+ * the new root (what you saw open stays open). The old root keeps its own set.
+ */
+function focusTo(c: ContextState, focus: readonly string[], tree: TreeNode): Pick<ContextState, "focus" | "open" | "recent"> {
+  const root = rootOf(focus);
+  if (root === rootOf(c.focus)) return { focus, open: c.open, recent: c.recent };
+  const had = c.open[root];
+  const carried = had ?? openOf(c).filter((id) => under(root === "" ? tree : findNode(tree, root) ?? tree, id));
+  return { focus, ...withRoot(c, root, carried) };
+}
 
 /**
  * Applies an intent. Returns THE SAME object when nothing changed, so the caller can skip the save and the broadcast, and keeps every array
@@ -97,7 +149,7 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
       if (isCallId(intent.id)) return calls(intent.id)?.key != null ? follow(change(s, context, { selected: intent.id }, { highlight: null }), context, intent.id, tree, calls, true) : s;
       const way = lineage(tree, intent.id);
       if (!way || sameList(way, c.focus)) return s; // not in the tree, or already the last step: nothing
-      return closeStale(change(s, context, { focus: way, selected: intent.id }, { highlight: null }), context);
+      return closeStale(change(s, context, { ...focusTo(c, way, tree), selected: intent.id }, { highlight: null }), context);
     }
 
     case "focusBack":
@@ -106,14 +158,18 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
     case "focusJump":
       return closeStale(refocus(s, context, tree, jump(c.focus, intent.depth)), context);
 
-    case "toggle":
-      return change(s, context, { expanded: c.expanded.includes(intent.id) ? c.expanded.filter((id) => id !== intent.id) : [...c.expanded, intent.id] });
+    case "toggle": {
+      const now = openOf(c);
+      return change(s, context, setOpen(c, now.includes(intent.id) ? now.filter((id) => id !== intent.id) : [...now, intent.id]));
+    }
 
-    case "expand":
-      return change(s, context, { expanded: keep(c.expanded, [...new Set([...c.expanded, ...intent.ids])]) });
+    case "expand": {
+      const now = openOf(c);
+      return change(s, context, setOpen(c, keep(now, [...new Set([...now, ...intent.ids])])));
+    }
 
     case "collapseAll":
-      return change(s, context, { expanded: c.expanded.length === 0 ? c.expanded : [] });
+      return change(s, context, setOpen(c, NONE));
 
     case "reveal": {
       const way = pathTo(tree, intent.id);
@@ -121,14 +177,13 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
       // the focus is a path: steps are dropped from the end until the last one contains the node, never added
       let kept = c.focus.length;
       while (kept > 0 && !way.some((n) => n.id === c.focus[kept - 1])) kept--;
-      const ancestors = way.slice(0, -1).map((n) => n.id);
+      const focus = kept === c.focus.length ? c.focus : c.focus.slice(0, kept);
+      // the ancestors between the root of what is drawn and the node open, in that root's set only (03 §2.1)
+      const from = focus.length === 0 ? 1 : way.findIndex((n) => n.id === rootOf(focus)) + 1; // the project's root, and a focus root, are always open
+      const ancestors = way.slice(from, -1).map((n) => n.id);
+      const moved = { ...c, ...focusTo(c, focus, tree) };
       const next = closeStale(
-        change(
-          s,
-          context,
-          { focus: kept === c.focus.length ? c.focus : c.focus.slice(0, kept), expanded: keep(c.expanded, [...new Set([...c.expanded, ...ancestors])]), selected: intent.id },
-          { highlight: null },
-        ),
+        change(s, context, { ...focusTo(c, focus, tree), ...setOpen(moved, keep(openOf(moved), [...new Set([...openOf(moved), ...ancestors])])), selected: intent.id }, { highlight: null }),
         context,
       );
       // `canvas: false` is the native sidebar's reveal (it scrolls its own row); it goes when the sidebar is a webview (step 8.5)
@@ -167,7 +222,7 @@ function refocus(s: Session, context: ContextId, tree: TreeNode, focus: readonly
   if (focus === c.focus || sameList(focus, c.focus)) return s;
   const top = focus[focus.length - 1] ?? tree.id;
   const under = c.selected !== null && pathTo(tree, c.selected)?.some((n) => n.id === top);
-  return change(s, context, { focus, selected: under ? c.selected : focus.length > 0 ? top : c.selected });
+  return change(s, context, { ...focusTo(c, focus, tree), selected: under ? c.selected : focus.length > 0 ? top : c.selected });
 }
 
 // ── EXPLORE contexts (03 §4) ──────────────────────────────────────────────────────────────────────────────────────────
@@ -183,7 +238,7 @@ function follow(s: Session, context: ContextId, id: string | null, tree: TreeNod
   const way = callee?.key != null ? lineage(tree, callee.key) : null;
   if (!callee || callee.key === null || !way) return next; // a callee the project does not know: selected, nothing opens
   const child = exploreId(id);
-  if (!next.contexts[child]) next = openExplore(next, context, { id: child, title: callee.name, kind: "explore", parent: context, call: id, focus: way, selected: callee.key, expanded: [] });
+  if (!next.contexts[child]) next = openExplore(next, context, { id: child, title: callee.name, kind: "explore", parent: context, call: id, focus: way, selected: callee.key, open: {}, recent: [] });
   return activate ? { ...next, active: child, seq: next.active === child ? next.seq : next.seq + 1 } : next;
 }
 
@@ -242,7 +297,7 @@ function fixFocus(tree: TreeNode, focus: readonly string[]): readonly string[] {
 }
 
 /**
- * A new call tree arrived for `owner` (05 §5). Every call id of that owner that is no longer in it is dropped from `expanded`; a `selected` that
+ * A new call tree arrived for `owner` (05 §5). Every call id of that owner that is no longer in it is dropped from every open set; a `selected` that
  * was one falls back to the owner function; an EXPLORE context whose call is gone closes with its children. `calls` says `null` for gone and
  * `undefined` for "its tree is not held": that is unknown, not gone, and nothing is touched (a tree that failed to load closes nothing).
  */
@@ -253,10 +308,22 @@ function callsChanged(s: Session, owner: string, tree: TreeNode, calls: CallLook
   const home = findNode(tree, owner) ? owner : null;
   for (const id of next.order) {
     const c = next.contexts[id];
-    next = change(next, id, { selected: gone(c.selected) ? home : c.selected, expanded: c.expanded.some(gone) ? c.expanded.filter((x) => !gone(x)) : c.expanded });
+    next = change(next, id, { selected: gone(c.selected) ? home : c.selected, ...filterOpen(c, (x) => !gone(x), () => true) });
   }
   for (const id of [...next.order]) if (next.contexts[id]) next = closeStale(next, id);
   return next;
+}
+
+/** `open` and `recent` without the ids `keepId` refuses and the roots `keepRoot` refuses. The same arrays when nothing goes. */
+function filterOpen(c: ContextState, keepId: (id: string) => boolean, keepRoot: (root: string) => boolean): Pick<ContextState, "open" | "recent"> {
+  const roots = Object.keys(c.open);
+  if (roots.every((r) => keepRoot(r) && c.open[r].every(keepId))) return { open: c.open, recent: c.recent };
+  const open: Record<string, readonly string[]> = {};
+  for (const r of roots) {
+    if (!keepRoot(r)) continue;
+    open[r] = c.open[r].every(keepId) ? c.open[r] : c.open[r].filter(keepId);
+  }
+  return { open, recent: c.recent.filter((r) => r in open) };
 }
 
 /** The code changed: every context drops what no longer exists, an EXPLORE context whose call is gone closes. */
@@ -269,7 +336,7 @@ function treeChanged(s: Session, tree: TreeNode): Session {
     next = change(next, id, {
       focus: fixFocus(tree, c.focus),
       selected: c.selected !== null && !exists(c.selected) ? null : c.selected,
-      expanded: c.expanded.every(exists) ? c.expanded : c.expanded.filter(exists),
+      ...filterOpen(c, exists, (root) => root === "" || findNode(tree, root) !== undefined),
     });
   }
   for (const id of [...next.order]) if (next.contexts[id]) next = closeStale(next, id); // a selection that went takes its EXPLORE child with it
@@ -287,14 +354,21 @@ function change(s: Session, context: ContextId, patch: Partial<ContextState>, to
 }
 
 /**
- * A session that arrived as a message has brand-new arrays even when only the cursor moved. A canvas lays out from `focus` and `expanded`, and a
+ * A session that arrived as a message has brand-new arrays even when only the cursor moved. A canvas lays out from `focus` and what is open, and a
  * new layout puts every dragged card back in its row: reuse the current arrays (and the reveal request) when their contents are equal.
  */
+/** `old` itself when `next` has the same roots with the same sets; else `next`, with every set that did not change kept. */
+function keepOpen(old: ContextState["open"], next: ContextState["open"]): ContextState["open"] {
+  const roots = Object.keys(next);
+  const kept = Object.fromEntries(roots.map((r) => [r, old[r] ? keep(old[r], next[r]) : next[r]]));
+  return roots.length === Object.keys(old).length && roots.every((r) => kept[r] === old[r]) ? old : kept;
+}
+
 export function keepEqual(old: Session, next: Session): Session {
   const contexts = Object.fromEntries(
     Object.entries(next.contexts).map(([id, c]) => {
       const o = old.contexts[id];
-      return [id, o ? { ...c, focus: keep(o.focus, c.focus), expanded: keep(o.expanded, c.expanded) } : c];
+      return [id, o ? { ...c, focus: keep(o.focus, c.focus), open: keepOpen(o.open, c.open), recent: keep(o.recent, c.recent) } : c];
     }),
   );
   const reveal = old.reveal && next.reveal && old.reveal.n === next.reveal.n && old.reveal.id === next.reveal.id ? old.reveal : next.reveal;
@@ -317,19 +391,38 @@ export function toSaved(s: Session): SavedSession {
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
 /**
+ * What a saved context had open. A session from before 8.4b saved one list, `expanded`: it becomes the set of the root it was saved at. Anything else that
+ * is not a record of lists, with the roots in `recent`, is not valid.
+ */
+function readOpen(c: Record<string, unknown>): Pick<ContextState, "open" | "recent"> | null {
+  if (c.open === undefined && isStrings(c.expanded)) {
+    const root = rootOf(isStrings(c.focus) ? c.focus : []);
+    return c.expanded.length === 0 ? { open: {}, recent: [] } : { open: { [root]: c.expanded }, recent: [root] };
+  }
+  if (typeof c.open !== "object" || c.open === null || Array.isArray(c.open) || !Object.values(c.open).every(isStrings)) return null;
+  const open = c.open as Record<string, string[]>;
+  const roots = Object.keys(open);
+  // `recent` lists exactly the roots that have a set; a saved one that does not is rebuilt, not refused
+  const recent = isStrings(c.recent) && c.recent.length === roots.length && roots.every((r) => (c.recent as string[]).includes(r)) ? c.recent : roots;
+  return roots.length > MAX_ROOTS ? { open: Object.fromEntries(roots.slice(-MAX_ROOTS).map((r) => [r, open[r]])), recent: recent.filter((r) => roots.slice(-MAX_ROOTS).includes(r)) } : { open, recent };
+}
+
+/**
  * One saved context, or null when it is not one. A context saved before EXPLORE existed has no `kind` and no `call`: it is MAIN (or, with a
  * parent, not valid, since nothing but MAIN existed).
  */
 function readContext(v: unknown): ContextState | null {
   const c = v as Partial<ContextState> | null;
   if (typeof c !== "object" || c === null) return null;
-  if (typeof c.id !== "string" || typeof c.title !== "string" || !isStrings(c.focus) || !isStrings(c.expanded)) return null;
+  if (typeof c.id !== "string" || typeof c.title !== "string" || !isStrings(c.focus)) return null;
+  const opens = readOpen(c as Record<string, unknown>);
+  if (!opens) return null;
   if (c.selected !== null && typeof c.selected !== "string") return null;
   if (c.parent !== null && typeof c.parent !== "string") return null;
   const kind = c.kind ?? (c.parent === null ? "main" : undefined);
-  if (kind === "main") return c.parent === null ? { id: c.id, title: c.title, kind, parent: null, call: null, focus: c.focus, selected: c.selected, expanded: c.expanded } : null;
+  if (kind === "main") return c.parent === null ? { id: c.id, title: c.title, kind, parent: null, call: null, focus: c.focus, selected: c.selected, ...opens } : null;
   if (kind === "explore") {
-    return typeof c.call === "string" && parseCallId(c.call) !== null && c.parent !== null ? { id: c.id, title: c.title, kind, parent: c.parent, call: c.call, focus: c.focus, selected: c.selected, expanded: c.expanded } : null;
+    return typeof c.call === "string" && parseCallId(c.call) !== null && c.parent !== null ? { id: c.id, title: c.title, kind, parent: c.parent, call: c.call, focus: c.focus, selected: c.selected, ...opens } : null;
   }
   return null;
 }

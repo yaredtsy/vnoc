@@ -23,14 +23,14 @@ export function App() {
   const docsOpen = useView((v) => v.docsOpen);
   const { root, top, laid, selected, active, subject } = useFocusedView(structure);
   useCanvasKeys(laid, root, selected);
-  useRenderedReport(laid, selected, active);
+  useRenderedReport(laid, active);
   const body = pageBody(status, laid !== null);
 
   return (
     <TooltipProvider>
       <ReactFlowProvider>
         <div className="flex h-screen flex-col">
-          <TopBar structure={structure} status={status} message={message} />
+          <TopBar structure={structure} status={status} message={message} cards={laid ? { drawn: laid.nodes.length, total: laid.total } : null} />
           <div className="flex min-h-0 flex-1" data-vscode-context={PANE_CONTEXT}>
             {/* nothing drawn yet: the message alone. Once cards are drawn they stay, whatever a later refresh says (the bar's ⚠ tells) */}
             {body === "canvas" && laid ? <Canvas key={`${active}:${reloads}:${top?.id ?? ""}`} laid={laid} context={active} at={`${reloads}:${top?.id ?? ""}`} /> : <CanvasMessage status={body === "error" ? "error" : "loading"} message={message} />}

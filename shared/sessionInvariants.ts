@@ -3,7 +3,7 @@
 
 import type { TreeNode } from "./messages";
 import { callExists, isCallId } from "./calls.ts";
-import { MAIN, type Session } from "./session.ts";
+import { MAIN, MAX_ROOTS, type Session } from "./session.ts";
 import { chainedPrefix, findNode } from "./tree.ts";
 
 export function sessionProblems(s: Session, tree: TreeNode): string[] {
@@ -37,6 +37,14 @@ export function sessionProblems(s: Session, tree: TreeNode): string[] {
     }
     if (chainedPrefix(tree, c.focus).length !== c.focus.length) bad(`${id}: focus [${c.focus.join(", ")}] is not a path in the tree`);
     if (c.selected !== null && !(isCallId(c.selected) ? callExists(tree, c.selected) : findNode(tree, c.selected) !== undefined)) bad(`${id}: selected "${c.selected}" does not exist`);
+    // what is open (03 §2.1): per root, only what exists, only roots that exist, and `recent` lists exactly those roots, at most MAX_ROOTS of them
+    const roots = Object.keys(c.open);
+    if (roots.length > MAX_ROOTS) bad(`${id}: ${roots.length} roots keep an open set, at most ${MAX_ROOTS}`);
+    if (c.recent.length !== roots.length || !roots.every((r) => c.recent.includes(r)) || new Set(c.recent).size !== c.recent.length) bad(`${id}: recent [${c.recent.join(", ")}] is not the roots that have a set [${roots.join(", ")}]`);
+    for (const root of roots) {
+      if (root !== "" && findNode(tree, root) === undefined) bad(`${id}: an open set for the root "${root}", which does not exist`);
+      for (const open of c.open[root]) if (!(isCallId(open) ? callExists(tree, open) : findNode(tree, open) !== undefined)) bad(`${id}: "${open}" is open (root "${root}") and does not exist`);
+    }
   });
   return problems;
 }

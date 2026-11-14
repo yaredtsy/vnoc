@@ -10,7 +10,7 @@ const node = (id: string, kind: TreeNode["kind"], children: TreeNode[] = []): Tr
 const tree = node("/", "folder", [node("a.py", "file", [node("f", "function"), node("g", "function")])]);
 const CALL = callId("f", ["g"]);
 
-const explore = (over: Partial<ContextState> = {}): ContextState => ({ id: "x", title: "g", kind: "explore", parent: "main", call: CALL, focus: ["a.py", "g"], selected: "g", expanded: [], ...over });
+const explore = (over: Partial<ContextState> = {}): ContextState => ({ id: "x", title: "g", kind: "explore", parent: "main", call: CALL, focus: ["a.py", "g"], selected: "g", open: {}, recent: [], ...over });
 const withExplore = (c: ContextState, mainSelected: string | null = CALL, order = ["main", c.id]): Session => {
   const s = emptySession();
   return { ...s, contexts: { main: { ...s.contexts.main, selected: mainSelected }, [c.id]: c }, order };

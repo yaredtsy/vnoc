@@ -6,6 +6,7 @@ import { docSubject } from "@vnoc/shared/docSubject.ts";
 import { findNode } from "@vnoc/shared/tree.ts";
 import { type Layout, layout } from "@/canvas/layout.ts";
 import { useCalls } from "@/state/calls.ts";
+import { openOf } from "@vnoc/shared/session.ts";
 import { useSession } from "@/state/session.ts";
 import { useView } from "@/state/view.ts";
 
@@ -15,7 +16,7 @@ export function useFocusedView(structure: StructureResult | null) {
   const contexts = useSession((s) => s.contexts);
   const focus = useSession((s) => s.contexts[s.active].focus);
   const selected = useSession((s) => s.contexts[s.active].selected);
-  const openList = useSession((s) => s.contexts[s.active].expanded);
+  const openList = useSession((s) => openOf(s.contexts[s.active]));
   const codeOpen = useView((v) => v.codeOpen);
   const sitesOpen = useView((v) => v.sitesOpen);
   const trees = useCalls((s) => s.trees);

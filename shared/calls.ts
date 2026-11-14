@@ -2,6 +2,7 @@
 // both the page and the host use to read a call tree. Pure: no `vscode`, no React, tested with `node --test`.
 
 import type { CallMark, CallSite, CallTreeNode, CallTreeResult, Range, TreeNode } from "./messages";
+import { openOf } from "./open.ts";
 import type { Session } from "./session.ts";
 import { findNode } from "./tree.ts";
 
@@ -266,7 +267,7 @@ export function wantedCalls(session: Session, tree: TreeNode, trees: TreeStore["
   const cut: string[] = [];
   for (const id of session.order) {
     const c = session.contexts[id];
-    for (const open of c.expanded) {
+    for (const open of openOf(c)) {
       if (!isCallId(open)) add(open, "open");
       else {
         const owner = parseCallId(open)?.owner;
@@ -287,3 +288,9 @@ export function wantedCalls(session: Session, tree: TreeNode, trees: TreeStore["
 export function siteChoice(site: OpenableSite, parentPath: string | null, lineText: string): { label: string; description: string; detail: string } {
   return { label: siteLabel(site), description: site.path === parentPath ? "" : site.path, detail: lineText.trim() };
 }
+
+/**
+ * The prefetch is for a selected card the user can see: one scrolled off screen is not asked for (03 §6.1). What is open or cut is a part of the drawing
+ * (which the card budget bounds), so it is always wanted. `onScreen`: the keys of the function and class cards the page last said are on screen.
+ */
+export const wantedOnScreen = (wanted: readonly Wanted[], onScreen: readonly string[]): Wanted[] => wanted.filter((w) => w.reason !== "prefetch" || onScreen.includes(w.key));

@@ -5,17 +5,15 @@ import type { Calls } from "@vnoc/shared/calls.ts";
 export type CallsFooter =
   /** it calls no function in this project */
   | { state: "nothing" }
-  /** a probe or its tree says opening shows `n` call cards (and it is closed) */
-  | { state: "count"; n: number }
   /** the host is fetching its tree */
   | { state: "loading" }
   /** the fetch failed: Retry */
   | { state: "failed"; message: string }
-  /** nothing to say (not known yet, or open: the calls are drawn) */
+  /** nothing to say: not known yet, or it has calls (a closed card's `+N` counts them, an open one draws them) */
   | null;
 
-/** The footer's word about calls, from what the canvas knows of them (`Calls`) and whether the card is open. */
-export function callsFooter(calls: Calls, open: boolean): CallsFooter {
+/** The footer's word about calls, from what the canvas knows of them (`Calls`). There is no `calls 4`: the `+N` of a closed card already counts them (04 §1). */
+export function callsFooter(calls: Calls): CallsFooter {
   switch (calls.state) {
     case "unknown":
       return null;
@@ -24,10 +22,10 @@ export function callsFooter(calls: Calls, open: boolean): CallsFooter {
     case "failed":
       return { state: "failed", message: calls.message };
     case "probed":
-      return count(calls.count, open);
+      return count(calls.count);
     case "known":
-      return count(calls.children.length, open);
+      return count(calls.children.length);
   }
 }
 
-const count = (n: number, open: boolean): CallsFooter => (n === 0 ? { state: "nothing" } : open ? null : { state: "count", n });
+const count = (n: number): CallsFooter => (n === 0 ? { state: "nothing" } : null);

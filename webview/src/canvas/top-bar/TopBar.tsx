@@ -3,6 +3,7 @@ import { ProgressLine } from "@/components/ProgressLine.tsx";
 import { useSession } from "@/state/session.ts";
 import { BackButton } from "./BackButton.tsx";
 import { ContextChips } from "./ContextChips.tsx";
+import { BudgetNote } from "./BudgetNote.tsx";
 import { Crumbs } from "./Crumbs.tsx";
 import { DocsToggle } from "./DocsToggle.tsx";
 import { MoreMenu } from "./MoreMenu.tsx";
@@ -16,7 +17,7 @@ const statsLine = (s: StructureResult) =>
   `${s.stats.folders} folders · ${s.stats.files} files · ${s.stats.classes} classes · ${s.stats.functions} functions`;
 
 /** The canvas's one bar (docs/16-ui-redesign/02-top-bar.md): back, the contexts, where you are, ⚠, reveal, docs, more. Draws; keeps no state of its own. */
-export function TopBar({ structure, status, message }: { structure: StructureResult | null; status: "loading" | "ready" | "error"; message: string }) {
+export function TopBar({ structure, status, message, cards }: { structure: StructureResult | null; status: "loading" | "ready" | "error"; message: string; cards: { drawn: number; total: number } | null }) {
   const focus = useSession((s) => s.contexts[s.active].focus);
   const crumbs = useCrumbs(structure?.root ?? null, focus);
   const [ref, width] = useElementWidth<HTMLElement>();
@@ -25,6 +26,7 @@ export function TopBar({ structure, status, message }: { structure: StructureRes
       <BackButton crumbs={crumbs} />
       <ContextChips width={width} />
       <Crumbs project={structure?.root.name ?? "V-NOC"} stats={structure ? statsLine(structure) : ""} crumbs={crumbs} width={width} />
+      {cards && <BudgetNote drawn={cards.drawn} total={cards.total} />}
       <Warning structure={structure} status={status} message={message} />
       <RevealButton />
       <DocsToggle />

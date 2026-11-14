@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-import { wantedCalls } from "@vnoc/shared/calls.ts";
+import { wantedCalls, wantedOnScreen } from "@vnoc/shared/calls.ts";
 import { CallScheduler } from "@vnoc/shared/callScheduler.ts";
 import type { CallTreeResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
@@ -111,12 +111,12 @@ export class CallTrees {
     return this.scheduler.all();
   }
 
-  /** What the session has open or selected changed, or a tree arrived: ask for what is wanted now, and probe the cards that are drawn. */
+  /** What the session has open or selected changed, or a tree arrived: ask for what is wanted now (the prefetch only for a card on screen), and probe the cards that are on screen. */
   update(session: Session, tree: TreeNode): void {
-    this.scheduler.setWanted(wantedCalls(session, tree, this.scheduler.all()), this.drawn);
+    this.scheduler.setWanted(wantedOnScreen(wantedCalls(session, tree, this.scheduler.all()), this.drawn), this.drawn);
   }
 
-  /** The function and class cards the canvas draws, the one to look at first first. A page that opened later is told the probes already held for them. */
+  /** The function and class cards on the canvas's screen (the viewport and a margin), the one to look at first first. A page that opened later is told the probes already held for them. */
   setDrawn(keys: readonly string[]): void {
     this.drawn = [...keys];
     const held = this.scheduler.allProbes();
