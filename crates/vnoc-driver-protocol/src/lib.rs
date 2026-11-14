@@ -253,6 +253,19 @@ pub struct CallTreeResult {
     pub root: CallNode,
 }
 
+/// `vnoc/environmentInputs` (capability `environmentInputs`): the files of `root` whose change means "call trees may differ now".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentInputsParams {
+    pub root: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentInputsResult {
+    /// paths and globs (`requirements*.txt`) relative to `root`, or an absolute path when the environment lives outside it. `/` separators on
+    /// every OS, the absolute ones too (`C:/envs/x/pyvenv.cfg`); the core hashes what they name and never rewrites an entry
+    pub files: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

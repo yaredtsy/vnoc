@@ -4,6 +4,8 @@
 //!
 //! The projects are kept: `Projects` holds one open `Project` per root, and each request first brings it up to date with the disk (`refresh`),
 //! so an edit, a new file or a deleted one is seen without opening the project again. It lives on the worker thread (`worker.rs`).
+//!
+//! `vnoc/environmentInputs` is answered here too: the list is the kept project's.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -12,7 +14,7 @@ use analyzer_core::graph::Entry;
 use lsp_server::ErrorCode;
 use python_analysis::{Cancel, Frame, Limits, Options, Project, call_wire};
 use python_syntax::DefKind as Kind;
-use vnoc_driver_protocol::{CallMark, CallNode, CallTarget, CallTreeParams, CallTreeResult, DefKind};
+use vnoc_driver_protocol::{CallMark, CallNode, CallTarget, CallTreeParams, CallTreeResult, DefKind, EnvironmentInputsParams, EnvironmentInputsResult};
 
 use crate::outline::{analyzer_occurrence, protocol_occurrence};
 use crate::positions::Lines;
@@ -92,6 +94,13 @@ pub fn call_tree(projects: &mut Projects, params: CallTreeParams, cancel: &Cance
     let callers = Callers::read(root, &wire)?;
     let convert = Convert { lines: callers.lines() };
     Ok(CallTreeResult { root: convert.node(&wire) })
+}
+
+/// The files whose change means "answers may differ" (the analyzer's `Project::environment_inputs`: the config, the environment the engine uses,
+/// the lock files). Asked of the kept project after its refresh, so a config or an environment changed since the last request is in the list.
+pub fn environment_inputs(projects: &mut Projects, params: EnvironmentInputsParams) -> Result<EnvironmentInputsResult, Failure> {
+    projects.ensure(&params.root)?;
+    Ok(EnvironmentInputsResult { files: projects.by_root[params.root.as_str()].environment_inputs() })
 }
 
 /// The text of every file a call is made from: a node's `call_site` is read in `call_site_file`, which is not always its parent's file

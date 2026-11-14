@@ -15,11 +15,11 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# The analyzer comes from one pinned commit of language_driver_rs, all three at the same rev: two revs would build analyzer-core twice
+# The analyzer comes from one pinned commit of language_driver_rs (this rev is the tag `python-v0.3.0`), all three at the same rev: two revs would build analyzer-core twice
 # and the types would not match. For local work, put a `[patch]` section in an uncommitted .cargo/config.toml pointing at the checkout.
-python-syntax = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c989c0f4a7ddb77ab0066f76061e4068acda73ab" }
-python-analysis = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c989c0f4a7ddb77ab0066f76061e4068acda73ab" }
-analyzer-core = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c989c0f4a7ddb77ab0066f76061e4068acda73ab" }
+python-syntax = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c1e1d7e00c4090b0ab6789d59a3811ccec34bf8c" }
+python-analysis = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c1e1d7e00c4090b0ab6789d59a3811ccec34bf8c" }
+analyzer-core = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "c1e1d7e00c4090b0ab6789d59a3811ccec34bf8c" }
 
 # The wire types are shared with the core (D1): a renamed field breaks the build on both sides, not at run time.
 vnoc-driver-protocol = { path = "../../crates/vnoc-driver-protocol" }

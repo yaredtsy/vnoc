@@ -15,6 +15,8 @@ pub struct Driver {
     stdin: ChildStdin,
     out: BufReader<ChildStdout>,
     next: u64,
+    /// the `initialize` result
+    pub init: Value,
 }
 
 impl Driver {
@@ -27,8 +29,8 @@ impl Driver {
             .spawn()
             .unwrap();
         let (stdin, out) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
-        let mut d = Driver { child, stdin, out, next: 0 };
-        d.request("initialize", json!({ "protocol": 1 })).expect("the handshake works");
+        let mut d = Driver { child, stdin, out, next: 0, init: Value::Null };
+        d.init = d.request("initialize", json!({ "protocol": 1 })).expect("the handshake works");
         d.notify("initialized", json!({}));
         d
     }

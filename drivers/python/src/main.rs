@@ -36,8 +36,8 @@ fn main() -> anyhow::Result<()> {
         return Err(refused);
     }
 
-    // The main loop only dispatches (VS-D68). Outline and the ids run each on a thread of their own; `vnoc/callTree` goes to the worker, which
-    // owns the projects and answers one at a time (worker.rs). Every request has a cancel flag (and for a call tree the analyzer's `Cancel`, with its
+    // The main loop only dispatches (VS-D68). Outline and the ids run each on a thread of their own; `vnoc/callTree` and `vnoc/environmentInputs`
+    // go to the worker, which owns the projects and answers one at a time (worker.rs). Every request has a cancel flag (and for a call tree the analyzer's `Cancel`, with its
     // deadline), so a cancel, a shutdown or stdin EOF is handled while an analysis runs or waits.
     let wire_format = analyzer_core::wire::WIRE_FORMAT_VERSION;
     if call_tree::WIRE_FORMATS_READ.contains(&wire_format) {
@@ -65,9 +65,10 @@ fn main() -> anyhow::Result<()> {
                         let _ = sender.send(Message::Response(resp));
                     }) as worker::Reply
                 };
-                if req.method == method::CALL_TREE {
+                if req.method == method::CALL_TREE || req.method == method::ENVIRONMENT_INPUTS {
+                    let call_tree = req.method == method::CALL_TREE;
                     let job = worker::Job { id: req.id, params: req.params, flag: request.flag.clone(), cancel: request.cancel.clone(), reply };
-                    let _ = worker.send(worker::Task::CallTree(job));
+                    let _ = worker.send(if call_tree { worker::Task::CallTree(job) } else { worker::Task::EnvironmentInputs(job) });
                 } else if test_hooks() && req.method.starts_with("vnoc/test/") {
                     match req.method.as_str() {
                         "vnoc/test/deadline" => reply(set_test_deadline(req.id, &req.params)),
@@ -146,7 +147,7 @@ fn handshake(conn: &Connection) -> anyhow::Result<()> {
         name: "python".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         // present even when small: stock LSP clients refuse a reply without it. Optional methods are announced here.
-        capabilities: [("outline", true), ("ids.plan", true), ("ids.file", true), ("callTree", true), ("environmentInputs", false)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        capabilities: [("outline", true), ("ids.plan", true), ("ids.file", true), ("callTree", true), ("environmentInputs", true)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
     };
     conn.initialize_finish(id, serde_json::to_value(reply)?)?;
     Ok(())

@@ -1,6 +1,6 @@
 //! The one thread that owns the projects (docs/16-ui-redesign/10-build-order.md 8.2a; the analyzer's `11-driver-needs.md` §8).
 //!
-//! `vnoc/callTree` is sent here. The worker keeps one open `Project` per root, brings it up to date with the disk before each request, and answers
+//! `vnoc/callTree` and `vnoc/environmentInputs` are sent here. The worker keeps one open `Project` per root, brings it up to date with the disk before each request, and answers
 //! one request at a time: the engine is not shared between threads, and a request on a kept project is ten times faster than on a new one
 //! (the memo of what it has already worked out). Outline, `planIds` and `planFileId` stay on their own threads (`main.rs`): they need no project.
 //!
@@ -17,9 +17,9 @@ use std::time::Duration;
 use lsp_server::{ErrorCode, RequestId, Response};
 use python_analysis::Cancel;
 use serde_json::{Value, json};
-use vnoc_driver_protocol::CallTreeParams;
+use vnoc_driver_protocol::{CallTreeParams, EnvironmentInputsParams};
 
-use crate::call_tree::{Projects, call_tree};
+use crate::call_tree::{Projects, call_tree, environment_inputs};
 use crate::{Failure, invalid};
 
 /// The worker's stack. The analyzer's `ENGINE.md` ("The stack"): a request that reaches `max_stack` (256 levels) needs just over 2 MiB, and an
@@ -41,6 +41,8 @@ pub struct Job {
 
 pub enum Task {
     CallTree(Job),
+    /// needs the kept project too; the cancel's deadline does not apply (no solve)
+    EnvironmentInputs(Job),
     /// a request of the test hooks (`VNOC_TEST_HOOKS=1`): it goes through the same queue, so it is ordered with the call trees
     Test { id: RequestId, method: String, params: Value, reply: Reply },
 }
@@ -55,7 +57,14 @@ fn run(queue: Receiver<Task>) {
     let mut projects = Projects::default();
     for task in queue {
         match task {
-            Task::CallTree(job) => serve(&mut projects, job),
+            Task::CallTree(job) => serve(&mut projects, job, |projects, params, cancel| {
+                let params: CallTreeParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
+                to_value(call_tree(projects, params, cancel)?)
+            }),
+            Task::EnvironmentInputs(job) => serve(&mut projects, job, |projects, params, _| {
+                let params: EnvironmentInputsParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
+                to_value(environment_inputs(projects, params)?)
+            }),
             Task::Test { id, method, params, reply } => reply(test_hook(&mut projects, id, &method, params)),
         }
     }
@@ -65,18 +74,20 @@ fn cancelled(id: RequestId) -> Response {
     Response::new_err(id, ErrorCode::RequestCanceled as i32, "cancelled".into())
 }
 
-fn serve(projects: &mut Projects, job: Job) {
+fn to_value(result: impl serde::Serialize) -> Result<Value, Failure> {
+    serde_json::to_value(result).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
+}
+
+/// Runs one request on the worker: not at all if it was cancelled while it waited, inside a catch for a panic, and its answer dropped if it was
+/// cancelled while it ran.
+fn serve(projects: &mut Projects, job: Job, run: impl FnOnce(&mut Projects, Value, &Cancel) -> Result<Value, Failure>) {
     let Job { id, params, flag, cancel, reply } = job;
     // cancelled while it waited: never run (the solver would have cut it at once, but the project would still have been refreshed)
     if flag.load(Ordering::Relaxed) {
         return reply(cancelled(id));
     }
     let root = params.get("root").and_then(Value::as_str).map(str::to_string);
-    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<Value, Failure> {
-        let params: CallTreeParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
-        let result = call_tree(projects, params, &cancel)?;
-        serde_json::to_value(result).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
-    }));
+    let outcome = catch_unwind(AssertUnwindSafe(|| run(projects, params, &cancel)));
     let result = outcome.unwrap_or_else(|payload| {
         if let Some(root) = &root {
             projects.forget(root);
