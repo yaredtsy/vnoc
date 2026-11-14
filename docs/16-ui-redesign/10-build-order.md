@@ -375,6 +375,22 @@ Proof by hand: focus on a big file → every function is drawn; in a drawing wit
 focuses on it and draws its family.
 Commit: `step 8.4b (part 2): the root's family is always drawn; a held-back card focuses or explores`.
 
+**As built, 8.4b part 2 (2026-11-14).**
+
+| Decision | Why |
+|---|---|
+| The root's family is accepted by `fits(family, always)`: it adds to `committed` whatever it is, so everything below stays closed. A root of 300 files draws 301 cards, `total` equal, no note; a root of 250 with one open child of 3: 251 drawn, that child `heldBack` with its `+3`, `total` 254. This answers the spec edge of 8.4b's as-built table | 03 §6.1, "the root" |
+| `Placed.heldBack` = in the open set (or the root) **and** drawn collapsed. A card with nothing to open is never held back, however full the budget is | a leaf in the set would otherwise count as refused once the budget ran out, and its keys would focus it for nothing |
+| `chevronAction(card)` (`node-card/chevronAction.ts`, table test of the six rows) gives `focus` / `explore` / `toggle`; the header's chevron, the footer's `+N`, `Space` and `→` all follow it. The header's `aria-label` says *Focus on …* / *Explore …* for a held-back card. `heldBackTip(card)` has the tooltip of 03 §6.1; `footerChips` uses it for a held-back card's `+N` | one function, so the four places cannot drift apart |
+| `withRoot` keeps `""` (`NO_ROOT`, new in `shared/open.ts`) when more than 20 roots are used: the oldest roots **other than** `""` go. `""` therefore costs one of the 20 | 03 §2.1 |
+| **Not done as written:** a `sessionProblems` check "21+ roots still has `""` when it had it". It cannot be known from one session (a saved state does not say what it once had). The test visits 25 roots after opening things at `""`, checks `""`'s set after each visit and runs `sessionProblems` after every step | an invariant must be decidable from the state |
+| **The prefetch regression:** `cardsDrawn` now carries `onScreen` (every function and class card on screen) beside `keys` (those with no structure children: the probes). `cardsReport` (`canvas/onScreen.ts`) builds both and has a test; the host's `wantedOnScreen` checks the prefetch against `onScreen`, the probes go to `keys`. Test: a selected class with a method and no `__init__` is wanted as `prefetch`, kept when on screen, dropped when scrolled off | `keys` was never a list of cards on screen, only of the ones that need a probe |
+| Window suite: the 250-function file is focused after the held-back check → 251 cards and `hidden` 0. The bar's note is not in the `rendered` post, so "no note" is shown by `hidden` 0 (the layout's `total` equals what it drew); the note's own words stay a pure test (`budgetNote`) | no new test hook for one assertion |
+
+Tests: `shared` 241, `webview` 216, window suite 46 (the 8.4b big-file test grew the focus step).
+
+**Proof by hand (yours, 8.4b and part 2 together):** focus on a big file or folder → every card is drawn, no note. In a drawing with the note, the `+N` of a held-back card says *Not drawn … Click to focus on it*; click it, or press `Space` or `→` on it → the canvas focuses on it and draws its family; on a call card the same asks to explore it. Select a class that has methods and no `__init__`: its chevron appears on the first click (the prefetch).
+
 ### 8.5 The sidebar becomes a webview (structure rows)
 
 | Files | What |
