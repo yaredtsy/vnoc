@@ -3,9 +3,10 @@
 import { linesText } from "@vnoc/shared/calls.ts";
 import type { CallsFooter } from "./callsFooter.ts";
 import type { CallInfo, Placed } from "../canvas/layout.ts";
+import { heldBackTip } from "./chevronAction.ts";
 
 /** What the footer reads of a card: the counts, and for a call card who calls it and at which lines. */
-export type FooterNode = Pick<Placed, "collapsed" | "plus" | "docs" | "link" | "callsFooter"> & { call: Pick<CallInfo, "callerName" | "lines"> | null };
+export type FooterNode = Pick<Placed, "collapsed" | "plus" | "docs" | "link" | "callsFooter"> & { heldBack?: boolean; call: Pick<CallInfo, "callerName" | "lines"> | null };
 
 export interface Chip {
   kind: "times" | "hidden" | "docs" | "link" | "selected" | "cursor" | "calls";
@@ -31,7 +32,7 @@ export function footerChips(node: FooterNode, hides: { selected: boolean; cursor
     const times = merged.lines.length;
     chips.push({ kind: "times", text: `×${times}`, tip: `${merged.callerName} calls it ${times} times: ${linesText(merged.lines)}`, faded: false });
   }
-  if (node.collapsed && node.plus > 0) chips.push({ kind: "hidden", text: `+${node.plus}`, tip: `${node.plus} hidden: open to see them`, faded: false });
+  if (node.collapsed && node.plus > 0) chips.push({ kind: "hidden", text: `+${node.plus}`, tip: node.heldBack ? heldBackTip({ role: node.call ? "call" : "node" }) : `${node.plus} hidden: open to see them`, faded: false });
   if (node.docs > 0) {
     chips.push({ kind: "docs", text: String(node.docs), tip: `${docsCount(node.docs)}: click to read`, faded: false });
     if (node.link) {

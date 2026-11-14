@@ -4,7 +4,20 @@ import { type OpenableSite, listedSites } from "@vnoc/shared/calls.ts";
 import type { CallTreeNode } from "@vnoc/shared/messages.ts";
 import type { Intent } from "@vnoc/shared/session.ts";
 import type { TreeNode } from "@vnoc/shared/messages.ts";
-import { type Layout, canOpen } from "./layout.ts";
+import { chevronAction } from "../node-card/chevronAction.ts";
+import { type Layout, type Placed, canOpen } from "./layout.ts";
+
+/** What a toggle of a card is as an intent: a held-back card is focused or explored instead (03 §6.1); `open` is what a plain toggle becomes. */
+function chevronIntent(card: Placed, open: Intent): Intent {
+  switch (chevronAction(card)) {
+    case "focus":
+      return { type: "focus", id: card.id };
+    case "explore":
+      return { type: "explore", call: card.id, activate: true };
+    case "toggle":
+      return open;
+  }
+}
 
 /** The intent for a key, or null when the key means nothing here. `laid.nodes` is in row order, top to bottom. */
 export function canvasKey(key: string, laid: Layout, _root: TreeNode, selected: string | null): Intent | null {
@@ -20,14 +33,14 @@ export function canvasKey(key: string, laid: Layout, _root: TreeNode, selected: 
       return card?.parentId && ids.includes(card.parentId) ? { type: "select", id: card.parentId } : null;
     case "ArrowRight": // open it if it is closed, else go to its first child
       if (!card || !canOpen(card)) return null;
-      if (card.collapsed) return { type: "expand", ids: [card.id] };
+      if (card.collapsed) return chevronIntent(card, { type: "expand", ids: [card.id] });
       // open: its first child, when one is drawn right after it (a function open with its calls not drawn has none)
       return laid.nodes[at + 1] && laid.nodes[at + 1].depth > card.depth ? { type: "select", id: ids[at + 1] } : null;
     case "Enter": // a structure card: Focus. A call card: Explore, activated (03 §7); an unknown callee has nowhere to go
       if (!card) return null;
       return card.role === "node" ? { type: "focus", id: card.id } : card.key === null ? null : { type: "explore", call: card.id, activate: true };
     case " ":
-      return card && canOpen(card) ? { type: "toggle", id: card.id } : null;
+      return card && canOpen(card) ? chevronIntent(card, { type: "toggle", id: card.id }) : null;
     case "Escape":
       return selected ? { type: "select", id: null } : null;
     default:

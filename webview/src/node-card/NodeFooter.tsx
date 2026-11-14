@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils.ts";
 import { FOOTER_H, LINE_H, type Placed } from "../canvas/layout.ts";
 import { request } from "../host.ts";
 import { useView } from "../state/view.ts";
+import { chevronAction } from "./chevronAction.ts";
 import { type Chip, footerChips } from "./footerChips.ts";
 import { CHIP_PAD, NAME_X } from "./rows.ts";
 import { useNodeActions } from "./useNodeActions.ts";
@@ -56,7 +57,8 @@ function CallsState({ chip, onRetry }: { chip: Chip; onRetry: () => void }) {
 
 /** The counts of `footerChips`, always in the same place. Draws only: which chips, their text and tips are decided there. */
 export function NodeFooter({ node, contextId }: { node: Placed; contextId: string }) {
-  const { toggle, showDocs } = useNodeActions(node.id, contextId);
+  const actions = useNodeActions(node.id, contextId);
+  const { showDocs } = actions;
   const hidesSelected = useView((v) => v.hidesSelected === node.id);
   const hidesCursor = useView((v) => v.hidesCursor === node.id);
   const draw = (c: Chip): ReactNode => {
@@ -64,7 +66,7 @@ export function NodeFooter({ node, contextId }: { node: Placed; contextId: strin
       case "times": // calls merged into this card: a fact, not a button
         return <ChipView key={c.kind} tip={c.tip}>{c.text}</ChipView>;
       case "hidden":
-        return <ChipView key={c.kind} tip={c.tip} onClick={toggle}>{c.text}</ChipView>;
+        return <ChipView key={c.kind} tip={c.tip} onClick={actions[chevronAction(node)]}>{c.text}</ChipView>;
       case "docs":
         return (
           <ChipView key={c.kind} tip={c.tip} onClick={showDocs}>

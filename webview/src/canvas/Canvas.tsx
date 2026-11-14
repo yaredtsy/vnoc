@@ -10,7 +10,7 @@ import { useData } from "../state/data.ts";
 import { rememberViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
-import { SETTLE_MS, onScreenIds } from "./onScreen.ts";
+import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
 
@@ -53,13 +53,11 @@ function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | n
   useEffect(() => {
     const timer = setTimeout(() => {
       const visible = new Set(onScreenIds(laid.nodes.map((p) => ({ id: p.id, x: p.x, y: p.y, h: cardHeight(p) })), { x, y, zoom }, { width, height }));
-      // a function or class card that shows nothing about its calls yet is what a probe is for
-      const keys = laid.nodes.filter((p) => p.role === "node" && (p.kind === "function" || p.kind === "class") && p.childCount === 0 && visible.has(p.id)).map((p) => p.id);
-      const ordered = selected !== null && keys.includes(selected) ? [selected, ...keys.filter((k) => k !== selected)] : keys;
-      const same = ordered.join("\n");
+      const report = cardsReport(laid.nodes, visible, selected);
+      const same = `${report.keys.join("\n")}\n\n${report.onScreen.join("\n")}`;
       if (same === last.current) return;
       last.current = same;
-      post({ type: "cardsDrawn", keys: ordered });
+      post({ type: "cardsDrawn", ...report });
     }, SETTLE_MS);
     return () => clearTimeout(timer);
   }, [laid, selected, x, y, zoom, width, height]);

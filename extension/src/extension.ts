@@ -104,8 +104,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     showLog: async () => output.show(),
     retryCalls: async (key) => callTrees.retry(key),
   });
-  panels = new Panels(ctx, handlers, (note) => onNote(note, store, output, (keys) => {
-    callTrees.setDrawn(keys); // what the canvas draws is what is probed
+  panels = new Panels(ctx, handlers, (note) => onNote(note, store, output, (keys, onScreen) => {
+    callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
     wantCalls();
   }));
   commands = new Commands(c, store, panels, async (id) => {
@@ -237,7 +237,7 @@ export function activate(ctx: vscode.ExtensionContext) {
 }
 
 /** What a webview says that needs no answer. */
-function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[]) => void) {
+function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void) {
   switch (note.type) {
     case "intent":
       store.dispatch(note.intent, note.context);
@@ -249,7 +249,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       renderWaiters.splice(0).forEach((w) => w(rendered!));
       break;
     case "cardsDrawn":
-      cardsDrawn(note.keys);
+      cardsDrawn(note.keys, note.onScreen);
       break;
     case "chipsDrawn":
       chips = note.chips;

@@ -1,7 +1,7 @@
 // Which cards are on screen (docs/16-ui-redesign/03-canvas.md §6.1): the viewport and one screen of margin on every side. Pure, so the rule is tested;
 // the canvas reports the result to the host after a pan settles, and only those cards are probed.
 
-import { CARD_W } from "./layout.ts";
+import { CARD_W, type Placed } from "./layout.ts";
 
 export interface Box {
   id: string;
@@ -33,4 +33,15 @@ export function onScreenIds(cards: readonly Box[], view: View, size: { width: nu
   const right = -view.x / view.zoom + 2 * w;
   const bottom = -view.y / view.zoom + 2 * h;
   return cards.filter((c) => c.x < right && c.x + CARD_W > left && c.y < bottom && c.y + c.h > top).map((c) => c.id);
+}
+
+/**
+ * What the page tells the host about the cards on screen (`visible`: their ids). `onScreen`: every function and class card there, whatever is under it: the
+ * prefetch of the selected one is checked against these. `keys`: those with no structure children, which show nothing about their calls until probed; the
+ * selected one first. A class with methods is in `onScreen` and not in `keys`: it owns a tree when it has no `__init__`, and its prefetch must survive.
+ */
+export function cardsReport(cards: readonly Pick<Placed, "id" | "role" | "kind" | "childCount">[], visible: ReadonlySet<string>, selected: string | null): { keys: string[]; onScreen: string[] } {
+  const shown = cards.filter((p) => p.role === "node" && (p.kind === "function" || p.kind === "class") && visible.has(p.id));
+  const keys = shown.filter((p) => p.childCount === 0).map((p) => p.id);
+  return { keys: selected !== null && keys.includes(selected) ? [selected, ...keys.filter((k) => k !== selected)] : keys, onScreen: shown.map((p) => p.id) };
 }

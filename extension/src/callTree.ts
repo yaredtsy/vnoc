@@ -41,7 +41,10 @@ export class CallTrees {
   private readonly loading = new Set<string>();
   private endProgress: (() => void) | undefined;
   private holdMs = 0;
+  /** the cards to probe: on screen, with nothing known of their calls */
   private drawn: string[] = [];
+  /** every function and class card on screen: the prefetch of the selected one is for these */
+  private onScreen: string[] = [];
   private readonly core: Core;
   private readonly waiting = new Map<string, ((r: Settled) => void)[]>();
   /** what happened, newest last (the window suite reads it) */
@@ -113,12 +116,16 @@ export class CallTrees {
 
   /** What the session has open or selected changed, or a tree arrived: ask for what is wanted now (the prefetch only for a card on screen), and probe the cards that are on screen. */
   update(session: Session, tree: TreeNode): void {
-    this.scheduler.setWanted(wantedOnScreen(wantedCalls(session, tree, this.scheduler.all()), this.drawn), this.drawn);
+    this.scheduler.setWanted(wantedOnScreen(wantedCalls(session, tree, this.scheduler.all()), this.onScreen), this.drawn);
   }
 
-  /** The function and class cards on the canvas's screen (the viewport and a margin), the one to look at first first. A page that opened later is told the probes already held for them. */
-  setDrawn(keys: readonly string[]): void {
+  /**
+   * The cards on the canvas's screen (the viewport and a margin). `keys`: the function and class cards to probe, the one to look at first first; `onScreen`: all
+   * of them, which `keys` leaves the ones with structure children out of. A page that opened later is told the probes already held for `keys`.
+   */
+  setDrawn(keys: readonly string[], onScreen: readonly string[] = keys): void {
     this.drawn = [...keys];
+    this.onScreen = [...onScreen];
     const held = this.scheduler.allProbes();
     for (const key of keys) {
       const probe = held[key];

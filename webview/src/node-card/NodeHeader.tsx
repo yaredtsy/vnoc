@@ -3,13 +3,15 @@ import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
 import { HEADER_H, type Placed, canOpen } from "../canvas/layout.ts";
 import { ActionStrip } from "./ActionStrip.tsx";
+import { chevronAction } from "./chevronAction.ts";
 import { KINDS, kindIcon } from "./kinds.ts";
 import { CHEVRON, HEADER_PAD, KIND_ICON } from "./rows.ts";
 import { useNodeActions } from "./useNodeActions.ts";
 
 /** Chevron (or ⌖ on the root of a focused view), kind icon, name, buttons. The opened folder, always open, has no chevron. */
 export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Placed; contextId: string; focusRoot: boolean; selected: boolean }) {
-  const { toggle } = useNodeActions(node.id, contextId, node.key);
+  const actions = useNodeActions(node.id, contextId, node.key);
+  const action = chevronAction(node);
   const { title, color } = KINDS[node.kind];
   const icon = kindIcon(node.kind, node.inClass); // a call card shows its callee's kind, never the call icon
   return (
@@ -24,8 +26,8 @@ export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Pla
           size="icon-xs"
           className="nodrag nopan" style={{ width: CHEVRON, height: CHEVRON }}
           aria-expanded={!node.collapsed}
-          aria-label={node.collapsed ? `Expand ${node.name}` : `Collapse ${node.name}`}
-          onClick={toggle}
+          aria-label={action === "focus" ? `Focus on ${node.name}` : action === "explore" ? `Explore ${node.name}` : node.collapsed ? `Expand ${node.name}` : `Collapse ${node.name}`}
+          onClick={actions[action]}
         >
           <Codicon name="chevron-right" className={cn("transition-transform", !node.collapsed && "rotate-90")} />
         </Button>

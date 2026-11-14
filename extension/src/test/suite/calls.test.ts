@@ -233,7 +233,7 @@ suite("show calls", () => {
     api.dispatch({ type: "collapseAll" });
   });
 
-  test("a big file opened draws at most 200 cards, and what it held back is hidden, not lost (03 §6.1)", async () => {
+  test("a big file opened draws at most 200 cards, and what it held back is hidden, not lost; focused, it is drawn whole (03 §6.1)", async () => {
     const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
     const file = path.join(folder, "calls_big.py");
     fs.writeFileSync(file, Array.from({ length: 250 }, (_, i) => `def big${i}():\n    return ${i}\n`).join("\n\n"));
@@ -244,8 +244,15 @@ suite("show calls", () => {
       api.dispatch({ type: "expand", ids: [big!.id] }); // what Expand All Below does
       await until("a drawing that held the file's functions back", () => api.renderedPosts().length > seen && (api.renderedPosts().at(-1)?.hidden ?? 0) >= 250, 30_000);
       assert.ok((api.renderedPosts().at(-1)?.visible ?? 999) <= 200, `visible ${api.renderedPosts().at(-1)?.visible}`);
+      // the way out the note names: the focus root and its whole family are drawn past the budget, so nothing is held back (and the bar has no note: it
+      // shows only when the layout's `total` is more than what it drew, which is `hidden` 0 here)
+      const before = api.renderedPosts().length;
+      api.dispatch({ type: "focus", id: big!.id });
+      await until("the focused file drawn whole: the file and its 250 functions", () => api.renderedPosts().length > before && api.renderedPosts().at(-1)?.visible === 251, 30_000);
+      assert.strictEqual(api.renderedPosts().at(-1)?.hidden, 0, "nothing held back");
       assert.deepStrictEqual(api.webviewErrors(), []);
     } finally {
+      api.dispatch({ type: "focusJump", depth: 0 });
       api.dispatch({ type: "collapseAll" });
       fs.rmSync(file, { force: true });
       let left = false;

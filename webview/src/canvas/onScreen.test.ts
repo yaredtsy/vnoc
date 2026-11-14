@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CARD_W } from "./layout.ts";
-import { type Box, onScreenIds } from "./onScreen.ts";
+import { wantedCalls, wantedOnScreen } from "@vnoc/shared/calls.ts";
+import type { TreeNode } from "@vnoc/shared/messages.ts";
+import { MAIN, emptySession } from "@vnoc/shared/session.ts";
+import { CARD_W, type Placed } from "./layout.ts";
+import { type Box, cardsReport, onScreenIds } from "./onScreen.ts";
 
 const card = (id: string, x: number, y: number, h = 80): Box => ({ id, x, y, h });
 const size = { width: 1000, height: 800 };
@@ -37,4 +40,29 @@ test("a canvas not measured yet has every card on screen; the order given is kep
   const cards = [card("b", 9000, 9000), card("a", 0, 0)];
   assert.deepEqual(onScreenIds(cards, at(), { width: 0, height: 0 }), ["b", "a"]);
   assert.deepEqual(onScreenIds(cards, at(), size), ["a"]);
+});
+
+// what the page reports of a drawing: probes for the cards with no structure children, and every function and class card for the prefetch
+const placed = (id: string, kind: Placed["kind"], childCount: number, role: Placed["role"] = "node") => ({ id, kind, childCount, role });
+const treeNode = (id: string, kind: TreeNode["kind"], children: TreeNode[] = []): TreeNode => ({
+  id, kind, name: id, path: id, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children,
+});
+
+test("cardsReport: probes go to the cards with no children; every function and class card on screen is in onScreen", () => {
+  const cards = [placed("a.py", "file", 3), placed("K", "class", 1), placed("K.run", "function", 0), placed("f", "function", 0), placed("far", "function", 0), placed("call:x", "function", 0, "call")];
+  const visible = new Set(["a.py", "K", "K.run", "f", "call:x"]);
+  assert.deepEqual(cardsReport(cards, visible, null), { keys: ["K.run", "f"], onScreen: ["K", "K.run", "f"] }, "a file and a call card are neither; `far` is off screen");
+  assert.deepEqual(cardsReport(cards, visible, "f").keys, ["f", "K.run"], "the selected one first");
+});
+
+test("the prefetch of a selected class that has methods and no __init__ survives what the page reports", () => {
+  const tree = treeNode("/", "folder", [treeNode("a.py", "file", [treeNode("K", "class", [treeNode("K.run", "function")])])]);
+  const main = emptySession().contexts[MAIN];
+  const session = { ...emptySession(), contexts: { [MAIN]: { ...main, selected: "K" } } };
+  const wanted = wantedCalls(session, tree, {});
+  assert.deepEqual(wanted, [{ key: "K", reason: "prefetch" }], "K is an entry: a class with no __init__ of its own");
+  const cards = [placed("a.py", "file", 1), placed("K", "class", 1), placed("K.run", "function", 0)];
+  const visible = new Set(["a.py", "K", "K.run"]);
+  assert.deepEqual(wantedOnScreen(wanted, cardsReport(cards, visible, "K").onScreen), wanted, "on screen: still asked for");
+  assert.deepEqual(wantedOnScreen(wanted, cardsReport(cards, new Set(["a.py"]), "K").onScreen), [], "scrolled off: dropped");
 });

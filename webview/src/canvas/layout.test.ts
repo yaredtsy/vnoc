@@ -296,14 +296,45 @@ test("a call card's footer says what its callee calls, except a recursive call o
 const files = (count: number, prefix = "f") => Array.from({ length: count }, (_, i) => n(`${prefix}${i}`, "file"));
 const folder = (id: string, count: number) => n(id, "folder", files(count, `${id}/`));
 
-test("the budget: 198 files under the root are 199 cards, 199 are 200, and 200 do not fit as a family, so the root is drawn alone", () => {
-  for (const [count, drawn, total] of [[198, 199, 199], [199, 200, 200], [200, 1, 201]] as const) {
+test("the budget: the root and its whole family are always drawn, past 200 if they must be, and nothing is held back, so no note", () => {
+  for (const [count, drawn] of [[198, 199], [199, 200], [200, 201], [300, 301]] as const) {
     const l = layout(n("/", "folder", files(count)), new Set());
-    assert.deepEqual([l.nodes.length, l.total], [drawn, total], `${count} files`);
+    assert.deepEqual([l.nodes.length, l.total], [drawn, drawn], `${count} files`);
+    assert.equal(l.nodes.some((p) => p.heldBack), false, `${count} files: nothing held back`);
   }
   assert.equal(MAX_CARDS, 200);
-  const alone = layout(n("/", "folder", files(200)), new Set());
-  assert.deepEqual([alone.nodes[0].id, alone.nodes[0].collapsed, alone.nodes[0].plus], ["/", true, 200], "the root is always drawn, closed, with its +N");
+  const root = layout(n("/", "folder", files(300)), new Set()).nodes[0];
+  assert.deepEqual([root.collapsed, root.heldBack], [false, false], "the root is open");
+});
+
+test("the root's family counts against the budget: everything below it stays closed, and an open child is held back", () => {
+  const project = n("/", "folder", [folder("a", 3), ...files(249)]);
+  const l = layout(project, new Set(["a"]));
+  const a = l.nodes.find((p) => p.id === "a")!;
+  assert.equal(l.nodes.length, 251, "the root and its 250 children");
+  assert.deepEqual([a.collapsed, a.plus, a.heldBack], [true, 3, true], "a is open in the set, drawn closed by the budget, with its +3");
+  assert.equal(l.total, 254);
+  assert.equal(l.nodes.filter((p) => p.heldBack).length, 1);
+  const closed = layout(project, new Set()).nodes.find((p) => p.id === "a")!;
+  assert.deepEqual([closed.collapsed, closed.heldBack], [true, false], "a card the user closed is never held back");
+});
+
+test("a focused file of 250 functions draws all 251 cards", () => {
+  const file = n("big.py", "file", Array.from({ length: 250 }, (_, i) => n(`big.py::f${i}`, "function")));
+  const l = layout(file, new Set());
+  assert.deepEqual([l.nodes.length, l.total], [251, 251]);
+});
+
+test("heldBack: a call card in the set that the budget closed; a leaf, or a card with nothing to open, never", () => {
+  const callee = (i: number): CallTreeNode => ({ key: null, name: `c${i}`, qualname: `c${i}`, path: null, kind: "function", call_count: 1, call_sites: [], marks: [], children: [] });
+  const f = n("f", "function");
+  const project = n("/", "folder", [n("a.py", "file", [f, n("leaf", "function")])]);
+  const callsOf = (id: string): Calls => (id === "f" ? { state: "known", children: Array.from({ length: 199 }, (_, i) => callee(i)) } : { state: "unknown" });
+  const l = layout(project, new Set(["a.py", "f", "leaf"]), new Set(), callsOf);
+  const by = (id: string) => l.nodes.find((p) => p.id === id)!;
+  assert.deepEqual([by("f").heldBack, by("f").collapsed], [true, true], "4 + 199 > 200");
+  assert.deepEqual([by("leaf").heldBack, by("leaf").collapsed], [false, false], "it has nothing to open: the budget has nothing to hold back");
+  assert.equal(by("a.py").heldBack, false);
 });
 
 test("an open card whose children do not all fit is drawn closed with its +N, and so is every open card after it; what fits before it stays whole", () => {

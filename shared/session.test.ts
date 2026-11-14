@@ -597,6 +597,28 @@ test("a 21st root drops the one used longest ago; a root used again moves to the
   assert.deepEqual([...openOf(ctx(s))], []);
 });
 
+test("the project's root keeps its set however many roots are visited (03 §2.1)", () => {
+  const files = Array.from({ length: 25 }, (_, i) => node(`f${i}.py`, "file", [node(`f${i}`, "function")]));
+  const wide = node("/", "folder", [node("pkg", "folder", files)]);
+  let s = emptySession();
+  const go = (...intents: Intent[]) => {
+    for (const intent of intents) {
+      s = reduce(s, MAIN, intent, wide, lookup);
+      assert.deepEqual(sessionProblems(s, wide), [], `after ${JSON.stringify(intent)}`);
+    }
+  };
+  go({ type: "expand", ids: ["pkg", "f3.py"] }); // opened at "": the oldest set from here on
+  for (let i = 0; i < 25; i++) {
+    go({ type: "focus", id: `f${i}.py` }, { type: "expand", ids: [`f${i}`] });
+    assert.deepEqual(ctx(s).open[""], ["pkg", "f3.py"], `the project's set after visiting f${i}.py`);
+    assert.ok(ctx(s).recent.length <= 20, `${ctx(s).recent.length} roots kept`);
+  }
+  assert.equal(ctx(s).recent.length, 20);
+  assert.ok(ctx(s).recent.includes("") && !("f0.py" in ctx(s).open) && "f24.py" in ctx(s).open, `kept ${Object.keys(ctx(s).open)}`);
+  go({ type: "focusJump", depth: 0 });
+  assert.deepEqual([[...ctx(s).focus], [...openOf(ctx(s))]], [[], ["pkg", "f3.py"]], "clearing the focus gives the project back as it was left");
+});
+
 test("the code changed: ids that are gone leave every set, and a root that is gone loses its set", () => {
   let s = run(emptySession(), { type: "expand", ids: ["pkg", "b.py", "g"] }, { type: "focus", id: "f" });
   s = run(s, { type: "focusBack" }, { type: "focus", id: "g" }, { type: "expand", ids: ["g"] });

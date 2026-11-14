@@ -96,6 +96,8 @@ export type Placed = {
   call: CallInfo | null;
   /** how many lines its open site list has; 0 when closed */
   siteRows: number;
+  /** it is in the open set but the card budget drew it closed (03 §6.1): its chevron focuses or explores instead of toggling, so it never leaves the set unseen */
+  heldBack: boolean;
 };
 
 /** Whether the card has anything to open: structure under it, or calls. */
@@ -159,7 +161,8 @@ export function layout(
 
 /**
  * One walk of the drawing, depth first in reading order. `budget`: when the children of the next open card (its structure children and its first level of
- * calls, together: a family) do not all fit, that card is drawn closed with its `+N`, and so is every open card after it. The root is always drawn.
+ * calls, together: a family) do not all fit, that card is drawn closed with its `+N`, and so is every open card after it. The root and its whole family
+ * are always drawn, past the budget if they must be: they count against it, so everything below them stays closed (03 §6.1).
  */
 function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, codeOpen: ReadonlySet<string>, callsOf: (id: string) => Calls, sitesOpen: ReadonlySet<string>): Omit<Layout, "total"> & { capped: boolean } {
   const nodes: Placed[] = [];
@@ -167,7 +170,11 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
   /** The cards drawn or promised: the root, and every family accepted so far (its cards are drawn when the walk gets to them). */
   let committed = 1;
   /** Whether a card asked to be open, with `family` children, may be: they fit in what is left. A family that does not fit is refused, and so is every one after it. */
-  const fits = (family: number): boolean => {
+  const fits = (family: number, always = false): boolean => {
+    if (always) {
+      committed += family;
+      return true;
+    }
     if (capped) return false;
     if (committed + family > budget) {
       capped = true;
@@ -196,9 +203,10 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
     const range = n.kind === "file" ? WHOLE_FILE : n.range;
     const structural = n.children.length > 0;
     const calls = ownsCalls(n) ? callsOf(n.id) : null;
-    // asked to be open (the root always is), and its whole family fits: the structure children, then the first level of its calls
+    // asked to be open, and its whole family fits: the structure children, then the first level of its calls. The root is always open, whatever its family
     const family = n.children.length + (calls?.state === "known" ? calls.children.length : 0);
-    const open = (n === root || expanded.has(n.id)) && fits(family);
+    const asked = n === root || expanded.has(n.id);
+    const open = asked && fits(family, n === root);
     const look = calls ? callsLook(calls, open) : null;
     // a class that has methods is not "calls nothing": its methods are what is under it
     const footer = calls ? callsFooter(calls) : null;
@@ -207,7 +215,7 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
       id: n.id, role: "node", key: n.id, kind: n.kind, name: n.name, path: n.path, line: n.range ? n.range.start.line + 1 : null, range,
       codeOpen: range !== null && codeOpen.has(n.id), depth, x: depth * COL_W, y, parentId, inClass: n.kind === "function" && parentKind === "class",
       childCount: n.children.length, callsChevron: look?.chevron ?? false, plus: n.children.length + (look?.plus ?? 0), callsFooter: structural && footer?.state === "nothing" ? null : footer, contents: contentsOf(n),
-      collapsed: isCollapsed, syntaxError: n.syntax_error, docs: n.docs, link: n.link, call: null, siteRows: 0,
+      collapsed: isCollapsed, syntaxError: n.syntax_error, docs: n.docs, link: n.link, call: null, siteRows: 0, heldBack: asked && isCollapsed,
     });
     if (isCollapsed) return;
     for (const c of n.children) {
@@ -236,7 +244,7 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
         childCount: 0, callsChevron: look.chevron, plus: look.plus ?? 0, callsFooter: look.unknown || c.marks.includes("recursive") ? null : callsFooter(calls), contents: noContents, collapsed, syntaxError: callee?.node.syntax_error ?? false,
         docs: callee?.node.docs ?? 0, link: callee?.node.link ?? null,
         call: { count: c.call_count, sites: c.call_sites, lines: c.call_sites.map((s) => s.start.line + 1), callerName: caller.name, callerPath: caller.path, look },
-        siteRows,
+        siteRows, heldBack: expanded.has(id) && collapsed,
       });
       edges.push({ id: `${parentId}->${id}`, source: parentId, target: id, kind: "call" });
       if (collapsed || !look.chevron || calls.state !== "known") continue;

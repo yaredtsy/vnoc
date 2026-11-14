@@ -5,7 +5,7 @@
 import type { TreeNode } from "./messages";
 import { type CallId, type CallLookup, callExists, isCallId, parseCallId } from "./calls.ts";
 import { jump, pop } from "./focusStack.ts";
-import { MAX_ROOTS, NONE, openOf, rootOf } from "./open.ts";
+import { MAX_ROOTS, NONE, NO_ROOT, openOf, rootOf } from "./open.ts";
 import { chainedPrefix, findNode, lineage, pathTo } from "./tree.ts";
 
 export type ContextId = string;
@@ -89,13 +89,16 @@ const keep = (old: readonly string[], next: readonly string[]) => (sameList(old,
 /** Puts `root` last in the list of roots in use, once. The same array when it already is. */
 const touch = (recent: readonly string[], root: string): readonly string[] => (recent[recent.length - 1] === root ? recent : [...recent.filter((r) => r !== root), root]);
 
-/** `open` and `recent` with `root` in use and its set `ids`; the root used longest ago goes when there are more than MAX_ROOTS (never `root`, which is last). */
+/**
+ * `open` and `recent` with `root` in use and its set `ids`; the root used longest ago goes when there are more than MAX_ROOTS. Never `root` (it is last), and
+ * never the project's root `""` (03 §2.1): clearing the focus always gives the project back as it was left, so it costs one of the 20 and the next-oldest goes.
+ */
 function withRoot(c: Pick<ContextState, "open" | "recent">, root: string, ids: readonly string[]): Pick<ContextState, "open" | "recent"> {
   let recent = touch(c.recent, root);
   let open = c.open[root] === ids ? c.open : { ...c.open, [root]: ids };
   if (recent.length > MAX_ROOTS) {
-    const drop = new Set(recent.slice(0, recent.length - MAX_ROOTS));
-    recent = recent.slice(recent.length - MAX_ROOTS);
+    const drop = new Set(recent.filter((r) => r !== NO_ROOT).slice(0, recent.length - MAX_ROOTS));
+    recent = recent.filter((r) => !drop.has(r));
     open = Object.fromEntries(Object.entries(open).filter(([r]) => !drop.has(r)));
   }
   return { open, recent };

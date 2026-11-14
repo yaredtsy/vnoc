@@ -83,3 +83,11 @@ test("no `calls 4`: a closed card with calls says its number once, in the +N, an
   const kinds = footerChips({ ...base, collapsed: true, plus: 4, callsFooter: null }, none).map((c) => [c.kind, c.text]);
   assert.deepEqual(kinds, [["hidden", "+4"]]);
 });
+
+test("the +N of a held-back card says why, and what a click does (03 §6.1)", () => {
+  const plus = (node: Parameters<typeof footerChips>[0]) => footerChips(node, { selected: false, cursor: false }).find((c) => c.kind === "hidden")?.tip;
+  const base = { collapsed: true, plus: 3, docs: 0, link: null, callsFooter: null, call: null } as const;
+  assert.equal(plus({ ...base, heldBack: true }), "Not drawn: the canvas shows at most 200 cards. Click to focus on it.");
+  assert.equal(plus({ ...base, heldBack: true, call: { callerName: "f", lines: [1] } }), "Not drawn: the canvas shows at most 200 cards. Click to explore it.");
+  assert.equal(plus({ ...base, heldBack: false }), "3 hidden: open to see them");
+});
