@@ -53,6 +53,14 @@
   --list-inactive-fg: var(--vscode-list-inactiveSelectionForeground, var(--foreground));
   --list-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
   --indent-guide: var(--vscode-tree-indentGuidesStroke, #585858);
+  /* the search box, and the hover card of a row */
+  --input-bg: var(--vscode-input-background, #3c3c3c);
+  --input-fg: var(--vscode-input-foreground, #ccc);
+  --input-border: var(--vscode-input-border, transparent);
+  --input-placeholder: var(--vscode-input-placeholderForeground, #9d9d9d);
+  --hover-bg: var(--vscode-editorHoverWidget-background, #252526);
+  --hover-fg: var(--vscode-editorHoverWidget-foreground, #ccc);
+  --hover-border: var(--vscode-editorHoverWidget-border, #454545);
   --side-bar-bg: var(--vscode-sideBar-background, var(--background));
   --side-bar-fg: var(--vscode-sideBar-foreground, var(--foreground));
   --edge-call: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 70%, transparent); /* a call edge: dashed, blue at 70% */

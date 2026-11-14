@@ -65,3 +65,16 @@ test("no rows: no key means anything but Back", () => {
   assert.equal(sidebarKey(press("Enter"), [], null, PAGE), null);
   assert.deepEqual(sidebarKey(press("ArrowLeft", { altKey: true }), [], null, PAGE), intent({ type: "focusBack" }));
 });
+
+// the keys that put the cursor in the search box (06 §7)
+import { isSearchKey } from "./keys.ts";
+const searchTable: { name: string; key: KeyFacts; expect: boolean }[] = [
+  { name: "/", key: press("/"), expect: true },
+  { name: "Ctrl+F", key: press("f", { ctrlKey: true }), expect: true },
+  { name: "Cmd+F", key: press("f", { metaKey: true }), expect: true },
+  { name: "Ctrl+Shift+F (VS Code's search in files) is not ours", key: press("F", { ctrlKey: true, shiftKey: true }), expect: false },
+  { name: "Alt+F is not ours", key: press("f", { altKey: true }), expect: false },
+  { name: "a plain f is type-ahead", key: press("f"), expect: false },
+  { name: "? (Shift+/) is not /", key: press("?", { shiftKey: true }), expect: false },
+];
+for (const t of searchTable) test(`search key: ${t.name}`, () => assert.equal(isSearchKey(t.key), t.expect));

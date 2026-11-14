@@ -18,8 +18,18 @@ export interface KeyFacts {
 const intent = (i: Intent): SidebarAction => ({ type: "intent", intent: i });
 
 /**
+ * Whether a key puts the cursor in the search box (06 §7): `/`, or `Ctrl/Cmd+F`. The page asks before anything else, from anywhere in the view but the box
+ * itself (in the box `/` is a character: `billing/` finds by path).
+ */
+export function isSearchKey(e: KeyFacts): boolean {
+  if (e.altKey) return false;
+  if (e.ctrlKey || e.metaKey) return !e.shiftKey && e.key.toLowerCase() === "f";
+  return e.key === "/";
+}
+
+/**
  * `rows` in row order, `selected` the selected row's id (a node with no row, or none, counts as no selection), `page` how many rows a screen holds.
- * `Shift+F10` and the context-menu key are left to the browser, which raises the row's menu; a letter is type-ahead, which part 2 builds.
+ * `Shift+F10` and the context-menu key are left to the browser, which raises the row's menu; a letter is type-ahead (`typeAhead.ts`, which has the state).
  */
 export function sidebarKey(e: KeyFacts, rows: readonly FlatRow[], selected: string | null, page: number): SidebarAction | null {
   const at = selected === null ? -1 : rows.findIndex((r) => r.id === selected);

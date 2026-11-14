@@ -15,7 +15,7 @@ interface Api {
   session(): Session;
   dispatch(intent: Intent, context?: string): void;
   rowClick(context: string, id: string): Promise<void>;
-  sidebarPosts(): { rows: number; selected: string | null; inView: boolean; contexts: number; height: number }[];
+  sidebarPosts(): { rows: number; selected: string | null; inView: boolean; drawn: boolean; contexts: number; height: number }[];
   sidebarOpen(): boolean;
   renderedPosts(): { context: string; visible: number }[];
   webviewErrors(): string[];
@@ -54,6 +54,8 @@ function recordTimeline(highlight: () => string | null): { log: string[]; stop: 
 
 const textTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputText);
 const lastPost = () => api.sidebarPosts().at(-1);
+/** The page says this node's row is selected, the list is scrolled to it (`inView`, read from the element) and the virtualizer has put it in the page (`drawn`): three facts, not one. */
+const shown = (id: string): boolean => lastPost()?.selected === id && lastPost()?.inView === true && lastPost()?.drawn === true;
 
 suiteSetup(async () => {
   api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
@@ -138,11 +140,11 @@ suite("the sidebar", () => {
     await closeCanvas();
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
     api.dispatch({ type: "reveal", id: first.id, canvas: false }); // opens the ancestors and selects, as Reveal in Sidebar does
-    await until("the page to name the revealed row, in view", () => lastPost()?.selected === first.id && lastPost()?.inView === true, 30_000);
+    await until("the page to name the revealed row, in view", () => shown(first.id), 30_000);
     api.dispatch({ type: "reveal", id: other.id, canvas: false });
-    await until("the page to follow the selection", () => lastPost()?.selected === other.id && lastPost()?.inView === true, 30_000);
+    await until("the page to follow the selection", () => shown(other.id), 30_000);
     api.dispatch({ type: "select", id: first.id }); // what a click on a card sends: its row is there, the ancestors being open
-    await until("the page to follow a plain select", () => lastPost()?.selected === first.id && lastPost()?.inView === true, 30_000);
+    await until("the page to follow a plain select", () => shown(first.id), 30_000);
     assert.strictEqual(textTabs().length, 0, "a selection from elsewhere opens no code");
   });
 
@@ -155,10 +157,10 @@ suite("the sidebar", () => {
     api.dispatch({ type: "expand", ids: [file.id] }); // the file open: its 120 functions are rows
     await until("120 functions as rows", () => (lastPost()?.rows ?? 0) > 120, 30_000);
     api.dispatch({ type: "select", id: file.children[0].id });
-    await until("the first function in view", () => lastPost()?.selected === file.children[0].id && lastPost()?.inView === true, 30_000);
+    await until("the first function in view", () => shown(file.children[0].id), 30_000);
     api.dispatch({ type: "select", id: last.id });
     try {
-      await until("the last function, 119 rows below, scrolled into view", () => lastPost()?.selected === last.id && lastPost()?.inView === true, 30_000);
+      await until("the last function, 119 rows below, scrolled into view", () => shown(last.id), 30_000);
     } catch (e) {
       throw new Error(`${(e as Error).message}; wanted ${last.id}; the page's last reports: ${JSON.stringify(api.sidebarPosts().slice(-4))}; session selected ${api.session().contexts.main.selected}`);
     }
@@ -169,7 +171,7 @@ suite("the sidebar", () => {
     api.dispatch({ type: "focusJump", depth: 0 });
     api.dispatch({ type: "collapseAll" });
     await vscode.commands.executeCommand("vnoc.revealInSidebar", { nodeKey: first.id, webviewSection: "node" }); // what a card's or a row's menu passes
-    await until("the page to show it", () => lastPost()?.selected === first.id && lastPost()?.inView === true, 30_000);
+    await until("the page to show it", () => shown(first.id), 30_000);
     assert.strictEqual(api.session().contexts.main.selected, first.id);
   });
 
@@ -210,6 +212,35 @@ suite("the sidebar", () => {
     } finally {
       timeline.stop();
     }
+  });
+
+  test("picking a result the focus hides (the palette's search: the same Enter as the sidebar's box) shortens the focus and selects the node (03 §3)", async () => {
+    await closeCanvas();
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    const root = (await api.structure()).root;
+    const everything: TreeNode[] = [];
+    const walk = (n: TreeNode) => (everything.push(n), n.children.forEach(walk));
+    root.children.forEach(walk);
+    const last = everything.at(-1)!; // the last item of the list: `quickOpenSelectPrevious` from the top wraps to it
+    const otherFile = root.children.find((n) => n.name === "other.py")!;
+    api.dispatch({ type: "focus", id: otherFile.id });
+    assert.deepStrictEqual([...api.session().contexts.main.focus].at(-1), otherFile.id);
+    assert.notStrictEqual(last.path, otherFile.path, "the node is outside the focus");
+    await structureSettled();
+    const timeline = recordTimeline(() => api.session().highlight);
+    try {
+      await vscode.commands.executeCommand("vnoc.search");
+      await until("the list's first item to be pointed at", () => api.session().highlight !== null);
+      await vscode.commands.executeCommand("workbench.action.quickOpenSelectPrevious");
+      await until("the last item to be pointed at", () => api.session().highlight === last.id);
+      await vscode.commands.executeCommand("workbench.action.acceptSelectedQuickOpenItem");
+      await until("the focus to shorten and the node to be selected", () => api.session().contexts.main.focus.length === 0 && api.session().contexts.main.selected === last.id);
+    } catch (e) {
+      throw new Error(`${(e as Error).message}; what happened, in ms from the start: ${timeline.log.join(" | ")}`);
+    } finally {
+      timeline.stop();
+    }
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
   });
 
   test("a click selects the row; clicking the selected row again changes nothing in the contexts", async () => {

@@ -51,7 +51,7 @@ export class Surfaces {
     view.onDidDispose(() => {
       if (this.sidebarView === view) this.sidebarView = undefined;
     });
-    view.webview.html = this.html(view.webview, { script: "assets/sidebar.js", css: "assets/sidebar.css", attributes: `data-mode="sidebar" data-folder="${(vscode.workspace.workspaceFolders?.length ?? 0) > 0}"` });
+    view.webview.html = this.html(view.webview, { script: "assets/sidebar.js", css: "assets/sidebar.css", attributes: `data-mode="sidebar" data-folder="${(vscode.workspace.workspaceFolders?.length ?? 0) > 0}" data-hover-delay="${vscode.workspace.getConfiguration("workbench.hover").get<number>("delay", 500)}"` });
     view.webview.onDidReceiveMessage((m: RequestMessage | Notes) => void this.receive(view.webview, m, () => {}));
   }
 

@@ -16,9 +16,10 @@ const BUTTONS: Record<ButtonId, { icon: string; label: (codeOpen: boolean) => st
 /**
  * The card's buttons, always shown (docs/16-ui-redesign/04-node-cards.md §3): which ones is `cardButtons`. Dim at rest, full colour on the selected
  * card. `nodrag nopan`: React Flow must not start a drag or a pan from a click on one. On a sidebar row (07 §3) the same buttons, without `</>`, and out of
- * the tab order: the row's keys do the same things.
+ * the tab order: the row's keys do the same things. `before` runs first: a row's buttons make its panel's context the active one (06 §4), as every other
+ * gesture in the panel does.
  */
-export function ActionStrip({ node, contextId, focusRoot, selected, surface = "canvas" }: { node: Pick<Placed, "id" | "kind" | "range" | "role" | "key" | "codeOpen">; contextId: string; focusRoot: boolean; selected: boolean; surface?: "canvas" | "sidebar" }) {
+export function ActionStrip({ node, contextId, focusRoot, selected, surface = "canvas", before }: { node: Pick<Placed, "id" | "kind" | "range" | "role" | "key" | "codeOpen">; contextId: string; focusRoot: boolean; selected: boolean; surface?: "canvas" | "sidebar"; before?: () => void }) {
   const actions = useNodeActions(node.id, contextId, node.key);
   const run: Record<ButtonId, () => void> = { focus: actions.focus, explore: actions.explore, goToCode: actions.goToCode, code: actions.toggleCode, addDoc: actions.addDoc };
   return (
@@ -27,7 +28,7 @@ export function ActionStrip({ node, contextId, focusRoot, selected, surface = "c
         const { icon, label } = BUTTONS[id];
         const pressed = id === "code" ? node.codeOpen : undefined;
         return (
-          <IconButton key={id} className="nodrag nopan size-[22px] hover:text-foreground" label={label(node.codeOpen)} disabled={disabled} aria-pressed={pressed} variant={pressed ? "secondary" : "ghost"} tabIndex={surface === "sidebar" ? -1 : undefined} onClick={run[id]}>
+          <IconButton key={id} className="nodrag nopan size-[22px] hover:text-foreground" label={label(node.codeOpen)} disabled={disabled} aria-pressed={pressed} variant={pressed ? "secondary" : "ghost"} tabIndex={surface === "sidebar" ? -1 : undefined} onClick={() => (before?.(), run[id]())}>
             <Codicon name={icon} />
           </IconButton>
         );

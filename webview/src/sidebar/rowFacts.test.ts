@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 import { nodeContext } from "../node-card/nodeContext.ts";
 import type { FlatRow } from "./flatten.ts";
-import { rowDescription, rowFacts, rowLabel, rowTip } from "./rowFacts.ts";
+import { rowDescription, rowFacts, rowLabel } from "./rowFacts.ts";
 
 const RANGE = { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } };
 const node = (kind: Kind, over: Partial<TreeNode> = {}): TreeNode => ({ id: `${kind}-id`, kind, name: kind, path: "p", qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children: [], ...over });
@@ -64,10 +64,7 @@ test("the description: syntax error first, else the docs, else nothing", () => {
   assert.equal(rowDescription(node("file")), "");
 });
 
-test("what a screen reader says, and the tooltip of a row with docs", () => {
+test("what a screen reader says", () => {
   assert.equal(rowLabel(node("function", { name: "checkout" })), "function checkout");
   assert.equal(rowLabel(node("file", { name: "api.py", docs: 2 })), "file api.py, 2 docs");
-  assert.match(rowTip(node("function", { link: "marker" }))!, /ID is in the code/);
-  assert.match(rowTip(node("function", { link: "name" }))!, /path and name only/);
-  assert.equal(rowTip(node("function")), undefined);
 });

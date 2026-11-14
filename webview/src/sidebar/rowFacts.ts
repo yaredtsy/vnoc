@@ -25,7 +25,3 @@ export const rowDescription = (node: Pick<TreeNode, "syntax_error" | "docs">): s
 
 /** What a screen reader says of a row: its kind, its name and how many docs it has. */
 export const rowLabel = (node: Pick<TreeNode, "kind" | "name" | "docs">): string => `${node.kind} ${node.name}${node.docs > 0 ? `, ${node.docs} docs` : ""}`;
-
-/** The tooltip of a row that has docs (07 §5, until part 2 draws the hover card): how the docs were found again. */
-export const rowTip = (node: Pick<TreeNode, "link">): string | undefined =>
-  node.link === "marker" ? "Docs attached: the ID is in the code, so they follow it anywhere" : node.link === "name" ? "Docs attached: found by path and name only, so they are lost if it moves" : undefined;
