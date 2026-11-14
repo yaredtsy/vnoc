@@ -226,6 +226,21 @@ Tests: `shared` 217, `webview` 147, window suite 43 (new: call cards drawn exact
 
 **Proof by hand, and its limits.** The four minicart steps were run on the real page (the real `reduce`, `wantedCalls`, `callLookup`) in a browser with a **mock host**, fed the **real core and driver's answers** for `/tmp/minicart` (probes: `checkout` 1, `checkout_order` 6, `reserve_stock` 2). It was **not** a real VS Code window. Counts of cards on the canvas: start 9; focus `checkout` 2 (the function and one call card); open `checkout_order` 8 (six call cards); open `reserve_stock` 10 (its own two: `_lookup`, `_log`). Nine dashed call edges at the end. `check_stock` ("line 19 · line 20 · 2 more ▾", four sites, ×4) opened its site list; the callee's file name is hidden there by the 36-character rule. Real clicks on the chevron toggled 8 ↔ 2 cards. The harness and its data are not kept. Checked by the user in a real window (2026-11-14): **Ctrl/Cmd+Enter and the QuickPick with preview work.** Still to check: the dim unknown callee.
 
+**As built, part 3 (2026-11-14, a small step between 8.3 part 2 and 8.4 part 5).** In: the card's rows of 04 §1 as rewritten that day.
+
+| Decision | Why |
+|---|---|
+| `CARD_H = 80` = `HEADER_H` 32 + `META_H` 24 + `LINE_H` 1 + `FOOTER_H` 23 (`layout.ts`; the components take their heights from them); `ROW_H` is 96. A 1 px line (`--card-border` at 60%) runs the card's full inner width above the footer | one place for every row |
+| **The card's 1 px border is inside the 80**, so the footer draws **21** px, not 23 (measured on the page: rows 32 / 24 / 1 / 21, the card 300 × 80). The footer is `flex: 0 1 auto` with a 21 px minimum, so with the code open it keeps its 23 | a spec gap: 32 + 24 + 1 + 23 = 80 leaves nothing for the border. Kept the 80 (the layout's number) and let the footer give the 2 px up; the text is centred in either |
+| `metaOf(node)` (`node-card/metaOf.ts`, 17 table rows) replaces `whereOf`; it reads only `parentId` (null = the root of the view), `kind`, `line`, `path`, `syntaxError`, `contents`. `Placed.contents` = what a node holds **directly**, by kind (a file's top-level classes and functions; a folder's folders and files); `contentsText` leaves a part that is 0 out and says `empty` when none is left | 04 §1. A nested def under a def says `line N` like any other def under its parent card. The opened folder (`/`) has no path: its meta line is empty |
+| `callsFooter(calls, open)` (`node-card/callsFooter.ts`, 9 rows) and the `calls` chip of `footerChips`, last, on the right: `calls nothing` · `calls N` (closed) · a spinner while fetching · `couldn't read calls · Retry`. `Placed.callsFooter` replaces `callsNothing`; `callsLook.callsNothing` (shared) is gone with it | `calls nothing` left the meta line. A class that has methods does not say it (its methods are what is under it); a call card says it too, **except** a recursive call (it calls itself) and a callee the project does not know |
+| **Retry** is a new request `retryCalls {key}` served by `callTrees.retry(key)` (the scheduler's); on a call card whose callee's own tree failed, the key is the callee's (`Placed.key`) | the scheduler had `retry`, the page had no way to reach it. Not exercised by the window suite (it cannot click in the page) |
+| the spinner is the codicon `loading` with `codicon-modifier-spin`; `prefers-reduced-motion` stops it | 09 |
+
+**Seen on the mock host** (a browser page fed the real core's answers for the minicart, with one function loading and one failed; not a real window): meta lines `empty`, `2 functions`, `4 functions`, `1 class · 3 functions`, `line 13`, the root `app/`; footers `calls nothing`, `calls 2`, `calls 6`, the spinner, `couldn't read calls · Retry`. **Open point for you:** a function with only calls shows both `+2` (left, "hidden: open to see them") and `calls 2` (right); 04 §1 asks for both, and they say the same number there. Dropping `+N` when it equals the calls' count would be one rule in `footerChips`.
+
+Tests: `shared` 225, `webview` 193, window suite 44. The ×N fix and the context chips (8.4 part 5) were already in before this step was asked.
+
 ### 8.4 The canvas's one bar; contexts on one canvas
 
 | Files | What |
