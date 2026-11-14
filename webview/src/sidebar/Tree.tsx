@@ -8,7 +8,7 @@ import { act, clickRow } from "./actions.ts";
 import type { FlatRow } from "./flatten.ts";
 import { sidebarKey } from "./keys.ts";
 import { ROW_H, Row } from "./Row.tsx";
-import { inView } from "./viewport.ts";
+import { inView, scrollFor } from "./viewport.ts";
 
 /**
  * The rows as a virtual list with the ARIA of a tree (06 §1): one tab stop, the list itself, which names the selected row as its active descendant, so the
@@ -22,17 +22,37 @@ export function Tree({ rows, selected, cursor }: { rows: FlatRow[]; selected: st
   const virtual = useVirtualizer({ count: rows.length, getScrollElement: () => scroller.current, estimateSize: () => ROW_H, overscan: 12 });
   const index = useMemo(() => (selected === null ? -1 : rows.findIndex((r) => r.id === selected)), [rows, selected]);
 
-  // the selected row is always in view when the selection changes, whoever changed it (a card, a reveal, a key)
+  // The selected row is always in view when the selection changes, whoever changed it (a card, a reveal, a key). Rows are one height, so the scroll is
+  // set directly (`scrollFor`): the virtualizer's own `scrollToIndex` measures and retries on later frames, and a list asked twice in a row could stop short.
+  // It also runs when the row first exists (a reveal whose rows arrive after the selection) and when the list first has a height (the view was hidden).
+  const measured = (virtual.scrollRect?.height ?? 0) > 0;
+  const hasRow = index >= 0;
   useEffect(() => {
-    if (index >= 0) virtual.scrollToIndex(index, { align: "auto" });
-    // only when the selection moves: opening another row must not pull the list back to the selected one
+    const el = scroller.current;
+    if (!el || !hasRow || !measured) return;
+    const top = scrollFor(index, el.scrollTop, el.clientHeight, ROW_H);
+    if (top !== el.scrollTop) el.scrollTop = top;
+    // only when the selection moves, the row appears or the list gets a height: opening another row must not pull the list back to the selected one
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected]);
+  }, [selected, hasRow, measured]);
 
-  const visible = inView(index, virtual.scrollOffset ?? 0, virtual.scrollRect?.height ?? 0, ROW_H);
+  // What the page reports is read from the element, not from the virtualizer: the virtualizer learns of a scroll from the element's `scroll` event, which
+  // the browser raises on a frame, and a view that is not being painted raises none, so its `scrollOffset` can be a frame (or for ever) behind the element.
+  // `offset` is only here to draw this effect again when the virtualizer sees a scroll (the user's); this effect comes after the one that scrolls, so it
+  // reads the position that one set.
+  const offset = virtual.scrollOffset ?? 0;
+  const height = virtual.scrollRect?.height ?? 0;
+  const reported = useRef("");
   useEffect(() => {
-    post({ type: "sidebarRendered", rows: rows.length, selected: index >= 0 ? selected : null, inView: visible, contexts });
-  }, [rows.length, selected, index, visible, contexts]);
+    const el = scroller.current;
+    const height = el?.clientHeight ?? 0;
+    const visible = inView(index, el?.scrollTop ?? 0, height, ROW_H);
+    const note = { type: "sidebarRendered" as const, rows: rows.length, selected: index >= 0 ? selected : null, inView: visible, contexts, height };
+    const key = JSON.stringify(note);
+    if (key === reported.current) return;
+    reported.current = key;
+    post(note);
+  }, [rows.length, selected, index, offset, contexts, height]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const page = Math.max(1, Math.floor((virtual.scrollRect?.height ?? 0) / ROW_H) - 1);

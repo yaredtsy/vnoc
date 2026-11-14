@@ -24,7 +24,7 @@ const renderedPosts: Rendered[] = [];
 const renderWaiters: ((r: Rendered) => void)[] = [];
 
 /** What the STRUCTURE view last said it drew (for the test suite). */
-type SidebarRendered = { rows: number; selected: string | null; inView: boolean; contexts: number };
+type SidebarRendered = { rows: number; selected: string | null; inView: boolean; contexts: number; height: number };
 const sidebarPosts: SidebarRendered[] = [];
 
 /** What the bar's ⚠ last said (for the test suite). */
@@ -211,7 +211,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       cardsDrawn(note.keys, note.onScreen);
       break;
     case "sidebarRendered":
-      sidebarPosts.push({ rows: note.rows, selected: note.selected, inView: note.inView, contexts: note.contexts });
+      sidebarPosts.push({ rows: note.rows, selected: note.selected, inView: note.inView, contexts: note.contexts, height: note.height });
       break;
     case "chipsDrawn":
       chips = note.chips;

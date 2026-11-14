@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 
 import type { StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Intent, Session } from "@vnoc/shared/session.ts";
-import { canvasTabs, closeCanvas, sleep, until } from "./util";
+import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
 
 // The STRUCTURE view in a real window (docs/16-ui-redesign/06-sidebar.md, 07 §4): it is a webview, so the suite drives it through what it says (the
 // `sidebarRendered` note) and through the host's side of a click (`rowClick`). What a key or a click means is unit-tested beside the page.
@@ -15,11 +15,42 @@ interface Api {
   session(): Session;
   dispatch(intent: Intent, context?: string): void;
   rowClick(context: string, id: string): Promise<void>;
-  sidebarPosts(): { rows: number; selected: string | null; inView: boolean; contexts: number }[];
+  sidebarPosts(): { rows: number; selected: string | null; inView: boolean; contexts: number; height: number }[];
   sidebarOpen(): boolean;
+  renderedPosts(): { context: string; visible: number }[];
   webviewErrors(): string[];
 }
 let api: Api;
+
+/** Waits until the index has stopped changing: the same revision for a second. */
+async function structureSettled(): Promise<void> {
+  let revision = -1;
+  let since = Date.now();
+  await waitFor("the structure to stop changing", async () => {
+    const now = (await api.structure()).revision;
+    if (now !== revision) (revision = now), (since = Date.now());
+    return Date.now() - since >= 1000;
+  }, 30_000);
+}
+
+/** What changed where the keyboard and the pointer could be taken or cleared, with times: a failure that names its cause is worth more than a timeout. */
+function recordTimeline(highlight: () => string | null): { log: string[]; stop: () => void } {
+  const t0 = Date.now();
+  const log: string[] = [];
+  const note = (what: string) => log.push(`+${Date.now() - t0} ${what}`);
+  let last = highlight();
+  const poll = setInterval(() => {
+    const now = highlight();
+    if (now !== last) (last = now), note(`highlight ${now === null ? "cleared" : "→ " + now}`);
+  }, 20);
+  const subs = [
+    vscode.window.onDidChangeWindowState((e) => note(`window focused=${e.focused}`)),
+    vscode.window.onDidChangeActiveTextEditor((e) => note(`active text editor ${e?.document.uri.path.split("/").pop() ?? "none"}`)),
+    vscode.window.tabGroups.onDidChangeTabs((e) => note(`tabs +${e.opened.length} -${e.closed.length} ~${e.changed.length}`)),
+    vscode.window.tabGroups.onDidChangeTabGroups(() => note("tab groups changed")),
+  ];
+  return { log, stop: () => (clearInterval(poll), subs.forEach((s) => s.dispose())) };
+}
 
 const textTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputText);
 const lastPost = () => api.sidebarPosts().at(-1);
@@ -118,12 +149,19 @@ suite("the sidebar", () => {
   test("a selection far down a long list is scrolled into view by the page itself", async () => {
     const file = (await api.structure()).root.children.find((n) => n.name === "sidebar_many.py")!;
     const last = file.children[119];
+    // the list can only scroll when the view is shown and laid out: bring it up, and wait for the page to say it has a height
+    await vscode.commands.executeCommand("vnoc.structure.focus");
+    await until("the list to have a height", () => (lastPost()?.height ?? 0) > 0, 30_000);
     api.dispatch({ type: "expand", ids: [file.id] }); // the file open: its 120 functions are rows
     await until("120 functions as rows", () => (lastPost()?.rows ?? 0) > 120, 30_000);
     api.dispatch({ type: "select", id: file.children[0].id });
     await until("the first function in view", () => lastPost()?.selected === file.children[0].id && lastPost()?.inView === true, 30_000);
     api.dispatch({ type: "select", id: last.id });
-    await until("the last function, 119 rows below, scrolled into view", () => lastPost()?.selected === last.id && lastPost()?.inView === true, 30_000);
+    try {
+      await until("the last function, 119 rows below, scrolled into view", () => lastPost()?.selected === last.id && lastPost()?.inView === true, 30_000);
+    } catch (e) {
+      throw new Error(`${(e as Error).message}; wanted ${last.id}; the page's last reports: ${JSON.stringify(api.sidebarPosts().slice(-4))}; session selected ${api.session().contexts.main.selected}`);
+    }
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
 
@@ -144,23 +182,34 @@ suite("the sidebar", () => {
   });
 
   test("moving through the search list points at nodes without selecting; closing it clears the pointer", async () => {
-    // with the canvas open: cards are drawn, so a highlight really reaches them (it once crashed the page: a hook was skipped on the highlighted card)
+    // With the canvas open, cards are drawn, so a highlight really reaches them (it once crashed the page: a hook was skipped on the highlighted card).
+    // The list is a QuickPick, and it closes the moment anything else takes the keyboard, which clears the pointer. So before it is opened, wait for what
+    // could take the keyboard or change what it lists: the canvas page (VS Code runs the new tab's focus request when its page is ready, and the page says
+    // it drew only after that), and the index (a node that goes while it is pointed at drops the pointer, correctly).
+    const drawn = api.renderedPosts().length;
     await vscode.commands.executeCommand("vnoc.openCanvas");
     await until("the canvas tab", () => canvasTabs().length === 1);
-    await sleep(1200);
+    await until("the canvas page to draw, its focus request done", () => api.renderedPosts().length > drawn, 30_000);
+    await structureSettled();
     api.dispatch({ type: "select", id: first.id });
-    await sleep(600);
     const selected = api.session().contexts.main.selected;
-    await vscode.commands.executeCommand("vnoc.search");
-    await until("the list's first item to be pointed at", () => api.session().highlight !== null);
-    await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
-    await sleep(400);
-    await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
-    await sleep(400);
-    assert.notStrictEqual(api.session().highlight, null);
-    assert.strictEqual(api.session().contexts.main.selected, selected, "a highlight never changes the selection");
-    await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
-    await until("the pointer to clear", () => api.session().highlight === null);
+    const timeline = recordTimeline(() => api.session().highlight);
+    try {
+      await vscode.commands.executeCommand("vnoc.search");
+      await until("the list's first item to be pointed at", () => api.session().highlight !== null);
+      for (const step of ["next", "next again"]) {
+        const was = api.session().highlight;
+        await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
+        await until(`the pointer to move to ${step} item`, () => api.session().highlight !== null && api.session().highlight !== was);
+      }
+      assert.strictEqual(api.session().contexts.main.selected, selected, "a highlight never changes the selection");
+      await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+      await until("the pointer to clear", () => api.session().highlight === null);
+    } catch (e) {
+      throw new Error(`${(e as Error).message}; what happened, in ms from the start: ${timeline.log.join(" | ")}`);
+    } finally {
+      timeline.stop();
+    }
   });
 
   test("a click selects the row; clicking the selected row again changes nothing in the contexts", async () => {

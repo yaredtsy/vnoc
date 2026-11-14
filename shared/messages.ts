@@ -202,7 +202,7 @@ export type Notes =
   | { type: "cardsDrawn"; keys: string[]; onScreen: string[] } // `keys`: the function and class cards on the canvas's screen that show nothing of their calls yet, the one to look at first first: the host probes those. `onScreen`: every function and class card on screen, with or without structure children: the host's prefetch of the selected one is for those
   | { type: "chipsDrawn"; chips: { id: string; label: string; active: boolean }[] } // the bar's context chips changed (none: one context): the extension's test suite uses it
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
-  | { type: "sidebarRendered"; rows: number; selected: string | null; inView: boolean; contexts: number } // the STRUCTURE view drew: how many rows, which one is selected (the active context's, or null) and whether it is in the visible part of the list. The extension's test suite uses it
+  | { type: "sidebarRendered"; rows: number; selected: string | null; inView: boolean; contexts: number; height: number } // the STRUCTURE view drew: how many rows, which one is selected (the active context's, or null), whether it is in the visible part of the list, and how high that part is in px (0: the view is hidden or not laid out, and nothing can be in view). The extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 
