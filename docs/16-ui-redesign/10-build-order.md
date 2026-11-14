@@ -250,7 +250,7 @@ Tests: `shared` 217, `webview` 147, window suite 43 (new: call cards drawn exact
 | **Retry** is a new request `retryCalls {key}` served by `callTrees.retry(key)` (the scheduler's); on a call card whose callee's own tree failed, the key is the callee's (`Placed.key`) | the scheduler had `retry`, the page had no way to reach it. Not exercised by the window suite (it cannot click in the page) |
 | the spinner is the codicon `loading` with `codicon-modifier-spin`; `prefers-reduced-motion` stops it | 09 |
 
-**Seen on the mock host** (a browser page fed the real core's answers for the minicart, with one function loading and one failed; not a real window): meta lines `empty`, `2 functions`, `4 functions`, `1 class · 3 functions`, `line 13`, the root `app/`; footers `calls nothing`, `calls 2`, `calls 6`, the spinner, `couldn't read calls · Retry`. **Open point for you:** a function with only calls shows both `+2` (left, "hidden: open to see them") and `calls 2` (right); 04 §1 asks for both, and they say the same number there. Dropping `+N` when it equals the calls' count would be one rule in `footerChips`.
+**Seen on the mock host** (a browser page fed the real core's answers for the minicart, with one function loading and one failed; not a real window): meta lines `empty`, `2 functions`, `4 functions`, `1 class · 3 functions`, `line 13`, the root `app/`; footers `calls nothing`, `calls 2`, `calls 6`, the spinner, `couldn't read calls · Retry`. **Open point, decided 2026-11-14:** a function with only calls showed both `+2` and `calls 2`. `calls N` is dropped (8.4b): the closed card's `+N` counts the calls.
 
 Tests: `shared` 225, `webview` 193, window suite 44. The ×N fix and the context chips (8.4 part 5) were already in before this step was asked.
 
@@ -299,6 +299,8 @@ Tests: `shared` 225, `webview` 158, window suite 44, Rust unchanged. The new win
 
 **For the hand check (real window):** double-click a call card → a chip appears, filled, and the canvas shows the callee; click `Main` → the canvas is back and its pan and zoom are as you left them; pan the EXPLORE view, go to Main and back → its own pan and zoom are back; ✕ on the chip closes it (when it was active, the canvas is on Main); the docs panel (`ⓘ`) on a selected call says *called by …* and shows the callee's docs, and follows the chip you switch to; open four explores → `+1 ▾` appears and the active chip is never in it; make the bar narrower than 360 px → one chip and a ▾ menu.
 
+**Hand check by the user (2026-11-14): the chips, the viewports and the docs panel worked.** One problem, not in the chips: clearing the focus drew hundreds of cards and took seconds (everything ever opened in MAIN, plus every ancestor a Reveal had opened, was one set). That is 8.4b below.
+
 ### 8.4b Big drawings (before 8.5)
 
 From 03 §2.1 and §6.1, after the user saw hundreds of cards and a delay when clearing the focus.
@@ -325,6 +327,29 @@ Tests (table tests, `sessionProblems` after every step):
 Proof by hand: the user's case. Open many things while focused, Reveal a few deep nodes, clear the focus: the root draws as it was left, with
 no delay. On a big project: Expand All Below on a large folder → at most 200 cards and the note.
 Commit: `step 8.4b: what is open belongs to the focus root; a card budget; only what is on screen asks for work`.
+
+**As built, 8.4b (2026-11-14).**
+
+| Decision | Why |
+|---|---|
+| `ContextState.open: { [root]: string[] }` and **`recent: string[]`** (new, a spec gap): the roots that have a set, the one used longest ago first. `rootOf(focus)`, `openOf(context)` and `MAX_ROOTS = 20` live in `shared/open.ts` (re-exported by `session.ts`). Every intent of 03 §2.1's table is in `reduce`; focusing a root creates its set (carried in the first time), so merely visiting a root counts as using it | `open` is a record and **key order is not ours to rely on**: a folder named `2024` has the id `2024`, an integer-like key that JS puts first. An explicit order is two lines more and cannot be wrong |
+| Reveal opens the ancestors **below the root it lands on**: with no focus the project's root is skipped, with a focus the focus root is (both are always open) | 03 §2.1: "between the current root and the node". The old reducer opened `/` and every ancestor above the focus too |
+| Carry-in uses the set of the root it **leaves** (Back to a root that never had a set, a crumb jump) with the same "under X" rule; a call id is under X by its owner | the rule of 03 §2.1, applied one way everywhere |
+| `sessionProblems` checks the sets (≤ 20 roots, `recent` is exactly those roots, every root and every open id exists); the new tests run it after every step | as asked |
+| A saved `expanded` becomes `open[its focus root]`; a `recent` that does not match its roots is rebuilt, not refused | old saves load; a hand-edited one does not lose the session |
+| `MAX_CARDS = 200`, counted as **cards drawn or promised**: accepting an open card's family (structure children + the first level of its calls) adds its size at once. A second open card cannot spend what its siblings were promised (a test row: 150 children accepted, the first one open with 100 more is refused) | counting only what is placed would let a big family be accepted after a small one and go over |
+| **Spec edge, for you:** the root's own family is subject to the same rule: a focus root with 200 or more direct children is drawn **alone**, closed, with its `+200` and the note *"1 of 201 cards"*. "Whole family, never half a family" says so, but it is a harsh result for a folder with 300 files | Focus on a part is the way out the tooltip names, but a root has no smaller part. Say if the root should be allowed a partial family |
+| `Layout.total` comes from a second walk with no budget, only when the first was capped | the second walk allocates cards but renders none; the cost that mattered was rendering |
+| `BudgetNote` (*"200 of 640 cards"*, tooltip of 03 §6.1), `budgetNote(drawn, total)` pure | |
+| `onlyRenderVisibleElements` on, and nodes carry `width` / `height` from the layout. **Finding:** React Flow renders every node once the first time it sees it (`forceInitialRender` while it has no handle bounds), so a layout of 200 new cards still mounts 200 cards once before it culls to the screen (14 stay). Measured in the real window's production bundle: a 158-card drawing reported itself ~100 ms after the intent, on three rounds | the page does not freeze, but the first draw of a new big family is not free; a smaller budget or leaner cards would be the next lever, not another culling switch |
+| The page reports `cardsDrawn` from the canvas (`OnScreenReport`), 300 ms after the pan or zoom stops: the function and class cards inside the viewport grown by **one screen on every side** (`onScreenIds`, a table test); before the canvas is measured every card counts. `useRenderedReport` no longer sends it | probes follow the screen, as 03 §6.1 says |
+| The host's prefetch of the selected function is dropped when that card is not in the reported set (`wantedOnScreen`, tested); what is open or cut is always wanted. The scheduler needed no change: it already probes only the keys it is given and cancels a probe whose card left the list (a new test says it in on-screen words) | 05 §2 |
+| Footer: `calls N` is gone (`callsFooter(calls)` has no `open` argument now); `calls nothing`, the spinner and `couldn't read calls · Retry` stay | 04 §1 as edited |
+| The chips window test waits for the previous test's chip to clear instead of reading it at once | it passed by timing before; the page reports a close a moment after the session says it |
+
+Tests: `shared` 240, `webview` 203, window suite 46 (new: *what is opened inside a focus stays inside it*; *a big file opened draws at most 200 cards and what it held back is hidden*).
+
+**Proof by hand (yours):** open many things while focused deep and Reveal a few deep nodes, then clear the focus: the project draws as you left it, with no delay. Expand All Below on a large folder: at most 200 cards and the note in the bar. Pan around a 200-card drawing: nothing flickers, and the sidebar and the cards' chevrons for functions you scroll to appear within about a second.
 
 ### 8.5 The sidebar becomes a webview (structure rows)
 
