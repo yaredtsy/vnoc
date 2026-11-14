@@ -410,6 +410,25 @@ row is reported after a card click.
 Proof: the tests; by hand with a 1,000-file folder (scrolls smoothly, opens in under a second). Commit:
 `step 8.5: the STRUCTURE view is a webview: search, focus bar, keyboard, the click rule`.
 
+**Split in two (decided 2026-11-14, after the 8.0 answers).** The table above is the whole of 8.5; it is built in two commits, each one green and
+usable. The native view goes in part 1 (two views cannot share the id `vnoc.structure`), so part 1 must leave nothing the native tree did
+missing: its row menu, its inline buttons, its keys.
+
+| Part | Builds | Leaves for later |
+|---|---|---|
+| **1: the view is a webview, at parity** | provider (06 §10, `retainContextWhenHidden`), the second bundle entry, `Panels` → `Surfaces`; **one panel: MAIN** (a click in it activates MAIN, as 06 §4 says of any panel; the other panels are 8.6); `flatten` (MAIN's `openOf`, its focus) + `@tanstack/react-virtual`; `Row` (07 §1: chevron, codicon, name, description, docs, `●` cursor dot); the hover buttons (07 §3, `ActionStrip` shared with the card); the selection colours and scroll-into-view (06 §6); click / double-click / chevron and `rowClick` (07 §4); the focus bar (06 §3, with `…` folding); the four states (06 §8, replacing `viewsWelcome`); the title buttons (06 §9); the keyboard of 06 §7 **except type-ahead**, with `role="tree"` and the ARIA of 06 §1; **the row menu moved, not redesigned**: today's `view/item/context` entries for `vnoc.structure` become `webview/context` entries with `webviewId == 'vnoc.structure' && webviewSection == 'node'` and the same conditions, read from the row's `data-vscode-context` (`nodeContext()` with `surface: "sidebar"`, 07 §6); the commands take the row's context object as their argument, as the canvas's do. Removed: the native view, `structureView.ts`, `focusView.ts`, `cursorMark.ts`, the tree-mirror code, the `vnoc.focusStack` view, `vnoc.focusDrop`, `vnoc.focusSelection`, and the two `contributes.keybindings` that use `focusedView` (06 §10) | the search box, type-ahead, tooltips, hover highlight |
+| **2: search and the rest** | the search box (06 §5: flat results, up to 200, ranking, `↑` `↓` highlight on the canvas, `Enter` selects and reveals in the active context, `Esc`, `Ctrl/Cmd+F` and `/`); type-ahead (500 ms); tooltips (07 §5); hover → the card's dotted highlight (06 §6) | the panels of the other contexts (8.6), one menu list for cards and rows (8.7) |
+
+Tests, part 1: `flatten` table (open set × focus × a closed ancestor; a 10,000-row tree flattens under 50 ms); the key map table (06 §7, each
+row); the row's `nodeContext` table (kind × docs × link → the object); `rowClick` in the window suite (canvas open: reveal, no code tab; closed: a
+preview tab); a card click → the sidebar's `rendered` note reports that row selected and in view; `menus.test.ts` updated: every former
+`view/item/context` entry of `vnoc.structure` has a `webview/context` twin. Part 2: the ranking table (name before path, prefix before
+substring, 200 cap); type-ahead table; `Enter` on a result whose node the focus hides → the focus shortens (03 §3).
+
+Proof by hand, part 1: right-click a row (the old menu's entries); `Alt+←` and `Ctrl/Cmd+Enter` in the sidebar; a 1,000-file folder scrolls
+smoothly; NEEDS ATTENTION stays under STRUCTURE. Part 2: search `billing`, arrow through results (the canvas highlights), `Enter`.
+Commits: `step 8.5 (part 1): the STRUCTURE view is a webview, at parity with the native tree` · `step 8.5 (part 2): search, type-ahead, tooltips`.
+
 ### 8.6 Context panels in the sidebar
 
 | Files | What |
