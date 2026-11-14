@@ -54,6 +54,10 @@ pub enum HostError {
     Io(#[from] std::io::Error),
     #[error("the driver sent something that is not the protocol: {0}")]
     Protocol(String),
+    /// One answer, whole and well framed, whose body could not be read (not JSON, too deeply nested, not the shape asked for). It fails the request it
+    /// belongs to and nothing else: the driver is not at fault for the whole connection, so it is kept.
+    #[error("the driver's answer could not be read: {0}")]
+    BadAnswer(String),
     #[error("the driver stopped: {0}")]
     Closed(String),
     #[error("the driver did not answer `{0}` in time")]
@@ -156,7 +160,8 @@ impl DriverClient {
     /// One request, answered within the time its method is given (`timeout_of`).
     async fn call<R: DeserializeOwned>(&self, method: &'static str, params: &impl Serialize) -> Result<R, HostError> {
         let reply = self.wire.request(method, params, timeout_of(method)).await?;
-        serde_json::from_value(reply).map_err(|e| HostError::Protocol(e.to_string()))
+        // an answer of the wrong shape is one bad answer, not a broken driver
+        serde_json::from_value(reply).map_err(|e| HostError::BadAnswer(e.to_string()))
     }
 }
 
@@ -233,13 +238,21 @@ impl Drop for Pending {
 }
 
 /// The one reader of the driver's output: each response goes to the request with its `id`. It ends when the driver closes its output or
-/// sends something that is not a frame; everyone still waiting then gets the reason, and so does every later request.
+/// sends something that is not a frame (no `Content-Length`, stray output): everyone still waiting then gets the reason, and so does every later request.
+/// A frame that is whole but whose body cannot be read fails only its own request (`unreadable`) and the reader goes on.
 async fn read_replies(mut stdout: impl AsyncBufRead + Unpin, waiting: Waiting) {
     let reason = loop {
-        let msg = match read_frame(&mut stdout).await {
-            Ok(msg) => msg,
+        let body = match read_body(&mut stdout).await {
+            Ok(body) => body,
             Err(HostError::Closed(reason)) => break reason,
             Err(other) => break other.to_string(),
+        };
+        let msg = match serde_json::from_slice::<Value>(&body) {
+            Ok(msg) => msg,
+            Err(e) => {
+                unreadable(&waiting, &body, &e);
+                continue;
+            }
         };
         // a notification or a request from the driver: not part of protocol 1
         let Some(id) = msg.get("id").and_then(Value::as_u64).filter(|_| msg.get("method").is_none()) else { continue };
@@ -252,6 +265,45 @@ async fn read_replies(mut stdout: impl AsyncBufRead + Unpin, waiting: Waiting) {
     for (_, tx) in gone.into_iter().flatten() {
         let _ = tx.send(Err(HostError::Closed(reason.clone())));
     }
+}
+
+/// A well-framed body that is not readable JSON. The request it answers gets the error, so the user sees *that* request fail and the driver goes on.
+/// Which request: the `id` read out of the raw text when there is one; else, when exactly one request is waiting, that one; else nobody can be told
+/// apart, the error is logged, and each request still waiting is answered, or times out, on its own.
+fn unreadable(waiting: &Waiting, body: &[u8], error: &serde_json::Error) {
+    let id = salvage_id(body);
+    tracing::warn!("the driver sent an answer that could not be read ({error}); its request is {}", id.map_or("not known".to_string(), |id| id.to_string()));
+    let mut guard = waiting.lock().unwrap();
+    let Some(map) = guard.as_mut() else { return };
+    let id = id.or_else(|| (map.len() == 1).then(|| *map.keys().next().expect("one entry")));
+    if let Some(tx) = id.and_then(|id| map.remove(&id)) {
+        let _ = tx.send(Err(HostError::BadAnswer(error.to_string())));
+    }
+}
+
+/// The numeric `"id"` of a response whose body does not parse (too deep, cut, not JSON after it). The first `"id":` followed by digits: a quote inside a
+/// JSON string is always escaped, so the unescaped text `"id":` is a key, and the driver writes the response's own `id` before its `result`.
+fn salvage_id(body: &[u8]) -> Option<u64> {
+    const KEY: &[u8] = b"\"id\"";
+    let mut from = 0;
+    while let Some(at) = body[from..].windows(KEY.len()).position(|w| w == KEY) {
+        let mut i = from + at + KEY.len();
+        while body.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
+            i += 1;
+        }
+        if body.get(i) == Some(&b':') {
+            i += 1;
+            while body.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
+                i += 1;
+            }
+            let digits = body[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+            if digits > 0 {
+                return std::str::from_utf8(&body[i..i + digits]).ok()?.parse().ok();
+            }
+        }
+        from += at + KEY.len();
+    }
+    None
 }
 
 fn reply_of(msg: &Value) -> Reply {
@@ -331,7 +383,9 @@ impl DriverHost {
     }
 }
 
-async fn read_frame(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Value, HostError> {
+/// One frame's body, read whole. The framing errors here (stray output, no `Content-Length`, a closed pipe) are fatal: after them nothing says where the
+/// next frame starts.
+async fn read_body(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Vec<u8>, HostError> {
     let mut len: Option<usize> = None;
     loop {
         let mut line = String::new();
@@ -350,7 +404,14 @@ async fn read_frame(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Value, H
     let len = len.ok_or_else(|| HostError::Protocol("a frame without Content-Length".into()))?;
     let mut buf = vec![0u8; len];
     stdout.read_exact(&mut buf).await?;
-    serde_json::from_slice(&buf).map_err(|e| HostError::Protocol(e.to_string()))
+    Ok(buf)
+}
+
+/// A frame as JSON: framing errors as `read_body`'s, and a body that does not parse is `Protocol` (only the tests read frames this way; the reader
+/// of the driver's answers treats an unreadable body as one failed request).
+#[cfg(test)]
+async fn read_frame(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Value, HostError> {
+    serde_json::from_slice(&read_body(stdout).await?).map_err(|e| HostError::Protocol(e.to_string()))
 }
 
 #[cfg(test)]
@@ -373,6 +434,13 @@ mod tests {
             let body = serde_json::to_vec(&message).unwrap();
             self.to_core.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
             self.to_core.write_all(&body).await.unwrap();
+            self.to_core.flush().await.unwrap();
+        }
+
+        /// A frame whose body is these bytes, whatever they are.
+        async fn write_raw(&mut self, body: &[u8]) {
+            self.to_core.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+            self.to_core.write_all(body).await.unwrap();
             self.to_core.flush().await.unwrap();
         }
 
@@ -543,5 +611,152 @@ mod tests {
         let limits: Vec<_> = [method::OUTLINE, method::PLAN_IDS, method::PLAN_FILE_ID, method::CALL_TREE].map(timeout_of).into();
         assert_eq!(limits, [REQUEST_TIMEOUT, REQUEST_TIMEOUT, REQUEST_TIMEOUT, CALL_TREE_TIMEOUT]);
         assert_eq!((REQUEST_TIMEOUT.as_secs(), CALL_TREE_TIMEOUT.as_secs()), (10, 30));
+    }
+
+    // ── one unreadable answer fails its request, not the driver ─────────────────────────────────────────────────────────
+
+    /// A host that holds this connected client, as `with_client` needs.
+    async fn hosted() -> (DriverHost, Arc<DriverClient>, Fake) {
+        let (client, fake) = connected().await;
+        let host = DriverHost::default();
+        *host.client.lock().await = Some(client.clone());
+        (host, client, fake)
+    }
+
+    /// The next request is answered, on the same driver (the pointer is the one that was there, and nothing was started again).
+    async fn next_request_is_answered(host: &DriverHost, client: &Arc<DriverClient>, fake: &mut Fake) {
+        let next = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(2)).await });
+        let answer = async {
+            loop {
+                let frame = fake.read().await;
+                if frame["method"] == method::OUTLINE && frame["params"]["n"] == 2 {
+                    fake.answer(&frame["id"], json!("fine")).await;
+                    break;
+                }
+            }
+        };
+        let (next, ()) = tokio::join!(next, answer);
+        assert_eq!(next.unwrap(), json!("fine"));
+        assert!(Arc::ptr_eq(host.client.lock().await.as_ref().expect("the driver is still held"), client), "the same driver: it was never restarted");
+    }
+
+    #[tokio::test]
+    async fn a_well_framed_body_that_is_not_json_fails_its_request_with_a_readable_message_and_the_next_one_is_answered() {
+        let (host, client, mut fake) = hosted().await;
+        let first = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
+        let garbage = async {
+            let request = fake.read().await;
+            // the id is in the text, so the right request is the one that fails
+            fake.write_raw(format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{ this is not json"#, request["id"]).as_bytes()).await;
+        };
+        let (first, ()) = tokio::join!(first, garbage);
+        let error = first.unwrap_err();
+        assert!(matches!(error, HostError::BadAnswer(_)), "{error:?}");
+        assert!(error.to_string().starts_with("the driver's answer could not be read: "), "{error}");
+        next_request_is_answered(&host, &client, &mut fake).await;
+    }
+
+    #[tokio::test]
+    async fn a_body_with_no_id_fails_the_one_request_that_is_waiting_and_the_driver_goes_on() {
+        let (host, client, mut fake) = hosted().await;
+        let first = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
+        let garbage = async {
+            fake.read().await;
+            fake.write_raw(b"not json at all").await;
+        };
+        let (first, ()) = tokio::join!(first, garbage);
+        assert!(matches!(first, Err(HostError::BadAnswer(_))), "{first:?}");
+        next_request_is_answered(&host, &client, &mut fake).await;
+    }
+
+    #[tokio::test]
+    async fn with_two_requests_waiting_a_body_with_no_id_cannot_say_which_so_both_keep_waiting_for_their_own_answers() {
+        let (client, mut fake) = connected().await;
+        let ask = |n: u32| {
+            let client = client.clone();
+            tokio::spawn(async move { client.call::<Value>(method::OUTLINE, &asked(n)).await })
+        };
+        let (one, two) = (ask(1), ask(2));
+        let (a, b) = (fake.read().await, fake.read().await);
+        fake.write_raw(b"{ nonsense").await;
+        fake.answer(&a["id"], json!("a")).await;
+        fake.answer(&b["id"], json!("b")).await;
+        let mut answers = vec![one.await.unwrap().unwrap(), two.await.unwrap().unwrap()];
+        answers.sort_by_key(|v| v.as_str().unwrap().to_string());
+        assert_eq!(answers, [json!("a"), json!("b")], "neither was failed for something it did not cause");
+    }
+
+    #[tokio::test]
+    async fn an_answer_nested_deeper_than_the_parser_allows_fails_its_request_and_not_the_driver() {
+        // the real case: a call tree of a long chain (valid JSON, 200 levels): serde_json's limit is 128
+        let (host, client, mut fake) = hosted().await;
+        let first = host.with_client(|c| async move { c.call::<Value>(method::CALL_TREE, &asked(1)).await });
+        let deep = async {
+            let request = fake.read().await;
+            let body = format!(r#"{{"jsonrpc":"2.0","id":{},"result":{}{}}}"#, request["id"], "[".repeat(200), "]".repeat(200));
+            fake.write_raw(body.as_bytes()).await;
+        };
+        let (first, ()) = tokio::join!(first, deep);
+        let error = first.unwrap_err();
+        assert!(matches!(&error, HostError::BadAnswer(m) if m.contains("recursion limit")), "{error:?}");
+        next_request_is_answered(&host, &client, &mut fake).await;
+    }
+
+    #[tokio::test]
+    async fn an_answer_of_the_wrong_shape_is_one_bad_answer_too() {
+        let (host, client, mut fake) = hosted().await;
+        let first = host.with_client(|c| async move { c.call::<Vec<u32>>(method::OUTLINE, &asked(1)).await });
+        let wrong = async {
+            let request = fake.read().await;
+            fake.answer(&request["id"], json!("a string, not a list")).await;
+        };
+        let (first, ()) = tokio::join!(first, wrong);
+        assert!(matches!(first, Err(HostError::BadAnswer(_))), "{first:?}");
+        next_request_is_answered(&host, &client, &mut fake).await;
+    }
+
+    #[tokio::test]
+    async fn a_frame_without_content_length_still_ends_the_driver() {
+        let (host, _client, mut fake) = hosted().await;
+        let first = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
+        let broken = async {
+            fake.read().await;
+            fake.to_core.write_all(b"\r\n").await.unwrap(); // a header block with nothing in it: no Content-Length
+            fake.to_core.flush().await.unwrap();
+        };
+        let (first, ()) = tokio::join!(first, broken);
+        assert!(matches!(first, Err(HostError::Closed(_))), "{first:?}");
+        assert!(host.client.lock().await.is_none(), "after a framing error nothing says where the next frame starts: the driver is dropped");
+    }
+
+    #[tokio::test]
+    async fn stray_output_on_the_drivers_stdout_still_ends_it() {
+        let (host, _client, mut fake) = hosted().await;
+        let first = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
+        let stray = async {
+            fake.read().await;
+            fake.to_core.write_all(b"hello from a print statement\r\n").await.unwrap();
+            fake.to_core.flush().await.unwrap();
+        };
+        let (first, ()) = tokio::join!(first, stray);
+        assert!(matches!(first, Err(HostError::Closed(_))), "{first:?}");
+        assert!(host.client.lock().await.is_none());
+    }
+
+    #[test]
+    fn the_id_of_a_response_is_read_out_of_text_that_does_not_parse() {
+        let table: &[(&str, Option<u64>)] = &[
+            (r#"{"jsonrpc":"2.0","id":7,"result":{ oops"#, Some(7)),
+            (r#"{"id" : 42 , "result": [[[["#, Some(42)),
+            (r#"{"result":"x","id":9"#, Some(9)),
+            (r#"{"jsonrpc":"2.0","result":"has \"id\":5 inside a string"#, None),
+            (r#"{"id":"a-string-id"}"#, None),
+            (r#"{"id":null,"error":{"code":1}"#, None),
+            ("not json", None),
+            ("", None),
+        ];
+        for (body, expected) in table {
+            assert_eq!(salvage_id(body.as_bytes()), *expected, "{body}");
+        }
     }
 }
