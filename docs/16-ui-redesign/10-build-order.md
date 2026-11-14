@@ -351,6 +351,30 @@ Tests: `shared` 240, `webview` 203, window suite 46 (new: *what is opened inside
 
 **Proof by hand (yours):** open many things while focused deep and Reveal a few deep nodes, then clear the focus: the project draws as you left it, with no delay. Expand All Below on a large folder: at most 200 cards and the note in the bar. Pan around a 200-card drawing: nothing flickers, and the sidebar and the cards' chevrons for functions you scroll to appear within about a second.
 
+### 8.4b part 2: the root's family, held-back cards (before 8.5)
+
+From the 8.4b review (2026-11-14). As built, a focus on a folder of 200+ files or a file of 200+ functions drew one closed card, and the
+tooltip's way out ("focus on a part") led back to the same card; and a click on a held-back card's chevron took it out of the open set with
+nothing changing on screen (a second click put it back, again with nothing). 03 §6.1's rows *the root* and *a held-back card*, and §2.1's
+row on the root `""`.
+
+| Files | What |
+|---|---|
+| `webview/src/canvas/layout.ts` | the root's family is always accepted (it counts: `committed` starts at 1 + its family); `Placed.heldBack` on a card that is open in the set but drawn closed by the budget |
+| `webview/src/node-card/` (`cardButtons`, `useNodeActions`), `webview/src/canvas/keys.ts` | chevron / `Space` / `→` on a held-back card: `focus` (structure) or `explore` with `activate: true` (call); the `+N` tooltip of 03 §6.1 |
+| `shared/session.ts`, `shared/sessionInvariants.ts` | `withRoot` never drops `""`; `sessionProblems`: a context that has used 21+ roots still has `""` when it had it |
+
+Tests (table tests):
+- layout: a root with 198 / 199 / 200 / 300 children draws 199 / 200 / 201 / 301 cards with `total` equal to them (no note); a root with 250
+  children, one of them open with 3 more: that one is drawn closed, `heldBack`, `+3`; a card closed by the user is never `heldBack`;
+- the chevron intent of a card: a table of (structure / call) × (held back / open / closed) → `focus` / `explore` / `toggle`;
+- session: 25 roots visited after opening things at `""` → `""` is still there with its set; `sessionProblems` after every step.
+- window suite: the 250-function file of 8.4b, focused → 251 cards drawn and no note.
+
+Proof by hand: focus on a big file → every function is drawn; in a drawing with the note, click a held-back card's chevron → the canvas
+focuses on it and draws its family.
+Commit: `step 8.4b (part 2): the root's family is always drawn; a held-back card focuses or explores`.
+
 ### 8.5 The sidebar becomes a webview (structure rows)
 
 | Files | What |
@@ -407,6 +431,7 @@ the Explorer. Commit: `step 8.7: one menu list for cards and rows; the editor's 
 | 8.2b | chevrons only on functions that call something; `+N` on closed function cards |
 | 8.3 | calls as cards, one level at a time; the new card |
 | 8.4 | one bar on the canvas |
+| 8.4b | clearing the focus draws the project as it was left; at most 200 cards, with a note; a focused folder or file is always drawn whole |
 | 8.5 | the webview sidebar (structure only) |
 | 8.6 | EXPLORE panels in the sidebar |
 | 8.7 | the new menus |

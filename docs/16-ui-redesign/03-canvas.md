@@ -77,7 +77,7 @@ of it at once from the project's root: hundreds of cards and seconds of delay (s
 | toggle, expand, Collapse All, Expand All Below | `open[current root]` only |
 | Reveal | opens the ancestors between the current root and the node, in `open[current root]` only |
 | the code changed | ids that are gone are dropped from every set; a root that is gone loses its set |
-| how many roots are kept | the 20 used last per context (each set is small; this bounds the saved session) |
+| how many roots are kept | the 20 used last per context (each set is small; this bounds the saved session; `recent` keeps their order, 8.4b). The project's root `""` is never dropped (decided 2026-11-14): clearing the focus always gives the project back as it was left |
 | a saved session from before | its single `expanded` becomes `open[its focus root]` |
 
 `wantedCalls` (05 §2) reads `open[current root]` of each context, not every root's set: only what is drawn asks for trees.
@@ -189,10 +189,12 @@ Whatever path leads there (a restored session, a 300-function file, Expand All B
 
 | Rule | How |
 |---|---|
-| the budget | the layout walks depth first in reading order. When the next open node's children do not all fit, that node is drawn **closed** with its `+N`; so is every open node after it. The root is always drawn. What is drawn is always a whole tree, never half a family |
+| the budget | the layout walks depth first in reading order. When the next open node's children do not all fit, that node is drawn **closed** with its `+N`; so is every open node after it. What is drawn is always a whole tree, never half a family |
+| the root (decided 2026-11-14, after 8.4b) | the root **and its whole family** are always drawn, past the budget if they must be: they count against it, so everything below them stays closed. Focus is the way out the note names; a focus on a 300-file folder or a 250-function file has to show its 300 or 250 cards, or there is no way to see them at all. The cost is bounded by the biggest folder or file, and the note does not show (nothing was held back) |
+| a held-back card | an open card the budget drew closed is marked `heldBack`. Its chevron, `Space` and `→` do not toggle it (that would silently take it out of the open set): on a structure card they **Focus** on it, on a call card they **Explore** it (activates), so its family draws in full by the root rule. Its `+N` tooltip: *"Not drawn: the canvas shows at most 200 cards. Click to focus on it."* (call card: *"… Click to explore it."*) |
 | saying so | the bar shows, dim, before the right-hand buttons: *"200 of 640 cards"*, tooltip *"Some open cards are drawn closed to keep the canvas fast. Focus on a part to see all of it."* No "Show all": that would bring back the freeze |
 | drawing | React Flow's `onlyRenderVisibleElements`: cards and edges off screen are not in the page |
-| asking | probes and the prefetch go to the cards **on screen** (the viewport plus one screen's margin), reported by the page after a pan settles (300 ms). Full trees are still fetched for the open functions of the drawing, which the budget bounds |
+| asking | probes and the prefetch go to the cards **on screen** (the viewport plus one screen's margin), reported by the page after a pan settles (300 ms). Full trees are fetched for every open function of the current root's set, also one the budget drew closed: its family's size is only known from its tree, and the set grows only by clicks, Reveal and Expand All Below (500 at most) |
 
 ## 7. Keys
 
