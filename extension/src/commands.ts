@@ -1,8 +1,8 @@
 import * as path from "path";
 import * as vscode from "vscode";
 
-import { siteChoice } from "@vnoc/shared/calls.ts";
-import type { Range, TreeNode } from "@vnoc/shared/messages";
+import { type CallId, isCallId, listedSites, resolveCall, siteChoice } from "@vnoc/shared/calls.ts";
+import type { CallTreeNode, Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
 import type { Events } from "@vnoc/shared/messages";
 import { MISSING_PIN } from "@vnoc/shared/tree";
@@ -11,7 +11,7 @@ import type { CallTrees } from "./callTree";
 import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
 import type { Surfaces } from "./surfaces";
-import { type ContextId, MAIN } from "@vnoc/shared/session.ts";
+import { type ContextId, type ContextState, MAIN } from "@vnoc/shared/session.ts";
 import type { SessionStore } from "./session";
 import { attachMissingHere, relinkMissing } from "./relink";
 import { writeId } from "./writeId";
@@ -24,6 +24,9 @@ import { absolute, selectionOf } from "./files";
 
 const isTreeNode = (arg: unknown): arg is TreeNode => typeof arg === "object" && arg !== null && "kind" in arg && "children" in arg;
 const isAttentionRow = <R extends AttentionRow["row"]>(arg: unknown, row: R): arg is Extract<AttentionRow, { row: R }> => typeof arg === "object" && arg !== null && (arg as AttentionRow).row === row;
+
+/** The editor's or a tab's menu passes the file's Uri alone; the Explorer passes it with the list of selected ones. From an editor the canvas opens beside it. */
+const isEditorArg = (arg: unknown, selected: unknown): boolean => arg instanceof vscode.Uri && !Array.isArray(selected);
 
 /** Cursor moves come in bursts; look at where it rests. */
 const CURSOR_DEBOUNCE_MS = 200;
@@ -64,8 +67,10 @@ export class Commands {
   register(): vscode.Disposable[] {
     const on = (name: string, run: (arg: unknown, selected?: unknown) => Promise<unknown> | unknown) => vscode.commands.registerCommand(name, command(run));
     return [
-      // with a node (the editor's or the Explorer's menu, a row) the canvas opens at it; from the palette it just opens
-      on("vnoc.openCanvas", async (arg, selected) => (arg === undefined ? void this.panels.showCanvas() : this.openCanvasAt((await this.nodeFor(arg, selected)).id))),
+      // Open Canvas takes no node: it brings the canvas up as it was (the title button, the palette). With a node it is Open in Canvas
+      on("vnoc.openCanvas", () => void this.panels.showCanvas()),
+      // reveal the node on the canvas, opening it if closed; from an editor or a tab it opens BESIDE it, so the code stays in view (08 §4)
+      on("vnoc.openInCanvas", async (arg, selected) => this.openCanvasAt((await this.nodeFor(arg, selected)).id, { beside: isEditorArg(arg, selected) })),
       // a click on a node, from the palette or a test: the sidebar row's click, in MAIN
       on("vnoc.open", (arg) => (isTreeNode(arg) ? this.rowClick(MAIN, arg.id) : undefined)),
       on("vnoc.focusJump", (depth) => this.store.dispatch({ type: "focusJump", depth: Number(depth) })),
@@ -76,13 +81,21 @@ export class Commands {
         await this.showSidebar();
       }),
       on("vnoc.revealInExplorer", async (arg, selected) => vscode.commands.executeCommand("revealInExplorer", absolute((await this.nodeFor(arg, selected)).path))),
-      on("vnoc.openCanvasBeside", async (arg, selected) => (arg === undefined ? void this.panels.showCanvas({ beside: true }) : this.openCanvasAt((await this.nodeFor(arg, selected)).id, { beside: true }))),
-      on("vnoc.expand", async (arg, selected) => this.store.dispatch({ type: "expand", ids: [(await this.nodeFor(arg, selected)).id] })),
-      on("vnoc.collapse", async (arg, selected) => this.store.dispatch({ type: "toggle", id: (await this.nodeFor(arg, selected)).id })),
+      // a card's own id: a structure key, or a call id for a call card (whose `nodeKey` is its callee)
+      on("vnoc.expand", async (arg, selected) => this.store.dispatch({ type: "expand", ids: [await this.cardIdOf(arg, selected)] }, this.contextOf(arg))),
+      on("vnoc.collapse", async (arg, selected) => this.store.dispatch({ type: "toggle", id: await this.cardIdOf(arg, selected) }, this.contextOf(arg))),
+      // the call menu (08 §3): Explore follows the call into its own context; Go to Call Site goes to its line, or asks when it is made in several places
+      on("vnoc.explore", (arg) => {
+        const call = this.callFor(arg);
+        this.store.dispatch({ type: "explore", call: call.id, activate: true }, call.context);
+      }),
+      on("vnoc.goToCallSite", (arg) => this.goToCallSite(this.callFor(arg).node)),
+      on("vnoc.closeContext", (arg) => this.closeContext(this.contextOf(arg))),
+      on("vnoc.closeOtherContexts", (arg) => this.closeOtherContexts(this.contextOf(arg))),
       on("vnoc.expandAll", async (arg, selected) => this.expandAll(await this.nodeFor(arg, selected))),
       on("vnoc.collapseAll", () => this.store.dispatch({ type: "collapseAll" })),
-      on("vnoc.showCodeInCard", async (arg, selected) => this.viewCommand({ name: "showCode", key: (await this.nodeFor(arg, selected)).id })),
-      on("vnoc.hideCodeInCard", async (arg, selected) => this.viewCommand({ name: "hideCode", key: (await this.nodeFor(arg, selected)).id })),
+      on("vnoc.showCodeInCard", async (arg, selected) => this.viewCommand({ name: "showCode", key: await this.cardIdOf(arg, selected) })),
+      on("vnoc.hideCodeInCard", async (arg, selected) => this.viewCommand({ name: "hideCode", key: await this.cardIdOf(arg, selected) })),
       on("vnoc.fitView", () => this.viewCommand({ name: "fitView" })),
       on("vnoc.copyPath", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
@@ -95,12 +108,11 @@ export class Commands {
         return this.rowClick(this.store.get().active, node.id);
       })),
       on("vnoc.focus", async (arg, selected) => this.focusInSidebar((await this.nodeFor(arg, selected)).id)),
-      on("vnoc.showOnCanvas", async (arg, selected) => this.showOnCanvas((await this.nodeFor(arg, selected)).id)),
       on("vnoc.focusBack", () => this.store.dispatch({ type: "focusBack" })),
       on("vnoc.focusClear", () => this.store.dispatch({ type: "focusJump", depth: 0 })),
       on("vnoc.goToCode", async (arg, selected) => this.goToCode(await this.nodeFor(arg, selected))),
       on("vnoc.showDocs", (arg, selected) => this.showDocsBeside(arg, selected)),
-      on("vnoc.showCalls", async (arg, selected) => this.showCalls(await this.nodeFor(arg, selected), arg instanceof vscode.Uri)),
+      on("vnoc.showCalls", async (arg, selected) => this.showCalls(await this.nodeFor(arg, selected), isEditorArg(arg, selected))),
       // the NEEDS ATTENTION rows (a row is `{ row: "missing" | "problem", … }`; nothing here changes the session)
       on("vnoc.openMissingDocs", (arg) => (isAttentionRow(arg, "missing") ? this.panels.showDocs(MISSING_PIN + arg.node.id) : undefined)),
       on("vnoc.openNotRead", (arg) => (isAttentionRow(arg, "notRead") && arg.item.kind === "file" ? this.openAt(arg.item.path, { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }) : undefined)),
@@ -173,18 +185,33 @@ export class Commands {
     return chain[chain.length - 1];
   }
 
+  /** The context a menu entry is about: the one the card or the row is in (`contextId`, from `nodeContext`), else the active one. */
+  private contextOf(arg: unknown): ContextId {
+    const id = typeof arg === "object" && arg !== null && "contextId" in arg ? (arg as { contextId: unknown }).contextId : undefined;
+    return typeof id === "string" && id in this.store.get().contexts ? id : this.store.get().active;
+  }
+
+  /**
+   * The call a call card's menu is about, from `callId` in what `nodeContext` wrote (08 §6): its id, the context it is in, and its node in the call trees
+   * the host holds, which has its sites (undefined when the tree is not held: nothing is known of its sites).
+   */
+  callFor(arg: unknown): { id: CallId; context: ContextId; node: CallTreeNode | undefined } {
+    const id = typeof arg === "object" && arg !== null && "callId" in arg ? (arg as { callId: unknown }).callId : undefined;
+    if (typeof id !== "string" || !isCallId(id)) throw new Error("That is not a call.");
+    return { id, context: this.contextOf(arg), node: resolveCall(this.callTrees.all(), id) };
+  }
+
+  /** The id of the card a menu entry is about: a call id for a call card, else its structure node's key. */
+  private async cardIdOf(arg: unknown, selected?: unknown): Promise<string> {
+    return typeof arg === "object" && arg !== null && (arg as { role?: unknown }).role === "call" ? this.callFor(arg).id : (await this.nodeFor(arg, selected)).id;
+  }
+
   // ── what they do ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
   /** Focus: the sidebar and the canvas both start at this node (the focus is shared), and the V-NOC side bar comes up. The canvas is not opened. */
   private async focusInSidebar(id: string) {
     this.store.dispatch({ type: "focus", id });
     await vscode.commands.executeCommand("workbench.view.extension.vnoc");
-  }
-
-  /** Show on Canvas: zoom the canvas into this node (and the sidebar follows), opening the canvas if it is closed. */
-  private showOnCanvas(id: string) {
-    this.store.dispatch({ type: "focus", id });
-    this.panels.showCanvas();
   }
 
   /** Open Canvas, on a node: bring the canvas up with the node revealed and selected, keeping the focus unless it hides the node. The canvas finds the request in the session, whether it was open or not. */
@@ -299,6 +326,30 @@ export class Commands {
     });
     pick.onDidHide(() => pick.dispose());
     pick.show();
+  }
+
+  /** Go to Call Site (08 §3): one site goes there; several are a list that previews each. A call whose sites name no file of the project has nowhere to go. */
+  private async goToCallSite(node: CallTreeNode | undefined): Promise<void> {
+    const sites = node ? listedSites(node).map((site) => ({ path: site.path, range: { start: site.start, end: site.end } })) : [];
+    if (sites.length === 0) throw new Error("This call has no site to go to: its calls are not loaded yet, or none is in a file of the project.");
+    if (sites.length === 1) return this.openAt(sites[0].path, sites[0].range);
+    return this.pickCallSite(sites);
+  }
+
+  /** Close (08 §5): an EXPLORE context goes with its children; MAIN stays. */
+  private closeContext(id: ContextId): void {
+    if (this.store.get().contexts[id]?.kind === "explore") this.store.dispatch({ type: "closeContext", id }, id);
+  }
+
+  /** Close Others: every EXPLORE context but this one and the ones it hangs from (closing one of those would close this one with it). */
+  private closeOtherContexts(keep: ContextId): void {
+    const s = this.store.get();
+    const keepers = new Set<ContextId>();
+    for (let c: ContextState | undefined = s.contexts[keep]; c; c = c.parent === null ? undefined : s.contexts[c.parent]) keepers.add(c.id);
+    for (const id of s.order) {
+      if (keepers.has(id) || !this.store.get().contexts[id]) continue; // an earlier close may have taken it with it
+      this.closeContext(id);
+    }
   }
 
   /** A file below the opened folder, at a range (a call site). Beside the canvas when it is in front, as Go to Code does. */

@@ -5,6 +5,7 @@ import { useCanvasKeys } from "./app/useCanvasKeys.ts";
 import { useFocusedView } from "./app/useFocusedView.ts";
 import { pageBody } from "./app/pageBody.ts";
 import { useRenderedReport } from "./app/useRenderedReport.ts";
+import { paneContext } from "./node-card/nodeContext.ts";
 import { Canvas } from "./canvas/Canvas.tsx";
 import { CanvasMessage } from "./canvas/CanvasMessage.tsx";
 import { TopBar } from "./canvas/top-bar/TopBar.tsx";
@@ -16,7 +17,7 @@ import { setDocsOpen, useView } from "./state/view.ts";
 // The canvas page: the bar, the cards, the doc panel. It reads the stores and draws; nothing here keeps state of its own.
 
 // right-click on the empty canvas: its own menu (Fit View, Collapse All, ...); a card inside it says "node" and wins
-const PANE_CONTEXT = JSON.stringify({ webviewSection: "pane", preventDefaultContextMenuItems: true });
+const PANE_CONTEXT = paneContext("canvas");
 
 export function App() {
   const { status, message, structure, reloads } = useData();

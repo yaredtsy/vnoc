@@ -58,7 +58,12 @@ export class SessionStore {
 
 /** The context keys that menus and the view test: set only when the value moves. */
 function setContextKeys(prev: Session | undefined, next: Session) {
-  const keys = { "vnoc.focused": (s: Session) => s.contexts[s.active].focus.length > 0, "vnoc.hasSelection": (s: Session) => s.contexts[s.active].selected !== null };
+  const keys = {
+    "vnoc.focused": (s: Session) => s.contexts[s.active].focus.length > 0,
+    "vnoc.hasSelection": (s: Session) => s.contexts[s.active].selected !== null,
+    // the canvas background's Close Explore, and the palette's Close
+    "vnoc.activeIsExplore": (s: Session) => s.contexts[s.active].kind === "explore",
+  };
   for (const [key, value] of Object.entries(keys)) {
     if (!prev || value(prev) !== value(next)) void vscode.commands.executeCommand("setContext", key, value(next));
   }

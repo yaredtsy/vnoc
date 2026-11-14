@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 
 import { callNodesIn } from "@vnoc/shared/calls.ts";
 import type { CallTreeResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
-import { type Intent, type Session, exploreId } from "@vnoc/shared/session.ts";
+import { type Intent, type Session, exploreId, openOf } from "@vnoc/shared/session.ts";
 import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
 
 // The STRUCTURE view in a real window (docs/16-ui-redesign/06-sidebar.md, 07 §4): it is a webview, so the suite drives it through what it says (the
@@ -80,6 +80,7 @@ suite("the sidebar", () => {
   const many = path.join(folderPath, "sidebar_many.py");
   const callFiles = [path.join(folderPath, "sidebar_calls_lib.py"), path.join(folderPath, "sidebar_calls_app.py")];
   let caller: TreeNode;
+  let single: TreeNode;
 
   suiteSetup(async () => {
     // a second file, so a preview tab can be seen being replaced; and a long one, so a row can be below the fold
@@ -87,9 +88,10 @@ suite("the sidebar", () => {
     fs.writeFileSync(path.join(folder, "other.py"), "def other():\n    pass\n");
     fs.writeFileSync(many, Array.from({ length: 120 }, (_, i) => `def many${i}():\n    return ${i}\n`).join("\n\n"));
     fs.writeFileSync(callFiles[0], "def sleaf():\n    return 1\n");
-    fs.writeFileSync(callFiles[1], "from sidebar_calls_lib import sleaf\n\n\ndef smain():\n    sleaf()\n");
+    // smain calls sleaf in two places (one merged call with two sites); sone in one (lines 4, 5 and 9, 0-based)
+    fs.writeFileSync(callFiles[1], "from sidebar_calls_lib import sleaf\n\n\ndef smain():\n    sleaf()\n    sleaf()\n\n\ndef sone():\n    sleaf()\n");
     let files: TreeNode[] = [];
-    for (let waited = 0; !(files.length >= 5 && files.find((f) => f.name === "sidebar_many.py")?.children.length === 120 && files.find((f) => f.name === "sidebar_calls_app.py")?.children.length === 1); waited += 200) {
+    for (let waited = 0; !(files.length >= 5 && files.find((f) => f.name === "sidebar_many.py")?.children.length === 120 && files.find((f) => f.name === "sidebar_calls_app.py")?.children.length === 2); waited += 200) {
       assert.ok(waited < 30_000, "the new files never reached the structure");
       files = (await api.structure()).root.children.filter((n) => n.kind === "file");
       await sleep(200);
@@ -97,7 +99,7 @@ suite("the sidebar", () => {
     firstFile = files.find((f) => f.name === "nested.py")!;
     first = firstFile.children[0];
     other = files.find((f) => f.name === "other.py")!.children[0];
-    caller = files.find((f) => f.name === "sidebar_calls_app.py")!.children[0];
+    [caller, single] = files.find((f) => f.name === "sidebar_calls_app.py")!.children;
   });
 
   suiteTeardown(async () => {
@@ -218,6 +220,63 @@ suite("the sidebar", () => {
       throw new Error(`${(e as Error).message}; the panels' last reports: ${JSON.stringify(api.sidebarPosts().slice(-6))}; active ${api.session().active}`);
     } finally {
       api.dispatch({ type: "closeContext", id: explore });
+      api.dispatch({ type: "select", id: null });
+      api.dispatch({ type: "collapseAll" });
+    }
+  });
+
+  test("the call menu's commands take what a call card's context gives (08 §3, §5)", async () => {
+    await closeCanvas();
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    api.dispatch({ type: "focusJump", depth: 0 });
+    api.dispatch({ type: "collapseAll" });
+    api.dispatch({ type: "expand", ids: [caller.id, single.id] }); // two open functions: the host fetches what they call
+    await until("both call trees", () => api.callTrees()[caller.id] !== undefined && api.callTrees()[single.id] !== undefined, 30_000);
+    const [several] = callNodesIn(caller.id, api.callTrees()[caller.id].root); // sleaf, called in two places
+    const [once] = callNodesIn(single.id, api.callTrees()[single.id].root); // sleaf, called in one
+    assert.deepStrictEqual([several.node.call_sites.length, once.node.call_sites.length], [2, 1]);
+    const card = (id: string, over: object = {}) => ({ webviewSection: "node", role: "call", callId: id, nodeKey: "sidebar_calls_lib.py::sleaf", contextId: "main", surface: "canvas", ...over });
+    const line = () => vscode.window.activeTextEditor?.selection.active.line;
+    const inApp = () => vscode.window.activeTextEditor?.document.uri.fsPath.endsWith("sidebar_calls_app.py") === true;
+    try {
+      // Expand and Collapse are the call card's own, not its callee's
+      await vscode.commands.executeCommand("vnoc.expand", card(several.id));
+      assert.ok(openOf(api.session().contexts.main).includes(several.id), "the call is open");
+      assert.ok(!openOf(api.session().contexts.main).includes("sidebar_calls_lib.py::sleaf"), "its callee's structure node is not what was opened");
+      await vscode.commands.executeCommand("vnoc.collapse", card(several.id));
+      assert.ok(!openOf(api.session().contexts.main).includes(several.id));
+
+      // Go to Call Site: one site goes there
+      await vscode.commands.executeCommand("vnoc.goToCallSite", card(once.id));
+      await until("the editor at the one site", () => inApp() && line() === 9);
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+
+      // …several are a list that previews each; Enter goes to the one picked
+      await vscode.commands.executeCommand("vnoc.goToCallSite", card(several.id));
+      await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
+      await until("the preview of the second site", () => vscode.window.visibleTextEditors.some((e) => e.document.uri.fsPath.endsWith("sidebar_calls_app.py") && e.selection.active.line === 5));
+      await vscode.commands.executeCommand("workbench.action.acceptSelectedQuickOpenItem");
+      await until("the editor at the picked site", () => inApp() && line() === 5);
+
+      // Explore follows the call into its own context, activated
+      const explore = exploreId(several.id);
+      await vscode.commands.executeCommand("vnoc.explore", card(several.id));
+      await until("the EXPLORE context to be active", () => api.session().active === explore);
+
+      // Close with no node closes the active EXPLORE; MAIN stays; Close Others keeps the one it is asked about
+      await vscode.commands.executeCommand("vnoc.closeContext", { contextId: "main", webviewSection: "context", contextKind: "main" });
+      assert.deepStrictEqual(api.session().order, ["main", explore], "MAIN has no Close");
+      await vscode.commands.executeCommand("vnoc.closeOtherContexts", { contextId: explore, webviewSection: "context", contextKind: "explore" });
+      assert.deepStrictEqual(api.session().order, ["main", explore], "the one it is asked about stays");
+      await vscode.commands.executeCommand("vnoc.closeOtherContexts", { contextId: "main", webviewSection: "context", contextKind: "main" });
+      assert.deepStrictEqual(api.session().order, ["main"], "from MAIN every EXPLORE is another");
+      await vscode.commands.executeCommand("vnoc.explore", card(several.id));
+      await until("the EXPLORE context again", () => api.session().active === explore);
+      await vscode.commands.executeCommand("vnoc.closeContext"); // the canvas background's Close Explore: no node, the active one
+      assert.deepStrictEqual([api.session().order, api.session().active], [["main"], "main"]);
+    } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      api.dispatch({ type: "activate", id: "main" });
       api.dispatch({ type: "select", id: null });
       api.dispatch({ type: "collapseAll" });
     }
