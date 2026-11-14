@@ -21,7 +21,7 @@ export function States({ body, message }: { body: Exclude<SidebarBody, "ready">;
           {[60, 45, 70, 40, 55].map((width, i) => (
             <div key={i} className="flex h-[22px] items-center gap-2 px-2" style={{ paddingLeft: 8 + (i % 2) * 16 }}>
               <span className="size-4 flex-none rounded-sm bg-muted" />
-              <span className="h-2.5 animate-pulse rounded-sm bg-muted" style={{ width: `${width}%` }} />
+              <span className="h-2.5 rounded-sm motion-safe:animate-pulse bg-muted" style={{ width: `${width}%` }} />
             </div>
           ))}
         </div>

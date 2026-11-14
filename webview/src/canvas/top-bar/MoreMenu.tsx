@@ -2,6 +2,7 @@ import { useReactFlow } from "@xyflow/react";
 
 import { BarButton } from "@/components/BarButton.tsx";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
+import { motionMs, prefersReducedMotion } from "@/lib/motion.ts";
 import { refresh } from "@/state/data.ts";
 import { dispatch } from "@/state/session.ts";
 import { setMinimap, useView } from "@/state/view.ts";
@@ -14,7 +15,7 @@ export function MoreMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger render={<BarButton icon="ellipsis" label="More" />} />
       <DropdownMenuContent>
-        <DropdownMenuItem onClick={() => void fitView({ duration: 300 })}>Fit View</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void fitView({ duration: motionMs(300, prefersReducedMotion()) })}>Fit View</DropdownMenuItem>
         <DropdownMenuItem onClick={() => dispatch({ type: "collapseAll" })}>Collapse All</DropdownMenuItem>
         <DropdownMenuCheckboxItem checked={minimap} onCheckedChange={setMinimap}>
           Show Minimap

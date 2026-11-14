@@ -19,6 +19,8 @@ interface Api {
   sidebarPosts(): { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number }[];
   callTrees(): Record<string, CallTreeResult>;
   sidebarOpen(): boolean;
+  readingStarts(): number;
+  emitIndexChanged(): void;
   renderedPosts(): { context: string; visible: number }[];
   webviewErrors(): string[];
 }
@@ -115,6 +117,16 @@ suite("the sidebar", () => {
     await until("the STRUCTURE page to exist", () => api.sidebarOpen(), 30_000);
     await until("the page to draw its rows", () => (lastPost()?.rows ?? 0) > 0, 30_000);
     assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+
+  test("the first read of the code has VS Code's progress line on the view; a read after rows are drawn does not (06 §8)", async () => {
+    const first = api.readingStarts();
+    assert.ok(first >= 1, "the first read ran with the line on the view");
+    const posts = api.sidebarPosts().length;
+    api.emitIndexChanged(); // every page asks for the structure again, as after a save
+    await sleep(1500);
+    assert.strictEqual(api.readingStarts(), first, "a quiet refresh over drawn rows starts no line");
+    assert.ok((lastPost()?.rows ?? 0) > 0 && api.sidebarPosts().length >= posts, "and the rows stayed");
   });
 
   test("with the canvas open, a click selects and reveals on the canvas, and opens no code tab", async () => {

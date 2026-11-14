@@ -11,6 +11,7 @@ import { CANVAS, DOCS, Surfaces } from "./surfaces";
 import { callLookup } from "@vnoc/shared/calls.ts";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
+import { readingStarts, readingTheCode } from "./progress";
 import { registerSidebar } from "./sidebarView";
 import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 
@@ -72,7 +73,11 @@ export function activate(ctx: vscode.ExtensionContext) {
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // what a webview may ask of the extension (`shared/messages.ts` lists it, `relay.ts` serves it)
   const handlers = createHandlers({
-    structure: async () => ({ ...(await c.loadStructure()), epoch: c.epoch }),
+    // the first read has the progress line on the STRUCTURE view; a read after rows are drawn (the index changed) is quiet
+    structure: () => {
+      const read = async () => ({ ...(await c.loadStructure()), epoch: c.epoch });
+      return c.tree === undefined ? readingTheCode(read) : read();
+    },
     core: (method, params) => c.request(method, params),
     addDoc: (key) => commands.addDocTo(key),
     docs,
@@ -163,6 +168,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     rowClick: (context: string, id: string) => commands.rowClick(context, id),
     /** every drawing the STRUCTURE view reported, in order; empty until the view was shown */
     sidebarPosts: () => sidebarPosts,
+    /** how many times the view's progress line was started: once, for the first read of the code */
+    readingStarts: () => readingStarts(),
     /** whether the STRUCTURE view has been shown (its page exists) */
     sidebarOpen: () => panels.sidebar !== undefined,
     /** the context chips the bar draws now: empty with one context */

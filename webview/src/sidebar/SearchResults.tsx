@@ -37,7 +37,7 @@ export function SearchResults({ results, active, onPick }: { results: Result[]; 
             </span>
             <span className="flex-none truncate">
               {before}
-              {match && <b>{match}</b>}
+              {match && <b className="text-[color:var(--list-highlight)]">{match}</b>}
               {after}
             </span>
             <span className={cn("min-w-0 flex-1 truncate text-[0.92em]", i === active ? "opacity-80" : "text-muted-foreground")}>{hoverParts(r.node).where}</span>

@@ -90,7 +90,7 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize the doc panel"
-          className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none transition-colors hover:bg-ring/40 active:bg-ring/60"
+          className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none motion-safe:transition-colors hover:bg-ring/40 active:bg-ring/60"
           onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
           onPointerMove={onResizeMove}
         />

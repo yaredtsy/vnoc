@@ -67,7 +67,12 @@ test("the description: syntax error first, else the docs, else nothing", () => {
   assert.equal(rowDescription(node("file")), "");
 });
 
-test("what a screen reader says", () => {
-  assert.equal(rowLabel(node("function", { name: "checkout" })), "function checkout");
-  assert.equal(rowLabel(node("file", { name: "api.py", docs: 2 })), "file api.py, 2 docs");
-});
+// the table of 09 §6: what a screen reader says of a row
+const said: { name: string; node: TreeNode; row?: Partial<FlatRow>; state?: { selected: boolean; cursor: boolean }; expect: string }[] = [
+  { name: "the sentence of 09 §6", node: node("function", { name: "checkout", docs: 1 }), row: { depth: 2, posInSet: 2, setSize: 4 }, state: { selected: true, cursor: true }, expect: "function checkout, selected, 1 doc, cursor here, level 3, 2 of 4" },
+  { name: "a top row", node: node("folder", { name: "app" }), expect: "folder app, level 1, 1 of 1" },
+  { name: "two docs, not selected", node: node("file", { name: "api.py", docs: 2 }), row: { posInSet: 3, setSize: 3 }, expect: "file api.py, 2 docs, level 1, 3 of 3" },
+  { name: "a file that did not parse", node: node("file", { name: "bad.py", syntax_error: true }), expect: "file bad.py, syntax error, level 1, 1 of 1" },
+  { name: "only the cursor", node: node("class", { name: "Order" }), row: { depth: 1 }, state: { selected: false, cursor: true }, expect: "class Order, cursor here, level 2, 1 of 1" },
+];
+for (const s of said) test(`what a screen reader says of a row: ${s.name}`, () => assert.equal(rowLabel(row(s.node, s.row), s.state ?? { selected: false, cursor: false }), s.expect));

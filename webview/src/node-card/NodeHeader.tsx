@@ -29,7 +29,7 @@ export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Pla
           aria-label={action === "focus" ? `Focus on ${node.name}` : action === "explore" ? `Explore ${node.name}` : node.collapsed ? `Expand ${node.name}` : `Collapse ${node.name}`}
           onClick={actions[action]}
         >
-          <Codicon name="chevron-right" className={cn("transition-transform", !node.collapsed && "rotate-90")} />
+          <Codicon name="chevron-right" className={cn("motion-safe:transition-transform", !node.collapsed && "rotate-90")} />
         </Button>
       ) : (
         <span className="flex-none" style={{ width: CHEVRON }} />

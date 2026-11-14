@@ -3,6 +3,7 @@
 import { Background, Controls, MiniMap, type Node, ReactFlow, useNodesState, useReactFlow, useStore } from "@xyflow/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { motionMs, prefersReducedMotion } from "../lib/motion.ts";
 import { NodeCard } from "../node-card/NodeCard.tsx";
 import { on, post } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
@@ -30,7 +31,7 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
     if (!target || !laid.nodes.some((p) => p.id === target.id)) return;
     // the cards of a new layout are measured on the next frames; framing them before that frames nothing
     const timer = setTimeout(() => {
-      void fitView({ nodes: [{ id: target.id }], duration: 300, maxZoom: 1.2 });
+      void fitView({ nodes: [{ id: target.id }], duration: motionMs(300, prefersReducedMotion()), maxZoom: 1.2 });
       dispatch({ type: "revealed", n: target.n });
       pulse(target.id); // the card pulses for a second so the eye finds it
     }, 60);
@@ -70,7 +71,7 @@ function ViewCommands() {
   useEffect(
     () =>
       on("viewCommand", ({ name, key }) => {
-        if (name === "fitView") void fitView({ duration: 300 });
+        if (name === "fitView") void fitView({ duration: motionMs(300, prefersReducedMotion()) });
         else if (key) setCodeOpen(key, name === "showCode");
       }),
     [fitView],

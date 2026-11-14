@@ -65,6 +65,10 @@
   --section-header-bg: var(--vscode-sideBarSectionHeader-background, transparent);
   --section-header-fg: var(--vscode-sideBarSectionHeader-foreground, var(--foreground));
   --sash: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder, #007fd4));
+  --list-highlight: var(--vscode-list-highlightForeground, #2aaaff); /* the letters that matched a search */
+  /* a row's outline: the list's focus outline while it has the keyboard, and in High Contrast the active border, which is defined there and empty elsewhere */
+  --row-outline-focused: var(--vscode-contrastActiveBorder, var(--vscode-list-focusOutline, transparent));
+  --row-outline-selected: var(--vscode-contrastActiveBorder, transparent);
   --side-bar-bg: var(--vscode-sideBar-background, var(--background));
   --side-bar-fg: var(--vscode-sideBar-foreground, var(--foreground));
   --edge-call: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 70%, transparent); /* a call edge: dashed, blue at 70% */

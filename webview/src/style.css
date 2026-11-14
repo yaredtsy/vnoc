@@ -34,6 +34,12 @@
 @keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
 
 html, body, #root { height: 100%; margin: 0; }
+
+/* Reduce motion (docs/16-ui-redesign/09-states.md §6): whatever else moves (a tooltip fading in, a chevron turning, a skeleton) is over at once. What a pulse or a
+   spinner draws is decided where it is drawn (node-card.css, Spinner.tsx); a script-driven move (fit view) is `motionMs`. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
+}
 /* VS Code's own font and size: nothing falls back to the browser's 16 px or to a 12 px preset of the kit */
 body { background: var(--background); color: var(--foreground); font-family: var(--font); font-size: var(--font-size); }
 

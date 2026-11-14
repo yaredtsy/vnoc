@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { Codicon } from "@/components/Codicon.tsx";
+import { Spinner } from "@/components/Spinner.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.tsx";
 import { cn } from "@/lib/utils.ts";
@@ -37,7 +38,7 @@ function CallsState({ chip, onRetry }: { chip: Chip; onRetry: () => void }) {
   if (chip.calls === "loading") {
     return (
       <ChipView tip={chip.tip}>
-        <Codicon name="loading" className="codicon-modifier-spin text-[12px]" />
+        <Spinner className="text-[12px]" />
       </ChipView>
     );
   }

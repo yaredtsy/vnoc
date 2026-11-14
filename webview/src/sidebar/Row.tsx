@@ -8,6 +8,7 @@ import { activate } from "./actions.ts";
 import type { FlatRow } from "./flatten.ts";
 import { hoverParts } from "./hover.ts";
 import { rowDescription, rowFacts, rowLabel } from "./rowFacts.ts";
+import { nameClasses, rowClasses } from "./rowLook.ts";
 
 /** One row's height, and what each level of depth indents it by (07 §1: 22 px; 16 px per level, 8 before the first, as the Explorer). */
 export const ROW_H = 22;
@@ -20,7 +21,7 @@ const INDENT_FIRST = 8;
  * object, which shows the entries of `webview/context` for `webviewId == 'vnoc.structure'` and passes it to the command (07 §6). After the hover delay the
  * row says what it is (07 §5). Draws; decides nothing.
  */
-export function Row({ row, domId, start, contextId, selected, cursor, treeFocused, onClick, onDoubleClick, onToggle, onContextMenu, onHover }: {
+export function Row({ row, domId, start, contextId, selected, highlighted, cursor, treeFocused, onClick, onDoubleClick, onToggle, onContextMenu, onHover }: {
   row: FlatRow;
   /** the row's element id: unique across the panels (the list's `aria-activedescendant` names it) */
   domId: string;
@@ -28,6 +29,8 @@ export function Row({ row, domId, start, contextId, selected, cursor, treeFocuse
   start: number;
   contextId: string;
   selected: boolean;
+  /** pointed at without selecting (`session.highlight`): the hovered card, a crumb, a search result */
+  highlighted: boolean;
   /** the text cursor is in this node */
   cursor: boolean;
   /** the list has the keyboard: the selection is bright, else dim */
@@ -51,16 +54,9 @@ export function Row({ row, domId, start, contextId, selected, cursor, treeFocuse
       aria-selected={selected}
       aria-setsize={row.setSize}
       aria-posinset={row.posInSet}
-      aria-label={rowLabel(node)}
+      aria-label={rowLabel(row, { selected, cursor })}
       data-vscode-context={nodeContext({ node: rowFacts(row), contextId, isFocusRoot: row.focusRoot, surface: "sidebar" })}
-      className={cn(
-        "group absolute inset-x-0 flex cursor-pointer items-center pr-2 select-none",
-        selected
-          ? treeFocused
-            ? "bg-[var(--card-selected-bg)] text-[color:var(--list-active-fg)] [--row-bg:var(--card-selected-bg)]"
-            : "bg-[var(--list-inactive-bg)] text-[color:var(--list-inactive-fg)] [--row-bg:var(--list-inactive-bg)]"
-          : "hover:bg-[var(--list-hover-bg)] hover:[--row-bg:var(--list-hover-bg)]",
-      )}
+      className={rowClasses({ selected, highlighted, treeFocused })}
       style={{ top: start, height: ROW_H, paddingLeft: INDENT_FIRST + row.depth * INDENT }}
       onClick={(e) => !(e.target as Element).closest("button") && onClick()}
       onDoubleClick={(e) => !(e.target as Element).closest("button") && onDoubleClick()}
@@ -73,7 +69,7 @@ export function Row({ row, domId, start, contextId, selected, cursor, treeFocuse
     <Tooltip>
       <TooltipTrigger render={line}>
         {Array.from({ length: row.depth }, (_, i) => (
-          <span key={i} aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-[var(--indent-guide)] opacity-0 transition-opacity group-hover/tree:opacity-60" style={{ left: INDENT_FIRST + i * INDENT + 7 }} />
+          <span key={i} aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-[var(--indent-guide)] opacity-0 motion-safe:transition-opacity group-hover/tree:opacity-60" style={{ left: INDENT_FIRST + i * INDENT + 7 }} />
         ))}
         {row.hasChildren ? (
           <button
@@ -86,7 +82,7 @@ export function Row({ row, domId, start, contextId, selected, cursor, treeFocuse
               if (!row.focusRoot) onToggle();
             }}
           >
-            <Codicon name="chevron-right" className={cn("text-[16px] transition-transform", row.open && "rotate-90")} />
+            <Codicon name="chevron-right" className={cn("text-[16px] motion-safe:transition-transform", row.open && "rotate-90")} />
           </button>
         ) : (
           <span className="size-4 flex-none" />
@@ -94,7 +90,7 @@ export function Row({ row, domId, start, contextId, selected, cursor, treeFocuse
         <span className="mx-1 flex size-4 flex-none items-center justify-center" style={{ color: KINDS[node.kind].color }}>
           <Codicon name={kindIcon(node.kind, row.inClass)} className="text-[16px]" />
         </span>
-        <span className="min-w-0 truncate">{node.name}</span>
+        <span className={nameClasses(node.syntax_error)}>{node.name}</span>
         {description && <span className={cn("ml-2 flex-none text-[0.92em]", selected ? "opacity-80" : "text-muted-foreground")}>{description}</span>}
         {cursor && (
           <span className="ml-auto flex-none pl-2 text-[color:var(--card-cursor)]" title="the cursor is here">

@@ -20,7 +20,7 @@ const HOVER_MS = 40;
  * What a key means is `sidebarKey` (and `typeAhead`); what a click means is `actions.ts`, in this panel's `context`. `onList` gets the list's element (the page
  * gives it the keyboard), `onTab` says where `Tab` goes: true when it went to another panel's list. Draws; decides nothing.
  */
-export function Tree({ context, rows, selected, cursor, onList, onTab }: { context: ContextId; rows: FlatRow[]; selected: string | null; cursor: string | null; onList: (el: HTMLDivElement | null) => void; onTab: (shift: boolean) => boolean }) {
+export function Tree({ context, rows, selected, cursor, highlight, onList, onTab }: { context: ContextId; rows: FlatRow[]; selected: string | null; cursor: string | null; highlight: string | null; onList: (el: HTMLDivElement | null) => void; onTab: (shift: boolean) => boolean }) {
   const scroller = useRef<HTMLDivElement | null>(null);
   // a row's element id is unique across the panels' lists (the list names the selected one as its active descendant)
   const uid = useId();
@@ -144,6 +144,7 @@ export function Tree({ context, rows, selected, cursor, onList, onTab }: { conte
               start={item.start}
               contextId={context}
               selected={row.id === selected}
+              highlighted={row.id === highlight}
               cursor={row.id === cursor}
               treeFocused={focused}
               onClick={() => {

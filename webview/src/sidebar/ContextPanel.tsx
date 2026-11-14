@@ -31,6 +31,7 @@ export function ContextPanel({ panel, headers, structure, height, splitter, sect
   const selected = useSession((s) => s.contexts[panel.id]?.selected ?? null);
   const open = useSession((s) => (s.contexts[panel.id] ? openOf(s.contexts[panel.id]) : NONE));
   const cursor = useSession((s) => s.cursor);
+  const highlight = useSession((s) => s.highlight);
   const focusId = focus.length > 0 ? focus[focus.length - 1] : null;
   const rows = useMemo(() => flatten(structure.root, new Set(open), focusId), [structure, open, focusId]);
   return (
@@ -45,7 +46,7 @@ export function ContextPanel({ panel, headers, structure, height, splitter, sect
       {splitter}
       {headers && <PanelHeader panel={panel} />}
       {focusId !== null && <FocusBar structure={structure} focus={focus} context={panel.id} />}
-      <Tree context={panel.id} rows={rows} selected={selected} cursor={cursor} onList={onList} onTab={onTab} />
+      <Tree context={panel.id} rows={rows} selected={selected} cursor={cursor} highlight={highlight} onList={onList} onTab={onTab} />
     </section>
   );
 }
