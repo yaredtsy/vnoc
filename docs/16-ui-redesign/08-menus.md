@@ -8,7 +8,7 @@ menus
 ├── 4. V-NOC in VS Code's menus: code editor, editor tab, Explorer (R11)
 ├── 5. the other menus: canvas background, panel header, view titles, the bar's ⋯
 ├── 6. what a card or a row tells the menu (nodeContext)
-├── 7. if webview/context does not reach a webview view
+├── 7. webview/context on a webview view (checked: it works)
 ├── 8. commands: new, renamed, removed · context keys · keys
 └── 9. the test that keeps it honest
 ```
@@ -137,14 +137,14 @@ export function nodeContext(f: {
 Every command still starts with `nodeFor(arg)`: `nodeKey` gives the structure node (the callee for a call), and the new `callFor(arg)` gives the
 call (its sites) from `id`.
 
-## 7. If `webview/context` does not reach a webview view
+## 7. `webview/context` on a webview view (checked 2026-11-14: it works)
 
-**[check first in step 8.6]**: right-click a row in the new sidebar with one test entry in `webview/context` whose `when` is
-`webviewId == 'vnoc.structure'`. VS Code documents `webview/context` for webviews; whether a *view* gets it was not checked here.
-
-If it does not: the sidebar draws its own menu (a small React list in `--vscode-menu-*` colours), built from **the same table**, exported as data
-from `extension/package.json` at build time (`scripts/menus.mjs` writes `webview/src/sidebar/menu.json`), and runs the command through a
-`command { name, arg }` request. One list stays one list.
+Checked in step 8.0 with a throwaway webview view `vnoc.probeView`, one element with `data-vscode-context='{"webviewSection":"probe","preventDefaultContextMenuItems":true}'`
+and one `webview/context` entry with `when: webviewId == 'vnoc.probeView'`, in a real window (F5): **the entry appears on a right-click, and the
+default Cut / Copy / Paste items are gone.** The command received **one argument, the element's context object plus the view's id**:
+`{"webviewSection":"probe","preventDefaultContextMenuItems":true,"webview":"vnoc.probeView"}`. So a webview view is a webview for `webview/context`,
+`webviewId` is the view's id, and the sidebar's rows use the same list as the cards. There is no fallback to build: no menu of our own, no
+`scripts/menus.mjs`.
 
 ## 8. Commands, context keys, keys
 

@@ -51,7 +51,7 @@ Proposed here. The ones marked **ask** change behaviour you already use; say yes
 | **R9** | **One bar** on the canvas: Back · context chips · crumbs · reveal selection · docs · `⋯`. The stats line and the selection strip go. | | [02](02-top-bar.md) |
 | **R10** | **Focus never opens anything.** It changes what the sidebar and the canvas show. Opening the canvas is its own entry, "Open in Canvas". | Answers "when I click Focus, should the canvas open or the code?": neither; the canvas follows if it is open. One verb, one effect. | [01](01-layout.md) §4 |
 | **R11** | The editor's V-NOC submenu has **five entries** (Reveal in Sidebar · Open in Canvas · Focus · Show Calls · Show Docs / Add Doc…), down from nine. From an editor the canvas always opens **beside** it, so "Open Canvas to the Side" goes. | | [08](08-menus.md) §4 |
-| **R12** | **One menu list** for a card and a sidebar row: both are webviews, so one `webview/context` list serves both. The drift test shrinks to two exceptions. **[check]** that `webview/context` applies to a webview *view* (8.6 checks it first; the fallback is in 08 §7). | | [08](08-menus.md) §1 |
+| **R12** | **One menu list** for a card and a sidebar row: both are webviews, so one `webview/context` list serves both. The drift test shrinks to two exceptions. `webview/context` applies to a webview *view* (checked in 8.0: it does, 08 §7; no fallback). | | [08](08-menus.md) §1 |
 
 ## 3. What is replaced
 

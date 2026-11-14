@@ -30,7 +30,7 @@ On the branch `0.2-call-trees`, after 7.8. Each step is one commit (or a few wit
 
 | Check | How | Write the answer into |
 |---|---|---|
-| does `webview/context` reach a **webview view**? | a throwaway webview view with one `data-vscode-context` element and one menu entry; F5; right-click | 08 §7 (and drop the fallback if yes) |
+| does `webview/context` reach a **webview view**? | a throwaway webview view with one `data-vscode-context` element and one menu entry; F5; right-click | 08 §7 (and drop the fallback if yes: done) |
 | is `focusedView == <id>` set for a webview view? | *Developer: Inspect Context Keys* with the throwaway view focused | 06 §10 |
 | codicons in a webview under the panel's CSP | load `@vscode/codicons/dist/codicon.css` from `media/`, `font-src ${webview.cspSource}` | 04 §5 |
 
@@ -41,8 +41,8 @@ Proof: the three answers in the docs. Commit: `step 8.0: three checks for the we
 | Check | Answer |
 |---|---|
 | codicons in a webview under the panel's CSP | **works.** The CSP already had `font-src ${webview.cspSource}`. What broke it was Vite's `base` (`/`): the CSS asked for `/assets/index.ttf`, which a webview resolves against its own root, a `NetworkError`. With `base: "./"` in `webview/vite.config.ts` the font loads in the real window (`document.fonts.load("16px codicon")` answered with the face, `check` true on the canvas page; measured with a throwaway probe, removed). The card uses codicons from step 8.3 part 1. |
-| `webview/context` reaches a webview **view** | **not answered**: a right-click needs a person with F5; nothing in the window suite can open a context menu. Still open for 8.5, which builds the sidebar webview. |
-| `focusedView == <id>` for a webview view | **not answered**: *Developer: Inspect Context Keys* is also manual. Still open for 8.5. |
+| `webview/context` reaches a webview **view** | **yes** (by the user, F5, 2026-11-14). The entry appears, the default items are gone, and the command gets `{"webviewSection":"probe","preventDefaultContextMenuItems":true,"webview":"vnoc.probeView"}` as its one argument. The fallback of 08 §7 is dropped. |
+| `focusedView == <id>` for a webview view | **no** (by the user, F5, 2026-11-14). Key `ctrl+alt+8` with no `when` fired with the probe's page focused; `ctrl+alt+9` with `when: focusedView == 'vnoc.probeView'` did not. *Inspect Context Keys* (its output goes to the Developer Tools console, not a document) read `focusedView: ""`, `activeWebviewPanelId: "vnoc.canvas"` with the canvas the active editor, which proved nothing on its own. So key bindings cannot test `focusedView` for the sidebar; its keys are handled inside the page (06 §7), as planned. Not checked: the title bar focused, and the `vnoc.structure.focus` command (8.5). Written into 06 §10. |
 
 ### 8.1 The session: focus is a path, contexts, call ids
 
