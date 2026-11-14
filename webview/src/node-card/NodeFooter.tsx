@@ -37,6 +37,8 @@ export function NodeFooter({ node, contextId }: { node: Placed; contextId: strin
   const hidesCursor = useView((v) => v.hidesCursor === node.id);
   const draw = (c: Chip): ReactNode => {
     switch (c.kind) {
+      case "times": // calls merged into this card: a fact, not a button
+        return <ChipView key={c.kind} tip={c.tip}>{c.text}</ChipView>;
       case "hidden":
         return <ChipView key={c.kind} tip={c.tip} onClick={toggle}>{c.text}</ChipView>;
       case "docs":
@@ -55,6 +57,10 @@ export function NodeFooter({ node, contextId }: { node: Placed; contextId: strin
         return <ChipView key={c.kind} tip={c.tip} className="text-[color:var(--card-selected)]">{c.text}</ChipView>;
       case "cursor":
         return <ChipView key={c.kind} tip={c.tip} className="text-[color:var(--card-cursor)]">{c.text}</ChipView>;
+      default: {
+        const unhandled: never = c.kind; // a new kind of chip must be drawn: the compiler says so
+        return unhandled;
+      }
     }
   };
   return <div className="flex h-5 flex-none items-center gap-0.5 pr-1.5 text-muted-foreground" style={{ paddingLeft: NAME_X - CHIP_PAD }}>{footerChips(node, { selected: hidesSelected, cursor: hidesCursor }).map(draw)}</div>;

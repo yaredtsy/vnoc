@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
+import { callNodesIn } from "@vnoc/shared/calls.ts";
 import type { CallTreeResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Intent, Session } from "@vnoc/shared/session.ts";
 import { canvasTabs, sleep, until } from "./util";
@@ -21,7 +22,7 @@ interface Api {
   coreEpoch(): number;
   dispatch(intent: Intent, context?: string): void;
   restartCore(): Promise<void>;
-  renderedPosts(): { visible: number; hidden: number; calls: number; chevrons: number }[];
+  renderedPosts(): { visible: number; hidden: number; callCards: number; chevrons: number }[];
   callProbes(): Record<string, { revision: number; count: number }>;
 }
 let api: Api;
@@ -75,7 +76,7 @@ suite("show calls", () => {
     api.dispatch({ type: "toggle", id: main.id });
     await until("its tree", () => api.callTrees()[main.id] !== undefined, 30_000);
     assert.strictEqual(api.callTrees()[main.id].root.children.length, 2, "what the probe counted");
-    await until("a card to draw what it calls", () => api.renderedPosts().some((r) => r.calls >= 1), 30_000);
+    await until("a card to draw what it calls", () => api.renderedPosts().some((r) => r.callCards >= 1), 30_000);
     api.dispatch({ type: "toggle", id: main.id }); // closed again for the tests after
     api.dispatch({ type: "collapseAll" });
   });
@@ -90,7 +91,7 @@ suite("show calls", () => {
     assert.deepStrictEqual(statesOf(main.id).slice(0, 2), ["loading", "idle"]);
     // main calls leaf twice (merged: one node) and twice once, which calls leaf: three nodes
     assert.strictEqual(api.callTrees()[main.id].root.children.length, 2, "leaf (×2) and twice");
-    await until("a card to draw the Calls section", () => api.renderedPosts().some((r) => r.calls >= 1), 30_000);
+    await until("a card to draw the Calls section", () => api.renderedPosts().some((r) => r.callCards >= 1), 30_000);
   });
 
   test("closing it before the answer cancels the request: no tree is kept for it", async () => {
@@ -142,6 +143,48 @@ suite("show calls", () => {
     await until("the __init__'s tree", () => api.callTrees()[init] !== undefined, 30_000);
     assert.strictEqual(api.callTrees()["calls_cls.py::Widget"], undefined, "the class itself owns no tree");
     assert.deepStrictEqual(api.callTrees()[init].root.children.map((c) => c.name), ["leaf"]);
+  });
+
+  test("a function that is open has its call cards drawn, and a call card is a row of the layout like any other", async () => {
+    api.dispatch({ type: "collapseAll" }); // what earlier tests left open would draw cards too
+    await vscode.commands.executeCommand("vnoc.showCalls", main);
+    await until("its two call cards: leaf (merged from two calls) and twice", () => api.renderedPosts().at(-1)?.callCards === 2, 30_000);
+  });
+
+  test("selecting a call card opens its EXPLORE context, not activated; double-click (Explore) activates it", async () => {
+    const [leaf] = callNodesIn(main.id, api.callTrees()[main.id].root);
+    const explore = `explore:${leaf.id}`;
+    api.dispatch({ type: "select", id: leaf.id });
+    await until("its EXPLORE context", () => api.session().order.includes(explore));
+    assert.strictEqual(api.session().active, "main", "the canvas stays where it was");
+    assert.deepStrictEqual([...api.session().contexts[explore].focus], ["calls_lib.py", "calls_lib.py::leaf"], "it shows the callee at home");
+    api.dispatch({ type: "explore", call: leaf.id, activate: true }); // what a double-click sends
+    await until("it to be active", () => api.session().active === explore);
+    api.dispatch({ type: "activate", id: "main" });
+    api.dispatch({ type: "select", id: null });
+    await until("it to close", () => !api.session().order.includes(explore));
+  });
+
+  test("a cut call card that is opened gets its callee's tree fetched", async () => {
+    const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
+    // 40 functions in a chain: the full tree is cut at the depth cap (32), so the node at the cap has its calls not loaded
+    let text = "def head():\n    c0()\n\n\n";
+    for (let i = 0; i < 39; i++) text += `def c${i}():\n    c${i + 1}()\n\n\n`;
+    text += "def c39():\n    return 1\n";
+    fs.writeFileSync(path.join(folder, "calls_chain.py"), text);
+    let head: TreeNode | undefined;
+    await until("the chain in the structure", () => (void api.structure().then((s) => (head = find(s.root, "calls_chain.py::head"))), head !== undefined), 20_000);
+    await vscode.commands.executeCommand("vnoc.showCalls", head);
+    await until("the tree of head", () => api.callTrees()["calls_chain.py::head"] !== undefined, 30_000);
+    const nodes = callNodesIn("calls_chain.py::head", api.callTrees()["calls_chain.py::head"].root);
+    const cutNode = nodes.at(-1)!;
+    assert.deepStrictEqual(cutNode.node.marks, ["cut"], "the node at the cap says the walk stopped there");
+    assert.strictEqual(api.callTrees()[cutNode.node.key!], undefined, "its own tree is not held yet");
+    // open every card down the chain, the cut one last: the host then wants the callee's own tree
+    api.dispatch({ type: "expand", ids: nodes.map((n) => n.id) });
+    await until("the cut node's own tree", () => api.callTrees()[cutNode.node.key!] !== undefined, 30_000);
+    await until("more call cards than the cap", () => (api.renderedPosts().at(-1)?.callCards ?? 0) > 33, 30_000);
+    api.dispatch({ type: "collapseAll" });
   });
 
   test("the command refuses a file: calls start at a function or a class", async () => {

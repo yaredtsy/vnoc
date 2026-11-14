@@ -8,6 +8,7 @@ import { on } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
 import { pulse, setCodeOpen, useView } from "../state/view.ts";
+import { doubleClickIntent } from "./cardClicks.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import type { Layout, Placed } from "./layout.ts";
 
@@ -50,7 +51,7 @@ function ViewCommands() {
 
 // Module-level, so they are the same function on every render: React Flow re-renders every card when one of its props changes.
 const onNodeClick = (_: unknown, node: { id: string }) => dispatch({ type: "select", id: node.id });
-const onNodeDoubleClick = (_: unknown, node: { id: string }) => dispatch({ type: "focus", id: node.id });
+const onNodeDoubleClick = (_: unknown, node: { data: unknown }) => dispatch(doubleClickIntent(node.data as Placed));
 
 export function Canvas({ laid }: { laid: Layout }) {
   const root = useData((s) => s.structure?.root ?? null);
@@ -62,7 +63,8 @@ export function Canvas({ laid }: { laid: Layout }) {
   const drawnRoot = laid.nodes[0]?.id;
   const edges = useMemo(() => {
     const onPath = root && drawnRoot ? pathEdges(root, drawnRoot, selected) : new Set<string>();
-    return onPath.size === 0 ? laid.edges : laid.edges.map((e) => (onPath.has(e.id) ? { ...e, className: "on-path" } : e));
+    // a call edge is dashed (03 §6); the way down to the selection is thicker, whichever kind the edge is
+    return laid.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, className: [e.kind === "call" && "call", onPath.has(e.id) && "on-path"].filter(Boolean).join(" ") || undefined }));
   }, [laid, root, drawnRoot, selected]);
 
   // A closed card that holds the selection or the cursor shows a dot (the cards read these two ids from the view store).

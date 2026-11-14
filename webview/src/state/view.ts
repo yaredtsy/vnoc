@@ -16,6 +16,8 @@ interface Saved {
 interface View {
   /** cards that show their code instead of the summary */
   codeOpen: ReadonlySet<string>;
+  /** call cards whose list of sites is open (`N more ▾`); not saved */
+  sitesOpen: ReadonlySet<string>;
   /** the canvas's doc panel, and its width */
   docsOpen: boolean;
   docWidth: number;
@@ -37,6 +39,7 @@ const saved = vscode.getState<Saved>() ?? {};
 
 export const useView = create<View>(() => ({
   codeOpen: new Set(saved.codeOpen),
+  sitesOpen: new Set(),
   docsOpen: saved.docsOpen ?? false,
   docWidth: saved.docWidth ?? 380,
   minimap: saved.minimap ?? false,
@@ -70,6 +73,14 @@ export function setCodeOpen(id: string, open: boolean): void {
     if (open) next.add(id);
     else next.delete(id);
     return { codeOpen: next };
+  });
+}
+
+export function toggleSites(id: string): void {
+  useView.setState(({ sitesOpen }) => {
+    const next = new Set(sitesOpen);
+    if (!next.delete(id)) next.add(id);
+    return { sitesOpen: next };
   });
 }
 

@@ -23,6 +23,8 @@ export interface Deps {
   /** opens a file below the opened folder at a range */
   openAt(path: string, range: Range): Promise<void>;
   session(): Session;
+  /** the list of call sites, with a preview as it is moved through */
+  pickCallSite(sites: { path: string; range: Range }[]): Promise<void>;
   /** shows the NEEDS ATTENTION view */
   focusAttention(): Promise<void>;
   /** reveals the output channel */
@@ -42,6 +44,7 @@ export function createHandlers(d: Deps): Handlers {
     callTrees: async () => d.callTrees(),
     openAt: ({ path, range }) => d.openAt(path, range),
     session: async () => d.session(),
+    pickCallSite: ({ sites }) => d.pickCallSite(sites),
     focusAttention: () => d.focusAttention(),
     showLog: () => d.showLog(),
   };

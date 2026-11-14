@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { callExists, callId, callLookup, callNodesIn, callsLook, callsOf, isCallId, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
+import { callExists, callId, callLookup, callNodesIn, callsLook, callsOf, isCallId, markBadge, MARK_ORDER, ownsCalls, siteChoice, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
 import type { CallTreeNode, CallTreeResult, Range, TreeNode } from "./messages";
 import { type ContextState, type Session, emptySession, exploreId } from "./session.ts";
 
@@ -242,3 +242,24 @@ const lookTable: { name: string; calls: Parameters<typeof callsLook>[0]; open: b
   { name: "failed: the chevron stays, so there is a way to try again", calls: { state: "failed", message: "boom" }, open: true, expect: { chevron: true, plus: null, callsNothing: false } },
 ];
 for (const row of lookTable) test(`callsLook: ${row.name}`, () => assert.deepEqual(callsLook(row.calls, row.open), row.expect));
+
+test("the marks have the words of 05 §6, and a cut call says its calls are not loaded", () => {
+  assert.deepEqual(["recursive", "cut", "incomplete", "likely"].map((m) => markBadge(m as never).text), ["↻ recursive", "… calls not loaded", "… incomplete", "≈ likely"]);
+  assert.match(markBadge("cut").title, /Open to load what this function calls/);
+  assert.deepEqual([...MARK_ORDER], ["recursive", "cut", "incomplete", "likely"]);
+});
+
+test("ownsCalls: a function, or a class with no __init__ of its own; not a file, a folder, or a class that has one", () => {
+  const named = (n: TreeNode, name: string): TreeNode => ({ ...n, name });
+  assert.equal(ownsCalls(entry("f", "function")), true);
+  assert.equal(ownsCalls(entry("K", "class", [entry("K.run", "function")])), true);
+  assert.equal(ownsCalls(entry("W", "class", [named(entry("W.__init__", "function"), "__init__")])), false);
+  assert.equal(ownsCalls(entry("a.py", "file")), false);
+  assert.equal(ownsCalls(undefined), false);
+});
+
+test("a call site as a choice of the list: the line, the file only when it is not the caller's, and the line's text", () => {
+  const site = { ...at(39), path: "app/inventory.py" };
+  assert.deepEqual(siteChoice(site, "app/inventory.py", "    stock = reserve_stock(item, qty)  "), { label: "line 40", description: "", detail: "stock = reserve_stock(item, qty)" });
+  assert.deepEqual(siteChoice(site, "app/api.py", "x"), { label: "line 40", description: "app/inventory.py", detail: "x" });
+});

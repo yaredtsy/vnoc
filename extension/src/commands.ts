@@ -1,6 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 
+import { siteChoice } from "@vnoc/shared/calls.ts";
 import type { Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
 import type { Events } from "@vnoc/shared/messages";
@@ -274,14 +275,43 @@ export class Commands {
     });
   }
 
+  /**
+   * Go to Call Site when a call has several sites (04 §2.1): a list with the line, the file and the line's own text; **moving through it previews each
+   * site** in the editor beside the canvas (`preserveFocus`), as Go to References does; Enter goes there for good, Escape leaves the editor as it was.
+   */
+  async pickCallSite(sites: { path: string; range: Range }[]) {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) throw new Error("Open a folder first.");
+    const lineText = async (file: string, line: number) => {
+      try {
+        return (await vscode.workspace.openTextDocument(vscode.Uri.file(path.resolve(folder.uri.fsPath, file)))).lineAt(line).text;
+      } catch {
+        return "";
+      }
+    };
+    const items = await Promise.all(sites.map(async (site) => ({ site, ...siteChoice({ ...site.range, path: site.path }, null, await lineText(site.path, site.range.start.line)) })));
+    const pick = vscode.window.createQuickPick<(typeof items)[number]>();
+    pick.title = "Go to Call Site";
+    pick.matchOnDetail = true;
+    pick.items = items;
+    pick.onDidChangeActive(([item]) => item && void this.openAt(item.site.path, item.site.range, { preserveFocus: true }).catch(() => {}));
+    pick.onDidAccept(() => {
+      const [item] = pick.selectedItems;
+      pick.hide();
+      if (item) void this.openAt(item.site.path, item.site.range).catch(() => {});
+    });
+    pick.onDidHide(() => pick.dispose());
+    pick.show();
+  }
+
   /** A file below the opened folder, at a range (a call site). Beside the canvas when it is in front, as Go to Code does. */
-  async openAt(relative: string, r: Range) {
+  async openAt(relative: string, r: Range, opts: { preserveFocus?: boolean } = {}) {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) throw new Error("Open a folder first.");
     const file = path.resolve(folder.uri.fsPath, relative);
     if (!file.startsWith(folder.uri.fsPath + path.sep)) throw new Error(`${relative} is outside the opened folder`);
     const selection = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
-    await vscode.window.showTextDocument(vscode.Uri.file(file), { selection, ...(this.panels.canvas?.active ? { viewColumn: vscode.ViewColumn.Beside } : {}) });
+    await vscode.window.showTextDocument(vscode.Uri.file(file), { selection, preserveFocus: opts.preserveFocus, ...(this.panels.canvas?.active ? { viewColumn: vscode.ViewColumn.Beside } : {}) });
   }
 
   /** Opens (or reuses) the docs tab beside the editor. From a card or a row it shows that node; from the editor's menu it follows the cursor. */

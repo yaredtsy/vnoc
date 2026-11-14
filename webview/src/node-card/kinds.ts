@@ -18,3 +18,9 @@ export const KINDS: Record<Kind, KindStyle> = {
   class: { icon: "symbol-class", title: (n) => n, color: "var(--kind-class)" },
   function: { icon: "symbol-function", title: (n) => n, color: "var(--kind-function)" },
 };
+
+/**
+ * The codicon of a card: the kind's own, except that a function inside a class is `symbol-method`. A call card shows the **callee's** kind: never
+ * `call-outgoing` (that is only the `↳` in front of the sites), so the stripe's colour and the icon always agree (04 §2, §5).
+ */
+export const kindIcon = (kind: Kind, inClass: boolean): string => (kind === "function" && inClass ? "symbol-method" : KINDS[kind].icon);

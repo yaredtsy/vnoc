@@ -7,9 +7,14 @@ import { type Placed, canOpen } from "../canvas/layout.ts";
  */
 export function nodeContext(f: { node: Placed; contextId: string; isFocusRoot: boolean }): string {
   return JSON.stringify({
-    webviewSection: "node",
+    // a call card whose callee the project does not know has no node to act on: its own section, so the node entries do not show (08 §6)
+    webviewSection: f.node.role === "call" && f.node.key === null ? "callUnknown" : "node",
     preventDefaultContextMenuItems: true, // no Cut / Copy / Paste
-    nodeKey: f.node.id,
+    nodeKey: f.node.key ?? f.node.id, // a call card acts on its callee
+    role: f.node.role,
+    calleeKnown: f.node.role === "call" ? f.node.key !== null : undefined,
+    sites: f.node.call?.sites.length,
+    callId: f.node.role === "call" ? f.node.id : undefined,
     contextId: f.contextId,
     kind: f.node.kind,
     hasChildren: canOpen(f.node),

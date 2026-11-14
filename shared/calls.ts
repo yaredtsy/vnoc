@@ -107,12 +107,15 @@ export function callExists(tree: TreeNode, id: string): boolean {
 
 const MARKS: Record<CallMark, { text: string; title: string }> = {
   recursive: { text: "↻ recursive", title: "It is already above on this path: shown, not entered" },
-  cut: { text: "✂ cut", title: "Its calls are not shown: the tree stopped here" },
+  cut: { text: "… calls not loaded", title: "The analysis stopped here. Open to load what this function calls." },
   incomplete: { text: "… incomplete", title: "The analysis gave up on part of this" },
   likely: { text: "≈ likely", title: "The engine's best guess for the function called here, not a certainty" },
 };
 
 export const markBadge = (mark: CallMark) => MARKS[mark];
+
+/** The mark a call card shows in place of the callee's file name, when it has several: the one that changes what you can do first (05 §6). */
+export const MARK_ORDER: readonly CallMark[] = ["recursive", "cut", "incomplete", "likely"];
 
 /** "line 12": a call site as the menu names it (0-based in the message, 1-based for people). */
 export const siteLabel = (site: Range): string => `line ${site.start.line + 1}`;
@@ -218,10 +221,11 @@ export interface Wanted {
 }
 
 /**
- * Who owns a call tree: a function, and a class only when it has no `__init__` of its own (R7: a class's own calls are under its `__init__` row; a class
+ * Who owns a call tree (`ownsCalls`: the canvas draws its calls under it): a function, and a class only when it has no `__init__` of its own (R7: a class's own calls are under its `__init__` row; a class
  * with an inherited `__init__` and no child of its own is its own entry, because its tree is what the inherited one calls, 14 §10.1).
  */
-const isEntry = (n: TreeNode | undefined): n is TreeNode => n !== undefined && (n.kind === "function" || (n.kind === "class" && !n.children.some((c) => c.name === "__init__")));
+export const ownsCalls = (n: TreeNode | undefined): n is TreeNode => n !== undefined && (n.kind === "function" || (n.kind === "class" && !n.children.some((c) => c.name === "__init__")));
+const isEntry = ownsCalls;
 
 /**
  * The call trees to have, in the order to fetch them: first what is drawn open (in every context, in the order of `session.order`), then the
@@ -254,4 +258,9 @@ export function wantedCalls(session: Session, tree: TreeNode, trees: TreeStore["
   const selected = session.contexts[session.active]?.selected;
   if (selected !== null && selected !== undefined && !isCallId(selected)) add(selected, "prefetch");
   return out;
+}
+
+/** One choice of the list that Go to Call Site shows when a call has several sites (04 §2.1): the line, the file, and the line's own text. */
+export function siteChoice(site: OpenableSite, parentPath: string | null, lineText: string): { label: string; description: string; detail: string } {
+  return { label: siteLabel(site), description: site.path === parentPath ? "" : site.path, detail: lineText.trim() };
 }

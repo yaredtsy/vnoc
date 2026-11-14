@@ -19,7 +19,7 @@ import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 // Wires the pieces together: the core, the session, the two webview tabs, the sidebar, the commands. Nothing here decides anything.
 
 /** What the webview last said it drew (for the test suite). */
-type Rendered = { visible: number; hidden: number; calls: number; chevrons: number };
+type Rendered = { visible: number; hidden: number; callCards: number; chevrons: number };
 let rendered: Rendered | undefined;
 /** Every drawing a webview reported, in order (for the test suite). */
 const renderedPosts: Rendered[] = [];
@@ -97,6 +97,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     callTrees: () => callTrees.all(),
     openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
+    pickCallSite: (sites) => commands.pickCallSite(sites),
     focusAttention: async () => void (await vscode.commands.executeCommand("vnoc.attention.focus")),
     showLog: async () => output.show(),
   });
@@ -237,9 +238,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       store.dispatch(note.intent, note.context);
       break;
     case "rendered":
-      rendered = { visible: note.visible, hidden: note.hidden, calls: note.calls, chevrons: note.chevrons };
+      rendered = { visible: note.visible, hidden: note.hidden, callCards: note.callCards, chevrons: note.chevrons };
       renderedPosts.push(rendered);
-      output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden, ${note.calls} with calls)`);
+      output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden, ${note.callCards} call cards)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
       break;
     case "cardsDrawn":

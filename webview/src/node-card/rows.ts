@@ -1,3 +1,5 @@
+import { CARD_W } from "../canvas/layout.ts";
+
 // The widths that line the rows of a card up (docs/16-ui-redesign/04-node-cards.md §1): the header's chevron, kind icon and gaps decide where the
 // name starts, and the meta line and the footer start there too, so the three rows read as one column. One place, so a change of an icon moves all three.
 
@@ -12,3 +14,11 @@ export const NAME_X = HEADER_PAD + CHEVRON + GAP + KIND_ICON + GAP;
 
 /** a footer chip has 6 px of padding of its own (`px-1.5`): the footer starts that much before, so the chip's TEXT is under the name */
 export const CHIP_PAD = 6;
+
+/** a call card's meta line is monospace at 11 px: one character is this wide (0.6 em), so the line holds a whole number of them */
+export const META_CHAR_W = 6.6;
+/** the meta line's padding on the right */
+export const META_PAD_R = 12;
+
+/** How many characters a card's meta line holds: what is left of the card after the name's column and the right padding. */
+export const metaChars = (): number => Math.floor((CARD_W - NAME_X - META_PAD_R) / META_CHAR_W);

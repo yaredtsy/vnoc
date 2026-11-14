@@ -7,6 +7,7 @@ import { useNodeActions } from "./useNodeActions.ts";
 
 const BUTTONS: Record<ButtonId, { icon: string; label: (codeOpen: boolean) => string }> = {
   focus: { icon: "target", label: () => "Focus" },
+  explore: { icon: "compass", label: () => "Explore" },
   goToCode: { icon: "link-external", label: () => "Go to Code" },
   code: { icon: "code", label: (open) => (open ? "Hide Code in Card" : "Code in Card") },
   addDoc: { icon: "add", label: () => "Add Doc…" },
@@ -17,8 +18,8 @@ const BUTTONS: Record<ButtonId, { icon: string; label: (codeOpen: boolean) => st
  * card. `nodrag nopan`: React Flow must not start a drag or a pan from a click on one.
  */
 export function ActionStrip({ node, contextId, focusRoot, selected }: { node: Placed; contextId: string; focusRoot: boolean; selected: boolean }) {
-  const actions = useNodeActions(node.id, contextId);
-  const run: Record<ButtonId, () => void> = { focus: actions.focus, goToCode: actions.goToCode, code: actions.toggleCode, addDoc: actions.addDoc };
+  const actions = useNodeActions(node.id, contextId, node.key);
+  const run: Record<ButtonId, () => void> = { focus: actions.focus, explore: actions.explore, goToCode: actions.goToCode, code: actions.toggleCode, addDoc: actions.addDoc };
   return (
     <div className={cn("flex flex-none items-center", selected ? "text-[color:var(--card-selected-fg)]" : "text-muted-foreground")}>
       {cardButtons(node, focusRoot).map(({ id, disabled }) => {

@@ -3,14 +3,15 @@ import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
 import { type Placed, canOpen } from "../canvas/layout.ts";
 import { ActionStrip } from "./ActionStrip.tsx";
-import { KINDS } from "./kinds.ts";
+import { KINDS, kindIcon } from "./kinds.ts";
 import { CHEVRON, HEADER_PAD, KIND_ICON } from "./rows.ts";
 import { useNodeActions } from "./useNodeActions.ts";
 
 /** Chevron (or ⌖ on the root of a focused view), kind icon, name, buttons. The opened folder, always open, has no chevron. */
 export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Placed; contextId: string; focusRoot: boolean; selected: boolean }) {
-  const { toggle } = useNodeActions(node.id, contextId);
-  const { icon, title, color } = KINDS[node.kind];
+  const { toggle } = useNodeActions(node.id, contextId, node.key);
+  const { title, color } = KINDS[node.kind];
+  const icon = kindIcon(node.kind, node.inClass); // a call card shows its callee's kind, never the call icon
   return (
     <div className="node-header flex h-[30px] flex-none items-center gap-1 pr-1" style={{ paddingLeft: HEADER_PAD }}>
       {focusRoot ? (
@@ -34,8 +35,8 @@ export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Pla
       <span className="flex flex-none items-center justify-center" style={{ color, width: KIND_ICON }}>
         <Codicon name={icon} />
       </span>
-      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" title={title(node.name)}>
-        {title(node.name)}
+      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" title={node.role === "call" ? node.name : title(node.name)}>
+        {node.role === "call" ? node.name : title(node.name)}
       </span>
       <ActionStrip node={node} contextId={contextId} focusRoot={focusRoot} selected={selected} />
     </div>

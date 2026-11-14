@@ -157,6 +157,8 @@ export interface Requests {
   openAt: { params: { path: string; range: Range }; result: void };
   /** the session as it is now; a webview asks once when it starts, and after that it listens for the `session` event */
   session: { params: void; result: Session };
+  /** Go to Call Site with several sites: a list the host shows, with a preview of each site as it is moved through; the answer is when it closes */
+  pickCallSite: { params: { sites: { path: string; range: Range }[] }; result: void };
   /** the bar's ⚠: show the NEEDS ATTENTION view (`vnoc.attention.focus`) */
   focusAttention: { params: void; result: void };
   /** Show Log next to Try Again: reveals the "V-NOC" output channel */
@@ -190,7 +192,7 @@ export interface Events {
 /** webview → extension, no answer. */
 export type Notes =
   | { type: "intent"; context: ContextId; intent: Intent } // the one way a webview changes the session
-  | { type: "rendered"; visible: number; hidden: number; calls: number; chevrons: number } // the extension's test suite uses it; `calls`: cards that draw a "Calls" section; `chevrons`: function and class cards that show one
+  | { type: "rendered"; visible: number; hidden: number; callCards: number; chevrons: number } // the extension's test suite uses it; `callCards`: call cards drawn; `chevrons`: function and class cards that show a chevron for their calls
   | { type: "cardsDrawn"; keys: string[] } // the function and class cards the canvas draws, in reading order: the host probes the ones whose calls it does not know
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
   | { type: "close" } // the docs tab

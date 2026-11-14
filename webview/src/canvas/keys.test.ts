@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
-import { canvasKey } from "./keys.ts";
+import { type Calls, callId } from "@vnoc/shared/calls.ts";
+import type { CallSite, CallTreeNode, Kind, TreeNode } from "@vnoc/shared/messages.ts";
+import { canvasChord, canvasKey } from "./keys.ts";
 import { layout } from "./layout.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = []): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
@@ -38,7 +39,7 @@ test("enter focuses, space opens and closes, escape clears the selection", () =>
 
 // a function whose calls a probe counted has a chevron: the keys open it like any card with something under it
 const withCalls = n("/", "folder", [n("a.py", "file", [n("f", "function"), n("g", "function")])]);
-const probed = (open: string[]) => layout(withCalls, new Set(["a.py", ...open]), new Set(), new Map(), (key) => (key === "f" ? { state: "probed", count: 2 } : { state: "unknown" })); // rows: / a.py f g
+const probed = (open: string[]) => layout(withCalls, new Set(["a.py", ...open]), new Set(), (key) => (key === "f" ? { state: "probed", count: 2 } : { state: "unknown" })); // rows: / a.py f g
 
 test("→ opens a function that has calls, Space toggles it, and a function with none does nothing", () => {
   assert.deepEqual(canvasKey("ArrowRight", probed([]), withCalls, "f"), { type: "expand", ids: ["f"] });
@@ -49,4 +50,46 @@ test("→ opens a function that has calls, Space toggles it, and a function with
 
 test("→ on an open function whose calls are not drawn as cards goes nowhere: the card below it is not its child", () => {
   assert.equal(canvasKey("ArrowRight", probed(["f"]), withCalls, "f"), null);
+});
+
+// ── call cards (03 §7) ──────────────────────────────────────────────────────────────────────────────────────────────
+
+const site = (line: number, path: string | null = "a.py"): CallSite => ({ start: { line: line - 1, character: 0 }, end: { line: line - 1, character: 3 }, path });
+const callNode = (key: string | null, name: string, sites: CallSite[]): CallTreeNode => ({ key, name, qualname: name, path: key && "a.py", kind: "function", call_count: sites.length, call_sites: sites, marks: [], children: [] });
+const proj = n("/", "folder", [n("a.py", "file", [n("f", "function"), n("g", "function")])]);
+const under = (...children: CallTreeNode[]) => layout(proj, new Set(["a.py", "f"]), new Set(), (id): Calls => (id === "f" ? { state: "known", children } : { state: "unknown" })); // rows: / a.py f <calls> g
+const C = (step: string) => callId("f", [step]);
+
+test("Enter on a structure card focuses it; on a call card it explores, activated; on an unknown callee it does nothing", () => {
+  const l = under(callNode("g", "g", [site(5)]), callNode(null, "lib", [site(6)]));
+  assert.deepEqual(canvasKey("Enter", l, proj, "f"), { type: "focus", id: "f" });
+  assert.deepEqual(canvasKey("Enter", l, proj, C("g")), { type: "explore", call: C("g"), activate: true });
+  assert.equal(canvasKey("Enter", l, proj, C("?::lib")), null);
+});
+
+test("← on a call card selects the card it hangs from; → on an open card goes to its first call card", () => {
+  const l = under(callNode("g", "g", [site(5)]));
+  assert.deepEqual(canvasKey("ArrowLeft", l, proj, C("g")), { type: "select", id: "f" });
+  assert.deepEqual(canvasKey("ArrowLeft", l, proj, "f"), { type: "select", id: "a.py" });
+  assert.deepEqual(canvasKey("ArrowDown", l, proj, "f"), { type: "select", id: C("g") }, "↓ goes through the rows, call cards included");
+});
+
+test("Ctrl/Cmd+Enter: Go to Code on a structure card, none on a folder", () => {
+  const l = under(callNode("g", "g", [site(5)]));
+  assert.deepEqual(canvasChord("Enter", l, "f"), { type: "goToCode", key: "f" });
+  assert.equal(canvasChord("Enter", l, "/"), null);
+  assert.equal(canvasChord("Enter", l, null), null);
+  assert.equal(canvasChord("a", l, "f"), null);
+});
+
+test("Ctrl/Cmd+Enter on a call card: one site goes there, several are the list, no file or an unknown callee has nowhere to go", () => {
+  const one = under(callNode("g", "g", [site(5)]));
+  assert.deepEqual(canvasChord("Enter", one, C("g")), { type: "goToCallSite", sites: [site(5)] });
+  const many = under(callNode("g", "g", [site(5), site(9), site(12)]));
+  const chord = canvasChord("Enter", many, C("g"));
+  assert.equal(chord?.type === "goToCallSite" && chord.sites.length, 3);
+  const noFile = under(callNode("g", "g", [site(5, null)]));
+  assert.equal(canvasChord("Enter", noFile, C("g")), null, "the driver said no file");
+  const mixed = under(callNode("g", "g", [site(5, null), site(7)]));
+  assert.deepEqual(canvasChord("Enter", mixed, C("g")), { type: "goToCallSite", sites: [site(7)] }, "only the sites that name a file");
 });
