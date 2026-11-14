@@ -72,13 +72,13 @@ V-NOC
 │   └── UI ──────────────────────────────────────── 07-ui/
 │       ├── state                     who owns what, how it flows
 │       ├── design                    sidebar · canvas · node card · doc panel
-│       └── selection and menus       (replaced by 10-ui-rework/)
+│       └── selection and menus       (replaced by 10-ui-rework/, and that by 16-ui-redesign/)
 │
-├── UI REWORK (wins over 07-ui where they differ) ── 10-ui-rework/
+├── UI REWORK (partly replaced by 16-ui-redesign/ below; wins over 07-ui where they differ) ── 10-ui-rework/
 │   ├── state                     one session in the extension · intents up, state down · typed messages
-│   ├── sidebar                   the native tree: focus bar row · FOCUS view · click rule · search
+│   ├── sidebar                   the native tree: focus bar row · FOCUS view · click rule · search   (replaced by 16: a webview)
 │   ├── focus and contexts        one focus stack on both surfaces · MAIN now, EXPLORE in 0.2
-│   ├── menus                     the same node menu on row and card · the V-NOC submenus
+│   ├── menus                     the same node menu on row and card · the V-NOC submenus   (replaced by 16)
 │   ├── build order               where the files go · nine steps · the webview sidebar later
 │   └── how it looks              selected · highlighted · cursor · revealed · focused
 │
@@ -102,7 +102,7 @@ V-NOC
 │   ├── top bar · canvas · cards     one bar; calls are cards, one level at a time; focus is a path
 │   ├── calls as nodes               call ids · the host fetches what is open · the optimistic chevron
 │   ├── sidebar · rows               a webview view: search, EXPLORE panels, keyboard, the click rule
-│   ├── menus · states               one list for card and row; five editor entries; every state's look
+│   ├── menus · states               one list for card and row; eight editor entries; every state's look
 │   └── build order                  steps 8.0 – 8.8
 │
 ├── RELEASE 0.3: EDIT IN THE CANVAS ─────────────── 17-edit-in-canvas.md

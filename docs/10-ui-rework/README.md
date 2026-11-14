@@ -1,7 +1,17 @@
 # 10. UI rework: one state, the native tree with a focus bar, matching menus
 
-> **Partly replaced by [`../16-ui-redesign/`](../16-ui-redesign/README.md) (2026-11-12):** the sidebar becomes a webview (U1, U5, U6, U10 go),
-> the focus is a path inside a context, and contexts are built. Its README §3 lists what is kept from here.
+> **Partly replaced by [`../16-ui-redesign/`](../16-ui-redesign/README.md) (2026-11-12, built in steps 8.0 – 8.8):** the sidebar becomes a webview (U1, U5, U6, U10 go),
+> the focus is a path inside a context, and contexts are built. Its README §3 lists what is kept from here. **Where this folder and that one differ, that one is the
+> truth and the code follows it.**
+>
+> | This file | Status |
+> |---|---|
+> | `01-state.md` | **kept** (one session, intents up, state down), changed by [16/03](../16-ui-redesign/03-canvas.md) §2–§4: focus is a path, contexts, call ids |
+> | `02-sidebar.md` | **replaced** by [16/06](../16-ui-redesign/06-sidebar.md) and [16/07](../16-ui-redesign/07-sidebar-rows.md); only the click rule (§4) is kept |
+> | `03-focus-and-contexts.md` | **replaced** by [16/03](../16-ui-redesign/03-canvas.md); §1's words are kept |
+> | `04-menus.md` | **replaced** by [16/08](../16-ui-redesign/08-menus.md) |
+> | `05-build-order.md` | history: the steps of 0.1's rework, all built |
+> | `06-how-it-looks.md` | **kept** for the card's selected / highlighted / cursor / revealed looks; [16/09](../16-ui-redesign/09-states.md) adds the rest and the sidebar's |
 
 Written 2026-11-10 after reading `extension/src/`, `webview/src/`, `shared/` (commit `11b99ce`), the files in [`../07-ui/`](../07-ui/), and the web
 version's Dashboard (`ide/v-noc/src/frontend/src/features/Dashboard/`: store slices, Sidebar, `NodeContextMenu`, `useNodeHandlers`).
