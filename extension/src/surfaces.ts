@@ -4,7 +4,8 @@ import type { Events, Notes, RequestMessage } from "@vnoc/shared/messages";
 
 import { type Handlers, event, serve } from "./relay";
 
-// The two webview tabs: the canvas, and the docs tab beside a code editor. Same bundle and same relay; the mode tells the page which one it is.
+// The three webview surfaces: the canvas and the docs tab beside a code editor (one bundle; the mode tells the page which one it is), and the STRUCTURE
+// view in the side bar (its own, smaller bundle: 06 §10). Same relay for all three.
 // A webview cannot reach the core or any file: it posts a request, the relay serves it, and the result is posted back.
 
 export type Mode = "canvas" | "docs";
@@ -12,9 +13,10 @@ export type Mode = "canvas" | "docs";
 export const CANVAS = "vnoc.canvas";
 export const DOCS = "vnoc.docs";
 
-export class Panels {
+export class Surfaces {
   private canvasPanel: vscode.WebviewPanel | undefined;
   private docsPanel: vscode.WebviewPanel | undefined;
+  private sidebarView: vscode.WebviewView | undefined;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -31,10 +33,26 @@ export class Panels {
     return this.docsPanel;
   }
 
-  /** Sends an event to every open V-NOC tab. */
+  get sidebar(): vscode.WebviewView | undefined {
+    return this.sidebarView;
+  }
+
+  /** Sends an event to every open V-NOC page: the tabs and the side bar. */
   emit<E extends keyof Events>(name: E, data: Events[E]): void {
     this.canvasPanel?.webview.postMessage(event(name, data));
     this.docsPanel?.webview.postMessage(event(name, data));
+    this.sidebarView?.webview.postMessage(event(name, data));
+  }
+
+  /** The STRUCTURE view was resolved (it is shown for the first time, or VS Code made it again): give it its page. */
+  adoptSidebar(view: vscode.WebviewView): void {
+    this.sidebarView = view;
+    view.webview.options = this.options();
+    view.onDidDispose(() => {
+      if (this.sidebarView === view) this.sidebarView = undefined;
+    });
+    view.webview.html = this.html(view.webview, { script: "assets/sidebar.js", css: "assets/sidebar.css", attributes: `data-mode="sidebar" data-folder="${(vscode.workspace.workspaceFolders?.length ?? 0) > 0}"` });
+    view.webview.onDidReceiveMessage((m: RequestMessage | Notes) => void this.receive(view.webview, m, () => {}));
   }
 
   /**
@@ -88,25 +106,26 @@ export class Panels {
       }
       if (this.docsPanel === panel) this.docsPanel = undefined;
     });
-    panel.webview.html = this.html(panel.webview, mode, pinTo);
-    panel.webview.onDidReceiveMessage((m: RequestMessage | Notes) => this.receive(panel, m));
+    panel.webview.html = this.html(panel.webview, { script: "assets/index.js", css: "assets/index.css", attributes: `data-mode="${mode}"${pinTo ? ` data-node="${escapeAttribute(pinTo)}"` : ""}` });
+    panel.webview.onDidReceiveMessage((m: RequestMessage | Notes) => void this.receive(panel.webview, m, () => panel.dispose()));
     return panel;
   }
 
-  private html(webview: vscode.Webview, mode: Mode, pinTo?: string): string {
+  /** The page: `script` and `css` are files of the bundle in `media/webview`; `attributes` go on the root element (what the page needs to know before it asks). */
+  private html(webview: vscode.Webview, page: { script: string; css: string; attributes: string }): string {
     const asUri = (file: string) => webview.asWebviewUri(vscode.Uri.joinPath(this.dist(), file));
     const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     // CSP: no remote anything. Scripts only with our nonce, styles and fonts only from the extension.
     return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
-<link rel="stylesheet" href="${asUri("assets/index.css")}">
-</head><body><div id="root" data-mode="${mode}"${pinTo ? ` data-node="${escapeAttribute(pinTo)}"` : ""}></div>
-<script nonce="${nonce}" type="module" src="${asUri("assets/index.js")}"></script></body></html>`;
+<link rel="stylesheet" href="${asUri(page.css)}">
+</head><body><div id="root" ${page.attributes}></div>
+<script nonce="${nonce}" type="module" src="${asUri(page.script)}"></script></body></html>`;
   }
 
-  private async receive(panel: vscode.WebviewPanel, message: RequestMessage | Notes): Promise<void> {
-    if (message.type === "req") return void (await panel.webview.postMessage(await serve(this.handlers, message)));
-    if (message.type === "close") return panel.dispose();
+  private async receive(webview: vscode.Webview, message: RequestMessage | Notes, close: () => void): Promise<void> {
+    if (message.type === "req") return void (await webview.postMessage(await serve(this.handlers, message)));
+    if (message.type === "close") return close();
     this.onNote(message);
   }
 }

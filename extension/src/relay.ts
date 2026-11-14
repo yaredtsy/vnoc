@@ -1,5 +1,5 @@
 import type { CallTreeResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
-import type { Session } from "@vnoc/shared/session.ts";
+import type { ContextId, Session } from "@vnoc/shared/session.ts";
 
 import type { Docs } from "./docs";
 
@@ -31,6 +31,10 @@ export interface Deps {
   showLog(): Promise<void>;
   /** fetches a call tree again after it failed */
   retryCalls(key: string): Promise<void>;
+  /** a click on a sidebar row: the click rule (07 §4) */
+  rowClick(context: ContextId, id: string): Promise<void>;
+  /** a button of the sidebar's states */
+  command(name: "openFolder" | "refreshStructure"): Promise<void>;
 }
 
 export function createHandlers(d: Deps): Handlers {
@@ -50,6 +54,8 @@ export function createHandlers(d: Deps): Handlers {
     focusAttention: () => d.focusAttention(),
     showLog: () => d.showLog(),
     retryCalls: ({ key }) => d.retryCalls(key),
+    rowClick: ({ context, id }) => d.rowClick(context, id),
+    command: ({ name }) => d.command(name),
   };
 }
 

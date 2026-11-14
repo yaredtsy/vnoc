@@ -47,6 +47,14 @@
   --card-cursor: var(--vscode-editorCursor-foreground, #aeafad);
   --card-badge-bg: var(--vscode-badge-background, #4d4d4d);
   --card-badge-fg: var(--vscode-badge-foreground, #fff);
+  /* the sidebar's rows: a VS Code list (06-sidebar.md §6): the selection is bright while the list has the keyboard and dim otherwise */
+  --list-active-fg: var(--vscode-list-activeSelectionForeground, #fff);
+  --list-inactive-bg: var(--vscode-list-inactiveSelectionBackground, #37373d);
+  --list-inactive-fg: var(--vscode-list-inactiveSelectionForeground, var(--foreground));
+  --list-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
+  --indent-guide: var(--vscode-tree-indentGuidesStroke, #585858);
+  --side-bar-bg: var(--vscode-sideBar-background, var(--background));
+  --side-bar-fg: var(--vscode-sideBar-foreground, var(--foreground));
   --edge-call: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 70%, transparent); /* a call edge: dashed, blue at 70% */
 
   /* the bar: the ⚠ when something is cut or unread, and VS Code's own progress line */

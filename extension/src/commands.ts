@@ -10,21 +10,19 @@ import { addDoc } from "./addDoc";
 import type { CallTrees } from "./callTree";
 import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
-import type { Panels } from "./panels";
+import type { Surfaces } from "./surfaces";
+import { type ContextId, MAIN } from "@vnoc/shared/session.ts";
 import type { SessionStore } from "./session";
 import { attachMissingHere, relinkMissing } from "./relink";
 import { writeId } from "./writeId";
 import { searchNodes } from "./search";
 import { emptyTrash, removeAllMissing, removeMissing, restoreRemoved } from "./trash";
-import { type Row, absolute, selectionOf } from "./structureView";
+import { absolute, selectionOf } from "./files";
 
 // Every `vnoc.*` command: what a sidebar row, a card's right-click menu, the Explorer and the editor's menu run. Each one turns its argument into a
 // node (`nodeFor`), then changes the session or shows something. The commands never keep state of their own.
 
 const isTreeNode = (arg: unknown): arg is TreeNode => typeof arg === "object" && arg !== null && "kind" in arg && "children" in arg;
-/** What the native tree gives a menu command: the row. */
-const isNodeRow = (arg: unknown): arg is Row & { row: "node" } => typeof arg === "object" && arg !== null && "row" in arg && (arg as Row).row === "node";
-
 const isAttentionRow = <R extends AttentionRow["row"]>(arg: unknown, row: R): arg is Extract<AttentionRow, { row: R }> => typeof arg === "object" && arg !== null && (arg as AttentionRow).row === row;
 
 /** Cursor moves come in bursts; look at where it rests. */
@@ -49,9 +47,9 @@ export class Commands {
   constructor(
     private readonly core: Core,
     private readonly store: SessionStore,
-    private readonly panels: Panels,
-    /** selects the node's row in the sidebar tree and brings the V-NOC side bar up */
-    private readonly revealRow: (id: string) => Promise<void>,
+    private readonly panels: Surfaces,
+    /** brings the V-NOC side bar up (`vnoc.structure.focus`); the page scrolls the selected row into view by itself */
+    private readonly showSidebar: () => Promise<void>,
     private readonly callTrees: CallTrees,
   ) {}
 
@@ -68,15 +66,14 @@ export class Commands {
     return [
       // with a node (the editor's or the Explorer's menu, a row) the canvas opens at it; from the palette it just opens
       on("vnoc.openCanvas", async (arg, selected) => (arg === undefined ? void this.panels.showCanvas() : this.openCanvasAt((await this.nodeFor(arg, selected)).id))),
-      on("vnoc.open", (arg) => (isNodeRow(arg) ? this.open(arg.node) : isTreeNode(arg) ? this.open(arg) : undefined)),
+      // a click on a node, from the palette or a test: the sidebar row's click, in MAIN
+      on("vnoc.open", (arg) => (isTreeNode(arg) ? this.rowClick(MAIN, arg.id) : undefined)),
       on("vnoc.focusJump", (depth) => this.store.dispatch({ type: "focusJump", depth: Number(depth) })),
-      // the inline ✕ on a FOCUS-view row: drop this step and those after it
-      on("vnoc.focusDrop", (step) => this.store.dispatch({ type: "focusJump", depth: Math.max(0, Number((step as { depth?: number }).depth) - 1) })),
       on("vnoc.showLog", () => this.core.showLog()),
       on("vnoc.revealInSidebar", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
         this.store.dispatch({ type: "reveal", id: node.id, canvas: false }); // steps the focus back if it hides the node, selects it
-        await this.revealRow(node.id);
+        await this.showSidebar();
       }),
       on("vnoc.revealInExplorer", async (arg, selected) => vscode.commands.executeCommand("revealInExplorer", absolute((await this.nodeFor(arg, selected)).path))),
       on("vnoc.openCanvasBeside", async (arg, selected) => (arg === undefined ? void this.panels.showCanvas({ beside: true }) : this.openCanvasAt((await this.nodeFor(arg, selected)).id, { beside: true }))),
@@ -92,13 +89,7 @@ export class Commands {
         await vscode.env.clipboard.writeText(node.range ? `${node.path}:${node.range.start.line + 1}` : node.path);
       }),
       on("vnoc.clearSelection", () => this.store.dispatch({ type: "select", id: null })),
-      on("vnoc.search", async () => searchNodes(this.core.tree ?? (await this.core.loadStructure()).root, this.store, (node) => this.open(node))),
-      // Ctrl/Cmd+Enter in the sidebar: focus the selected node
-      on("vnoc.focusSelection", () => {
-        const s = this.store.get();
-        const id = s.contexts[s.active].selected;
-        if (id) this.store.dispatch({ type: "focus", id });
-      }),
+      on("vnoc.search", async () => searchNodes(this.core.tree ?? (await this.core.loadStructure()).root, this.store, (node) => this.rowClick(MAIN, node.id))),
       on("vnoc.focus", async (arg, selected) => this.focusInSidebar((await this.nodeFor(arg, selected)).id)),
       on("vnoc.showOnCanvas", async (arg, selected) => this.showOnCanvas((await this.nodeFor(arg, selected)).id)),
       on("vnoc.focusBack", () => this.store.dispatch({ type: "focusBack" })),
@@ -153,12 +144,11 @@ export class Commands {
   }
 
   /**
-   * The node a command is about. It starts from one of: a sidebar item (a tree node), a card's right-click menu (`{ nodeKey }`), the Explorer
-   * (a Uri, with the list of selected Uris as the next argument), or the editor's menu (a Uri, nothing after it: the node at the cursor).
+   * The node a command is about. It starts from one of: a node, a card's or a sidebar row's right-click menu (`{ nodeKey }`, from `nodeContext`),
+   * the Explorer (a Uri, with the list of selected Uris as the next argument), or the editor's menu (a Uri, nothing after it: the node at the cursor).
    */
   async nodeFor(arg: unknown, selected?: unknown): Promise<TreeNode> {
     if (isTreeNode(arg)) return arg;
-    if (isNodeRow(arg)) return arg.node;
     const tree = this.core.tree ?? (await this.core.loadStructure()).root;
     if (typeof arg === "object" && arg !== null && "nodeKey" in arg) {
       const hit = findNode(tree, String((arg as { nodeKey: unknown }).nodeKey));
@@ -218,14 +208,17 @@ export class Commands {
   }
 
   /**
-   * A click on a sidebar row (docs/10-ui-rework/02-sidebar.md §4): the canvas is where you are working while it is open, so a click shows the node there;
-   * the code comes along beside it, never on top of it. With the canvas closed it opens the code as a preview tab, like a click in the Explorer.
+   * A click on a sidebar row (docs/16-ui-redesign/07-sidebar-rows.md §4): the canvas is where you are working while it is open, so a click shows the node
+   * there, in the row's context; the code comes along beside it, never on top of it. With the canvas closed it opens the code as a preview tab, like a click
+   * in the Explorer. The page has sent the `select` intent already; it is sent again here for a caller that has not (the palette, a test): it changes nothing twice.
    */
-  private async open(node: TreeNode) {
-    this.store.dispatch({ type: "select", id: node.id });
+  async rowClick(context: ContextId, id: string): Promise<void> {
+    const node = findNode(this.core.tree ?? (await this.core.loadStructure()).root, id);
+    if (!node) throw new Error("That node is not in the structure any more.");
+    this.store.dispatch({ type: "select", id: node.id }, context);
     const mode = vscode.workspace.getConfiguration("vnoc").get<"auto" | "code" | "canvas">("sidebar.click", "auto");
     if (mode === "canvas" || (mode === "auto" && this.panels.canvas)) {
-      this.store.dispatch({ type: "reveal", id: node.id, canvas: true });
+      this.store.dispatch({ type: "reveal", id: node.id, canvas: true }, context);
       const canvas = this.panels.showCanvas({ preserveFocus: true });
       // a code editor already visible in another column follows the click too (canvas and code side by side); none is opened in the canvas's column
       const code = vscode.window.visibleTextEditors.find((e) => e.viewColumn !== undefined && e.viewColumn !== canvas.viewColumn);
@@ -317,7 +310,7 @@ export class Commands {
   /** Opens (or reuses) the docs tab beside the editor. From a card or a row it shows that node; from the editor's menu it follows the cursor. */
   private async showDocsBeside(arg: unknown, selected: unknown) {
     const otherTab = arg instanceof vscode.Uri && vscode.window.activeTextEditor?.document.uri.toString() !== arg.toString();
-    const explicit = isTreeNode(arg) || isNodeRow(arg) || (typeof arg === "object" && arg !== null && "nodeKey" in arg) || Array.isArray(selected) || otherTab;
+    const explicit = isTreeNode(arg) || (typeof arg === "object" && arg !== null && "nodeKey" in arg) || Array.isArray(selected) || otherTab;
     this.panels.showDocs(explicit ? (await this.nodeFor(arg, selected)).id : undefined);
     this.syncCursor(); // an unpinned tab shows the cursor node: make sure the session has it, also when no cursor has moved since the window opened
   }

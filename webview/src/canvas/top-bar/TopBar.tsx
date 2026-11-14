@@ -8,13 +8,10 @@ import { Crumbs } from "./Crumbs.tsx";
 import { DocsToggle } from "./DocsToggle.tsx";
 import { MoreMenu } from "./MoreMenu.tsx";
 import { RevealButton } from "./RevealButton.tsx";
+import { statsLine } from "./statsLine.ts";
 import { useCrumbs } from "./useCrumbs.ts";
 import { useElementWidth } from "./useElementWidth.ts";
 import { Warning } from "./Warning.tsx";
-
-/** The project's numbers: the first crumb's tooltip. */
-const statsLine = (s: StructureResult) =>
-  `${s.stats.folders} folders · ${s.stats.files} files · ${s.stats.classes} classes · ${s.stats.functions} functions`;
 
 /** The canvas's one bar (docs/16-ui-redesign/02-top-bar.md): back, the contexts, where you are, ⚠, reveal, docs, more. Draws; keeps no state of its own. */
 export function TopBar({ structure, status, message, cards }: { structure: StructureResult | null; status: "loading" | "ready" | "error"; message: string; cards: { drawn: number; total: number } | null }) {

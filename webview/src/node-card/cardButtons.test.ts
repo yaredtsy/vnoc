@@ -31,3 +31,19 @@ test("a call card never has Focus or Add Doc, and Explore is never disabled", ()
   assert.ok(!b.some((x) => x.id === "focus" || x.id === "addDoc"));
   assert.ok(b.every((x) => !x.disabled));
 });
+
+// a sidebar row (07 §3): the same buttons without Code in Card, which changes a card the row does not have. They are what the native tree's inline buttons were
+// (Focus on every node, Go to Code on a file, class or function, Add Doc on every node), so nothing the tree did is missing
+test("a sidebar row has the card's buttons except Code in Card", () => {
+  const row = (kind: "folder" | "file" | "class" | "function") => cardButtons({ id: kind, kind, range: kind === "class" || kind === "function" ? RANGE : null, role: "node", key: kind }, false, "sidebar").map((b) => b.id);
+  assert.deepEqual(row("folder"), ["focus", "addDoc"]);
+  assert.deepEqual(row("file"), ["focus", "goToCode", "addDoc"]);
+  assert.deepEqual(row("class"), ["focus", "goToCode", "addDoc"]);
+  assert.deepEqual(row("function"), ["focus", "goToCode", "addDoc"]);
+  assert.deepEqual(ids({ id: "f", kind: "function", range: RANGE }), ["focus", "goToCode", "code", "addDoc"], "the card still has it");
+});
+
+test("on the focused row Focus is there and does nothing, as on the card", () => {
+  const b = cardButtons({ id: "a.py", kind: "file", range: null, role: "node", key: "a.py" }, true, "sidebar");
+  assert.deepEqual(b.map((x) => [x.id, x.disabled]), [["focus", true], ["goToCode", false], ["addDoc", false]]);
+});
