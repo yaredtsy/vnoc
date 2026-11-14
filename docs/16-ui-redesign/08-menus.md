@@ -110,7 +110,7 @@ Which files: `resourceExtname in vnoc.extensions` and folders, as today.
 
 | Where | Contribution | Entries | Job |
 |---|---|---|---|
-| canvas background | `webview/context`, `webviewSection == 'pane'` | Fit View · Collapse All · ─ · Back · Clear Focus (`vnoc.focused`) · Clear Selection (`vnoc.hasSelection`) · ─ · Close Explore (`activeIsExplore`) | J1, J2 |
+| canvas background | `webview/context`, `webviewSection == 'pane'` | Fit View · Collapse All · ─ · Back · Clear Focus (`vnoc.focused`) · Clear Selection (`vnoc.hasSelection`) · ─ · Close Explore (`vnoc.activeIsExplore`) | J1, J2 |
 | sidebar panel header | `webview/context`, `webviewSection == 'context'` | Close (EXPLORE) · Close Others | J4 |
 | sidebar empty space | `webviewSection == 'pane'`, `surface == sidebar` | Collapse All · Clear Focus · Refresh Structure | |
 | STRUCTURE view title | `view/title`, `view == vnoc.structure` | `⊞` Open Canvas · `⊟` Collapse All · `⋯` Refresh Structure · Search… · Restore Removed Doc… · Empty Trash | 06 §9 |
@@ -164,7 +164,7 @@ default Cut / Copy / Paste items are gone.** The command received **one argument
 | Context key | Set by | For |
 |---|---|---|
 | `vnoc.extensions` · `vnoc.callTree` · `vnoc.hasMissing` · `vnoc.canvasOpen` · `vnoc.focused` · `vnoc.hasSelection` | unchanged (`vnoc.focused` and `vnoc.hasSelection` now about the **active** context) | |
-| `activeIsExplore` | the session store | Close Explore on the canvas background |
+| `vnoc.activeIsExplore` | the session store (the active context is an EXPLORE) | Close Explore on the canvas background; prefixed like every other V-NOC key (decided 2026-11-14) |
 
 Keys: `Alt+←`, `Enter`, `Ctrl/Cmd+Enter`, `Space`, `Esc` and the arrows are handled **inside** each page (03 §7, 06 §7), so they work the same on
 both surfaces and skip text fields and code cards. `contributes.keybindings` keeps only `Ctrl/Cmd+Alt+N` (Search…).
