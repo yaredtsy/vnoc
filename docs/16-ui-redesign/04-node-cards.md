@@ -16,14 +16,17 @@ set of states ([`09-states.md`](09-states.md)).
 
 ## 1. The structure card
 
-260 × 72 px (today 240 × 80, and 12 px text): three rows, always all three, so every card has one height.
+300 × 80 px: three rows, always all three, so every card has one height. (Was 72 px with a 22 px meta line and a 20 px footer and no line
+between them; in a real window the footer read as empty padding and every card in a file repeated the same long path, cut to its useless
+middle: `…ersation_state.py:382`. Changed 2026-11-14.)
 
 ```
-┌────────────────────────────────────────────┐
-│ ▸  ƒ  checkout_order         ⌖  ↗  </>  ＋ │  header, 30 px: the buttons are always there
-│    app/order.py:24                         │  meta, 22 px
-│    +3   📄 2  🔗                           │  footer, 20 px: the counts, each with a tooltip
-└────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ ▸  ƒ  checkout_order           ⌖  ↗  </>  ＋ │  header, 32 px: the buttons are always there
+│       line 24                                │  meta, 24 px: where it is, said only as far as the card above does not
+│ ──────────────────────────────────────────── │  1 px line, --card-border at 60%
+│       +3   📄 2  🔗              calls nothing │  footer, 23 px: the facts, each with a tooltip
+└──────────────────────────────────────────────┘
  ▲ 3 px stripe in the kind's colour
 ```
 
@@ -34,11 +37,18 @@ set of states ([`09-states.md`](09-states.md)).
 | name | always; a function `checkout_order`, a class `Order` (no `()` and no "File " prefix). Cut at the end when long, full name in the tooltip |
 | the buttons | always (§3) |
 
-| Meta line | When |
-|---|---|
-| `path:line` for a def, `path` for a file, `path/` for a folder, mono, dim | always. When it does not fit, it is cut **at the start**, never the end: `…/inventory.py:40`. The file name and the line are what you read; the folders are in the tooltip |
-| `syntax error` in `--vscode-errorForeground` | the file did not parse |
-| `calls nothing` (right side) | a function whose calls are known and empty |
+**Meta line: where it is, relative to the card it hangs from.** The card's parent is drawn right beside it, so repeating its path says nothing:
+
+| The card | Its parent card on the canvas | Meta line |
+|---|---|---|
+| a function or class | its file, or its class | `line 382` |
+| a function or class | none (it is the root of the view: focused, or an EXPLORE context's callee) | `conversation_state.py:382`; the folders are in the tooltip |
+| a file | its folder | what is inside: `2 classes · 9 functions` (top-level defs, counted from the structure; `empty` when none) |
+| a file or folder | none (the root of the view) | its path, cut **at the start** when it does not fit: `…/models/conversation_state.py` |
+| a folder | its folder | what is inside: `3 folders · 12 files` |
+| any | — | `syntax error` in `--vscode-errorForeground` instead, when the file did not parse |
+
+The full path (`app/core/models/conversation_state.py:382`) is always the meta line's tooltip.
 
 | Footer, left to right | When | Tooltip |
 |---|---|---|
@@ -46,10 +56,15 @@ set of states ([`09-states.md`](09-states.md)).
 | `📄 N` | N > 0 | *"2 docs: click to read"* |
 | `🔗` | it has docs: solid = ID in the code, faded = found by name only (kept from today) | *"ID in the code"* / *"found by name only: Write ID to keep it on renames"* |
 | `●` / `○` | a closed card hides the selection / the cursor (kept from 10/06) | *"the selection is inside"* / *"the cursor is inside"* |
+| right side: the calls' state | a function or class whose calls the canvas knows something about: `calls nothing` · `calls 4` (probed, not opened) · a spinner while fetching · `couldn't read calls · Retry` | *"opening it shows nothing: it calls no function in this project"* … |
 
-The meta line and the footer start **under the name's first letter**, not under the chevron: their left padding is the chevron's and the kind icon's width (as the mockup's `padding-left: 33px`), so the three rows read as one column.
+The footer is the card's **facts**; the meta line is only **where**. `calls nothing` moved from the meta line to the footer, so most cards have
+something in the footer and the meta line has room.
 
-An empty footer stays (blank). The cards keep one height, so a count that appears (a new doc) moves nothing on the canvas.
+The meta line and the footer start **under the name's first letter**, not under the chevron (one constant, `NAME_X`), so the rows read as one column.
+The line above the footer runs the card's full inner width.
+
+An empty footer stays (blank, with its line). The cards keep one height, so a count that appears (a new doc) moves nothing on the canvas.
 
 Gone: the `⌖ focus` chip (the bar's crumbs and the `⌖` in place of the chevron say it), the cursor `▌` (the dashed inset line says it, 09),
 the old footer's path (it is the meta line now).

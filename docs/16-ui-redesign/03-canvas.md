@@ -159,7 +159,7 @@ only for the canvas. `reveal.context` says which context; a canvas showing anoth
 | on the path from the root card to the selection | either style, 2 px, `--card-selected` (kept from 10/06 §3) | where the selection sits |
 
 The layout stays `layout.ts`'s columns (one column per depth, rows top to bottom). It gains call cards as children (§1) and loses the "Calls"
-section heights (`callsHeight`, `CALLS_*`, `Placed.callRows`). Every card is 72 px high (04 §1) except with the code shown.
+section heights (`callsHeight`, `CALLS_*`, `Placed.callRows`). Every card is 80 px high (04 §1) except with the code shown.
 
 ## 7. Keys
 
@@ -203,7 +203,7 @@ From 10/06 §7, kept: `↑` `↓` previous / next card, `←` the parent, `→` 
 | `shared/session.ts`, `shared/session.test.ts` | §3, §4, §5 |
 | `shared/tree.ts` | `lineage` |
 | `shared/calls.ts` (new) | call ids and lookups, 05 §1 |
-| `webview/src/canvas/layout.ts`, `layout.test.ts` | call cards, no Calls section, 72 px cards |
+| `webview/src/canvas/layout.ts`, `layout.test.ts` | call cards, no Calls section, 80 px cards |
 | `webview/src/canvas/Canvas.tsx` | dashed call edges, per-context viewport, minimap toggle |
 | `webview/src/canvas/keys.ts` | `Enter` / `Ctrl+Enter` on a call |
 | `webview/src/App.tsx` | the top bar (02), no `SelectionStrip`, the docs panel follows the active context |

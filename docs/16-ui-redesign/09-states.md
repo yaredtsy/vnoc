@@ -91,6 +91,6 @@ One card or row can be selected, the cursor, the focus root and loading at once.
 - [ ] *Reduce motion*: nothing pulses, spinners are static dots.
 - [ ] VoiceOver reads a row as *"function checkout, selected, 1 doc, cursor here, level 3, 2 of 4"* and a call card as *"call to function
       reserve_stock, called twice, lines 16 and 31, collapsed"*.
-- [ ] 100% and 200% window zoom: no text is cut in a 72 px card or a 22 px row.
+- [ ] 100% and 200% window zoom: no text is cut in an 80 px card or a 22 px row.
 
 Next: [`10-build-order.md`](10-build-order.md)
