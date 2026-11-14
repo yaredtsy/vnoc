@@ -144,6 +144,19 @@ Tests: `drivers/python/tests/kept_project.rs` (8): an edit, a deleted and a new 
 
 Proof: 14 §11.1 (release build, httpx). **Not done here:** `vnoc/environmentInputs` (§8 item 3, capability still `false`), and no memory measurement of a kept project. The debug build directory of the driver was deleted to make room for the release build (the disk had 2.6 GiB free); the next step starts with `cargo build` in `drivers/python`.
 
+**8.2a part 2 (`python-v0.3.0`, 2026-11-14).** The analyzer's handoff for that tag asked for the six items of its `11-driver-needs.md` §8; items 1–3, 5 and 6 (the worker, `refresh`, cancel, `likely`, `depth` as `render_depth`) were already built above, so this part is the pin and the one item left.
+
+| Decision | Why |
+|---|---|
+| **Pinned at `c1e1d7e`** (= the tag `python-v0.3.0`; the `rev`, not the tag, as before), all three crates. The driver built with no code change; the only lockfile lines that moved are the analyzer's own source strings, and the analyzer's `languages/python/Cargo.lock` is the same at `c989c0f` and `c1e1d7e` | `Options` and `Limits` were already built with `..Default::default()`; `Entry` is still the struct (the enum, D32, comes with a later tag and needs one line per call site) |
+| What users see (the analyzer's numbers, not measured here): effects are on for every request (CS4b), so class-heavy code gets its calls (FastAPI `include_router` 458 → 1019 nodes); one known `incomplete` on FastAPI; some context digests moved, names / ids / sites did not | no driver code; the wire is still version 2 |
+| **`vnoc/environmentInputs { root } → { files }`** (the shape of `plan_vs/07-drivers/01` §5; `EnvironmentInputsParams` / `EnvironmentInputsResult` in the protocol crate), capability `environmentInputs: true`. It goes through the **worker** (`Task::EnvironmentInputs`): the list is the kept project's, asked after its `refresh`, so a config written since the last request is already in it. It does not count as a solve | the list lives in the `Project`, which lives on that thread |
+| The entries are the analyzer's, **passed as they are**: relative to the root, or absolute when the environment is outside it (kept: it is the virtual environment), the glob `requirements*.txt`, always `/` | the core compares strings and never rewrites an entry (the analyzer's §8 item 3) |
+
+Tests: `drivers/python/tests/environment_inputs.rs` (6): the capability; the fixed entries, sorted; an environment under the root (`env/pyvenv.cfg`); one outside it (absolute, the exact path on Unix; on every OS no entry holds `\`, which CI's Windows job checks); an environment named in `ty.toml` after the first call tree is in the next list (one open, one reopen, one solve); a missing root is `-32603` and the next request is answered. The environment is named in `ty.toml` so that the test machine's `VIRTUAL_ENV` / `PATH` cannot choose it. The driver crate has 54 tests; the core's Rust tests and the window suite (46) pass.
+
+**Not done here:** the core does not ask for the list yet (nothing hashes the inputs; that is the tree cache of 14 T6 / `04-storage/02-index.md`), and 14 §11.1's httpx measurement was not taken again at this rev (it needs a release build).
+
 ### 8.2b Exact chevrons: the probe (05 §3.1)
 
 After 8.2 and 8.2a.
