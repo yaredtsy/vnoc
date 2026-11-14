@@ -89,7 +89,7 @@ V-NOC ▸  Reveal in Sidebar          select it in the sidebar; the canvas revea
          Write ID                                                           (only when found by name)  J8
 ```
 
-Five entries, two conditional, down from nine. Merged or gone:
+Eight entries in three groups (corrected 2026-11-14: this line said "five", the list above has always had eight). Attach a Missing Doc Here is conditional on `vnoc.hasMissing`; Show Calls on `vnoc.callTree` only, and Write ID on nothing: a tab's menu has no cursor, so neither can test the node, and each says so when run on a node it does not fit (as built in 8.7). Merged or gone:
 
 | Was | Now |
 |---|---|
