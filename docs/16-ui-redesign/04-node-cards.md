@@ -56,7 +56,7 @@ The full path (`app/core/models/conversation_state.py:382`) is always the meta l
 | `📄 N` | N > 0 | *"2 docs: click to read"* |
 | `🔗` | it has docs: solid = ID in the code, faded = found by name only (kept from today) | *"ID in the code"* / *"found by name only: Write ID to keep it on renames"* |
 | `●` / `○` | a closed card hides the selection / the cursor (kept from 10/06) | *"the selection is inside"* / *"the cursor is inside"* |
-| right side: the calls' state | a function or class whose calls the canvas knows something about: `calls nothing` · `calls 4` (probed, not opened) · a spinner while fetching · `couldn't read calls · Retry` | *"opening it shows nothing: it calls no function in this project"* … |
+| right side: the calls' state | a function or class whose calls the canvas knows something about: `calls nothing` · a spinner while fetching · `couldn't read calls · Retry`. **No `calls 4`**: a closed card's `+N` already counts its calls, and an open card shows them as cards, so a number here only repeated one (decided 2026-11-14) | *"opening it shows nothing: it calls no function in this project"* … |
 
 The footer is the card's **facts**; the meta line is only **where**. `calls nothing` moved from the meta line to the footer, so most cards have
 something in the footer and the meta line has room.

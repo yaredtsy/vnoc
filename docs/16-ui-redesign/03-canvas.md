@@ -61,6 +61,27 @@ under an open function, are drawn by the canvas only: the sidebar has no call ro
 | Collapse All | `⋯` on the canvas, `⊟` on the sidebar's title | `collapseAll` (the active context) |
 | Expand All Below | menu, folders, files and classes | `expand` with up to 500 ids (kept from 10/04 §5) |
 
+### 2.1 What is open belongs to the focus root (decided 2026-11-14)
+
+A context does not keep one open set for the whole project; it keeps one **per focus root**: `open: { [root]: ids }`, where `root` is the last
+step of the focus (`""` with no focus). The drawing, the sidebar panel (R8) and every gesture use `open[root]` of the current root only.
+
+Why: with one set, everything opened while focused deep, and every ancestor a Reveal opened, stayed open. Clearing the focus then drew all
+of it at once from the project's root: hundreds of cards and seconds of delay (seen in a real window, 2026-11-14).
+
+| Event | `open` |
+|---|---|
+| focus on `X` for the first time | `open[X]` starts as the ids of `open[current root]` that are under `X`: what you saw open stays open |
+| focus on `X` again later | `open[X]` as it was left |
+| Back, a crumb, clearing the focus | the parent root's own set, as it was left: what was opened inside a focus stays there |
+| toggle, expand, Collapse All, Expand All Below | `open[current root]` only |
+| Reveal | opens the ancestors between the current root and the node, in `open[current root]` only |
+| the code changed | ids that are gone are dropped from every set; a root that is gone loses its set |
+| how many roots are kept | the 20 used last per context (each set is small; this bounds the saved session) |
+| a saved session from before | its single `expanded` becomes `open[its focus root]` |
+
+`wantedCalls` (05 §2) reads `open[current root]` of each context, not every root's set: only what is drawn asks for trees.
+
 What changes for people used to 0.1: opening many folders in the sidebar makes the canvas bigger. That is the point of sharing: the canvas is the
 sidebar drawn as a graph. Fit View (`⋯`) frames it again.
 
@@ -131,8 +152,8 @@ export interface ContextState {
   focus: readonly string[];
   /** a structure key or a call id */
   selected: string | null;
-  /** structure keys and call ids, open on BOTH surfaces (R8) */
-  expanded: readonly string[];
+  /** per focus root ("" = no focus): structure keys and call ids, open on BOTH surfaces (R8, §2.1). Replaces `expanded` (step 8.4b) */
+  open: Readonly<Record<string, readonly string[]>>;
 }
 
 export type Intent =
@@ -160,6 +181,18 @@ only for the canvas. `reveal.context` says which context; a canvas showing anoth
 
 The layout stays `layout.ts`'s columns (one column per depth, rows top to bottom). It gains call cards as children (§1) and loses the "Calls"
 section heights (`callsHeight`, `CALLS_*`, `Placed.callRows`). Every card is 80 px high (04 §1) except with the code shown.
+
+### 6.1 Big drawings: a budget, and only what is on screen (decided 2026-11-14)
+
+Whatever path leads there (a restored session, a 300-function file, Expand All Below, a Reveal), one drawing never holds more than
+**`MAX_CARDS` = 200 cards** (one constant in `layout.ts`).
+
+| Rule | How |
+|---|---|
+| the budget | the layout walks depth first in reading order. When the next open node's children do not all fit, that node is drawn **closed** with its `+N`; so is every open node after it. The root is always drawn. What is drawn is always a whole tree, never half a family |
+| saying so | the bar shows, dim, before the right-hand buttons: *"200 of 640 cards"*, tooltip *"Some open cards are drawn closed to keep the canvas fast. Focus on a part to see all of it."* No "Show all": that would bring back the freeze |
+| drawing | React Flow's `onlyRenderVisibleElements`: cards and edges off screen are not in the page |
+| asking | probes and the prefetch go to the cards **on screen** (the viewport plus one screen's margin), reported by the page after a pan settles (300 ms). Full trees are still fetched for the open functions of the drawing, which the budget bounds |
 
 ## 7. Keys
 

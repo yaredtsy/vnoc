@@ -47,7 +47,7 @@ Five are from 10-ui-rework/03 §1; **explore** and **active context** are new. H
 |---|---|---|---|
 | **selection** | "the node I am working with": the docs panel, the menus and the keys act on it. One per context, or none. **A call node can be selected** (05 §1). | `contexts[c].selected` | no; ring on the card, highlight on the row |
 | **focus** | "show only this and what is under it", on both surfaces. **A path** from the root down to the node (R2). | `contexts[c].focus` | yes |
-| **open** (expanded) | a card / row whose children are drawn. Shared by both surfaces (R8). | `contexts[c].expanded` | yes |
+| **open** (expanded) | a card / row whose children are drawn. Shared by both surfaces (R8), and kept **per focus root** (03 §2.1). | `contexts[c].open[root]` | yes |
 | **explore** | open the callee of a call in a **context of its own**, focused on its lineage | a new entry in `contexts` | a new panel; the canvas switches if it is activated |
 | **active context** | the context the canvas draws and the docs panel follows | `session.active` | the canvas |
 | **highlight** | "look here" without selecting (search list, hovered crumb) | `session.highlight` | no; dotted outline |

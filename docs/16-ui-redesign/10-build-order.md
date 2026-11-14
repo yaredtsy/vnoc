@@ -286,6 +286,33 @@ Tests: `shared` 225, `webview` 158, window suite 44, Rust unchanged. The new win
 
 **For the hand check (real window):** double-click a call card → a chip appears, filled, and the canvas shows the callee; click `Main` → the canvas is back and its pan and zoom are as you left them; pan the EXPLORE view, go to Main and back → its own pan and zoom are back; ✕ on the chip closes it (when it was active, the canvas is on Main); the docs panel (`ⓘ`) on a selected call says *called by …* and shows the callee's docs, and follows the chip you switch to; open four explores → `+1 ▾` appears and the active chip is never in it; make the bar narrower than 360 px → one chip and a ▾ menu.
 
+### 8.4b Big drawings (before 8.5)
+
+From 03 §2.1 and §6.1, after the user saw hundreds of cards and a delay when clearing the focus.
+
+| Files | What |
+|---|---|
+| `shared/session.ts` | `ContextState.open: { [root]: string[] }` replaces `expanded`; every intent of 03 §2.1's table; the 20-root cap; `restoreSession` turns a saved `expanded` into `open[its root]` |
+| `shared/calls.ts` | `wantedCalls` reads `open[current root]` only |
+| `webview/src/canvas/layout.ts` | `MAX_CARDS` = 200, the whole-family rule; the layout says how many cards there would be (`total`) |
+| `webview/src/canvas/top-bar/` | the "200 of 640 cards" note |
+| `webview/src/canvas/Canvas.tsx` | `onlyRenderVisibleElements`; reports the cards on screen after a pan settles |
+| `extension/src/callTree.ts`, `shared/callScheduler.ts` | probes and the prefetch for cards on screen only |
+
+Tests (table tests, `sessionProblems` after every step):
+- focus `X` the first time → the open ids under `X` carry in; open things inside `X`; clear the focus → the root's set is as it was; focus `X`
+  again → `X`'s set is as left;
+- Reveal while focused → only `open[current root]` grows; Collapse All → only `open[current root]` empties;
+- a 21st root drops the one used longest ago; the code changed → gone ids and roots are dropped; a saved `expanded` is converted;
+- layout: 199, 200 and 201 cards; an open node whose children do not all fit is drawn closed, and so is every open node after it; the root is
+  always drawn; `total` counts what would be drawn without the budget;
+- wantedCalls: an open function under another root is not wanted;
+- scheduler: a card scrolled off screen stops being probed; one scrolled on is probed.
+
+Proof by hand: the user's case. Open many things while focused, Reveal a few deep nodes, clear the focus: the root draws as it was left, with
+no delay. On a big project: Expand All Below on a large folder → at most 200 cards and the note.
+Commit: `step 8.4b: what is open belongs to the focus root; a card budget; only what is on screen asks for work`.
+
 ### 8.5 The sidebar becomes a webview (structure rows)
 
 | Files | What |
