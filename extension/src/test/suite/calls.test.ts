@@ -22,7 +22,8 @@ interface Api {
   coreEpoch(): number;
   dispatch(intent: Intent, context?: string): void;
   restartCore(): Promise<void>;
-  renderedPosts(): { visible: number; hidden: number; callCards: number; chevrons: number }[];
+  chips(): { id: string; label: string; active: boolean }[];
+  renderedPosts(): { context: string; visible: number; hidden: number; callCards: number; chevrons: number }[];
   callProbes(): Record<string, { revision: number; count: number }>;
 }
 let api: Api;
@@ -163,6 +164,35 @@ suite("show calls", () => {
     api.dispatch({ type: "activate", id: "main" });
     api.dispatch({ type: "select", id: null });
     await until("it to close", () => !api.session().order.includes(explore));
+  });
+
+  test("a double-click on a call card draws a chip, active; the Main chip brings the canvas back; the ✕ closes the context and the chip goes", async () => {
+    // the suite cannot click in the page: it sends the intent a click sends, and reads what the page says it drew (`chipsDrawn`, `rendered.context`)
+    const [leaf] = callNodesIn(main.id, api.callTrees()[main.id].root);
+    const explore = `explore:${leaf.id}`;
+    const drewContext = () => api.renderedPosts().at(-1)?.context;
+    assert.deepStrictEqual(api.chips(), [], "one context: no chips");
+
+    api.dispatch({ type: "explore", call: leaf.id, activate: true }); // the double-click
+    await until("a chip for it, filled", () => api.chips().some((c) => c.id === explore && c.active));
+    assert.deepStrictEqual(api.chips().map((c) => [c.label, c.active]), [["Main", false], ["leaf", true]]);
+    await until("the canvas to draw the EXPLORE context", () => drewContext() === explore);
+
+    api.dispatch({ type: "activate", id: "main" }); // the click on Main
+    await until("Main's chip to be filled", () => api.chips().find((c) => c.id === "main")?.active === true);
+    await until("the canvas to draw MAIN again", () => drewContext() === "main");
+    assert.ok(api.session().order.includes(explore), "the EXPLORE context is still there, one click away");
+
+    api.dispatch({ type: "closeContext", id: explore }); // the ✕
+    await until("the chip to go", () => api.chips().length === 0);
+    assert.ok(!api.session().order.includes(explore));
+
+    // the active one closed: its parent is active, and the canvas draws it
+    api.dispatch({ type: "explore", call: leaf.id, activate: true });
+    await until("the chip, active", () => api.chips().some((c) => c.id === explore && c.active));
+    api.dispatch({ type: "closeContext", id: explore });
+    await until("the canvas back on MAIN", () => api.session().active === "main" && drewContext() === "main" && api.chips().length === 0);
+    assert.deepStrictEqual(api.webviewErrors(), []);
   });
 
   test("a cut call card that is opened gets its callee's tree fetched", async () => {

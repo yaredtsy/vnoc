@@ -1,15 +1,18 @@
 import { useMemo } from "react";
 
 import type { StructureResult } from "@vnoc/shared/messages.ts";
-import { callsOf } from "@vnoc/shared/calls.ts";
+import { callFacts, callsOf } from "@vnoc/shared/calls.ts";
+import { docSubject } from "@vnoc/shared/docSubject.ts";
 import { findNode } from "@vnoc/shared/tree.ts";
 import { type Layout, layout } from "@/canvas/layout.ts";
 import { useCalls } from "@/state/calls.ts";
 import { useSession } from "@/state/session.ts";
 import { useView } from "@/state/view.ts";
 
-/** What the canvas page draws, derived from the session, the call trees and the view: the layout, and the node the docs panel is about. */
+/** What the canvas page draws, derived from the session, the call trees and the view: the active context, the layout, and what the docs panel is about. */
 export function useFocusedView(structure: StructureResult | null) {
+  const active = useSession((s) => s.active);
+  const contexts = useSession((s) => s.contexts);
   const focus = useSession((s) => s.contexts[s.active].focus);
   const selected = useSession((s) => s.contexts[s.active].selected);
   const openList = useSession((s) => s.contexts[s.active].expanded);
@@ -28,8 +31,8 @@ export function useFocusedView(structure: StructureResult | null) {
   // what a function, class or call card knows about its calls: its tree, what the host is doing, or a probe's count (05 §3.1)
   const callsFor = useMemo(() => (key: string) => callsOf({ trees, probes, states }, key), [trees, probes, states]);
   const laid = useMemo<Layout | null>(() => (root ? layout(top ?? root, expanded, codeOpen, callsFor, sitesOpen) : null), [root, expanded, top, codeOpen, callsFor, sitesOpen]);
-  // the doc panel shows the selected card, else the focused node
-  const selectedNode = root && selected ? findNode(root, selected) ?? null : null;
+  // the doc panel follows the active context's selection (a selected call: its callee, and who calls it), else its focused node
+  const subject = useMemo(() => (root ? docSubject({ contexts, active }, root, (call) => callFacts(trees, call)) : { node: null, calledBy: null }), [root, contexts, active, trees]);
 
-  return { root, top, laid, selected, docNode: selectedNode ?? top };
+  return { root, top, laid, selected, active, subject };
 }

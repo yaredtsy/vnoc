@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { callExists, callId, callLookup, callNodesIn, callsLook, callsOf, isCallId, markBadge, MARK_ORDER, ownsCalls, siteChoice, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
+import { callExists, callFacts, callId, linesText, callLookup, callNodesIn, callsLook, callsOf, isCallId, markBadge, MARK_ORDER, ownsCalls, siteChoice, isStale, isStaleIn, listedSites, parseCallId, resolveCall, siteLabel, siteText, stepOf, wantedCalls } from "./calls.ts";
 import type { CallTreeNode, CallTreeResult, Range, TreeNode } from "./messages";
 import { type ContextState, type Session, emptySession, exploreId } from "./session.ts";
 
@@ -72,6 +72,22 @@ test("a recursive call (A → B → A): the ids stay distinct and finite", () =>
   assert.deepEqual(nodes.map((n) => parseCallId(n.id)!.steps), [["b.py::b"], ["b.py::b", "a.py::a"]]);
   assert.notEqual(nodes[1].id, callId(a, []), "the A below B is not the owner A");
   assert.equal(new Set(nodes.map((n) => n.id)).size, 2);
+});
+
+test("callFacts: the callee, the caller (the owner for a first step, else the step before) and the 1-based lines of the sites", () => {
+  const trees = { [OWNER]: { root: { ...tree, children: [call("order", { call_sites: [siteAt(15, "checkout.py"), siteAt(30, "checkout.py")] }, [call("reserve", { call_sites: [siteAt(4, "order.py")] })]), tree.children[1]] } } };
+  assert.deepEqual(callFacts(trees, callId(OWNER, ["order.py::order"])), { callee: { key: "order.py::order", name: "order" }, callerName: "checkout", lines: [16, 31] });
+  assert.deepEqual(callFacts(trees, callId(OWNER, ["order.py::order", "reserve.py::reserve"])), { callee: { key: "reserve.py::reserve", name: "reserve" }, callerName: "order", lines: [5] });
+  assert.equal(callFacts(trees, callId(OWNER, ["order.py::order", "nope"])), null, "gone");
+  assert.equal(callFacts(trees, callId("other", ["x"])), null, "owner's tree not held");
+  assert.equal(callFacts(trees, "app/api.py"), null);
+  assert.equal(callFacts(trees, callId(OWNER, ["?lib/x.py::lib"]))?.callee.key, null, "a callee the project does not know");
+});
+
+test("linesText: `line 16`, `lines 16, 31`, each line once", () => {
+  assert.equal(linesText([16]), "line 16");
+  assert.equal(linesText([16, 31]), "lines 16, 31");
+  assert.equal(linesText([16, 16]), "line 16");
 });
 
 test("resolveCall: a path that is not in the tree, an owner we do not hold, and the owner alone give nothing", () => {

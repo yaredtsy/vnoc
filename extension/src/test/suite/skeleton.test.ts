@@ -36,6 +36,6 @@ suite("walking skeleton: extension host -> core -> Python driver -> structure ->
     // The webview asked the host for the structure (host -> core -> driver), laid it out and drew it, then reported back.
     // Files start collapsed: the folder and nested.py are drawn, the 15 defs are hidden behind it.
     const drew = await api.waitRendered(30_000);
-    assert.deepStrictEqual(drew, { visible: 2, hidden: 15, callCards: 0, chevrons: 0 });
+    assert.deepStrictEqual(drew, { context: "main", visible: 2, hidden: 15, callCards: 0, chevrons: 0 });
   });
 });

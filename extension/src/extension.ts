@@ -19,7 +19,7 @@ import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 // Wires the pieces together: the core, the session, the two webview tabs, the sidebar, the commands. Nothing here decides anything.
 
 /** What the webview last said it drew (for the test suite). */
-type Rendered = { visible: number; hidden: number; callCards: number; chevrons: number };
+type Rendered = { context: string; visible: number; hidden: number; callCards: number; chevrons: number };
 let rendered: Rendered | undefined;
 /** Every drawing a webview reported, in order (for the test suite). */
 const renderedPosts: Rendered[] = [];
@@ -28,6 +28,8 @@ const renderWaiters: ((r: Rendered) => void)[] = [];
 /** What the bar's ⚠ last said (for the test suite). */
 type Warned = { level: "none" | "warning" | "error"; text: string };
 let warned: Warned | undefined;
+/** The context chips the bar last drew (for the test suite). */
+let chips: { id: string; label: string; active: boolean }[] = [];
 const warnedWaiters: (() => void)[] = [];
 
 let core: Core | undefined;
@@ -203,6 +205,8 @@ export function activate(ctx: vscode.ExtensionContext) {
       const row = sidebar.rowForId(id);
       if (row) await sidebarView.reveal(row, { select: true, focus: false });
     },
+    /** the context chips the bar draws now: empty with one context */
+    chips: () => chips,
     /** every drawing the pages reported, in order */
     renderedPosts: () => renderedPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
@@ -238,13 +242,16 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       store.dispatch(note.intent, note.context);
       break;
     case "rendered":
-      rendered = { visible: note.visible, hidden: note.hidden, callCards: note.callCards, chevrons: note.chevrons };
+      rendered = { context: note.context, visible: note.visible, hidden: note.hidden, callCards: note.callCards, chevrons: note.chevrons };
       renderedPosts.push(rendered);
       output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden, ${note.callCards} call cards)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
       break;
     case "cardsDrawn":
       cardsDrawn(note.keys);
+      break;
+    case "chipsDrawn":
+      chips = note.chips;
       break;
     case "warned":
       warned = { level: note.level, text: note.text };

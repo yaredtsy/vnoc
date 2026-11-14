@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select.tsx";
 import { on, request } from "../host.ts";
 import { setDocWidth, useView } from "../state/view.ts";
+import { type DocSubject, calledByText } from "@vnoc/shared/docSubject.ts";
 import type { DocInfo, TreeNode } from "@vnoc/shared/messages.ts";
 import { renderMarkdown } from "./markdown.ts";
 
@@ -18,6 +19,8 @@ const MAX_WIDTH = 800;
 
 interface DocPanelProps {
   node: TreeNode | null;
+  /** for a selected call on the canvas: who calls it, shown on top of its docs */
+  calledBy?: DocSubject["calledBy"];
   revision: number;
   onAddDoc: (id: string) => void;
   onClose: () => void;
@@ -29,7 +32,7 @@ interface DocPanelProps {
   emptyText?: string;
 }
 
-export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extra, emptyText = "Select a node to see its docs." }: DocPanelProps) {
+export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, fill = false, extra, emptyText = "Select a node to see its docs." }: DocPanelProps) {
   const nodeId = node?.node_id ?? null;
   // Each answer keeps what it was asked for, so another node's docs (or another doc's text) are never shown while the new ones load.
   const [listed, setListed] = useState<{ nodeId: string; docs: DocInfo[] } | null>(null);
@@ -95,6 +98,7 @@ export function DocPanel({ node, revision, onAddDoc, onClose, fill = false, extr
       <header className="flex flex-none items-center gap-2 border-b border-border px-3 py-2">
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold">{node?.name ?? "Docs"}</div>
+          {node && calledBy && <div className="truncate text-[11px] text-muted-foreground">{calledByText(calledBy)}</div>}
           {node && (
             <div className="truncate font-mono text-[11px] text-muted-foreground" title={node.path}>
               {node.path}

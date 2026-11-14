@@ -21,9 +21,9 @@ const PANE_CONTEXT = JSON.stringify({ webviewSection: "pane", preventDefaultCont
 export function App() {
   const { status, message, structure, reloads } = useData();
   const docsOpen = useView((v) => v.docsOpen);
-  const { root, top, laid, selected, docNode } = useFocusedView(structure);
+  const { root, top, laid, selected, active, subject } = useFocusedView(structure);
   useCanvasKeys(laid, root, selected);
-  useRenderedReport(laid, selected);
+  useRenderedReport(laid, selected, active);
   const body = pageBody(status, laid !== null);
 
   return (
@@ -33,10 +33,11 @@ export function App() {
           <TopBar structure={structure} status={status} message={message} />
           <div className="flex min-h-0 flex-1" data-vscode-context={PANE_CONTEXT}>
             {/* nothing drawn yet: the message alone. Once cards are drawn they stay, whatever a later refresh says (the bar's ⚠ tells) */}
-            {body === "canvas" && laid ? <Canvas key={`${reloads}:${top?.id ?? ""}`} laid={laid} /> : <CanvasMessage status={body === "error" ? "error" : "loading"} message={message} />}
+            {body === "canvas" && laid ? <Canvas key={`${active}:${reloads}:${top?.id ?? ""}`} laid={laid} context={active} at={`${reloads}:${top?.id ?? ""}`} /> : <CanvasMessage status={body === "error" ? "error" : "loading"} message={message} />}
             {docsOpen && (
               <DocPanel
-                node={docNode}
+                node={subject.node}
+                calledBy={subject.calledBy}
                 revision={structure?.revision ?? 0}
                 onAddDoc={(key) => void request("addDoc", { key }).catch(() => {})}
                 onClose={() => setDocsOpen(false)}

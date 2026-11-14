@@ -409,7 +409,7 @@ pub struct CallTreeNode {
     /// relative to the opened folder, as in `vnoc/structure`; `null` when the code is not under it
     pub path: Option<String>,
     pub kind: DefKind,
-    /// how many calls were merged into this node; 1 for the root
+    /// the calls that reach this node, once per copy of a merged parent; not the number of places it is written (that is `call_sites`); 1 for the root
     pub call_count: u32,
     /// where it is called, each with the file it is written in, by file and then in source order; empty for the root
     pub call_sites: Vec<CallSite>,

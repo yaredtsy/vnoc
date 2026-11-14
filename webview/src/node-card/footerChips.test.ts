@@ -43,21 +43,23 @@ test("the order: hidden, docs, link, ●, ○", () => {
   assert.deepEqual(all.map((c) => c.kind), ["hidden", "docs", "link", "selected", "cursor"]);
 });
 
-const merged = (count: number, lines: number[]) => ({ ...base, call: { count, callerName: "checkout_order", lines } });
-test("×N on a call node that merges calls, with where: `checkout_order calls it 2 times: lines 16, 31`", () => {
-  const [chip] = footerChips(merged(2, [16, 31]), none);
+const merged = (lines: number[]) => ({ ...base, call: { callerName: "checkout_order", lines } });
+test("×N on a call node with several sites, with where: `checkout_order calls it 2 times: lines 16, 31`", () => {
+  const [chip] = footerChips(merged([16, 31]), none);
   assert.deepEqual(chip, { kind: "times", text: "×2", tip: "checkout_order calls it 2 times: lines 16, 31", faded: false });
 });
-test("one call: no ×N; two calls on one line say `line`", () => {
-  assert.deepEqual(footerChips(merged(1, [16]), none), []);
-  assert.equal(footerChips(merged(2, [16, 16]), none)[0].tip, "checkout_order calls it 2 times: line 16");
+test("one site: no ×N; two calls on one line say `line`", () => {
+  assert.deepEqual(footerChips(merged([16]), none), []);
+  assert.equal(footerChips(merged([16, 16]), none)[0].tip, "checkout_order calls it 2 times: line 16");
 });
 test("×N comes first, before +N, docs and the rest", () => {
-  const all = footerChips({ ...merged(3, [1, 2, 3]), collapsed: true, plus: 4, docs: 1, link: "marker" }, { selected: true, cursor: false });
+  const all = footerChips({ ...merged([1, 2, 3]), collapsed: true, plus: 4, docs: 1, link: "marker" }, { selected: true, cursor: false });
   assert.deepEqual(all.map((c) => c.kind), ["times", "hidden", "docs", "link", "selected"]);
 });
 
-test("×N only where the sites back the count: calls that reach a node through a merged parent are more than the places it is written, and say nothing", () => {
-  assert.deepEqual(footerChips(merged(2, [14]), none), [], "two calls reach it, one line in the code");
-  assert.deepEqual(footerChips(merged(4, [19, 20, 26, 27]), none).map((c) => c.text), ["×4"], "four calls, four places");
+// The core's `call_count` is not an input: it is the calls that reach the node, once per copy of a merged parent. N is the sites.
+test("×N is the number of sites, whatever the core counted: 2 sites → ×2, 1 site → none, 3 sites → ×3", () => {
+  assert.deepEqual(footerChips(merged([19, 20]), none).map((c) => c.text), ["×2"], "core count 4, two sites");
+  assert.deepEqual(footerChips(merged([14]), none), [], "core count 2, one site");
+  assert.deepEqual(footerChips(merged([1, 2, 3]), none).map((c) => c.text), ["×3"]);
 });

@@ -25,6 +25,8 @@
   /* text and surfaces */
   --font: var(--vscode-font-family, sans-serif);
   --font-size: var(--vscode-font-size, 13px); /* the page's base size, and the crumbs' */
+  --chip-active: var(--vscode-button-secondaryBackground, #3a3d41); /* the active context's chip, filled */
+  --chip-active-foreground: var(--vscode-button-secondaryForeground, #fff);
   --toolbar-hover: var(--vscode-toolbar-hoverBackground, #5a5d5e50); /* under the pointer on a bar button */
   --editor-font: var(--vscode-editor-font-family, monospace);
   --link: var(--vscode-textLink-foreground, #3794ff);

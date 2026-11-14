@@ -120,6 +120,32 @@ export const MARK_ORDER: readonly CallMark[] = ["recursive", "cut", "incomplete"
 /** "line 12": a call site as the menu names it (0-based in the message, 1-based for people). */
 export const siteLabel = (site: Range): string => `line ${site.start.line + 1}`;
 
+/** "line 16", "lines 16, 31": the 1-based lines of a call's sites, each once, in order. */
+export const linesText = (lines: readonly number[]): string => {
+  const unique = [...new Set(lines)];
+  return `${unique.length === 1 ? "line" : "lines"} ${unique.join(", ")}`;
+};
+
+/** Who calls a call node and where: the callee, the caller's name, and the lines (1-based) of the sites. */
+export interface CallFacts {
+  callee: { key: string | null; name: string };
+  callerName: string;
+  lines: number[];
+}
+
+/**
+ * What a call id says about itself, from the trees held: null when its owner's tree is not here or the call is not in it (unknown, or gone).
+ * The caller of a first step is the owner; of a later step, the step before it.
+ */
+export function callFacts(trees: Readonly<Record<string, Pick<CallTreeResult, "root">>>, id: CallId): CallFacts | null {
+  const parsed = parseCallId(id);
+  const node = resolveCall(trees, id);
+  if (!parsed || !node) return null;
+  const caller = parsed.steps.length === 1 ? trees[parsed.owner].root : resolveCall(trees, callId(parsed.owner, parsed.steps.slice(0, -1)));
+  if (!caller) return null;
+  return { callee: { key: node.key, name: node.name }, callerName: caller.name, lines: node.call_sites.map((site) => site.start.line + 1) };
+}
+
 /** A site the card can open: it names a file. */
 export type OpenableSite = CallSite & { path: string };
 

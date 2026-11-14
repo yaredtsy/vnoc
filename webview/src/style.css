@@ -19,6 +19,8 @@
   --color-destructive: var(--destructive);
   --color-warning: var(--warning);
   --color-toolbar-hover: var(--toolbar-hover);
+  --color-chip-active: var(--chip-active);
+  --color-chip-active-foreground: var(--chip-active-foreground);
   --color-progress: var(--progress);
   --color-border: var(--border);
   --color-input: var(--input);

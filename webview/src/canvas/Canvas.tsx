@@ -7,6 +7,7 @@ import { NodeCard } from "../node-card/NodeCard.tsx";
 import { on } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
+import { rememberViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
 import { holderOf, pathEdges } from "./marks.ts";
@@ -17,11 +18,12 @@ const nodeTypes = { card: NodeCard };
 const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p }));
 
 /** Brings the requested node to the middle of the view once it is drawn. Inside `<ReactFlow>` so it can reach the view. */
-function CenterOn({ laid }: { laid: Layout }) {
+function CenterOn({ laid, context }: { laid: Layout; context: string }) {
   const { fitView } = useReactFlow();
   // the session's request to bring a node into view; done, it says so and the session clears it (a canvas opened later does not repeat it)
   const reveal = useSession((s) => s.reveal);
-  const target = useMemo(() => (reveal ? { id: reveal.id, n: reveal.n } : null), [reveal]);
+  // a canvas that shows another context leaves the request for that context's own canvas
+  const target = useMemo(() => (reveal && reveal.context === context ? { id: reveal.id, n: reveal.n } : null), [reveal, context]);
   useEffect(() => {
     if (!target || !laid.nodes.some((p) => p.id === target.id)) return;
     // the cards of a new layout are measured on the next frames; framing them before that frames nothing
@@ -53,7 +55,12 @@ function ViewCommands() {
 const onNodeClick = (_: unknown, node: { id: string }) => dispatch({ type: "select", id: node.id });
 const onNodeDoubleClick = (_: unknown, node: { data: unknown }) => dispatch(doubleClickIntent(node.data as Placed));
 
-export function Canvas({ laid }: { laid: Layout }) {
+/**
+ * `context`: the one it draws; `at`: which drawing this is (the same root of the same load), so its pan and zoom are remembered for as long as the drawing is
+ * the same and the context is open (canvas/viewports.ts). A context shown for the first time is fitted.
+ */
+export function Canvas({ laid, context, at }: { laid: Layout; context: string; at: string }) {
+  const saved = useMemo(() => savedViewport(context, at), [context, at]);
   const root = useData((s) => s.structure?.root ?? null);
   const selected = useSession((s) => s.contexts[s.active].selected);
   const cursor = useSession((s) => s.cursor);
@@ -95,7 +102,9 @@ export function Canvas({ laid }: { laid: Layout }) {
       elementsSelectable={false} // the session decides what is selected, not React Flow
       zoomOnDoubleClick={false}
       nodesConnectable={false}
-      fitView
+      fitView={saved === null}
+      defaultViewport={saved ?? undefined}
+      onMoveEnd={(_, viewport) => rememberViewport(context, at, viewport)}
       className="min-w-0 flex-1"
       minZoom={0.02}
       proOptions={{ hideAttribution: true }}
@@ -103,7 +112,7 @@ export function Canvas({ laid }: { laid: Layout }) {
       <Background />
       <Controls showInteractive={false} />
       {minimap && <MiniMap pannable zoomable nodeColor={(node) => (node.id === selected ? "var(--card-selected)" : node.id === cursor ? "var(--card-cursor)" : "var(--muted-foreground)")} />}
-      <CenterOn laid={laid} />
+      <CenterOn laid={laid} context={context} />
       <ViewCommands />
     </ReactFlow>
   );
