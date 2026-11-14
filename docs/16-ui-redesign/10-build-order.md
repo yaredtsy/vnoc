@@ -202,9 +202,29 @@ components only draw. Also: `foldCrumbs.ts` and `app/pageBody.ts` (02 §4–§5)
 | Left | When |
 |---|---|
 | call cards, dashed call edges, `Placed.role` / `key` / `call`, `childCount: number \| null`, `+N` counting calls, `calls nothing`, call-card buttons (`◇ Explore`) | after 8.1 (call ids, contexts) and 8.2 (the host fetches what is open) |
-| `NodeCalls.tsx` and `canvas/calls.ts`'s `callRows` (the old "Calls" section, still drawn, 24 + 20 px rows added to the card) | deleted by 8.3 part 2 |
-| `symbol-method` for a function inside a class | 8.3 part 2 (needs the parent's kind in `Placed`) |
-| `@tabler/icons-react` | still used by the bar and the menus; goes when nothing uses it |
+| `NodeCalls.tsx` and `canvas/calls.ts`'s `callRows` (the old "Calls" section, still drawn, 24 + 20 px rows added to the card) | **done in 8.3 part 2** |
+| `symbol-method` for a function inside a class | **done in 8.3 part 2** (`Placed.inClass`, `kindIcon`) |
+| `@tabler/icons-react` | still used by the docs panel, the docs tab and the kit's select and menu; goes when nothing uses it (not 8.3) |
+
+**As built, part 2 (`6bd3413`, 2026-11-14, after 8.2b).** In: call cards, one level at a time, at `CARD_W` 300; the old "Calls" section is gone.
+
+| Decision | Why |
+|---|---|
+| `Placed` has `role` (`node` / `call`), `key`, `parentId`, `inClass`, `call: CallInfo \| null` (count, sites, lines, callerName, callerPath, look), `siteRows`. `Edge.kind` is `node` or `call`; call edges are dashed (`--edge-call`) | a call card is a row of the layout like any other (03 §1); ids are `callId(owner, steps)` |
+| `callsLook` of 8.2b stays; `childCount: number \| null` was **not** added | the three-valued answer is already in `callsChevron` / `plus` / `callsNothing`; a second field would say the same thing twice |
+| `callLook(node, open)` is the one rule for chevron, `+N`, mark and unknown callee (05 §6); `MARK_ORDER` picks the one mark to show. The `cut` text is now "… calls not loaded" | one place, tested as a table |
+| `callMeta(sites, parentPath, right, chars)`: up to 2 sites ("line 16", "base.py:12" when the site is in another file than the caller), then "N more ▾"; the right text (callee file, mark, or "not in the index") is shown only if `left + 2 + right <= metaChars()` (`rows.ts`: card width minus the name column, 6.6 px per monospace char) | the file name is whole or hidden, never cut. `PublicFilesResourceHandler`-style long names still cut in the **header**: the meta rule does not touch it |
+| **×N shows only when the sites back the count** (`merged.lines.length === merged.count`); tooltip "checkout_order calls it 2 times: lines 16, 31" | found on the minicart: under a merged parent the core's `call_count` is "calls reaching the node" (it multiplies down), so a function called once from one place under a parent merged twice said ×2. That is the core's deliberate meaning (its test "two calls, but one place in the code"), so the core is **not** changed; the footer states only what the card can show |
+| `rendered` is `{visible, hidden, callCards, chevrons}`; `hidden` counts structure nodes only | the window suite counts call cards apart from structure cards |
+| request `pickCallSite`: several sites → a QuickPick (label `siteChoice`: "line 16" / "base.py:12" + the line's text), each item previews in the editor with `preserveFocus`; one site goes straight to `openAt` | 03 §7 |
+| webview section `callUnknown` (08 §6) for an unknown callee; `nodeKey: key ?? id`, `role`, `calleeKnown`, `sites`, `callId` in `nodeContext` | menus (8.7) read them; a call card's Go to Code and Add Doc use the callee's `key`, not the card id |
+| keys: `Enter` on a call = Explore (activates), on an unknown call nothing; `Ctrl/Cmd+Enter` = Go to Call Site (only sites that name a file); double-click on a call = Explore and activate, on an unknown call = select | `canvasChord` and `doubleClickIntent` are pure with tables |
+| the card's `NodeFooter` had no case for the new `times` chip and drew nothing, silently | the switch now ends in `const unhandled: never = c.kind` |
+| card heights: 72, +220 with code, + `siteRows × 18 + 8` when "N more ▾" is open; a class with no own `__init__` shows methods first, then its calls | `SITE_ROW_H`, `SITE_LIST_PAD` in `layout.ts` |
+
+Tests: `shared` 217, `webview` 147, window suite 43 (new: call cards drawn exactly 2 after `collapseAll`; selecting a call card opens `explore:<id>` without activating it and an Explore dispatch activates it; a 40-deep chain cut at the depth cap, opened, fetches the callee's tree and draws more than 33 cards).
+
+**Proof by hand, and its limits.** The four minicart steps were run on the real page (the real `reduce`, `wantedCalls`, `callLookup`) in a browser with a **mock host**, fed the **real core and driver's answers** for `/tmp/minicart` (probes: `checkout` 1, `checkout_order` 6, `reserve_stock` 2). It was **not** a real VS Code window. Counts of cards on the canvas: start 9; focus `checkout` 2 (the function and one call card); open `checkout_order` 8 (six call cards); open `reserve_stock` 10 (its own two: `_lookup`, `_log`). Nine dashed call edges at the end. `check_stock` ("line 19 · line 20 · 2 more ▾", four sites, ×4) opened its site list; the callee's file name is hidden there by the 36-character rule. Real clicks on the chevron toggled 8 ↔ 2 cards. The harness and its data are not kept. Still to do by a person in a real window: the QuickPick with preview for several sites, Ctrl/Cmd+Enter, the dim unknown callee.
 
 ### 8.4 The canvas's one bar; contexts on one canvas
 
