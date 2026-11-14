@@ -61,6 +61,10 @@
   --hover-bg: var(--vscode-editorHoverWidget-background, #252526);
   --hover-fg: var(--vscode-editorHoverWidget-foreground, #ccc);
   --hover-border: var(--vscode-editorHoverWidget-border, #454545);
+  /* the sidebar's panels: the header of each one, and the splitter between them */
+  --section-header-bg: var(--vscode-sideBarSectionHeader-background, transparent);
+  --section-header-fg: var(--vscode-sideBarSectionHeader-foreground, var(--foreground));
+  --sash: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder, #007fd4));
   --side-bar-bg: var(--vscode-sideBar-background, var(--background));
   --side-bar-fg: var(--vscode-sideBar-foreground, var(--foreground));
   --edge-call: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 70%, transparent); /* a call edge: dashed, blue at 70% */

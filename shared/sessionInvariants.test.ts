@@ -10,7 +10,7 @@ const node = (id: string, kind: TreeNode["kind"], children: TreeNode[] = []): Tr
 const tree = node("/", "folder", [node("a.py", "file", [node("f", "function"), node("g", "function")])]);
 const CALL = callId("f", ["g"]);
 
-const explore = (over: Partial<ContextState> = {}): ContextState => ({ id: "x", title: "g", kind: "explore", parent: "main", call: CALL, focus: ["a.py", "g"], selected: "g", open: {}, recent: [], ...over });
+const explore = (over: Partial<ContextState> = {}): ContextState => ({ id: "x", title: "g", kind: "explore", parent: "main", call: CALL, preview: false, focus: ["a.py", "g"], selected: "g", open: {}, recent: [], ...over });
 const withExplore = (c: ContextState, mainSelected: string | null = CALL, order = ["main", c.id]): Session => {
   const s = emptySession();
   return { ...s, contexts: { main: { ...s.contexts.main, selected: mainSelected }, [c.id]: c }, order };
@@ -31,6 +31,8 @@ const broken: [string, Session, RegExp][] = [
   ["a focus that is not a path", withExplore(explore({ focus: ["g"] })), /is not a path in the tree/],
   ["a selection that is gone", { ...emptySession(), contexts: { main: { ...emptySession().contexts.main, selected: "ghost" } } }, /selected "ghost" does not exist/],
   ["a call that is not in the tree", withExplore(explore({ call: callId("f", ["ghost"]) }), callId("f", ["ghost"])), /its call does not exist/],
+  ["a MAIN that is a preview", { ...emptySession(), contexts: { main: { ...emptySession().contexts.main, preview: true } } }, /MAIN is never a preview/],
+  ["an active context that is a preview", { ...withExplore(explore({ preview: true })), active: "x" }, /the active context x is a preview/],
   ["order and contexts that differ", { ...emptySession(), order: ["main", "ghost"] }, /do not hold the same contexts/],
 ];
 for (const [name, session, expected] of broken) {

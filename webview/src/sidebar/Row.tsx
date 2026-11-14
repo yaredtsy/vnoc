@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils.ts";
 import { ActionStrip } from "../node-card/ActionStrip.tsx";
 import { KINDS, kindIcon } from "../node-card/kinds.ts";
 import { nodeContext } from "../node-card/nodeContext.ts";
-import { activateMain } from "./actions.ts";
+import { activate } from "./actions.ts";
 import type { FlatRow } from "./flatten.ts";
 import { hoverParts } from "./hover.ts";
 import { rowDescription, rowFacts, rowLabel } from "./rowFacts.ts";
@@ -20,9 +20,10 @@ const INDENT_FIRST = 8;
  * object, which shows the entries of `webview/context` for `webviewId == 'vnoc.structure'` and passes it to the command (07 §6). After the hover delay the
  * row says what it is (07 §5). Draws; decides nothing.
  */
-export function Row({ row, index, start, contextId, selected, cursor, treeFocused, onClick, onDoubleClick, onToggle, onContextMenu, onHover }: {
+export function Row({ row, domId, start, contextId, selected, cursor, treeFocused, onClick, onDoubleClick, onToggle, onContextMenu, onHover }: {
   row: FlatRow;
-  index: number;
+  /** the row's element id: unique across the panels (the list's `aria-activedescendant` names it) */
+  domId: string;
   /** the row's top, in the list */
   start: number;
   contextId: string;
@@ -44,7 +45,7 @@ export function Row({ row, index, start, contextId, selected, cursor, treeFocuse
   const line = (
     <div
       role="treeitem"
-      id={`row-${index}`}
+      id={domId}
       aria-level={row.depth + 1}
       aria-expanded={row.hasChildren ? row.open : undefined}
       aria-selected={selected}
@@ -101,7 +102,7 @@ export function Row({ row, index, start, contextId, selected, cursor, treeFocuse
           </span>
         )}
         <div className="absolute inset-y-0 right-0 hidden items-center bg-[var(--row-bg)] pl-1 group-hover:flex data-[on=true]:flex" data-on={selected}>
-          <ActionStrip node={{ id: row.id, key: row.id, role: "node", kind: node.kind, range: node.range, codeOpen: false }} contextId={contextId} focusRoot={row.focusRoot} selected={selected} surface="sidebar" before={activateMain} />
+          <ActionStrip node={{ id: row.id, key: row.id, role: "node", kind: node.kind, range: node.range, codeOpen: false }} contextId={contextId} focusRoot={row.focusRoot} selected={selected} surface="sidebar" before={() => activate(contextId)} />
         </div>
       </TooltipTrigger>
       <TooltipContent side="right" align="start" arrow={false} className="border border-[color:var(--hover-border)] bg-[color:var(--hover-bg)] text-[length:var(--font-size)] text-[color:var(--hover-fg)]">

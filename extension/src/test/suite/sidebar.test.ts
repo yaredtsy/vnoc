@@ -3,8 +3,9 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import type { StructureResult, TreeNode } from "@vnoc/shared/messages";
-import type { Intent, Session } from "@vnoc/shared/session.ts";
+import { callNodesIn } from "@vnoc/shared/calls.ts";
+import type { CallTreeResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
+import { type Intent, type Session, exploreId } from "@vnoc/shared/session.ts";
 import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
 
 // The STRUCTURE view in a real window (docs/16-ui-redesign/06-sidebar.md, 07 §4): it is a webview, so the suite drives it through what it says (the
@@ -15,7 +16,8 @@ interface Api {
   session(): Session;
   dispatch(intent: Intent, context?: string): void;
   rowClick(context: string, id: string): Promise<void>;
-  sidebarPosts(): { rows: number; selected: string | null; inView: boolean; drawn: boolean; contexts: number; height: number }[];
+  sidebarPosts(): { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number }[];
+  callTrees(): Record<string, CallTreeResult>;
   sidebarOpen(): boolean;
   renderedPosts(): { context: string; visible: number }[];
   webviewErrors(): string[];
@@ -53,9 +55,10 @@ function recordTimeline(highlight: () => string | null): { log: string[]; stop: 
 }
 
 const textTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputText);
-const lastPost = () => api.sidebarPosts().at(-1);
-/** The page says this node's row is selected, the list is scrolled to it (`inView`, read from the element) and the virtualizer has put it in the page (`drawn`): three facts, not one. */
-const shown = (id: string): boolean => lastPost()?.selected === id && lastPost()?.inView === true && lastPost()?.drawn === true;
+/** What a panel last said it drew (MAIN's unless a context is named): every panel reports on its own. */
+const lastPost = (context = "main") => api.sidebarPosts().filter((p) => p.context === context).at(-1);
+/** The page says this node's row is selected in that panel, the list is scrolled to it (`inView`, read from the element) and the virtualizer has put it in the page (`drawn`): three facts, not one. */
+const shown = (id: string, context = "main"): boolean => lastPost(context)?.selected === id && lastPost(context)?.inView === true && lastPost(context)?.drawn === true;
 
 suiteSetup(async () => {
   api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
@@ -73,15 +76,20 @@ suite("the sidebar", () => {
   let first: TreeNode;
   let firstFile: TreeNode;
   let other: TreeNode;
-  const many = path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, "sidebar_many.py");
+  const folderPath = vscode.workspace.workspaceFolders![0].uri.fsPath;
+  const many = path.join(folderPath, "sidebar_many.py");
+  const callFiles = [path.join(folderPath, "sidebar_calls_lib.py"), path.join(folderPath, "sidebar_calls_app.py")];
+  let caller: TreeNode;
 
   suiteSetup(async () => {
     // a second file, so a preview tab can be seen being replaced; and a long one, so a row can be below the fold
     const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
     fs.writeFileSync(path.join(folder, "other.py"), "def other():\n    pass\n");
     fs.writeFileSync(many, Array.from({ length: 120 }, (_, i) => `def many${i}():\n    return ${i}\n`).join("\n\n"));
+    fs.writeFileSync(callFiles[0], "def sleaf():\n    return 1\n");
+    fs.writeFileSync(callFiles[1], "from sidebar_calls_lib import sleaf\n\n\ndef smain():\n    sleaf()\n");
     let files: TreeNode[] = [];
-    for (let waited = 0; !(files.length >= 3 && files.find((f) => f.name === "sidebar_many.py")?.children.length === 120); waited += 200) {
+    for (let waited = 0; !(files.length >= 5 && files.find((f) => f.name === "sidebar_many.py")?.children.length === 120 && files.find((f) => f.name === "sidebar_calls_app.py")?.children.length === 1); waited += 200) {
       assert.ok(waited < 30_000, "the new files never reached the structure");
       files = (await api.structure()).root.children.filter((n) => n.kind === "file");
       await sleep(200);
@@ -89,10 +97,12 @@ suite("the sidebar", () => {
     firstFile = files.find((f) => f.name === "nested.py")!;
     first = firstFile.children[0];
     other = files.find((f) => f.name === "other.py")!.children[0];
+    caller = files.find((f) => f.name === "sidebar_calls_app.py")!.children[0];
   });
 
   suiteTeardown(async () => {
     fs.rmSync(many, { force: true });
+    callFiles.forEach((f) => fs.rmSync(f, { force: true }));
     api.dispatch({ type: "focusJump", depth: 0 });
     api.dispatch({ type: "collapseAll" });
   });
@@ -181,6 +191,36 @@ suite("the sidebar", () => {
     await until("the page to draw the focused node alone", () => (lastPost()?.rows ?? 99) <= firstFile.children.length + 1, 30_000);
     await vscode.commands.executeCommand("vnoc.focusBack");
     assert.deepStrictEqual([...api.session().contexts.main.focus], []);
+  });
+
+  test("with an EXPLORE context active, Reveal in Sidebar selects the row in the EXPLORE panel, drawn and in view: the gap of 8.5 is closed (06 §4)", async () => {
+    await closeCanvas();
+    api.dispatch({ type: "focusJump", depth: 0 });
+    api.dispatch({ type: "collapseAll" });
+    await vscode.commands.executeCommand("vnoc.structure.focus");
+    await until("the list to have a height", () => (lastPost()?.height ?? 0) > 0, 30_000);
+    api.dispatch({ type: "expand", ids: [caller.id] }); // an open function: the host fetches what it calls
+    await until("the call tree of the function", () => api.callTrees()[caller.id] !== undefined, 30_000);
+    const [call] = callNodesIn(caller.id, api.callTrees()[caller.id].root);
+    const explore = exploreId(call.id);
+    api.dispatch({ type: "explore", call: call.id, activate: true }); // a double-click on the call card
+    try {
+      await until("the EXPLORE context to be the active one", () => api.session().active === explore);
+      await until("both panels to draw", () => (lastPost("main")?.rows ?? 0) > 0 && (lastPost(explore)?.rows ?? 0) > 0, 30_000);
+      const mainSelected = api.session().contexts.main.selected;
+      assert.strictEqual(mainSelected, call.id, "MAIN has the call selected: its panel has no row for it");
+      await vscode.commands.executeCommand("vnoc.revealInSidebar", { nodeKey: first.id, webviewSection: "node" }); // a node the callee's focus hides
+      await until("the EXPLORE panel to show it: selected, in view, drawn", () => shown(first.id, explore), 30_000);
+      assert.strictEqual(api.session().contexts[explore].selected, first.id);
+      assert.strictEqual(api.session().contexts.main.selected, mainSelected, "MAIN's selection did not move: the context that acted is the active one");
+      assert.notStrictEqual(lastPost("main")?.selected, first.id, "and its panel does not show it");
+    } catch (e) {
+      throw new Error(`${(e as Error).message}; the panels' last reports: ${JSON.stringify(api.sidebarPosts().slice(-6))}; active ${api.session().active}`);
+    } finally {
+      api.dispatch({ type: "closeContext", id: explore });
+      api.dispatch({ type: "select", id: null });
+      api.dispatch({ type: "collapseAll" });
+    }
   });
 
   test("moving through the search list points at nodes without selecting; closing it clears the pointer", async () => {

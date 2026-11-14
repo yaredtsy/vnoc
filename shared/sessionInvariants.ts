@@ -15,6 +15,7 @@ export function sessionProblems(s: Session, tree: TreeNode): string[] {
   if (new Set(s.order).size !== s.order.length) bad("order lists a context twice");
   if (s.order.length !== ids.length || !s.order.every((id) => id in s.contexts)) bad("order and contexts do not hold the same contexts");
   if (s.order[0] !== MAIN) bad("MAIN is not first in order");
+  if (s.contexts[s.active]?.preview) bad(`the active context ${s.active} is a preview: being active ends a preview`);
 
   const calls = new Set<string>();
   s.order.forEach((id, at) => {
@@ -23,6 +24,7 @@ export function sessionProblems(s: Session, tree: TreeNode): string[] {
     if (c.id !== id) bad(`${id}: its id says ${c.id}`);
     if (c.kind === "main") {
       if (id !== MAIN || c.parent !== null || c.call !== null) bad(`${id}: MAIN has no parent and no call, and it is the only one`);
+      if (c.preview) bad(`${id}: MAIN is never a preview`);
     } else {
       if (c.parent === null || c.call === null) bad(`${id}: an EXPLORE context has a parent and a call`);
       else {

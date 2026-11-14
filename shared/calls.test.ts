@@ -207,7 +207,7 @@ const sessionWith = (main: Over, ...more: ContextState[]): Session => {
   const contexts: Record<string, ContextState> = { main: { ...s.contexts.main, ...withOpen(main) }, ...Object.fromEntries(more.map((c) => [c.id, c])) };
   return { ...s, contexts, order: ["main", ...more.map((c) => c.id)] };
 };
-const explore = (call: string, over: Over = {}): ContextState => ({ id: exploreId(call), title: "x", kind: "explore", parent: "main", call, focus: [], selected: null, open: {}, recent: [], ...withOpen(over) });
+const explore = (call: string, over: Over = {}): ContextState => ({ id: exploreId(call), title: "x", kind: "explore", parent: "main", call, preview: false, focus: [], selected: null, open: {}, recent: [], ...withOpen(over) });
 const Cfg = callId("f", ["g"]);
 const Chg = callId("h", ["g"]);
 const trees = {};

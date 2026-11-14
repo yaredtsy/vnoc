@@ -1,9 +1,9 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { MAIN } from "@vnoc/shared/session.ts";
+import type { ContextId } from "@vnoc/shared/session.ts";
 import { post, request } from "../host.ts";
-import { dispatch, useSession } from "../state/session.ts";
+import { dispatch } from "../state/session.ts";
 import { act, clickRow } from "./actions.ts";
 import type { FlatRow } from "./flatten.ts";
 import { isSearchKey, sidebarKey } from "./keys.ts";
@@ -17,13 +17,15 @@ const HOVER_MS = 40;
 /**
  * The rows as a virtual list with the ARIA of a tree (06 §1): one tab stop, the list itself, which names the selected row as its active descendant, so the
  * focus does not die when a scrolled-away row leaves the page. `rows` is the whole list; only the ones on screen (and a few more) are in the page.
- * What a key means is `sidebarKey` (and `typeAhead`); what a click means is `actions.ts`. `listRef` is the list's element, so the page can give it the keyboard.
- * Draws; decides nothing.
+ * What a key means is `sidebarKey` (and `typeAhead`); what a click means is `actions.ts`, in this panel's `context`. `onList` gets the list's element (the page
+ * gives it the keyboard), `onTab` says where `Tab` goes: true when it went to another panel's list. Draws; decides nothing.
  */
-export function Tree({ rows, selected, cursor, listRef }: { rows: FlatRow[]; selected: string | null; cursor: string | null; listRef: RefObject<HTMLDivElement | null> }) {
-  const scroller = listRef;
+export function Tree({ context, rows, selected, cursor, onList, onTab }: { context: ContextId; rows: FlatRow[]; selected: string | null; cursor: string | null; onList: (el: HTMLDivElement | null) => void; onTab: (shift: boolean) => boolean }) {
+  const scroller = useRef<HTMLDivElement | null>(null);
+  // a row's element id is unique across the panels' lists (the list names the selected one as its active descendant)
+  const uid = useId();
+  const rowDomId = (i: number) => `${uid}-row-${i}`;
   const [focused, setFocused] = useState(false);
-  const contexts = useSession((s) => s.order.length);
   const virtual = useVirtualizer({ count: rows.length, getScrollElement: () => scroller.current, estimateSize: () => ROW_H, overscan: 12 });
   const index = useMemo(() => (selected === null ? -1 : rows.findIndex((r) => r.id === selected)), [rows, selected]);
   const typed = useRef<TypeAhead>(noTypeAhead);
@@ -64,15 +66,15 @@ export function Tree({ rows, selected, cursor, listRef }: { rows: FlatRow[]; sel
       rows: rows.length,
       selected: index >= 0 ? selected : null,
       inView: inView(index, el?.scrollTop ?? 0, el?.clientHeight ?? 0, ROW_H),
-      drawn: index >= 0 && document.getElementById(`row-${index}`) !== null,
-      contexts,
+      drawn: index >= 0 && document.getElementById(rowDomId(index)) !== null,
+      context,
       height: el?.clientHeight ?? 0,
     };
     const key = JSON.stringify(note);
     if (key === reported.current) return;
     reported.current = key;
     post(note);
-  }, [rows.length, selected, index, offset, drawnRange, contexts, height]);
+  }, [rows.length, selected, index, offset, drawnRange, context, height]);
 
   // The card of the row under the pointer is pointed at on the canvas (06 §6): the session's `highlight`, which every surface reads. Told after a short rest.
   const over = useRef<string | null>(null);
@@ -97,29 +99,33 @@ export function Tree({ rows, selected, cursor, listRef }: { rows: FlatRow[]; sel
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (isSearchKey(e)) return; // the page puts the cursor in the search box
+    if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && onTab(e.shiftKey)) return e.preventDefault(); // to the next panel's list (06 §7)
     const page = Math.max(1, Math.floor((virtual.scrollRect?.height ?? 0) / ROW_H) - 1);
     const action = sidebarKey(e, rows, selected, page);
     if (action) {
       e.preventDefault();
-      if (action.type === "click") clickRow(action.id);
-      else act(action.intent);
+      if (action.type === "click") clickRow(context, action.id);
+      else act(context, action.intent);
       return;
     }
     const found = typeAhead(typed.current, e, Date.now(), rows, selected);
     typed.current = found.state;
     if (found.id !== null) {
       e.preventDefault();
-      act({ type: "select", id: found.id });
+      act(context, { type: "select", id: found.id });
     }
   };
 
   return (
     <div
-      ref={scroller}
+      ref={(el) => {
+        scroller.current = el;
+        onList(el);
+      }}
       role="tree"
       aria-label="Structure"
       aria-multiselectable={false}
-      aria-activedescendant={index >= 0 ? `row-${index}` : undefined}
+      aria-activedescendant={index >= 0 ? rowDomId(index) : undefined}
       tabIndex={0}
       className="group/tree min-h-0 flex-1 overflow-y-auto outline-none"
       onKeyDown={onKeyDown}
@@ -134,19 +140,19 @@ export function Tree({ rows, selected, cursor, listRef }: { rows: FlatRow[]; sel
             <Row
               key={row.id}
               row={row}
-              index={item.index}
+              domId={rowDomId(item.index)}
               start={item.start}
-              contextId={MAIN}
+              contextId={context}
               selected={row.id === selected}
               cursor={row.id === cursor}
               treeFocused={focused}
               onClick={() => {
                 scroller.current?.focus({ preventScroll: true });
-                clickRow(row.id);
+                clickRow(context, row.id);
               }}
-              onDoubleClick={() => (row.node.kind === "folder" ? act({ type: "toggle", id: row.id }) : void request("goToCode", { key: row.id }).catch(() => {}))}
-              onToggle={() => act({ type: "toggle", id: row.id })}
-              onContextMenu={() => act({ type: "select", id: row.id })}
+              onDoubleClick={() => (row.node.kind === "folder" ? act(context, { type: "toggle", id: row.id }) : void request("goToCode", { key: row.id }).catch(() => {}))}
+              onToggle={() => act(context, { type: "toggle", id: row.id })}
+              onContextMenu={() => act(context, { type: "select", id: row.id })}
               onHover={(on) => hover(on ? row.id : null)}
             />
           );

@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { TreeNode } from "@vnoc/shared/messages.ts";
 import { request } from "../host.ts";
@@ -7,10 +7,10 @@ import { type Result, indexNodes, pickIntent, rankNodes, searchKey } from "./sea
 
 /**
  * The search box's state and what it does (06 §5): the query, the results, the active result. While there is a query the panels give way to the results;
- * the active result is pointed at on the canvas (`highlight`: nothing is selected); `Enter` or a click picks it; `Esc` clears. `tree` is the list to give the
- * keyboard back to when the search ends. Keeps no state a gesture could need elsewhere: the session has the rest.
+ * the active result is pointed at on the canvas (`highlight`: nothing is selected); `Enter` or a click picks it; `Esc` clears. `focusList` gives the
+ * keyboard to the active panel's list when the search ends. Keeps no state a gesture could need elsewhere: the session has the rest.
  */
-export function useSearch(root: TreeNode | null, tree: RefObject<HTMLDivElement | null>) {
+export function useSearch(root: TreeNode | null, focusList: () => void) {
   const [query, setQueryState] = useState("");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -40,11 +40,13 @@ export function useSearch(root: TreeNode | null, tree: RefObject<HTMLDivElement 
   );
 
   // when the search ends by a gesture in the box, the keyboard goes to the list that comes back
+  const focusLatest = useRef(focusList);
+  focusLatest.current = focusList;
   useEffect(() => {
     if (searching || !toTree.current) return;
     toTree.current = false;
-    tree.current?.focus({ preventScroll: true });
-  }, [searching, tree]);
+    focusLatest.current();
+  }, [searching]);
 
   const clear = () => {
     toTree.current = true;

@@ -19,6 +19,11 @@ export interface ContextState {
   parent: ContextId | null;
   /** the call in `parent` this context explores; null for MAIN */
   call: CallId | null;
+  /**
+   * An EXPLORE context opened by selecting its call (not activated): its sidebar header is in italics, like a preview tab, until it is activated once
+   * (09 §4). Cleared whenever the context becomes the active one, by any way; MAIN is never one. In the session, so a reloaded page keeps it.
+   */
+  preview: boolean;
   /** the keys from the top level down to the focused node: a path, the last one is the root of what is drawn (R2) */
   focus: readonly string[];
   /** a structure key or a call id */
@@ -75,7 +80,7 @@ export const MAIN: ContextId = "main";
 export const exploreId = (call: CallId): ContextId => `explore:${call}`;
 
 export function emptySession(): Session {
-  const main: ContextState = { id: MAIN, title: "Main", kind: "main", parent: null, call: null, focus: [], selected: null, open: {}, recent: [] };
+  const main: ContextState = { id: MAIN, title: "Main", kind: "main", parent: null, call: null, preview: false, focus: [], selected: null, open: {}, recent: [] };
   return { contexts: { [MAIN]: main }, order: [MAIN], active: MAIN, cursor: null, highlight: null, reveal: null, seq: 0 };
 }
 
@@ -204,7 +209,7 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
       return change(s, context, {}, { highlight: intent.id });
 
     case "activate":
-      return s.contexts[intent.id] && s.active !== intent.id ? { ...s, active: intent.id, seq: s.seq + 1 } : s;
+      return s.contexts[intent.id] ? activateContext(s, intent.id) : s;
 
     case "closeContext": {
       const target = s.contexts[intent.id];
@@ -241,8 +246,15 @@ function follow(s: Session, context: ContextId, id: string | null, tree: TreeNod
   const way = callee?.key != null ? lineage(tree, callee.key) : null;
   if (!callee || callee.key === null || !way) return next; // a callee the project does not know: selected, nothing opens
   const child = exploreId(id);
-  if (!next.contexts[child]) next = openExplore(next, context, { id: child, title: callee.name, kind: "explore", parent: context, call: id, focus: way, selected: callee.key, open: {}, recent: [] });
-  return activate ? { ...next, active: child, seq: next.active === child ? next.seq : next.seq + 1 } : next;
+  if (!next.contexts[child]) next = openExplore(next, context, { id: child, title: callee.name, kind: "explore", parent: context, call: id, preview: !activate, focus: way, selected: callee.key, open: {}, recent: [] });
+  return activate ? activateContext(next, child) : next;
+}
+
+/** Makes a context the active one. Being active ends a preview (09 §4). The same session when it already is, and not a preview. */
+function activateContext(s: Session, id: ContextId): Session {
+  const c = s.contexts[id];
+  if (s.active === id && !c.preview) return s;
+  return { ...s, contexts: c.preview ? { ...s.contexts, [id]: { ...c, preview: false } } : s.contexts, active: id, seq: s.seq + 1 };
 }
 
 /** Closes the EXPLORE children of `context` whose call is not what `context` has selected (with their own children). */
@@ -281,7 +293,8 @@ function removeContexts(s: Session, roots: readonly ContextId[]): Session {
   let active = s.active;
   while (gone.has(active)) active = s.contexts[active].parent ?? MAIN;
   const contexts = Object.fromEntries(Object.entries(s.contexts).filter(([id]) => !gone.has(id)));
-  return { ...s, contexts, order: s.order.filter((id) => !gone.has(id)), active, seq: s.seq + 1 };
+  const left = { ...s, contexts, order: s.order.filter((id) => !gone.has(id)), seq: s.seq + 1 };
+  return active === s.active ? left : activateContext(left, active); // the ancestor that takes over is active now: no longer a preview
 }
 
 // ── the code changed ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -423,9 +436,9 @@ function readContext(v: unknown): ContextState | null {
   if (c.selected !== null && typeof c.selected !== "string") return null;
   if (c.parent !== null && typeof c.parent !== "string") return null;
   const kind = c.kind ?? (c.parent === null ? "main" : undefined);
-  if (kind === "main") return c.parent === null ? { id: c.id, title: c.title, kind, parent: null, call: null, focus: c.focus, selected: c.selected, ...opens } : null;
+  if (kind === "main") return c.parent === null ? { id: c.id, title: c.title, kind, parent: null, call: null, preview: false, focus: c.focus, selected: c.selected, ...opens } : null;
   if (kind === "explore") {
-    return typeof c.call === "string" && parseCallId(c.call) !== null && c.parent !== null ? { id: c.id, title: c.title, kind, parent: c.parent, call: c.call, focus: c.focus, selected: c.selected, ...opens } : null;
+    return typeof c.call === "string" && parseCallId(c.call) !== null && c.parent !== null ? { id: c.id, title: c.title, kind, parent: c.parent, call: c.call, preview: c.preview === true, focus: c.focus, selected: c.selected, ...opens } : null;
   }
   return null;
 }
@@ -456,5 +469,8 @@ export function restoreSession(saved: unknown, oldFocus?: unknown): Session {
     if (c.call) calls.add(c.call);
   }
   if (order[0] !== MAIN) return fallback;
-  return { ...fresh, contexts, order, active: s.active in contexts ? s.active : MAIN };
+  const active = s.active in contexts ? s.active : MAIN;
+  // the active context is not a preview (it was activated, whatever the file says)
+  if (contexts[active].preview) contexts[active] = { ...contexts[active], preview: false };
+  return { ...fresh, contexts, order, active };
 }

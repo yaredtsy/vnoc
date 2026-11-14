@@ -16,7 +16,7 @@ function session(names: string[], active: string = MAIN) {
   for (const name of names) {
     const call = callTo(name);
     const id = exploreId(call);
-    contexts[id] = { id, title: name, kind: "explore", parent: MAIN, call, focus: [], selected: null, open: {}, recent: [] };
+    contexts[id] = { id, title: name, kind: "explore", parent: MAIN, call, preview: false, focus: [], selected: null, open: {}, recent: [] };
     order.push(id);
   }
   return { ...s, contexts, order, active: active === MAIN ? MAIN : exploreId(callTo(active)) };

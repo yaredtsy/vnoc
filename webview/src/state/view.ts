@@ -11,6 +11,7 @@ interface Saved {
   docWidth?: number;
   minimap?: boolean;
   pinned?: string;
+  panelShares?: Record<string, number>;
 }
 
 interface View {
@@ -23,6 +24,8 @@ interface View {
   docWidth: number;
   /** the canvas's minimap: off unless asked for (the bar's ⋯ menu) */
   minimap: boolean;
+  /** the sidebar's EXPLORE panels: a share of the view's height, kept per depth (1 = an EXPLORE of MAIN, 2 = an EXPLORE of an EXPLORE; 06 §4.1) */
+  panelShares: Readonly<Record<string, number>>;
   /** the docs tab: the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; the page carries it, as a message could be lost) */
   pinned: string | null;
   // not saved: how the canvas points at things (docs/10-ui-rework/06-how-it-looks.md)
@@ -43,6 +46,7 @@ export const useView = create<View>(() => ({
   docsOpen: saved.docsOpen ?? false,
   docWidth: saved.docWidth ?? 380,
   minimap: saved.minimap ?? false,
+  panelShares: saved.panelShares ?? {},
   pinned: document.getElementById("root")?.dataset.node ?? saved.pinned ?? null,
   hover: null,
   revealed: null,
@@ -88,8 +92,10 @@ export const setDocsOpen = (docsOpen: boolean) => useView.setState({ docsOpen })
 export const setMinimap = (minimap: boolean) => useView.setState({ minimap });
 export const setDocWidth = (docWidth: number) => useView.setState({ docWidth });
 export const pin = (pinned: string | null) => useView.setState({ pinned });
+/** Keeps the shares of the panels at these depths (a drag or a double-click on a splitter). */
+export const setPanelShares = (shares: Record<string, number>) => useView.setState(({ panelShares }) => ({ panelShares: { ...panelShares, ...shares } }));
 
 // the one place the view is saved
-useView.subscribe(({ codeOpen, docsOpen, docWidth, minimap, pinned }) => {
-  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined });
+useView.subscribe(({ codeOpen, docsOpen, docWidth, minimap, pinned, panelShares }) => {
+  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares });
 });

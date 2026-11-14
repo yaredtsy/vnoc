@@ -182,6 +182,76 @@ test("closing the middle one hands active to the nearest open ancestor", () => {
   assert.equal(elsewhere.active, e1, "closing one that is not active leaves the active one");
 });
 
+// ── preview (09 §4): an EXPLORE opened by selecting its call is a preview until it is activated once ───────────────────────────────
+
+const isPreview = (s: Session, id: string) => ctx(s, id).preview;
+
+test("09 §4: selecting a call opens its EXPLORE as a preview; MAIN never is", () => {
+  const s = run(emptySession(), { type: "select", id: Cm });
+  assert.equal(isPreview(s, exploreId(Cm)), true);
+  assert.equal(isPreview(s, MAIN), false);
+  assert.equal(isPreview(run(emptySession(), { type: "explore", call: Cm, activate: false }), exploreId(Cm)), true, "Explore without activating is a preview too");
+});
+
+// every way a context becomes the active one ends its preview (a table: how → the context it activates)
+const activations: { name: string; steps: Intent[]; context: string }[] = [
+  { name: "a click on its panel or chip (activate)", steps: [{ type: "select", id: Cm }, { type: "activate", id: exploreId(Cm) }], context: exploreId(Cm) },
+  { name: "Explore with activate (a double-click)", steps: [{ type: "select", id: Cm }, { type: "explore", call: Cm, activate: true }], context: exploreId(Cm) },
+  { name: "Focus on the call (it is Explore)", steps: [{ type: "select", id: Cm }, { type: "focus", id: Cm }], context: exploreId(Cm) },
+  { name: "Explore with activate on a call that was never selected: opened active, never a preview", steps: [{ type: "explore", call: Cm, activate: true }], context: exploreId(Cm) },
+];
+for (const a of activations) {
+  test(`09 §4: ${a.name} ends the preview`, () => {
+    const s = run(emptySession(), ...a.steps);
+    assert.equal(s.active, a.context);
+    assert.equal(isPreview(s, a.context), false);
+  });
+}
+
+test("09 §4: activating one context leaves another one's preview alone; it ends only when that one is activated", () => {
+  const [e1, e2] = [exploreId(Cm), exploreId(Cmg)];
+  let s = run(emptySession(), { type: "select", id: Cm });
+  s = runIn(e1, s, { type: "select", id: Cmg }); // a grandchild, a preview too
+  assert.deepEqual([isPreview(s, e1), isPreview(s, e2)], [true, true]);
+  s = run(s, { type: "activate", id: e1 });
+  assert.deepEqual([isPreview(s, e1), isPreview(s, e2)], [false, true]);
+  s = run(s, { type: "activate", id: e2 }, { type: "activate", id: MAIN });
+  assert.deepEqual([isPreview(s, e1), isPreview(s, e2)], [false, false], "going back to MAIN does not make it a preview again");
+});
+
+test("09 §4: when the active context closes, the ancestor that takes over is active, so it is no longer a preview", () => {
+  const [e1, e2] = [exploreId(Cm), exploreId(Cmg)];
+  let s = run(emptySession(), { type: "select", id: Cm });
+  s = runIn(e1, s, { type: "select", id: Cmg });
+  s = run(s, { type: "activate", id: e2 });
+  assert.equal(isPreview(s, e1), true, "e1 was never activated");
+  s = run(s, { type: "closeContext", id: e2 });
+  assert.equal(s.active, e1);
+  assert.equal(isPreview(s, e1), false);
+});
+
+test("09 §4: activating what is already active, or a context that is not a preview, changes nothing", () => {
+  const s = run(emptySession(), { type: "select", id: Cm }, { type: "activate", id: exploreId(Cm) });
+  assert.equal(run(s, { type: "activate", id: exploreId(Cm) }), s);
+  assert.equal(run(s, { type: "activate", id: MAIN }).contexts[exploreId(Cm)].preview, false);
+});
+
+test("09 §4: the preview is saved, so a reloaded page keeps it; an active context never comes back as one", () => {
+  const s = run(emptySession(), { type: "select", id: Cm });
+  const back = roundTrip(s);
+  assert.equal(isPreview(back, exploreId(Cm)), true);
+  assert.deepEqual(sessionProblems(back, tree), []);
+  const lying = JSON.parse(JSON.stringify(toSaved(s)));
+  lying.active = exploreId(Cm); // a file that says the active context is a preview
+  assert.equal(isPreview(restoreSession(lying), exploreId(Cm)), false);
+  const old = JSON.parse(JSON.stringify(toSaved(s)));
+  delete old.contexts[exploreId(Cm)].preview; // a session saved before the flag
+  assert.equal(isPreview(restoreSession(old), exploreId(Cm)), false);
+  const mainLie = JSON.parse(JSON.stringify(toSaved(s)));
+  mainLie.contexts[MAIN].preview = true;
+  assert.equal(isPreview(restoreSession(mainLie), MAIN), false, "MAIN is never a preview, whatever the file says");
+});
+
 test("closeContext on MAIN or on a context that is not there does nothing", () => {
   const s = run(emptySession(), { type: "select", id: Cm });
   assert.equal(run(s, { type: "closeContext", id: MAIN }), s);

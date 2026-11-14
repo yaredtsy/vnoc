@@ -19,7 +19,7 @@ const withContexts = (main: Partial<ContextState>, explore?: Partial<ContextStat
   const order = [MAIN];
   if (explore) {
     const id = exploreId(CALL);
-    contexts[id] = { id, title: "reserve_stock", kind: "explore", parent: MAIN, call: CALL, focus: [], selected: null, open: {}, recent: [], ...explore };
+    contexts[id] = { id, title: "reserve_stock", kind: "explore", parent: MAIN, call: CALL, preview: false, focus: [], selected: null, open: {}, recent: [], ...explore };
     order.push(id);
   }
   return { ...s, contexts, order, active };
