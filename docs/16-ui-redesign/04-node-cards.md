@@ -76,7 +76,7 @@ The same size and rows. It stands for **one callee, called from its parent card*
 | meta, left: **the call sites**, `↳ line 16 · line 31` | each a link to **that** site (§2.1). In another file than the caller's: `base.py:12` (14 §10.5). That only happens under a **class** caller (an inherited method's call, 14 §10.1); a function's sites are all in its own file. More than two: `↳ line 16 · line 31 · 3 more ▾`. |
 | meta, right: **where the callee lives**, file name only, dim, no `:line` | so you know before exploring. Shown **whole or not at all**: the sites win the room, and when the name does not fit it is hidden, never cut (`payme…` says nothing and looks like a site). The full path is always in the name's tooltip and the docs panel's header |
 | a mark instead of the file name | `↻ recursive` · `… calls not loaded` (cut) · `… incomplete`, dim like the file name, each with a tooltip that says what to do (05 §6). None of them is a problem, so none is in a warning colour |
-| footer: `×N` | merged calls, N > 1. Tooltip: *"checkout_order calls it 2 times: lines 16, 31"* |
+| footer: `×N` | N = the **distinct call sites** listed on the card, shown when N > 1. Tooltip: *"checkout_order calls it 2 times: lines 16, 31"*. Not the core's `call_count`: that counts the calls *reaching* the node, once per copy of a merged parent (`reserve_stock` called twice, each calling `_lookup` once: count 2, one site), so it can be more than the places the call is written (decided 2026-11-14) |
 | footer: `+N`, `📄 N` | as on a structure card; docs are the **callee's** |
 
 A call whose callee the project does not know (`key: null`, 05 §6): 60% opacity, no docs, no buttons, meta right says *"not in the index"*.
