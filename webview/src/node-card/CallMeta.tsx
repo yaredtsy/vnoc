@@ -1,5 +1,5 @@
 import { Codicon } from "@/components/Codicon.tsx";
-import type { Placed } from "../canvas/layout.ts";
+import { META_H, type Placed } from "../canvas/layout.ts";
 import { toggleSites } from "../state/view.ts";
 import { callMeta } from "./callMeta.ts";
 import { goToSite } from "./goToSite.ts";
@@ -17,7 +17,7 @@ export function CallMeta({ node }: { node: Placed }) {
   const right = look.unknown ? "not in the index" : look.mark ? look.mark.text : node.path ? fileName(node.path) : null;
   const meta = callMeta(call.sites, call.callerPath, right, metaChars());
   return (
-    <div className="flex h-[22px] flex-none items-center gap-2 pr-3 font-mono text-[11px] text-muted-foreground" style={{ paddingLeft: NAME_X }}>
+    <div className="flex flex-none items-center gap-2 pr-3 font-mono text-[11px] text-muted-foreground" style={{ height: META_H, paddingLeft: NAME_X }}>
       {meta.leftLength > 0 && (
         <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
           <Codicon name="call-outgoing" className="text-[11px]" />

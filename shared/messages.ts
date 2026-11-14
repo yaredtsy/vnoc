@@ -163,6 +163,8 @@ export interface Requests {
   focusAttention: { params: void; result: void };
   /** Show Log next to Try Again: reveals the "V-NOC" output channel */
   showLog: { params: void; result: void };
+  /** ask the host to fetch an entry's call tree again, after it failed (the footer's Retry) */
+  retryCalls: { params: { key: string }; result: void };
 }
 
 /** extension → webview. No answer. */

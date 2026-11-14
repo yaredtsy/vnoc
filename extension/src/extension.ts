@@ -102,6 +102,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     pickCallSite: (sites) => commands.pickCallSite(sites),
     focusAttention: async () => void (await vscode.commands.executeCommand("vnoc.attention.focus")),
     showLog: async () => output.show(),
+    retryCalls: async (key) => callTrees.retry(key),
   });
   panels = new Panels(ctx, handlers, (note) => onNote(note, store, output, (keys) => {
     callTrees.setDrawn(keys); // what the canvas draws is what is probed

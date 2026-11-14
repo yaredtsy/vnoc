@@ -1,19 +1,19 @@
 import type { Placed } from "../canvas/layout.ts";
+import { META_H } from "../canvas/layout.ts";
+import { metaOf } from "./metaOf.ts";
 import { NAME_X } from "./rows.ts";
-import { whereOf } from "./whereOf.ts";
 
 /**
- * Where it lives (`whereOf`). When it does not fit it is cut at the START, so the file name and the line stay (the folders are in the tooltip).
- * `<bdi>` keeps the text in its own order inside the right-to-left box.
+ * Where it is, relative to the card it hangs from (`metaOf`); the full path is the tooltip. A root's path is cut at the START when it does not fit, so the
+ * file name stays. `<bdi>` keeps the text in its own order inside the right-to-left box.
  */
 export function NodeMeta({ node }: { node: Placed }) {
-  const where = whereOf(node);
+  const meta = metaOf(node);
   return (
-    <div className="flex h-[22px] flex-none items-center gap-2 pr-3 font-mono text-[11px] text-muted-foreground" style={{ paddingLeft: NAME_X }}>
-      <span className="min-w-0 flex-1 truncate text-left [direction:rtl]" title={where}>
-        <bdi>{where}</bdi>
+    <div className="flex flex-none items-center pr-3 font-mono text-[11px] text-muted-foreground" style={{ height: META_H, paddingLeft: NAME_X }}>
+      <span className={`min-w-0 flex-1 truncate text-left [direction:rtl] ${meta.error ? "text-destructive" : ""}`} title={meta.tip}>
+        <bdi>{meta.text}</bdi>
       </span>
-      {node.syntaxError ? <span className="flex-none text-destructive">syntax error</span> : node.callsNothing && <span className="flex-none">calls nothing</span>}
     </div>
   );
 }

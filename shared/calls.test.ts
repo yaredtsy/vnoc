@@ -248,14 +248,14 @@ test("callsOf: a probe's count is what a probed function carries", () => {
 // ── what a card shows (04 §1, 05 §3.1) ─────────────────────────────────────────────────────────────────────────────
 
 const lookTable: { name: string; calls: Parameters<typeof callsLook>[0]; open: boolean; expect: ReturnType<typeof callsLook> }[] = [
-  { name: "pending (a probe is out): an empty slot, nothing said", calls: { state: "unknown" }, open: false, expect: { chevron: false, plus: null, callsNothing: false } },
-  { name: "probed with calls, closed: a chevron and +N", calls: { state: "probed", count: 3 }, open: false, expect: { chevron: true, plus: 3, callsNothing: false } },
-  { name: "probed with calls, open: a chevron, no +N", calls: { state: "probed", count: 3 }, open: true, expect: { chevron: true, plus: null, callsNothing: false } },
-  { name: "probed with 0: no chevron, calls nothing", calls: { state: "probed", count: 0 }, open: false, expect: { chevron: false, plus: null, callsNothing: true } },
-  { name: "known with children, closed: a chevron and +N", calls: { state: "known", children: [call("a"), call("b")] }, open: false, expect: { chevron: true, plus: 2, callsNothing: false } },
-  { name: "known and empty: calls nothing, and the chevron goes", calls: { state: "known", children: [] }, open: true, expect: { chevron: false, plus: null, callsNothing: true } },
-  { name: "loading: the chevron is there, nothing counted", calls: { state: "loading" }, open: true, expect: { chevron: true, plus: null, callsNothing: false } },
-  { name: "failed: the chevron stays, so there is a way to try again", calls: { state: "failed", message: "boom" }, open: true, expect: { chevron: true, plus: null, callsNothing: false } },
+  { name: "pending (a probe is out): an empty slot, nothing said", calls: { state: "unknown" }, open: false, expect: { chevron: false, plus: null } },
+  { name: "probed with calls, closed: a chevron and +N", calls: { state: "probed", count: 3 }, open: false, expect: { chevron: true, plus: 3 } },
+  { name: "probed with calls, open: a chevron, no +N", calls: { state: "probed", count: 3 }, open: true, expect: { chevron: true, plus: null } },
+  { name: "probed with 0: no chevron, calls nothing", calls: { state: "probed", count: 0 }, open: false, expect: { chevron: false, plus: null } },
+  { name: "known with children, closed: a chevron and +N", calls: { state: "known", children: [call("a"), call("b")] }, open: false, expect: { chevron: true, plus: 2 } },
+  { name: "known and empty: calls nothing, and the chevron goes", calls: { state: "known", children: [] }, open: true, expect: { chevron: false, plus: null } },
+  { name: "loading: the chevron is there, nothing counted", calls: { state: "loading" }, open: true, expect: { chevron: true, plus: null } },
+  { name: "failed: the chevron stays, so there is a way to try again", calls: { state: "failed", message: "boom" }, open: true, expect: { chevron: true, plus: null } },
 ];
 for (const row of lookTable) test(`callsLook: ${row.name}`, () => assert.deepEqual(callsLook(row.calls, row.open), row.expect));
 

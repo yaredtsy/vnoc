@@ -29,6 +29,8 @@ export interface Deps {
   focusAttention(): Promise<void>;
   /** reveals the output channel */
   showLog(): Promise<void>;
+  /** fetches a call tree again after it failed */
+  retryCalls(key: string): Promise<void>;
 }
 
 export function createHandlers(d: Deps): Handlers {
@@ -47,6 +49,7 @@ export function createHandlers(d: Deps): Handlers {
     pickCallSite: ({ sites }) => d.pickCallSite(sites),
     focusAttention: () => d.focusAttention(),
     showLog: () => d.showLog(),
+    retryCalls: ({ key }) => d.retryCalls(key),
   };
 }
 

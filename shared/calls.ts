@@ -215,22 +215,19 @@ export interface CallsLook {
   chevron: boolean;
   /** `+N` in the footer of a closed card */
   plus: number | null;
-  /** the meta line says it calls nothing */
-  callsNothing: boolean;
 }
 
 /**
- * Unknown: an empty slot (no chevron, nothing said). Probed or known: a chevron when there is something to open, `+N` while closed, and *calls nothing* when
- * the answer is 0. Loading: the chevron is there (the user opened it); failed: it stays, so there is a way to try again. `open`: the card is open.
+ * Unknown: an empty slot (no chevron, nothing said). Probed or known: a chevron when there is something to open and `+N` while closed. Loading: the chevron is there (the user opened it); failed: it stays, so there is a way to try again. `open`: the card is open.
  */
 export function callsLook(calls: Calls, open: boolean): CallsLook {
-  const some = (n: number): CallsLook => (n > 0 ? { chevron: true, plus: open ? null : n, callsNothing: false } : { chevron: false, plus: null, callsNothing: true });
+  const some = (n: number): CallsLook => (n > 0 ? { chevron: true, plus: open ? null : n } : { chevron: false, plus: null });
   switch (calls.state) {
     case "unknown":
-      return { chevron: false, plus: null, callsNothing: false };
+      return { chevron: false, plus: null };
     case "loading":
     case "failed":
-      return { chevron: true, plus: null, callsNothing: false };
+      return { chevron: true, plus: null };
     case "probed":
       return some(calls.count);
     case "known":

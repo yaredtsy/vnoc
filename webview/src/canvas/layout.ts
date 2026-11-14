@@ -4,14 +4,21 @@
 import { type Calls, callId, callsLook, ownsCalls, stepOf } from "@vnoc/shared/calls.ts";
 import type { CallSite, CallTreeNode, Kind, TreeNode } from "@vnoc/shared/messages.ts";
 import { type CallLook, callLook } from "../node-card/callLook.ts";
+import { type CallsFooter, callsFooter } from "../node-card/callsFooter.ts";
 import { SITES_SHOWN } from "../node-card/callMeta.ts";
+import type { Contents } from "../node-card/metaOf.ts";
 
 /** A card's width (04 §1): names get about 160 px beside four always-visible buttons. */
 export const CARD_W = 300;
 /** One column: a card and the room for its edge. */
 export const COL_W = CARD_W + 40;
-/** One card: header 30 + meta 22 + footer 20 (docs/16-ui-redesign/04-node-cards.md §1). */
-export const CARD_H = 72;
+/** The rows of a card (docs/16-ui-redesign/04-node-cards.md §1): header, meta line, a 1 px line, footer. The card's own 1 px border is inside the 80. */
+export const HEADER_H = 32;
+export const META_H = 24;
+export const LINE_H = 1;
+export const FOOTER_H = 23;
+/** One card: the four rows. */
+export const CARD_H = HEADER_H + META_H + LINE_H + FOOTER_H;
 /** One card plus a gap. Cards that grow (code, the site list) add their own height, so the layout never has to measure. */
 export const ROW_H = CARD_H + 16;
 /** A file's code is all of it: the host clamps a range that runs past the end of the document. */
@@ -74,8 +81,10 @@ export type Placed = {
   callsChevron: boolean;
   /** how many cards a closed card hides: its structure children plus the calls a probe or its tree counted */
   plus: number;
-  /** its calls are known and there are none: the meta line says so (structure cards) */
-  callsNothing: boolean;
+  /** what the footer says about its calls, on the right: nothing, a count, a spinner, a failure with Retry; null: nothing to say (04 §1) */
+  callsFooter: CallsFooter;
+  /** what a folder or a file holds directly, for its meta line */
+  contents: Contents;
   collapsed: boolean;
   syntaxError: boolean;
   /** how many docs are attached, and how the node was found again (see `TreeNode`); a call card shows its callee's */
@@ -103,6 +112,20 @@ export interface Layout {
   edges: Edge[];
   /** structure nodes in the tree that are not drawn because an ancestor is closed */
   hidden: number;
+}
+
+const noContents: Contents = { folders: 0, files: 0, classes: 0, functions: 0 };
+
+/** What a node holds directly, by kind. */
+function contentsOf(n: TreeNode): Contents {
+  const c = { ...noContents };
+  for (const child of n.children) {
+    if (child.kind === "folder") c.folders++;
+    else if (child.kind === "file") c.files++;
+    else if (child.kind === "class") c.classes++;
+    else c.functions++;
+  }
+  return c;
 }
 
 function size(n: TreeNode): number {
@@ -148,11 +171,13 @@ export function layout(
     const open = n === root || expanded.has(n.id);
     const calls = ownsCalls(n) ? callsOf(n.id) : null;
     const look = calls ? callsLook(calls, open) : null;
+    // a class that has methods is not "calls nothing": its methods are what is under it
+    const footer = calls ? callsFooter(calls, open) : null;
     const isCollapsed = (structural || look?.chevron === true) && n !== root && !expanded.has(n.id);
     place({
       id: n.id, role: "node", key: n.id, kind: n.kind, name: n.name, path: n.path, line: n.range ? n.range.start.line + 1 : null, range,
       codeOpen: range !== null && codeOpen.has(n.id), depth, x: depth * COL_W, y, parentId, inClass: n.kind === "function" && parentKind === "class",
-      childCount: n.children.length, callsChevron: look?.chevron ?? false, plus: n.children.length + (look?.plus ?? 0), callsNothing: !structural && (look?.callsNothing ?? false),
+      childCount: n.children.length, callsChevron: look?.chevron ?? false, plus: n.children.length + (look?.plus ?? 0), callsFooter: structural && footer?.state === "nothing" ? null : footer, contents: contentsOf(n),
       collapsed: isCollapsed, syntaxError: n.syntax_error, docs: n.docs, link: n.link, call: null, siteRows: 0,
     });
     if (isCollapsed) return;
@@ -178,7 +203,7 @@ export function layout(
       place({
         id, role: "call", key: c.key, kind: c.kind, name: c.name, path: c.path ?? "", line: range ? range.start.line + 1 : null, range,
         codeOpen: range !== null && codeOpen.has(id), depth, x: depth * COL_W, y, parentId, inClass: c.kind === "function" && callee?.parentKind === "class",
-        childCount: 0, callsChevron: look.chevron, plus: look.plus ?? 0, callsNothing: false, collapsed, syntaxError: callee?.node.syntax_error ?? false,
+        childCount: 0, callsChevron: look.chevron, plus: look.plus ?? 0, callsFooter: look.unknown || c.marks.includes("recursive") ? null : callsFooter(calls, open), contents: noContents, collapsed, syntaxError: callee?.node.syntax_error ?? false,
         docs: callee?.node.docs ?? 0, link: callee?.node.link ?? null,
         call: { count: c.call_count, sites: c.call_sites, lines: c.call_sites.map((s) => s.start.line + 1), callerName: caller.name, callerPath: caller.path, look },
         siteRows,

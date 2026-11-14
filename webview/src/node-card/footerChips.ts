@@ -1,24 +1,27 @@
 // What the card's footer counts (docs/16-ui-redesign/04-node-cards.md §1). Pure, so the rules are tested; NodeFooter only draws them.
 
 import { linesText } from "@vnoc/shared/calls.ts";
+import type { CallsFooter } from "./callsFooter.ts";
 import type { CallInfo, Placed } from "../canvas/layout.ts";
 
 /** What the footer reads of a card: the counts, and for a call card who calls it and at which lines. */
-export type FooterNode = Pick<Placed, "collapsed" | "plus" | "docs" | "link"> & { call: Pick<CallInfo, "callerName" | "lines"> | null };
+export type FooterNode = Pick<Placed, "collapsed" | "plus" | "docs" | "link" | "callsFooter"> & { call: Pick<CallInfo, "callerName" | "lines"> | null };
 
 export interface Chip {
-  kind: "times" | "hidden" | "docs" | "link" | "selected" | "cursor";
+  kind: "times" | "hidden" | "docs" | "link" | "selected" | "cursor" | "calls";
   /** the text beside the icon (the chip's own mark for `selected` and `cursor`); empty when the icon says it all */
   text: string;
   tip: string;
   /** drawn dim: a link that was found by name only */
   faded: boolean;
+  /** `calls` only: which state it says; `failed` is drawn with a Retry beside it, `loading` as a spinner */
+  calls?: "nothing" | "count" | "loading" | "failed";
 }
 
 /** "1 doc", "2 docs". */
 export const docsCount = (n: number): string => `${n} ${n === 1 ? "doc" : "docs"}`;
 
-/** The chips in the footer's order: `×N` (a call node with several call sites), what a closed card hides, docs, the link, the marks. `hides`: whether this card, closed, holds the selection or the text cursor inside it. */
+/** The chips in the footer's order: `×N` (a call node with several call sites), what a closed card hides, docs, the link, the marks, then the calls' state (drawn on the right). `hides`: whether this card, closed, holds the selection or the text cursor inside it. */
 export function footerChips(node: FooterNode, hides: { selected: boolean; cursor: boolean }): Chip[] {
   const chips: Chip[] = [];
   const merged = node.call;
@@ -38,5 +41,21 @@ export function footerChips(node: FooterNode, hides: { selected: boolean; cursor
   }
   if (hides.selected) chips.push({ kind: "selected", text: "●", tip: "the selection is inside", faded: false });
   if (hides.cursor) chips.push({ kind: "cursor", text: "○", tip: "the cursor is inside", faded: false });
+  chips.push(...callsChip(node.callsFooter));
   return chips;
+}
+
+/** The footer's right side: what the card's calls are (04 §1). */
+function callsChip(calls: CallsFooter): Chip[] {
+  if (!calls) return [];
+  switch (calls.state) {
+    case "nothing":
+      return [{ kind: "calls", calls: "nothing", text: "calls nothing", tip: "opening it shows nothing: it calls no function in this project", faded: false }];
+    case "count":
+      return [{ kind: "calls", calls: "count", text: `calls ${calls.n}`, tip: `opening it shows ${calls.n} ${calls.n === 1 ? "call" : "calls"}`, faded: false }];
+    case "loading":
+      return [{ kind: "calls", calls: "loading", text: "", tip: "reading what it calls…", faded: false }];
+    case "failed":
+      return [{ kind: "calls", calls: "failed", text: "couldn't read calls", tip: calls.message ? `couldn't read calls: ${calls.message}` : "couldn't read calls", faded: false }];
+  }
 }

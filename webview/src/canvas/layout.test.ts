@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type Calls, callId } from "@vnoc/shared/calls.ts";
 import type { CallMark, CallSite, CallTreeNode, Kind, TreeNode } from "@vnoc/shared/messages.ts";
-import { CARD_H, CODE_H, COL_W, ROW_H, SITE_LIST_PAD, SITE_ROW_H, canOpen, cardHeight, layout, siteListHeight } from "./layout.ts";
+import { CARD_H, CODE_H, COL_W, FOOTER_H, HEADER_H, LINE_H, META_H, ROW_H, SITE_LIST_PAD, SITE_ROW_H, canOpen, cardHeight, layout, siteListHeight } from "./layout.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, node_id: null, docs: 0, link: null, children });
 
@@ -64,19 +64,19 @@ const project = n("/", "folder", [n("a.py", "file", [fn("f"), fn("g"), fn("h"), 
 const calls = (table: Record<string, Calls>) => (key: string): Calls => table[key] ?? { state: "unknown" };
 const card = (l: ReturnType<typeof layout>, id: string) => l.nodes.find((p) => p.id === id)!;
 
-test("a function a probe counted: closed, a chevron, +N behind it, and it is not calls-nothing", () => {
+test("a function a probe counted: closed, a chevron, +N behind it, and the footer says calls 3", () => {
   const l = layout(project, new Set(["a.py"]), new Set(), calls({ f: { state: "probed", count: 3 } }));
-  assert.deepEqual([card(l, "f").callsChevron, card(l, "f").collapsed, card(l, "f").plus, card(l, "f").callsNothing, card(l, "f").childCount], [true, true, 3, false, 0]);
+  assert.deepEqual([card(l, "f").callsChevron, card(l, "f").collapsed, card(l, "f").plus, card(l, "f").callsFooter, card(l, "f").childCount], [true, true, 3, { state: "count", n: 3 }, 0]);
 });
 
-test("a probe of 0: no chevron, nothing behind it, and the meta line says calls nothing", () => {
+test("a probe of 0: no chevron, nothing behind it, and the footer says calls nothing", () => {
   const f = card(layout(project, new Set(["a.py"]), new Set(), calls({ f: { state: "probed", count: 0 } })), "f");
-  assert.deepEqual([f.callsChevron, f.collapsed, f.plus, f.callsNothing], [false, false, 0, true]);
+  assert.deepEqual([f.callsChevron, f.collapsed, f.plus, f.callsFooter], [false, false, 0, { state: "nothing" }]);
 });
 
 test("a probe not answered yet: an empty slot, nothing said, and the card is as it was", () => {
   const f = card(layout(project, new Set(["a.py"])), "f");
-  assert.deepEqual([f.callsChevron, f.collapsed, f.plus, f.callsNothing], [false, false, 0, false]);
+  assert.deepEqual([f.callsChevron, f.collapsed, f.plus, f.callsFooter], [false, false, 0, null]);
 });
 
 test("open, a function with calls has its chevron turned and no +N", () => {
@@ -100,7 +100,7 @@ test("a class with methods and no __init__ of its own owns calls too: closed, it
 
 test("the focused function is the root of the view: always open, never a chevron, but it can say it calls nothing", () => {
   const f = card(layout(fn("f"), new Set(), new Set(), calls({ f: { state: "probed", count: 0 } })), "f");
-  assert.deepEqual([f.collapsed, f.callsNothing], [false, true]);
+  assert.deepEqual([f.collapsed, f.callsFooter], [false, { state: "nothing" }]);
   const g = card(layout(fn("g"), new Set(), new Set(), calls({ g: { state: "probed", count: 4 } })), "g");
   assert.deepEqual([g.collapsed, g.callsChevron, g.plus], [false, true, 0]);
 });
@@ -212,9 +212,11 @@ test("a function inside a class is a method: its card says so, and so does a cal
   assert.equal(l.nodes.find((p) => p.id === callId("checkout", ["K.run"]))!.inClass, true, "the callee's parent is a class");
 });
 
-test("heights: every card is 72 px; +220 with its code; a call card's open site list adds a line for each site", () => {
+test("heights: every card is 80 px (32 + 24 + 1 + 23); +220 with its code; a call card's open site list adds a line for each site", () => {
   assert.equal(cardHeight({ codeOpen: false, siteRows: 0 }), CARD_H);
-  assert.equal(CARD_H, 72);
+  assert.equal(CARD_H, 80);
+  assert.equal(HEADER_H + META_H + LINE_H + FOOTER_H, CARD_H, "the four rows are the card");
+  assert.deepEqual([HEADER_H, META_H, LINE_H, FOOTER_H], [32, 24, 1, 23]);
   assert.equal(cardHeight({ codeOpen: true, siteRows: 0 }), CARD_H + CODE_H);
   assert.equal(siteListHeight(4), 4 * SITE_ROW_H + SITE_LIST_PAD);
   assert.equal(siteListHeight(0), 0);
@@ -256,4 +258,35 @@ test("two calls to one callee from one parent are one card (the merge), and the 
   assert.equal(checks.length, 2);
   assert.notEqual(checks[0].id, checks[1].id);
   assert.equal(new Set(ids(l)).size, ids(l).length, "every id is unique, so a toggle always hits one card");
+});
+
+// ── the footer's calls state, and what a folder or file holds (04 §1) ───────────────────────────────────────────────
+
+test("the footer's calls state: a spinner while fetching, a failure with its reason, a count when closed and none when open", () => {
+  const l = layout(project, new Set(["a.py"]), new Set(), calls({ f: { state: "loading" }, g: { state: "failed", message: "boom" }, h: { state: "probed", count: 2 } }));
+  assert.deepEqual([card(l, "f").callsFooter, card(l, "g").callsFooter, card(l, "h").callsFooter], [{ state: "loading" }, { state: "failed", message: "boom" }, { state: "count", n: 2 }]);
+  const open = layout(project, new Set(["a.py", "h"]), new Set(), calls({ h: { state: "probed", count: 2 } }));
+  assert.equal(card(open, "h").callsFooter, null, "open: the calls are the cards");
+});
+
+test("a class that has methods does not say it calls nothing: its methods are what is under it", () => {
+  const c = card(layout(project, new Set(["a.py"]), new Set(), calls({ C: { state: "probed", count: 0 } })), "C");
+  assert.equal(c.callsFooter, null);
+});
+
+test("a file and a folder know what they hold directly, by kind; a function holds nothing", () => {
+  const l = layout(project, new Set(["a.py"]));
+  assert.deepEqual(card(l, "/").contents, { folders: 0, files: 1, classes: 0, functions: 0 });
+  assert.deepEqual(card(l, "a.py").contents, { folders: 0, files: 0, classes: 1, functions: 3 });
+  assert.deepEqual(card(l, "f").contents, { folders: 0, files: 0, classes: 0, functions: 0 });
+});
+
+test("a call card's footer says what its callee calls, except a recursive call or a callee the project does not know", () => {
+  const open = new Set(["app.py", "checkout"]);
+  const footerOf = (id: string, children: CallTreeNode[], table: Record<string, Calls>) => layout(app, open, new Set(), callsTable({ checkout: { state: "known", children }, ...table })).nodes.find((p) => p.id === id)!.callsFooter;
+  assert.deepEqual(footerOf(Corder, [call("order", "order")], { [Corder]: known(orderCall.children) }), { state: "count", n: 2 }, "closed, its tree known");
+  assert.deepEqual(footerOf(Corder, [call("order", "order")], { [Corder]: known([]) }), { state: "nothing" });
+  assert.equal(footerOf(Corder, [call("order", "order", { marks: ["recursive"] })], { [Corder]: known([]) }), null, "it calls itself: not nothing");
+  assert.equal(footerOf(Corder, [call("order", "order")], {}), null, "nothing known");
+  assert.deepEqual(footerOf(Corder, [call("order", "order", { marks: ["cut"] })], { [Corder]: { state: "failed", message: "x" } }), { state: "failed", message: "x" }, "a cut call whose callee's tree failed: Retry");
 });

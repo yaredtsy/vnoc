@@ -29,3 +29,6 @@
 /* a call edge is dashed (docs/16-ui-redesign/03-canvas.md §6); on the way to the selection it is as thick as any other edge there */
 .react-flow__edge.call .react-flow__edge-path { stroke: var(--edge-call); stroke-width: 1.5px; stroke-dasharray: 4 3; }
 .react-flow__edge.call.on-path .react-flow__edge-path { stroke: var(--card-selected); stroke-width: 2px; }
+
+/* the footer's spinner turns; with reduced motion it stands still (09 §Reduce motion) */
+@media (prefers-reduced-motion: reduce) { .codicon-modifier-spin { animation: none; } }
