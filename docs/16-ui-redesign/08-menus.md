@@ -170,8 +170,9 @@ Keys: `Alt+←`, `Enter`, `Ctrl/Cmd+Enter`, `Space`, `Esc` and the arrows are ha
 both surfaces and skip text fields and code cards. `contributes.keybindings` keeps only `Ctrl/Cmd+Alt+N` (Search…).
 
 **`F` is Fit View** on the canvas (added 2026-11-15, for the GIFs of 18.04: a film may only show keys the product has). It is the same move as the
-menu's **Fit View** (the 300 ms glide, none with reduced motion). Like the other canvas keys it does nothing in a text field, in a code card or on a
-focused button, and with Ctrl, Cmd or Alt held (`webview/src/canvas/keys.ts`, `canvasViewKey`).
+menu's **Fit View** (the 300 ms glide, none with reduced motion). Like the other canvas keys it does nothing in a text field or a code card, on a
+link, or with Ctrl, Cmd or Alt held. **Unlike them it works when a button has the focus** (changed the same day, P5 of 18.04): Space and Enter are a
+button's keys, `F` is not, and a chevron that was just clicked keeps the focus (`webview/src/canvas/keys.ts`, `canvasViewKey`, with its table test).
 
 ## 9. The test
 

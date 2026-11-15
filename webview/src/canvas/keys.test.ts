@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type Calls, callId } from "@vnoc/shared/calls.ts";
 import type { CallSite, CallTreeNode, Kind, TreeNode } from "@vnoc/shared/messages.ts";
-import { canvasChord, canvasKey, canvasViewKey } from "./keys.ts";
+import { type KeyContext, canvasChord, canvasKey, canvasViewKey } from "./keys.ts";
 import { layout } from "./layout.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = []): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
@@ -107,6 +107,20 @@ test("F is Fit View, in either case, and no other key is", () => {
     ["", null],
   ];
   for (const [key, want] of table) assert.equal(canvasViewKey(key), want, JSON.stringify(key));
+});
+
+test("F is Fit View wherever the focus is, except where a key is typing, a chord or a link's", () => {
+  const ctx = (c: Partial<KeyContext>): KeyContext => ({ inField: false, modified: false, onLink: false, ...c });
+  const table: [string, Partial<KeyContext>, "fitView" | null][] = [
+    ["nothing focused, or a card or a button (a chevron just clicked): Space and Enter stay the button's, F is not", {}, "fitView"],
+    ["in a text field or a code card: it is a letter", { inField: true }, null],
+    ["with Ctrl, Cmd or Alt held: a chord", { modified: true }, null],
+    ["on a link", { onLink: true }, null],
+    ["in a field with Cmd held", { inField: true, modified: true }, null],
+  ];
+  for (const [what, c, want] of table) assert.equal(canvasViewKey("f", ctx(c)), want, what);
+  assert.equal(canvasViewKey("F", ctx({})), "fitView", "Shift or Caps Lock");
+  assert.equal(canvasViewKey("x", ctx({})), null);
 });
 
 test("F is not one of the keys that change the session", () => {
