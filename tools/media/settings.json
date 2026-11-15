@@ -15,5 +15,6 @@
   "editor.minimap.enabled": false,
   "editor.fontSize": 14,
   "editor.lineHeight": 22,
+  "git.blame.statusBarItem.enabled": false,
   "files.exclude": { "**/__pycache__": true }
 }

@@ -66,10 +66,31 @@ export async function webviewWith(page, selector, { timeout = 30_000 } = {}) {
   }
 }
 
-/** A command from the palette (F1, the title, Enter). Not used while a GIF is recorded: there only the mouse moves. */
+/**
+ * A command from the palette. It waits for the box, types the title, and presses Enter only when the first entry is that command: a keystroke that
+ * missed the box would land in the editor or the terminal, and a title that matches nothing must be an error, not a guess. Not used while a GIF is recorded.
+ */
 export async function runCommand(page, title) {
-  await page.keyboard.press("F1");
-  await page.keyboard.type(title);
-  await page.waitForTimeout(400);
+  const widget = page.locator(".quick-input-widget");
+  const input = widget.locator("input.input");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.keyboard.press("F1");
+    try {
+      await input.waitFor({ state: "visible", timeout: 2000 });
+      break;
+    } catch {
+      if (attempt === 2) throw new Error(`the command palette did not open for "${title}"`);
+    }
+  }
+  await input.fill(`>${title}`);
+  const first = widget.locator(".quick-input-list .monaco-list-row").first();
+  await first.waitFor({ state: "visible", timeout: 5000 });
+  await page.waitForTimeout(250);
+  const label = ((await first.getAttribute("aria-label")) ?? "").trim();
+  if (!label.toLowerCase().includes(title.toLowerCase().replace(/^.*?: /, ""))) {
+    await page.keyboard.press("Escape");
+    throw new Error(`the palette's first entry for "${title}" is "${label}"`);
+  }
   await page.keyboard.press("Enter");
+  await widget.waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
 }
