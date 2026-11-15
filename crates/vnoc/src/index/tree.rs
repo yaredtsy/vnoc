@@ -51,7 +51,19 @@ pub struct Node {
 
 impl Node {
     fn folder(id: String, name: String, path: String) -> Node {
-        Node { id, kind: Kind::Folder, name, path, qualname: None, range: None, syntax_error: false, node_id: None, docs: 0, link: None, children: vec![] }
+        Node {
+            id,
+            kind: Kind::Folder,
+            name,
+            path,
+            qualname: None,
+            range: None,
+            syntax_error: false,
+            node_id: None,
+            docs: 0,
+            link: None,
+            children: vec![],
+        }
     }
 
     /// How many nodes of each kind are under **and including** this one: [folders, files, classes, functions].
@@ -72,9 +84,14 @@ impl Node {
     fn sort(&mut self) {
         if matches!(self.kind, Kind::Folder) {
             self.children.sort_by(|a, b| {
-                let (a_dir, b_dir) = (matches!(a.kind, Kind::Folder), matches!(b.kind, Kind::Folder));
+                let (a_dir, b_dir) = (
+                    matches!(a.kind, Kind::Folder),
+                    matches!(b.kind, Kind::Folder),
+                );
                 // `false < true`, so comparing b to a puts the folders (true) first
-                b_dir.cmp(&a_dir).then_with(|| natural_cmp(&a.name, &b.name))
+                b_dir
+                    .cmp(&a_dir)
+                    .then_with(|| natural_cmp(&a.name, &b.name))
             });
         }
         self.children.iter_mut().for_each(Node::sort);
@@ -123,15 +140,29 @@ fn take_digits(chars: &mut Peekable<Chars>) -> String {
 
 /// Builds the tree. `prefix` is the opened folder's place in the repo (`""` or `"services/api"`): the tree shows paths below it,
 /// while ids keep the full repo path so they do not depend on which folder was opened.
-pub fn build(root_name: &str, prefix: &str, files: &BTreeMap<RepoPath, Vec<Def>>, attached: &HashMap<String, Attached>) -> Node {
+pub fn build(
+    root_name: &str,
+    prefix: &str,
+    files: &BTreeMap<RepoPath, Vec<Def>>,
+    attached: &HashMap<String, Attached>,
+) -> Node {
     let mut root = Node::folder("/".to_string(), root_name.to_string(), String::new());
     for (repo_path, defs) in files {
-        let shown = if prefix.is_empty() { Some(repo_path.as_str()) } else { repo_path.as_str().strip_prefix(prefix).and_then(|p| p.strip_prefix('/')) };
+        let shown = if prefix.is_empty() {
+            Some(repo_path.as_str())
+        } else {
+            repo_path
+                .as_str()
+                .strip_prefix(prefix)
+                .and_then(|p| p.strip_prefix('/'))
+        };
         let Some(shown) = shown else { continue };
         let folder = shown.rsplit_once('/').map_or("", |(dir, _)| dir);
         let name = shown.rsplit('/').next().unwrap_or(shown).to_string();
         let parent = descend(&mut root, prefix, folder);
-        parent.children.push(file_node(repo_path, shown, name, defs, attached));
+        parent
+            .children
+            .push(file_node(repo_path, shown, name, defs, attached));
     }
     decorate_folders(&mut root, attached);
     root.sort();
@@ -142,7 +173,10 @@ pub fn build(root_name: &str, prefix: &str, files: &BTreeMap<RepoPath, Vec<Def>>
 fn decorate_folders(node: &mut Node, attached: &HashMap<String, Attached>) {
     for child in &mut node.children {
         if child.kind == Kind::Folder {
-            if let Some(found) = RepoPath::new(child.id.clone()).ok().and_then(|path| attached.get(&whole_key(&path))) {
+            if let Some(found) = RepoPath::new(child.id.clone())
+                .ok()
+                .and_then(|path| attached.get(&whole_key(&path)))
+            {
                 (child.node_id, child.docs, child.link) = found.shown();
             }
             decorate_folders(child, attached);
@@ -152,7 +186,9 @@ fn decorate_folders(node: &mut Node, attached: &HashMap<String, Attached>) {
 
 /// How a file or a folder is called in the `attached` map: a location with no name.
 fn whole_key(path: &RepoPath) -> String {
-    LocationKey::new(path.clone(), "", 1).expect("occurrences are 1-based").to_string()
+    LocationKey::new(path.clone(), "", 1)
+        .expect("occurrences are 1-based")
+        .to_string()
 }
 
 /// The folder node for `dir` (`"a/b"`, below the opened folder), created on the way.
@@ -164,11 +200,20 @@ fn descend<'a>(root: &'a mut Node, prefix: &str, dir: &str) -> &'a mut Node {
             so_far.push('/');
         }
         so_far.push_str(part);
-        let at = match cur.children.iter().position(|c| matches!(c.kind, Kind::Folder) && c.name == part) {
+        let at = match cur
+            .children
+            .iter()
+            .position(|c| matches!(c.kind, Kind::Folder) && c.name == part)
+        {
             Some(i) => i,
             None => {
-                let id = if prefix.is_empty() { so_far.clone() } else { format!("{prefix}/{so_far}") };
-                cur.children.push(Node::folder(id, part.to_string(), so_far.clone()));
+                let id = if prefix.is_empty() {
+                    so_far.clone()
+                } else {
+                    format!("{prefix}/{so_far}")
+                };
+                cur.children
+                    .push(Node::folder(id, part.to_string(), so_far.clone()));
                 cur.children.len() - 1
             }
         };
@@ -177,8 +222,26 @@ fn descend<'a>(root: &'a mut Node, prefix: &str, dir: &str) -> &'a mut Node {
     cur
 }
 
-fn file_node(path: &RepoPath, shown: &str, name: String, defs: &[Def], attached: &HashMap<String, Attached>) -> Node {
-    let mut file = Node { id: path.to_string(), kind: Kind::File, name, path: shown.to_string(), qualname: None, range: None, syntax_error: defs.iter().any(|d| d.syntax_error), node_id: None, docs: 0, link: None, children: vec![] };
+fn file_node(
+    path: &RepoPath,
+    shown: &str,
+    name: String,
+    defs: &[Def],
+    attached: &HashMap<String, Attached>,
+) -> Node {
+    let mut file = Node {
+        id: path.to_string(),
+        kind: Kind::File,
+        name,
+        path: shown.to_string(),
+        qualname: None,
+        range: None,
+        syntax_error: defs.iter().any(|d| d.syntax_error),
+        node_id: None,
+        docs: 0,
+        link: None,
+        children: vec![],
+    };
     if let Some(found) = attached.get(&whole_key(path)) {
         (file.node_id, file.docs, file.link) = found.shown();
     }
@@ -193,7 +256,9 @@ fn file_node(path: &RepoPath, shown: &str, name: String, defs: &[Def], attached:
         if def.parent.is_empty() {
             open.clear();
         }
-        let key = LocationKey::new(path.clone(), def.qualname.clone(), occurrence).expect("occurrences are 1-based").to_string();
+        let key = LocationKey::new(path.clone(), def.qualname.clone(), occurrence)
+            .expect("occurrences are 1-based")
+            .to_string();
         let found = attached.get(&key);
         let (node_id, docs, link) = found.map_or((None, 0, None), Attached::shown);
         let node = Node {
@@ -201,7 +266,11 @@ fn file_node(path: &RepoPath, shown: &str, name: String, defs: &[Def], attached:
             docs,
             link,
             id: key,
-            kind: if def.kind == DefKind::Class { Kind::Class } else { Kind::Function },
+            kind: if def.kind == DefKind::Class {
+                Kind::Class
+            } else {
+                Kind::Function
+            },
             name: def.name.clone(),
             path: shown.to_string(),
             qualname: Some(def.qualname.clone()),
@@ -229,8 +298,21 @@ mod tests {
     use vnoc_driver_protocol::Position;
 
     fn def(qualname: &str, parent: &str, kind: DefKind) -> Def {
-        let p = Position { line: 0, character: 0 };
-        Def { qualname: qualname.into(), name: qualname.rsplit('.').next().unwrap().into(), kind, parent: parent.into(), parent_kind: None, range: Range { start: p, end: p }, params: vec![], id: None, syntax_error: false }
+        let p = Position {
+            line: 0,
+            character: 0,
+        };
+        Def {
+            qualname: qualname.into(),
+            name: qualname.rsplit('.').next().unwrap().into(),
+            kind,
+            parent: parent.into(),
+            parent_kind: None,
+            range: Range { start: p, end: p },
+            params: vec![],
+            id: None,
+            syntax_error: false,
+        }
     }
     /// `build` for a project with no docs.
     fn build(root_name: &str, prefix: &str, files: &BTreeMap<RepoPath, Vec<Def>>) -> Node {
@@ -238,21 +320,44 @@ mod tests {
     }
 
     fn files(list: &[(&str, Vec<Def>)]) -> BTreeMap<RepoPath, Vec<Def>> {
-        list.iter().map(|(p, d)| (RepoPath::new(*p).unwrap(), d.clone())).collect()
+        list.iter()
+            .map(|(p, d)| (RepoPath::new(*p).unwrap(), d.clone()))
+            .collect()
     }
 
     #[test]
     fn names_sort_like_the_vscode_explorer() {
-        let mut v = vec!["b.py", "B2.py", "a10.py", "a2.py", "A.py", "a02.py", "_x.py", "a.py"];
+        let mut v = vec![
+            "b.py", "B2.py", "a10.py", "a2.py", "A.py", "a02.py", "_x.py", "a.py",
+        ];
         v.sort_by(|a, b| natural_cmp(a, b));
         // case is ignored, digit runs are numbers (2 = 02 < 10), and exact ties (A.py / a.py) fall back to the text
-        assert_eq!(v, ["_x.py", "A.py", "a.py", "a02.py", "a2.py", "a10.py", "b.py", "B2.py"]);
+        assert_eq!(
+            v,
+            [
+                "_x.py", "A.py", "a.py", "a02.py", "a2.py", "a10.py", "b.py", "B2.py"
+            ]
+        );
     }
 
     #[test]
     fn folders_come_before_files_at_every_level() {
-        let root = build("r", "", &files(&[("Zeta.py", vec![]), ("lib/b.py", vec![]), ("alpha.py", vec![])]));
-        assert_eq!(root.children.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["lib", "alpha.py", "Zeta.py"]);
+        let root = build(
+            "r",
+            "",
+            &files(&[
+                ("Zeta.py", vec![]),
+                ("lib/b.py", vec![]),
+                ("alpha.py", vec![]),
+            ]),
+        );
+        assert_eq!(
+            root.children
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            ["lib", "alpha.py", "Zeta.py"]
+        );
     }
 
     fn names(n: &Node) -> Vec<String> {
@@ -261,31 +366,67 @@ mod tests {
 
     #[test]
     fn folders_files_and_defs_nest_and_sort() {
-        let tree = build("repo", "", &files(&[
-            ("b.py", vec![def("f", "", DefKind::Function)]),
-            ("pkg/sub/m.py", vec![]),
-            ("pkg/a.py", vec![def("C", "", DefKind::Class), def("C.m", "C", DefKind::Function)]),
-        ]));
+        let tree = build(
+            "repo",
+            "",
+            &files(&[
+                ("b.py", vec![def("f", "", DefKind::Function)]),
+                ("pkg/sub/m.py", vec![]),
+                (
+                    "pkg/a.py",
+                    vec![
+                        def("C", "", DefKind::Class),
+                        def("C.m", "C", DefKind::Function),
+                    ],
+                ),
+            ]),
+        );
         assert_eq!(names(&tree), vec!["pkg", "b.py"], "folders first");
         let pkg = &tree.children[0];
         assert_eq!(names(pkg), vec!["sub", "a.py"]);
         let a = &pkg.children[1];
         assert_eq!(a.children[0].name, "C");
-        assert_eq!(a.children[0].children[0].name, "m", "a method sits under its class");
-        assert_eq!(tree.counts(), [3, 3, 1, 2], "counts() includes the root folder itself");
+        assert_eq!(
+            a.children[0].children[0].name, "m",
+            "a method sits under its class"
+        );
+        assert_eq!(
+            tree.counts(),
+            [3, 3, 1, 2],
+            "counts() includes the root folder itself"
+        );
     }
 
     #[test]
     fn ids_are_unique_even_when_a_name_is_defined_twice() {
-        let tree = build("repo", "", &files(&[("a.py", vec![def("top", "", DefKind::Function), def("top", "", DefKind::Function)])]));
-        let ids: Vec<&str> = tree.children[0].children.iter().map(|c| c.id.as_str()).collect();
+        let tree = build(
+            "repo",
+            "",
+            &files(&[(
+                "a.py",
+                vec![
+                    def("top", "", DefKind::Function),
+                    def("top", "", DefKind::Function),
+                ],
+            )]),
+        );
+        let ids: Vec<&str> = tree.children[0]
+            .children
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect();
         assert_eq!(ids, vec!["a.py::top", "a.py::top#2"]);
     }
 
     #[test]
     fn children_attach_to_the_right_one_of_two_same_named_parents() {
         // class Outer ... class Outer (redefined) with a method in each
-        let defs = vec![def("Outer", "", DefKind::Class), def("Outer.m", "Outer", DefKind::Function), def("Outer", "", DefKind::Class), def("Outer.n", "Outer", DefKind::Function)];
+        let defs = vec![
+            def("Outer", "", DefKind::Class),
+            def("Outer.m", "Outer", DefKind::Function),
+            def("Outer", "", DefKind::Class),
+            def("Outer.n", "Outer", DefKind::Function),
+        ];
         let tree = build("repo", "", &files(&[("a.py", defs)]));
         let file = &tree.children[0];
         assert_eq!(file.children.len(), 2);
@@ -295,7 +436,16 @@ mod tests {
 
     #[test]
     fn nested_locals_attach_by_parent_qualname() {
-        let defs = vec![def("top", "", DefKind::Function), def("top.<locals>.inner", "top", DefKind::Function), def("top.<locals>.inner.<locals>.deepest", "top.<locals>.inner", DefKind::Function), def("after", "", DefKind::Function)];
+        let defs = vec![
+            def("top", "", DefKind::Function),
+            def("top.<locals>.inner", "top", DefKind::Function),
+            def(
+                "top.<locals>.inner.<locals>.deepest",
+                "top.<locals>.inner",
+                DefKind::Function,
+            ),
+            def("after", "", DefKind::Function),
+        ];
         let tree = build("repo", "", &files(&[("a.py", defs)]));
         let file = &tree.children[0];
         assert_eq!(names(file), vec!["top", "after"]);
@@ -305,23 +455,59 @@ mod tests {
 
     #[test]
     fn below_the_repo_root_the_tree_shows_short_paths_and_ids_keep_the_full_one() {
-        let tree = build("api", "services/api", &files(&[("services/api/pkg/m.py", vec![def("f", "", DefKind::Function)]), ("services/other/x.py", vec![])]));
-        assert_eq!(names(&tree), vec!["pkg"], "files outside the opened folder are not shown");
+        let tree = build(
+            "api",
+            "services/api",
+            &files(&[
+                (
+                    "services/api/pkg/m.py",
+                    vec![def("f", "", DefKind::Function)],
+                ),
+                ("services/other/x.py", vec![]),
+            ]),
+        );
+        assert_eq!(
+            names(&tree),
+            vec!["pkg"],
+            "files outside the opened folder are not shown"
+        );
         let (folder, file) = (&tree.children[0], &tree.children[0].children[0]);
-        assert_eq!((folder.id.as_str(), folder.path.as_str()), ("services/api/pkg", "pkg"));
-        assert_eq!((file.id.as_str(), file.path.as_str()), ("services/api/pkg/m.py", "pkg/m.py"));
+        assert_eq!(
+            (folder.id.as_str(), folder.path.as_str()),
+            ("services/api/pkg", "pkg")
+        );
+        assert_eq!(
+            (file.id.as_str(), file.path.as_str()),
+            ("services/api/pkg/m.py", "pkg/m.py")
+        );
         assert_eq!(file.children[0].id, "services/api/pkg/m.py::f");
         assert_eq!(file.children[0].path, "pkg/m.py");
     }
 
     #[test]
     fn a_documented_node_shows_its_id_doc_count_and_how_it_was_found() {
-        let defs = files(&[("a.py", vec![def("f", "", DefKind::Function), def("g", "", DefKind::Function)])]);
+        let defs = files(&[(
+            "a.py",
+            vec![
+                def("f", "", DefKind::Function),
+                def("g", "", DefKind::Function),
+            ],
+        )]);
         let id = vnoc_domain::NodeId::parse("00000000000000000000000001").unwrap();
-        let attached = HashMap::from([("a.py::f".to_string(), Attached { id, docs: 2, by: FoundBy::Anchor })]);
+        let attached = HashMap::from([(
+            "a.py::f".to_string(),
+            Attached {
+                id,
+                docs: 2,
+                by: FoundBy::Anchor,
+            },
+        )]);
         let tree = super::build("repo", "", &defs, &attached);
         let (f, g) = (&tree.children[0].children[0], &tree.children[0].children[1]);
-        assert_eq!((f.node_id.as_deref(), f.docs, f.link), (Some("00000000000000000000000001"), 2, Some(Link::Name)));
+        assert_eq!(
+            (f.node_id.as_deref(), f.docs, f.link),
+            (Some("00000000000000000000000001"), 2, Some(Link::Name))
+        );
         assert_eq!((g.node_id.as_deref(), g.docs, g.link), (None, 0, None));
     }
 }

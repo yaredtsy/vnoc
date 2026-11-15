@@ -14,7 +14,10 @@ use analyzer_core::graph::Entry;
 use lsp_server::ErrorCode;
 use python_analysis::{Cancel, Frame, Limits, Options, Project, call_wire};
 use python_syntax::DefKind as Kind;
-use vnoc_driver_protocol::{CallMark, CallNode, CallTarget, CallTreeParams, CallTreeResult, DefKind, EnvironmentInputsParams, EnvironmentInputsResult};
+use vnoc_driver_protocol::{
+    CallMark, CallNode, CallTarget, CallTreeParams, CallTreeResult, DefKind,
+    EnvironmentInputsParams, EnvironmentInputsResult,
+};
 
 use crate::outline::{analyzer_occurrence, protocol_occurrence};
 use crate::positions::Lines;
@@ -52,7 +55,13 @@ impl Projects {
             self.counts.opens += 1;
             self.by_root.insert(root.to_string(), project);
         }
-        if self.by_root.get_mut(root).expect("just opened").refresh().reopened {
+        if self
+            .by_root
+            .get_mut(root)
+            .expect("just opened")
+            .refresh()
+            .reopened
+        {
             self.counts.reopens += 1;
         }
         Ok(())
@@ -69,22 +78,48 @@ impl Projects {
 }
 
 fn internal(message: impl Into<String>) -> Failure {
-    Failure { code: ErrorCode::InternalError, message: message.into() }
+    Failure {
+        code: ErrorCode::InternalError,
+        message: message.into(),
+    }
 }
 
 /// `cancel` is the request's: its flag is the core's `$/cancelRequest`, its deadline is counted from when the request arrived (so waiting in the
 /// queue counts). A fired one cuts what is not walked yet, and the tree says so with `incomplete`.
-pub fn call_tree(projects: &mut Projects, params: CallTreeParams, cancel: &Cancel) -> Result<CallTreeResult, Failure> {
+pub fn call_tree(
+    projects: &mut Projects,
+    params: CallTreeParams,
+    cancel: &Cancel,
+) -> Result<CallTreeResult, Failure> {
     let root = Path::new(&params.root);
-    std::fs::read_to_string(root.join(&params.file)).map_err(|e| internal(format!("cannot read {}: {e}", params.file)))?;
+    std::fs::read_to_string(root.join(&params.file))
+        .map_err(|e| internal(format!("cannot read {}: {e}", params.file)))?;
 
-    let no_def = || invalid(format!("no function {} in {}", params.entry.qualname, params.file));
+    let no_def = || {
+        invalid(format!(
+            "no function {} in {}",
+            params.entry.qualname, params.file
+        ))
+    };
     // the protocol counts from 1: a 0 is a malformed request, not a def that is not there
     if params.entry.occurrence == 0 {
-        return Err(invalid(format!("occurrence of {} starts at 1, not 0", params.entry.qualname)));
+        return Err(invalid(format!(
+            "occurrence of {} starts at 1, not 0",
+            params.entry.qualname
+        )));
     }
-    let entry = Entry { qualname: &params.entry.qualname, occurrence: analyzer_occurrence(params.entry.occurrence).ok_or_else(no_def)? };
-    let opts = Options { limits: Limits { render_depth: params.depth, ..Limits::default() }, cancel: cancel.clone(), ..Options::default() };
+    let entry = Entry {
+        qualname: &params.entry.qualname,
+        occurrence: analyzer_occurrence(params.entry.occurrence).ok_or_else(no_def)?,
+    };
+    let opts = Options {
+        limits: Limits {
+            render_depth: params.depth,
+            ..Limits::default()
+        },
+        cancel: cancel.clone(),
+        ..Options::default()
+    };
 
     projects.ensure(&params.root)?;
     projects.counts.solves += 1;
@@ -92,15 +127,24 @@ pub fn call_tree(projects: &mut Projects, params: CallTreeParams, cancel: &Cance
     let wire = call_wire(project, &params.file, &entry, &opts, false).ok_or_else(no_def)?;
 
     let callers = Callers::read(root, &wire)?;
-    let convert = Convert { lines: callers.lines() };
-    Ok(CallTreeResult { root: convert.node(&wire) })
+    let convert = Convert {
+        lines: callers.lines(),
+    };
+    Ok(CallTreeResult {
+        root: convert.node(&wire),
+    })
 }
 
 /// The files whose change means "answers may differ" (the analyzer's `Project::environment_inputs`: the config, the environment the engine uses,
 /// the lock files). Asked of the kept project after its refresh, so a config or an environment changed since the last request is in the list.
-pub fn environment_inputs(projects: &mut Projects, params: EnvironmentInputsParams) -> Result<EnvironmentInputsResult, Failure> {
+pub fn environment_inputs(
+    projects: &mut Projects,
+    params: EnvironmentInputsParams,
+) -> Result<EnvironmentInputsResult, Failure> {
     projects.ensure(&params.root)?;
-    Ok(EnvironmentInputsResult { files: projects.by_root[params.root.as_str()].environment_inputs() })
+    Ok(EnvironmentInputsResult {
+        files: projects.by_root[params.root.as_str()].environment_inputs(),
+    })
 }
 
 /// The text of every file a call is made from: a node's `call_site` is read in `call_site_file`, which is not always its parent's file
@@ -124,13 +168,20 @@ impl Callers {
         collect(wire, &mut files);
         let texts = files
             .into_iter()
-            .map(|file| std::fs::read_to_string(root.join(&file)).map(|text| (file.clone(), text)).map_err(|e| internal(format!("cannot read {file}: {e}"))))
+            .map(|file| {
+                std::fs::read_to_string(root.join(&file))
+                    .map(|text| (file.clone(), text))
+                    .map_err(|e| internal(format!("cannot read {file}: {e}")))
+            })
             .collect::<Result<_, _>>()?;
         Ok(Callers { texts })
     }
 
     fn lines(&self) -> HashMap<&str, Lines<'_>> {
-        self.texts.iter().map(|(file, text)| (file.as_str(), Lines::new(text))).collect()
+        self.texts
+            .iter()
+            .map(|(file, text)| (file.as_str(), Lines::new(text)))
+            .collect()
     }
 }
 
@@ -153,23 +204,42 @@ struct Convert<'a> {
 impl Convert<'_> {
     fn node(&self, frame: &Frame) -> CallNode {
         // the position and the file come from one place, so a site never has a position from one file and the name of another
-        let site = frame.call_site.as_ref().zip(frame.call_site_file.as_deref()).and_then(|(span, file)| {
-            // a site in a file outside `root` is no site: "a site with no file" then means only a driver from before 7.7 (docs/14 §10.3)
-            if Path::new(file).is_absolute() {
-                return None;
-            }
-            let lines = self.lines.get(file)?;
-            Some((vnoc_driver_protocol::Range { start: lines.position_1based(span.start), end: lines.position_1based(span.end) }, file.to_string()))
-        });
+        let site = frame
+            .call_site
+            .as_ref()
+            .zip(frame.call_site_file.as_deref())
+            .and_then(|(span, file)| {
+                // a site in a file outside `root` is no site: "a site with no file" then means only a driver from before 7.7 (docs/14 §10.3)
+                if Path::new(file).is_absolute() {
+                    return None;
+                }
+                let lines = self.lines.get(file)?;
+                Some((
+                    vnoc_driver_protocol::Range {
+                        start: lines.position_1based(span.start),
+                        end: lines.position_1based(span.end),
+                    },
+                    file.to_string(),
+                ))
+            });
         let (call_site, call_site_file) = site.unzip();
         let marks = frame.marks.iter().filter_map(|m| mark(m)).collect();
-        CallNode { target: self.target(frame), call_site, call_site_file, marks, children: frame.children.iter().map(|c| self.node(c)).collect() }
+        CallNode {
+            target: self.target(frame),
+            call_site,
+            call_site_file,
+            marks,
+            children: frame.children.iter().map(|c| self.node(c)).collect(),
+        }
     }
 
     fn target(&self, frame: &Frame) -> CallTarget {
         CallTarget {
             // relative to the root already; a def outside it (library code) keeps its absolute path, and the protocol says `null`
-            file: frame.target_file.clone().filter(|f| !Path::new(f).is_absolute()),
+            file: frame
+                .target_file
+                .clone()
+                .filter(|f| !Path::new(f).is_absolute()),
             qualname: frame.target_qualname.clone(),
             occurrence: protocol_occurrence(frame.target_occurrence),
             kind: match frame.target_kind {
@@ -190,7 +260,11 @@ mod tests {
         assert_eq!(mark("recursive"), Some(CallMark::Recursive));
         assert_eq!(mark("cut"), Some(CallMark::Cut));
         assert_eq!(mark("incomplete"), Some(CallMark::Incomplete));
-        assert_eq!(mark("likely"), Some(CallMark::Likely), "it used to be dropped, so a guess looked like a certainty");
+        assert_eq!(
+            mark("likely"),
+            Some(CallMark::Likely),
+            "it used to be dropped, so a guess looked like a certainty"
+        );
         assert_eq!(mark("external"), None);
         assert_eq!(mark("something new"), None);
     }
@@ -198,6 +272,9 @@ mod tests {
     #[test]
     fn the_wire_format_is_one_this_driver_was_checked_against() {
         let reported = analyzer_core::wire::WIRE_FORMAT_VERSION;
-        assert!(WIRE_FORMATS_READ.contains(&reported), "the analyzer's wire format is {reported}: read what changed, then add it to WIRE_FORMATS_READ");
+        assert!(
+            WIRE_FORMATS_READ.contains(&reported),
+            "the analyzer's wire format is {reported}: read what changed, then add it to WIRE_FORMATS_READ"
+        );
     }
 }

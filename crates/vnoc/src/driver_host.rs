@@ -15,12 +15,16 @@ use std::time::Duration;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+};
 use tokio::process::{Child, Command};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use vnoc_driver_protocol::{
-    CallTreeParams, CallTreeResult, InitializeParams, InitializeResult, OutlineParams, OutlineResult, PROTOCOL_VERSION, PlanFileIdParams, PlanFileIdResult, PlanIdsParams, PlanIdsResult, method,
+    CallTreeParams, CallTreeResult, InitializeParams, InitializeResult, OutlineParams,
+    OutlineResult, PROTOCOL_VERSION, PlanFileIdParams, PlanFileIdResult, PlanIdsParams,
+    PlanIdsResult, method,
 };
 
 /// How long the driver may take to answer `outline`, `planIds`, `planFileId` and the handshake before the request is given up (review C4).
@@ -94,19 +98,38 @@ impl DriverClient {
         if !path.exists() {
             return Err(HostError::NotFound(path.to_path_buf()));
         }
-        let mut child = Command::new(path).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).kill_on_drop(true).spawn().map_err(HostError::Spawn)?;
+        let mut child = Command::new(path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(HostError::Spawn)?;
         let stdin = child.stdin.take().expect("piped");
         let stdout = child.stdout.take().expect("piped");
         DriverClient::connect(stdin, stdout, Some(child)).await
     }
 
     /// The handshake over any pair of pipes: the driver's process is `child`, or none for a stand-in in a test.
-    async fn connect(stdin: impl AsyncWrite + Send + Unpin + 'static, stdout: impl AsyncRead + Send + Unpin + 'static, child: Option<Child>) -> Result<DriverClient, HostError> {
+    async fn connect(
+        stdin: impl AsyncWrite + Send + Unpin + 'static,
+        stdout: impl AsyncRead + Send + Unpin + 'static,
+        child: Option<Child>,
+    ) -> Result<DriverClient, HostError> {
         let waiting: Waiting = Arc::new(Mutex::new(Some(HashMap::new())));
-        let wire = Arc::new(Wire { writer: Arc::new(tokio::sync::Mutex::new(Box::new(stdin))), waiting: waiting.clone(), next_id: AtomicU64::new(0) });
+        let wire = Arc::new(Wire {
+            writer: Arc::new(tokio::sync::Mutex::new(Box::new(stdin))),
+            waiting: waiting.clone(),
+            next_id: AtomicU64::new(0),
+        });
         let reader = tokio::spawn(read_replies(BufReader::new(stdout), waiting));
         match DriverClient::handshake(&wire).await {
-            Ok(info) => Ok(DriverClient { wire, reader, info, _child: child }),
+            Ok(info) => Ok(DriverClient {
+                wire,
+                reader,
+                info,
+                _child: child,
+            }),
             Err(e) => {
                 reader.abort();
                 Err(e)
@@ -115,51 +138,94 @@ impl DriverClient {
     }
 
     async fn handshake(wire: &Arc<Wire>) -> Result<InitializeResult, HostError> {
-        let reply = wire.request("initialize", &InitializeParams { protocol: PROTOCOL_VERSION }, REQUEST_TIMEOUT).await.map_err(|e| match e {
-            HostError::Remote { message, .. } => HostError::Handshake(message),
-            other => other,
-        })?;
-        let info: InitializeResult = serde_json::from_value(reply).map_err(|e| HostError::Protocol(e.to_string()))?;
+        let reply = wire
+            .request(
+                "initialize",
+                &InitializeParams {
+                    protocol: PROTOCOL_VERSION,
+                },
+                REQUEST_TIMEOUT,
+            )
+            .await
+            .map_err(|e| match e {
+                HostError::Remote { message, .. } => HostError::Handshake(message),
+                other => other,
+            })?;
+        let info: InitializeResult =
+            serde_json::from_value(reply).map_err(|e| HostError::Protocol(e.to_string()))?;
         if info.protocol != PROTOCOL_VERSION {
             return Err(HostError::WrongProtocol { got: info.protocol });
         }
         if !info.capabilities.get("outline").copied().unwrap_or(false) {
             return Err(HostError::MissingCapability("outline"));
         }
-        wire.send(&json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} })).await?;
+        wire.send(&json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }))
+            .await?;
         Ok(info)
     }
 
     /// The defs of a file the driver reads itself.
     pub async fn outline_file(&self, root: &Path, file: &str) -> Result<OutlineResult, HostError> {
-        let params = OutlineParams { root: Some(root.to_string_lossy().into_owned()), file: Some(file.to_string()), ..Default::default() };
+        let params = OutlineParams {
+            root: Some(root.to_string_lossy().into_owned()),
+            file: Some(file.to_string()),
+            ..Default::default()
+        };
         self.call(method::OUTLINE, &params).await
     }
 
     pub async fn plan_ids(&self, params: &PlanIdsParams) -> Result<PlanIdsResult, HostError> {
-        if !self.info.capabilities.get("ids.plan").copied().unwrap_or(false) {
+        if !self
+            .info
+            .capabilities
+            .get("ids.plan")
+            .copied()
+            .unwrap_or(false)
+        {
             return Err(HostError::MissingCapability("ids.plan"));
         }
         self.call(method::PLAN_IDS, params).await
     }
 
-    pub async fn plan_file_id(&self, params: &PlanFileIdParams) -> Result<PlanFileIdResult, HostError> {
-        if !self.info.capabilities.get("ids.file").copied().unwrap_or(false) {
+    pub async fn plan_file_id(
+        &self,
+        params: &PlanFileIdParams,
+    ) -> Result<PlanFileIdResult, HostError> {
+        if !self
+            .info
+            .capabilities
+            .get("ids.file")
+            .copied()
+            .unwrap_or(false)
+        {
             return Err(HostError::MissingCapability("ids.file"));
         }
         self.call(method::PLAN_FILE_ID, params).await
     }
 
     pub async fn call_tree(&self, params: &CallTreeParams) -> Result<CallTreeResult, HostError> {
-        if !self.info.capabilities.get("callTree").copied().unwrap_or(false) {
+        if !self
+            .info
+            .capabilities
+            .get("callTree")
+            .copied()
+            .unwrap_or(false)
+        {
             return Err(HostError::MissingCapability("callTree"));
         }
         self.call(method::CALL_TREE, params).await
     }
 
     /// One request, answered within the time its method is given (`timeout_of`).
-    async fn call<R: DeserializeOwned>(&self, method: &'static str, params: &impl Serialize) -> Result<R, HostError> {
-        let reply = self.wire.request(method, params, timeout_of(method)).await?;
+    async fn call<R: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        params: &impl Serialize,
+    ) -> Result<R, HostError> {
+        let reply = self
+            .wire
+            .request(method, params, timeout_of(method))
+            .await?;
         // an answer of the wrong shape is one bad answer, not a broken driver
         serde_json::from_value(reply).map_err(|e| HostError::BadAnswer(e.to_string()))
     }
@@ -177,16 +243,29 @@ impl Wire {
     ///
     /// A request that cannot even be written in time means the driver has stopped reading its input: that is a broken connection
     /// (`Closed`, so the host drops the driver), not a slow answer (`Timeout`, which keeps it).
-    async fn request(self: &Arc<Self>, method: &'static str, params: &impl Serialize, limit: Duration) -> Reply {
+    async fn request(
+        self: &Arc<Self>,
+        method: &'static str,
+        params: &impl Serialize,
+        limit: Duration,
+    ) -> Reply {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
         match self.waiting.lock().unwrap().as_mut() {
             Some(waiting) => waiting.insert(id, tx),
             None => return Err(HostError::Closed("it is not running".into())),
         };
-        let _pending = Pending { wire: self.clone(), id };
+        let _pending = Pending {
+            wire: self.clone(),
+            id,
+        };
         let deadline = tokio::time::Instant::now() + limit;
-        match tokio::time::timeout_at(deadline, self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))).await {
+        match tokio::time::timeout_at(
+            deadline,
+            self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })),
+        )
+        .await
+        {
             Ok(written) => written?,
             Err(_) => return Err(HostError::Closed("it is not reading its input".into())),
         }
@@ -223,7 +302,13 @@ struct Pending {
 
 impl Drop for Pending {
     fn drop(&mut self) {
-        let unanswered = self.wire.waiting.lock().unwrap().as_mut().is_some_and(|waiting| waiting.remove(&self.id).is_some());
+        let unanswered = self
+            .wire
+            .waiting
+            .lock()
+            .unwrap()
+            .as_mut()
+            .is_some_and(|waiting| waiting.remove(&self.id).is_some());
         if !unanswered {
             return;
         }
@@ -255,8 +340,18 @@ async fn read_replies(mut stdout: impl AsyncBufRead + Unpin, waiting: Waiting) {
             }
         };
         // a notification or a request from the driver: not part of protocol 1
-        let Some(id) = msg.get("id").and_then(Value::as_u64).filter(|_| msg.get("method").is_none()) else { continue };
-        let waiter = waiting.lock().unwrap().as_mut().and_then(|waiting| waiting.remove(&id));
+        let Some(id) = msg
+            .get("id")
+            .and_then(Value::as_u64)
+            .filter(|_| msg.get("method").is_none())
+        else {
+            continue;
+        };
+        let waiter = waiting
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|waiting| waiting.remove(&id));
         if let Some(tx) = waiter {
             let _ = tx.send(reply_of(&msg));
         } // else: an answer to a request that timed out or was cancelled
@@ -272,7 +367,10 @@ async fn read_replies(mut stdout: impl AsyncBufRead + Unpin, waiting: Waiting) {
 /// apart, the error is logged, and each request still waiting is answered, or times out, on its own.
 fn unreadable(waiting: &Waiting, body: &[u8], error: &serde_json::Error) {
     let id = salvage_id(body);
-    tracing::warn!("the driver sent an answer that could not be read ({error}); its request is {}", id.map_or("not known".to_string(), |id| id.to_string()));
+    tracing::warn!(
+        "the driver sent an answer that could not be read ({error}); its request is {}",
+        id.map_or("not known".to_string(), |id| id.to_string())
+    );
     let mut guard = waiting.lock().unwrap();
     let Some(map) = guard.as_mut() else { return };
     let id = id.or_else(|| (map.len() == 1).then(|| *map.keys().next().expect("one entry")));
@@ -308,7 +406,10 @@ fn salvage_id(body: &[u8]) -> Option<u64> {
 
 fn reply_of(msg: &Value) -> Reply {
     match msg.get("error") {
-        Some(e) => Err(HostError::Remote { code: e["code"].as_i64().unwrap_or(0), message: e["message"].as_str().unwrap_or("").to_string() }),
+        Some(e) => Err(HostError::Remote {
+            code: e["code"].as_i64().unwrap_or(0),
+            message: e["message"].as_str().unwrap_or("").to_string(),
+        }),
         None => Ok(msg["result"].clone()),
     }
 }
@@ -323,7 +424,12 @@ pub struct DriverHost {
 impl DriverHost {
     /// What the running driver says it can do; empty when none is running.
     pub async fn capabilities(&self) -> std::collections::BTreeMap<String, bool> {
-        self.client.lock().await.as_ref().map(|client| client.info.capabilities.clone()).unwrap_or_default()
+        self.client
+            .lock()
+            .await
+            .as_ref()
+            .map(|client| client.info.capabilities.clone())
+            .unwrap_or_default()
     }
 
     pub fn set_path(&self, path: Option<PathBuf>) {
@@ -332,31 +438,44 @@ impl DriverHost {
 
     /// The outline of one file (repo path relative to `root`), starting the driver on first use.
     pub async fn outline(&self, root: &Path, file: &str) -> Result<OutlineResult, HostError> {
-        self.with_client(|client| async move { client.outline_file(root, file).await }).await
+        self.with_client(|client| async move { client.outline_file(root, file).await })
+            .await
     }
 
     /// Where the `ID:` lines go in `params.text` (the editor's buffer).
     pub async fn plan_ids(&self, params: &PlanIdsParams) -> Result<PlanIdsResult, HostError> {
-        self.with_client(|client| async move { client.plan_ids(params).await }).await
+        self.with_client(|client| async move { client.plan_ids(params).await })
+            .await
     }
 
     /// Where the `# FileID:` comment goes in `params.text` (the editor's buffer).
-    pub async fn plan_file_id(&self, params: &PlanFileIdParams) -> Result<PlanFileIdResult, HostError> {
-        self.with_client(|client| async move { client.plan_file_id(params).await }).await
+    pub async fn plan_file_id(
+        &self,
+        params: &PlanFileIdParams,
+    ) -> Result<PlanFileIdResult, HostError> {
+        self.with_client(|client| async move { client.plan_file_id(params).await })
+            .await
     }
 
     /// The calls made by one function, or by a class's `__init__`: unmerged, as the driver gives them.
     pub async fn call_tree(&self, params: &CallTreeParams) -> Result<CallTreeResult, HostError> {
-        self.with_client(|client| async move { client.call_tree(params).await }).await
+        self.with_client(|client| async move { client.call_tree(params).await })
+            .await
     }
 
     /// Runs `request` on the driver. An error from the driver about this request is returned as is, and so is a timeout (the driver has been
     /// told to cancel, and other requests may be running on it). A broken connection drops the driver (its process dies with it) and the next
     /// request starts a new one.
-    async fn with_client<T, Fut: std::future::Future<Output = Result<T, HostError>>>(&self, request: impl FnOnce(Arc<DriverClient>) -> Fut) -> Result<T, HostError> {
+    async fn with_client<T, Fut: std::future::Future<Output = Result<T, HostError>>>(
+        &self,
+        request: impl FnOnce(Arc<DriverClient>) -> Fut,
+    ) -> Result<T, HostError> {
         let client = self.client().await?;
         let result = request(client.clone()).await;
-        if matches!(&result, Err(HostError::Io(_) | HostError::Protocol(_) | HostError::Closed(_))) {
+        if matches!(
+            &result,
+            Err(HostError::Io(_) | HostError::Protocol(_) | HostError::Closed(_))
+        ) {
             self.forget(&client).await;
         }
         result
@@ -365,7 +484,10 @@ impl DriverHost {
     /// Drops `broken`, unless another request has already replaced it with a new driver.
     async fn forget(&self, broken: &Arc<DriverClient>) {
         let mut slot = self.client.lock().await;
-        if slot.as_ref().is_some_and(|current| Arc::ptr_eq(current, broken)) {
+        if slot
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, broken))
+        {
             *slot = None;
         }
     }
@@ -375,9 +497,19 @@ impl DriverHost {
         if let Some(c) = slot.as_ref() {
             return Ok(c.clone());
         }
-        let path = self.path.lock().unwrap().clone().ok_or(HostError::NotConfigured)?;
+        let path = self
+            .path
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(HostError::NotConfigured)?;
         let client = Arc::new(DriverClient::start(&path).await?);
-        tracing::info!("driver `{}` {} started from {}", client.info.name, client.info.version, path.display());
+        tracing::info!(
+            "driver `{}` {} started from {}",
+            client.info.name,
+            client.info.version,
+            path.display()
+        );
         *slot = Some(client.clone());
         Ok(client)
     }
@@ -398,7 +530,11 @@ async fn read_body(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Vec<u8>, 
         }
         match line.strip_prefix("Content-Length:") {
             Some(n) => len = n.trim().parse().ok(),
-            None => return Err(HostError::Protocol(format!("stray output on the driver's stdout: {line:?}"))),
+            None => {
+                return Err(HostError::Protocol(format!(
+                    "stray output on the driver's stdout: {line:?}"
+                )));
+            }
         }
     }
     let len = len.ok_or_else(|| HostError::Protocol("a frame without Content-Length".into()))?;
@@ -411,7 +547,8 @@ async fn read_body(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Vec<u8>, 
 /// of the driver's answers treats an unreadable body as one failed request).
 #[cfg(test)]
 async fn read_frame(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Value, HostError> {
-    serde_json::from_slice(&read_body(stdout).await?).map_err(|e| HostError::Protocol(e.to_string()))
+    serde_json::from_slice(&read_body(stdout).await?)
+        .map_err(|e| HostError::Protocol(e.to_string()))
 }
 
 #[cfg(test)]
@@ -427,32 +564,42 @@ mod tests {
 
     impl Fake {
         async fn read(&mut self) -> Value {
-            read_frame(&mut self.from_core).await.expect("the core sent a frame")
+            read_frame(&mut self.from_core)
+                .await
+                .expect("the core sent a frame")
         }
 
         async fn write(&mut self, message: Value) {
             let body = serde_json::to_vec(&message).unwrap();
-            self.to_core.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+            self.to_core
+                .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
+                .await
+                .unwrap();
             self.to_core.write_all(&body).await.unwrap();
             self.to_core.flush().await.unwrap();
         }
 
         /// A frame whose body is these bytes, whatever they are.
         async fn write_raw(&mut self, body: &[u8]) {
-            self.to_core.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+            self.to_core
+                .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
+                .await
+                .unwrap();
             self.to_core.write_all(body).await.unwrap();
             self.to_core.flush().await.unwrap();
         }
 
         async fn answer(&mut self, id: &Value, result: Value) {
-            self.write(json!({ "jsonrpc": "2.0", "id": id, "result": result })).await;
+            self.write(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+                .await;
         }
 
         /// `initialize`, then `initialized`.
         async fn handshake(&mut self) {
             let init = self.read().await;
             assert_eq!(init["method"], "initialize");
-            let capabilities = json!({ "outline": true, "ids.plan": true, "ids.file": true, "callTree": true });
+            let capabilities =
+                json!({ "outline": true, "ids.plan": true, "ids.file": true, "callTree": true });
             self.answer(&init["id"], json!({ "protocol": PROTOCOL_VERSION, "name": "fake", "version": "0", "capabilities": capabilities })).await;
             assert_eq!(self.read().await["method"], "initialized");
         }
@@ -463,8 +610,18 @@ mod tests {
         let (fake_out, core_in) = tokio::io::duplex(64 * 1024);
         let (from_core, _) = split(fake_in);
         let (_, to_core) = split(fake_out);
-        let mut fake = Fake { from_core: BufReader::new(from_core), to_core };
-        let (client, ()) = tokio::join!(async { DriverClient::connect(core_out, core_in, None).await.expect("the handshake works") }, fake.handshake());
+        let mut fake = Fake {
+            from_core: BufReader::new(from_core),
+            to_core,
+        };
+        let (client, ()) = tokio::join!(
+            async {
+                DriverClient::connect(core_out, core_in, None)
+                    .await
+                    .expect("the handshake works")
+            },
+            fake.handshake()
+        );
         (Arc::new(client), fake)
     }
 
@@ -485,7 +642,8 @@ mod tests {
         assert_ne!(first["id"], second["id"]);
         // the later request is answered first; each answer carries the `n` of the request it belongs to
         for request in [&second, &first] {
-            fake.answer(&request["id"], json!({ "echo": request["params"]["n"] })).await;
+            fake.answer(&request["id"], json!({ "echo": request["params"]["n"] }))
+                .await;
         }
 
         assert_eq!(one.await.unwrap().unwrap(), json!({ "echo": 1 }));
@@ -495,13 +653,37 @@ mod tests {
     #[tokio::test]
     async fn a_request_that_times_out_is_cancelled_and_its_late_answer_is_ignored() {
         let (client, mut fake) = connected().await;
-        let slow = client.wire.request(method::OUTLINE, &asked(1), Duration::from_millis(50)).await;
-        assert!(matches!(slow, Err(HostError::Timeout(m)) if m == method::OUTLINE), "{slow:?}");
+        let slow = client
+            .wire
+            .request(method::OUTLINE, &asked(1), Duration::from_millis(50))
+            .await;
+        assert!(
+            matches!(slow, Err(HostError::Timeout(m)) if m == method::OUTLINE),
+            "{slow:?}"
+        );
 
         let request = fake.read().await;
         let cancel = fake.read().await;
-        assert_eq!((cancel["method"].as_str(), &cancel["params"]["id"], cancel.get("id")), (Some("$/cancelRequest"), &request["id"], None), "a notification naming the request");
-        assert!(client.wire.waiting.lock().unwrap().as_ref().unwrap().is_empty(), "nothing is waiting any more");
+        assert_eq!(
+            (
+                cancel["method"].as_str(),
+                &cancel["params"]["id"],
+                cancel.get("id")
+            ),
+            (Some("$/cancelRequest"), &request["id"], None),
+            "a notification naming the request"
+        );
+        assert!(
+            client
+                .wire
+                .waiting
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .is_empty(),
+            "nothing is waiting any more"
+        );
 
         // the answer comes anyway, then the answer to the next request: only the second is used
         fake.answer(&request["id"], json!("late")).await;
@@ -526,7 +708,10 @@ mod tests {
         let _ = task.await;
 
         let cancel = fake.read().await;
-        assert_eq!((cancel["method"].as_str(), &cancel["params"]["id"]), (Some("$/cancelRequest"), &request["id"]));
+        assert_eq!(
+            (cancel["method"].as_str(), &cancel["params"]["id"]),
+            (Some("$/cancelRequest"), &request["id"])
+        );
     }
 
     #[tokio::test]
@@ -567,12 +752,24 @@ mod tests {
         let host = DriverHost::default();
         *host.client.lock().await = Some(client);
 
-        let slow = host.with_client(|client| async move { client.wire.request(method::OUTLINE, &asked(1), Duration::from_millis(50)).await }).await;
+        let slow = host
+            .with_client(|client| async move {
+                client
+                    .wire
+                    .request(method::OUTLINE, &asked(1), Duration::from_millis(50))
+                    .await
+            })
+            .await;
         assert!(matches!(slow, Err(HostError::Timeout(_))), "{slow:?}");
-        assert!(host.client.lock().await.is_some(), "other requests may be running on it: it stays");
+        assert!(
+            host.client.lock().await.is_some(),
+            "other requests may be running on it: it stays"
+        );
 
         // the same driver answers the next request
-        let next = host.with_client(|client| async move { client.call::<Value>(method::OUTLINE, &asked(2)).await });
+        let next = host.with_client(|client| async move {
+            client.call::<Value>(method::OUTLINE, &asked(2)).await
+        });
         let answer = async {
             // the first request, its cancel and the second request arrive in no fixed order: answer the second
             loop {
@@ -587,10 +784,20 @@ mod tests {
         assert_eq!(next.unwrap(), json!("still here"));
 
         drop(fake);
-        let gone = host.with_client(|client| async move { client.call::<Value>(method::OUTLINE, &asked(3)).await }).await;
+        let gone = host
+            .with_client(
+                |client| async move { client.call::<Value>(method::OUTLINE, &asked(3)).await },
+            )
+            .await;
         // the write may fail before the reader has seen the driver's output close: either way the connection is broken
-        assert!(matches!(gone, Err(HostError::Closed(_) | HostError::Io(_))), "{gone:?}");
-        assert!(host.client.lock().await.is_none(), "a driver that is gone is dropped, and the next request starts a new one");
+        assert!(
+            matches!(gone, Err(HostError::Closed(_) | HostError::Io(_))),
+            "{gone:?}"
+        );
+        assert!(
+            host.client.lock().await.is_none(),
+            "a driver that is gone is dropped, and the next request starts a new one"
+        );
     }
 
     #[tokio::test]
@@ -600,17 +807,45 @@ mod tests {
         *host.client.lock().await = Some(client);
 
         let big = json!({ "pad": "x".repeat(200_000) });
-        let stuck = host.with_client(|client| async move { client.wire.request(method::OUTLINE, &big, Duration::from_millis(50)).await });
-        let stuck = tokio::time::timeout(Duration::from_secs(5), stuck).await.expect("the limit covers the write: it does not hang");
+        let stuck = host.with_client(|client| async move {
+            client
+                .wire
+                .request(method::OUTLINE, &big, Duration::from_millis(50))
+                .await
+        });
+        let stuck = tokio::time::timeout(Duration::from_secs(5), stuck)
+            .await
+            .expect("the limit covers the write: it does not hang");
         assert!(matches!(stuck, Err(HostError::Closed(_))), "{stuck:?}");
-        assert!(host.client.lock().await.is_none(), "nothing else would end a driver that is stuck");
+        assert!(
+            host.client.lock().await.is_none(),
+            "nothing else would end a driver that is stuck"
+        );
     }
 
     #[test]
     fn a_call_tree_is_given_more_time_than_an_outline() {
-        let limits: Vec<_> = [method::OUTLINE, method::PLAN_IDS, method::PLAN_FILE_ID, method::CALL_TREE].map(timeout_of).into();
-        assert_eq!(limits, [REQUEST_TIMEOUT, REQUEST_TIMEOUT, REQUEST_TIMEOUT, CALL_TREE_TIMEOUT]);
-        assert_eq!((REQUEST_TIMEOUT.as_secs(), CALL_TREE_TIMEOUT.as_secs()), (10, 30));
+        let limits: Vec<_> = [
+            method::OUTLINE,
+            method::PLAN_IDS,
+            method::PLAN_FILE_ID,
+            method::CALL_TREE,
+        ]
+        .map(timeout_of)
+        .into();
+        assert_eq!(
+            limits,
+            [
+                REQUEST_TIMEOUT,
+                REQUEST_TIMEOUT,
+                REQUEST_TIMEOUT,
+                CALL_TREE_TIMEOUT
+            ]
+        );
+        assert_eq!(
+            (REQUEST_TIMEOUT.as_secs(), CALL_TREE_TIMEOUT.as_secs()),
+            (10, 30)
+        );
     }
 
     // ── one unreadable answer fails its request, not the driver ─────────────────────────────────────────────────────────
@@ -624,8 +859,13 @@ mod tests {
     }
 
     /// The next request is answered, on the same driver (the pointer is the one that was there, and nothing was started again).
-    async fn next_request_is_answered(host: &DriverHost, client: &Arc<DriverClient>, fake: &mut Fake) {
-        let next = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(2)).await });
+    async fn next_request_is_answered(
+        host: &DriverHost,
+        client: &Arc<DriverClient>,
+        fake: &mut Fake,
+    ) {
+        let next =
+            host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(2)).await });
         let answer = async {
             loop {
                 let frame = fake.read().await;
@@ -637,29 +877,54 @@ mod tests {
         };
         let (next, ()) = tokio::join!(next, answer);
         assert_eq!(next.unwrap(), json!("fine"));
-        assert!(Arc::ptr_eq(host.client.lock().await.as_ref().expect("the driver is still held"), client), "the same driver: it was never restarted");
+        assert!(
+            Arc::ptr_eq(
+                host.client
+                    .lock()
+                    .await
+                    .as_ref()
+                    .expect("the driver is still held"),
+                client
+            ),
+            "the same driver: it was never restarted"
+        );
     }
 
     #[tokio::test]
-    async fn a_well_framed_body_that_is_not_json_fails_its_request_with_a_readable_message_and_the_next_one_is_answered() {
+    async fn a_well_framed_body_that_is_not_json_fails_its_request_with_a_readable_message_and_the_next_one_is_answered()
+     {
         let (host, client, mut fake) = hosted().await;
-        let first = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
+        let first =
+            host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
         let garbage = async {
             let request = fake.read().await;
             // the id is in the text, so the right request is the one that fails
-            fake.write_raw(format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{ this is not json"#, request["id"]).as_bytes()).await;
+            fake.write_raw(
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":{},"result":{{ this is not json"#,
+                    request["id"]
+                )
+                .as_bytes(),
+            )
+            .await;
         };
         let (first, ()) = tokio::join!(first, garbage);
         let error = first.unwrap_err();
         assert!(matches!(error, HostError::BadAnswer(_)), "{error:?}");
-        assert!(error.to_string().starts_with("the driver's answer could not be read: "), "{error}");
+        assert!(
+            error
+                .to_string()
+                .starts_with("the driver's answer could not be read: "),
+            "{error}"
+        );
         next_request_is_answered(&host, &client, &mut fake).await;
     }
 
     #[tokio::test]
     async fn a_body_with_no_id_fails_the_one_request_that_is_waiting_and_the_driver_goes_on() {
         let (host, client, mut fake) = hosted().await;
-        let first = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
+        let first =
+            host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
         let garbage = async {
             fake.read().await;
             fake.write_raw(b"not json at all").await;
@@ -670,7 +935,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_two_requests_waiting_a_body_with_no_id_cannot_say_which_so_both_keep_waiting_for_their_own_answers() {
+    async fn with_two_requests_waiting_a_body_with_no_id_cannot_say_which_so_both_keep_waiting_for_their_own_answers()
+     {
         let (client, mut fake) = connected().await;
         let ask = |n: u32| {
             let client = client.clone();
@@ -683,32 +949,47 @@ mod tests {
         fake.answer(&b["id"], json!("b")).await;
         let mut answers = vec![one.await.unwrap().unwrap(), two.await.unwrap().unwrap()];
         answers.sort_by_key(|v| v.as_str().unwrap().to_string());
-        assert_eq!(answers, [json!("a"), json!("b")], "neither was failed for something it did not cause");
+        assert_eq!(
+            answers,
+            [json!("a"), json!("b")],
+            "neither was failed for something it did not cause"
+        );
     }
 
     #[tokio::test]
     async fn an_answer_nested_deeper_than_the_parser_allows_fails_its_request_and_not_the_driver() {
         // the real case: a call tree of a long chain (valid JSON, 200 levels): serde_json's limit is 128
         let (host, client, mut fake) = hosted().await;
-        let first = host.with_client(|c| async move { c.call::<Value>(method::CALL_TREE, &asked(1)).await });
+        let first = host
+            .with_client(|c| async move { c.call::<Value>(method::CALL_TREE, &asked(1)).await });
         let deep = async {
             let request = fake.read().await;
-            let body = format!(r#"{{"jsonrpc":"2.0","id":{},"result":{}{}}}"#, request["id"], "[".repeat(200), "]".repeat(200));
+            let body = format!(
+                r#"{{"jsonrpc":"2.0","id":{},"result":{}{}}}"#,
+                request["id"],
+                "[".repeat(200),
+                "]".repeat(200)
+            );
             fake.write_raw(body.as_bytes()).await;
         };
         let (first, ()) = tokio::join!(first, deep);
         let error = first.unwrap_err();
-        assert!(matches!(&error, HostError::BadAnswer(m) if m.contains("recursion limit")), "{error:?}");
+        assert!(
+            matches!(&error, HostError::BadAnswer(m) if m.contains("recursion limit")),
+            "{error:?}"
+        );
         next_request_is_answered(&host, &client, &mut fake).await;
     }
 
     #[tokio::test]
     async fn an_answer_of_the_wrong_shape_is_one_bad_answer_too() {
         let (host, client, mut fake) = hosted().await;
-        let first = host.with_client(|c| async move { c.call::<Vec<u32>>(method::OUTLINE, &asked(1)).await });
+        let first = host
+            .with_client(|c| async move { c.call::<Vec<u32>>(method::OUTLINE, &asked(1)).await });
         let wrong = async {
             let request = fake.read().await;
-            fake.answer(&request["id"], json!("a string, not a list")).await;
+            fake.answer(&request["id"], json!("a string, not a list"))
+                .await;
         };
         let (first, ()) = tokio::join!(first, wrong);
         assert!(matches!(first, Err(HostError::BadAnswer(_))), "{first:?}");
@@ -718,7 +999,8 @@ mod tests {
     #[tokio::test]
     async fn a_frame_without_content_length_still_ends_the_driver() {
         let (host, _client, mut fake) = hosted().await;
-        let first = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
+        let first =
+            host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
         let broken = async {
             fake.read().await;
             fake.to_core.write_all(b"\r\n").await.unwrap(); // a header block with nothing in it: no Content-Length
@@ -726,16 +1008,23 @@ mod tests {
         };
         let (first, ()) = tokio::join!(first, broken);
         assert!(matches!(first, Err(HostError::Closed(_))), "{first:?}");
-        assert!(host.client.lock().await.is_none(), "after a framing error nothing says where the next frame starts: the driver is dropped");
+        assert!(
+            host.client.lock().await.is_none(),
+            "after a framing error nothing says where the next frame starts: the driver is dropped"
+        );
     }
 
     #[tokio::test]
     async fn stray_output_on_the_drivers_stdout_still_ends_it() {
         let (host, _client, mut fake) = hosted().await;
-        let first = host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
+        let first =
+            host.with_client(|c| async move { c.call::<Value>(method::OUTLINE, &asked(1)).await });
         let stray = async {
             fake.read().await;
-            fake.to_core.write_all(b"hello from a print statement\r\n").await.unwrap();
+            fake.to_core
+                .write_all(b"hello from a print statement\r\n")
+                .await
+                .unwrap();
             fake.to_core.flush().await.unwrap();
         };
         let (first, ()) = tokio::join!(first, stray);
@@ -749,7 +1038,10 @@ mod tests {
             (r#"{"jsonrpc":"2.0","id":7,"result":{ oops"#, Some(7)),
             (r#"{"id" : 42 , "result": [[[["#, Some(42)),
             (r#"{"result":"x","id":9"#, Some(9)),
-            (r#"{"jsonrpc":"2.0","result":"has \"id\":5 inside a string"#, None),
+            (
+                r#"{"jsonrpc":"2.0","result":"has \"id\":5 inside a string"#,
+                None,
+            ),
             (r#"{"id":"a-string-id"}"#, None),
             (r#"{"id":null,"error":{"code":1}"#, None),
             ("not json", None),

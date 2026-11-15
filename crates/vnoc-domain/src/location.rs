@@ -39,11 +39,16 @@ impl RepoPath {
         if path.contains('\\') {
             return Err(RepoPathError::Backslash(path));
         }
-        let drive = path.len() >= 2 && path.as_bytes()[1] == b':' && path.as_bytes()[0].is_ascii_alphabetic();
+        let drive = path.len() >= 2
+            && path.as_bytes()[1] == b':'
+            && path.as_bytes()[0].is_ascii_alphabetic();
         if path.starts_with('/') || drive {
             return Err(RepoPathError::Absolute(path));
         }
-        if path.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..") {
+        if path
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+        {
             return Err(RepoPathError::BadSegment(path));
         }
         Ok(RepoPath(path))
@@ -81,9 +86,17 @@ pub struct LocationKey {
 }
 
 impl LocationKey {
-    pub fn new(path: RepoPath, qualname: impl Into<String>, occurrence: u32) -> Result<LocationKey, LocationKeyError> {
+    pub fn new(
+        path: RepoPath,
+        qualname: impl Into<String>,
+        occurrence: u32,
+    ) -> Result<LocationKey, LocationKeyError> {
         let occurrence = NonZeroU32::new(occurrence).ok_or(LocationKeyError::ZeroOccurrence)?;
-        Ok(LocationKey { path, qualname: qualname.into(), occurrence })
+        Ok(LocationKey {
+            path,
+            qualname: qualname.into(),
+            occurrence,
+        })
     }
     pub fn path(&self) -> &RepoPath {
         &self.path
@@ -112,13 +125,20 @@ impl std::str::FromStr for LocationKey {
     type Err = LocationKeyError;
 
     fn from_str(text: &str) -> Result<LocationKey, LocationKeyError> {
-        let (path, rest) = text.split_once("::").ok_or_else(|| LocationKeyError::Malformed(text.to_string()))?;
+        let (path, rest) = text
+            .split_once("::")
+            .ok_or_else(|| LocationKeyError::Malformed(text.to_string()))?;
         // `#` cannot be in a Python name, so a trailing `#<digits>` is always the occurrence
         let (qualname, occurrence) = match rest.rsplit_once('#') {
-            Some((q, n)) if n.bytes().all(|b| b.is_ascii_digit()) && !n.is_empty() => (q, n.parse().map_err(|_| LocationKeyError::Malformed(text.to_string()))?),
+            Some((q, n)) if n.bytes().all(|b| b.is_ascii_digit()) && !n.is_empty() => (
+                q,
+                n.parse()
+                    .map_err(|_| LocationKeyError::Malformed(text.to_string()))?,
+            ),
             _ => (rest, 1),
         };
-        let path = RepoPath::new(path).map_err(|_| LocationKeyError::Malformed(text.to_string()))?;
+        let path =
+            RepoPath::new(path).map_err(|_| LocationKeyError::Malformed(text.to_string()))?;
         LocationKey::new(path, qualname, occurrence)
     }
 }
@@ -146,10 +166,28 @@ mod tests {
 
     #[test]
     fn repo_paths_that_cannot_be_repo_relative_are_refused() {
-        for bad in ["", "/etc/x.py", "C:/x.py", "c:\\x.py", "a\\b.py", "a//b.py", "a/./b.py", "../x.py", "a/../b.py", "a/b/", "a\0b"] {
+        for bad in [
+            "",
+            "/etc/x.py",
+            "C:/x.py",
+            "c:\\x.py",
+            "a\\b.py",
+            "a//b.py",
+            "a/./b.py",
+            "../x.py",
+            "a/../b.py",
+            "a/b/",
+            "a\0b",
+        ] {
             assert!(RepoPath::new(bad).is_err(), "{bad:?} should be refused");
         }
-        for good in ["a.py", "src/orders.py", "my dir/mod.py", "caf\u{e9}/\u{e9}.py", ".vnoc/nodes/ab/x/node.toml"] {
+        for good in [
+            "a.py",
+            "src/orders.py",
+            "my dir/mod.py",
+            "caf\u{e9}/\u{e9}.py",
+            ".vnoc/nodes/ab/x/node.toml",
+        ] {
             assert!(RepoPath::new(good).is_ok(), "{good:?} should be accepted");
         }
     }
@@ -165,9 +203,18 @@ mod tests {
     #[test]
     fn a_location_shows_path_qualname_and_the_occurrence_after_the_first() {
         let p = RepoPath::new("src/a.py").unwrap();
-        assert_eq!(LocationKey::new(p.clone(), "C.f", 1).unwrap().to_string(), "src/a.py::C.f");
-        assert_eq!(LocationKey::new(p.clone(), "C.f", 2).unwrap().to_string(), "src/a.py::C.f#2");
-        assert_eq!(LocationKey::new(p, "C.f", 0), Err(LocationKeyError::ZeroOccurrence));
+        assert_eq!(
+            LocationKey::new(p.clone(), "C.f", 1).unwrap().to_string(),
+            "src/a.py::C.f"
+        );
+        assert_eq!(
+            LocationKey::new(p.clone(), "C.f", 2).unwrap().to_string(),
+            "src/a.py::C.f#2"
+        );
+        assert_eq!(
+            LocationKey::new(p, "C.f", 0),
+            Err(LocationKeyError::ZeroOccurrence)
+        );
     }
 
     #[test]

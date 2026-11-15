@@ -12,8 +12,13 @@ use tower::ServiceBuilder;
 
 #[tokio::main]
 async fn main() {
-    let filter = tracing_subscriber::EnvFilter::try_from_env("VNOC_LOG").unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,vnoc=info"));
-    tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).with_ansi(false).init();
+    let filter = tracing_subscriber::EnvFilter::try_from_env("VNOC_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,vnoc=info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .init();
 
     let (server, _client) = MainLoop::new_server(|client| {
         ServiceBuilder::new()
@@ -25,7 +30,10 @@ async fn main() {
     });
 
     #[cfg(unix)]
-    let (stdin, stdout) = (async_lsp::stdio::PipeStdin::lock_tokio().expect("stdin is a pipe"), async_lsp::stdio::PipeStdout::lock_tokio().expect("stdout is a pipe"));
+    let (stdin, stdout) = (
+        async_lsp::stdio::PipeStdin::lock_tokio().expect("stdin is a pipe"),
+        async_lsp::stdio::PipeStdout::lock_tokio().expect("stdout is a pipe"),
+    );
     #[cfg(not(unix))]
     let (stdin, stdout) = (
         tokio_util::compat::TokioAsyncReadCompatExt::compat(tokio::io::stdin()),

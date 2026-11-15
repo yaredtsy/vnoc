@@ -57,7 +57,18 @@ pub fn outline(text: &str) -> OutlineResult {
             }
         })
         .collect();
-    let syntax_errors = found.syntax_errors.iter().map(|e| SyntaxError { range: lines.range(e.range), message: e.message.clone() }).collect();
+    let syntax_errors = found
+        .syntax_errors
+        .iter()
+        .map(|e| SyntaxError {
+            range: lines.range(e.range),
+            message: e.message.clone(),
+        })
+        .collect();
     // the outline's own `file_marker` is not filled for Python: the header has its own label
-    OutlineResult { defs, file_id: file_id::read(text), syntax_errors }
+    OutlineResult {
+        defs,
+        file_id: file_id::read(text),
+        syntax_errors,
+    }
 }

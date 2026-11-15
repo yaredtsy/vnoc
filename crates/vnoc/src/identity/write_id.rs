@@ -27,7 +27,10 @@ pub enum WriteIdError {
     UserData(#[from] UserDataError),
 }
 
-pub async fn write_id(mut env: Env<'_>, params: WriteIdParams) -> Result<WriteIdResult, WriteIdError> {
+pub async fn write_id(
+    mut env: Env<'_>,
+    params: WriteIdParams,
+) -> Result<WriteIdResult, WriteIdError> {
     // the index answers who is documented here, in the same lock as the target: a node whose ID is elsewhere in the code is not this one,
     // however old its stored anchor is
     let (location, target, id) = {
@@ -47,12 +50,26 @@ pub async fn write_id(mut env: Env<'_>, params: WriteIdParams) -> Result<WriteId
     if !data.settings()?.markers {
         return Err(WriteIdError::IdsOff);
     }
-    let document = document_for(&env, &target, &location, &params.key, params.document.as_ref())?;
+    let document = document_for(
+        &env,
+        &target,
+        &location,
+        &params.key,
+        params.document.as_ref(),
+    )?;
 
     if let Err(reason) = write_marker(&mut env, &target, &location, &id, document).await {
-        return Ok(WriteIdResult { written: false, notice: Some(format!("The ID could not be written ({reason}); the docs stay attached by name.")) });
+        return Ok(WriteIdResult {
+            written: false,
+            notice: Some(format!(
+                "The ID could not be written ({reason}); the docs stay attached by name."
+            )),
+        });
     }
     toml.set_id_in_code(IdInCode::Yes);
     data.write_node_toml(&id, &toml)?;
-    Ok(WriteIdResult { written: true, notice: None })
+    Ok(WriteIdResult {
+        written: true,
+        notice: None,
+    })
 }

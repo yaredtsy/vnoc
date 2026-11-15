@@ -36,7 +36,11 @@ impl<F: Future> Future for Timed<'_, F> {
         let took = started.elapsed();
         if took > *this.limit {
             this.counter.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!("handler `{}` held a tokio worker for {took:?} in one poll (limit {:?}): move the blocking work to spawn_blocking", this.name, this.limit);
+            tracing::warn!(
+                "handler `{}` held a tokio worker for {took:?} in one poll (limit {:?}): move the blocking work to spawn_blocking",
+                this.name,
+                this.limit
+            );
         }
         out
     }
@@ -44,12 +48,27 @@ impl<F: Future> Future for Timed<'_, F> {
 
 /// Wrap a handler's future: `timed("structure", async move { … })`.
 pub fn timed<F: Future>(name: &'static str, inner: F) -> Timed<'static, F> {
-    Timed { name, limit: LIMIT, counter: &SLOW_POLLS, inner }
+    Timed {
+        name,
+        limit: LIMIT,
+        counter: &SLOW_POLLS,
+        inner,
+    }
 }
 
 /// The same, with your own limit and counter (so a test does not share a global with other tests).
-pub fn timed_with<'c, F: Future>(name: &'static str, limit: Duration, counter: &'c AtomicU32, inner: F) -> Timed<'c, F> {
-    Timed { name, limit, counter, inner }
+pub fn timed_with<'c, F: Future>(
+    name: &'static str,
+    limit: Duration,
+    counter: &'c AtomicU32,
+    inner: F,
+) -> Timed<'c, F> {
+    Timed {
+        name,
+        limit,
+        counter,
+        inner,
+    }
 }
 
 #[cfg(test)]
@@ -59,7 +78,10 @@ mod tests {
     #[tokio::test]
     async fn a_handler_that_blocks_the_worker_is_counted() {
         let counter = AtomicU32::new(0);
-        timed_with("blocks", Duration::from_millis(50), &counter, async { std::thread::sleep(Duration::from_millis(90)) }).await;
+        timed_with("blocks", Duration::from_millis(50), &counter, async {
+            std::thread::sleep(Duration::from_millis(90))
+        })
+        .await;
         assert_eq!(counter.load(Ordering::Relaxed), 1);
     }
 
@@ -67,7 +89,10 @@ mod tests {
     async fn a_handler_that_waits_properly_is_not() {
         let counter = AtomicU32::new(0);
         // 120 ms of waiting, but every poll is short: the worker was free the whole time
-        timed_with("waits", Duration::from_millis(50), &counter, async { tokio::time::sleep(Duration::from_millis(120)).await }).await;
+        timed_with("waits", Duration::from_millis(50), &counter, async {
+            tokio::time::sleep(Duration::from_millis(120)).await
+        })
+        .await;
         assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 
@@ -75,7 +100,9 @@ mod tests {
     async fn blocking_work_moved_to_spawn_blocking_is_not() {
         let counter = AtomicU32::new(0);
         timed_with("offloaded", Duration::from_millis(50), &counter, async {
-            tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(90))).await.unwrap();
+            tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(90)))
+                .await
+                .unwrap();
         })
         .await;
         assert_eq!(counter.load(Ordering::Relaxed), 0);

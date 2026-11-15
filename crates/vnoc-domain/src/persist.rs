@@ -16,8 +16,14 @@ pub struct NoFreeId(pub u32);
 ///
 /// `is_taken` is "a node folder with this ID exists" (in `nodes/` or in the trash). **After this the ID is opaque**: no code may
 /// derive it again to check a node.
-pub fn first_free_id(location: &LocationKey, is_taken: impl Fn(&NodeId) -> bool) -> Result<NodeId, NoFreeId> {
-    (1..=MAX_ATTEMPTS).map(|attempt| NodeId::derive(location, attempt)).find(|id| !is_taken(id)).ok_or(NoFreeId(MAX_ATTEMPTS))
+pub fn first_free_id(
+    location: &LocationKey,
+    is_taken: impl Fn(&NodeId) -> bool,
+) -> Result<NodeId, NoFreeId> {
+    (1..=MAX_ATTEMPTS)
+        .map(|attempt| NodeId::derive(location, attempt))
+        .find(|id| !is_taken(id))
+        .ok_or(NoFreeId(MAX_ATTEMPTS))
 }
 
 #[cfg(test)]
@@ -41,6 +47,9 @@ mod tests {
 
     #[test]
     fn a_broken_taken_check_stops() {
-        assert!(matches!(first_free_id(&loc(), |_| true), Err(NoFreeId(MAX_ATTEMPTS))));
+        assert!(matches!(
+            first_free_id(&loc(), |_| true),
+            Err(NoFreeId(MAX_ATTEMPTS))
+        ));
     }
 }

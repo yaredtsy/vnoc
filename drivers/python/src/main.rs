@@ -20,12 +20,20 @@ use anyhow::anyhow;
 use lsp_server::{Connection, ErrorCode, Message, Request, RequestId, Response};
 use python_analysis::Cancel;
 use serde_json::Value;
-use vnoc_driver_protocol::{InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanFileIdParams, PlanIdsParams, method};
+use vnoc_driver_protocol::{
+    InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanFileIdParams,
+    PlanIdsParams, method,
+};
 
 fn main() -> anyhow::Result<()> {
     // Filtered by default: the type checker underneath traces every query, which is tens of MB per run.
-    let filter = tracing_subscriber::EnvFilter::try_from_env("VNOC_LOG").unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,vnoc_driver_python=info"));
-    tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).with_ansi(false).init();
+    let filter = tracing_subscriber::EnvFilter::try_from_env("VNOC_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,vnoc_driver_python=info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .init();
 
     let (conn, io) = Connection::stdio();
     if let Err(refused) = handshake(&conn) {
@@ -43,7 +51,10 @@ fn main() -> anyhow::Result<()> {
     if call_tree::WIRE_FORMATS_READ.contains(&wire_format) {
         tracing::info!("analyzer wire format {wire_format}");
     } else {
-        tracing::warn!("analyzer wire format {wire_format} is not one this driver was checked against {:?}", call_tree::WIRE_FORMATS_READ);
+        tracing::warn!(
+            "analyzer wire format {wire_format} is not one this driver was checked against {:?}",
+            call_tree::WIRE_FORMATS_READ
+        );
     }
     let worker = worker::spawn();
     let in_flight: Arc<Mutex<HashMap<RequestId, Arc<InFlight>>>> = Arc::default();
@@ -54,12 +65,19 @@ fn main() -> anyhow::Result<()> {
                     break;
                 }
                 let received = Instant::now();
-                let request = Arc::new(InFlight { flag: Arc::new(AtomicBool::new(false)), cancel: Cancel::new().with_deadline(received + call_deadline()) });
-                in_flight.lock().unwrap().insert(req.id.clone(), request.clone());
+                let request = Arc::new(InFlight {
+                    flag: Arc::new(AtomicBool::new(false)),
+                    cancel: Cancel::new().with_deadline(received + call_deadline()),
+                });
+                in_flight
+                    .lock()
+                    .unwrap()
+                    .insert(req.id.clone(), request.clone());
                 let (sender, in_flight) = (conn.sender.clone(), in_flight.clone());
                 // how an answer gets out, and forgets the request
                 let reply = {
-                    let (sender, in_flight, id) = (sender.clone(), in_flight.clone(), req.id.clone());
+                    let (sender, in_flight, id) =
+                        (sender.clone(), in_flight.clone(), req.id.clone());
                     Box::new(move |resp: Response| {
                         in_flight.lock().unwrap().remove(&id);
                         let _ = sender.send(Message::Response(resp));
@@ -67,13 +85,28 @@ fn main() -> anyhow::Result<()> {
                 };
                 if req.method == method::CALL_TREE || req.method == method::ENVIRONMENT_INPUTS {
                     let call_tree = req.method == method::CALL_TREE;
-                    let job = worker::Job { id: req.id, params: req.params, flag: request.flag.clone(), cancel: request.cancel.clone(), reply };
-                    let _ = worker.send(if call_tree { worker::Task::CallTree(job) } else { worker::Task::EnvironmentInputs(job) });
+                    let job = worker::Job {
+                        id: req.id,
+                        params: req.params,
+                        flag: request.flag.clone(),
+                        cancel: request.cancel.clone(),
+                        reply,
+                    };
+                    let _ = worker.send(if call_tree {
+                        worker::Task::CallTree(job)
+                    } else {
+                        worker::Task::EnvironmentInputs(job)
+                    });
                 } else if test_hooks() && req.method.starts_with("vnoc/test/") {
                     match req.method.as_str() {
                         "vnoc/test/deadline" => reply(set_test_deadline(req.id, &req.params)),
                         _ => {
-                            let _ = worker.send(worker::Task::Test { id: req.id, method: req.method, params: req.params, reply });
+                            let _ = worker.send(worker::Task::Test {
+                                id: req.id,
+                                method: req.method,
+                                params: req.params,
+                                reply,
+                            });
                         }
                     }
                 } else {
@@ -84,8 +117,12 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             Message::Notification(n) if n.method == "$/cancelRequest" => {
-                let id = n.params.get("id").and_then(|v| serde_json::from_value::<RequestId>(v.clone()).ok());
-                if let Some(request) = id.and_then(|id| in_flight.lock().unwrap().get(&id).cloned()) {
+                let id = n
+                    .params
+                    .get("id")
+                    .and_then(|v| serde_json::from_value::<RequestId>(v.clone()).ok());
+                if let Some(request) = id.and_then(|id| in_flight.lock().unwrap().get(&id).cloned())
+                {
                     request.flag.store(true, Ordering::Relaxed);
                     request.cancel.cancel();
                 }
@@ -129,17 +166,27 @@ fn test_hooks() -> bool {
 }
 
 fn set_test_deadline(id: RequestId, params: &Value) -> Response {
-    TEST_DEADLINE_MS.store(params.get("ms").and_then(Value::as_u64).unwrap_or(u64::MAX), Ordering::Relaxed);
+    TEST_DEADLINE_MS.store(
+        params.get("ms").and_then(Value::as_u64).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
     Response::new_ok(id, Value::Null)
 }
 
 /// `initialize { protocol: 1 }`: refuse a protocol we do not speak, with the reason.
 fn handshake(conn: &Connection) -> anyhow::Result<()> {
     let (id, params) = conn.initialize_start()?;
-    let asked = serde_json::from_value::<InitializeParams>(params).ok().map(|p| p.protocol);
+    let asked = serde_json::from_value::<InitializeParams>(params)
+        .ok()
+        .map(|p| p.protocol);
     if asked != Some(PROTOCOL_VERSION) {
-        let reason = format!("this driver speaks protocol {PROTOCOL_VERSION}, the core asked for {asked:?}");
-        conn.sender.send(Message::Response(Response::new_err(id, ErrorCode::InvalidRequest as i32, reason.clone())))?;
+        let reason =
+            format!("this driver speaks protocol {PROTOCOL_VERSION}, the core asked for {asked:?}");
+        conn.sender.send(Message::Response(Response::new_err(
+            id,
+            ErrorCode::InvalidRequest as i32,
+            reason.clone(),
+        )))?;
         return Err(anyhow!(reason));
     }
     let reply = InitializeResult {
@@ -147,14 +194,24 @@ fn handshake(conn: &Connection) -> anyhow::Result<()> {
         name: "python".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         // present even when small: stock LSP clients refuse a reply without it. Optional methods are announced here.
-        capabilities: [("outline", true), ("ids.plan", true), ("ids.file", true), ("callTree", true), ("environmentInputs", true)].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        capabilities: [
+            ("outline", true),
+            ("ids.plan", true),
+            ("ids.file", true),
+            ("callTree", true),
+            ("environmentInputs", true),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect(),
     };
     conn.initialize_finish(id, serde_json::to_value(reply)?)?;
     Ok(())
 }
 
 fn respond(req: Request, cancel: &AtomicBool) -> Response {
-    let cancelled = |id| Response::new_err(id, ErrorCode::RequestCanceled as i32, "cancelled".into());
+    let cancelled =
+        |id| Response::new_err(id, ErrorCode::RequestCanceled as i32, "cancelled".into());
     if cancel.load(Ordering::Relaxed) {
         return cancelled(req.id);
     }
@@ -162,7 +219,13 @@ fn respond(req: Request, cancel: &AtomicBool) -> Response {
         method::OUTLINE => outline_request(&req.params),
         method::PLAN_IDS => plan_ids_request(req.params.clone()),
         method::PLAN_FILE_ID => plan_file_id_request(req.params.clone()),
-        other => return Response::new_err(req.id, ErrorCode::MethodNotFound as i32, format!("unknown method {other}")),
+        other => {
+            return Response::new_err(
+                req.id,
+                ErrorCode::MethodNotFound as i32,
+                format!("unknown method {other}"),
+            );
+        }
     };
     // A running analysis cannot be interrupted (the analyzer has no cancel flag, VS-D69): its answer is dropped.
     if cancel.load(Ordering::Relaxed) {
@@ -180,30 +243,52 @@ struct Failure {
 }
 
 fn invalid(message: impl Into<String>) -> Failure {
-    Failure { code: ErrorCode::InvalidParams, message: message.into() }
+    Failure {
+        code: ErrorCode::InvalidParams,
+        message: message.into(),
+    }
 }
 
 fn outline_request(params: &Value) -> Result<Value, Failure> {
     if params.get("fingerprints").and_then(Value::as_bool) == Some(true) {
-        return Err(invalid("`fingerprints` is not supported by this driver version"));
+        return Err(invalid(
+            "`fingerprints` is not supported by this driver version",
+        ));
     }
-    let p: OutlineParams = serde_json::from_value(params.clone()).map_err(|e| invalid(e.to_string()))?;
+    let p: OutlineParams =
+        serde_json::from_value(params.clone()).map_err(|e| invalid(e.to_string()))?;
     let text = match (p.text, p.root, p.file) {
         (Some(text), _, _) => text,
         (None, Some(root), Some(file)) => {
-            std::fs::read_to_string(std::path::Path::new(&root).join(&file)).map_err(|e| Failure { code: ErrorCode::InternalError, message: format!("cannot read {file}: {e}") })?
+            std::fs::read_to_string(std::path::Path::new(&root).join(&file)).map_err(|e| {
+                Failure {
+                    code: ErrorCode::InternalError,
+                    message: format!("cannot read {file}: {e}"),
+                }
+            })?
         }
         _ => return Err(invalid("give `text`, or `root` and `file`")),
     };
-    serde_json::to_value(outline::outline(&text)).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
+    serde_json::to_value(outline::outline(&text)).map_err(|e| Failure {
+        code: ErrorCode::InternalError,
+        message: e.to_string(),
+    })
 }
 
 fn plan_ids_request(params: Value) -> Result<Value, Failure> {
-    let params: PlanIdsParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
-    serde_json::to_value(plan_ids::plan(params)?).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
+    let params: PlanIdsParams =
+        serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
+    serde_json::to_value(plan_ids::plan(params)?).map_err(|e| Failure {
+        code: ErrorCode::InternalError,
+        message: e.to_string(),
+    })
 }
 
 fn plan_file_id_request(params: Value) -> Result<Value, Failure> {
-    let params: PlanFileIdParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
-    serde_json::to_value(file_id::plan(params)).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
+    let params: PlanFileIdParams =
+        serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
+    serde_json::to_value(file_id::plan(params)).map_err(|e| Failure {
+        code: ErrorCode::InternalError,
+        message: e.to_string(),
+    })
 }

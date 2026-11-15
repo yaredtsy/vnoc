@@ -13,13 +13,20 @@ pub const FILE_NAME: &str = ".vnoc-id";
 
 /// What the file says, for the one who finds it.
 pub fn render(id: &NodeId) -> String {
-    format!("# V-NOC folder ID. It keeps this folder's docs attached when the folder is renamed or moved.\n# Safe to commit. Do not copy this file into another folder.\nid = \"{id}\"\n")
+    format!(
+        "# V-NOC folder ID. It keeps this folder's docs attached when the folder is renamed or moved.\n# Safe to commit. Do not copy this file into another folder.\nid = \"{id}\"\n"
+    )
 }
 
 /// The ID in a `.vnoc-id` file. Other keys are ignored. `Err` says what is wrong, for the problems list.
 pub fn parse(text: &str) -> Result<NodeId, String> {
-    let doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.message().to_string())?;
-    let id = doc.get("id").and_then(|id| id.as_str()).ok_or("`id` (a string) is missing")?;
+    let doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e: toml_edit::TomlError| e.message().to_string())?;
+    let id = doc
+        .get("id")
+        .and_then(|id| id.as_str())
+        .ok_or("`id` (a string) is missing")?;
     NodeId::parse(id).map_err(|e| e.to_string())
 }
 
@@ -43,7 +50,12 @@ mod tests {
 
     #[test]
     fn unknown_keys_are_ignored_and_bad_content_says_why() {
-        assert_eq!(parse(&format!("id = \"{ID}\"\nfuture = 1\n")).unwrap().to_string(), ID);
+        assert_eq!(
+            parse(&format!("id = \"{ID}\"\nfuture = 1\n"))
+                .unwrap()
+                .to_string(),
+            ID
+        );
         assert!(parse("").unwrap_err().contains("missing"));
         assert!(parse("id = [").is_err());
         assert!(parse("id = \"not an id\"").is_err());
@@ -56,7 +68,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let id = NodeId::parse(ID).unwrap();
         write(&dir, &id).unwrap();
-        assert_eq!(write(&dir, &id).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
-        assert_eq!(parse(&std::fs::read_to_string(dir.join(FILE_NAME)).unwrap()), Ok(id));
+        assert_eq!(
+            write(&dir, &id).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(
+            parse(&std::fs::read_to_string(dir.join(FILE_NAME)).unwrap()),
+            Ok(id)
+        );
     }
 }

@@ -17,20 +17,30 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
-use async_lsp::lsp_types::{InitializeParams, InitializeResult, InitializedParams, ServerCapabilities, ServerInfo, notification, request};
+use async_lsp::lsp_types::{
+    InitializeParams, InitializeResult, InitializedParams, ServerCapabilities, ServerInfo,
+    notification, request,
+};
 use async_lsp::router::Router;
 use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 
 use crate::calls::{self, Merged};
 use crate::driver_host::{DriverHost, HostError};
+use crate::identity::{self, Env};
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
-use crate::identity::{self, Env};
-use crate::protocol::{Attach, AttachParams, AttachResult, CallSite, CallTree, CallTreeNode, CallTreeParams, CallTreeResult, DocInfo, Docs, DocsParams, FilesChanged, HasCalls, HasCallsParams, HasCallsResult, FilesChangedParams, IndexChanged, IndexChangedParams, Ping, PingResult, ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Trash, TrashItem, TrashList, TrashParams, MovePlan, Stats, Structure, StructureResult, TrashInfo, TrashInfoResult, WriteId, WriteIdParams, WriteIdResult};
+use crate::protocol::{
+    Attach, AttachParams, AttachResult, CallSite, CallTree, CallTreeNode, CallTreeParams,
+    CallTreeResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, HasCalls,
+    HasCallsParams, HasCallsResult, IndexChanged, IndexChangedParams, MovePlan, Ping, PingResult,
+    ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan,
+    RestorePlanParams, Stats, Structure, StructureResult, Trash, TrashInfo, TrashInfoResult,
+    TrashItem, TrashList, TrashParams, WriteId, WriteIdParams, WriteIdResult,
+};
 use crate::userdata::{TrashError, UserData};
+use crate::watchdog::timed;
 use vnoc_domain::{LocationKey, NodeId};
 use vnoc_driver_protocol::CallEntry;
-use crate::watchdog::timed;
 
 /// Where the first build is.
 #[derive(Clone)]
@@ -77,12 +87,18 @@ impl Core {
             attaching: tokio::sync::Mutex::new(()),
             everything_pending: AtomicBool::new(false),
         };
-        Core { client, host: Arc::default(), state: Arc::new(state) }
+        Core {
+            client,
+            host: Arc::default(),
+            state: Arc::new(state),
+        }
     }
 
     /// Starts an update in the background.
     fn spawn_update(&self, work: Work) {
-        if matches!(work, Work::Everything) && self.state.everything_pending.swap(true, Ordering::AcqRel) {
+        if matches!(work, Work::Everything)
+            && self.state.everything_pending.swap(true, Ordering::AcqRel)
+        {
             tracing::debug!("a full read is already waiting: dropped");
             return;
         }
@@ -91,15 +107,27 @@ impl Core {
     }
 
     async fn update(&self, work: Work) {
-        let Some(project) = self.state.project.get() else { return };
+        let Some(project) = self.state.project.get() else {
+            return;
+        };
         let _only_one = self.state.one_at_a_time.lock().await;
         if matches!(work, Work::Everything) {
-            self.state.everything_pending.store(false, Ordering::Release);
+            self.state
+                .everything_pending
+                .store(false, Ordering::Release);
         }
         // until one build has worked, every update is a full one (this also retries a build that failed)
         let first = !matches!(*self.state.status.borrow(), Status::Ready);
         let result = match &work {
-            Work::Files(paths) if !first => refresh(project, &self.host, &self.state.index, Touched::Files(paths)).await,
+            Work::Files(paths) if !first => {
+                refresh(
+                    project,
+                    &self.host,
+                    &self.state.index,
+                    Touched::Files(paths),
+                )
+                .await
+            }
             _ => refresh(project, &self.host, &self.state.index, Touched::All).await,
         };
         match result {
@@ -112,7 +140,9 @@ impl Core {
             // after a first success the old index stays; the driver was dropped, so the next update starts a new one
             Err(e) if first => {
                 tracing::error!("the first build failed: {e}");
-                self.state.status.send_replace(Status::Failed(e.to_string()));
+                self.state
+                    .status
+                    .send_replace(Status::Failed(e.to_string()));
             }
             Err(e) => tracing::warn!("update failed, the index is as it was: {e}"),
         }
@@ -120,7 +150,10 @@ impl Core {
 
     fn announce(&self) {
         let revision = self.state.index.read().unwrap().revision();
-        if let Err(e) = self.client.notify::<IndexChanged>(IndexChangedParams { revision }) {
+        if let Err(e) = self
+            .client
+            .notify::<IndexChanged>(IndexChangedParams { revision })
+        {
             tracing::warn!("could not tell the editor about revision {revision}: {e}");
         }
     }
@@ -138,7 +171,13 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<request::Shutdown, _>(|_, _| async { Ok(()) })
         .notification::<notification::Initialized>(initialized)
         .request::<Ping, _>(|_, _ignored| {
-            timed("ping", async { Ok(PingResult { pong: true, pid: std::process::id(), version: env!("CARGO_PKG_VERSION").to_string() }) })
+            timed("ping", async {
+                Ok(PingResult {
+                    pong: true,
+                    pid: std::process::id(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                })
+            })
         })
         .request::<Structure, _>(structure)
         .request::<ProjectInfo, _>(project_info)
@@ -164,7 +203,12 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         })
         .unhandled_request(|_, r| {
             let method = r.method.clone();
-            async move { Err(ResponseError::new(ErrorCode::METHOD_NOT_FOUND, format!("unknown method `{method}`"))) }
+            async move {
+                Err(ResponseError::new(
+                    ErrorCode::METHOD_NOT_FOUND,
+                    format!("unknown method `{method}`"),
+                ))
+            }
         });
     router
 }
@@ -173,24 +217,43 @@ pub fn router(client: ClientSocket) -> Router<Core> {
 ///
 /// `initialize` reads `initializationOptions`: `driverPath` (the extension resolves it, and ignores workspace settings in
 /// Restricted Mode; the `VNOC_DRIVER` environment variable is a fallback for tests and terminals) and `root`, the opened folder.
-fn initialize(core: &mut Core, params: InitializeParams) -> impl std::future::Future<Output = Result<InitializeResult, ResponseError>> + Send + use<> {
-    let option = |key: &str| params.initialization_options.as_ref().and_then(|o| o.get(key)).and_then(|v| v.as_str()).map(PathBuf::from);
-    core.host.set_path(option("driverPath").or_else(|| std::env::var_os("VNOC_DRIVER").map(PathBuf::from)));
+fn initialize(
+    core: &mut Core,
+    params: InitializeParams,
+) -> impl std::future::Future<Output = Result<InitializeResult, ResponseError>> + Send + use<> {
+    let option = |key: &str| {
+        params
+            .initialization_options
+            .as_ref()
+            .and_then(|o| o.get(key))
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+    };
+    core.host.set_path(
+        option("driverPath").or_else(|| std::env::var_os("VNOC_DRIVER").map(PathBuf::from)),
+    );
     match option("root").map(|root| Project::open(&root)) {
         Some(Ok(project)) => {
             let _ = core.state.project.set(project);
         }
         Some(Err(e)) => {
-            core.state.status.send_replace(Status::Failed(e.to_string()));
+            core.state
+                .status
+                .send_replace(Status::Failed(e.to_string()));
         }
         None => {
-            core.state.status.send_replace(Status::Failed("no folder is open: V-NOC shows the code of the folder you opened".into()));
+            core.state.status.send_replace(Status::Failed(
+                "no folder is open: V-NOC shows the code of the folder you opened".into(),
+            ));
         }
     }
     timed("initialize", async {
         Ok(InitializeResult {
             capabilities: ServerCapabilities::default(),
-            server_info: Some(ServerInfo { name: "vnoc".into(), version: Some(env!("CARGO_PKG_VERSION").into()) }),
+            server_info: Some(ServerInfo {
+                name: "vnoc".into(),
+                version: Some(env!("CARGO_PKG_VERSION").into()),
+            }),
         })
     })
 }
@@ -201,20 +264,37 @@ fn initialized(core: &mut Core, _: InitializedParams) -> ControlFlow<async_lsp::
     ControlFlow::Continue(())
 }
 
-fn files_changed(core: &mut Core, params: FilesChangedParams) -> ControlFlow<async_lsp::Result<()>> {
-    core.spawn_update(Work::Files(params.paths.into_iter().map(PathBuf::from).collect()));
+fn files_changed(
+    core: &mut Core,
+    params: FilesChangedParams,
+) -> ControlFlow<async_lsp::Result<()>> {
+    core.spawn_update(Work::Files(
+        params.paths.into_iter().map(PathBuf::from).collect(),
+    ));
     ControlFlow::Continue(())
 }
 
 /// `vnoc/structure`: the tree, from the index. Waits for the first build.
-fn structure(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<StructureResult, ResponseError>> + Send + use<> {
+fn structure(
+    core: &mut Core,
+    _ignored: serde_json::Value,
+) -> impl std::future::Future<Output = Result<StructureResult, ResponseError>> + Send + use<> {
     let (state, host) = (core.state.clone(), core.host.clone());
     timed("structure", async move {
-        let status = state.status.subscribe().wait_for(|s| !matches!(s, Status::Building)).await.map_err(internal)?.clone();
+        let status = state
+            .status
+            .subscribe()
+            .wait_for(|s| !matches!(s, Status::Building))
+            .await
+            .map_err(internal)?
+            .clone();
         if let Status::Failed(message) = status {
             return Err(internal(message));
         }
-        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
         let capabilities = host.capabilities().await;
         let index = state.index.read().unwrap();
         let root = index.tree(&project.name(), project.prefix());
@@ -224,7 +304,12 @@ fn structure(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::
             git_root: project.git_root().to_string_lossy().into_owned(),
             capabilities,
             root,
-            stats: Stats { folders: folders.saturating_sub(1), files, classes, functions }, // the opened folder is not a folder under itself
+            stats: Stats {
+                folders: folders.saturating_sub(1),
+                files,
+                classes,
+                functions,
+            }, // the opened folder is not a folder under itself
             truncated: index.truncated(),
             failed: index.failed(),
             missing: index.missing(),
@@ -234,22 +319,45 @@ fn structure(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::
 }
 
 /// `vnoc/projectInfo`: whether the first-attach question still has to be asked.
-fn project_info(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<ProjectInfoResult, ResponseError>> + Send + use<> {
+fn project_info(
+    core: &mut Core,
+    _ignored: serde_json::Value,
+) -> impl std::future::Future<Output = Result<ProjectInfoResult, ResponseError>> + Send + use<> {
     let state = core.state.clone();
     timed("projectInfo", async move {
-        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
-        let settings = UserData::new(project.git_root()).settings().map_err(internal)?;
-        Ok(ProjectInfoResult { initialized: settings.initialized, markers: settings.markers })
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
+        let settings = UserData::new(project.git_root())
+            .settings()
+            .map_err(internal)?;
+        Ok(ProjectInfoResult {
+            initialized: settings.initialized,
+            markers: settings.markers,
+        })
     })
 }
 
 /// `vnoc/attach`: see `identity::attach`.
-fn attach(core: &mut Core, params: AttachParams) -> impl std::future::Future<Output = Result<AttachResult, ResponseError>> + Send + use<> {
+fn attach(
+    core: &mut Core,
+    params: AttachParams,
+) -> impl std::future::Future<Output = Result<AttachResult, ResponseError>> + Send + use<> {
     let core = core.clone();
     timed("attach", async move {
         let _one_at_a_time = core.state.attaching.lock().await;
-        let project = core.state.project.get().ok_or_else(|| internal("no folder is open"))?;
-        let env = Env { project, index: &core.state.index, host: &core.host, client: core.client.clone() };
+        let project = core
+            .state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
+        let env = Env {
+            project,
+            index: &core.state.index,
+            host: &core.host,
+            client: core.client.clone(),
+        };
         let result = identity::attach(env, params).await.map_err(internal)?;
         core.spawn_update(Work::Files(vec![])); // the new node and doc are in `.vnoc/` now: the tree shows them
         Ok(result)
@@ -257,13 +365,25 @@ fn attach(core: &mut Core, params: AttachParams) -> impl std::future::Future<Out
 }
 
 /// `vnoc/relink`: see `identity::relink`. A refusal is an `INVALID_PARAMS` answer with the reason.
-fn relink(core: &mut Core, params: RelinkParams) -> impl std::future::Future<Output = Result<RelinkResult, ResponseError>> + Send + use<> {
+fn relink(
+    core: &mut Core,
+    params: RelinkParams,
+) -> impl std::future::Future<Output = Result<RelinkResult, ResponseError>> + Send + use<> {
     let core = core.clone();
     timed("relink", async move {
         // the same lock as attach: both write an ID and a node.toml
         let _one_at_a_time = core.state.attaching.lock().await;
-        let project = core.state.project.get().ok_or_else(|| internal("no folder is open"))?;
-        let env = Env { project, index: &core.state.index, host: &core.host, client: core.client.clone() };
+        let project = core
+            .state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
+        let env = Env {
+            project,
+            index: &core.state.index,
+            host: &core.host,
+            client: core.client.clone(),
+        };
         let result = identity::relink(env, params).await.map_err(|e| match e {
             identity::RelinkError::UserData(_) => internal(e),
             _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
@@ -274,13 +394,25 @@ fn relink(core: &mut Core, params: RelinkParams) -> impl std::future::Future<Out
 }
 
 /// `vnoc/writeId`: see `identity::write_id`. A refusal is an `INVALID_PARAMS` answer with the reason.
-fn write_id(core: &mut Core, params: WriteIdParams) -> impl std::future::Future<Output = Result<WriteIdResult, ResponseError>> + Send + use<> {
+fn write_id(
+    core: &mut Core,
+    params: WriteIdParams,
+) -> impl std::future::Future<Output = Result<WriteIdResult, ResponseError>> + Send + use<> {
     let core = core.clone();
     timed("writeId", async move {
         // the same lock as attach: both write an ID and a node.toml
         let _one_at_a_time = core.state.attaching.lock().await;
-        let project = core.state.project.get().ok_or_else(|| internal("no folder is open"))?;
-        let env = Env { project, index: &core.state.index, host: &core.host, client: core.client.clone() };
+        let project = core
+            .state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
+        let env = Env {
+            project,
+            index: &core.state.index,
+            host: &core.host,
+            client: core.client.clone(),
+        };
         let result = identity::write_id(env, params).await.map_err(|e| match e {
             identity::WriteIdError::UserData(_) => internal(e),
             _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
@@ -293,7 +425,10 @@ fn write_id(core: &mut Core, params: WriteIdParams) -> impl std::future::Future<
 }
 
 fn move_plan(plan: crate::userdata::MovePlan) -> MovePlan {
-    MovePlan { from: plan.from.to_string_lossy().into_owned(), to: plan.to.to_string_lossy().into_owned() }
+    MovePlan {
+        from: plan.from.to_string_lossy().into_owned(),
+        to: plan.to.to_string_lossy().into_owned(),
+    }
 }
 
 fn trash_error(e: TrashError) -> ResponseError {
@@ -304,144 +439,282 @@ fn trash_error(e: TrashError) -> ResponseError {
 }
 
 /// `vnoc/trash`: Remove, step 1. Only a Missing node: a node that still has its code keeps its docs (to drop one, delete its `.md` file).
-fn trash(core: &mut Core, params: TrashParams) -> impl std::future::Future<Output = Result<MovePlan, ResponseError>> + Send + use<> {
+fn trash(
+    core: &mut Core,
+    params: TrashParams,
+) -> impl std::future::Future<Output = Result<MovePlan, ResponseError>> + Send + use<> {
     let state = core.state.clone();
     timed("trash", async move {
-        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
-        let id = NodeId::parse(&params.id).map_err(|e| ResponseError::new(ErrorCode::INVALID_PARAMS, e))?;
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
+        let id = NodeId::parse(&params.id)
+            .map_err(|e| ResponseError::new(ErrorCode::INVALID_PARAMS, e))?;
         if !state.index.read().unwrap().is_missing(&id) {
-            return Err(ResponseError::new(ErrorCode::INVALID_PARAMS, "that node is not Missing: only a node whose code is gone can be removed"));
+            return Err(ResponseError::new(
+                ErrorCode::INVALID_PARAMS,
+                "that node is not Missing: only a node whose code is gone can be removed",
+            ));
         }
         let data = UserData::new(project.git_root());
-        let plan = tokio::task::spawn_blocking(move || data.trash_plan(&id)).await.map_err(internal)?.map_err(trash_error)?;
+        let plan = tokio::task::spawn_blocking(move || data.trash_plan(&id))
+            .await
+            .map_err(internal)?
+            .map_err(trash_error)?;
         Ok(move_plan(plan))
     })
 }
 
 /// `vnoc/trashList`: the removed nodes, newest first.
-fn trash_list(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<Vec<TrashItem>, ResponseError>> + Send + use<> {
+fn trash_list(
+    core: &mut Core,
+    _ignored: serde_json::Value,
+) -> impl std::future::Future<Output = Result<Vec<TrashItem>, ResponseError>> + Send + use<> {
     let state = core.state.clone();
     timed("trashList", async move {
-        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
         let data = UserData::new(project.git_root());
-        let entries = tokio::task::spawn_blocking(move || data.trash_list()).await.map_err(internal)?;
-        Ok(entries.into_iter().map(|e| TrashItem { entry: e.entry, id: e.id.to_string(), removed_at: e.removed_at, docs: e.docs, name: e.name }).collect())
+        let entries = tokio::task::spawn_blocking(move || data.trash_list())
+            .await
+            .map_err(internal)?;
+        Ok(entries
+            .into_iter()
+            .map(|e| TrashItem {
+                entry: e.entry,
+                id: e.id.to_string(),
+                removed_at: e.removed_at,
+                docs: e.docs,
+                name: e.name,
+            })
+            .collect())
     })
 }
 
 /// `vnoc/trashInfo`: where the trash is, how many entries and how many bytes: what Empty Trash asks about and deletes.
-fn trash_info(core: &mut Core, _ignored: serde_json::Value) -> impl std::future::Future<Output = Result<TrashInfoResult, ResponseError>> + Send + use<> {
+fn trash_info(
+    core: &mut Core,
+    _ignored: serde_json::Value,
+) -> impl std::future::Future<Output = Result<TrashInfoResult, ResponseError>> + Send + use<> {
     let state = core.state.clone();
     timed("trashInfo", async move {
-        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
         let data = UserData::new(project.git_root());
-        let (folder, entries, bytes) = tokio::task::spawn_blocking(move || data.trash_info()).await.map_err(internal)?;
-        Ok(TrashInfoResult { folder: folder.to_string_lossy().into_owned(), entries, bytes })
+        let (folder, entries, bytes) = tokio::task::spawn_blocking(move || data.trash_info())
+            .await
+            .map_err(internal)?;
+        Ok(TrashInfoResult {
+            folder: folder.to_string_lossy().into_owned(),
+            entries,
+            bytes,
+        })
     })
 }
 
 /// `vnoc/restorePlan`: Restore, step 2.
-fn restore_plan(core: &mut Core, params: RestorePlanParams) -> impl std::future::Future<Output = Result<MovePlan, ResponseError>> + Send + use<> {
+fn restore_plan(
+    core: &mut Core,
+    params: RestorePlanParams,
+) -> impl std::future::Future<Output = Result<MovePlan, ResponseError>> + Send + use<> {
     let state = core.state.clone();
     timed("restorePlan", async move {
-        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
         let data = UserData::new(project.git_root());
-        let plan = tokio::task::spawn_blocking(move || data.restore_plan(&params.entry)).await.map_err(internal)?.map_err(trash_error)?;
+        let plan = tokio::task::spawn_blocking(move || data.restore_plan(&params.entry))
+            .await
+            .map_err(internal)?
+            .map_err(trash_error)?;
         Ok(move_plan(plan))
     })
 }
 
 /// `vnoc/docs`: the titles of a node's docs, read from the files.
-fn docs(core: &mut Core, params: DocsParams) -> impl std::future::Future<Output = Result<Vec<DocInfo>, ResponseError>> + Send + use<> {
+fn docs(
+    core: &mut Core,
+    params: DocsParams,
+) -> impl std::future::Future<Output = Result<Vec<DocInfo>, ResponseError>> + Send + use<> {
     let state = core.state.clone();
     timed("docs", async move {
-        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
-        let id = NodeId::parse(&params.id).map_err(|e| ResponseError::new(ErrorCode::INVALID_PARAMS, e))?;
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
+        let id = NodeId::parse(&params.id)
+            .map_err(|e| ResponseError::new(ErrorCode::INVALID_PARAMS, e))?;
         let data = UserData::new(project.git_root());
-        let docs = tokio::task::spawn_blocking(move || data.docs_of(&id)).await.map_err(internal)?;
-        Ok(docs.into_iter().map(|d| DocInfo { file: d.file, title: d.title, path: d.path.to_string_lossy().into_owned() }).collect())
+        let docs = tokio::task::spawn_blocking(move || data.docs_of(&id))
+            .await
+            .map_err(internal)?;
+        Ok(docs
+            .into_iter()
+            .map(|d| DocInfo {
+                file: d.file,
+                title: d.title,
+                path: d.path.to_string_lossy().into_owned(),
+            })
+            .collect())
     })
 }
 
 /// `vnoc/callTree`: the driver's tree for the node `key`, merged, with each target given the key the index knows it by.
 /// A request the editor cancels is dropped by the lifecycle layer, which drops the driver request under it, and that cancels the driver's work.
 /// Every full tree is asked for with a depth cap (`calls::DEPTH_CAP`): a node at it is `cut`, and opening it asks for its own tree.
-fn call_tree(core: &mut Core, params: CallTreeParams) -> impl std::future::Future<Output = Result<CallTreeResult, ResponseError>> + Send + use<> {
+fn call_tree(
+    core: &mut Core,
+    params: CallTreeParams,
+) -> impl std::future::Future<Output = Result<CallTreeResult, ResponseError>> + Send + use<> {
     let core = core.clone();
     timed("callTree", async move {
         let answer = driver_tree(&core, &params.key, Some(calls::DEPTH_CAP)).await?;
         let merged = calls::merge(&answer.root);
         let state = &core.state;
-        let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
         // one read of the index for the whole mapping: the revision says which index the keys are from
         let index = state.index.read().unwrap();
         let known = |target: &vnoc_driver_protocol::CallTarget| {
-            let location = LocationKey::new(project.repo_path(target.file.as_deref()?).ok()?, target.qualname.clone(), target.occurrence).ok()?;
+            let location = LocationKey::new(
+                project.repo_path(target.file.as_deref()?).ok()?,
+                target.qualname.clone(),
+                target.occurrence,
+            )
+            .ok()?;
             index.def_at(&location).map(|_| location.to_string())
         };
         let root = tree_node(&merged, &known);
-        Ok(CallTreeResult { revision: index.revision(), root })
+        Ok(CallTreeResult {
+            revision: index.revision(),
+            root,
+        })
     })
 }
 
 /// `vnoc/hasCalls`: how many nodes opening `key` would show. The driver is asked for one level, and the answer is merged exactly as `vnoc/callTree`
 /// merges its own; only the count leaves the core.
-fn has_calls(core: &mut Core, params: HasCallsParams) -> impl std::future::Future<Output = Result<HasCallsResult, ResponseError>> + Send + use<> {
+fn has_calls(
+    core: &mut Core,
+    params: HasCallsParams,
+) -> impl std::future::Future<Output = Result<HasCallsResult, ResponseError>> + Send + use<> {
     let core = core.clone();
     timed("hasCalls", async move {
         let answer = driver_tree(&core, &params.key, Some(1)).await?;
         let revision = core.state.index.read().unwrap().revision();
-        Ok(HasCallsResult { revision, count: calls::count_calls(&answer.root) })
+        Ok(HasCallsResult {
+            revision,
+            count: calls::count_calls(&answer.root),
+        })
     })
 }
 
 /// Asks the driver for the tree of the def `key` names, `depth` levels deep. Waits for the first build; the errors are `vnoc/callTree`'s.
-async fn driver_tree(core: &Core, key: &str, depth: Option<u32>) -> Result<vnoc_driver_protocol::CallTreeResult, ResponseError> {
+async fn driver_tree(
+    core: &Core,
+    key: &str,
+    depth: Option<u32>,
+) -> Result<vnoc_driver_protocol::CallTreeResult, ResponseError> {
     let state = &core.state;
-    let status = state.status.subscribe().wait_for(|s| !matches!(s, Status::Building)).await.map_err(internal)?.clone();
+    let status = state
+        .status
+        .subscribe()
+        .wait_for(|s| !matches!(s, Status::Building))
+        .await
+        .map_err(internal)?
+        .clone();
     if let Status::Failed(message) = status {
         return Err(internal(message));
     }
-    let project = state.project.get().ok_or_else(|| internal("no folder is open"))?;
+    let project = state
+        .project
+        .get()
+        .ok_or_else(|| internal("no folder is open"))?;
 
     let invalid = |message: String| ResponseError::new(ErrorCode::INVALID_PARAMS, message);
     if !key.contains("::") {
-        return Err(invalid(format!("`{key}` is not a function or a class: a call tree starts at one")));
+        return Err(invalid(format!(
+            "`{key}` is not a function or a class: a call tree starts at one"
+        )));
     }
     let location: LocationKey = key.parse().map_err(|e| invalid(format!("{e}")))?;
     if state.index.read().unwrap().def_at(&location).is_none() {
-        return Err(invalid(format!("`{key}` is not in the index (is the file saved, and is it Python?)")));
+        return Err(invalid(format!(
+            "`{key}` is not in the index (is the file saved, and is it Python?)"
+        )));
     }
 
     // The driver is given the opened folder: it is the project the user sees, and what its imports resolve against. Its paths are then
     // relative to that folder, like the editor's; a repo path (what the index's keys are made of) is the folder's prefix and the path.
-    let inside = location.path().as_str().strip_prefix(project.prefix()).map(|p| p.trim_start_matches('/'));
-    let file = inside.filter(|p| !p.is_empty()).ok_or_else(|| internal(format!("`{key}` is not under the opened folder")))?;
+    let inside = location
+        .path()
+        .as_str()
+        .strip_prefix(project.prefix())
+        .map(|p| p.trim_start_matches('/'));
+    let file = inside
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| internal(format!("`{key}` is not under the opened folder")))?;
     let asked = vnoc_driver_protocol::CallTreeParams {
         root: project.open_dir().to_string_lossy().into_owned(),
         file: file.to_string(),
-        entry: CallEntry { qualname: location.qualname().to_string(), occurrence: location.occurrence() },
+        entry: CallEntry {
+            qualname: location.qualname().to_string(),
+            occurrence: location.occurrence(),
+        },
         depth,
     };
     core.host.call_tree(&asked).await.map_err(|e| match e {
-        HostError::MissingCapability(_) => ResponseError::new(ErrorCode::REQUEST_FAILED, format!("{e}: call trees need a driver that has `callTree`")),
-        HostError::Remote { code: -32602, message } => invalid(message),
+        HostError::MissingCapability(_) => ResponseError::new(
+            ErrorCode::REQUEST_FAILED,
+            format!("{e}: call trees need a driver that has `callTree`"),
+        ),
+        HostError::Remote {
+            code: -32602,
+            message,
+        } => invalid(message),
         other => internal(other),
     })
 }
 
 /// A merged node as the editor gets it. `known`: the key of a target the index has.
-fn tree_node(node: &Merged, known: &dyn Fn(&vnoc_driver_protocol::CallTarget) -> Option<String>) -> CallTreeNode {
+fn tree_node(
+    node: &Merged,
+    known: &dyn Fn(&vnoc_driver_protocol::CallTarget) -> Option<String>,
+) -> CallTreeNode {
     let target = &node.target;
     CallTreeNode {
         key: known(target),
-        name: target.qualname.rsplit('.').next().unwrap_or(&target.qualname).to_string(),
+        name: target
+            .qualname
+            .rsplit('.')
+            .next()
+            .unwrap_or(&target.qualname)
+            .to_string(),
         qualname: target.qualname.clone(),
         path: target.file.clone(), // already relative to the opened folder, `null` outside it
         kind: target.kind,
         call_count: node.call_count,
-        call_sites: node.call_sites.iter().map(|site| CallSite { path: site.file.clone(), range: site.range }).collect(),
+        call_sites: node
+            .call_sites
+            .iter()
+            .map(|site| CallSite {
+                path: site.file.clone(),
+                range: site.range,
+            })
+            .collect(),
         marks: node.marks.clone(),
-        children: node.children.iter().map(|child| tree_node(child, known)).collect(),
+        children: node
+            .children
+            .iter()
+            .map(|child| tree_node(child, known))
+            .collect(),
     }
 }

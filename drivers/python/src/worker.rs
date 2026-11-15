@@ -9,9 +9,9 @@
 
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::Arc;
 use std::time::Duration;
 
 use lsp_server::{ErrorCode, RequestId, Response};
@@ -44,12 +44,21 @@ pub enum Task {
     /// needs the kept project too; the cancel's deadline does not apply (no solve)
     EnvironmentInputs(Job),
     /// a request of the test hooks (`VNOC_TEST_HOOKS=1`): it goes through the same queue, so it is ordered with the call trees
-    Test { id: RequestId, method: String, params: Value, reply: Reply },
+    Test {
+        id: RequestId,
+        method: String,
+        params: Value,
+        reply: Reply,
+    },
 }
 
 pub fn spawn() -> Sender<Task> {
     let (tx, rx) = channel();
-    std::thread::Builder::new().name("vnoc-call-tree".into()).stack_size(STACK).spawn(move || run(rx)).expect("the worker thread starts");
+    std::thread::Builder::new()
+        .name("vnoc-call-tree".into())
+        .stack_size(STACK)
+        .spawn(move || run(rx))
+        .expect("the worker thread starts");
     tx
 }
 
@@ -58,14 +67,21 @@ fn run(queue: Receiver<Task>) {
     for task in queue {
         match task {
             Task::CallTree(job) => serve(&mut projects, job, |projects, params, cancel| {
-                let params: CallTreeParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
+                let params: CallTreeParams =
+                    serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
                 to_value(call_tree(projects, params, cancel)?)
             }),
             Task::EnvironmentInputs(job) => serve(&mut projects, job, |projects, params, _| {
-                let params: EnvironmentInputsParams = serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
+                let params: EnvironmentInputsParams =
+                    serde_json::from_value(params).map_err(|e| invalid(e.to_string()))?;
                 to_value(environment_inputs(projects, params)?)
             }),
-            Task::Test { id, method, params, reply } => reply(test_hook(&mut projects, id, &method, params)),
+            Task::Test {
+                id,
+                method,
+                params,
+                reply,
+            } => reply(test_hook(&mut projects, id, &method, params)),
         }
     }
 }
@@ -75,24 +91,43 @@ fn cancelled(id: RequestId) -> Response {
 }
 
 fn to_value(result: impl serde::Serialize) -> Result<Value, Failure> {
-    serde_json::to_value(result).map_err(|e| Failure { code: ErrorCode::InternalError, message: e.to_string() })
+    serde_json::to_value(result).map_err(|e| Failure {
+        code: ErrorCode::InternalError,
+        message: e.to_string(),
+    })
 }
 
 /// Runs one request on the worker: not at all if it was cancelled while it waited, inside a catch for a panic, and its answer dropped if it was
 /// cancelled while it ran.
-fn serve(projects: &mut Projects, job: Job, run: impl FnOnce(&mut Projects, Value, &Cancel) -> Result<Value, Failure>) {
-    let Job { id, params, flag, cancel, reply } = job;
+fn serve(
+    projects: &mut Projects,
+    job: Job,
+    run: impl FnOnce(&mut Projects, Value, &Cancel) -> Result<Value, Failure>,
+) {
+    let Job {
+        id,
+        params,
+        flag,
+        cancel,
+        reply,
+    } = job;
     // cancelled while it waited: never run (the solver would have cut it at once, but the project would still have been refreshed)
     if flag.load(Ordering::Relaxed) {
         return reply(cancelled(id));
     }
-    let root = params.get("root").and_then(Value::as_str).map(str::to_string);
+    let root = params
+        .get("root")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let outcome = catch_unwind(AssertUnwindSafe(|| run(projects, params, &cancel)));
     let result = outcome.unwrap_or_else(|payload| {
         if let Some(root) = &root {
             projects.forget(root);
         }
-        Err(Failure { code: ErrorCode::InternalError, message: format!("the analysis crashed: {}", panic_message(&payload)) })
+        Err(Failure {
+            code: ErrorCode::InternalError,
+            message: format!("the analysis crashed: {}", panic_message(&payload)),
+        })
     });
     // a running solve is stopped by the cancel; whatever it made is dropped, as it always was
     if flag.load(Ordering::Relaxed) {
@@ -105,7 +140,11 @@ fn serve(projects: &mut Projects, job: Job, run: impl FnOnce(&mut Projects, Valu
 }
 
 fn panic_message(payload: &Box<dyn Any + Send>) -> String {
-    payload.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no message".into())
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".into())
 }
 
 /// The test hooks that need the worker: `vnoc/test/stats`, `vnoc/test/hold { ms }` (keeps the worker busy, so a request can be queued behind it) and
@@ -114,23 +153,41 @@ fn test_hook(projects: &mut Projects, id: RequestId, method: &str, params: Value
     match method {
         "vnoc/test/stats" => {
             let c = projects.counts;
-            Response::new_ok(id, json!({ "solves": c.solves, "opens": c.opens, "reopens": c.reopens, "projects": projects.len() }))
+            Response::new_ok(
+                id,
+                json!({ "solves": c.solves, "opens": c.opens, "reopens": c.reopens, "projects": projects.len() }),
+            )
         }
         "vnoc/test/hold" => {
-            std::thread::sleep(Duration::from_millis(params.get("ms").and_then(Value::as_u64).unwrap_or(0)));
+            std::thread::sleep(Duration::from_millis(
+                params.get("ms").and_then(Value::as_u64).unwrap_or(0),
+            ));
             Response::new_ok(id, Value::Null)
         }
         "vnoc/test/panic" => {
-            let root = params.get("root").and_then(Value::as_str).map(str::to_string);
-            let crashed = catch_unwind(AssertUnwindSafe(|| -> () { panic!("a test hook panicked on purpose") }));
+            let root = params
+                .get("root")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let crashed = catch_unwind(AssertUnwindSafe(|| -> () {
+                panic!("a test hook panicked on purpose")
+            }));
             if let Some(root) = root {
                 projects.forget(&root);
             }
             match crashed {
-                Err(payload) => Response::new_err(id, ErrorCode::InternalError as i32, format!("the analysis crashed: {}", panic_message(&payload))),
+                Err(payload) => Response::new_err(
+                    id,
+                    ErrorCode::InternalError as i32,
+                    format!("the analysis crashed: {}", panic_message(&payload)),
+                ),
                 Ok(()) => Response::new_ok(id, Value::Null),
             }
         }
-        other => Response::new_err(id, ErrorCode::MethodNotFound as i32, format!("unknown method {other}")),
+        other => Response::new_err(
+            id,
+            ErrorCode::MethodNotFound as i32,
+            format!("unknown method {other}"),
+        ),
     }
 }

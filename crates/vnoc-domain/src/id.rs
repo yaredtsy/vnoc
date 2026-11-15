@@ -108,7 +108,9 @@ impl NodeId {
             input.extend_from_slice(attempt.to_string().as_bytes());
         }
         let out = blake3::derive_key(CONTEXT, &input);
-        NodeId(u128::from_be_bytes(out[..16].try_into().expect("a blake3 output has 32 bytes")))
+        NodeId(u128::from_be_bytes(
+            out[..16].try_into().expect("a blake3 output has 32 bytes"),
+        ))
     }
 
     #[cfg(test)]
@@ -123,7 +125,10 @@ fn digit_of(c: char) -> Option<u8> {
         'O' => '0',
         other => other,
     };
-    ALPHABET.iter().position(|&a| a as char == c).map(|p| p as u8)
+    ALPHABET
+        .iter()
+        .position(|&a| a as char == c)
+        .map(|p| p as u8)
 }
 
 impl fmt::Display for NodeId {
@@ -205,43 +210,91 @@ mod tests {
 
     #[test]
     fn the_first_character_is_zero_to_seven() {
-        assert_eq!(NodeId::from_u128(u128::MAX).to_string().chars().next(), Some('7'));
-        assert_eq!(NodeId::parse("80000000000000000000000000"), Err(NodeIdError::FirstCharTooLarge));
-        assert_eq!(NodeId::parse("ZZZZZZZZZZZZZZZZZZZZZZZZZZ"), Err(NodeIdError::FirstCharTooLarge));
+        assert_eq!(
+            NodeId::from_u128(u128::MAX).to_string().chars().next(),
+            Some('7')
+        );
+        assert_eq!(
+            NodeId::parse("80000000000000000000000000"),
+            Err(NodeIdError::FirstCharTooLarge)
+        );
+        assert_eq!(
+            NodeId::parse("ZZZZZZZZZZZZZZZZZZZZZZZZZZ"),
+            Err(NodeIdError::FirstCharTooLarge)
+        );
     }
 
     #[test]
     fn reading_is_case_insensitive_and_maps_look_alikes() {
         let canonical = NodeId::parse("3RGJ87CMS6TK775XRJV8BW977Y").unwrap();
-        assert_eq!(NodeId::parse("3rgj87cms6tk775xrjv8bw977y").unwrap(), canonical, "lowercase");
+        assert_eq!(
+            NodeId::parse("3rgj87cms6tk775xrjv8bw977y").unwrap(),
+            canonical,
+            "lowercase"
+        );
         // I and L read as 1, O reads as 0
-        assert_eq!(NodeId::parse("0I00000000000000000000000L").unwrap(), NodeId::parse("01000000000000000000000001").unwrap());
-        assert_eq!(NodeId::parse("0O00000000000000000000000o").unwrap(), NodeId::parse("00000000000000000000000000").unwrap());
-        assert_eq!(canonical.to_string(), "3RGJ87CMS6TK775XRJV8BW977Y", "the canonical text is uppercase");
+        assert_eq!(
+            NodeId::parse("0I00000000000000000000000L").unwrap(),
+            NodeId::parse("01000000000000000000000001").unwrap()
+        );
+        assert_eq!(
+            NodeId::parse("0O00000000000000000000000o").unwrap(),
+            NodeId::parse("00000000000000000000000000").unwrap()
+        );
+        assert_eq!(
+            canonical.to_string(),
+            "3RGJ87CMS6TK775XRJV8BW977Y",
+            "the canonical text is uppercase"
+        );
     }
 
     #[test]
     fn rejects_what_is_not_an_id() {
         assert_eq!(NodeId::parse(""), Err(NodeIdError::WrongLength(0)));
-        assert_eq!(NodeId::parse("3RGJ87CMS6TK775XRJV8BW977"), Err(NodeIdError::WrongLength(25)));
-        assert_eq!(NodeId::parse("3RGJ87CMS6TK775XRJV8BW977YY"), Err(NodeIdError::WrongLength(27)));
-        assert_eq!(NodeId::parse("3RGJ87CMS6TK775XRJV8BW977U"), Err(NodeIdError::BadChar('U')), "U is not in the alphabet");
-        assert_eq!(NodeId::parse("3RGJ87CMS6TK775XRJV8BW977-"), Err(NodeIdError::BadChar('-')));
+        assert_eq!(
+            NodeId::parse("3RGJ87CMS6TK775XRJV8BW977"),
+            Err(NodeIdError::WrongLength(25))
+        );
+        assert_eq!(
+            NodeId::parse("3RGJ87CMS6TK775XRJV8BW977YY"),
+            Err(NodeIdError::WrongLength(27))
+        );
+        assert_eq!(
+            NodeId::parse("3RGJ87CMS6TK775XRJV8BW977U"),
+            Err(NodeIdError::BadChar('U')),
+            "U is not in the alphabet"
+        );
+        assert_eq!(
+            NodeId::parse("3RGJ87CMS6TK775XRJV8BW977-"),
+            Err(NodeIdError::BadChar('-'))
+        );
         // a UUID (the old V-NOC format) is not a node ID
         assert!(NodeId::parse("123e4567-e89b-12d3-a456-426614174000").is_err());
     }
 
     #[test]
     fn the_shard_is_the_last_two_characters_uppercase() {
-        assert_eq!(NodeId::parse("3rgj87cms6tk775xrjv8bw977y").unwrap().shard(), "7Y");
-        assert_eq!(NodeId::parse("00000000000000000000000001").unwrap().shard(), "01");
+        assert_eq!(
+            NodeId::parse("3rgj87cms6tk775xrjv8bw977y").unwrap().shard(),
+            "7Y"
+        );
+        assert_eq!(
+            NodeId::parse("00000000000000000000000001").unwrap().shard(),
+            "01"
+        );
     }
 
     #[test]
     fn serde_writes_the_canonical_text_and_reads_leniently() {
         let id = NodeId::parse("3RGJ87CMS6TK775XRJV8BW977Y").unwrap();
-        assert_eq!(serde_json::to_string(&id).unwrap(), "\"3RGJ87CMS6TK775XRJV8BW977Y\"");
-        assert_eq!(serde_json::from_str::<NodeId>("\"3rgj87cms6tk775xrjv8bw977y\"").unwrap(), id);
+        assert_eq!(
+            serde_json::to_string(&id).unwrap(),
+            "\"3RGJ87CMS6TK775XRJV8BW977Y\""
+        );
+        assert_eq!(
+            serde_json::from_str::<NodeId>("\"3rgj87cms6tk775xrjv8bw977y\"").unwrap(),
+            id
+        );
         assert!(serde_json::from_str::<NodeId>("\"nope\"").is_err());
     }
 
@@ -249,6 +302,9 @@ mod tests {
     fn a_provisional_id_hides_its_value() {
         use crate::location::{LocationKey, RepoPath};
         let loc = LocationKey::new(RepoPath::new("src/a.py").unwrap(), "f", 1).unwrap();
-        assert_eq!(format!("{:?}", ProvisionalId::of(&loc)), "ProvisionalId(..)");
+        assert_eq!(
+            format!("{:?}", ProvisionalId::of(&loc)),
+            "ProvisionalId(..)"
+        );
     }
 }

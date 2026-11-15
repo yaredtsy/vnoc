@@ -147,18 +147,28 @@ impl NodeToml {
 
     /// Reads a file. Fails only when the anchor (`path`, `qualname`) is missing or wrong; everything else is optional.
     pub fn parse(text: &str) -> Result<NodeToml, NodeTomlError> {
-        let node = NodeToml { doc: DocumentMut::from_str(text)? };
+        let node = NodeToml {
+            doc: DocumentMut::from_str(text)?,
+        };
         node.location()?; // validate the anchor now, so later reads cannot fail
         Ok(node)
     }
 
     /// The anchor as a location. `occurrence` is 1 when the file does not say.
     pub fn location(&self) -> Result<LocationKey, NodeTomlError> {
-        let path = self.str_field("path").ok_or(NodeTomlError::Missing("path"))?;
-        let qualname = self.str_field("qualname").ok_or(NodeTomlError::Missing("qualname"))?;
+        let path = self
+            .str_field("path")
+            .ok_or(NodeTomlError::Missing("path"))?;
+        let qualname = self
+            .str_field("qualname")
+            .ok_or(NodeTomlError::Missing("qualname"))?;
         let occurrence = match self.doc.get("occurrence") {
             None => 1,
-            Some(item) => item.as_integer().and_then(|n| u32::try_from(n).ok()).filter(|n| *n >= 1).ok_or(NodeTomlError::Occurrence)?,
+            Some(item) => item
+                .as_integer()
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n >= 1)
+                .ok_or(NodeTomlError::Occurrence)?,
         };
         let path = RepoPath::new(path)?;
         LocationKey::new(path, qualname, occurrence).map_err(|_| NodeTomlError::Occurrence)
@@ -186,7 +196,8 @@ impl NodeToml {
 
     /// A file without `status` is active.
     pub fn status(&self) -> Status {
-        self.str_field("status").map_or(Status::Active, Status::read)
+        self.str_field("status")
+            .map_or(Status::Active, Status::read)
     }
 
     /// The date the node was archived, as written (`2026-11-06`), if any.
