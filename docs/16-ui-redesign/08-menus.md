@@ -113,7 +113,7 @@ Which files: `resourceExtname in vnoc.extensions` and folders, as today.
 | canvas background | `webview/context`, `webviewSection == 'pane'` | Fit View · Collapse All · ─ · Back · Clear Focus (`vnoc.focused`) · Clear Selection (`vnoc.hasSelection`) · ─ · Close Explore (`vnoc.activeIsExplore`) | J1, J2 |
 | sidebar panel header | `webview/context`, `webviewSection == 'context'` | Close (EXPLORE) · Close Others | J4 |
 | sidebar empty space | `webviewSection == 'pane'`, `surface == sidebar` | Collapse All · Clear Focus · Refresh Structure | |
-| STRUCTURE view title | `view/title`, `view == vnoc.structure` | `⊞` Open Canvas · `⊟` Collapse All · `⋯` Refresh Structure · Search… · Restore Removed Doc… · Empty Trash | 06 §9 |
+| STRUCTURE view title | `view/title`, `view == vnoc.structure` | `⊞` Open Canvas · `⊟` Collapse All · `⋯` Refresh Structure · Search… · Restore Removed Doc… · Empty Trash · (last group) Help and Feedback… | 06 §9 |
 | the canvas bar's `⋯` | a menu drawn by the page (not VS Code's): Fit View · Collapse All · Show Minimap ✓ · Refresh Structure | 02 §3 | |
 | NEEDS ATTENTION | unchanged (11) | | J8 |
 
@@ -168,6 +168,11 @@ default Cut / Copy / Paste items are gone.** The command received **one argument
 
 Keys: `Alt+←`, `Enter`, `Ctrl/Cmd+Enter`, `Space`, `Esc` and the arrows are handled **inside** each page (03 §7, 06 §7), so they work the same on
 both surfaces and skip text fields and code cards. `contributes.keybindings` keeps only `Ctrl/Cmd+Alt+N` (Search…).
+
+**`F` is Fit View** on the canvas (added 2026-11-15, for the GIFs of 18.04: a film may only show keys the product has). It is the same move as the
+menu's **Fit View** (the 300 ms glide, none with reduced motion). Like the other canvas keys it does nothing in a text field or a code card, on a
+link, or with Ctrl, Cmd or Alt held. **Unlike them it works when a button has the focus** (changed the same day, P5 of 18.04): Space and Enter are a
+button's keys, `F` is not, and a chevron that was just clicked keeps the focus (`webview/src/canvas/keys.ts`, `canvasViewKey`, with its table test).
 
 ## 9. The test
 

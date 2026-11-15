@@ -1,0 +1,5 @@
+path = "httpx/_client.py"
+qualname = "Client.send"
+id_in_code = "yes"
+status = "active"
+kind = "function"

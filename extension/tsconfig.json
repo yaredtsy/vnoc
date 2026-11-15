@@ -16,6 +16,7 @@
     "src"
   ],
   "exclude": [
-    "src/menus.test.ts"
+    "src/menus.test.ts",
+    "src/report.test.ts"
   ]
 }

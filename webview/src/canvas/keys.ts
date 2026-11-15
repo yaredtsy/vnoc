@@ -48,6 +48,29 @@ export function canvasKey(key: string, laid: Layout, _root: TreeNode, selected: 
   }
 }
 
+/** The name of the event the page sends itself for a view key: the canvas, inside React Flow, is the one that can move the view. */
+export const FIT_VIEW_EVENT = "vnoc:fitView";
+
+/** What the page knows about where a key came from, for the keys that are not the session's. */
+export interface KeyContext {
+  /** the key went to a text field or a code card: it is typing */
+  inField: boolean;
+  /** Ctrl, Cmd or Alt is held (Shift is not: `F` with Caps Lock or Shift is still `F`) */
+  modified: boolean;
+  /** a link has the focus */
+  onLink: boolean;
+}
+
+/**
+ * A key that changes only what the canvas draws, not the session: `F` is Fit View, the same move as the bar's ⋯ menu. Unlike the session's keys it is not
+ * a button's key (Space and Enter are), so a button that has the focus, a chevron that was just clicked, does not keep it. It is still typing in a text field
+ * or a code card, still a chord with Ctrl, Cmd or Alt, and a link keeps it too.
+ */
+export function canvasViewKey(key: string, ctx: KeyContext = { inField: false, modified: false, onLink: false }): "fitView" | null {
+  if (ctx.inField || ctx.modified || ctx.onLink) return null;
+  return key === "f" || key === "F" ? "fitView" : null;
+}
+
 /** What Ctrl/Cmd+Enter asks of the page, which is not a change of the session. */
 export type Chord = { type: "goToCode"; key: string } | { type: "goToCallSite"; sites: OpenableSite[] };
 

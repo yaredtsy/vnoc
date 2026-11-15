@@ -2,7 +2,7 @@
   "name": "vnoc",
   "displayName": "V-NOC",
   "description": "Browse Python code as a tree and a canvas, and attach docs that stay with the code when it is renamed or moved.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "vnoc",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
@@ -15,13 +15,26 @@
     "graph",
     "python",
     "documentation",
-    "canvas"
+    "canvas",
+    "call graph",
+    "call hierarchy",
+    "code visualization",
+    "code navigation"
   ],
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
   "preview": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/yaredtsy/vnoc"
   },
+  "bugs": {
+    "url": "https://github.com/yaredtsy/vnoc/issues"
+  },
+  "homepage": "https://github.com/yaredtsy/vnoc#readme",
+  "qna": "https://discord.gg/J5nfPHqyBr",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -211,6 +224,16 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.reportIssue",
+        "title": "Report Issue…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.help",
+        "title": "Help and Feedback…",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.revealInSidebar",
         "title": "Reveal in Sidebar",
         "category": "V-NOC"
@@ -331,6 +354,11 @@
           "command": "vnoc.refreshStructure",
           "when": "view == vnoc.structure",
           "group": "1_more@1"
+        },
+        {
+          "command": "vnoc.help",
+          "when": "view == vnoc.structure",
+          "group": "9_help@1"
         }
       ],
       "commandPalette": [
@@ -794,7 +822,7 @@
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
     "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts src/test/suite/bar.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
-    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts"
+    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

@@ -1,6 +1,7 @@
 [package]
 name = "vnoc"
-version = "0.1.0"
+version = "0.2.0"
+license = "Apache-2.0"
 edition = "2024"
 description = "The V-NOC core: speaks LSP-framed JSON-RPC to the editor extension, and the driver wire to language drivers."
 

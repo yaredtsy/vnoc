@@ -1,0 +1,5 @@
+path = "httpx/_transports/default.py"
+qualname = "HTTPTransport.handle_request"
+id_in_code = "yes"
+status = "active"
+kind = "function"

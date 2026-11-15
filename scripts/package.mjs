@@ -1,6 +1,6 @@
 // Build everything and write one platform-specific .vsix.  Usage: node scripts/package.mjs [--target darwin-arm64|darwin-x64|linux-x64|win32-x64] [--pre-release]
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +24,12 @@ if (!triple) {
 const preRelease = process.argv.includes("--pre-release");
 // the programs run on the VSIX's system, not on this one: a .exe is a matter of the target (a cross build has the target's names too)
 const exe = (name) => (target.startsWith("win32") ? `${name}.exe` : name);
+
+// the third-party licences are committed (node scripts/notices.mjs writes them): a binary that contains other people's code must not ship without them
+if (!existsSync(join(root, "extension/THIRD_PARTY_NOTICES.md"))) {
+  console.error("extension/THIRD_PARTY_NOTICES.md is missing: run `node scripts/notices.mjs` (it needs `cargo install cargo-about --locked --features cli`) and commit the file.");
+  process.exit(1);
+}
 
 const run = (cmd, args, cwd = root) => {
   console.log(`\n$ ${cmd} ${args.join(" ")}   (${cwd.replace(root, ".") || "."})`);

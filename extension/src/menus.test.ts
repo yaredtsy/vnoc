@@ -356,9 +356,9 @@ test("the two key bindings that tested `focusedView` are gone: a webview view ne
   assert.equal(pkg.contributes.viewsWelcome, undefined, "the states are the page's now");
 });
 
-test("the view's title: Open Canvas and Collapse All are buttons; Refresh, Search and Restore are in the ⋯ menu (06 §9)", () => {
+test("the view's title: Open Canvas and Collapse All are buttons; Refresh, Search and Restore are in the ⋯ menu, Help and Feedback in its last group (06 §9, 18.03 §5)", () => {
   const title = (menus["view/title"] as Entry[]).filter((e) => e.when === "view == vnoc.structure").map((e) => [e.command, e.group]);
-  assert.deepEqual(title.sort(), [["vnoc.collapseAll", "navigation@2"], ["vnoc.openCanvas", "navigation@1"], ["vnoc.refreshStructure", "1_more@1"], ["vnoc.restoreRemoved", "1_more@3"], ["vnoc.search", "1_more@2"]].sort());
+  assert.deepEqual(title.sort(), [["vnoc.collapseAll", "navigation@2"], ["vnoc.openCanvas", "navigation@1"], ["vnoc.help", "9_help@1"], ["vnoc.refreshStructure", "1_more@1"], ["vnoc.restoreRemoved", "1_more@3"], ["vnoc.search", "1_more@2"]].sort());
   for (const command of ["vnoc.openCanvas", "vnoc.collapseAll"]) assert.ok((pkg.contributes.commands as { command: string; icon?: string }[]).find((c) => c.command === command)?.icon, `${command} needs an icon to be a button`);
 });
 

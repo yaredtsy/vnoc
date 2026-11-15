@@ -9,3 +9,4 @@ extension/bin/*
 extension/out/
 .vscode-test/
 extension/LICENSE
+tools/media/out/

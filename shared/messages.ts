@@ -163,6 +163,8 @@ export interface Requests {
   focusAttention: { params: void; result: void };
   /** Show Log next to Try Again: reveals the "V-NOC" output channel */
   showLog: { params: void; result: void };
+  /** Report Issue next to Show Log, in the sidebar's error state: the host runs `vnoc.reportIssue` */
+  reportIssue: { params: void; result: void };
   /** ask the host to fetch an entry's call tree again, after it failed (the footer's Retry) */
   retryCalls: { params: { key: string }; result: void };
   /** a click on a sidebar row (07 §4): the host applies the click rule: the canvas is open → reveal the card there (never a code tab over it); closed → the code as a preview tab */
