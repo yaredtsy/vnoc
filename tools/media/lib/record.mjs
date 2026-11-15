@@ -1,16 +1,25 @@
-// Frames for a GIF: screenshots taken in a loop, each with its time, so the GIF keeps the real timing even if the loop is uneven (01-media.md §7).
-import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+// Frames for a GIF, and the marks that say what was happening when (docs/18-release-0.2/01-media.md §7.1, §7.2).
+// The recording is never timed exactly and does not try to be: it keeps every frame, and what happens in the film as a list of marks. `edit.mjs` cuts the
+// waits and speeds up the slow parts afterwards, and can do it again from the saved frames and marks without starting VS Code.
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { paths, window as size } from "../config.mjs";
+import { paths } from "../config.mjs";
 
-const FFMPEG = process.env.FFMPEG ?? "/opt/homebrew/bin/ffmpeg";
+/**
+ * What a mark says, and what the edit does with it (§7.2):
+ *   wait    from an action to the page being settled (a fetch, Explore loading)       cut to 0.3 s
+ *   drag    a drag of the canvas                                                      2× faster
+ *   glide   the arrow moving                                                          1× (1.5× if longer than 0.5 s)
+ *   typing  keys typed (G2)                                                           1.5× if longer than 2 s
+ *   reveal  what the GIF is for: cards drawn, Explore's switch, the doc panel          never changed
+ *   hold    the film stands still on purpose (`kind`: first, after, read, end)        kept; shortened only by the length budget
+ * The unmarked time between marks is what the script did not know about: a stretch of unchanged frames in it is cut to 0.7 s and reported.
+ */
+export const MARK_TYPES = ["wait", "drag", "glide", "typing", "reveal", "hold"];
 
 export class Recording {
   #page;
-  #dir;
-  #frames = [];
   #running = false;
   #loop;
   #t0 = 0;
@@ -19,13 +28,19 @@ export class Recording {
   #pausedAt = 0;
   /** time spent paused: the film does not have it */
   #cut = 0;
+  /** how many marks are open: a mark inside another one belongs to the outer one */
+  #open = 0;
 
   constructor(page, name) {
     this.#page = page;
-    this.#dir = join(paths.work, "frames", name);
-    rmSync(this.#dir, { recursive: true, force: true });
-    mkdirSync(this.#dir, { recursive: true });
     this.name = name;
+    this.dir = join(paths.out, "frames", name);
+    rmSync(this.dir, { recursive: true, force: true });
+    mkdirSync(this.dir, { recursive: true });
+    /** `{ file, t }`: a frame and the film's second it was taken at */
+    this.frames = [];
+    /** `{ type, label, kind?, from, to }`, in the film's seconds */
+    this.marks = [];
   }
 
   /**
@@ -36,32 +51,83 @@ export class Recording {
   start() {
     this.#running = true;
     this.#t0 = performance.now();
+    let ready;
+    const warm = new Promise((resolve) => (ready = resolve));
     this.#loop = (async () => {
       const session = await this.#page.context().newCDPSession(this.#page);
+      // the first captures are slow (a second or more); they are taken, thrown away, and the film's clock starts after them
+      let warming = 6;
       for (let i = 0; this.#running; ) {
         if (this.#paused) {
           await new Promise((resolve) => setTimeout(resolve, 15));
           continue;
         }
-        const t = (performance.now() - this.#t0 - this.#cut) / 1000;
+        const t = this.elapsed;
         i++;
-        const file = join(this.#dir, `f${String(i).padStart(5, "0")}.jpg`);
+        const file = join(this.dir, `f${String(i).padStart(5, "0")}.jpg`);
         try {
           const { data } = await session.send("Page.captureScreenshot", { format: "jpeg", quality: 92, fromSurface: true });
           writeFileSync(file, Buffer.from(data, "base64"));
         } catch (error) {
           // the window went away (the scene failed): that error is the one to show, not this one
           if (this.#running) this.#error = error;
+          ready();
           return;
         }
-        this.#frames.push({ file, t });
+        if (warming > 0) {
+          if (--warming === 0) {
+            i = 0;
+            this.frames = [];
+            this.#t0 = performance.now();
+            this.#cut = 0;
+            ready();
+          }
+          continue;
+        }
+        this.frames.push({ file, t });
       }
     })();
+    return warm;
+  }
+
+  /** Seconds of film so far. */
+  get elapsed() {
+    return (performance.now() - this.#t0 - this.#cut) / 1000;
   }
 
   /**
-   * Stops taking frames (a load the viewer would only watch is a cut, not dead time): the frame before and the frame after are next to each other in the film.
-   * Always paired with `resume()`.
+   * Opens a mark; the function it returns closes it. A mark inside another is ignored (the outer one is what the edit sees): a drag inside a wait is part of
+   * the wait.
+   */
+  begin(type, label = "", extra = {}) {
+    if (this.#open > 0) return () => {};
+    this.#open++;
+    const mark = { type, label, ...extra, from: this.elapsed };
+    return () => {
+      mark.to = this.elapsed;
+      this.marks.push(mark);
+      this.#open--;
+    };
+  }
+
+  /** Runs `fn` as one mark. */
+  async during(type, label, fn, extra) {
+    const end = this.begin(type, label, extra);
+    try {
+      return await fn();
+    } finally {
+      end();
+    }
+  }
+
+  /** The film stands still for `ms`, on purpose. `kind`: `first` (the first frame), `after` (after an action), `read` (something new to read), `end` (the last frame). */
+  hold(ms, kind = "after") {
+    return this.during("hold", "", () => this.#page.waitForTimeout(ms), { kind });
+  }
+
+  /**
+   * Stops taking frames: a true cut, for what the viewer must not see at all (the product's zoom jump when Explore opens). Always paired with `resume()`, and
+   * never with a mark open inside it. A wait that is only slow is a `wait` mark, not a pause.
    */
   pause() {
     this.#paused = true;
@@ -73,40 +139,17 @@ export class Recording {
     this.#paused = false;
   }
 
-  /** Seconds of film so far. */
-  get elapsed() {
-    return (performance.now() - this.#t0 - this.#cut) / 1000;
-  }
-
-  /** Waits (the recording goes on): the scene's `hold`. */
-  hold(ms) {
-    return this.#page.waitForTimeout(ms);
-  }
-
   async stop() {
     this.#running = false;
     await this.#loop;
     if (this.#error) throw this.#error;
-    const seconds = (performance.now() - this.#t0 - this.#cut) / 1000;
-    return { frames: this.#frames.length, seconds, fps: this.#frames.length / seconds };
+    const seconds = this.elapsed;
+    return { frames: this.frames.length, seconds, fps: this.frames.length / seconds };
   }
 
-  /** The list file ffmpeg reads: every frame with the time it was on screen; the last one for 1 s (the loop point). */
-  #list() {
-    const lines = this.#frames.map((f, i) => `file '${f.file}'\nduration ${(((this.#frames[i + 1]?.t ?? f.t + 1) - f.t)).toFixed(4)}`);
-    lines.push(`file '${this.#frames.at(-1).file}'`); // ffmpeg ignores the duration of the last entry unless it is repeated
-    const list = join(this.#dir, "frames.txt");
-    writeFileSync(list, lines.join("\n") + "\n");
-    return list;
-  }
-
-  /** The GIF (two-pass palette) and the MP4 for posts. Returns the sizes. */
-  encode({ gif, mp4, fps = 12, colors = 128 }) {
-    const list = this.#list();
-    mkdirSync(paths.out, { recursive: true });
-    const filter = `scale=${size.width}:${size.height}:flags=lanczos,fps=${fps},split[a][b];[a]palettegen=max_colors=${colors}:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle`;
-    execFileSync(FFMPEG, ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list, "-vf", filter, "-loop", "0", gif], { stdio: "inherit" });
-    if (mp4) execFileSync(FFMPEG, ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list, "-vf", `scale=${size.width}:${size.height}:flags=lanczos,fps=30`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", mp4], { stdio: "inherit" });
-    return { gifBytes: statSync(gif).size, mp4Bytes: mp4 ? statSync(mp4).size : 0 };
+  /** Writes what the edit needs to run again without recording: `out/<scene>.frames.json` and `out/<scene>.marks.json`. */
+  save() {
+    writeFileSync(join(paths.out, `${this.name}.frames.json`), JSON.stringify({ frames: this.frames }, null, 1));
+    writeFileSync(join(paths.out, `${this.name}.marks.json`), JSON.stringify(this.marks, null, 1));
   }
 }

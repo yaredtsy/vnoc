@@ -46,7 +46,13 @@ if (gone) {
   edit("httpx/_config.py", (text) => text.replace(/^ *"""ID: [0-9A-Za-z]+"""\n/m, "").replaceAll("as_dict", "as_mapping"));
   edit("httpx/_client.py", (text) => text.replaceAll("timeout.as_dict()", "timeout.as_mapping()"));
   await core.filesChanged([join(root, "httpx/_config.py"), join(root, "httpx/_client.py")]);
-  const structure = await core.request("vnoc/structure", null);
+  // the core reads the files again in the background: ask until it has found the doc missing
+  let structure;
+  for (let i = 0; i < 40; i++) {
+    structure = await core.request("vnoc/structure", null);
+    if (structure.missing.length === 1) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
   if (structure.missing.length !== 1) throw new Error(`expected one Missing doc, the core says ${JSON.stringify(structure.missing)}`);
   console.log(`missing: ${structure.missing[0].title ?? JSON.stringify(structure.missing[0])}`);
 }

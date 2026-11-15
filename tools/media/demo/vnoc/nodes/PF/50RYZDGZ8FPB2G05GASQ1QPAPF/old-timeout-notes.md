@@ -4,4 +4,7 @@ hint: httpx/_config.py::Timeout.as_dict
 ---
 # Old timeout notes
 
-The four timeouts as a dict, for httpcore's `timeout` extension. Keep the keys in sync with httpcore.
+The four timeouts as a dict, for httpcore's `timeout` extension.
+
+- keys: `connect`, `read`, `write`, `pool`
+- keep them in sync with httpcore

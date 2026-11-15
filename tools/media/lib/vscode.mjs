@@ -1,6 +1,6 @@
 // Starts a clean VS Code with V-NOC installed, and reaches into its webviews (docs/18-release-0.2/01-media.md §4).
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath } from "@vscode/test-electron";
 import { _electron } from "playwright-core";
@@ -8,10 +8,10 @@ import { _electron } from "playwright-core";
 import { here, paths, repoRoot, vscodeVersion, window as size } from "../config.mjs";
 
 /**
- * Launches VS Code on `workspace` in a fresh profile. `vsix`: the extension is installed from that file (what users get). `dev`: the extension is
+ * Launches VS Code on `workspace` in a fresh profile (`settings`: what this scene changes of tools/media/settings.json). `vsix`: the extension is installed from that file (what users get). `dev`: the extension is
  * loaded from this repository instead (for looking around while writing a scene: the title bar then says Extension Development Host).
  */
-export async function launch({ workspace, vsix, dev = false }) {
+export async function launch({ workspace, vsix, dev = false, settings = {} }) {
   // the executable is the one the window suite uses, downloaded once into extension/.vscode-test
   const executablePath = await downloadAndUnzipVSCode({ version: vscodeVersion, cachePath: join(repoRoot, "extension/.vscode-test") });
   const [cli, ...cliArgs] = resolveCliArgsFromVSCodeExecutablePath(executablePath);
@@ -21,7 +21,9 @@ export async function launch({ workspace, vsix, dev = false }) {
   const extensions = join(profile, "extensions");
   mkdirSync(join(userData, "User"), { recursive: true });
   mkdirSync(extensions, { recursive: true });
-  cpSync(join(here, "settings.json"), join(userData, "User/settings.json"));
+  // the settings of every picture (settings.json), and what one scene changes (`export const settings` of the scene)
+  const base = JSON.parse(readFileSync(join(here, "settings.json"), "utf8"));
+  writeFileSync(join(userData, "User/settings.json"), JSON.stringify({ ...base, ...settings }, null, 2));
 
   // ELECTRON_RUN_AS_NODE makes VS Code start as plain Node (docs/16-ui-redesign/10-build-order.md §1): a shell started from VS Code has it
   const env = { ...process.env };

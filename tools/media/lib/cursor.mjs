@@ -8,11 +8,17 @@ export const RING_MS = 180;
 
 export class Cursor {
   #page;
+  #rec;
   #x = 640;
   #y = 400;
 
   constructor(page) {
     this.#page = page;
+  }
+
+  /** The recording that gets a mark for every glide and drag (`glide`, `drag`: what the edit speeds up, §7.2). */
+  attach(recording) {
+    this.#rec = recording;
   }
 
   /** Puts the arrow in the page (again after a reload). */
@@ -48,11 +54,15 @@ export class Cursor {
     );
   }
 
-  /** The box of `locator` once it has stopped moving (a camera gliding or a list settling would send the arrow to where the target was). */
-  async #stableBox(locator) {
+  /**
+   * The box of `locator` once it has stopped moving (a camera gliding or a list settling would send the arrow to where the target was). A scene calls this
+   * while it holds, for the target of the next action, and passes the box on (`{ box }`): measuring takes a quarter of a second, and doing it after the hold
+   * is a freeze.
+   */
+  async aim(locator) {
     let last = await locator.boundingBox();
     for (let i = 0; i < 40; i++) {
-      await this.#page.waitForTimeout(60);
+      await this.#page.waitForTimeout(40);
       const box = await locator.boundingBox();
       if (box && last && Math.abs(box.x - last.x) < 1 && Math.abs(box.y - last.y) < 1) return box;
       last = box;
@@ -61,20 +71,25 @@ export class Cursor {
     return last;
   }
 
-  /** Moves to the middle of `locator` (a point `at` = [fx, fy] of its box if given), then waits for the glide to end. */
-  async moveTo(locator, at = [0.5, 0.5]) {
-    const box = await this.#stableBox(locator);
+  /**
+   * Moves to the middle of `locator` (a point `at` = [fx, fy] of its box if given), then waits for the glide to end. `box`: the target, already measured by
+   * `aim`. `hover: false`: no Playwright hover afterwards (a card on the canvas has no hover-only buttons; a hover costs a round trip, which is a freeze).
+   */
+  async moveTo(locator, at = [0.5, 0.5], { box, hover = true } = {}) {
+    box ??= await this.aim(locator);
     await this.moveToPoint(box.x + box.width * at[0], box.y + box.height * at[1]);
     // the pointer's hover states (a row's buttons appear only on hover) are Playwright's, which reaches inside webviews
-    await locator.hover({ position: { x: box.width * at[0], y: box.height * at[1] }, timeout: 3000 }).catch(() => {});
+    if (hover) await locator.hover({ position: { x: box.width * at[0], y: box.height * at[1] }, timeout: 10_000 }).catch(() => {});
   }
 
   /** The arrow glides; the real pointer is not moved along the way (a straight line over a list would hover every row, and tooltips would pop up behind it). */
   async moveToPoint(x, y) {
+    const end = this.#rec?.begin("glide");
     this.#x = x;
     this.#y = y;
     await this.#page.evaluate(({ x, y }) => (document.getElementById("media-cursor").style.transform = `translate(${x}px, ${y}px)`), { x, y });
     await this.#page.waitForTimeout(MOVE_MS + 30);
+    end?.();
   }
 
   async #ring() {
@@ -89,21 +104,28 @@ export class Cursor {
     }, { x: this.#x, y: this.#y });
   }
 
-  async click(locator, options = {}) {
-    const at = options.at ?? [0.5, 0.5];
-    await this.moveTo(locator, options.at);
+  /** The ring plays and the click lands where the arrow is. With a measured `box` the click is the pointer's own (fast); without, Playwright's, which checks what it hits. */
+  async click(locator, { at = [0.5, 0.5], button = "left", box, hover } = {}) {
+    await this.moveTo(locator, at, { box, hover: hover ?? !box });
     await this.#ring();
-    const box = await locator.boundingBox();
-    await locator.click({ position: { x: box.width * at[0], y: box.height * at[1] }, button: options.button ?? "left", timeout: 5000 });
+    if (box) {
+      await this.#page.mouse.click(this.#x, this.#y, { button });
+    } else {
+      const b = await locator.boundingBox();
+      await locator.click({ position: { x: b.width * at[0], y: b.height * at[1] }, button, timeout: 15_000 });
+    }
     await this.#page.waitForTimeout(RING_MS);
   }
 
-  async dblclick(locator, options = {}) {
-    const at = options.at ?? [0.5, 0.5];
-    await this.moveTo(locator, options.at);
+  async dblclick(locator, { at = [0.5, 0.5], box, hover } = {}) {
+    await this.moveTo(locator, at, { box, hover: hover ?? !box });
     await this.#ring();
-    const box = await locator.boundingBox();
-    await locator.dblclick({ position: { x: box.width * at[0], y: box.height * at[1] }, timeout: 5000 });
+    if (box) {
+      await this.#page.mouse.dblclick(this.#x, this.#y);
+    } else {
+      const b = await locator.boundingBox();
+      await locator.dblclick({ position: { x: b.width * at[0], y: b.height * at[1] }, timeout: 15_000 });
+    }
     await this.#page.waitForTimeout(RING_MS);
   }
 
@@ -113,6 +135,7 @@ export class Cursor {
    */
   async drag([fx, fy], [tx, ty], ms = 700) {
     await this.moveToPoint(fx, fy);
+    const end = this.#rec?.begin("drag");
     await this.#page.mouse.move(fx, fy);
     await this.#ring();
     await this.#page.mouse.down();
@@ -131,6 +154,7 @@ export class Cursor {
     this.#x = tx;
     this.#y = ty;
     await this.#page.waitForTimeout(150);
+    end?.();
   }
 
   /** A screenshot must not show the arrow (except where the scene says so). */

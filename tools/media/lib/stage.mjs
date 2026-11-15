@@ -16,8 +16,8 @@ export class Stage {
     this.cursor = new Cursor(page);
   }
 
-  static async open({ vsix, dev = false } = {}) {
-    const { app, page } = await launch({ workspace: prepareDemo(), vsix, dev });
+  static async open({ vsix, dev = false, settings } = {}) {
+    const { app, page } = await launch({ workspace: prepareDemo(), vsix, dev, settings });
     const stage = new Stage(app, page);
     await page.waitForTimeout(2500);
     await stage.command("V-NOC: Focus on Structure View");
@@ -42,6 +42,21 @@ export class Stage {
     if (await visible(".part.panel:not(.hidden)")) await this.command("View: Toggle Panel Visibility");
     if (await visible(".notifications-toasts.visible")) await this.command("Notifications: Clear All Notifications");
     await this.attention(false);
+  }
+
+  /** The side bar's width in CSS pixels, by dragging its edge (setup only: a GIF never resizes). */
+  async resizeSidebar(width) {
+    const edge = await this.page.evaluate(() => {
+      const sashes = [...document.querySelectorAll(".monaco-sash.vertical")].map((e) => e.getBoundingClientRect()).filter((r) => r.left > 250 && r.left < 420);
+      return sashes[0] && { x: sashes[0].left + sashes[0].width / 2, y: sashes[0].top + sashes[0].height / 2 };
+    });
+    if (!edge) throw new Error("the side bar's edge was not found");
+    const activityBar = 48; // the Activity Bar is 48 px wide: the side bar starts there
+    await this.page.mouse.move(edge.x, edge.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(activityBar + width, edge.y, { steps: 8 });
+    await this.page.mouse.up();
+    await this.page.waitForTimeout(400);
   }
 
   /** Needs Attention open or folded (it takes half the side bar: folded in every picture but S6). */
