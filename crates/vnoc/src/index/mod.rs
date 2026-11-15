@@ -445,9 +445,11 @@ mod tests {
     }
 
     fn index(files: &[(&str, Vec<Def>)], records: Vec<(NodeId, NodeRecord)>) -> Index {
-        let mut index = Index::default();
-        index.files = files.iter().map(|(p, d)| (path(p), d.clone())).collect();
-        index.records = records.into_iter().collect();
+        let mut index = Index {
+            files: files.iter().map(|(p, d)| (path(p), d.clone())).collect(),
+            records: records.into_iter().collect(),
+            ..Default::default()
+        };
         index.resolve_all();
         index
     }
