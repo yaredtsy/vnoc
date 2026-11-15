@@ -1,10 +1,10 @@
-// G2 docs.gif: "Write a doc. Rename the function. The doc stays." (docs/18-release-0.2/04-gifs-v2.md §5). Two panes that never move, two acts with a pause between them,
-// and no mouse at all: the arrow is hidden and every step is a key with its badge. The left pane is where the hands are (`_client.py`, then the doc as a tab over it, then
-// `_client.py` again); the right pane, the docs tab, only answers.
+// G2 docs.gif: "Write a doc. Rename the function. The doc stays." (docs/18-release-0.2/04-gifs-v2.md §5). Two panes that never move, two acts with a pause between them, and one
+// mouse gesture: the right-click that starts the first act (the same gesture as G1's Show Calls); the arrow then leaves and is hidden, and every other step is a key with its
+// badge. The left pane is where the hands are (`_client.py`, then the doc as a tab over it, then `_client.py` again); the right pane, the docs tab, only answers.
 //
 // Setup, off camera: the window 960 × 600, the Activity Bar and the side bar closed, `httpx/_client.py` on the left with `def _send_handling_redirects(` a third of the way
 // down and the text cursor in the name, and on the right the docs tab (Show Docs from the editor's menu: unpinned, it shows the cursor's node), which says the function has no
-// doc. `_send_handling_redirects` has none in the overlay (01 §2.2). Setup uses the mouse; the film does not.
+// doc, and the arrow at rest right of the signature, on no text. `_send_handling_redirects` has none in the overlay (01 §2.2).
 //
 // The scene records freely (§6.1): it waits for state, holds 1.5 s after every change, and never thinks about length. Every row of the table of §5 is a beat.
 import { nameInLine, scrollNameTo } from "../editor.mjs";
@@ -37,9 +37,9 @@ const RENAMED = "_follow_redirects";
 const TEXT = "Follows redirects, one request per hop.\n\n- stops at `max_redirects`\n- every hop is added to `history`";
 
 const left = (page) => page.locator(".editor-group-container").first();
-const palette = (page) => page.locator(".quick-input-widget");
+const quickInput = (page) => page.locator(".quick-input-widget");
 
-/** Everything before the first frame. Returns the docs tab's frame. */
+/** Everything before the first frame. Returns the docs tab's frame and the name of the function in the code. */
 async function setup(stage) {
   const { page, cursor } = stage;
   await stage.openRow("folder httpx,");
@@ -67,14 +67,16 @@ async function setup(stage) {
   // the text cursor in the name, and the keyboard in the code
   await name.click();
   await page.mouse.move(200, 20);
-  await cursor.hideArrow(); // keys only
+  // the arrow at rest right of the signature, on no text (the line ends a few characters after the name)
+  const box = await name.boundingBox();
+  await cursor.moveToPoint(box.x + box.width + 60, box.y + box.height / 2);
   await stage.caption("A function. No doc yet.");
-  return { docs };
+  return { docs, name };
 }
 
 export async function run(stage, { stills: onlyStills }) {
-  const { page } = stage;
-  const { docs } = await setup(stage);
+  const { page, cursor } = stage;
+  const { docs, name } = await setup(stage);
   const rec = recordingFor(stage, id, { stills: onlyStills });
   const idLine = left(page).locator(".view-line", { hasText: /ID:\s*[0-9A-Z]{26}/ }).first();
   const tab = (name) => page.locator(".tab .label-name", { hasText: name });
@@ -85,30 +87,23 @@ export async function run(stage, { stills: onlyStills }) {
     await rec.beat("start");
     await rec.hold(HOLD, "first");
 
-    // 2 · act 1, add: F1, `add doc`, Enter. The palette's first entry is Add Doc…, and it takes the function at the cursor: the title box says so
+    // 2 · act 1, add: right-click the name → V-NOC ▸ Add Doc…, as G1 does Show Calls. The right-click puts the text cursor in the name, so the editor's menu is about this
+    // function: the title box says so. Then the arrow leaves the code, to empty space in the docs tab, and is hidden for the rest of the film
     await rec.beat("add-doc");
-    await stage.caption("Add Doc…");
-    await stage.key("F1");
-    await palette(page).locator("input.input").waitFor({ state: "visible", timeout: 5000 });
-    await page.keyboard.type("add doc", { delay: 60 });
-    const first = palette(page).locator(".quick-input-list .monaco-list-row").first();
-    await first.waitFor({ state: "visible", timeout: 5000 });
-    for (let i = 0; i < 40 && !(((await first.getAttribute("aria-label")) ?? "").includes("Add Doc")); i++) await page.waitForTimeout(100);
-    const entry = ((await first.getAttribute("aria-label")) ?? "").trim();
-    if (!entry.includes("Add Doc")) throw new Error(`the palette's first entry for "add doc" is "${entry}", not V-NOC: Add Doc…`);
-    rec.note(`the palette's first entry: "${entry}"`);
-    console.log(`  the palette's first entry: "${entry}"`);
-    await rec.look("the palette");
-    await rec.hold(HOLD);
-    await rec.during("reveal", "title box", async () => {
-      await stage.key("Enter");
-      await palette(page).locator(".quick-input-title", { hasText: /Add doc/i }).waitFor({ timeout: 15_000 });
-    });
-    const message = ((await palette(page).locator(".quick-input-message").textContent().catch(() => "")) ?? "").trim();
-    const value = await palette(page).locator("input.input").inputValue();
+    await stage.caption("Right-click → Add Doc…");
+    await cursor.click(name, { button: "right" });
+    await cursor.click(page.getByRole("menuitem", { name: "V-NOC" }));
+    await cursor.click(page.getByRole("menuitem", { name: /^Add Doc/ }));
+    await rec.during("reveal", "title box", () => quickInput(page).locator(".quick-input-title", { hasText: /Add doc/i }).waitFor({ timeout: 15_000 }));
+    const message = ((await quickInput(page).locator(".quick-input-message").textContent().catch(() => "")) ?? "").trim();
+    const value = await quickInput(page).locator("input.input").inputValue();
     rec.note(`the title box: "${message}", filled with "${value}"`);
     console.log(`  the title box: "${message}", filled with "${value}"`);
-    if (!message.includes(FN)) throw new Error(`Add Doc… from the palette is not about ${FN}: the title box says "${message}"`);
+    if (!message.includes(FN)) throw new Error(`Add Doc… from the editor's menu is not about ${FN}: the title box says "${message}"`);
+    const away = [720, 480]; // empty space in the docs tab, away from its button
+    await page.mouse.move(away[0], away[1]);
+    await cursor.moveToPoint(away[0], away[1]);
+    await cursor.hideArrow();
     await rec.hold(HOLD);
 
     // 3 · Enter: the title stays Overview, the core writes the ID line, the doc opens as a tab over the code
@@ -156,12 +151,14 @@ export async function run(stage, { stills: onlyStills }) {
     // 8 · ⌘S: the docs tab's header becomes the new name and the doc is still there
     await rec.beat("end");
     await stage.caption("The doc is still attached");
+    await stage.key("Meta+s");
+    // the project re-indexes and the docs tab says "Put the cursor in a function or class…" for about half a second: that is time in which nothing the viewer should see is
+    // happening, a wait, from ⌘S until the header says the new name. The frame where it does, and the doc still under it, is the reveal
+    await rec.during("wait", "re-index", () => docs.getByText(RENAMED).first().waitFor({ timeout: 30_000 }));
     await rec.during("reveal", "renamed", async () => {
-      await stage.key("Meta+s");
-      await docs.getByText(RENAMED).first().waitFor({ timeout: 30_000 });
       await docs.getByText("Follows redirects").first().waitFor({ timeout: 5000 });
+      await settled(page, null, 300);
     });
-    await rec.during("wait", "index", () => settled(page, null, 500));
     await rec.hold(END, "end");
   } catch (error) {
     await rec.stop().catch(() => {});
