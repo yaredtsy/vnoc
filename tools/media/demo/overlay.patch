@@ -1,0 +1,83 @@
+diff --git a/httpx/.vnoc-id b/httpx/.vnoc-id
+new file mode 100644
+index 0000000..4c904df
+--- /dev/null
++++ b/httpx/.vnoc-id
+@@ -0,0 +1,3 @@
++# V-NOC folder ID. It keeps this folder's docs attached when the folder is renamed or moved.
++# Safe to commit. Do not copy this file into another folder.
++id = "5APR397AAKSWPWW019WF9DZ3EN"
+diff --git a/httpx/_api.py b/httpx/_api.py
+index c3cda1e..1c980eb 100644
+--- a/httpx/_api.py
++++ b/httpx/_api.py
+@@ -1,3 +1,4 @@
++# FileID: 3A8XGXJVW6FVABEE44TDTP3JCG
+ from __future__ import annotations
+ 
+ import typing
+diff --git a/httpx/_client.py b/httpx/_client.py
+index 2249231..ceb7330 100644
+--- a/httpx/_client.py
++++ b/httpx/_client.py
+@@ -374,7 +374,7 @@ class BaseClient:
+                 if isinstance(timeout, UseClientDefault)
+                 else Timeout(timeout)
+             )
+-            extensions = dict(**extensions, timeout=timeout.as_dict())
++            extensions = dict(**extensions, timeout=timeout.as_mapping())
+         return Request(
+             method,
+             url,
+@@ -588,7 +588,7 @@ class BaseClient:
+                 if isinstance(self.timeout, UseClientDefault)
+                 else Timeout(self.timeout)
+             )
+-            request.extensions = dict(**request.extensions, timeout=timeout.as_dict())
++            request.extensions = dict(**request.extensions, timeout=timeout.as_mapping())
+ 
+ 
+ class Client(BaseClient):
+@@ -896,6 +896,8 @@ class Client(BaseClient):
+         See also: [Request instances][0]
+ 
+         [0]: /advanced/clients/#request-instances
++
++        ID: 17BGP5PS3SCJ6BFMG5T6MDG10Q
+         """
+         if self._state == ClientState.CLOSED:
+             raise RuntimeError("Cannot send a request, as the client has been closed.")
+@@ -1001,6 +1003,8 @@ class Client(BaseClient):
+     def _send_single_request(self, request: Request) -> Response:
+         """
+         Sends a single request, without handling any redirections.
++
++        ID: 03JMTWEPN2MJ6YHY9J5X6R00EK
+         """
+         transport = self._transport_for_url(request.url)
+         start = time.perf_counter()
+diff --git a/httpx/_config.py b/httpx/_config.py
+index 467a6c9..53bce3e 100644
+--- a/httpx/_config.py
++++ b/httpx/_config.py
+@@ -129,7 +129,7 @@ class Timeout:
+             self.write = timeout if isinstance(write, UnsetType) else write
+             self.pool = timeout if isinstance(pool, UnsetType) else pool
+ 
+-    def as_dict(self) -> dict[str, float | None]:
++    def as_mapping(self) -> dict[str, float | None]:
+         return {
+             "connect": self.connect,
+             "read": self.read,
+diff --git a/httpx/_transports/default.py b/httpx/_transports/default.py
+index d5aa05f..1e140e4 100644
+--- a/httpx/_transports/default.py
++++ b/httpx/_transports/default.py
+@@ -231,6 +231,7 @@ class HTTPTransport(BaseTransport):
+         self,
+         request: Request,
+     ) -> Response:
++        """ID: 3W0W7885978656QSHZCZF6X40B"""
+         assert isinstance(request.stream, SyncByteStream)
+         import httpcore
+ 
