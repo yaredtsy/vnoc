@@ -68,8 +68,13 @@ export class Stills {
     this.shots.push({ ...beat, file, caption: cursor.captionText, keys: [...this.#stage.pressed] });
   }
 
-  /** A film stands still here; a still does not. */
-  async hold() {}
+  /**
+   * A film stands still here, and so does a still, for the same time (at most 1.5 s): the product finishes what it started (the canvas's own fit of the view after Show Calls
+   * takes a moment) and a scene that did not wait for it would race it. Nothing is recorded.
+   */
+  async hold(ms) {
+    await this.#stage.page.waitForTimeout(Math.min(ms, 1500));
+  }
 
   async during(_type, _label, fn) {
     return fn();

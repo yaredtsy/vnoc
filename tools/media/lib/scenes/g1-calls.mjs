@@ -1,6 +1,6 @@
 // G1 calls.gif: "What does httpx.get() do?" (docs/18-release-0.2/04-gifs-v2.md §4, as rewritten after gate 1). It starts in the code, which a viewer knows: `get` in
 // `_api.py`. Right-click → Show Calls opens the canvas beside it; the canvas is maximised; the chevron of `request` opens one level; F fits the view (the four cards,
-// larger); `request` in `_client.py` is explored with Enter. The film ends on Explore, the largest and clearest picture.
+// larger); `request` in `_client.py` is explored with Enter; the `</>` button of a card opens its code inside it. The film ends there.
 //
 // The scene records freely (§6.1): it waits for state and holds 1.5 s after every change, and never thinks about length. Every beat begins with `rec.beat(name)`,
 // which is a named mark in a film and a picture in `--stills`. Speed is the edit's job, afterwards.
@@ -8,7 +8,7 @@
 // Setup, off camera: the window 960 × 600, the Activity Bar and the side bar closed, Focus on `get`, `_api.py` open with `def get(` a third of the way down, nothing
 // selected or highlighted in the code, no canvas, the arrow at rest right of the signature, on no text. No warm-up and no put-back: a slow first fetch is cut in the
 // edit. Only the mouse for what a new user clicks (a menu, a chevron, a card) and keys for what a user does with keys, each with its badge (§3.6): ⌘K ⌘M, F, Enter.
-import { emptySpot, settled, viewOf, viewSettled, zoomOf } from "../canvas.mjs";
+import { emptySpot, inView, settled, viewOf, viewSettled, zoomOf } from "../canvas.mjs";
 import { nameInLine, scrollNameTo } from "../editor.mjs";
 import { recordingFor } from "../stills.mjs";
 
@@ -155,7 +155,37 @@ export async function run(stage, { debug, stills: onlyStills }) {
     await shot("explore");
     await rec.hold(HOLD);
 
-    // 7 · the end: the arrow on empty canvas, 3 s. The caption answers the first one, and it is what the picture shows: `request` builds a request and `send` sends it
+    // 7 · the `</>` button (Code in Card) of the `request` card: its own code opens inside it. Nothing is scrolled. The card grows by about 220 px and takes `build_request` and
+    // `send` off the bottom of the window, so F fits the view once more, with no caption of its own: the caption stays what it is
+    await rec.beat("code");
+    await stage.caption("A card carries its code");
+    const carrier = nodeCard(cv, "request");
+    await cursor.click(carrier.getByRole("button", { name: "Code in Card" }));
+    await rec.during("reveal", "code", async () => {
+      await carrier.getByRole("button", { name: "Hide Code in Card" }).waitFor({ timeout: 15_000 });
+      await carrier.getByText(/^\d{3,4}$/).first().waitFor({ timeout: 15_000 }); // the code's line numbers are drawn
+    });
+    await rec.during("wait", "code", async () => {
+      await settled(page, cv, 300);
+      await viewSettled(page, cv);
+    });
+    // the first line number in the card: the code of `request` starts at 771
+    const firstLine = ((await carrier.getByText(/^\d{3,4}$/).first().textContent()) ?? "").trim();
+    rec.note(`the first line number in the code card: ${firstLine}`);
+    console.log(`  the first line number in the code card: ${firstLine}`);
+    await rec.during("reveal", "Fit View after the code", async () => {
+      await stage.key("f");
+      await viewSettled(page, cv);
+    });
+    // 04 §4 [check]: are the three cards whole on screen after the card grows and F has fitted the view?
+    const whole = [];
+    for (const [label, card] of [["request", nodeCard(cv, "request")], ["build_request", callCard(cv, "build_request")], ["send", callCard(cv, "send")]]) whole.push(`${label} ${(await card.count()) === 0 ? "NOT on screen (not drawn)" : (await inView(cv, card)) ? "whole" : "NOT whole"}`);
+    rec.note(`after the code and F: ${whole.join(", ")}`);
+    console.log(`  after the code and F: ${whole.join(", ")}`);
+    await shot("code");
+    await rec.hold(HOLD);
+
+    // 8 · the end: the arrow on empty canvas, 3 s. The caption answers the first one, and it is what the picture shows: `request` builds a request and `send` sends it
     await rec.beat("end");
     await stage.caption("It builds a request and sends it");
     const far = await emptySpot(cv, 0.9, 0.5); // empty canvas on the right side, not by the zoom buttons at the bottom left
