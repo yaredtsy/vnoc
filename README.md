@@ -1,70 +1,199 @@
-<div align="center">
-  <img src="extension/media/icon.png" alt="" width="72" height="72" />
-  <h1>V-NOC</h1>
-  <p><b>Browse Python code as a graph in VS Code. See what a function calls. Attach docs that survive renames.</b></p>
+<h1 align="center">
+  <img src="extension/media/icon.png" alt="" width="52" height="52" align="center" />&nbsp;V-NOC
+</h1>
 
-  <!-- badges: Marketplace version · Open VSX version · CI · Licence · Discord -->
-  [![Marketplace](https://img.shields.io/visual-studio-marketplace/v/vnoc.vnoc?label=Marketplace&include_prereleases)](https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc)
-  [![Open VSX](https://img.shields.io/open-vsx/v/vnoc/vnoc?label=Open%20VSX)](https://open-vsx.org/extension/vnoc/vnoc)
-  [![CI](https://github.com/yaredtsy/vnoc/actions/workflows/ci.yml/badge.svg)](https://github.com/yaredtsy/vnoc/actions/workflows/ci.yml)
-  [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
-  [![Discord](https://img.shields.io/badge/Discord-join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/J5nfPHqyBr)
-</div>
+<p align="center">
+  <b>Browse your code as a graph in VS Code.</b><br />
+  See what a function calls. Attach docs that survive renames.<br />
+  <sub>Python today · JavaScript/TypeScript, Rust and more on the way</sub>
+</p>
 
-![Open a function, see what it calls, follow a call to its own file](extension/media/screenshots/calls.gif)
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc"><img src="https://img.shields.io/visual-studio-marketplace/v/vnoc.vnoc?label=Marketplace&include_prereleases" alt="Marketplace" /></a>
+  <a href="https://open-vsx.org/extension/vnoc/vnoc"><img src="https://img.shields.io/open-vsx/v/vnoc/vnoc?label=Open%20VSX" alt="Open VSX" /></a>
+  <a href="https://github.com/yaredtsy/vnoc/actions/workflows/ci.yml"><img src="https://github.com/yaredtsy/vnoc/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-blue.svg" alt="Licence: Apache-2.0" /></a>
+  <a href="https://discord.gg/J5nfPHqyBr"><img src="https://img.shields.io/badge/Discord-join-5865F2.svg?logo=discord&logoColor=white" alt="Discord" /></a>
+</p>
 
-*Software development is a computational problem that we have turned into a memory problem.* V-NOC lets the computer keep the map:
-what is in the project, what calls what, and what someone wrote about it.
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#whats-coming">What's coming</a> ·
+  <a href="#how-it-is-built">How it is built</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
 
-## What it does
+<p align="center">
+  <img src="extension/media/screenshots/calls.gif" alt="Open a function, see what it calls, follow a call to its own file" width="900" />
+</p>
 
-- **The structure, as a tree and a canvas.** Folders, files, classes and functions in the side bar; open any part of it as cards on a canvas.
-  Focus on one node and both show only it.
-- **Calls, one level at a time.** Open a function to see what it calls, as cards joined by dashed lines. Explore a call to jump to where it
-  lives, and climb from there.
-- **Docs that stay with the code.** Attach Markdown to a function, class, file or folder. Rename it, move it, `git mv` its file: the doc is
-  still there. The docs are files in `.vnoc/`: commit them and your team sees them.
+Every time you open an unfamiliar function you rebuild the same map in your head: where it lives, what it calls, and what someone once
+wrote about it. V-NOC lets the computer keep that map. It reads your project, draws it as a tree and a canvas you can explore one level at
+a time, and keeps your notes attached to the code they describe, even after the code is renamed or moved.
+
+## Features
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🌳 Structure, as a tree and a canvas</h3>
+      Folders, files, classes and functions in the side bar. Open any part of it as cards on a canvas. <b>Focus</b> on one node and
+      both views show only it and what it holds.
+    </td>
+    <td width="33%" valign="top">
+      <h3>🔗 Calls, one level at a time</h3>
+      Open a function to see what it calls, as cards joined by dashed lines. <b>Explore</b> a call to jump to where it lives, and climb
+      from there. No wall of edges: you choose what to open.
+    </td>
+    <td width="33%" valign="top">
+      <h3>📝 Docs that stay with the code</h3>
+      Attach Markdown to a function, class, file or folder. Rename it, move it, <code>git mv</code> its file: the doc is still there.
+      Docs are plain files in <code>.vnoc/</code>, so your team sees them when you commit.
+    </td>
+  </tr>
+</table>
 
 ## Install
 
-V-NOC is a **pre-release**: in VS Code's Extensions view, search **V-NOC** and choose **Install Pre-Release Version**.
-Also on [Open VSX](https://open-vsx.org/extension/vnoc/vnoc) (Cursor, Windsurf, VSCodium) and as VSIX files on the
-[releases page](https://github.com/yaredtsy/vnoc/releases).
+V-NOC is a **pre-release**. In VS Code's Extensions view, search **V-NOC** and choose **Install Pre-Release Version**.
 
-Python only, for now. macOS (Apple silicon and Intel), Linux x64, Windows x64.
+| Where | Get it |
+|---|---|
+| VS Code | [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc) |
+| Cursor, Windsurf, VSCodium | [Open VSX](https://open-vsx.org/extension/vnoc/vnoc) |
+| Offline / by hand | `.vsix` files on the [releases page](https://github.com/yaredtsy/vnoc/releases) |
 
-## Start
+**Languages:** Python is the first. JavaScript/TypeScript, Rust and more are coming — see [What's coming](#whats-coming).<br />
+**Platforms:** macOS (Apple silicon and Intel), Linux x64 and Windows x64.
 
-1. Open a Python project. 2. Click the V-NOC icon in the Activity Bar. 3. Click a function to see it; **Show Calls** to see what it calls.
-4. Right-click anything → **Add Doc…**. 5. `⊞` opens the canvas.
+## Quick start
+
+1. Open a project in VS Code (Python, for now).
+2. Click the **V-NOC** icon in the Activity Bar.
+3. Click a function to see it, then **Show Calls** to see what it calls.
+4. Right-click anything and choose **Add Doc…** to write a note about it.
+5. Press `⊞` in the view's title (or run **V-NOC: Open Canvas**) to see the code as a graph.
+
+| Shortcut | Does |
+|---|---|
+| `Ctrl/Cmd+Alt+N` | **V-NOC: Search…** — find a node by name or path, from anywhere |
+| `/` or `Ctrl/Cmd+F` | Search inside the Structure view |
+| `Ctrl/Cmd+Enter` | Focus the selected node |
+| `Alt+←` | Go back one focus level |
 
 ## Docs that survive refactors
 
-![Add a doc, rename the function: the doc stays](extension/media/screenshots/docs.gif)
+<p align="center">
+  <img src="extension/media/screenshots/docs.gif" alt="Add a doc, rename the function: the doc stays" width="900" />
+</p>
 
-V-NOC writes a short ID into the code (one line in the docstring, a comment at the top of a file, a hidden `.vnoc-id` file in a folder) and
-finds the code again by it. A doc whose code is gone shows under **Needs Attention**, where you relink it or remove it.
+V-NOC writes a short ID into the code and finds the code again by it, so a doc follows its code through renames and moves.
+In Python:
+
+| Attached to | Where the ID goes |
+|---|---|
+| A function or class | One line in its docstring |
+| A file | A comment at the top of the file |
+| A folder | A hidden `.vnoc-id` file inside it |
+
+A doc whose code is gone shows under **Needs Attention**, where you relink it or remove it.
+
+## What's coming
+
+V-NOC is early, and a lot more is on the way.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🌐 More languages</h3>
+      Python is the first. JavaScript/TypeScript, Rust and more are next. Each language is one driver program, so adding one does not
+      touch the rest of V-NOC.
+    </td>
+    <td width="50%" valign="top">
+      <h3>✏️ Edit on the canvas</h3>
+      Edit code and docs right on the canvas cards, without switching to an editor tab.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🤖 Coding agents</h3>
+      A <b>CLI</b>, an <b>MCP server</b> and <b>skills</b> so agents (Claude Code, Codex, opencode…) can read and write the docs of a
+      node or function, read its code and follow its call tree.
+    </td>
+    <td width="50%" valign="top">
+      <h3>🧭 Walkthrough agent</h3>
+      An agent that walks you through a codebase on the canvas, opening functions and calls one step at a time as it explains them.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🔀 Changes as a graph</h3>
+      See what changed as functions, not lines: which were added, removed, updated or moved between two versions.
+    </td>
+    <td width="50%" valign="top">
+      <h3>🕓 Function history</h3>
+      Who changed <i>this</i> function, when and how, through renames and moves.
+    </td>
+  </tr>
+</table>
+
+| Version | Theme | Status |
+|---|---|---|
+| 0.1 | The docs loop | ✅ Released |
+| **0.2** | **Calls** | ✅ **This release** |
+| 0.3 | Edit code and docs on the canvas | 🚧 Next |
+| Later | More languages, coding agents (CLI · MCP · skills), walkthrough agent, changes as a graph, function history | 💭 [Planned](docs/futureplan/README.md) |
+
+Have an idea or a language you want first? Say so on [Discord](https://discord.gg/J5nfPHqyBr) or in [an issue](https://github.com/yaredtsy/vnoc/issues/new/choose).
 
 ## How it is built
 
+```mermaid
+flowchart LR
+    ext["<b>VS Code extension</b><br/>TypeScript<br/>side bar + canvas (React webviews)"]
+    core["<b>core</b><br/>Rust<br/>the index, IDs, .vnoc/ files"]
+    drv["<b>language driver</b><br/>Rust · Python today<br/>outline, IDs to write, call trees"]
+    ext -- "JSON-RPC over stdio" --> core
+    core -- "JSON-RPC over stdio" --> drv
 ```
-VS Code extension (TypeScript)  ──JSON-RPC, stdio──▶  core (Rust)  ──JSON-RPC, stdio──▶  language driver (Rust; Python today)
-  side bar + canvas (React webviews)                    the index, IDs, .vnoc/ files        outline, IDs to write, call trees
-```
 
-A language is one driver program: [docs/06-drivers.md](docs/06-drivers.md). The design notes are in [`docs/`](docs/README.md).
+| Folder | What is in it |
+|---|---|
+| [`crates/`](crates) | The Rust workspace: the core, the domain types, the driver protocol |
+| [`drivers/python/`](drivers/python) | The Python language driver (its own Cargo workspace) |
+| [`extension/`](extension) | The VS Code extension |
+| [`webview/`](webview) | The side bar and canvas (React + Vite) |
+| [`shared/`](shared) | TypeScript types and logic shared by the extension and the webview |
+| [`docs/`](docs/README.md) | The design notes |
 
-## Roadmap
-
-0.1 the docs loop · **0.2 calls** (this release) · 0.3 edit code and docs in the canvas · later: more languages, changes shown as a graph,
-access for coding agents ([docs/futureplan](docs/futureplan/README.md)).
+A new language is one driver program: see [docs/06-drivers.md](docs/06-drivers.md). Want to add one? That is a great place to start.
 
 ## Contributing
 
-Bug reports: **V-NOC: Report Issue…** in VS Code, or [an issue](https://github.com/yaredtsy/vnoc/issues/new/choose). Questions and ideas:
-[Discord](https://discord.gg/J5nfPHqyBr). Code: [CONTRIBUTING.md](CONTRIBUTING.md). If V-NOC is useful to you, a ⭐ helps other people find it.
+Contributions are welcome. To build from source:
+
+```sh
+pnpm install
+cargo build
+(cd drivers/python && cargo build)
+pnpm -r build
+```
+
+Then press **F5** in VS Code to run the extension. [CONTRIBUTING.md](CONTRIBUTING.md) has the toolchains, the tests and the conventions.
+
+- 🐞 **Bugs:** run **V-NOC: Report Issue…** in VS Code (it fills in your versions), or [open an issue](https://github.com/yaredtsy/vnoc/issues/new/choose).
+- 💬 **Questions and ideas:** join the [Discord](https://discord.gg/J5nfPHqyBr).
+- 🔒 **Security:** see [SECURITY.md](SECURITY.md).
 
 ## Licence
 
-Apache-2.0. The pictures show [httpx](https://github.com/encode/httpx) (BSD-3-Clause). Third-party code in the binaries:
-[THIRD_PARTY_NOTICES.md](extension/THIRD_PARTY_NOTICES.md).
+V-NOC is licensed under [Apache-2.0](LICENSE). Third-party code in the binaries is listed in
+[THIRD_PARTY_NOTICES.md](extension/THIRD_PARTY_NOTICES.md). The pictures show [httpx](https://github.com/encode/httpx) (BSD-3-Clause).
+
+---
+
+<p align="center">
+  If V-NOC is useful to you, a ⭐ helps other people find it.
+</p>
