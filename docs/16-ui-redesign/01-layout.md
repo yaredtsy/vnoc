@@ -38,6 +38,7 @@ Every entry of every menu and every button in this folder serves one of these. I
 | **J6** | **Read and write docs** | the docs of `checkout`; a new doc on `app/` | docs panel (ⓘ), docs tab, Add Doc… |
 | **J7** | **From the code to V-NOC** | "I am in `api.py` at `checkout`: show it in V-NOC" | the editor's and Explorer's V-NOC submenu |
 | **J8** | **Fix what broke** | a doc lost its function after a rename | NEEDS ATTENTION |
+| **J9** | **Tell us what broke, or find help** | "the core stopped"; "where do I ask a question?" | Report Issue…, Help and Feedback… ([18-release-0.2/03](../18-release-0.2/03-help-and-report.md)) |
 
 ## 3. The words
 

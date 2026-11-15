@@ -177,7 +177,7 @@ Explorer's habit is that the highlighted row is the selected one.
 | no folder open | *"Open a folder to see its code."* and an **Open Folder** button |
 | reading the code | the search box, then five skeleton rows (the web's `SidebarProjectSkeleton`), and VS Code's progress line on the view |
 | no supported file | *"No Python files here yet."* |
-| error | the message, **Try Again**, **Show Log** |
+| error | the message, **Try Again**, **Show Log**, **Report Issue** (a request `reportIssue`: the host runs `vnoc.reportIssue`) |
 | ready | §2 |
 
 These replace the native view's `viewsWelcome` entries.
@@ -191,6 +191,7 @@ These replace the native view's `viewsWelcome` entries.
 | `⋯` Refresh Structure | `vnoc.refreshStructure` | the way out if the tree ever does not follow the code |
 | `⋯` Search… | `vnoc.search` (the QuickPick) | |
 | `⋯` Restore Removed Doc… · Empty Trash | unchanged (11) | |
+| `⋯` Help and Feedback… | `vnoc.help` (a QuickPick), in its own last group `9_help` | J9: the one entry of the title's menu that is about V-NOC, not the code |
 
 Gone from the title: `🔍` (the box is in the view), Back and Clear (in each panel's focus bar).
 

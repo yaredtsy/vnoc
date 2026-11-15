@@ -113,7 +113,7 @@ Which files: `resourceExtname in vnoc.extensions` and folders, as today.
 | canvas background | `webview/context`, `webviewSection == 'pane'` | Fit View · Collapse All · ─ · Back · Clear Focus (`vnoc.focused`) · Clear Selection (`vnoc.hasSelection`) · ─ · Close Explore (`vnoc.activeIsExplore`) | J1, J2 |
 | sidebar panel header | `webview/context`, `webviewSection == 'context'` | Close (EXPLORE) · Close Others | J4 |
 | sidebar empty space | `webviewSection == 'pane'`, `surface == sidebar` | Collapse All · Clear Focus · Refresh Structure | |
-| STRUCTURE view title | `view/title`, `view == vnoc.structure` | `⊞` Open Canvas · `⊟` Collapse All · `⋯` Refresh Structure · Search… · Restore Removed Doc… · Empty Trash | 06 §9 |
+| STRUCTURE view title | `view/title`, `view == vnoc.structure` | `⊞` Open Canvas · `⊟` Collapse All · `⋯` Refresh Structure · Search… · Restore Removed Doc… · Empty Trash · (last group) Help and Feedback… | 06 §9 |
 | the canvas bar's `⋯` | a menu drawn by the page (not VS Code's): Fit View · Collapse All · Show Minimap ✓ · Refresh Structure | 02 §3 | |
 | NEEDS ATTENTION | unchanged (11) | | J8 |
 
