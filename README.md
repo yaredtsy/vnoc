@@ -25,8 +25,6 @@ what is in the project, what calls what, and what someone wrote about it.
 - **Docs that stay with the code.** Attach Markdown to a function, class, file or folder. Rename it, move it, `git mv` its file: the doc is
   still there. The docs are files in `.vnoc/`: commit them and your team sees them.
 
-![The side bar, the canvas and a doc](extension/media/screenshots/overview.png)
-
 ## Install
 
 V-NOC is a **pre-release**: in VS Code's Extensions view, search **V-NOC** and choose **Install Pre-Release Version**.

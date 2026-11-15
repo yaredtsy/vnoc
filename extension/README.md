@@ -10,8 +10,6 @@ Browse Python code as a tree and a canvas, follow what a function calls, and att
 
 ![Open a function, see what it calls, follow a call to its own file](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/calls.gif)
 
-![The side bar, the canvas and a doc](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/overview.png)
-
 ## How to start
 
 1. Open a Python project.
@@ -31,8 +29,6 @@ Browse Python code as a tree and a canvas, follow what a function calls, and att
 
 ![Add a doc, rename the function: the doc stays](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/docs.gif)
 
-![A function opened on the canvas, with its call cards](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/calls.png)
-
 ## The menus
 
 Right-click anything V-NOC draws; the entries say what happens.
@@ -45,10 +41,6 @@ Right-click anything V-NOC draws; the entries say what happens.
 | a panel's header in the Structure view | Close · Close Others |
 | the code editor, an editor tab | **V-NOC ▸** Reveal in Sidebar · Open in Canvas (beside the code) · Focus · Show Calls · Show Docs · Add Doc… · Attach a Missing Doc Here… · Write ID |
 | the Explorer | **V-NOC ▸** Reveal in Sidebar · Open in Canvas · Focus · Show Docs · Add Doc… |
-
-![The right-click menu of a call card](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/call-menu.png)
-
-![The V-NOC submenu in the editor](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/editor-menu.png)
 
 `V-NOC: Search…` (`Ctrl/Cmd+Alt+N`) finds a node by name or path from anywhere.
 
