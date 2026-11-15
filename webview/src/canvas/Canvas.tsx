@@ -132,6 +132,7 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
       zoomOnDoubleClick={false}
       nodesConnectable={false}
       fitView={saved === null}
+      fitViewOptions={{ maxZoom: 1 }} // a context of one card (a new EXPLORE) would otherwise open at React Flow's limit, 200 %
       defaultViewport={saved ?? undefined}
       onMoveEnd={(_, viewport) => rememberViewport(context, at, viewport)}
       className="min-w-0 flex-1"
