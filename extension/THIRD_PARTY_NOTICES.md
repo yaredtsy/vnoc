@@ -5135,6 +5135,8 @@ THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### Mozilla Public License 2.0 (MPL-2.0)
 
+The source code of these crates is available at the links above and on crates.io.
+
 Used by:
 
 - [option-ext 0.2.0](https://github.com/soc/option-ext.git)
@@ -5517,6 +5519,8 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 ```
 
 ### Mozilla Public License 2.0 (MPL-2.0)
+
+The source code of these crates is available at the links above and on crates.io.
 
 Used by:
 

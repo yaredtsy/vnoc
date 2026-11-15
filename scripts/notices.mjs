@@ -35,6 +35,9 @@ function rustLicences(manifest, extra) {
   }
 }
 
+/** MPL-2.0 asks us to say where the source of the code is. */
+const mplNote = (id) => (id.includes("MPL-2.0") ? ["The source code of these crates is available at the links above and on crates.io.", ""] : []);
+
 /** Our own crates are Apache-2.0 and the VSIX carries the LICENSE; they are not "third party". */
 const ours = (name) => name.startsWith("vnoc");
 
@@ -94,7 +97,7 @@ function render() {
     "## Rust crates",
   ];
   for (const [text, e] of rustSection()) {
-    lines.push("", `### ${e.name} (${e.id})`, "", "Used by:", "", ...[...e.crates].sort(([a], [b]) => a.localeCompare(b)).map(([name, url]) => `- [${name}](${url})`), "", "```text", text, "```");
+    lines.push("", `### ${e.name} (${e.id})`, "", ...mplNote(e.id), "Used by:", "", ...[...e.crates].sort(([a], [b]) => a.localeCompare(b)).map(([name, url]) => `- [${name}](${url})`), "", "```text", text, "```");
   }
   lines.push("", "## npm packages");
   for (const [text, e] of npmSection()) {
