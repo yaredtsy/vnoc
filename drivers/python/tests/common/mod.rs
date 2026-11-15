@@ -28,9 +28,20 @@ impl Driver {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let (stdin, out) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
-        let mut d = Driver { child, stdin, out, next: 0, init: Value::Null };
-        d.init = d.request("initialize", json!({ "protocol": 1 })).expect("the handshake works");
+        let (stdin, out) = (
+            child.stdin.take().unwrap(),
+            BufReader::new(child.stdout.take().unwrap()),
+        );
+        let mut d = Driver {
+            child,
+            stdin,
+            out,
+            next: 0,
+            init: Value::Null,
+        };
+        d.init = d
+            .request("initialize", json!({ "protocol": 1 }))
+            .expect("the handshake works");
         d.notify("initialized", json!({}));
         d
     }
@@ -58,10 +69,13 @@ impl Driver {
     pub fn read_response(&mut self) -> (u64, Result<Value, Value>) {
         let msg = self.read_frame();
         let id = msg["id"].as_u64().expect("a response has an id");
-        (id, match msg.get("error") {
-            Some(e) => Err(e.clone()),
-            None => Ok(msg["result"].clone()),
-        })
+        (
+            id,
+            match msg.get("error") {
+                Some(e) => Err(e.clone()),
+                None => Ok(msg["result"].clone()),
+            },
+        )
     }
 
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, Value> {
@@ -74,10 +88,18 @@ impl Driver {
     fn read_frame(&mut self) -> Value {
         let mut line = String::new();
         self.out.read_line(&mut line).unwrap();
-        let len: usize = line.strip_prefix("Content-Length:").unwrap_or_else(|| panic!("STDOUT GUARD: stray bytes on stdout: {line:?}")).trim().parse().unwrap();
+        let len: usize = line
+            .strip_prefix("Content-Length:")
+            .unwrap_or_else(|| panic!("STDOUT GUARD: stray bytes on stdout: {line:?}"))
+            .trim()
+            .parse()
+            .unwrap();
         let mut blank = String::new();
         self.out.read_line(&mut blank).unwrap();
-        assert_eq!(blank, "\r\n", "STDOUT GUARD: no blank line after the header");
+        assert_eq!(
+            blank, "\r\n",
+            "STDOUT GUARD: no blank line after the header"
+        );
         let mut buf = vec![0u8; len];
         self.out.read_exact(&mut buf).unwrap();
         // a call tree can be deeper than serde_json's default limit of 128 levels (the analyzer goes to 256)
@@ -99,7 +121,10 @@ impl Driver {
     pub fn finish(mut self) {
         self.request("shutdown", Value::Null).unwrap();
         self.notify("exit", Value::Null);
-        assert!(self.child.wait().unwrap().success(), "the driver exits cleanly after shutdown + exit");
+        assert!(
+            self.child.wait().unwrap().success(),
+            "the driver exits cleanly after shutdown + exit"
+        );
     }
 }
 
@@ -112,8 +137,15 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 impl Project {
     pub fn new(files: &[(&str, &str)]) -> Project {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("vnoc-driver-test-{}-{}-{nanos}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed)));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "vnoc-driver-test-{}-{}-{nanos}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&root).unwrap();
         // the engine canonicalizes the root; so that file names and the root agree on macOS (/var → /private/var), do it here too
         let root = std::fs::canonicalize(root).unwrap();
@@ -155,12 +187,20 @@ impl Drop for Project {
 
 /// The names of what a node calls, in order.
 pub fn callees(node: &Value) -> Vec<String> {
-    node["children"].as_array().unwrap().iter().map(|c| c["target"]["qualname"].as_str().unwrap().to_string()).collect()
+    node["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["target"]["qualname"].as_str().unwrap().to_string())
+        .collect()
 }
 
 /// Every mark in a tree, in the order met.
 pub fn marks(node: &Value) -> Vec<String> {
-    let mut out: Vec<String> = node["marks"].as_array().map(|m| m.iter().map(|x| x.as_str().unwrap().to_string()).collect()).unwrap_or_default();
+    let mut out: Vec<String> = node["marks"]
+        .as_array()
+        .map(|m| m.iter().map(|x| x.as_str().unwrap().to_string()).collect())
+        .unwrap_or_default();
     for child in node["children"].as_array().into_iter().flatten() {
         out.extend(marks(child));
     }

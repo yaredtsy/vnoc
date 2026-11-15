@@ -33,7 +33,15 @@ pub struct Attached {
 impl Attached {
     /// What a tree node shows of it: the permanent ID, the doc count, and how it was found.
     fn shown(&self) -> (Option<String>, usize, Option<tree::Link>) {
-        (Some(self.id.to_string()), self.docs, Some(if self.by == FoundBy::Marker { tree::Link::Marker } else { tree::Link::Name }))
+        (
+            Some(self.id.to_string()),
+            self.docs,
+            Some(if self.by == FoundBy::Marker {
+                tree::Link::Marker
+            } else {
+                tree::Link::Name
+            }),
+        )
     }
 }
 
@@ -85,7 +93,13 @@ impl Index {
     }
 
     pub fn failed(&self) -> Vec<FailedFile> {
-        self.failed.iter().map(|(path, error)| FailedFile { path: path.to_string(), error: error.clone() }).collect()
+        self.failed
+            .iter()
+            .map(|(path, error)| FailedFile {
+                path: path.to_string(),
+                error: error.clone(),
+            })
+            .collect()
     }
 
     /// Documented nodes the code does not match, sorted by path (then name).
@@ -107,17 +121,33 @@ impl Index {
     /// What the user should look at: broken files first, then IDs written twice. `git_root` makes the files absolute.
     pub fn problems(&self, git_root: &std::path::Path) -> Vec<Problem> {
         let absolute = |repo_path: &str| git_root.join(repo_path).to_string_lossy().into_owned();
-        let broken = self.problems.iter().map(|p| Problem { text: p.text.clone(), file: Some(p.file.to_string_lossy().into_owned()), line: None });
-        let markers = self.marker_problems.iter().map(|(text, file)| Problem { text: text.clone(), file: Some(absolute(file)), line: None });
+        let broken = self.problems.iter().map(|p| Problem {
+            text: p.text.clone(),
+            file: Some(p.file.to_string_lossy().into_owned()),
+            line: None,
+        });
+        let markers = self.marker_problems.iter().map(|(text, file)| Problem {
+            text: text.clone(),
+            file: Some(absolute(file)),
+            line: None,
+        });
         let duplicates = self.duplicates.iter().map(|d| {
             // a def is shown at its line; a file or a folder at its top (a folder has no file to open, so its marker is)
             let line = self.def_at(&d.copy).map(|def| def.range.start.line);
             let file = match (d.copy.qualname().is_empty(), self.is_folder(d.copy.path())) {
-                (true, true) => format!("{}/{}", d.copy.path(), crate::identity::folder_marker::FILE_NAME),
+                (true, true) => format!(
+                    "{}/{}",
+                    d.copy.path(),
+                    crate::identity::folder_marker::FILE_NAME
+                ),
                 _ => d.copy.path().to_string(),
             };
             let text = format!("{}: its ID is also at {}", place(&d.winner), place(&d.copy));
-            Problem { text, file: Some(absolute(&file)), line }
+            Problem {
+                text,
+                file: Some(absolute(&file)),
+                line,
+            }
         });
         broken.chain(markers).chain(duplicates).collect()
     }
@@ -131,7 +161,10 @@ impl Index {
     pub fn def_at(&self, location: &LocationKey) -> Option<Def> {
         let defs = self.files.get(location.path())?;
         let which = occurrences(defs.iter().map(|d| d.qualname.as_str()));
-        defs.iter().zip(which).find(|(d, n)| d.qualname == location.qualname() && *n == location.occurrence()).map(|(d, _)| d.clone())
+        defs.iter()
+            .zip(which)
+            .find(|(d, n)| d.qualname == location.qualname() && *n == location.occurrence())
+            .map(|(d, _)| d.clone())
     }
 
     /// The paths of the files the driver outlined.
@@ -151,7 +184,9 @@ impl Index {
 
     /// The V-NOC ID written in the file's `# FileID:` comment, if it is one.
     pub fn file_id(&self, path: &RepoPath) -> Option<NodeId> {
-        self.file_ids.get(path).and_then(|text| NodeId::parse(text).ok())
+        self.file_ids
+            .get(path)
+            .and_then(|text| NodeId::parse(text).ok())
     }
 
     /// The ID in the folder's `.vnoc-id`, if there is a readable one.
@@ -161,7 +196,11 @@ impl Index {
 
     /// Whether a location names something that is there now: a def, a file (empty qualname) or a folder.
     fn exists(&self, location: &LocationKey) -> bool {
-        if location.qualname().is_empty() { self.knows(location.path()) || self.is_folder(location.path()) } else { self.def_at(location).is_some() }
+        if location.qualname().is_empty() {
+            self.knows(location.path()) || self.is_folder(location.path())
+        } else {
+            self.def_at(location).is_some()
+        }
     }
 
     /// Whether the index already has an answer (an outline or an error) for this file.
@@ -170,7 +209,11 @@ impl Index {
     }
 
     /// Stores what the driver said about a file. Returns whether that differs from what was held.
-    fn set_outline(&mut self, path: RepoPath, outcome: Result<(Vec<Def>, Option<String>), String>) -> bool {
+    fn set_outline(
+        &mut self,
+        path: RepoPath,
+        outcome: Result<(Vec<Def>, Option<String>), String>,
+    ) -> bool {
         match outcome {
             Ok((defs, file_id)) => {
                 let had_error = self.failed.remove(&path).is_some();
@@ -179,12 +222,20 @@ impl Index {
                     None => self.file_ids.remove(&path),
                 };
                 let id_changed = old_id != file_id;
-                self.files.insert(path, defs.clone()).is_none_or(|old| old != defs) || had_error || id_changed
+                self.files
+                    .insert(path, defs.clone())
+                    .is_none_or(|old| old != defs)
+                    || had_error
+                    || id_changed
             }
             Err(error) => {
                 let was_outlined = self.files.remove(&path).is_some();
                 let had_id = self.file_ids.remove(&path).is_some();
-                self.failed.insert(path, error.clone()).is_none_or(|old| old != error) || was_outlined || had_id
+                self.failed
+                    .insert(path, error.clone())
+                    .is_none_or(|old| old != error)
+                    || was_outlined
+                    || had_id
             }
         }
     }
@@ -198,7 +249,8 @@ impl Index {
                 let id = match f.marker {
                     Some(Ok(id)) => Some(id),
                     Some(Err(e)) => {
-                        let file = format!("{}/{}", f.path, crate::identity::folder_marker::FILE_NAME);
+                        let file =
+                            format!("{}/{}", f.path, crate::identity::folder_marker::FILE_NAME);
                         problems.push((format!("{file}: {e}"), file));
                         None
                     }
@@ -233,20 +285,47 @@ impl Index {
 
     /// Finds every record again in the code. Call after `files` or `records` changed.
     fn resolve_all(&mut self) {
-        let folder_ids = self.folders.iter().filter_map(|(path, id)| Some((path.clone(), (*id)?))).collect();
+        let folder_ids = self
+            .folders
+            .iter()
+            .filter_map(|(path, id)| Some((path.clone(), (*id)?)))
+            .collect();
         let markers = Markers::read(&self.files, &self.file_ids, &folder_ids);
         let mut attached = HashMap::new();
-        let scanned: BTreeSet<String> = self.files.keys().chain(self.folders.keys()).map(|p| p.as_str().to_lowercase()).collect();
+        let scanned: BTreeSet<String> = self
+            .files
+            .keys()
+            .chain(self.folders.keys())
+            .map(|p| p.as_str().to_lowercase())
+            .collect();
         let mut missing = Vec::new();
         let mut duplicates = Vec::new();
         for (id, record) in &self.records {
             let anchor = record.toml.location().ok();
-            match resolve(id, anchor.as_ref(), &markers, |location| self.exists(location)) {
+            match resolve(id, anchor.as_ref(), &markers, |location| {
+                self.exists(location)
+            }) {
                 Resolved::Found { at, by } => {
                     if by == FoundBy::Marker {
-                        duplicates.extend(markers.places(id).iter().filter(|copy| **copy != at).map(|copy| Duplicate { winner: at.clone(), copy: copy.clone() }));
+                        duplicates.extend(
+                            markers
+                                .places(id)
+                                .iter()
+                                .filter(|copy| **copy != at)
+                                .map(|copy| Duplicate {
+                                    winner: at.clone(),
+                                    copy: copy.clone(),
+                                }),
+                        );
                     }
-                    attached.insert(at.to_string(), Attached { id: *id, docs: record.docs.len(), by });
+                    attached.insert(
+                        at.to_string(),
+                        Attached {
+                            id: *id,
+                            docs: record.docs.len(),
+                            by,
+                        },
+                    );
                 }
                 Resolved::Missing => {
                     // an unreadable anchor cannot be here: `NodeToml::parse` checked it
@@ -254,7 +333,13 @@ impl Index {
                     if !self.looked_for(anchor.path(), &scanned) {
                         continue;
                     }
-                    missing.push(MissingNode { id: id.to_string(), kind: record.toml.kind().map(|k| k.as_str().to_string()), path: anchor.path().to_string(), qualname: anchor.qualname().to_string(), docs: record.docs.len() });
+                    missing.push(MissingNode {
+                        id: id.to_string(),
+                        kind: record.toml.kind().map(|k| k.as_str().to_string()),
+                        path: anchor.path().to_string(),
+                        qualname: anchor.qualname().to_string(),
+                        docs: record.docs.len(),
+                    });
                 }
             }
         }
@@ -289,12 +374,24 @@ impl Index {
 
 /// A location for people: `src/orders.py::parse_order` (`#2` on the second of two same-named defs), or the bare path for a file or a folder.
 fn place(location: &LocationKey) -> String {
-    if location.qualname().is_empty() { location.path().to_string() } else { location.to_string() }
+    if location.qualname().is_empty() {
+        location.path().to_string()
+    } else {
+        location.to_string()
+    }
 }
 
 /// What a record's anchor path is: the paths `refresh` must look up on disk are the anchors of `records` that the scan did not read.
-pub fn anchors_to_check(records: &[(NodeId, NodeRecord)], read: &BTreeSet<RepoPath>) -> BTreeSet<RepoPath> {
-    records.iter().filter_map(|(_, r)| r.toml.location().ok()).map(|l| l.path().clone()).filter(|p| !read.contains(p)).collect()
+pub fn anchors_to_check(
+    records: &[(NodeId, NodeRecord)],
+    read: &BTreeSet<RepoPath>,
+) -> BTreeSet<RepoPath> {
+    records
+        .iter()
+        .filter_map(|(_, r)| r.toml.location().ok())
+        .map(|l| l.path().clone())
+        .filter(|p| !read.contains(p))
+        .collect()
 }
 
 #[cfg(test)]
@@ -316,8 +413,24 @@ mod tests {
     }
 
     fn def(qualname: &str, line: u32, marker: Option<NodeId>) -> Def {
-        let (start, end) = (Position { line, character: 0 }, Position { line: line + 1, character: 0 });
-        Def { qualname: qualname.into(), name: qualname.into(), kind: DefKind::Function, parent: String::new(), parent_kind: None, range: Range { start, end }, params: vec![], id: marker.map(|m| m.to_string()), syntax_error: false }
+        let (start, end) = (
+            Position { line, character: 0 },
+            Position {
+                line: line + 1,
+                character: 0,
+            },
+        );
+        Def {
+            qualname: qualname.into(),
+            name: qualname.into(),
+            kind: DefKind::Function,
+            parent: String::new(),
+            parent_kind: None,
+            range: Range { start, end },
+            params: vec![],
+            id: marker.map(|m| m.to_string()),
+            syntax_error: false,
+        }
     }
 
     fn record(at: &LocationKey, kind: Option<NodeKind>, docs: usize) -> NodeRecord {
@@ -325,13 +438,18 @@ mod tests {
         if let Some(kind) = kind {
             toml.set_kind(&kind);
         }
-        NodeRecord { toml, docs: (0..docs).map(|n| format!("{n}.md")).collect() }
+        NodeRecord {
+            toml,
+            docs: (0..docs).map(|n| format!("{n}.md")).collect(),
+        }
     }
 
     fn index(files: &[(&str, Vec<Def>)], records: Vec<(NodeId, NodeRecord)>) -> Index {
-        let mut index = Index::default();
-        index.files = files.iter().map(|(p, d)| (path(p), d.clone())).collect();
-        index.records = records.into_iter().collect();
+        let mut index = Index {
+            files: files.iter().map(|(p, d)| (path(p), d.clone())).collect(),
+            records: records.into_iter().collect(),
+            ..Default::default()
+        };
         index.resolve_all();
         index
     }
@@ -341,29 +459,66 @@ mod tests {
         let index = index(
             &[("a.py", vec![def("f", 0, None)])],
             vec![
-                (id(1), record(&at("z.py", "gone"), Some(NodeKind::Function), 2)),
+                (
+                    id(1),
+                    record(&at("z.py", "gone"), Some(NodeKind::Function), 2),
+                ),
                 (id(2), record(&at("a.py", "f"), None, 1)),
                 (id(3), record(&at("b/old.py", "g"), None, 1)),
             ],
         );
         let missing = index.missing();
-        assert_eq!(missing.iter().map(|m| (m.path.as_str(), m.qualname.as_str(), m.kind.as_deref(), m.docs)).collect::<Vec<_>>(), [("b/old.py", "g", None, 1), ("z.py", "gone", Some("function"), 2)]);
+        assert_eq!(
+            missing
+                .iter()
+                .map(|m| (
+                    m.path.as_str(),
+                    m.qualname.as_str(),
+                    m.kind.as_deref(),
+                    m.docs
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("b/old.py", "g", None, 1),
+                ("z.py", "gone", Some("function"), 2)
+            ]
+        );
         assert_eq!(missing[1].id, id(1).to_string());
-        assert_eq!(index.tree("r", "").counts()[3], 1, "the found one is in the tree, the missing ones are not");
+        assert_eq!(
+            index.tree("r", "").counts()[3],
+            1,
+            "the found one is in the tree, the missing ones are not"
+        );
     }
 
     /// A repo path made absolute the way `problems` does it: on Windows the join puts a `\` after the root (the editor opens either spelling).
     fn under_repo(repo_path: &str) -> String {
-        std::path::Path::new("/repo").join(repo_path).to_string_lossy().into_owned()
+        std::path::Path::new("/repo")
+            .join(repo_path)
+            .to_string_lossy()
+            .into_owned()
     }
 
     #[test]
     fn an_id_in_two_places_is_one_problem_and_the_winner_does_not_change() {
-        let files = [("a.py", vec![def("f", 3, Some(id(1)))]), ("copy.py", vec![def("x", 0, None), def("parse_order", 7, Some(id(1)))])];
+        let files = [
+            ("a.py", vec![def("f", 3, Some(id(1)))]),
+            (
+                "copy.py",
+                vec![def("x", 0, None), def("parse_order", 7, Some(id(1)))],
+            ),
+        ];
         // the anchor says a.py::f, so a.py wins
         let at_anchor = index(&files, vec![(id(1), record(&at("a.py", "f"), None, 1))]);
         let problems = at_anchor.problems(std::path::Path::new("/repo"));
-        assert_eq!(problems, [Problem { text: "a.py::f: its ID is also at copy.py::parse_order".into(), file: Some(under_repo("copy.py")), line: Some(7) }]);
+        assert_eq!(
+            problems,
+            [Problem {
+                text: "a.py::f: its ID is also at copy.py::parse_order".into(),
+                file: Some(under_repo("copy.py")),
+                line: Some(7)
+            }]
+        );
         assert_eq!(at_anchor.attached.get("a.py::f").map(|a| a.id), Some(id(1)));
 
         // the anchor is gone: the first by path still wins, and it is the same winner
@@ -372,20 +527,42 @@ mod tests {
         assert_eq!(no_anchor.problems(std::path::Path::new("/repo")).len(), 1);
 
         // an ID written once is not a problem
-        assert!(index(&files[..1], vec![(id(1), record(&at("a.py", "f"), None, 1))]).problems(std::path::Path::new("/repo")).is_empty());
+        assert!(
+            index(
+                &files[..1],
+                vec![(id(1), record(&at("a.py", "f"), None, 1))]
+            )
+            .problems(std::path::Path::new("/repo"))
+            .is_empty()
+        );
     }
 
     #[test]
     fn a_copy_on_the_second_of_two_same_named_defs_ends_in_its_number() {
-        let files = [("a.py", vec![def("f", 3, Some(id(1)))]), ("copy.py", vec![def("g", 0, None), def("g", 5, Some(id(1)))])];
+        let files = [
+            ("a.py", vec![def("f", 3, Some(id(1)))]),
+            ("copy.py", vec![def("g", 0, None), def("g", 5, Some(id(1)))]),
+        ];
         let index = index(&files, vec![(id(1), record(&at("a.py", "f"), None, 1))]);
-        assert_eq!(index.problems(std::path::Path::new("/repo"))[0].text, "a.py::f: its ID is also at copy.py::g#2");
+        assert_eq!(
+            index.problems(std::path::Path::new("/repo"))[0].text,
+            "a.py::f: its ID is also at copy.py::g#2"
+        );
     }
 
     /// `a.py` is outlined; `bad.py` failed in the driver; `out/x.py` is outside the scan (or ignored, or past the cap): the same to the index.
     fn looked_for(anchor: &str, on_disk: &[&str], failed: &[&str]) -> bool {
-        let mut index = index(&[("a.py", vec![def("f", 0, None)])], vec![(id(1), record(&at(anchor, "gone"), Some(NodeKind::Function), 1))]);
-        index.failed = failed.iter().map(|p| (path(p), "boom".to_string())).collect();
+        let mut index = index(
+            &[("a.py", vec![def("f", 0, None)])],
+            vec![(
+                id(1),
+                record(&at(anchor, "gone"), Some(NodeKind::Function), 1),
+            )],
+        );
+        index.failed = failed
+            .iter()
+            .map(|p| (path(p), "boom".to_string()))
+            .collect();
         index.folders.insert(path("pkg"), None);
         index.on_disk = on_disk.iter().map(|p| path(p)).collect();
         index.resolve_all();
@@ -414,9 +591,20 @@ mod tests {
     #[test]
     fn broken_files_are_problems_with_the_file_to_open() {
         let mut index = Index::default();
-        index.problems.push(LoadProblem { text: "x/node.toml: bad".into(), file: "/repo/.vnoc/nodes/ab/X/node.toml".into() });
-        index.marker_problems.push(("pkg/.vnoc-id: bad".into(), "pkg/.vnoc-id".into()));
+        index.problems.push(LoadProblem {
+            text: "x/node.toml: bad".into(),
+            file: "/repo/.vnoc/nodes/ab/X/node.toml".into(),
+        });
+        index
+            .marker_problems
+            .push(("pkg/.vnoc-id: bad".into(), "pkg/.vnoc-id".into()));
         let problems = index.problems(std::path::Path::new("/repo"));
-        assert_eq!(problems.iter().map(|p| p.file.clone()).collect::<Vec<_>>(), [Some("/repo/.vnoc/nodes/ab/X/node.toml".to_string()), Some(under_repo("pkg/.vnoc-id"))]);
+        assert_eq!(
+            problems.iter().map(|p| p.file.clone()).collect::<Vec<_>>(),
+            [
+                Some("/repo/.vnoc/nodes/ab/X/node.toml".to_string()),
+                Some(under_repo("pkg/.vnoc-id"))
+            ]
+        );
     }
 }

@@ -36,7 +36,13 @@ pub fn trash_dir(root: &Path) -> PathBuf {
 
 /// The trash folder of a removed node holds a copy of the node's path, so "is this ID taken" can look there too.
 pub fn trashed(root: &Path, id: &NodeId) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(trash_dir(root)) else { return vec![] };
+    let Ok(entries) = std::fs::read_dir(trash_dir(root)) else {
+        return vec![];
+    };
     let suffix = format!("_{id}");
-    entries.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(&suffix)).map(|e| e.path()).collect()
+    entries
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(&suffix))
+        .map(|e| e.path())
+        .collect()
 }

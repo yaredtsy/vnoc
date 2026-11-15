@@ -19,15 +19,30 @@ fn first_free_id_gives_the_oracles_ids_including_collision_counters() {
             .map(|(.., id)| id.to_string())
             .collect();
         let id = first_free_id(&loc, |id| taken.contains(&id.to_string())).unwrap();
-        assert_eq!(id.to_string(), *expected, "{path}::{qualname}#{occurrence} counter {counter}");
+        assert_eq!(
+            id.to_string(),
+            *expected,
+            "{path}::{qualname}#{occurrence} counter {counter}"
+        );
     }
 }
 
 #[test]
 fn the_nfc_and_nfd_spellings_of_one_path_are_two_different_ids() {
-    let nfc = ID_CASES.iter().find(|c| c.0 == "caf\u{e9}/\u{e9}.py").unwrap().4;
-    let nfd = ID_CASES.iter().find(|c| c.0 == "cafe\u{301}/e\u{301}.py").unwrap().4;
-    assert_ne!(nfc, nfd, "the id hashes the exact bytes of the path as git records it");
+    let nfc = ID_CASES
+        .iter()
+        .find(|c| c.0 == "caf\u{e9}/\u{e9}.py")
+        .unwrap()
+        .4;
+    let nfd = ID_CASES
+        .iter()
+        .find(|c| c.0 == "cafe\u{301}/e\u{301}.py")
+        .unwrap()
+        .4;
+    assert_ne!(
+        nfc, nfd,
+        "the id hashes the exact bytes of the path as git records it"
+    );
 }
 
 #[test]

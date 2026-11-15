@@ -22,19 +22,41 @@ fn nodes(frame: &Frame) -> usize {
 
 fn options() -> Options {
     // what the driver runs with
-    Options { limits: Limits { deadline: Some(Duration::from_secs(20)), ..Limits::default() }, ..Options::default() }
+    Options {
+        limits: Limits {
+            deadline: Some(Duration::from_secs(20)),
+            ..Limits::default()
+        },
+        ..Options::default()
+    }
 }
 
 /// `file::qualname#n`, n counted from 1 like the protocol (default 1).
 fn parse(spec: &str) -> (String, String, u16) {
     let (file, rest) = spec.split_once("::").expect("file::qualname");
-    let (qualname, nth) = rest.rsplit_once('#').map_or((rest, 1), |(q, n)| (q, n.parse().expect("#n")));
+    let (qualname, nth) = rest
+        .rsplit_once('#')
+        .map_or((rest, 1), |(q, n)| (q, n.parse().expect("#n")));
     (file.to_string(), qualname.to_string(), (nth - 1) as u16)
 }
 
-fn walk(project: &Project, file: &str, qualname: &str, occurrence: u16) -> (Duration, Option<usize>) {
+fn walk(
+    project: &Project,
+    file: &str,
+    qualname: &str,
+    occurrence: u16,
+) -> (Duration, Option<usize>) {
     let started = Instant::now();
-    let frame = call_wire(project, file, &Entry { qualname, occurrence }, &options(), false);
+    let frame = call_wire(
+        project,
+        file,
+        &Entry {
+            qualname,
+            occurrence,
+        },
+        &options(),
+        false,
+    );
     (started.elapsed(), frame.as_ref().map(nodes))
 }
 
@@ -45,7 +67,10 @@ fn open(root: &str) -> (Project, Duration) {
 }
 
 fn entries(root: &Path, specs: &[String]) {
-    println!("{:<46} {:>7} {:>9} {:>9} {:>9} {:>11}", "entry", "nodes", "open", "1st walk", "2nd walk", "fresh again");
+    println!(
+        "{:<46} {:>7} {:>9} {:>9} {:>9} {:>11}",
+        "entry", "nodes", "open", "1st walk", "2nd walk", "fresh again"
+    );
     for spec in specs {
         let (file, qualname, occurrence) = parse(spec);
         let (project, opened) = open(root.to_str().unwrap());
@@ -56,12 +81,22 @@ fn entries(root: &Path, specs: &[String]) {
         let (again_project, again_open) = open(root.to_str().unwrap());
         let (again_walk, _) = walk(&again_project, &file, &qualname, occurrence);
         let nodes = count.map_or("none".to_string(), |n| n.to_string());
-        println!("{:<46} {:>7} {:>7.1}ms {:>7.1}ms {:>7.1}ms {:>9.1}ms", spec, nodes, ms(opened), ms(first), ms(second), ms(again_open + again_walk));
+        println!(
+            "{:<46} {:>7} {:>7.1}ms {:>7.1}ms {:>7.1}ms {:>9.1}ms",
+            spec,
+            nodes,
+            ms(opened),
+            ms(first),
+            ms(second),
+            ms(again_open + again_walk)
+        );
     }
 }
 
 fn python_files(dir: &Path, root: &Path, out: &mut Vec<String>) {
-    let Ok(read) = std::fs::read_dir(dir) else { return };
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut paths: Vec<PathBuf> = read.filter_map(|e| e.ok()).map(|e| e.path()).collect();
     paths.sort();
     for path in paths {
@@ -71,7 +106,12 @@ fn python_files(dir: &Path, root: &Path, out: &mut Vec<String>) {
                 python_files(&path, root, out);
             }
         } else if name.ends_with(".py") {
-            out.push(path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"));
+            out.push(
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
         }
     }
 }
@@ -85,19 +125,36 @@ fn sweep(root: &Path) {
     let mut unanswered = 0;
     let all = Instant::now();
     for file in &files {
-        let Ok(text) = std::fs::read_to_string(root.join(file)) else { continue };
+        let Ok(text) = std::fs::read_to_string(root.join(file)) else {
+            continue;
+        };
         let outline = python_syntax::outline(&text, python_analysis::MarkerStyle::docstring("ID"));
         let mut seen = std::collections::HashMap::<String, u16>::new();
         for def in &outline.defs {
             let nth = seen.entry(def.qualname.clone()).or_insert(0);
             let occurrence = *nth;
             *nth += 1;
-            if !matches!(def.kind, python_syntax::DefKind::Function | python_syntax::DefKind::Method) {
+            if !matches!(
+                def.kind,
+                python_syntax::DefKind::Function | python_syntax::DefKind::Method
+            ) {
                 continue;
             }
             let (took, count) = walk(&project, file, &def.qualname, occurrence);
             match count {
-                Some(n) => timings.push((took, n, format!("{file}::{}{}", def.qualname, if occurrence > 0 { format!("#{}", occurrence + 1) } else { String::new() }))),
+                Some(n) => timings.push((
+                    took,
+                    n,
+                    format!(
+                        "{file}::{}{}",
+                        def.qualname,
+                        if occurrence > 0 {
+                            format!("#{}", occurrence + 1)
+                        } else {
+                            String::new()
+                        }
+                    ),
+                )),
                 None => unanswered += 1,
             }
         }
@@ -105,8 +162,21 @@ fn sweep(root: &Path) {
     let total = all.elapsed();
     timings.sort_by_key(|(d, _, _)| *d);
     let at = |q: f64| ms(timings[((timings.len() - 1) as f64 * q) as usize].0);
-    println!("{} files, {} functions walked ({} unanswered), open {:.1} ms, all walks {:.0} ms on one open project", files.len(), timings.len(), unanswered, ms(opened), ms(total));
-    println!("per walk: median {:.2} ms, p90 {:.2} ms, p99 {:.2} ms, max {:.1} ms", at(0.5), at(0.9), at(0.99), at(1.0));
+    println!(
+        "{} files, {} functions walked ({} unanswered), open {:.1} ms, all walks {:.0} ms on one open project",
+        files.len(),
+        timings.len(),
+        unanswered,
+        ms(opened),
+        ms(total)
+    );
+    println!(
+        "per walk: median {:.2} ms, p90 {:.2} ms, p99 {:.2} ms, max {:.1} ms",
+        at(0.5),
+        at(0.9),
+        at(0.99),
+        at(1.0)
+    );
     println!("the slowest five:");
     for (took, n, name) in timings.iter().rev().take(5) {
         println!("  {:>8.1} ms  {:>6} nodes  {name}", ms(*took), n);
@@ -115,7 +185,9 @@ fn sweep(root: &Path) {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let Some((root, rest)) = args.split_first() else { return eprintln!("usage: measure_call_tree <root> --sweep | <file::qualname[#n]>...") };
+    let Some((root, rest)) = args.split_first() else {
+        return eprintln!("usage: measure_call_tree <root> --sweep | <file::qualname[#n]>...");
+    };
     let root = std::fs::canonicalize(root).expect("the root exists");
     if rest.first().map(String::as_str) == Some("--sweep") {
         sweep(&root);

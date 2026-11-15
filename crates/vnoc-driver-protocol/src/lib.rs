@@ -270,25 +270,48 @@ pub struct EnvironmentInputsResult {
 mod tests {
     use super::*;
 
-    const TARGET: &str = r#"{ "file": "a.py", "qualname": "f", "occurrence": 1, "kind": "function", "id": null }"#;
+    const TARGET: &str =
+        r#"{ "file": "a.py", "qualname": "f", "occurrence": 1, "kind": "function", "id": null }"#;
 
     #[test]
     fn the_likely_mark_is_a_word_of_its_own() {
-        assert_eq!(serde_json::to_string(&CallMark::Likely).unwrap(), "\"likely\"");
-        assert_eq!(serde_json::from_str::<Vec<CallMark>>(r#"["recursive","likely"]"#).unwrap(), [CallMark::Recursive, CallMark::Likely]);
+        assert_eq!(
+            serde_json::to_string(&CallMark::Likely).unwrap(),
+            "\"likely\""
+        );
+        assert_eq!(
+            serde_json::from_str::<Vec<CallMark>>(r#"["recursive","likely"]"#).unwrap(),
+            [CallMark::Recursive, CallMark::Likely]
+        );
     }
 
     #[test]
     fn a_call_node_from_a_driver_before_7_7_has_no_site_file() {
-        let node: CallNode = serde_json::from_str(&format!(r#"{{ "target": {TARGET}, "call_site": null }}"#)).unwrap();
+        let node: CallNode =
+            serde_json::from_str(&format!(r#"{{ "target": {TARGET}, "call_site": null }}"#))
+                .unwrap();
         assert_eq!(node.call_site_file, None);
     }
 
     #[test]
     fn a_site_file_is_written_when_there_is_one_and_left_out_when_there_is_not() {
-        let node: CallNode = serde_json::from_str(&format!(r#"{{ "target": {TARGET}, "call_site": null }}"#)).unwrap();
-        assert!(serde_json::to_value(&node).unwrap().get("call_site_file").is_none(), "None adds no key");
-        let named = CallNode { call_site_file: Some("pkg/base.py".to_string()), ..node };
-        assert_eq!(serde_json::to_value(&named).unwrap()["call_site_file"], "pkg/base.py");
+        let node: CallNode =
+            serde_json::from_str(&format!(r#"{{ "target": {TARGET}, "call_site": null }}"#))
+                .unwrap();
+        assert!(
+            serde_json::to_value(&node)
+                .unwrap()
+                .get("call_site_file")
+                .is_none(),
+            "None adds no key"
+        );
+        let named = CallNode {
+            call_site_file: Some("pkg/base.py".to_string()),
+            ..node
+        };
+        assert_eq!(
+            serde_json::to_value(&named).unwrap()["call_site_file"],
+            "pkg/base.py"
+        );
     }
 }

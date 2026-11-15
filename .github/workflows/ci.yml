@@ -1,59 +1,83 @@
+# Lint and test (docs/18-ci-cd.md §3). Packaging is package.yml's job, not this file's.
 name: ci
 on:
-  push:
-    branches: ["**"] # a tag push runs publish.yml, which calls this file: not twice
   pull_request:
-  workflow_call: # publish.yml: the same build and tests, and its VSIX files packaged as pre-releases
-    inputs:
-      pre-release:
-        type: boolean
-        default: false
+  push:
+    branches: [main] # a branch is tested through its PR; main after a merge
+  workflow_dispatch: # a branch without a PR, by hand
+  workflow_call: # publish.yml: the same lint and tests before a release
+permissions:
+  contents: read
+concurrency: # a newer push to the same PR cancels the run still going; main and releases are never cancelled
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  CARGO_TERM_COLOR: always
 jobs:
-  build-test:
-    name: ${{ matrix.os }}
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: { contents: read, pull-requests: read } # paths-filter asks the API for the PR's files
+    outputs:
+      code: ${{ steps.filter.outputs.code || 'true' }} # not a PR (main, a release, by hand): everything runs
+    steps:
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          predicate-quantifier: every # a file counts only if it matches all three: not docs, not Markdown
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+
+  lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: lint
+          save-cache: ${{ github.ref == 'refs/heads/main' || github.event_name == 'pull_request' }}
+      - name: rustfmt
+        run: |
+          cargo fmt --all --check
+          (cd drivers/python && cargo fmt --all --check)
+      - name: clippy
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          (cd drivers/python && cargo clippy --all-targets -- -D warnings)
+      - run: pnpm typecheck
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    name: test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       # one broken system must not hide the other two
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
-            target: darwin-arm64
-            extra-target: darwin-x64
           - os: ubuntu-22.04 # not `latest`: the programs then run on older Linux too (an older glibc)
-            target: linux-x64
             window: xvfb-run -a # VS Code needs a display
           - os: windows-latest
-            target: win32-x64
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm }
-      # language_driver_rs vendors ruff, whose test snapshots have paths longer than Windows' 260 characters: cargo's own git library cannot check them out, the git program can
-      - name: long paths for the git checkout of language_driver_rs
-        if: runner.os == 'Windows'
-        run: |
-          git config --system core.longpaths true
-          echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
-      # two toolchains (rust-toolchain.toml: 1.94.1 in the root, 1.99.1 in drivers/python): do not rely on rustup installing them by itself
-      - name: rust toolchains
-        run: |
-          rustup toolchain install
-          (cd drivers/python && rustup toolchain install)
-      - uses: Swatinem/rust-cache@v2
-        with: { cache-on-failure: true }
-      - uses: Swatinem/rust-cache@v2
-        with: { workspaces: "drivers/python -> target", key: driver, cache-on-failure: true }
-      - uses: actions/cache@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup
         with:
-          path: extension/.vscode-test
-          key: vscode-test-${{ runner.os }}-${{ runner.arch }}
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
+          cache-key: test
+          save-cache: ${{ github.ref == 'refs/heads/main' || github.event_name == 'pull_request' }}
+          vscode-test: "true"
       - name: shared logic (session, tree, focus stack)
         run: pnpm --filter @vnoc/shared test
       - name: webview (layout, keys, markers, markdown)
@@ -71,17 +95,32 @@ jobs:
         run: pnpm -r build
       - name: extension suite in a real VS Code window (downloads VS Code)
         run: ${{ matrix.window }} pnpm --filter vnoc test
-      - name: package ${{ matrix.target }}
-        run: node scripts/package.mjs --target ${{ matrix.target }} ${{ inputs.pre-release && '--pre-release' || '' }}
-      - uses: actions/upload-artifact@v4
-        with: { name: "vsix-${{ matrix.target }}", path: "vnoc-${{ matrix.target }}.vsix" }
-      # the Intel Mac build is cross-built on the arm64 runner: packaged, not tested
-      - name: package ${{ matrix.extra-target }}
-        if: matrix.extra-target
+
+  # The four files of every merge, to install by hand before tagging; fills the release caches that a tag run reads. Not in ci-ok's needs: nothing waits for it.
+  package:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/package.yml
+
+  # The one required check (docs/18 §7.1). A skip nobody asked for is a failure, not a pass.
+  ci-ok:
+    if: always()
+    needs: [changes, lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          EVENT: ${{ github.event_name }}
+          CHANGES: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }} # a matrix: "success" only if every row succeeded
         run: |
-          rustup target add x86_64-apple-darwin
-          (cd drivers/python && rustup target add x86_64-apple-darwin)
-          node scripts/package.mjs --target ${{ matrix.extra-target }} ${{ inputs.pre-release && '--pre-release' || '' }}
-      - uses: actions/upload-artifact@v4
-        if: matrix.extra-target
-        with: { name: "vsix-${{ matrix.extra-target }}", path: "vnoc-${{ matrix.extra-target }}.vsix" }
+          echo "event=$EVENT changes=$CHANGES code=$CODE lint=$LINT test=$TEST"
+          [ "$CHANGES" = success ] || { echo "::error::changes did not succeed"; exit 1; }
+          if [ "$CODE" = true ]; then
+            [ "$LINT" = success ] && [ "$TEST" = success ] || { echo "::error::code changed: lint and test must both succeed"; exit 1; }
+          elif [ "$CODE" = false ] && [ "$EVENT" = pull_request ]; then
+            [ "$LINT" = skipped ] && [ "$TEST" = skipped ] || { echo "::error::docs-only PR, but lint or test ran and did not skip cleanly"; exit 1; }
+          else
+            echo "::error::unexpected: code=$CODE on $EVENT"; exit 1
+          fi

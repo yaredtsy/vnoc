@@ -43,10 +43,16 @@ pub enum BuildError {
 ///
 /// The index lock is only held to read the current state and, at the end, to apply the result; never across the driver calls.
 /// Callers run one refresh at a time (the server holds a mutex), so the state read at the start is still the state at the end.
-pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>, touched: Touched<'_>) -> Result<bool, BuildError> {
+pub async fn refresh(
+    project: &Project,
+    host: &DriverHost,
+    index: &RwLock<Index>,
+    touched: Touched<'_>,
+) -> Result<bool, BuildError> {
     let started = Instant::now();
     let walk_project = project.clone();
-    let scan = tokio::task::spawn_blocking(move || scan::python_files(&walk_project, MAX_FILES)).await?;
+    let scan =
+        tokio::task::spawn_blocking(move || scan::python_files(&walk_project, MAX_FILES)).await?;
     let walked = started.elapsed();
     let in_scope: BTreeSet<RepoPath> = scan.files.iter().cloned().collect();
 
@@ -57,10 +63,17 @@ pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>
             Touched::Files(paths) => paths.len() > TOO_MANY_TOUCHED,
         };
         let touched_paths: BTreeSet<RepoPath> = match &touched {
-            Touched::Files(paths) if !everything => paths.iter().filter_map(|p| project.repo_path_of(p)).collect(),
+            Touched::Files(paths) if !everything => paths
+                .iter()
+                .filter_map(|p| project.repo_path_of(p))
+                .collect(),
             _ => BTreeSet::new(),
         };
-        scan.files.iter().filter(|p| everything || touched_paths.contains(*p) || !known.knows(p)).cloned().collect()
+        scan.files
+            .iter()
+            .filter(|p| everything || touched_paths.contains(*p) || !known.knows(p))
+            .cloned()
+            .collect()
     };
 
     let mut outlined = Vec::with_capacity(to_read.len());
@@ -85,15 +98,29 @@ pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>
     // What was read: the outlines held or about to be applied, and the folders the walk found.
     let to_check = {
         let known = index.read().unwrap();
-        let mut read: BTreeSet<RepoPath> = known.outlined_paths().filter(|p| in_scope.contains(*p)).cloned().collect();
+        let mut read: BTreeSet<RepoPath> = known
+            .outlined_paths()
+            .filter(|p| in_scope.contains(*p))
+            .cloned()
+            .collect();
         for (path, outcome) in &outlined {
-            if outcome.is_ok() { read.insert(path.clone()) } else { read.remove(path) };
+            if outcome.is_ok() {
+                read.insert(path.clone())
+            } else {
+                read.remove(path)
+            };
         }
         read.extend(scan.folders.iter().map(|f| f.path.clone()));
         anchors_to_check(&report.records, &read)
     };
     let git_root = project.git_root().to_path_buf();
-    let on_disk = tokio::task::spawn_blocking(move || to_check.into_iter().filter(|p| git_root.join(p.as_str()).symlink_metadata().is_ok()).collect::<BTreeSet<_>>()).await?;
+    let on_disk = tokio::task::spawn_blocking(move || {
+        to_check
+            .into_iter()
+            .filter(|p| git_root.join(p.as_str()).symlink_metadata().is_ok())
+            .collect::<BTreeSet<_>>()
+    })
+    .await?;
 
     let read = outlined.len();
     let changed = {
@@ -112,6 +139,12 @@ pub async fn refresh(project: &Project, host: &DriverHost, index: &RwLock<Index>
         }
         changed
     };
-    tracing::info!("index: walked {} files in {} ms, read {read} with the driver, {} ms in all{}", in_scope.len(), walked.as_millis(), started.elapsed().as_millis(), if changed { "" } else { " (nothing changed)" });
+    tracing::info!(
+        "index: walked {} files in {} ms, read {read} with the driver, {} ms in all{}",
+        in_scope.len(),
+        walked.as_millis(),
+        started.elapsed().as_millis(),
+        if changed { "" } else { " (nothing changed)" }
+    );
     Ok(changed)
 }

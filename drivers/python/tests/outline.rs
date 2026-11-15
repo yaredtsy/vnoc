@@ -22,10 +22,25 @@ struct Driver {
 impl Driver {
     /// Starts the driver, sends `initialize` and `initialized`. Returns the `initialize` result.
     fn start() -> (Driver, Value) {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc-driver-python")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
-        let (stdin, out) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
-        let mut d = Driver { child, stdin, out, next: 0 };
-        let init = d.request("initialize", json!({ "protocol": 1 })).expect("the handshake works");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc-driver-python"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let (stdin, out) = (
+            child.stdin.take().unwrap(),
+            BufReader::new(child.stdout.take().unwrap()),
+        );
+        let mut d = Driver {
+            child,
+            stdin,
+            out,
+            next: 0,
+        };
+        let init = d
+            .request("initialize", json!({ "protocol": 1 }))
+            .expect("the handshake works");
         d.notify("initialized", json!({}));
         (d, init)
     }
@@ -57,30 +72,46 @@ impl Driver {
     fn read_frame(&mut self) -> Value {
         let mut line = String::new();
         self.out.read_line(&mut line).unwrap();
-        let len: usize = line.strip_prefix("Content-Length:").unwrap_or_else(|| panic!("STDOUT GUARD: stray bytes on stdout: {line:?}")).trim().parse().unwrap();
+        let len: usize = line
+            .strip_prefix("Content-Length:")
+            .unwrap_or_else(|| panic!("STDOUT GUARD: stray bytes on stdout: {line:?}"))
+            .trim()
+            .parse()
+            .unwrap();
         let mut blank = String::new();
         self.out.read_line(&mut blank).unwrap();
-        assert_eq!(blank, "\r\n", "STDOUT GUARD: no blank line after the header");
+        assert_eq!(
+            blank, "\r\n",
+            "STDOUT GUARD: no blank line after the header"
+        );
         let mut buf = vec![0u8; len];
         self.out.read_exact(&mut buf).unwrap();
         serde_json::from_slice(&buf).unwrap()
     }
 
     fn outline(&mut self, text: &str) -> Value {
-        self.request("vnoc/outline", json!({ "text": text })).expect("outline answers")
+        self.request("vnoc/outline", json!({ "text": text }))
+            .expect("outline answers")
     }
 
     fn finish(mut self) {
         self.request("shutdown", Value::Null).unwrap();
         self.notify("exit", Value::Null);
-        assert!(self.child.wait().unwrap().success(), "the driver exits cleanly after shutdown + exit");
+        assert!(
+            self.child.wait().unwrap().success(),
+            "the driver exits cleanly after shutdown + exit"
+        );
     }
 }
 
 /// Applies a plan's edits to ASCII `text` (positions are line/character; for ASCII a character is a byte).
 fn apply_edits(text: &str, edits: &[Value]) -> String {
-    let starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
-    let offset = |p: &Value| starts[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize;
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+    let offset = |p: &Value| {
+        starts[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize
+    };
     let mut out = text.to_string();
     for e in edits.iter().rev() {
         out.insert_str(offset(&e["range"]["start"]), e["newText"].as_str().unwrap());
@@ -104,40 +135,72 @@ fn the_handshake_announces_what_the_driver_can_do() {
 
 #[test]
 fn a_protocol_it_does_not_speak_is_refused_with_a_reason() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc-driver-python")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
-    let (mut stdin, mut out) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc-driver-python"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let (mut stdin, mut out) = (
+        child.stdin.take().unwrap(),
+        BufReader::new(child.stdout.take().unwrap()),
+    );
     let body = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":2}}"#;
     write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
     stdin.write_all(body).unwrap();
     stdin.flush().unwrap();
     let mut header = String::new();
     out.read_line(&mut header).unwrap();
-    let len: usize = header.strip_prefix("Content-Length:").unwrap().trim().parse().unwrap();
+    let len: usize = header
+        .strip_prefix("Content-Length:")
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     out.read_line(&mut String::new()).unwrap();
     let mut buf = vec![0u8; len];
     out.read_exact(&mut buf).unwrap();
     let msg: Value = serde_json::from_slice(&buf).unwrap();
     assert_eq!(msg["error"]["code"], -32600);
-    assert!(msg["error"]["message"].as_str().unwrap().contains("protocol 1"), "{msg}");
+    assert!(
+        msg["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("protocol 1"),
+        "{msg}"
+    );
     assert!(!child.wait().unwrap().success(), "and the driver stops");
 }
 
 #[test]
 fn qualnames_and_ids_of_the_fixture_match_the_independent_oracle() {
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../crates/vnoc-domain/tests/fixtures/nested.py")).unwrap();
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/vnoc-domain/tests/fixtures/nested.py"
+    ))
+    .unwrap();
     let (mut d, _) = Driver::start();
     let out = d.outline(&text);
-    let found: Vec<&str> = defs(&out).iter().map(|x| x["qualname"].as_str().unwrap()).collect();
+    let found: Vec<&str> = defs(&out)
+        .iter()
+        .map(|x| x["qualname"].as_str().unwrap())
+        .collect();
 
     // 1. the parser: Python's own __qualname__ (with <locals>), in source order
     let expected: Vec<&str> = golden::FIXTURE_DEFS.iter().map(|(q, ..)| *q).collect();
-    assert_eq!(found, expected, "qualnames, including <locals>, nested classes and redefinitions");
+    assert_eq!(
+        found, expected,
+        "qualnames, including <locals>, nested classes and redefinitions"
+    );
 
     // 2. the domain: occurrence counting and ID derivation, against the oracle's IDs
     let occ = occurrences(found.iter().copied());
-    for ((qualname, o), (expected_q, expected_o, expected_id)) in found.iter().zip(&occ).zip(golden::FIXTURE_DEFS) {
+    for ((qualname, o), (expected_q, expected_o, expected_id)) in
+        found.iter().zip(&occ).zip(golden::FIXTURE_DEFS)
+    {
         assert_eq!((*qualname, *o), (*expected_q, *expected_o));
-        let loc = LocationKey::new(RepoPath::new(golden::FIXTURE_PATH).unwrap(), *qualname, *o).unwrap();
+        let loc =
+            LocationKey::new(RepoPath::new(golden::FIXTURE_PATH).unwrap(), *qualname, *o).unwrap();
         let id = first_free_id(&loc, |_| false).unwrap();
         assert_eq!(id.to_string(), *expected_id, "{qualname}#{o}");
     }
@@ -150,12 +213,25 @@ fn defs_come_with_their_parents_kinds_and_params() {
     let out = d.outline("class A:\n    def m(self, x, *rest, **kw):\n        def inner(): pass\n");
     let v = defs(&out);
     assert_eq!(v.len(), 3);
-    assert_eq!((v[0]["qualname"].as_str(), v[0]["kind"].as_str(), v[0]["parent"].as_str()), (Some("A"), Some("class"), Some("")));
+    assert_eq!(
+        (
+            v[0]["qualname"].as_str(),
+            v[0]["kind"].as_str(),
+            v[0]["parent"].as_str()
+        ),
+        (Some("A"), Some("class"), Some(""))
+    );
     assert_eq!(v[1]["qualname"], "A.m");
-    assert_eq!((v[1]["parent"].as_str(), v[1]["parent_kind"].as_str()), (Some("A"), Some("class")));
+    assert_eq!(
+        (v[1]["parent"].as_str(), v[1]["parent_kind"].as_str()),
+        (Some("A"), Some("class"))
+    );
     assert_eq!(v[1]["params"], json!(["self", "x", "*rest", "**kw"]));
     assert_eq!(v[2]["qualname"], "A.m.<locals>.inner");
-    assert_eq!((v[2]["parent"].as_str(), v[2]["parent_kind"].as_str()), (Some("A.m"), Some("function")));
+    assert_eq!(
+        (v[2]["parent"].as_str(), v[2]["parent_kind"].as_str()),
+        (Some("A.m"), Some("function"))
+    );
     d.finish();
 }
 
@@ -173,8 +249,23 @@ fn an_id_in_a_docstring_is_read_and_a_def_without_one_has_none() {
 fn a_syntax_error_flags_the_broken_def_and_not_its_neighbours() {
     let (mut d, _) = Driver::start();
     let out = d.outline("def good(x):\n    return x\n\n\ndef broken(x):\n    if x\n        return 1\n\n\ndef also_good(x):\n    return 2\n");
-    let flags: Vec<(String, bool)> = defs(&out).iter().map(|x| (x["qualname"].as_str().unwrap().to_string(), x["syntax_error"].as_bool().unwrap())).collect();
-    assert_eq!(flags, vec![("good".into(), false), ("broken".into(), true), ("also_good".into(), false)]);
+    let flags: Vec<(String, bool)> = defs(&out)
+        .iter()
+        .map(|x| {
+            (
+                x["qualname"].as_str().unwrap().to_string(),
+                x["syntax_error"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        flags,
+        vec![
+            ("good".into(), false),
+            ("broken".into(), true),
+            ("also_good".into(), false)
+        ]
+    );
     assert!(!out["syntax_errors"].as_array().unwrap().is_empty());
     d.finish();
 }
@@ -205,15 +296,30 @@ fn unknown_notifications_are_ignored_and_unknown_requests_get_32601() {
     d.notify("$/somethingNew", json!({ "x": 1 }));
     let e = d.request("vnoc/doesNotExist", json!({})).unwrap_err();
     assert_eq!(e["code"], -32601);
-    assert!(d.outline("def f(): pass\n")["defs"].as_array().unwrap().len() == 1, "still alive and answering");
+    assert!(
+        d.outline("def f(): pass\n")["defs"]
+            .as_array()
+            .unwrap()
+            .len()
+            == 1,
+        "still alive and answering"
+    );
     d.finish();
 }
 
 #[test]
 fn bad_params_get_32602() {
     let (mut d, _) = Driver::start();
-    assert_eq!(d.request("vnoc/outline", json!({})).unwrap_err()["code"], -32602);
-    assert_eq!(d.request("vnoc/outline", json!({ "text": "x", "fingerprints": true })).unwrap_err()["code"], -32602, "fingerprints are not built yet");
+    assert_eq!(
+        d.request("vnoc/outline", json!({})).unwrap_err()["code"],
+        -32602
+    );
+    assert_eq!(
+        d.request("vnoc/outline", json!({ "text": "x", "fingerprints": true }))
+            .unwrap_err()["code"],
+        -32602,
+        "fingerprints are not built yet"
+    );
     d.finish();
 }
 
@@ -229,18 +335,40 @@ fn plan_ids_puts_the_id_line_in_the_docstring_and_says_what_it_did() {
     assert_eq!(plan["version"], 7, "the version is echoed");
 
     let new_text = apply_edits(text, plan["edits"].as_array().unwrap());
-    assert!(new_text.contains("    More.\n\n    ID: AAAA\n    \"\"\""), "extends the docstring:\n{new_text}");
-    assert!(new_text.contains("def no_doc():\n    \"\"\"ID: BBBB\"\"\"\n    return 2"), "the second no_doc, and only that one:\n{new_text}");
+    assert!(
+        new_text.contains("    More.\n\n    ID: AAAA\n    \"\"\""),
+        "extends the docstring:\n{new_text}"
+    );
+    assert!(
+        new_text.contains("def no_doc():\n    \"\"\"ID: BBBB\"\"\"\n    return 2"),
+        "the second no_doc, and only that one:\n{new_text}"
+    );
     assert_eq!(new_text.matches("ID: ").count(), 2);
 
-    let written: Vec<(&str, &str)> = plan["written"].as_array().unwrap().iter().map(|w| (w["id"].as_str().unwrap(), w["qualname"].as_str().unwrap())).collect();
+    let written: Vec<(&str, &str)> = plan["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| (w["id"].as_str().unwrap(), w["qualname"].as_str().unwrap()))
+        .collect();
     assert_eq!(written, vec![("AAAA", "with_doc"), ("BBBB", "no_doc")]);
     assert_eq!(plan["unmatched"][0]["qualname"], "nowhere");
-    assert_eq!(plan["skipped"][0]["qualname"], "broken", "a def with a syntax error is skipped on its own");
-    assert_eq!(plan["text_hash"], blake3::hash(new_text.as_bytes()).to_hex().as_str());
+    assert_eq!(
+        plan["skipped"][0]["qualname"], "broken",
+        "a def with a syntax error is skipped on its own"
+    );
+    assert_eq!(
+        plan["text_hash"],
+        blake3::hash(new_text.as_bytes()).to_hex().as_str()
+    );
 
     // a def that already carries an ID is left alone
-    let again = d.request("vnoc/planIds", json!({ "text": new_text, "version": 8, "ids": [ask("with_doc", 1, "ZZZZ")] })).unwrap();
+    let again = d
+        .request(
+            "vnoc/planIds",
+            json!({ "text": new_text, "version": 8, "ids": [ask("with_doc", 1, "ZZZZ")] }),
+        )
+        .unwrap();
     assert_eq!(again["edits"], json!([]));
     assert_eq!(again["skipped"][0]["reason"], "already has an ID");
     d.finish();
@@ -251,7 +379,12 @@ fn plan_ids_with_occurrence_zero_is_invalid_params() {
     // the protocol counts same-named defs from 1: 0 is a malformed request, and no def is touched for it
     let (mut d, _) = Driver::start();
     let ask = |occurrence: u32| json!({ "qualname": "f", "occurrence": occurrence, "id": "AAAA", "replace_existing": false });
-    let err = d.request("vnoc/planIds", json!({ "text": "def f():\n    return 1\n", "version": 1, "ids": [ask(1), ask(0)] })).unwrap_err();
+    let err = d
+        .request(
+            "vnoc/planIds",
+            json!({ "text": "def f():\n    return 1\n", "version": 1, "ids": [ask(1), ask(0)] }),
+        )
+        .unwrap_err();
     assert_eq!(err["code"], -32602);
     assert_eq!(err["message"], "occurrence of f starts at 1, not 0");
     d.finish();
@@ -262,17 +395,40 @@ fn plan_file_id_writes_the_header_comment_and_outline_reads_it_back() {
     let (mut d, init) = Driver::start();
     assert_eq!(init["capabilities"]["ids.file"], true);
     let text = "#!/usr/bin/env python3\n\"\"\"Orders.\"\"\"\n\ndef f():\n    pass\n";
-    assert_eq!(d.request("vnoc/outline", json!({ "text": text })).unwrap()["file_id"], serde_json::Value::Null);
+    assert_eq!(
+        d.request("vnoc/outline", json!({ "text": text })).unwrap()["file_id"],
+        serde_json::Value::Null
+    );
 
-    let plan = d.request("vnoc/planFileId", json!({ "text": text, "version": 4, "id": "AAAA" })).expect("planFileId answers");
+    let plan = d
+        .request(
+            "vnoc/planFileId",
+            json!({ "text": text, "version": 4, "id": "AAAA" }),
+        )
+        .expect("planFileId answers");
     assert_eq!(plan["version"], 4, "the version is echoed");
     let new_text = apply_edits(text, plan["edits"].as_array().unwrap());
-    assert_eq!(new_text, "#!/usr/bin/env python3\n# FileID: AAAA\n\"\"\"Orders.\"\"\"\n\ndef f():\n    pass\n");
+    assert_eq!(
+        new_text,
+        "#!/usr/bin/env python3\n# FileID: AAAA\n\"\"\"Orders.\"\"\"\n\ndef f():\n    pass\n"
+    );
     assert_eq!(plan["written"]["text"], "# FileID: AAAA\n");
-    assert_eq!(plan["text_hash"], blake3::hash(new_text.as_bytes()).to_hex().as_str());
-    assert_eq!(d.request("vnoc/outline", json!({ "text": new_text })).unwrap()["file_id"], "AAAA");
+    assert_eq!(
+        plan["text_hash"],
+        blake3::hash(new_text.as_bytes()).to_hex().as_str()
+    );
+    assert_eq!(
+        d.request("vnoc/outline", json!({ "text": new_text }))
+            .unwrap()["file_id"],
+        "AAAA"
+    );
 
-    let again = d.request("vnoc/planFileId", json!({ "text": new_text, "version": 5, "id": "BBBB" })).unwrap();
+    let again = d
+        .request(
+            "vnoc/planFileId",
+            json!({ "text": new_text, "version": 5, "id": "BBBB" }),
+        )
+        .unwrap();
     assert_eq!(again["edits"], json!([]));
     d.finish();
 }

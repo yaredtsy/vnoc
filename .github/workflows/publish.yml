@@ -12,17 +12,22 @@ on:
         default: false
 permissions:
   contents: read
+concurrency: # never two releases at once; a second one waits (docs/18-ci-cd.md §5)
+  group: release
+  cancel-in-progress: false
 jobs:
   # 1. The tag is on main, and "v" + the extension's version is the tag. A mistake here stops everything before anything is built.
   check:
     runs-on: ubuntu-22.04
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
       - name: the tag and the version
         run: |
           version=$(node -p "require('./extension/package.json').version")
           echo "extension/package.json version: $version"
+          grep -qx "## $version" extension/CHANGELOG.md || { echo "::error::extension/CHANGELOG.md has no \"## $version\" section"; exit 1; }
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::the tag is $GITHUB_REF_NAME but extension/package.json says $version: the tag must be v$version"; exit 1; }
             git fetch origin main
@@ -32,29 +37,38 @@ jobs:
             exit 1
           fi
 
-  # 2. The matrix of ci.yml, tests included: the four VSIX files (vsix-darwin-arm64, vsix-darwin-x64, vsix-linux-x64, vsix-win32-x64), packaged as pre-releases.
-  build:
+  # 2. Side by side: the release takes as long as the slower of the two, not the sum.
+  # The tests: the lint and tests of ci.yml. A called workflow can only lower the token's permissions, and its `changes` job asks for pull-requests: read.
+  test:
     needs: check
     uses: ./.github/workflows/ci.yml
+    permissions: { contents: read, pull-requests: read }
+
+  # The four VSIX files (vsix-darwin-arm64, vsix-darwin-x64, vsix-linux-x64, vsix-win32-x64), packaged as pre-releases.
+  package:
+    needs: check
+    uses: ./.github/workflows/package.yml
     with:
       pre-release: true
 
   # 3. Once, on one system. The step that publishes is in THIS file: the policy trusts it, not a workflow it calls.
   publish:
-    needs: build
+    needs: [test, package]
     if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     environment: release # Settings → Environments → release → Required reviewers: your approval before this job runs
     permissions:
       contents: write # the GitHub release
       id-token: write # Trusted Publishing: the job's OIDC token, no stored secret
+      attestations: write # the provenance of the four files
     env:
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
-      - uses: actions/checkout@v4 # the tag, for the release notes
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0: the tag, for the release notes
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22 }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { pattern: "vsix-*", merge-multiple: true, path: vsix }
       - name: the four files are there
         run: |
@@ -67,8 +81,26 @@ jobs:
       - name: publish to Open VSX
         if: env.OVSX_PAT != ''
         run: for f in vsix/*.vsix; do npx --yes ovsx publish "$f" --skip-duplicate; done # the token: OVSX_PAT, which ovsx reads itself
+      - name: checksums
+        run: (cd vsix && sha256sum -- *.vsix > SHA256SUMS)
+      # anyone can then check a file: gh attestation verify <file> -R yaredtsy/vnoc
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: vsix/*.vsix
+      # every step above and below is safe to run again: "Re-run failed jobs" is the fix for a partial failure (docs/18 §5)
       - name: the GitHub release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" vsix/*.vsix --prerelease --notes-from-tag
+        run: |
+          version=$(node -p "require('./extension/package.json').version")
+          # the notes are the CHANGELOG section of this version; they are written only when the release is made
+          awk -v h="## $version" '$0==h{f=1;next} /^## /{if(f)exit} f' extension/CHANGELOG.md > notes.md
+          # release and files are two commands on purpose: a create that fails halfway through its uploads leaves a release the second run completes
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME exists: uploading the files again"
+          else
+            echo "creating release $GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" --prerelease --title "v$version" --notes-file notes.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" vsix/*.vsix vsix/SHA256SUMS --clobber

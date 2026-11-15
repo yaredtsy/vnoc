@@ -38,7 +38,9 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
             return Err(RelinkError::NotMissing);
         }
         // the three refusals. A node found by name has no ID in the code, so the first check alone would miss it: the index is asked as well.
-        if target.in_code().is_some_and(|there| there != id) || index.node_at(&to).is_some_and(|there| there != id) {
+        if target.in_code().is_some_and(|there| there != id)
+            || index.node_at(&to).is_some_and(|there| there != id)
+        {
             return Err(RelinkError::Refused(HAS_DOCS));
         }
         (to, target)
@@ -46,10 +48,15 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
     let data = UserData::new(env.project.git_root());
     let mut toml = data.node_toml(&id).ok_or(RelinkError::NoRecord)?;
     let new_kind = target.kind();
-    if let Some(kind @ (NodeKind::Function | NodeKind::Class | NodeKind::File | NodeKind::Folder)) = toml.kind() {
+    if let Some(kind @ (NodeKind::Function | NodeKind::Class | NodeKind::File | NodeKind::Folder)) =
+        toml.kind()
+    {
         // a method is a function, so a function and a class are different kinds: the lists never offer it, the core checks anyway
         if kind != new_kind {
-            return Err(RelinkError::WrongKind { kind: kind.as_str().to_string(), to: new_kind.as_str().to_string() });
+            return Err(RelinkError::WrongKind {
+                kind: kind.as_str().to_string(),
+                to: new_kind.as_str().to_string(),
+            });
         }
     }
     let document = document_for(&env, &target, &to, &params.to, params.document.as_ref())?;
@@ -62,7 +69,9 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
     if target.in_code() != Some(id) {
         if may_write && data.settings()?.markers {
             if let Err(reason) = write_marker(&mut env, &target, &to, &id, document).await {
-                notice = Some(format!("The ID could not be written ({reason}); the docs are attached by name."));
+                notice = Some(format!(
+                    "The ID could not be written ({reason}); the docs are attached by name."
+                ));
                 written = Written::AnchorOnly;
             }
         } else {
@@ -74,7 +83,11 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
     toml.set_location(&to);
     toml.set_kind(&new_kind);
     if may_write {
-        toml.set_id_in_code(if written == Written::Id { IdInCode::Yes } else { IdInCode::No });
+        toml.set_id_in_code(if written == Written::Id {
+            IdInCode::Yes
+        } else {
+            IdInCode::No
+        });
     }
     data.write_node_toml(&id, &toml)?;
     Ok(RelinkResult { written, notice })

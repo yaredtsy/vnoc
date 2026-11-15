@@ -10,15 +10,21 @@
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use async_lsp::lsp_types::{ApplyWorkspaceEditParams, DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, WorkspaceEdit};
+use async_lsp::lsp_types::{
+    ApplyWorkspaceEditParams, DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier,
+    TextDocumentEdit, WorkspaceEdit,
+};
 use async_lsp::{ClientSocket, LanguageClient};
-use vnoc_domain::{IdInCode, LocationKey, LocationKeyError, NoFreeId, NodeId, NodeKind, NodeToml, RepoPath, first_free_id};
+use vnoc_domain::{
+    IdInCode, LocationKey, LocationKeyError, NoFreeId, NodeId, NodeKind, NodeToml, RepoPath,
+    first_free_id,
+};
 use vnoc_driver_protocol::{DefKind, PlanFileIdParams, PlanId, PlanIdsParams, TextEdit};
 
+use super::folder_marker;
 use crate::driver_host::DriverHost;
 use crate::index::Index;
 use crate::project::Project;
-use super::folder_marker;
 use crate::protocol::{AttachParams, AttachResult, Document};
 use crate::userdata::{UserData, UserDataError};
 
@@ -49,16 +55,29 @@ pub struct Env<'a> {
 
 /// What the doc is attached to, with what the index knows of its ID.
 pub(super) enum Target {
-    Def { in_code: Option<NodeId>, kind: DefKind },
-    File { in_code: Option<NodeId> },
-    Folder { in_code: Option<NodeId> },
+    Def {
+        in_code: Option<NodeId>,
+        kind: DefKind,
+    },
+    File {
+        in_code: Option<NodeId>,
+    },
+    Folder {
+        in_code: Option<NodeId>,
+    },
 }
 
 impl Target {
     pub(super) fn kind(&self) -> NodeKind {
         match self {
-            Target::Def { kind: DefKind::Class, .. } => NodeKind::Class,
-            Target::Def { kind: DefKind::Function, .. } => NodeKind::Function,
+            Target::Def {
+                kind: DefKind::Class,
+                ..
+            } => NodeKind::Class,
+            Target::Def {
+                kind: DefKind::Function,
+                ..
+            } => NodeKind::Function,
             Target::File { .. } => NodeKind::File,
             Target::Folder { .. } => NodeKind::Folder,
         }
@@ -66,7 +85,9 @@ impl Target {
 
     pub(super) fn in_code(&self) -> Option<NodeId> {
         match self {
-            Target::Def { in_code, .. } | Target::File { in_code } | Target::Folder { in_code } => *in_code,
+            Target::Def { in_code, .. } | Target::File { in_code } | Target::Folder { in_code } => {
+                *in_code
+            }
         }
     }
 }
@@ -78,14 +99,30 @@ pub(super) fn find_target(index: &Index, key: &str) -> Result<(LocationKey, Targ
         let location: LocationKey = key.parse()?;
         let def = index.def_at(&location).ok_or_else(not_in_index)?;
         let in_code = def.id.as_deref().and_then(|text| NodeId::parse(text).ok());
-        return Ok((location, Target::Def { in_code, kind: def.kind }));
+        return Ok((
+            location,
+            Target::Def {
+                in_code,
+                kind: def.kind,
+            },
+        ));
     }
     let path = RepoPath::new(key).map_err(|_| not_in_index())?;
     let whole = LocationKey::new(path.clone(), "", 1).expect("occurrences are 1-based");
     if index.is_file(&path) {
-        Ok((whole, Target::File { in_code: index.file_id(&path) }))
+        Ok((
+            whole,
+            Target::File {
+                in_code: index.file_id(&path),
+            },
+        ))
     } else if index.is_folder(&path) {
-        Ok((whole, Target::Folder { in_code: index.folder_id(&path) }))
+        Ok((
+            whole,
+            Target::Folder {
+                in_code: index.folder_id(&path),
+            },
+        ))
     } else {
         Err(not_in_index())
     }
@@ -93,16 +130,30 @@ pub(super) fn find_target(index: &Index, key: &str) -> Result<(LocationKey, Targ
 
 pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResult, AttachError> {
     let (location, target) = find_target(&env.index.read().unwrap(), &params.key)?;
-    let document = document_for(&env, &target, &location, &params.key, params.document.as_ref())?;
+    let document = document_for(
+        &env,
+        &target,
+        &location,
+        &params.key,
+        params.document.as_ref(),
+    )?;
 
     let data = UserData::new(env.project.git_root());
     let settings = data.settings()?;
     // the question is asked once per project: afterwards `vnoc.toml` answers it
-    let markers_on = if settings.initialized { settings.markers } else { params.markers.unwrap_or(true) };
+    let markers_on = if settings.initialized {
+        settings.markers
+    } else {
+        params.markers.unwrap_or(true)
+    };
 
     // 1. which ID: the one in the code, else the one this location already has, else a new one
     let in_code = target.in_code();
-    let existing = if in_code.is_some() { None } else { data.find_node_at(&location) };
+    let existing = if in_code.is_some() {
+        None
+    } else {
+        data.find_node_at(&location)
+    };
     let (id, is_new) = match (in_code, existing) {
         (Some(id), _) | (None, Some(id)) => (id, false),
         (None, None) => (first_free_id(&location, |id| data.is_taken(id))?, true),
@@ -114,28 +165,53 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
     if is_new && markers_on {
         match write_marker(&mut env, &target, &location, &id, document).await {
             Ok(()) => id_in_code = true,
-            Err(reason) => notice = Some(format!("The ID could not be written ({reason}); this doc is attached by name.")),
+            Err(reason) => {
+                notice = Some(format!(
+                    "The ID could not be written ({reason}); this doc is attached by name."
+                ))
+            }
         }
     }
 
     // 3. `.vnoc/`: first time set up, then the node, then the doc
     data.initialize(params.markers.unwrap_or(true))?;
     let mut toml = NodeToml::new(&location);
-    toml.set_id_in_code(if id_in_code { IdInCode::Yes } else { IdInCode::No });
+    toml.set_id_in_code(if id_in_code {
+        IdInCode::Yes
+    } else {
+        IdInCode::No
+    });
     toml.set_kind(&target.kind());
     data.create_node(&id, &toml)?;
-    let hint = if location.qualname().is_empty() { location.path().to_string() } else { location.to_string() };
+    let hint = if location.qualname().is_empty() {
+        location.path().to_string()
+    } else {
+        location.to_string()
+    };
     let doc: PathBuf = data.create_doc(&id, &params.title, &hint)?;
 
-    Ok(AttachResult { id: id.to_string(), doc: doc.to_string_lossy().into_owned(), id_in_code, notice })
+    Ok(AttachResult {
+        id: id.to_string(),
+        doc: doc.to_string_lossy().into_owned(),
+        id_in_code,
+        notice,
+    })
 }
 
 /// A function, class or file marker is an edit of the open document: it must be the node's own file. A folder has no document.
-pub(super) fn document_for<'a>(env: &Env<'_>, target: &Target, location: &LocationKey, key: &str, document: Option<&'a Document>) -> Result<Option<&'a Document>, AttachError> {
+pub(super) fn document_for<'a>(
+    env: &Env<'_>,
+    target: &Target,
+    location: &LocationKey,
+    key: &str,
+    document: Option<&'a Document>,
+) -> Result<Option<&'a Document>, AttachError> {
     match (target, document) {
         (Target::Folder { .. }, _) => Ok(None),
         (_, Some(document)) => {
-            if document.uri.to_file_path().ok() != Some(env.project.git_root().join(location.path().as_str())) {
+            if document.uri.to_file_path().ok()
+                != Some(env.project.git_root().join(location.path().as_str()))
+            {
                 return Err(AttachError::WrongDocument(key.to_string()));
             }
             Ok(Some(document))
@@ -146,7 +222,13 @@ pub(super) fn document_for<'a>(env: &Env<'_>, target: &Target, location: &Locati
 
 /// Writes the ID where the node is: the driver plans a def's or a file's line and the editor applies it; the core writes a folder's `.vnoc-id`.
 /// `Err` says why not, in words for the user.
-pub(super) async fn write_marker(env: &mut Env<'_>, target: &Target, location: &LocationKey, id: &NodeId, document: Option<&Document>) -> Result<(), String> {
+pub(super) async fn write_marker(
+    env: &mut Env<'_>,
+    target: &Target,
+    location: &LocationKey,
+    id: &NodeId,
+    document: Option<&Document>,
+) -> Result<(), String> {
     match (target, document) {
         (Target::Def { .. }, Some(document)) => write_def_marker(env, location, id, document).await,
         (Target::File { .. }, Some(document)) => write_file_marker(env, id, document).await,
@@ -155,11 +237,21 @@ pub(super) async fn write_marker(env: &mut Env<'_>, target: &Target, location: &
 }
 
 /// Plans the `ID:` line with the driver and has the editor apply it. `Err` says why not, in words for the user.
-async fn write_def_marker(env: &mut Env<'_>, location: &LocationKey, id: &NodeId, document: &Document) -> Result<(), String> {
+async fn write_def_marker(
+    env: &mut Env<'_>,
+    location: &LocationKey,
+    id: &NodeId,
+    document: &Document,
+) -> Result<(), String> {
     let ask = PlanIdsParams {
         text: document.text.clone(),
         version: i64::from(document.version),
-        ids: vec![PlanId { qualname: location.qualname().to_string(), occurrence: location.occurrence(), id: id.to_string(), replace_existing: false }],
+        ids: vec![PlanId {
+            qualname: location.qualname().to_string(),
+            occurrence: location.occurrence(),
+            id: id.to_string(),
+            replace_existing: false,
+        }],
     };
     let plan = env.host.plan_ids(&ask).await.map_err(|e| e.to_string())?;
     if let Some(skipped) = plan.skipped.first() {
@@ -172,9 +264,21 @@ async fn write_def_marker(env: &mut Env<'_>, location: &LocationKey, id: &NodeId
 }
 
 /// Plans the `# FileID:` comment with the driver and has the editor apply it.
-async fn write_file_marker(env: &mut Env<'_>, id: &NodeId, document: &Document) -> Result<(), String> {
-    let ask = PlanFileIdParams { text: document.text.clone(), version: i64::from(document.version), id: id.to_string() };
-    let plan = env.host.plan_file_id(&ask).await.map_err(|e| e.to_string())?;
+async fn write_file_marker(
+    env: &mut Env<'_>,
+    id: &NodeId,
+    document: &Document,
+) -> Result<(), String> {
+    let ask = PlanFileIdParams {
+        text: document.text.clone(),
+        version: i64::from(document.version),
+        id: id.to_string(),
+    };
+    let plan = env
+        .host
+        .plan_file_id(&ask)
+        .await
+        .map_err(|e| e.to_string())?;
     if let Some(reason) = plan.skipped {
         return Err(reason);
     }
@@ -182,24 +286,64 @@ async fn write_file_marker(env: &mut Env<'_>, id: &NodeId, document: &Document) 
 }
 
 /// Writes `.vnoc-id` in the folder. The core does it itself: nobody has it open, and no language is involved.
-fn write_folder_marker(git_root: &std::path::Path, folder: &RepoPath, id: &NodeId) -> Result<(), String> {
+fn write_folder_marker(
+    git_root: &std::path::Path,
+    folder: &RepoPath,
+    id: &NodeId,
+) -> Result<(), String> {
     folder_marker::write(&git_root.join(folder.as_str()), id).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => format!("the folder already has a {} that V-NOC cannot read", folder_marker::FILE_NAME),
+        std::io::ErrorKind::AlreadyExists => format!(
+            "the folder already has a {} that V-NOC cannot read",
+            folder_marker::FILE_NAME
+        ),
         _ => e.to_string(),
     })
 }
 
-async fn apply_edits(env: &mut Env<'_>, document: &Document, label: &str, edits: &[TextEdit]) -> Result<(), String> {
+async fn apply_edits(
+    env: &mut Env<'_>,
+    document: &Document,
+    label: &str,
+    edits: &[TextEdit],
+) -> Result<(), String> {
     let edit = TextDocumentEdit {
-        text_document: OptionalVersionedTextDocumentIdentifier { uri: document.uri.clone(), version: Some(document.version) },
+        text_document: OptionalVersionedTextDocumentIdentifier {
+            uri: document.uri.clone(),
+            version: Some(document.version),
+        },
         edits: edits.iter().map(|e| OneOf::Left(text_edit(e))).collect(),
     };
-    let workspace_edit = WorkspaceEdit { document_changes: Some(DocumentChanges::Edits(vec![edit])), ..Default::default() };
-    let answer = env.client.apply_edit(ApplyWorkspaceEditParams { label: Some(label.into()), edit: workspace_edit }).await.map_err(|e| e.to_string())?;
-    if answer.applied { Ok(()) } else { Err(answer.failure_reason.unwrap_or_else(|| "the editor did not apply the edit; the document changed meanwhile?".into())) }
+    let workspace_edit = WorkspaceEdit {
+        document_changes: Some(DocumentChanges::Edits(vec![edit])),
+        ..Default::default()
+    };
+    let answer = env
+        .client
+        .apply_edit(ApplyWorkspaceEditParams {
+            label: Some(label.into()),
+            edit: workspace_edit,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    if answer.applied {
+        Ok(())
+    } else {
+        Err(answer.failure_reason.unwrap_or_else(|| {
+            "the editor did not apply the edit; the document changed meanwhile?".into()
+        }))
+    }
 }
 
 fn text_edit(e: &vnoc_driver_protocol::TextEdit) -> async_lsp::lsp_types::TextEdit {
-    let position = |p: vnoc_driver_protocol::Position| async_lsp::lsp_types::Position { line: p.line, character: p.character };
-    async_lsp::lsp_types::TextEdit { range: async_lsp::lsp_types::Range { start: position(e.range.start), end: position(e.range.end) }, new_text: e.new_text.clone() }
+    let position = |p: vnoc_driver_protocol::Position| async_lsp::lsp_types::Position {
+        line: p.line,
+        character: p.character,
+    };
+    async_lsp::lsp_types::TextEdit {
+        range: async_lsp::lsp_types::Range {
+            start: position(e.range.start),
+            end: position(e.range.end),
+        },
+        new_text: e.new_text.clone(),
+    }
 }

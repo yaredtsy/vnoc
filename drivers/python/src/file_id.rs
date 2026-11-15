@@ -22,7 +22,13 @@ pub fn read(text: &str) -> Option<String> {
 
 pub fn plan(params: PlanFileIdParams) -> PlanFileIdResult {
     let text = params.text.as_str();
-    let done = |skipped: Option<String>| PlanFileIdResult { version: params.version, edits: vec![], written: None, skipped, text_hash: blake3::hash(text.as_bytes()).to_hex().to_string() };
+    let done = |skipped: Option<String>| PlanFileIdResult {
+        version: params.version,
+        edits: vec![],
+        written: None,
+        skipped,
+        text_hash: blake3::hash(text.as_bytes()).to_hex().to_string(),
+    };
     let edit = match python_syntax::plan_header_marker(text, &params.id, style()) {
         Ok(edit) => edit,
         Err(Skip::AlreadyMarked { .. }) => return done(Some("already has a FileID".into())),
@@ -41,8 +47,20 @@ pub fn plan(params: PlanFileIdParams) -> PlanFileIdResult {
     let end = edit.at.start as usize + inserted.len();
     PlanFileIdResult {
         version: params.version,
-        edits: vec![TextEdit { range: Lines::new(text).range(edit.at), new_text: inserted.clone() }],
-        written: Some(Written { id: params.id, qualname: String::new(), occurrence: 1, span: Range { start: position(start), end: position(end) }, text: inserted }),
+        edits: vec![TextEdit {
+            range: Lines::new(text).range(edit.at),
+            new_text: inserted.clone(),
+        }],
+        written: Some(Written {
+            id: params.id,
+            qualname: String::new(),
+            occurrence: 1,
+            span: Range {
+                start: position(start),
+                end: position(end),
+            },
+            text: inserted,
+        }),
         skipped: None,
         text_hash: blake3::hash(new_text.as_bytes()).to_hex().to_string(),
     }
@@ -55,19 +73,34 @@ mod tests {
     const ID: &str = "0Q8V5W4T2F7KX9M3B6D1RZ4H7K";
 
     fn apply(text: &str) -> String {
-        let result = plan(PlanFileIdParams { text: text.into(), version: 1, id: ID.into() });
-        let [edit] = &result.edits[..] else { panic!("one edit, got {:?} ({:?})", result.edits, result.skipped) };
+        let result = plan(PlanFileIdParams {
+            text: text.into(),
+            version: 1,
+            id: ID.into(),
+        });
+        let [edit] = &result.edits[..] else {
+            panic!("one edit, got {:?} ({:?})", result.edits, result.skipped)
+        };
         let lines = Lines::new(text);
-        let offset = (0..=text.len()).filter(|&o| text.is_char_boundary(o)).find(|&o| lines.position(u32::try_from(o).unwrap()) == edit.range.start).unwrap();
+        let offset = (0..=text.len())
+            .filter(|&o| text.is_char_boundary(o))
+            .find(|&o| lines.position(u32::try_from(o).unwrap()) == edit.range.start)
+            .unwrap();
         let new = format!("{}{}{}", &text[..offset], edit.new_text, &text[offset..]);
-        assert_eq!(result.text_hash, blake3::hash(new.as_bytes()).to_hex().to_string(), "the hash is of the new text");
+        assert_eq!(
+            result.text_hash,
+            blake3::hash(new.as_bytes()).to_hex().to_string(),
+            "the hash is of the new text"
+        );
         new
     }
 
     #[test]
     fn goes_before_the_docstring_and_after_the_header() {
         let before = "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n# Copyright 2026 Acme.\n\"\"\"Orders module.\"\"\"\n\nimport json\n";
-        let after = format!("#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n# Copyright 2026 Acme.\n# FileID: {ID}\n\"\"\"Orders module.\"\"\"\n\nimport json\n");
+        let after = format!(
+            "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n# Copyright 2026 Acme.\n# FileID: {ID}\n\"\"\"Orders module.\"\"\"\n\nimport json\n"
+        );
         assert_eq!(apply(before), after);
         assert_eq!(read(&after).as_deref(), Some(ID));
     }
@@ -79,7 +112,10 @@ mod tests {
 
     #[test]
     fn a_header_without_a_final_line_break_still_works() {
-        assert_eq!(apply("# only a comment"), format!("# only a comment\n# FileID: {ID}"));
+        assert_eq!(
+            apply("# only a comment"),
+            format!("# only a comment\n# FileID: {ID}")
+        );
     }
 
     #[test]
@@ -91,7 +127,11 @@ mod tests {
     fn a_file_that_has_one_is_left_alone() {
         let text = format!("#FileID:   {ID}  \nx = 1\n");
         assert_eq!(read(&text).as_deref(), Some(ID));
-        let result = plan(PlanFileIdParams { text, version: 3, id: "other".into() });
+        let result = plan(PlanFileIdParams {
+            text,
+            version: 3,
+            id: "other".into(),
+        });
         assert!(result.edits.is_empty() && result.skipped.is_some() && result.version == 3);
     }
 

@@ -9,7 +9,14 @@ use std::path::Path;
 pub fn write_atomic(target: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = target.parent().expect("a file has a parent folder");
     fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!(".{}.tmp-{}", target.file_name().expect("a file has a name").to_string_lossy(), std::process::id()));
+    let tmp = dir.join(format!(
+        ".{}.tmp-{}",
+        target
+            .file_name()
+            .expect("a file has a name")
+            .to_string_lossy(),
+        std::process::id()
+    ));
     {
         let mut file = fs::File::create(&tmp)?;
         file.write_all(bytes)?;
@@ -21,7 +28,10 @@ pub fn write_atomic(target: &Path, bytes: &[u8]) -> io::Result<()> {
 /// Writes a file that must not exist yet (a new doc): an existing one is an `AlreadyExists` error, never overwritten.
 pub fn create_new(target: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::create_dir_all(target.parent().expect("a file has a parent folder"))?;
-    let mut file = OpenOptions::new().write(true).create_new(true).open(target)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)?;
     file.write_all(bytes)?;
     file.sync_all()
 }
@@ -43,7 +53,11 @@ mod tests {
         write_atomic(&file, b"one").unwrap();
         write_atomic(&file, b"two").unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "two");
-        assert_eq!(fs::read_dir(file.parent().unwrap()).unwrap().count(), 1, "only the file itself is left");
+        assert_eq!(
+            fs::read_dir(file.parent().unwrap()).unwrap().count(),
+            1,
+            "only the file itself is left"
+        );
     }
 
     #[test]
@@ -51,7 +65,10 @@ mod tests {
         let d = fresh("new");
         let file = d.join("doc.md");
         create_new(&file, b"mine").unwrap();
-        assert_eq!(create_new(&file, b"theirs").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            create_new(&file, b"theirs").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
         assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
     }
 }

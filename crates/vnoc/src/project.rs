@@ -20,12 +20,27 @@ pub struct Project {
 impl Project {
     pub fn open(dir: &Path) -> io::Result<Project> {
         if !dir.is_dir() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, format!("{} is not a folder", dir.display())));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{} is not a folder", dir.display()),
+            ));
         }
-        let git_root = dir.ancestors().find(|d| d.join(".git").exists()).unwrap_or(dir);
+        let git_root = dir
+            .ancestors()
+            .find(|d| d.join(".git").exists())
+            .unwrap_or(dir);
         let relative = dir.strip_prefix(git_root).expect("an ancestor is a prefix");
-        let prefix = relative.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "the folder path is not UTF-8"))?.replace('\\', "/");
-        Ok(Project { open_dir: dir.to_path_buf(), git_root: git_root.to_path_buf(), prefix })
+        let prefix = relative
+            .to_str()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "the folder path is not UTF-8")
+            })?
+            .replace('\\', "/");
+        Ok(Project {
+            open_dir: dir.to_path_buf(),
+            git_root: git_root.to_path_buf(),
+            prefix,
+        })
     }
 
     pub fn open_dir(&self) -> &Path {
@@ -42,17 +57,28 @@ impl Project {
 
     /// The opened folder's name, for the root of the tree.
     pub fn name(&self) -> String {
-        self.open_dir.file_name().map_or_else(|| self.open_dir.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())
+        self.open_dir.file_name().map_or_else(
+            || self.open_dir.to_string_lossy().into_owned(),
+            |n| n.to_string_lossy().into_owned(),
+        )
     }
 
     /// The repo path of a file given relative to the opened folder.
     pub fn repo_path(&self, scoped: &str) -> Result<RepoPath, RepoPathError> {
-        if self.prefix.is_empty() { RepoPath::new(scoped) } else { RepoPath::new(format!("{}/{scoped}", self.prefix)) }
+        if self.prefix.is_empty() {
+            RepoPath::new(scoped)
+        } else {
+            RepoPath::new(format!("{}/{scoped}", self.prefix))
+        }
     }
 
     /// The repo path of an absolute path, or `None` when it is not under the opened folder.
     pub fn repo_path_of(&self, absolute: &Path) -> Option<RepoPath> {
-        let scoped = absolute.strip_prefix(&self.open_dir).ok()?.to_str()?.replace('\\', "/");
+        let scoped = absolute
+            .strip_prefix(&self.open_dir)
+            .ok()?
+            .to_str()?
+            .replace('\\', "/");
         self.repo_path(&scoped).ok()
     }
 }
@@ -83,9 +109,20 @@ mod tests {
         std::fs::create_dir_all(d.join("services/api")).unwrap();
         let p = Project::open(&d.join("services/api")).unwrap();
         assert_eq!((p.prefix(), p.git_root()), ("services/api", d.as_path()));
-        assert_eq!(p.repo_path("main.py").unwrap().as_str(), "services/api/main.py");
-        assert_eq!(p.repo_path_of(&d.join("services/api/x/y.py")).unwrap().as_str(), "services/api/x/y.py");
-        assert!(p.repo_path_of(&d.join("services/other.py")).is_none(), "outside the opened folder");
+        assert_eq!(
+            p.repo_path("main.py").unwrap().as_str(),
+            "services/api/main.py"
+        );
+        assert_eq!(
+            p.repo_path_of(&d.join("services/api/x/y.py"))
+                .unwrap()
+                .as_str(),
+            "services/api/x/y.py"
+        );
+        assert!(
+            p.repo_path_of(&d.join("services/other.py")).is_none(),
+            "outside the opened folder"
+        );
     }
 
     #[test]
@@ -96,6 +133,11 @@ mod tests {
 
     #[test]
     fn a_missing_folder_is_an_error() {
-        assert!(Project::open(Path::new("/definitely/not/here")).unwrap_err().to_string().contains("not a folder"));
+        assert!(
+            Project::open(Path::new("/definitely/not/here"))
+                .unwrap_err()
+                .to_string()
+                .contains("not a folder")
+        );
     }
 }

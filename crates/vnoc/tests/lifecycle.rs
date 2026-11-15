@@ -11,11 +11,23 @@ use async_lsp::lsp_types::Url;
 use serde_json::{Value, json};
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 fn driver_path() -> PathBuf {
-    std::env::var_os("VNOC_DRIVER").map(PathBuf::from).unwrap_or_else(|| repo_root().join("drivers/python/target/debug").join(format!("vnoc-driver-python{}", std::env::consts::EXE_SUFFIX)))
+    std::env::var_os("VNOC_DRIVER")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            repo_root()
+                .join("drivers/python/target/debug")
+                .join(format!(
+                    "vnoc-driver-python{}",
+                    std::env::consts::EXE_SUFFIX
+                ))
+        })
 }
 
 /// A copy of the fixtures in a fresh temp folder (a folder inside this repository would be inside its git repo, and ids would carry that path).
@@ -47,11 +59,28 @@ impl Core {
     /// Starts the core on `root`. `driver`: the path to put in `initializationOptions.driverPath` (None = leave it out).
     fn start(driver: Option<PathBuf>, root: &std::path::Path) -> Core {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).env_remove("VNOC_DRIVER");
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .env_remove("VNOC_DRIVER");
         let mut child = cmd.spawn().unwrap();
-        let (stdin, out) = (child.stdin.take().unwrap(), BufReader::new(child.stdout.take().unwrap()));
-        let mut core = Core { child, stdin, out, next: 0, notifications: vec![], editor_applies_edits: true, edit_requests: vec![] };
-        let options = driver.map_or(json!({ "root": root }), |d| json!({ "driverPath": d, "root": root }));
+        let (stdin, out) = (
+            child.stdin.take().unwrap(),
+            BufReader::new(child.stdout.take().unwrap()),
+        );
+        let mut core = Core {
+            child,
+            stdin,
+            out,
+            next: 0,
+            notifications: vec![],
+            editor_applies_edits: true,
+            edit_requests: vec![],
+        };
+        let options = driver.map_or(
+            json!({ "root": root }),
+            |d| json!({ "driverPath": d, "root": root }),
+        );
         let init = core.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {}, "initializationOptions": options })).expect("initialize answers");
         assert_eq!(init["serverInfo"]["name"], "vnoc");
         core.notify("initialized", json!({}));
@@ -79,7 +108,8 @@ impl Core {
                 if msg.get("id").is_some() {
                     self.answer_core_request(&msg);
                 } else {
-                    self.notifications.push((method.to_string(), msg["params"].clone()));
+                    self.notifications
+                        .push((method.to_string(), msg["params"].clone()));
                 }
                 continue;
             }
@@ -99,7 +129,9 @@ impl Core {
         if applied {
             apply_document_changes(&request["params"]["edit"]["documentChanges"]);
         }
-        self.send(json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "applied": applied } }));
+        self.send(
+            json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "applied": applied } }),
+        );
     }
 
     /// The params of the next `method` notification (reading frames until it comes).
@@ -112,7 +144,9 @@ impl Core {
             match msg["method"].as_str() {
                 Some(m) if m == method => return msg["params"].clone(),
                 Some(_) if msg.get("id").is_some() => self.answer_core_request(&msg),
-                Some(m) => self.notifications.push((m.to_string(), msg["params"].clone())),
+                Some(m) => self
+                    .notifications
+                    .push((m.to_string(), msg["params"].clone())),
                 None => panic!("a response nobody asked for: {msg}"),
             }
         }
@@ -122,7 +156,12 @@ impl Core {
     fn read_frame(&mut self) -> Value {
         let mut line = String::new();
         self.out.read_line(&mut line).unwrap();
-        let len: usize = line.strip_prefix("Content-Length:").unwrap_or_else(|| panic!("STDOUT GUARD: stray bytes on stdout: {line:?}")).trim().parse().unwrap();
+        let len: usize = line
+            .strip_prefix("Content-Length:")
+            .unwrap_or_else(|| panic!("STDOUT GUARD: stray bytes on stdout: {line:?}"))
+            .trim()
+            .parse()
+            .unwrap();
         self.out.read_line(&mut String::new()).unwrap();
         let mut buf = vec![0u8; len];
         self.out.read_exact(&mut buf).unwrap();
@@ -132,7 +171,10 @@ impl Core {
     fn finish(mut self) {
         self.request("shutdown", Value::Null).unwrap();
         self.notify("exit", Value::Null);
-        assert!(self.child.wait().unwrap().success(), "the core exits cleanly after shutdown + exit");
+        assert!(
+            self.child.wait().unwrap().success(),
+            "the core exits cleanly after shutdown + exit"
+        );
     }
 }
 
@@ -144,12 +186,22 @@ fn file_uri(file: &std::path::Path) -> String {
 /// Applies a `documentChanges` list of text edits to the files on disk (ASCII text: a character is a byte).
 fn apply_document_changes(changes: &Value) {
     for change in changes.as_array().unwrap() {
-        let path = Url::parse(change["textDocument"]["uri"].as_str().unwrap()).unwrap().to_file_path().unwrap();
+        let path = Url::parse(change["textDocument"]["uri"].as_str().unwrap())
+            .unwrap()
+            .to_file_path()
+            .unwrap();
         let mut text = std::fs::read_to_string(&path).unwrap();
-        let starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
-        let offset = |p: &Value| starts[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize;
+        let starts: Vec<usize> = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        let offset = |p: &Value| {
+            starts[p["line"].as_u64().unwrap() as usize] + p["character"].as_u64().unwrap() as usize
+        };
         for edit in change["edits"].as_array().unwrap().iter().rev() {
-            text.insert_str(offset(&edit["range"]["start"]), edit["newText"].as_str().unwrap());
+            text.insert_str(
+                offset(&edit["range"]["start"]),
+                edit["newText"].as_str().unwrap(),
+            );
         }
         std::fs::write(path, text).unwrap();
     }
@@ -160,10 +212,16 @@ fn unknown_messages_do_not_kill_the_core_and_the_lifecycle_ends_cleanly() {
     let mut core = Core::start(Some(driver_path()), &fixtures("lifecycle"));
     // unknown notifications, one under `$/` and one not (async-lsp's default would stop the loop on the second)
     core.notify("$/somethingNew", json!({}));
-    core.notify("workspace/didChangeConfiguration", json!({ "settings": {} }));
+    core.notify(
+        "workspace/didChangeConfiguration",
+        json!({ "settings": {} }),
+    );
     core.notify("vnoc/neverHeardOfIt", json!({ "x": 1 }));
     // an unknown request is an error, not silence and not a crash
-    assert_eq!(core.request("vnoc/nope", json!({})).unwrap_err()["code"], -32601);
+    assert_eq!(
+        core.request("vnoc/nope", json!({})).unwrap_err()["code"],
+        -32601
+    );
     // and the core still answers
     let pong = core.request("vnoc/ping", Value::Null).unwrap();
     assert_eq!(pong["pong"], true);
@@ -178,33 +236,75 @@ fn unknown_messages_do_not_kill_the_core_and_the_lifecycle_ends_cleanly() {
 fn the_structure_of_a_folder_comes_from_the_driver() {
     let root = fixtures("structure");
     let mut core = Core::start(Some(driver_path()), &root);
-    let r = core.request("vnoc/structure", Value::Null).expect("structure answers (is the driver built? `cd drivers/python && cargo build`)");
+    let r = core
+        .request("vnoc/structure", Value::Null)
+        .expect("structure answers (is the driver built? `cd drivers/python && cargo build`)");
 
     let file = &r["root"]["children"][0];
     assert_eq!(r["root"]["kind"], "folder");
-    assert_eq!(r["git_root"], json!(root), "no .git above the folder: the folder is the root");
-    assert_eq!((file["kind"].as_str(), file["name"].as_str()), (Some("file"), Some("nested.py")));
+    assert_eq!(
+        r["git_root"],
+        json!(root),
+        "no .git above the folder: the folder is the root"
+    );
+    assert_eq!(
+        (file["kind"].as_str(), file["name"].as_str()),
+        (Some("file"), Some("nested.py"))
+    );
     // 15 definitions in the fixture; the tree nests them: top-level defs and classes under the file
-    let top_level: Vec<&str> = file["children"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
-    assert_eq!(top_level, vec!["top", "Outer", "top", "cond", "cond", "decorated", "coro"]);
+    let top_level: Vec<&str> = file["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        top_level,
+        vec!["top", "Outer", "top", "cond", "cond", "decorated", "coro"]
+    );
     assert_eq!(r["stats"]["files"], 1);
     assert_eq!(r["stats"]["classes"], 3); // Local, Outer, Outer.Nested
     assert_eq!(r["stats"]["functions"], 12);
 
     // keys (the real LocationKey, from vnoc-domain) are unique even for redefinitions
-    let ids: Vec<&str> = file["children"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, vec!["nested.py::top", "nested.py::Outer", "nested.py::top#2", "nested.py::cond", "nested.py::cond#2", "nested.py::decorated", "nested.py::coro"]);
+    let ids: Vec<&str> = file["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            "nested.py::top",
+            "nested.py::Outer",
+            "nested.py::top#2",
+            "nested.py::cond",
+            "nested.py::cond#2",
+            "nested.py::decorated",
+            "nested.py::coro"
+        ]
+    );
     // nesting through <locals>: top > inner > deepest
     let inner = &file["children"][0]["children"][0];
     assert_eq!(inner["qualname"], "top.<locals>.inner");
-    assert_eq!(inner["children"][0]["qualname"], "top.<locals>.inner.<locals>.deepest");
+    assert_eq!(
+        inner["children"][0]["qualname"],
+        "top.<locals>.inner.<locals>.deepest"
+    );
     assert_eq!(r["truncated"], false);
     assert_eq!(r["failed"], json!([]));
 
     // the first build announces itself; asking again gives the same answer from the same revision
-    assert_eq!(core.wait_for("vnoc/indexChanged")["revision"], r["revision"]);
+    assert_eq!(
+        core.wait_for("vnoc/indexChanged")["revision"],
+        r["revision"]
+    );
     let again = core.request("vnoc/structure", Value::Null).unwrap();
-    assert_eq!((&again["root"], &again["revision"]), (&r["root"], &r["revision"]));
+    assert_eq!(
+        (&again["root"], &again["revision"]),
+        (&r["root"], &r["revision"])
+    );
     core.finish();
 }
 
@@ -220,8 +320,14 @@ fn opening_a_subfolder_of_a_repo_keeps_ids_relative_to_the_git_root() {
     let r = core.request("vnoc/structure", Value::Null).unwrap();
     let file = &r["root"]["children"][0];
     assert_eq!(r["git_root"], json!(repo));
-    assert_eq!(file["path"], "nested.py", "the editor opens it below the opened folder");
-    assert_eq!(file["id"], "services/api/nested.py", "the id starts at the git root");
+    assert_eq!(
+        file["path"], "nested.py",
+        "the editor opens it below the opened folder"
+    );
+    assert_eq!(
+        file["id"], "services/api/nested.py",
+        "the id starts at the git root"
+    );
     assert_eq!(file["children"][0]["id"], "services/api/nested.py::top");
     core.finish();
 }
@@ -231,7 +337,10 @@ fn a_changed_file_is_read_again_and_a_new_file_appears() {
     let root = fixtures("changes");
     let mut core = Core::start(Some(driver_path()), &root);
     let first = core.request("vnoc/structure", Value::Null).unwrap();
-    assert_eq!(core.wait_for("vnoc/indexChanged")["revision"], first["revision"]);
+    assert_eq!(
+        core.wait_for("vnoc/indexChanged")["revision"],
+        first["revision"]
+    );
 
     // an edit: the editor reports the path, the core reads that file again and says so
     let edited = root.join("nested.py");
@@ -240,7 +349,10 @@ fn a_changed_file_is_read_again_and_a_new_file_appears() {
     std::fs::write(&edited, text).unwrap();
     core.notify("vnoc/filesChanged", json!({ "paths": [edited] }));
     let changed = core.wait_for("vnoc/indexChanged");
-    assert_eq!(changed["revision"].as_u64().unwrap(), first["revision"].as_u64().unwrap() + 1);
+    assert_eq!(
+        changed["revision"].as_u64().unwrap(),
+        first["revision"].as_u64().unwrap() + 1
+    );
     let after = core.request("vnoc/structure", Value::Null).unwrap();
     assert_eq!(after["stats"]["functions"], 13);
 
@@ -251,7 +363,13 @@ fn a_changed_file_is_read_again_and_a_new_file_appears() {
     core.wait_for("vnoc/indexChanged");
     let after = core.request("vnoc/structure", Value::Null).unwrap();
     assert_eq!(after["root"]["children"][0]["name"], "fresh.py");
-    assert_eq!((after["stats"]["files"].as_u64(), after["stats"]["functions"].as_u64()), (Some(1), Some(1)));
+    assert_eq!(
+        (
+            after["stats"]["files"].as_u64(),
+            after["stats"]["functions"].as_u64()
+        ),
+        (Some(1), Some(1))
+    );
 
     // a rebuild of unchanged code is quiet; two at once are not run twice
     core.notify("vnoc/rebuild", Value::Null);
@@ -265,22 +383,50 @@ fn a_changed_file_is_read_again_and_a_new_file_appears() {
 fn a_missing_driver_is_a_clear_error_and_the_core_stays_up() {
     let mut core = Core::start(None, &fixtures("nodriver"));
     let e = core.request("vnoc/structure", Value::Null).unwrap_err();
-    assert!(e["message"].as_str().unwrap().contains("no driver is configured"), "{e}");
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .contains("no driver is configured"),
+        "{e}"
+    );
     core.finish();
 
-    let mut core = Core::start(Some(PathBuf::from("/definitely/not/a/driver")), &fixtures("baddriver"));
+    let mut core = Core::start(
+        Some(PathBuf::from("/definitely/not/a/driver")),
+        &fixtures("baddriver"),
+    );
     let e = core.request("vnoc/structure", Value::Null).unwrap_err();
-    assert!(e["message"].as_str().unwrap().contains("is not at /definitely/not/a/driver"), "{e}");
-    assert_eq!(core.request("vnoc/ping", Value::Null).unwrap()["pong"], true, "still alive");
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .contains("is not at /definitely/not/a/driver"),
+        "{e}"
+    );
+    assert_eq!(
+        core.request("vnoc/ping", Value::Null).unwrap()["pong"],
+        true,
+        "still alive"
+    );
     core.finish();
 }
 
 #[test]
 fn a_folder_that_does_not_exist_is_an_error_not_a_crash() {
-    let mut core = Core::start(Some(driver_path()), std::path::Path::new("/definitely/not/a/folder"));
+    let mut core = Core::start(
+        Some(driver_path()),
+        std::path::Path::new("/definitely/not/a/folder"),
+    );
     let e = core.request("vnoc/structure", Value::Null).unwrap_err();
-    assert!(e["message"].as_str().unwrap().contains("not a folder"), "{e}");
-    assert_eq!(core.request("vnoc/ping", Value::Null).unwrap()["pong"], true);
+    assert!(
+        e["message"].as_str().unwrap().contains("not a folder"),
+        "{e}"
+    );
+    assert_eq!(
+        core.request("vnoc/ping", Value::Null).unwrap()["pong"],
+        true
+    );
     core.finish();
 }
 
@@ -309,33 +455,78 @@ fn attach_params(root: &std::path::Path, key: &str, title: &str, markers: Option
 #[test]
 fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
     let (mut core, root) = orders_project("full", None);
-    assert_eq!(core.request("vnoc/projectInfo", Value::Null).unwrap(), json!({ "initialized": false, "markers": true }));
+    assert_eq!(
+        core.request("vnoc/projectInfo", Value::Null).unwrap(),
+        json!({ "initialized": false, "markers": true })
+    );
 
     let key = "orders.py::OrderService.parse_order";
-    let r = core.request("vnoc/attach", attach_params(&root, key, "Why we parse twice", Some(true))).expect("attach answers");
+    let r = core
+        .request(
+            "vnoc/attach",
+            attach_params(&root, key, "Why we parse twice", Some(true)),
+        )
+        .expect("attach answers");
     let id = r["id"].as_str().unwrap().to_string();
-    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(true), true));
+    assert_eq!(
+        (r["id_in_code"].as_bool(), r["notice"].is_null()),
+        (Some(true), true)
+    );
 
     // the editor was asked once, for a versioned edit of that document
     assert_eq!(core.edit_requests.len(), 1);
-    assert_eq!(core.edit_requests[0]["edit"]["documentChanges"][0]["textDocument"]["version"], 3);
+    assert_eq!(
+        core.edit_requests[0]["edit"]["documentChanges"][0]["textDocument"]["version"],
+        3
+    );
     // the ID line is in the code, in the docstring that was added
     let code = std::fs::read_to_string(root.join("orders.py")).unwrap();
-    assert!(code.contains(&format!("def parse_order(self, raw):\n        \"\"\"ID: {id}\"\"\"\n")), "{code}");
+    assert!(
+        code.contains(&format!(
+            "def parse_order(self, raw):\n        \"\"\"ID: {id}\"\"\"\n"
+        )),
+        "{code}"
+    );
 
     // .vnoc/ was set up and the node and doc are where the plan says
-    let (shard, node) = (&id[24..], root.join(".vnoc").join("nodes").join(&id[24..]).join(&id));
-    assert!(root.join(".vnoc/vnoc.toml").is_file() && root.join(".vnoc/.gitignore").is_file(), "{shard}");
+    let (shard, node) = (
+        &id[24..],
+        root.join(".vnoc").join("nodes").join(&id[24..]).join(&id),
+    );
+    assert!(
+        root.join(".vnoc/vnoc.toml").is_file() && root.join(".vnoc/.gitignore").is_file(),
+        "{shard}"
+    );
     let toml = std::fs::read_to_string(node.join("node.toml")).unwrap();
-    assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"OrderService.parse_order\"") && toml.contains("id_in_code = \"yes\"") && toml.contains("kind = \"function\""), "{toml}");
+    assert!(
+        toml.contains("path = \"orders.py\"")
+            && toml.contains("qualname = \"OrderService.parse_order\"")
+            && toml.contains("id_in_code = \"yes\"")
+            && toml.contains("kind = \"function\""),
+        "{toml}"
+    );
     assert_eq!(r["doc"], json!(node.join("why-we-parse-twice.md")));
-    assert!(std::fs::read_to_string(node.join("why-we-parse-twice.md")).unwrap().starts_with(&format!("---\nnode: {id}\nhint: {key}\n---\n# Why we parse twice")));
-    assert_eq!(core.request("vnoc/projectInfo", Value::Null).unwrap(), json!({ "initialized": true, "markers": true }));
+    assert!(
+        std::fs::read_to_string(node.join("why-we-parse-twice.md"))
+            .unwrap()
+            .starts_with(&format!(
+                "---\nnode: {id}\nhint: {key}\n---\n# Why we parse twice"
+            ))
+    );
+    assert_eq!(
+        core.request("vnoc/projectInfo", Value::Null).unwrap(),
+        json!({ "initialized": true, "markers": true })
+    );
 
     // a second doc on the same function: same ID, no new edit, no new question
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py")] }),
+    );
     core.wait_for("vnoc/indexChanged");
-    let second = core.request("vnoc/attach", attach_params(&root, key, "Edge cases", None)).unwrap();
+    let second = core
+        .request("vnoc/attach", attach_params(&root, key, "Edge cases", None))
+        .unwrap();
     assert_eq!(second["id"], json!(id));
     assert_eq!(core.edit_requests.len(), 1);
     assert!(second["doc"].as_str().unwrap().ends_with("edge-cases.md"));
@@ -346,12 +537,31 @@ fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
 fn a_marker_that_cannot_be_written_does_not_stop_the_attach() {
     let (mut core, root) = orders_project("refused", None);
     core.editor_applies_edits = false; // the document changed meanwhile, or the user undid it
-    let r = core.request("vnoc/attach", attach_params(&root, "orders.py::OrderService.other", "Notes", Some(true))).unwrap();
+    let r = core
+        .request(
+            "vnoc/attach",
+            attach_params(&root, "orders.py::OrderService.other", "Notes", Some(true)),
+        )
+        .unwrap();
     assert_eq!(r["id_in_code"], false);
-    assert!(r["notice"].as_str().unwrap().contains("attached by name"), "{r}");
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS, "the code is untouched");
-    let node = root.join(".vnoc/nodes").join(&r["id"].as_str().unwrap()[24..]).join(r["id"].as_str().unwrap());
-    assert!(std::fs::read_to_string(node.join("node.toml")).unwrap().contains("id_in_code = \"no\""));
+    assert!(
+        r["notice"].as_str().unwrap().contains("attached by name"),
+        "{r}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        ORDERS,
+        "the code is untouched"
+    );
+    let node = root
+        .join(".vnoc/nodes")
+        .join(&r["id"].as_str().unwrap()[24..])
+        .join(r["id"].as_str().unwrap());
+    assert!(
+        std::fs::read_to_string(node.join("node.toml"))
+            .unwrap()
+            .contains("id_in_code = \"no\"")
+    );
     assert!(node.join("notes.md").is_file());
     core.finish();
 }
@@ -359,36 +569,81 @@ fn a_marker_that_cannot_be_written_does_not_stop_the_attach() {
 #[test]
 fn a_project_set_to_no_ids_never_touches_the_code() {
     let (mut core, root) = orders_project("none", Some("format = 1\n[ids]\ndefault = \"none\"\n"));
-    let r = core.request("vnoc/attach", attach_params(&root, "orders.py::OrderService.other", "Notes", None)).unwrap();
-    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(false), true), "off is a choice, not a failure");
+    let r = core
+        .request(
+            "vnoc/attach",
+            attach_params(&root, "orders.py::OrderService.other", "Notes", None),
+        )
+        .unwrap();
+    assert_eq!(
+        (r["id_in_code"].as_bool(), r["notice"].is_null()),
+        (Some(false), true),
+        "off is a choice, not a failure"
+    );
     assert!(core.edit_requests.is_empty());
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS);
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        ORDERS
+    );
     core.finish();
 }
 
 #[test]
 fn attach_refuses_what_is_not_in_the_index_or_not_that_document() {
     let (mut core, root) = orders_project("refuse", None);
-    let e = core.request("vnoc/attach", attach_params(&root, "orders.py::Nope", "x", None)).unwrap_err();
-    assert!(e["message"].as_str().unwrap().contains("not in the index"), "{e}");
+    let e = core
+        .request(
+            "vnoc/attach",
+            attach_params(&root, "orders.py::Nope", "x", None),
+        )
+        .unwrap_err();
+    assert!(
+        e["message"].as_str().unwrap().contains("not in the index"),
+        "{e}"
+    );
     let mut wrong = attach_params(&root, "orders.py::OrderService.other", "x", None);
     wrong["document"]["uri"] = json!("file:///somewhere/else.py");
-    assert!(core.request("vnoc/attach", wrong).unwrap_err()["message"].as_str().unwrap().contains("not the file"));
-    assert!(!root.join(".vnoc").exists(), "a refused attach writes nothing");
+    assert!(
+        core.request("vnoc/attach", wrong).unwrap_err()["message"]
+            .as_str()
+            .unwrap()
+            .contains("not the file")
+    );
+    assert!(
+        !root.join(".vnoc").exists(),
+        "a refused attach writes nothing"
+    );
     core.finish();
 }
 
 /// The first node of a tree of `orders.py`: the file's children, by name.
 fn def_named<'a>(structure: &'a Value, name: &str) -> &'a Value {
-    structure["root"]["children"][0]["children"].as_array().and_then(|nodes| nodes.iter().flat_map(|n| std::iter::once(n).chain(n["children"].as_array().into_iter().flatten())).find(|n| n["name"] == name)).unwrap_or_else(|| panic!("no node `{name}` in {structure}"))
+    structure["root"]["children"][0]["children"]
+        .as_array()
+        .and_then(|nodes| {
+            nodes
+                .iter()
+                .flat_map(|n| {
+                    std::iter::once(n).chain(n["children"].as_array().into_iter().flatten())
+                })
+                .find(|n| n["name"] == name)
+        })
+        .unwrap_or_else(|| panic!("no node `{name}` in {structure}"))
 }
 
 #[test]
 fn a_documented_node_is_found_again_after_a_rename_and_a_move() {
     let (mut core, root) = orders_project("refind", None);
     let key = "orders.py::OrderService.parse_order";
-    core.request("vnoc/attach", attach_params(&root, key, "Why we parse twice", Some(true))).unwrap();
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    core.request(
+        "vnoc/attach",
+        attach_params(&root, key, "Why we parse twice", Some(true)),
+    )
+    .unwrap();
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py")] }),
+    );
 
     // the tree shows the id, the count and a marker link
     let shown = loop {
@@ -405,16 +660,33 @@ fn a_documented_node_is_found_again_after_a_rename_and_a_move() {
 
     // the doc list comes from the files
     let docs = core.request("vnoc/docs", json!({ "id": id })).unwrap();
-    assert_eq!((docs[0]["file"].as_str(), docs[0]["title"].as_str()), (Some("why-we-parse-twice.md"), Some("Why we parse twice")));
+    assert_eq!(
+        (docs[0]["file"].as_str(), docs[0]["title"].as_str()),
+        (Some("why-we-parse-twice.md"), Some("Why we parse twice"))
+    );
 
     // rename the function AND move it to another file; the ID line travels with it
     let code = std::fs::read_to_string(root.join("orders.py")).unwrap();
     let moved = code.replace("parse_order", "parse_payload");
-    std::fs::write(root.join("orders.py"), ORDERS.replace("    def parse_order(self, raw):\n        return raw\n\n", "")).unwrap();
+    std::fs::write(
+        root.join("orders.py"),
+        ORDERS.replace(
+            "    def parse_order(self, raw):\n        return raw\n\n",
+            "",
+        ),
+    )
+    .unwrap();
     let body_start = moved.find("    def parse_payload").unwrap();
     let body_end = moved.find("    def other").unwrap();
-    std::fs::write(root.join("payments.py"), format!("class Payments:\n{}", &moved[body_start..body_end])).unwrap();
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py"), root.join("payments.py")] }));
+    std::fs::write(
+        root.join("payments.py"),
+        format!("class Payments:\n{}", &moved[body_start..body_end]),
+    )
+    .unwrap();
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py"), root.join("payments.py")] }),
+    );
     let after = loop {
         core.wait_for("vnoc/indexChanged");
         let s = core.request("vnoc/structure", Value::Null).unwrap();
@@ -422,8 +694,32 @@ fn a_documented_node_is_found_again_after_a_rename_and_a_move() {
             break s;
         }
     };
-    let found = after["root"]["children"].as_array().unwrap().iter().flat_map(|f| f["children"].as_array().unwrap().iter().flat_map(|c| std::iter::once(c).chain(c["children"].as_array().unwrap().iter()))).find(|n| n["node_id"] == json!(id)).expect("the node is still found");
-    assert_eq!((found["name"].as_str(), found["path"].as_str(), found["link"].as_str(), found["docs"].as_u64()), (Some("parse_payload"), Some("payments.py"), Some("marker"), Some(1)));
+    let found =
+        after["root"]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|f| {
+                f["children"].as_array().unwrap().iter().flat_map(|c| {
+                    std::iter::once(c).chain(c["children"].as_array().unwrap().iter())
+                })
+            })
+            .find(|n| n["node_id"] == json!(id))
+            .expect("the node is still found");
+    assert_eq!(
+        (
+            found["name"].as_str(),
+            found["path"].as_str(),
+            found["link"].as_str(),
+            found["docs"].as_u64()
+        ),
+        (
+            Some("parse_payload"),
+            Some("payments.py"),
+            Some("marker"),
+            Some(1)
+        )
+    );
     core.finish();
 }
 
@@ -432,7 +728,10 @@ fn find_node<'a>(node: &'a Value, pred: &dyn Fn(&Value) -> bool) -> Option<&'a V
     if pred(node) {
         return Some(node);
     }
-    node["children"].as_array()?.iter().find_map(|child| find_node(child, pred))
+    node["children"]
+        .as_array()?
+        .iter()
+        .find_map(|child| find_node(child, pred))
 }
 
 /// Waits for index changes until the tree satisfies `ready`, and returns that tree.
@@ -449,28 +748,70 @@ fn structure_when(core: &mut Core, ready: impl Fn(&Value) -> bool) -> Value {
 #[test]
 fn a_file_gets_a_header_comment_and_is_found_again_after_a_rename() {
     let (mut core, root) = orders_project("file", None);
-    let r = core.request("vnoc/attach", attach_params(&root, "orders.py", "About orders", Some(true))).expect("attach answers");
+    let r = core
+        .request(
+            "vnoc/attach",
+            attach_params(&root, "orders.py", "About orders", Some(true)),
+        )
+        .expect("attach answers");
     let id = r["id"].as_str().unwrap().to_string();
-    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(true), true));
+    assert_eq!(
+        (r["id_in_code"].as_bool(), r["notice"].is_null()),
+        (Some(true), true)
+    );
     assert_eq!(core.edit_requests.len(), 1, "one edit of the open document");
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), format!("# FileID: {id}\n{ORDERS}"));
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        format!("# FileID: {id}\n{ORDERS}")
+    );
 
     let node = root.join(".vnoc/nodes").join(&id[24..]).join(&id);
     let toml = std::fs::read_to_string(node.join("node.toml")).unwrap();
-    assert!(toml.contains("path = \"orders.py\"") && toml.contains("qualname = \"\"") && toml.contains("id_in_code = \"yes\"") && toml.contains("kind = \"file\""), "{toml}");
-    assert!(std::fs::read_to_string(node.join("about-orders.md")).unwrap().contains("hint: orders.py\n"));
+    assert!(
+        toml.contains("path = \"orders.py\"")
+            && toml.contains("qualname = \"\"")
+            && toml.contains("id_in_code = \"yes\"")
+            && toml.contains("kind = \"file\""),
+        "{toml}"
+    );
+    assert!(
+        std::fs::read_to_string(node.join("about-orders.md"))
+            .unwrap()
+            .contains("hint: orders.py\n")
+    );
 
     // saved: the tree shows the file with its doc, found by its marker
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py")] }),
+    );
     let shown = structure_when(&mut core, |s| s["root"]["children"][0]["link"] == "marker");
-    assert_eq!((shown["root"]["children"][0]["node_id"].as_str(), shown["root"]["children"][0]["docs"].as_u64()), (Some(id.as_str()), Some(1)));
+    assert_eq!(
+        (
+            shown["root"]["children"][0]["node_id"].as_str(),
+            shown["root"]["children"][0]["docs"].as_u64()
+        ),
+        (Some(id.as_str()), Some(1))
+    );
 
     // renamed in the terminal: the comment travels with the file
     std::fs::rename(root.join("orders.py"), root.join("billing.py")).unwrap();
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py"), root.join("billing.py")] }));
-    let after = structure_when(&mut core, |s| s["root"]["children"][0]["name"] == "billing.py");
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py"), root.join("billing.py")] }),
+    );
+    let after = structure_when(&mut core, |s| {
+        s["root"]["children"][0]["name"] == "billing.py"
+    });
     let file = &after["root"]["children"][0];
-    assert_eq!((file["node_id"].as_str(), file["link"].as_str(), file["docs"].as_u64()), (Some(id.as_str()), Some("marker"), Some(1)));
+    assert_eq!(
+        (
+            file["node_id"].as_str(),
+            file["link"].as_str(),
+            file["docs"].as_u64()
+        ),
+        (Some(id.as_str()), Some("marker"), Some(1))
+    );
     core.finish();
 }
 
@@ -479,31 +820,74 @@ fn a_folder_gets_a_marker_file_and_is_found_again_after_a_move() {
     let (mut core, root) = orders_project("folder", None);
     std::fs::create_dir_all(root.join("pkg")).unwrap();
     std::fs::write(root.join("pkg/m.py"), "def f():\n    pass\n").unwrap();
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("pkg/m.py")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("pkg/m.py")] }),
+    );
     structure_when(&mut core, |s| s["stats"]["files"] == 2);
 
-    let r = core.request("vnoc/attach", json!({ "key": "pkg", "title": "The pkg folder", "markers": true })).expect("a folder needs no document");
+    let r = core
+        .request(
+            "vnoc/attach",
+            json!({ "key": "pkg", "title": "The pkg folder", "markers": true }),
+        )
+        .expect("a folder needs no document");
     let id = r["id"].as_str().unwrap().to_string();
-    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(true), true));
-    assert!(core.edit_requests.is_empty(), "the core writes the marker itself");
+    assert_eq!(
+        (r["id_in_code"].as_bool(), r["notice"].is_null()),
+        (Some(true), true)
+    );
+    assert!(
+        core.edit_requests.is_empty(),
+        "the core writes the marker itself"
+    );
     let marker = std::fs::read_to_string(root.join("pkg/.vnoc-id")).unwrap();
     assert!(marker.contains(&format!("id = \"{id}\"")), "{marker}");
     let node = root.join(".vnoc/nodes").join(&id[24..]).join(&id);
-    assert!(std::fs::read_to_string(node.join("node.toml")).unwrap().contains("path = \"pkg\"") && std::fs::read_to_string(node.join("node.toml")).unwrap().contains("kind = \"folder\""));
+    assert!(
+        std::fs::read_to_string(node.join("node.toml"))
+            .unwrap()
+            .contains("path = \"pkg\"")
+            && std::fs::read_to_string(node.join("node.toml"))
+                .unwrap()
+                .contains("kind = \"folder\"")
+    );
 
-    let shown = structure_when(&mut core, |s| find_node(&s["root"], &|n| n["id"] == "pkg").is_some_and(|n| n["link"] == "marker"));
-    assert_eq!(find_node(&shown["root"], &|n| n["id"] == "pkg").unwrap()["docs"], 1);
+    let shown = structure_when(&mut core, |s| {
+        find_node(&s["root"], &|n| n["id"] == "pkg").is_some_and(|n| n["link"] == "marker")
+    });
+    assert_eq!(
+        find_node(&shown["root"], &|n| n["id"] == "pkg").unwrap()["docs"],
+        1
+    );
 
     // moved and renamed in the terminal; the marker file went along inside it
     std::fs::create_dir_all(root.join("core")).unwrap();
     std::fs::rename(root.join("pkg"), root.join("core/pkg2")).unwrap();
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("core/pkg2/.vnoc-id")] }));
-    let after = structure_when(&mut core, |s| find_node(&s["root"], &|n| n["id"] == "core/pkg2").is_some());
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("core/pkg2/.vnoc-id")] }),
+    );
+    let after = structure_when(&mut core, |s| {
+        find_node(&s["root"], &|n| n["id"] == "core/pkg2").is_some()
+    });
     let folder = find_node(&after["root"], &|n| n["id"] == "core/pkg2").unwrap();
-    assert_eq!((folder["node_id"].as_str(), folder["link"].as_str(), folder["docs"].as_u64()), (Some(id.as_str()), Some("marker"), Some(1)));
+    assert_eq!(
+        (
+            folder["node_id"].as_str(),
+            folder["link"].as_str(),
+            folder["docs"].as_u64()
+        ),
+        (Some(id.as_str()), Some("marker"), Some(1))
+    );
 
     // a second doc on the same folder reuses its ID and does not touch the marker
-    let second = core.request("vnoc/attach", json!({ "key": "core/pkg2", "title": "More" })).unwrap();
+    let second = core
+        .request(
+            "vnoc/attach",
+            json!({ "key": "core/pkg2", "title": "More" }),
+        )
+        .unwrap();
     assert_eq!(second["id"], json!(id));
     core.finish();
 }
@@ -514,40 +898,81 @@ fn a_folder_marker_that_cannot_be_read_is_never_overwritten() {
     std::fs::create_dir_all(root.join("pkg")).unwrap();
     std::fs::write(root.join("pkg/m.py"), "x = 1\n").unwrap();
     std::fs::write(root.join("pkg/.vnoc-id"), "id = [").unwrap();
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("pkg/m.py")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("pkg/m.py")] }),
+    );
     structure_when(&mut core, |s| s["stats"]["files"] == 2);
 
-    let r = core.request("vnoc/attach", json!({ "key": "pkg", "title": "Notes", "markers": true })).unwrap();
+    let r = core
+        .request(
+            "vnoc/attach",
+            json!({ "key": "pkg", "title": "Notes", "markers": true }),
+        )
+        .unwrap();
     assert_eq!(r["id_in_code"], false);
     assert!(r["notice"].as_str().unwrap().contains("cannot read"), "{r}");
-    assert_eq!(std::fs::read_to_string(root.join("pkg/.vnoc-id")).unwrap(), "id = [", "the unreadable file is left as it was");
+    assert_eq!(
+        std::fs::read_to_string(root.join("pkg/.vnoc-id")).unwrap(),
+        "id = [",
+        "the unreadable file is left as it was"
+    );
     core.finish();
 }
 
 #[test]
 fn with_ids_off_a_file_is_attached_by_path_and_goes_missing_when_renamed() {
-    let (mut core, root) = orders_project("filenone", Some("format = 1\n[ids]\ndefault = \"none\"\n"));
-    let r = core.request("vnoc/attach", attach_params(&root, "orders.py", "Notes", None)).unwrap();
-    assert_eq!((r["id_in_code"].as_bool(), r["notice"].is_null()), (Some(false), true));
+    let (mut core, root) =
+        orders_project("filenone", Some("format = 1\n[ids]\ndefault = \"none\"\n"));
+    let r = core
+        .request(
+            "vnoc/attach",
+            attach_params(&root, "orders.py", "Notes", None),
+        )
+        .unwrap();
+    assert_eq!(
+        (r["id_in_code"].as_bool(), r["notice"].is_null()),
+        (Some(false), true)
+    );
     assert!(core.edit_requests.is_empty());
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS);
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        ORDERS
+    );
 
     core.notify("vnoc/filesChanged", json!({ "paths": [] }));
     let shown = structure_when(&mut core, |s| s["root"]["children"][0]["link"] == "name");
     assert_eq!(shown["root"]["children"][0]["docs"], 1, "found by its path");
 
     std::fs::rename(root.join("orders.py"), root.join("billing.py")).unwrap();
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py"), root.join("billing.py")] }));
-    let after = structure_when(&mut core, |s| s["root"]["children"][0]["name"] == "billing.py");
-    assert_eq!(after["root"]["children"][0]["node_id"], Value::Null, "no marker, so nothing follows the rename: it is Missing");
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py"), root.join("billing.py")] }),
+    );
+    let after = structure_when(&mut core, |s| {
+        s["root"]["children"][0]["name"] == "billing.py"
+    });
+    assert_eq!(
+        after["root"]["children"][0]["node_id"],
+        Value::Null,
+        "no marker, so nothing follows the rename: it is Missing"
+    );
     core.finish();
 }
 
 #[test]
 fn attach_to_a_file_needs_its_document() {
     let (mut core, _root) = orders_project("nodocument", None);
-    let e = core.request("vnoc/attach", json!({ "key": "orders.py", "title": "x" })).unwrap_err();
-    assert!(e["message"].as_str().unwrap().contains("needs the open document"), "{e}");
+    let e = core
+        .request("vnoc/attach", json!({ "key": "orders.py", "title": "x" }))
+        .unwrap_err();
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .contains("needs the open document"),
+        "{e}"
+    );
     core.finish();
 }
 
@@ -569,7 +994,11 @@ fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() 
     std::fs::write(root.join("ignored/x.py"), "def f():\n    pass\n").unwrap();
     // not valid UTF-8: the driver cannot outline it
     std::fs::write(root.join("bad.py"), [0xff, 0xfe, 0xfd]).unwrap();
-    let (gone, ignored, failed) = ("0000000000000000000000000A", "0000000000000000000000000B", "0000000000000000000000000C");
+    let (gone, ignored, failed) = (
+        "0000000000000000000000000A",
+        "0000000000000000000000000B",
+        "0000000000000000000000000C",
+    );
     write_record(&root, gone, "gone.py", "parse_order");
     write_record(&root, ignored, "ignored/x.py", "f");
     write_record(&root, failed, "bad.py", "g");
@@ -577,19 +1006,54 @@ fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() 
 
     let mut core = Core::start(Some(driver_path()), &root);
     let s = core.request("vnoc/structure", Value::Null).unwrap();
-    assert_eq!(s["failed"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect::<Vec<_>>(), ["bad.py"], "the driver failed on it");
-    assert_eq!(s["missing"], json!([{ "id": gone, "kind": "function", "path": "gone.py", "qualname": "parse_order", "docs": 1 }]), "the others were not looked for");
+    assert_eq!(
+        s["failed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["bad.py"],
+        "the driver failed on it"
+    );
+    assert_eq!(
+        s["missing"],
+        json!([{ "id": gone, "kind": "function", "path": "gone.py", "qualname": "parse_order", "docs": 1 }]),
+        "the others were not looked for"
+    );
     let problems = s["problems"].as_array().unwrap();
     assert_eq!(problems.len(), 1, "{problems:?}");
-    assert_eq!(problems[0]["text"], ".vnoc/nodes/zz/not-an-id: the folder name is not a node ID");
-    assert_eq!(problems[0]["file"], json!(root.join(".vnoc").join("nodes").join("zz").join("not-an-id")));
+    assert_eq!(
+        problems[0]["text"],
+        ".vnoc/nodes/zz/not-an-id: the folder name is not a node ID"
+    );
+    assert_eq!(
+        problems[0]["file"],
+        json!(
+            root.join(".vnoc")
+                .join("nodes")
+                .join("zz")
+                .join("not-an-id")
+        )
+    );
     assert_eq!(problems[0]["line"], Value::Null);
 
     // the ignored file goes: now the name was looked for, and the node is Missing
     std::fs::remove_file(root.join("ignored/x.py")).unwrap();
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("ignored/x.py")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("ignored/x.py")] }),
+    );
     let after = structure_when(&mut core, |s| s["missing"].as_array().unwrap().len() == 2);
-    assert_eq!(after["missing"].as_array().unwrap().iter().map(|m| m["path"].as_str().unwrap()).collect::<Vec<_>>(), ["gone.py", "ignored/x.py"]);
+    assert_eq!(
+        after["missing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["gone.py", "ignored/x.py"]
+    );
     core.finish();
 }
 
@@ -603,47 +1067,114 @@ fn relink_params(root: &std::path::Path, id: &str, to: &str) -> Value {
 
 /// The structure once it lists exactly these Missing IDs.
 fn missing_is(core: &mut Core, ids: &[&str]) -> Value {
-    structure_when(core, |s| s["missing"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>() == ids)
+    structure_when(core, |s| {
+        s["missing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect::<Vec<_>>()
+            == ids
+    })
 }
 
 fn tell_core_about_vnoc(core: &mut Core, root: &std::path::Path) {
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join(".vnoc/nodes")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join(".vnoc/nodes")] }),
+    );
 }
 
 fn message(error: Result<Value, Value>) -> String {
-    error.expect_err("the core refuses")["message"].as_str().unwrap().to_string()
+    error.expect_err("the core refuses")["message"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 
 #[test]
 fn relink_writes_the_id_at_the_new_place_then_moves_the_node_and_keeps_what_it_does_not_know() {
     let (mut core, root) = orders_project("relink", Some("format = 1\n"));
     write_record(&root, R, "gone.py", "old");
-    let toml = root.join(".vnoc/nodes").join(&R[24..]).join(R).join("node.toml");
-    std::fs::write(&toml, format!("{}future = 7\n", std::fs::read_to_string(&toml).unwrap())).unwrap();
+    let toml = root
+        .join(".vnoc/nodes")
+        .join(&R[24..])
+        .join(R)
+        .join("node.toml");
+    std::fs::write(
+        &toml,
+        format!("{}future = 7\n", std::fs::read_to_string(&toml).unwrap()),
+    )
+    .unwrap();
     tell_core_about_vnoc(&mut core, &root);
     missing_is(&mut core, &[R]);
 
-    let r = core.request("vnoc/relink", relink_params(&root, R, "orders.py::OrderService.other")).expect("relink answers");
-    assert_eq!((r["written"].as_str(), r["notice"].is_null()), (Some("id"), true));
-    assert_eq!(core.edit_requests.len(), 1, "the editor was asked once, as for attach");
-    assert!(std::fs::read_to_string(root.join("orders.py")).unwrap().contains(&format!("def other(self):\n        \"\"\"ID: {R}\"\"\"")));
+    let r = core
+        .request(
+            "vnoc/relink",
+            relink_params(&root, R, "orders.py::OrderService.other"),
+        )
+        .expect("relink answers");
+    assert_eq!(
+        (r["written"].as_str(), r["notice"].is_null()),
+        (Some("id"), true)
+    );
+    assert_eq!(
+        core.edit_requests.len(),
+        1,
+        "the editor was asked once, as for attach"
+    );
+    assert!(
+        std::fs::read_to_string(root.join("orders.py"))
+            .unwrap()
+            .contains(&format!("def other(self):\n        \"\"\"ID: {R}\"\"\""))
+    );
     let text = std::fs::read_to_string(&toml).unwrap();
-    assert!(text.contains("path = \"orders.py\"") && text.contains("qualname = \"OrderService.other\"") && text.contains("kind = \"function\"") && text.contains("id_in_code = \"yes\"") && text.contains("future = 7"), "{text}");
+    assert!(
+        text.contains("path = \"orders.py\"")
+            && text.contains("qualname = \"OrderService.other\"")
+            && text.contains("kind = \"function\"")
+            && text.contains("id_in_code = \"yes\"")
+            && text.contains("future = 7"),
+        "{text}"
+    );
 
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py")] }),
+    );
     // found by name as soon as node.toml moved; by its ID once the saved file is read again
-    let s = structure_when(&mut core, |s| find_node(&s["root"], &|n| n["name"] == "other").is_some_and(|n| n["link"] == "marker"));
+    let s = structure_when(&mut core, |s| {
+        find_node(&s["root"], &|n| n["name"] == "other").is_some_and(|n| n["link"] == "marker")
+    });
     assert!(s["missing"].as_array().unwrap().is_empty());
     let other = find_node(&s["root"], &|n| n["name"] == "other").unwrap();
-    assert_eq!((other["node_id"].as_str(), other["link"].as_str(), other["docs"].as_u64()), (Some(R), Some("marker"), Some(1)));
+    assert_eq!(
+        (
+            other["node_id"].as_str(),
+            other["link"].as_str(),
+            other["docs"].as_u64()
+        ),
+        (Some(R), Some("marker"), Some(1))
+    );
     core.finish();
 }
 
 #[test]
-fn relink_refuses_a_place_with_another_nodes_id_a_node_found_by_name_the_wrong_kind_and_a_node_that_is_not_missing() {
+fn relink_refuses_a_place_with_another_nodes_id_a_node_found_by_name_the_wrong_kind_and_a_node_that_is_not_missing()
+ {
     let (mut core, root) = orders_project("refuse", None);
     // X: a documented function with its ID in the code. S: a node found by name at `other`. R: Missing.
-    core.request("vnoc/attach", attach_params(&root, "orders.py::OrderService.parse_order", "Why", Some(true))).unwrap();
+    core.request(
+        "vnoc/attach",
+        attach_params(
+            &root,
+            "orders.py::OrderService.parse_order",
+            "Why",
+            Some(true),
+        ),
+    )
+    .unwrap();
     write_record(&root, S, "orders.py", "OrderService.other");
     write_record(&root, R, "gone.py", "old");
     tell_core_about_vnoc(&mut core, &root);
@@ -651,31 +1182,79 @@ fn relink_refuses_a_place_with_another_nodes_id_a_node_found_by_name_the_wrong_k
     let code = std::fs::read_to_string(root.join("orders.py")).unwrap();
     let edits = core.edit_requests.len();
 
-    let ask = |core: &mut Core, id: &str, to: &str| message(core.request("vnoc/relink", relink_params(&root, id, to)));
-    assert_eq!(ask(&mut core, R, "orders.py::OrderService.parse_order"), "that node already has its own docs", "the place carries another ID");
-    assert_eq!(ask(&mut core, R, "orders.py::OrderService.other"), "that node already has its own docs", "found by name: no ID in the code to see");
-    assert_eq!(ask(&mut core, R, "orders.py"), "this is a file, and the docs belong to a function");
+    let ask = |core: &mut Core, id: &str, to: &str| {
+        message(core.request("vnoc/relink", relink_params(&root, id, to)))
+    };
+    assert_eq!(
+        ask(&mut core, R, "orders.py::OrderService.parse_order"),
+        "that node already has its own docs",
+        "the place carries another ID"
+    );
+    assert_eq!(
+        ask(&mut core, R, "orders.py::OrderService.other"),
+        "that node already has its own docs",
+        "found by name: no ID in the code to see"
+    );
+    assert_eq!(
+        ask(&mut core, R, "orders.py"),
+        "this is a file, and the docs belong to a function"
+    );
     assert!(ask(&mut core, S, "orders.py::OrderService").contains("not Missing"));
     assert!(ask(&mut core, R, "nowhere.py::f").contains("not in the index"));
 
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), code, "a refusal writes nothing into the code");
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        code,
+        "a refusal writes nothing into the code"
+    );
     assert_eq!(core.edit_requests.len(), edits);
-    let record = std::fs::read_to_string(root.join(".vnoc/nodes").join(&R[24..]).join(R).join("node.toml")).unwrap();
-    assert!(record.contains("path = \"gone.py\""), "and nothing in .vnoc/: {record}");
+    let record = std::fs::read_to_string(
+        root.join(".vnoc/nodes")
+            .join(&R[24..])
+            .join(R)
+            .join("node.toml"),
+    )
+    .unwrap();
+    assert!(
+        record.contains("path = \"gone.py\""),
+        "and nothing in .vnoc/: {record}"
+    );
     core.finish();
 }
 
 #[test]
 fn relink_with_ids_off_moves_only_the_stored_place() {
-    let (mut core, root) = orders_project("relinkoff", Some("format = 1\n[ids]\ndefault = \"none\"\n"));
+    let (mut core, root) =
+        orders_project("relinkoff", Some("format = 1\n[ids]\ndefault = \"none\"\n"));
     write_record(&root, R, "gone.py", "old");
     tell_core_about_vnoc(&mut core, &root);
     missing_is(&mut core, &[R]);
-    let r = core.request("vnoc/relink", relink_params(&root, R, "orders.py::OrderService.other")).unwrap();
-    assert_eq!((r["written"].as_str(), r["notice"].is_null()), (Some("anchorOnly"), true), "off is a choice, not a failure");
+    let r = core
+        .request(
+            "vnoc/relink",
+            relink_params(&root, R, "orders.py::OrderService.other"),
+        )
+        .unwrap();
+    assert_eq!(
+        (r["written"].as_str(), r["notice"].is_null()),
+        (Some("anchorOnly"), true),
+        "off is a choice, not a failure"
+    );
     assert!(core.edit_requests.is_empty());
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS);
-    assert!(std::fs::read_to_string(root.join(".vnoc/nodes").join(&R[24..]).join(R).join("node.toml")).unwrap().contains("id_in_code = \"no\""));
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        ORDERS
+    );
+    assert!(
+        std::fs::read_to_string(
+            root.join(".vnoc/nodes")
+                .join(&R[24..])
+                .join(R)
+                .join("node.toml")
+        )
+        .unwrap()
+        .contains("id_in_code = \"no\"")
+    );
     core.finish();
 }
 
@@ -688,26 +1267,58 @@ fn write_id_params(root: &std::path::Path, key: &str) -> Value {
 
 /// The structure once `name` is drawn with this `link`.
 fn link_of_is(core: &mut Core, name: &str, link: &str) -> Value {
-    structure_when(core, |s| find_node(&s["root"], &|n| n["name"] == name).is_some_and(|n| n["link"] == link))
+    structure_when(core, |s| {
+        find_node(&s["root"], &|n| n["name"] == name).is_some_and(|n| n["link"] == link)
+    })
 }
 
 #[test]
 fn write_id_puts_the_id_back_in_the_code_of_a_node_found_by_name() {
     let (mut core, root) = orders_project("writeid", Some("format = 1\n"));
     write_record(&root, S, "orders.py", "OrderService.other");
-    let toml = root.join(".vnoc/nodes").join(&S[24..]).join(S).join("node.toml");
-    std::fs::write(&toml, format!("{}future = 7\n", std::fs::read_to_string(&toml).unwrap())).unwrap();
+    let toml = root
+        .join(".vnoc/nodes")
+        .join(&S[24..])
+        .join(S)
+        .join("node.toml");
+    std::fs::write(
+        &toml,
+        format!("{}future = 7\n", std::fs::read_to_string(&toml).unwrap()),
+    )
+    .unwrap();
     tell_core_about_vnoc(&mut core, &root);
     link_of_is(&mut core, "other", "name");
 
-    let r = core.request("vnoc/writeId", write_id_params(&root, "orders.py::OrderService.other")).expect("writeId answers");
-    assert_eq!((r["written"].as_bool(), r["notice"].is_null()), (Some(true), true), "{r}");
+    let r = core
+        .request(
+            "vnoc/writeId",
+            write_id_params(&root, "orders.py::OrderService.other"),
+        )
+        .expect("writeId answers");
+    assert_eq!(
+        (r["written"].as_bool(), r["notice"].is_null()),
+        (Some(true), true),
+        "{r}"
+    );
     assert_eq!(core.edit_requests.len(), 1, "the editor was asked once");
-    assert!(std::fs::read_to_string(root.join("orders.py")).unwrap().contains(&format!("def other(self):\n        \"\"\"ID: {S}\"\"\"")));
+    assert!(
+        std::fs::read_to_string(root.join("orders.py"))
+            .unwrap()
+            .contains(&format!("def other(self):\n        \"\"\"ID: {S}\"\"\""))
+    );
     let text = std::fs::read_to_string(&toml).unwrap();
-    assert!(text.contains("path = \"orders.py\"") && text.contains("qualname = \"OrderService.other\"") && text.contains("id_in_code = \"yes\"") && text.contains("future = 7"), "{text}");
+    assert!(
+        text.contains("path = \"orders.py\"")
+            && text.contains("qualname = \"OrderService.other\"")
+            && text.contains("id_in_code = \"yes\"")
+            && text.contains("future = 7"),
+        "{text}"
+    );
 
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py")] }),
+    );
     link_of_is(&mut core, "other", "marker");
     core.finish();
 }
@@ -715,27 +1326,79 @@ fn write_id_puts_the_id_back_in_the_code_of_a_node_found_by_name() {
 #[test]
 fn write_id_refuses_what_has_no_docs_has_its_id_or_is_not_allowed_one_and_changes_nothing() {
     let (mut core, root) = orders_project("writeidrefuse", None);
-    core.request("vnoc/attach", attach_params(&root, "orders.py::OrderService.parse_order", "Why", Some(true))).unwrap(); // its ID is in the code
+    core.request(
+        "vnoc/attach",
+        attach_params(
+            &root,
+            "orders.py::OrderService.parse_order",
+            "Why",
+            Some(true),
+        ),
+    )
+    .unwrap(); // its ID is in the code
     write_record(&root, S, "orders.py", "OrderService.other");
     write_record(&root, T, "orders.py", "OrderService");
-    let record = |id: &str| root.join(".vnoc/nodes").join(&id[24..]).join(id).join("node.toml");
-    std::fs::write(record(S), std::fs::read_to_string(record(S)).unwrap().replace("\"no\"", "\"never\"")).unwrap();
+    let record = |id: &str| {
+        root.join(".vnoc/nodes")
+            .join(&id[24..])
+            .join(id)
+            .join("node.toml")
+    };
+    std::fs::write(
+        record(S),
+        std::fs::read_to_string(record(S))
+            .unwrap()
+            .replace("\"no\"", "\"never\""),
+    )
+    .unwrap();
     tell_core_about_vnoc(&mut core, &root);
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py")] }),
+    );
     link_of_is(&mut core, "parse_order", "marker");
     link_of_is(&mut core, "other", "name");
-    let (code, edits, s_toml, t_toml) = (std::fs::read_to_string(root.join("orders.py")).unwrap(), core.edit_requests.len(), std::fs::read_to_string(record(S)).unwrap(), std::fs::read_to_string(record(T)).unwrap());
+    let (code, edits, s_toml, t_toml) = (
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        core.edit_requests.len(),
+        std::fs::read_to_string(record(S)).unwrap(),
+        std::fs::read_to_string(record(T)).unwrap(),
+    );
 
-    let ask = |core: &mut Core, key: &str| message(core.request("vnoc/writeId", write_id_params(&root, key)));
+    let ask = |core: &mut Core, key: &str| {
+        message(core.request("vnoc/writeId", write_id_params(&root, key)))
+    };
     assert!(ask(&mut core, "orders.py::Nope").contains("not in the index"));
-    assert_eq!(ask(&mut core, "orders.py"), "that node has no docs, so there is no ID to write");
-    assert_eq!(ask(&mut core, "orders.py::OrderService.parse_order"), "the ID of that node is already in the code");
-    assert_eq!(ask(&mut core, "orders.py::OrderService.other"), "this node was set to never have an ID in the code");
-    std::fs::write(root.join(".vnoc/vnoc.toml"), "format = 1\n[ids]\ndefault = \"none\"\n").unwrap(); // the settings are read on every call
+    assert_eq!(
+        ask(&mut core, "orders.py"),
+        "that node has no docs, so there is no ID to write"
+    );
+    assert_eq!(
+        ask(&mut core, "orders.py::OrderService.parse_order"),
+        "the ID of that node is already in the code"
+    );
+    assert_eq!(
+        ask(&mut core, "orders.py::OrderService.other"),
+        "this node was set to never have an ID in the code"
+    );
+    std::fs::write(
+        root.join(".vnoc/vnoc.toml"),
+        "format = 1\n[ids]\ndefault = \"none\"\n",
+    )
+    .unwrap(); // the settings are read on every call
     assert!(ask(&mut core, "orders.py::OrderService").contains("does not write IDs"));
 
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), code);
-    assert_eq!((std::fs::read_to_string(record(S)).unwrap(), std::fs::read_to_string(record(T)).unwrap()), (s_toml, t_toml));
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        code
+    );
+    assert_eq!(
+        (
+            std::fs::read_to_string(record(S)).unwrap(),
+            std::fs::read_to_string(record(T)).unwrap()
+        ),
+        (s_toml, t_toml)
+    );
     assert_eq!(core.edit_requests.len(), edits);
     core.finish();
 }
@@ -747,11 +1410,35 @@ fn write_id_that_cannot_write_says_so_and_changes_nothing() {
     tell_core_about_vnoc(&mut core, &root);
     link_of_is(&mut core, "other", "name");
     core.editor_applies_edits = false;
-    let r = core.request("vnoc/writeId", write_id_params(&root, "orders.py::OrderService.other")).unwrap();
+    let r = core
+        .request(
+            "vnoc/writeId",
+            write_id_params(&root, "orders.py::OrderService.other"),
+        )
+        .unwrap();
     assert_eq!(r["written"], false);
-    assert!(r["notice"].as_str().unwrap().contains("could not be written"), "{r}");
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS, "the code is untouched");
-    assert!(std::fs::read_to_string(root.join(".vnoc/nodes").join(&S[24..]).join(S).join("node.toml")).unwrap().contains("id_in_code = \"no\""));
+    assert!(
+        r["notice"]
+            .as_str()
+            .unwrap()
+            .contains("could not be written"),
+        "{r}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        ORDERS,
+        "the code is untouched"
+    );
+    assert!(
+        std::fs::read_to_string(
+            root.join(".vnoc/nodes")
+                .join(&S[24..])
+                .join(S)
+                .join("node.toml")
+        )
+        .unwrap()
+        .contains("id_in_code = \"no\"")
+    );
     core.finish();
 }
 
@@ -760,16 +1447,30 @@ fn write_id_does_not_take_a_node_whose_id_is_elsewhere_in_the_code_however_old_i
     let (mut core, root) = orders_project("writeidelsewhere", Some("format = 1\n"));
     // S still has its stored anchor at `other`, but its ID is in the code of `parse_order`
     write_record(&root, S, "orders.py", "OrderService.other");
-    let moved = ORDERS.replace("def parse_order(self, raw):\n", &format!("def parse_order(self, raw):\n        \"\"\"ID: {S}\"\"\"\n"));
+    let moved = ORDERS.replace(
+        "def parse_order(self, raw):\n",
+        &format!("def parse_order(self, raw):\n        \"\"\"ID: {S}\"\"\"\n"),
+    );
     std::fs::write(root.join("orders.py"), &moved).unwrap();
     tell_core_about_vnoc(&mut core, &root);
-    core.notify("vnoc/filesChanged", json!({ "paths": [root.join("orders.py")] }));
-    structure_when(&mut core, |s| find_node(&s["root"], &|n| n["name"] == "parse_order").is_some_and(|n| n["node_id"] == S));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py")] }),
+    );
+    structure_when(&mut core, |s| {
+        find_node(&s["root"], &|n| n["name"] == "parse_order").is_some_and(|n| n["node_id"] == S)
+    });
 
-    let refused = message(core.request("vnoc/writeId", write_id_params(&root, "orders.py::OrderService.other")));
+    let refused = message(core.request(
+        "vnoc/writeId",
+        write_id_params(&root, "orders.py::OrderService.other"),
+    ));
     assert!(refused.contains("has no docs"), "{refused}");
     assert!(core.edit_requests.is_empty());
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), moved);
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        moved
+    );
     core.finish();
 }
 
@@ -778,22 +1479,52 @@ fn relink_keeps_never_and_a_value_it_does_not_know_and_writes_no_id() {
     let (mut core, root) = orders_project("relinknever", Some("format = 1\n"));
     write_record(&root, R, "gone.py", "old");
     write_record(&root, T, "gone.py", "older");
-    let toml = |id: &str| root.join(".vnoc/nodes").join(&id[24..]).join(id).join("node.toml");
+    let toml = |id: &str| {
+        root.join(".vnoc/nodes")
+            .join(&id[24..])
+            .join(id)
+            .join("node.toml")
+    };
     for (id, value) in [(R, "never"), (T, "sometimes")] {
-        std::fs::write(toml(id), std::fs::read_to_string(toml(id)).unwrap().replace("\"no\"", &format!("\"{value}\""))).unwrap();
+        std::fs::write(
+            toml(id),
+            std::fs::read_to_string(toml(id))
+                .unwrap()
+                .replace("\"no\"", &format!("\"{value}\"")),
+        )
+        .unwrap();
     }
     tell_core_about_vnoc(&mut core, &root);
     missing_is(&mut core, &[R, T]);
 
-    for (id, to, value) in [(R, "orders.py::OrderService.other", "never"), (T, "orders.py::OrderService.parse_order", "sometimes")] {
-        let r = core.request("vnoc/relink", relink_params(&root, id, to)).expect("relink answers");
-        assert_eq!((r["written"].as_str(), r["notice"].is_null()), (Some("anchorOnly"), true), "{r}");
+    for (id, to, value) in [
+        (R, "orders.py::OrderService.other", "never"),
+        (T, "orders.py::OrderService.parse_order", "sometimes"),
+    ] {
+        let r = core
+            .request("vnoc/relink", relink_params(&root, id, to))
+            .expect("relink answers");
+        assert_eq!(
+            (r["written"].as_str(), r["notice"].is_null()),
+            (Some("anchorOnly"), true),
+            "{r}"
+        );
         let text = std::fs::read_to_string(toml(id)).unwrap();
-        assert!(text.contains(&format!("id_in_code = \"{value}\"")), "the field is as it was: {text}");
-        assert!(text.contains("path = \"orders.py\""), "the place moved: {text}");
+        assert!(
+            text.contains(&format!("id_in_code = \"{value}\"")),
+            "the field is as it was: {text}"
+        );
+        assert!(
+            text.contains("path = \"orders.py\""),
+            "the place moved: {text}"
+        );
     }
     assert!(core.edit_requests.is_empty(), "the editor was not asked");
-    assert_eq!(std::fs::read_to_string(root.join("orders.py")).unwrap(), ORDERS, "no ID line in the code");
+    assert_eq!(
+        std::fs::read_to_string(root.join("orders.py")).unwrap(),
+        ORDERS,
+        "no ID line in the code"
+    );
     core.finish();
 }
 
@@ -811,24 +1542,63 @@ fn trash_refuses_a_node_that_is_not_missing_and_remove_then_restore_gives_back_t
     assert!(folder(S).is_dir(), "a refusal changes nothing");
 
     let before = std::fs::read(folder(R).join("notes.md")).unwrap();
-    let plan = core.request("vnoc/trash", json!({ "id": R })).expect("a Missing node can be removed");
-    let (from, to) = (PathBuf::from(plan["from"].as_str().unwrap()), PathBuf::from(plan["to"].as_str().unwrap()));
+    let plan = core
+        .request("vnoc/trash", json!({ "id": R }))
+        .expect("a Missing node can be removed");
+    let (from, to) = (
+        PathBuf::from(plan["from"].as_str().unwrap()),
+        PathBuf::from(plan["to"].as_str().unwrap()),
+    );
     assert_eq!(from, folder(R));
     assert!(from.is_dir(), "the core only plans: the editor moves");
     std::fs::rename(&from, &to).unwrap(); // what WorkspaceEdit.renameFile does
-    core.notify("vnoc/filesChanged", json!({ "paths": [from.join("node.toml")] }));
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [from.join("node.toml")] }),
+    );
     missing_is(&mut core, &[]);
 
     let list = core.request("vnoc/trashList", Value::Null).unwrap();
-    assert_eq!((list.as_array().unwrap().len(), list[0]["id"].as_str(), list[0]["docs"].as_u64(), list[0]["name"].as_str()), (1, Some(R), Some(1), Some("old")));
-    let back = core.request("vnoc/restorePlan", json!({ "entry": list[0]["entry"] })).unwrap();
-    assert_eq!(PathBuf::from(back["to"].as_str().unwrap()), folder(R), "worked out from the ID");
+    assert_eq!(
+        (
+            list.as_array().unwrap().len(),
+            list[0]["id"].as_str(),
+            list[0]["docs"].as_u64(),
+            list[0]["name"].as_str()
+        ),
+        (1, Some(R), Some(1), Some("old"))
+    );
+    let back = core
+        .request("vnoc/restorePlan", json!({ "entry": list[0]["entry"] }))
+        .unwrap();
+    assert_eq!(
+        PathBuf::from(back["to"].as_str().unwrap()),
+        folder(R),
+        "worked out from the ID"
+    );
     std::fs::rename(back["from"].as_str().unwrap(), back["to"].as_str().unwrap()).unwrap();
-    assert_eq!(std::fs::read(folder(R).join("notes.md")).unwrap(), before, "the same bytes");
-    core.notify("vnoc/filesChanged", json!({ "paths": [folder(R).join("node.toml")] }));
+    assert_eq!(
+        std::fs::read(folder(R).join("notes.md")).unwrap(),
+        before,
+        "the same bytes"
+    );
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [folder(R).join("node.toml")] }),
+    );
     missing_is(&mut core, &[R]);
-    assert!(core.request("vnoc/trashList", Value::Null).unwrap().as_array().unwrap().is_empty(), "the emptied entry is gone");
-    assert!(message(core.request("vnoc/restorePlan", json!({ "entry": "../../nodes" }))).contains("not in the trash"));
+    assert!(
+        core.request("vnoc/trashList", Value::Null)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "the emptied entry is gone"
+    );
+    assert!(
+        message(core.request("vnoc/restorePlan", json!({ "entry": "../../nodes" })))
+            .contains("not in the trash")
+    );
     core.finish();
 }
 
@@ -841,13 +1611,25 @@ fn calls_project(folder: &std::path::Path, open: &std::path::Path) -> Core {
     std::fs::write(folder.join("lib.py"), CALLS_LIB).unwrap();
     std::fs::write(folder.join("app.py"), CALLS_APP).unwrap();
     let mut core = Core::start(Some(driver_path()), open);
-    core.request("vnoc/structure", Value::Null).expect("structure answers");
+    core.request("vnoc/structure", Value::Null)
+        .expect("structure answers");
     core
 }
 
 /// `(line, start, end)` of each call site of a call-tree node.
 fn sites(node: &Value) -> Vec<(u64, u64, u64)> {
-    node["call_sites"].as_array().unwrap().iter().map(|r| (r["start"]["line"].as_u64().unwrap(), r["start"]["character"].as_u64().unwrap(), r["end"]["character"].as_u64().unwrap())).collect()
+    node["call_sites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["start"]["line"].as_u64().unwrap(),
+                r["start"]["character"].as_u64().unwrap(),
+                r["end"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -856,26 +1638,86 @@ fn a_call_tree_comes_back_merged_and_mapped_to_the_structure() {
     let _ = std::fs::remove_dir_all(&root);
     let mut core = calls_project(&root, &root);
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
-    assert_eq!(structure["capabilities"]["callTree"], true, "the editor shows its command because the structure says the driver can");
+    assert_eq!(
+        structure["capabilities"]["callTree"], true,
+        "the editor shows its command because the structure says the driver can"
+    );
 
-    let result = core.request("vnoc/callTree", json!({ "key": "app.py::main" })).expect("the call tree answers (is the driver built? `cd drivers/python && cargo build`)");
-    assert_eq!(result["revision"], structure["revision"], "the keys were mapped against the index the editor shows");
+    let result = core
+        .request("vnoc/callTree", json!({ "key": "app.py::main" }))
+        .expect("the call tree answers (is the driver built? `cd drivers/python && cargo build`)");
+    assert_eq!(
+        result["revision"], structure["revision"],
+        "the keys were mapped against the index the editor shows"
+    );
 
     let main = &result["root"];
-    assert_eq!((main["key"].as_str(), main["name"].as_str(), main["qualname"].as_str(), main["path"].as_str(), main["kind"].as_str()), (Some("app.py::main"), Some("main"), Some("main"), Some("app.py"), Some("function")));
-    assert_eq!((main["call_count"].as_u64(), sites(main), main["marks"].clone()), (Some(1), vec![], json!([])));
+    assert_eq!(
+        (
+            main["key"].as_str(),
+            main["name"].as_str(),
+            main["qualname"].as_str(),
+            main["path"].as_str(),
+            main["kind"].as_str()
+        ),
+        (
+            Some("app.py::main"),
+            Some("main"),
+            Some("main"),
+            Some("app.py"),
+            Some("function")
+        )
+    );
+    assert_eq!(
+        (
+            main["call_count"].as_u64(),
+            sites(main),
+            main["marks"].clone()
+        ),
+        (Some(1), vec![], json!([]))
+    );
 
     // `main` calls leaf, twice, leaf, and `os.getcwd()`: two nodes (the library call is not in the tree), `leaf` merged from two calls
     let kids = main["children"].as_array().unwrap();
-    assert_eq!(kids.iter().map(|k| k["name"].as_str().unwrap()).collect::<Vec<_>>(), ["leaf", "twice"]);
+    assert_eq!(
+        kids.iter()
+            .map(|k| k["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["leaf", "twice"]
+    );
     let (leaf, twice) = (&kids[0], &kids[1]);
-    assert_eq!((leaf["key"].as_str(), leaf["path"].as_str(), leaf["call_count"].as_u64()), (Some("lib.py::leaf"), Some("lib.py"), Some(2)));
-    assert_eq!(sites(leaf), [(11, 4, 10), (13, 4, 10)], "both calls, in app.py, in source order");
-    assert_eq!((twice["key"].as_str(), twice["call_count"].as_u64(), sites(twice)), (Some("lib.py::twice"), Some(1), vec![(12, 4, 11)]));
+    assert_eq!(
+        (
+            leaf["key"].as_str(),
+            leaf["path"].as_str(),
+            leaf["call_count"].as_u64()
+        ),
+        (Some("lib.py::leaf"), Some("lib.py"), Some(2))
+    );
+    assert_eq!(
+        sites(leaf),
+        [(11, 4, 10), (13, 4, 10)],
+        "both calls, in app.py, in source order"
+    );
+    assert_eq!(
+        (
+            twice["key"].as_str(),
+            twice["call_count"].as_u64(),
+            sites(twice)
+        ),
+        (Some("lib.py::twice"), Some(1), vec![(12, 4, 11)])
+    );
 
     // `twice` calls `leaf` twice from lib.py: one node, two sites, in the PARENT's file (lib.py)
     let inner = &twice["children"][0];
-    assert_eq!((inner["key"].as_str(), inner["call_count"].as_u64(), sites(inner)), (Some("lib.py::leaf"), Some(2), vec![(5, 4, 10), (6, 4, 10)]));
+    assert_eq!(
+        (
+            inner["key"].as_str(),
+            inner["call_count"].as_u64(),
+            sites(inner)
+        ),
+        (Some("lib.py::leaf"), Some(2), vec![(5, 4, 10), (6, 4, 10)])
+    );
     assert_eq!(inner["children"], json!([]));
     core.finish();
 }
@@ -886,19 +1728,43 @@ fn a_class_is_the_root_with_what_its_init_calls_and_a_bad_key_is_refused() {
     let _ = std::fs::remove_dir_all(&root);
     let mut core = calls_project(&root, &root);
 
-    let result = core.request("vnoc/callTree", json!({ "key": "app.py::Box" })).unwrap();
+    let result = core
+        .request("vnoc/callTree", json!({ "key": "app.py::Box" }))
+        .unwrap();
     let boxed = &result["root"];
-    assert_eq!((boxed["key"].as_str(), boxed["kind"].as_str(), boxed["name"].as_str()), (Some("app.py::Box"), Some("class"), Some("Box")));
+    assert_eq!(
+        (
+            boxed["key"].as_str(),
+            boxed["kind"].as_str(),
+            boxed["name"].as_str()
+        ),
+        (Some("app.py::Box"), Some("class"), Some("Box"))
+    );
     let kids = boxed["children"].as_array().unwrap();
-    assert_eq!(kids.iter().map(|k| k["key"].as_str().unwrap()).collect::<Vec<_>>(), ["lib.py::leaf"], "there is no node for __init__ itself");
+    assert_eq!(
+        kids.iter()
+            .map(|k| k["key"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["lib.py::leaf"],
+        "there is no node for __init__ itself"
+    );
     assert_eq!(sites(&kids[0]), [(7, 8, 14)]);
 
     // not a function or a class, or not in the index: INVALID_PARAMS, and the core goes on
     for key in ["app.py", "app.py::nope", "nowhere.py::main", "::"] {
-        let error = core.request("vnoc/callTree", json!({ "key": key })).unwrap_err();
+        let error = core
+            .request("vnoc/callTree", json!({ "key": key }))
+            .unwrap_err();
         assert_eq!(error["code"], -32602, "{key}: {error}");
     }
-    assert_eq!(core.request("vnoc/callTree", json!({ "key": "app.py::main" })).unwrap()["root"]["children"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        core.request("vnoc/callTree", json!({ "key": "app.py::main" }))
+            .unwrap()["root"]["children"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     core.finish();
 }
 
@@ -910,11 +1776,23 @@ fn a_call_tree_of_a_subfolder_has_keys_from_the_git_root_and_paths_from_the_fold
     let sub = repo.join("services/api");
     let mut core = calls_project(&sub, &sub);
 
-    let result = core.request("vnoc/callTree", json!({ "key": "services/api/app.py::main" })).unwrap();
+    let result = core
+        .request(
+            "vnoc/callTree",
+            json!({ "key": "services/api/app.py::main" }),
+        )
+        .unwrap();
     let main = &result["root"];
-    assert_eq!((main["key"].as_str(), main["path"].as_str()), (Some("services/api/app.py::main"), Some("app.py")), "the key starts at the git root, the path at the opened folder");
+    assert_eq!(
+        (main["key"].as_str(), main["path"].as_str()),
+        (Some("services/api/app.py::main"), Some("app.py")),
+        "the key starts at the git root, the path at the opened folder"
+    );
     let leaf = &main["children"][0];
-    assert_eq!((leaf["key"].as_str(), leaf["path"].as_str()), (Some("services/api/lib.py::leaf"), Some("lib.py")));
+    assert_eq!(
+        (leaf["key"].as_str(), leaf["path"].as_str()),
+        (Some("services/api/lib.py::leaf"), Some("lib.py"))
+    );
     core.finish();
 }
 
@@ -937,18 +1815,35 @@ fn a_call_site_in_an_inherited_constructor_names_the_base_file() {
     // `class Child(Base)` is in pkg/child.py and has no `__init__`; `Base.__init__` in pkg/base.py calls `a()` from pkg/calc.py
     let folder = std::env::temp_dir().join(format!("vnoc-calltree-inherit-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
-    copy_tree(&repo_root().join("drivers/python/tests/fixtures/call_tree"), &folder);
+    copy_tree(
+        &repo_root().join("drivers/python/tests/fixtures/call_tree"),
+        &folder,
+    );
     let mut core = Core::start(Some(driver_path()), &folder);
-    core.request("vnoc/structure", Value::Null).expect("structure answers");
+    core.request("vnoc/structure", Value::Null)
+        .expect("structure answers");
 
-    let result = core.request("vnoc/callTree", json!({ "key": "pkg/child.py::Child" })).expect("the call tree answers (is the driver built? `cd drivers/python && cargo build`)");
+    let result = core
+        .request("vnoc/callTree", json!({ "key": "pkg/child.py::Child" }))
+        .expect("the call tree answers (is the driver built? `cd drivers/python && cargo build`)");
     let child = &result["root"];
-    assert_eq!((child["path"].as_str(), child["kind"].as_str()), (Some("pkg/child.py"), Some("class")));
-    let [a] = &child["children"].as_array().unwrap()[..] else { panic!("one call: {child}") };
-    assert_eq!((a["qualname"].as_str(), a["path"].as_str()), (Some("a"), Some("pkg/calc.py")));
+    assert_eq!(
+        (child["path"].as_str(), child["kind"].as_str()),
+        (Some("pkg/child.py"), Some("class"))
+    );
+    let [a] = &child["children"].as_array().unwrap()[..] else {
+        panic!("one call: {child}")
+    };
+    assert_eq!(
+        (a["qualname"].as_str(), a["path"].as_str()),
+        (Some("a"), Some("pkg/calc.py"))
+    );
     let sites = a["call_sites"].as_array().unwrap();
     assert_eq!(sites.len(), 1, "{a}");
-    assert_eq!(sites[0]["path"], "pkg/base.py", "the call is written in the base class's file, not in child.py");
+    assert_eq!(
+        sites[0]["path"], "pkg/base.py",
+        "the call is written in the base class's file, not in child.py"
+    );
     core.finish();
 }
 
@@ -961,7 +1856,8 @@ fn files_project(name: &str, files: &[(&str, String)]) -> Core {
         std::fs::write(folder.join(file), text).unwrap();
     }
     let mut core = Core::start(Some(driver_path()), &folder);
-    core.request("vnoc/structure", Value::Null).expect("structure answers");
+    core.request("vnoc/structure", Value::Null)
+        .expect("structure answers");
     core
 }
 
@@ -978,7 +1874,10 @@ fn chain(n: usize) -> String {
 /// The nodes down the only child of each node, from `root`, root first.
 fn spine(root: &Value) -> Vec<&Value> {
     let mut nodes = vec![root];
-    while let Some(next) = nodes.last().unwrap()["children"].as_array().and_then(|c| c.first()) {
+    while let Some(next) = nodes.last().unwrap()["children"]
+        .as_array()
+        .and_then(|c| c.first())
+    {
         nodes.push(next);
     }
     nodes
@@ -991,22 +1890,51 @@ fn has_calls_counts_what_opening_would_show_and_nothing_else_leaves_the_core() {
     let mut core = calls_project(&root, &root);
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
 
-    let count = |core: &mut Core, key: &str| core.request("vnoc/hasCalls", json!({ "key": key })).unwrap_or_else(|e| panic!("{key}: {e}"));
+    let count = |core: &mut Core, key: &str| {
+        core.request("vnoc/hasCalls", json!({ "key": key }))
+            .unwrap_or_else(|e| panic!("{key}: {e}"))
+    };
     // main calls leaf twice, twice, leaf again, and os.getcwd(): two nodes, as the tree has them (the library call is not one)
     let main = count(&mut core, "app.py::main");
     assert_eq!(main["count"], 2);
-    assert_eq!(main["revision"], structure["revision"], "the index the keys belong to");
-    assert_eq!(main.as_object().unwrap().keys().collect::<Vec<_>>(), ["count", "revision"], "the depth-1 tree's marks and children never leave the core: {main}");
-    assert_eq!(count(&mut core, "lib.py::twice")["count"], 1, "two calls to one callee are one node");
-    assert_eq!(count(&mut core, "lib.py::leaf")["count"], 0, "calls nothing");
-    assert_eq!(count(&mut core, "app.py::Box")["count"], 1, "a class: what its __init__ calls");
+    assert_eq!(
+        main["revision"], structure["revision"],
+        "the index the keys belong to"
+    );
+    assert_eq!(
+        main.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["count", "revision"],
+        "the depth-1 tree's marks and children never leave the core: {main}"
+    );
+    assert_eq!(
+        count(&mut core, "lib.py::twice")["count"],
+        1,
+        "two calls to one callee are one node"
+    );
+    assert_eq!(
+        count(&mut core, "lib.py::leaf")["count"],
+        0,
+        "calls nothing"
+    );
+    assert_eq!(
+        count(&mut core, "app.py::Box")["count"],
+        1,
+        "a class: what its __init__ calls"
+    );
 
     // the same count as opening would show
-    let tree = core.request("vnoc/callTree", json!({ "key": "app.py::main" })).unwrap();
-    assert_eq!(tree["root"]["children"].as_array().unwrap().len() as u64, main["count"].as_u64().unwrap());
+    let tree = core
+        .request("vnoc/callTree", json!({ "key": "app.py::main" }))
+        .unwrap();
+    assert_eq!(
+        tree["root"]["children"].as_array().unwrap().len() as u64,
+        main["count"].as_u64().unwrap()
+    );
 
     for key in ["app.py", "app.py::nope", "nowhere.py::main", "::"] {
-        let error = core.request("vnoc/hasCalls", json!({ "key": key })).unwrap_err();
+        let error = core
+            .request("vnoc/hasCalls", json!({ "key": key }))
+            .unwrap_err();
         assert_eq!(error["code"], -32602, "{key}: {error}");
     }
     core.finish();
@@ -1015,8 +1943,17 @@ fn has_calls_counts_what_opening_would_show_and_nothing_else_leaves_the_core() {
 #[test]
 fn a_function_that_calls_only_library_code_has_no_calls() {
     let mut core = files_project("hascalls-library", &[("app.py", "import os\nimport json\n\n\ndef only_library():\n    os.getcwd()\n    json.dumps({})\n    len([])\n".to_string())]);
-    assert_eq!(core.request("vnoc/hasCalls", json!({ "key": "app.py::only_library" })).unwrap()["count"], 0);
-    assert_eq!(core.request("vnoc/callTree", json!({ "key": "app.py::only_library" })).unwrap()["root"]["children"], json!([]), "and the tree agrees");
+    assert_eq!(
+        core.request("vnoc/hasCalls", json!({ "key": "app.py::only_library" }))
+            .unwrap()["count"],
+        0
+    );
+    assert_eq!(
+        core.request("vnoc/callTree", json!({ "key": "app.py::only_library" }))
+            .unwrap()["root"]["children"],
+        json!([]),
+        "and the tree agrees"
+    );
     core.finish();
 }
 
@@ -1025,23 +1962,48 @@ fn a_deep_chain_comes_back_cut_at_the_cap_and_parses_and_opening_the_cut_node_gi
     // 70 functions: past the ~60 a call tree can nest before the core's JSON reader (limit 128, two levels a node) gives up
     let mut core = files_project("deep-chain", &[("chain.py", chain(70))]);
 
-    let first = core.request("vnoc/callTree", json!({ "key": "chain.py::main" })).expect("a deep tree parses: the core asks for a depth cap");
+    let first = core
+        .request("vnoc/callTree", json!({ "key": "chain.py::main" }))
+        .expect("a deep tree parses: the core asks for a depth cap");
     let down = spine(&first["root"]);
     let last = down.last().unwrap();
-    assert!(down.len() >= 30 && down.len() <= 34, "cut at about 32 levels, not 70: {} nodes deep", down.len());
-    assert_eq!(last["marks"], json!(["cut"]), "the node at the cap says the walk stopped there");
+    assert!(
+        down.len() >= 30 && down.len() <= 34,
+        "cut at about 32 levels, not 70: {} nodes deep",
+        down.len()
+    );
+    assert_eq!(
+        last["marks"],
+        json!(["cut"]),
+        "the node at the cap says the walk stopped there"
+    );
     assert_eq!(last["children"], json!([]));
-    let key = last["key"].as_str().expect("the cut node is a function of the project: it has a key").to_string();
-    assert!(down.iter().all(|n| n["name"] != "f69"), "the end of the chain is not in the first tree");
+    let key = last["key"]
+        .as_str()
+        .expect("the cut node is a function of the project: it has a key")
+        .to_string();
+    assert!(
+        down.iter().all(|n| n["name"] != "f69"),
+        "the end of the chain is not in the first tree"
+    );
 
     // opening the cut node asks for its own tree: it goes on from there, and is cut again (38 more levels are left)
-    let second = core.request("vnoc/callTree", json!({ "key": key })).expect("the cut node's own tree");
+    let second = core
+        .request("vnoc/callTree", json!({ "key": key }))
+        .expect("the cut node's own tree");
     assert_eq!(second["root"]["key"], json!(key));
     let rest = spine(&second["root"]);
     assert!(rest.len() > 1, "it has calls of its own");
-    assert!(rest.iter().any(|n| n["name"] == "f69") || rest.last().unwrap()["marks"] == json!(["cut"]), "it reaches the end or is cut again");
+    assert!(
+        rest.iter().any(|n| n["name"] == "f69") || rest.last().unwrap()["marks"] == json!(["cut"]),
+        "it reaches the end or is cut again"
+    );
 
     // a probe of the chain's head is one level and says one call
-    assert_eq!(core.request("vnoc/hasCalls", json!({ "key": "chain.py::f0" })).unwrap()["count"], 1);
+    assert_eq!(
+        core.request("vnoc/hasCalls", json!({ "key": "chain.py::f0" }))
+            .unwrap()["count"],
+        1
+    );
     core.finish();
 }
