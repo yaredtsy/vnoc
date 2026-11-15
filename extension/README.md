@@ -1,10 +1,16 @@
 # V-NOC
 
+[![Marketplace](https://img.shields.io/visual-studio-marketplace/v/vnoc.vnoc?label=Marketplace&include_prereleases)](https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/J5nfPHqyBr)
+[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](https://github.com/yaredtsy/vnoc/blob/main/LICENSE)
+
 Browse Python code as a tree and a canvas, follow what a function calls, and attach docs that stay with the code when it is renamed or moved.
 
 **This is a pre-release.** It works on Python code only, on macOS (Apple silicon and Intel), Linux (x64) and Windows (x64).
 
-<!-- SCREENSHOT 1: the whole window: the V-NOC side bar (search box, MAIN panel, an EXPLORE panel) beside the canvas with call cards. File: media/screenshots/overview.png -->
+![Open a function, see what it calls, follow a call to its own file](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/calls.gif)
+
+![The side bar, the canvas and a doc](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/overview.png)
 
 ## How to start
 
@@ -23,7 +29,9 @@ Browse Python code as a tree and a canvas, follow what a function calls, and att
 - A doc is attached to a function, class, file or folder. It is found again after a rename or a move: V-NOC writes a short ID into the code (a docstring line) and follows it.
 - Docs that lost their code show under **Needs Attention**, where you can relink or remove them. A removed doc can be restored.
 
-<!-- SCREENSHOT 2: a function opened on the canvas: its call cards, the dashed edges, a card with its code open. File: media/screenshots/calls.png -->
+![Add a doc, rename the function: the doc stays](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/docs.gif)
+
+![A function opened on the canvas, with its call cards](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/calls.png)
 
 ## The menus
 
@@ -38,7 +46,9 @@ Right-click anything V-NOC draws; the entries say what happens.
 | the code editor, an editor tab | **V-NOC ▸** Reveal in Sidebar · Open in Canvas (beside the code) · Focus · Show Calls · Show Docs · Add Doc… · Attach a Missing Doc Here… · Write ID |
 | the Explorer | **V-NOC ▸** Reveal in Sidebar · Open in Canvas · Focus · Show Docs · Add Doc… |
 
-<!-- SCREENSHOT 3: the right-click menu of a call card, and the editor's V-NOC submenu. Files: media/screenshots/call-menu.png, media/screenshots/editor-menu.png -->
+![The right-click menu of a call card](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/call-menu.png)
+
+![The V-NOC submenu in the editor](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/editor-menu.png)
 
 `V-NOC: Search…` (`Ctrl/Cmd+Alt+N`) finds a node by name or path from anywhere.
 
@@ -57,6 +67,10 @@ Rows and cards are labelled for screen readers (*"function checkout, selected, 1
 - Editing code or docs inside the canvas: "Go to Code" opens the editor, and a doc is edited in a normal editor tab.
 - Private docs that are not committed.
 
+## Feedback
+
+**V-NOC: Report Issue…** fills in your versions and opens a GitHub form. Questions: [Discord](https://discord.gg/J5nfPHqyBr). The source: [GitHub](https://github.com/yaredtsy/vnoc).
+
 ## Licence
 
-Apache-2.0.
+Apache-2.0. Third-party code in the binaries: [THIRD_PARTY_NOTICES.md](https://github.com/yaredtsy/vnoc/blob/main/extension/THIRD_PARTY_NOTICES.md).
