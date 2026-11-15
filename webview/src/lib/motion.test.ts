@@ -19,9 +19,10 @@ test("a script-driven move (fit view) lasts as long as asked, and not at all wit
 
 const src = fileURLToPath(new URL("..", import.meta.url));
 const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? files(join(dir, f)) : [join(dir, f)]));
-const all = files(src).filter((f) => !f.endsWith(".test.ts"));
+// with `/` on every OS, so the checks below can name folders the same way on Windows
+const all = files(src).map((f) => f.replaceAll("\\", "/")).filter((f) => !f.endsWith(".test.ts"));
 const text = (file: string) => readFileSync(file, "utf8");
-const rel = (file: string) => file.slice(src.length);
+const rel = (file: string) => file.slice(src.replaceAll("\\", "/").length);
 
 test("no `animate-` class is used without `motion-safe:`, but the UI kit's (its tooltips and menus fade in; the page's reduce-motion rule makes that instant)", () => {
   for (const file of all.filter((f) => /\.tsx?$/.test(f) && !f.includes("/components/ui/"))) {
