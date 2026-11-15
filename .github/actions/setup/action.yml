@@ -13,8 +13,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@v4
-    - uses: actions/setup-node@v4
+    - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with: { node-version: 22, cache: pnpm }
     # language_driver_rs vendors ruff, whose test snapshots have paths longer than Windows' 260 characters: cargo's own git library cannot check them out, the git program can
     - name: long paths for the git checkout of language_driver_rs
@@ -29,18 +29,18 @@ runs:
       run: |
         rustup toolchain install
         (cd drivers/python && rustup toolchain install)
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         key: ${{ inputs.cache-key }}
         save-if: ${{ inputs.save-cache }}
         cache-on-failure: true
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         workspaces: "drivers/python -> target"
         key: driver-${{ inputs.cache-key }}
         save-if: ${{ inputs.save-cache }}
         cache-on-failure: true
-    - uses: actions/cache@v4
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       if: inputs.vscode-test == 'true'
       with:
         path: extension/.vscode-test

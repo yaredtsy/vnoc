@@ -1,0 +1,27 @@
+# Monthly and grouped: a few PRs a month, not dozens (docs/18-ci-cd.md §6).
+version: 2
+updates:
+  - package-ecosystem: github-actions # updates the commit SHA and its version comment together
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      actions: { patterns: ["*"] }
+  - package-ecosystem: npm # reads pnpm-lock.yaml
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch] # majors: one PR each
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: cargo
+    directory: /drivers/python
+    schedule: { interval: monthly }
+    groups:
+      driver-minor-patch:
+        update-types: [minor, patch]
+    # the language_driver_rs git rev is moved by hand (docs/18 §6 [check]: if Dependabot opens PRs for these git deps, list the three crates here)
