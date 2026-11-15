@@ -119,20 +119,32 @@ impl Project {
         let root = std::fs::canonicalize(root).unwrap();
         let p = Project { root };
         for (name, text) in files {
-            p.write(name, text);
+            p.put(name, text);
         }
         p
     }
 
+    /// Changes the project on disk while a driver may have it open. The engine tells a changed file or folder by its modification time; Linux stamps that with a
+    /// clock that ticks every few milliseconds, so a change made right after the last one it read can carry the same stamp and go unseen. Wait for a tick first.
     pub fn write(&self, name: &str, text: &str) {
+        tick();
+        self.put(name, text);
+    }
+
+    pub fn remove(&self, name: &str) {
+        tick();
+        std::fs::remove_file(self.root.join(name)).unwrap();
+    }
+
+    fn put(&self, name: &str, text: &str) {
         let path = self.root.join(name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
+}
 
-    pub fn remove(&self, name: &str) {
-        std::fs::remove_file(self.root.join(name)).unwrap();
-    }
+fn tick() {
+    std::thread::sleep(std::time::Duration::from_millis(20));
 }
 
 impl Drop for Project {

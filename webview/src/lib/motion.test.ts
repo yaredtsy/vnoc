@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { motionMs, spinnerIcon } from "./motion.ts";
 
@@ -16,7 +17,7 @@ test("a script-driven move (fit view) lasts as long as asked, and not at all wit
   assert.equal(motionMs(300, true), 0);
 });
 
-const src = new URL("..", import.meta.url).pathname;
+const src = fileURLToPath(new URL("..", import.meta.url));
 const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? files(join(dir, f)) : [join(dir, f)]));
 const all = files(src).filter((f) => !f.endsWith(".test.ts"));
 const text = (file: string) => readFileSync(file, "utf8");
