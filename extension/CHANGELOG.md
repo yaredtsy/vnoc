@@ -16,6 +16,7 @@ Calls, and a new side bar.
 - The canvas and docs tabs show the V-NOC logo.
 - New **Show Selected Node** in the canvas's **…** menu: it centres the selected card.
 - Press **F** on the canvas to **Fit View**, like the **…** menu's entry.
+- A new EXPLORE context opens at 100 % at most; it used to open zoomed in to 200 %.
 - Fixed: the docs tab kept showing the previous node's docs when you moved to a node that has none.
 
 ### Commands and menus
