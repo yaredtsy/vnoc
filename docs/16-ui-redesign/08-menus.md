@@ -169,6 +169,10 @@ default Cut / Copy / Paste items are gone.** The command received **one argument
 Keys: `Alt+←`, `Enter`, `Ctrl/Cmd+Enter`, `Space`, `Esc` and the arrows are handled **inside** each page (03 §7, 06 §7), so they work the same on
 both surfaces and skip text fields and code cards. `contributes.keybindings` keeps only `Ctrl/Cmd+Alt+N` (Search…).
 
+**`F` is Fit View** on the canvas (added 2026-11-15, for the GIFs of 18.04: a film may only show keys the product has). It is the same move as the
+menu's **Fit View** (the 300 ms glide, none with reduced motion). Like the other canvas keys it does nothing in a text field, in a code card or on a
+focused button, and with Ctrl, Cmd or Alt held (`webview/src/canvas/keys.ts`, `canvasViewKey`).
+
 ## 9. The test
 
 `extension/src/menus.test.ts` (exists) becomes:

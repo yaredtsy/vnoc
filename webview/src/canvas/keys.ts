@@ -48,6 +48,17 @@ export function canvasKey(key: string, laid: Layout, _root: TreeNode, selected: 
   }
 }
 
+/** The name of the event the page sends itself for a view key: the canvas, inside React Flow, is the one that can move the view. */
+export const FIT_VIEW_EVENT = "vnoc:fitView";
+
+/**
+ * A key that changes only what the canvas draws, not the session: `F` is Fit View, the same move as the bar's ⋯ menu. The page lets no key through from a
+ * text field, a code card or a focused button, nor with Ctrl, Cmd or Alt held (`useCanvasKeys`), so this only says what a bare key means.
+ */
+export function canvasViewKey(key: string): "fitView" | null {
+  return key === "f" || key === "F" ? "fitView" : null;
+}
+
 /** What Ctrl/Cmd+Enter asks of the page, which is not a change of the session. */
 export type Chord = { type: "goToCode"; key: string } | { type: "goToCallSite"; sites: OpenableSite[] };
 

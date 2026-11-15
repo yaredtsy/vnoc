@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type Calls, callId } from "@vnoc/shared/calls.ts";
 import type { CallSite, CallTreeNode, Kind, TreeNode } from "@vnoc/shared/messages.ts";
-import { canvasChord, canvasKey } from "./keys.ts";
+import { canvasChord, canvasKey, canvasViewKey } from "./keys.ts";
 import { layout } from "./layout.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = []): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
@@ -92,4 +92,24 @@ test("Ctrl/Cmd+Enter on a call card: one site goes there, several are the list, 
   assert.equal(canvasChord("Enter", noFile, C("g")), null, "the driver said no file");
   const mixed = under(callNode("g", "g", [site(5, null), site(7)]));
   assert.deepEqual(canvasChord("Enter", mixed, C("g")), { type: "goToCallSite", sites: [site(7)] }, "only the sites that name a file");
+});
+
+test("F is Fit View, in either case, and no other key is", () => {
+  const table: [string, "fitView" | null][] = [
+    ["f", "fitView"],
+    ["F", "fitView"],
+    ["g", null],
+    ["ff", null],
+    ["Enter", null],
+    [" ", null],
+    ["Escape", null],
+    ["ArrowDown", null],
+    ["", null],
+  ];
+  for (const [key, want] of table) assert.equal(canvasViewKey(key), want, JSON.stringify(key));
+});
+
+test("F is not one of the keys that change the session", () => {
+  assert.equal(canvasKey("f", laid, root, "a.py"), null);
+  assert.equal(canvasKey("F", laid, root, null), null);
 });

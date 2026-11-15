@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 import type { TreeNode } from "@vnoc/shared/messages.ts";
-import { canvasChord, canvasKey } from "@/canvas/keys.ts";
+import { FIT_VIEW_EVENT, canvasChord, canvasKey, canvasViewKey } from "@/canvas/keys.ts";
 import type { Layout } from "@/canvas/layout.ts";
 import { request } from "@/host.ts";
 import { goToCallSite } from "@/node-card/goToSite.ts";
@@ -10,7 +10,8 @@ import { dispatch } from "@/state/session.ts";
 /**
  * The keys on the canvas (docs/10-ui-rework/06-how-it-looks.md §7, 16/03 §7). Alt+← goes back one focus, like the ← button; both stay out of a text field
  * and a code card (Option+← is "word left" on macOS), and the other keys leave a focused button alone (Space and Enter are the button's).
- * Ctrl/Cmd+Enter is Go to Code on a structure card and Go to Call Site on a call card.
+ * Ctrl/Cmd+Enter is Go to Code on a structure card and Go to Call Site on a call card. `F` is Fit View: it is the canvas, inside React Flow, that moves the
+ * view, so the page tells it with an event.
  */
 export function useCanvasKeys(laid: Layout | null, root: TreeNode | null, selected: string | null): void {
   useEffect(() => {
@@ -29,7 +30,13 @@ export function useCanvasKeys(laid: Layout | null, root: TreeNode | null, select
       }
       if (e.altKey || e.ctrlKey || e.metaKey || target?.closest("button, a")) return;
       const intent = laid && root ? canvasKey(e.key, laid, root, selected) : null;
-      if (!intent) return;
+      if (!intent) {
+        if (laid && canvasViewKey(e.key) === "fitView") {
+          e.preventDefault();
+          window.dispatchEvent(new Event(FIT_VIEW_EVENT));
+        }
+        return;
+      }
       e.preventDefault();
       dispatch(intent);
     };

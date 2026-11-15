@@ -11,6 +11,7 @@ import { useData } from "../state/data.ts";
 import { rememberViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
+import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
@@ -65,17 +66,21 @@ function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | n
   return null;
 }
 
-/** Menu commands that change only what this canvas draws: show or hide a card's code, fit the view. */
+/** Menu commands (and the F key) that change only what this canvas draws: show or hide a card's code, fit the view. */
 function ViewCommands() {
   const { fitView } = useReactFlow();
-  useEffect(
-    () =>
-      on("viewCommand", ({ name, key }) => {
-        if (name === "fitView") void fitView({ duration: motionMs(300, prefersReducedMotion()) });
-        else if (key) setCodeOpen(key, name === "showCode");
-      }),
-    [fitView],
-  );
+  useEffect(() => {
+    const fit = () => void fitView({ duration: motionMs(300, prefersReducedMotion()) });
+    const stop = on("viewCommand", ({ name, key }) => {
+      if (name === "fitView") fit();
+      else if (key) setCodeOpen(key, name === "showCode");
+    });
+    window.addEventListener(FIT_VIEW_EVENT, fit); // the F key (canvas/keys.ts)
+    return () => {
+      stop();
+      window.removeEventListener(FIT_VIEW_EVENT, fit);
+    };
+  }, [fitView]);
   return null;
 }
 
