@@ -9,7 +9,6 @@ import { Recording } from "../record.mjs";
 export const id = "g2";
 export const kind = "gif";
 export const output = "docs.gif";
-export const target = 15; // seconds, the budget of the edit (§5.1)
 // Two editor groups next to a side bar wide enough for the row's "1 doc" leave each group about 400 px: at 14 px the long `ID:` line does not fit, the editor
 // scrolls sideways to show it, and the function's name leaves the screen. At 12 px it fits.
 export const settings = { "editor.fontSize": 12, "editor.lineHeight": 20 };

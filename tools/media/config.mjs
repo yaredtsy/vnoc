@@ -24,6 +24,8 @@ export const paths = {
   work: join(tmpdir(), "vnoc-media"),
   /** the extension for this Mac, as `node scripts/package.mjs` writes it */
   vsix: join(repoRoot, `vnoc-${process.platform}-${process.arch}.vsix`),
+  /** the edit lists a person writes, one per scene (docs/18-release-0.2/04-gifs-v2.md §6.3): committed */
+  edits: join(here, "edits"),
   /** what is kept: `tools/media/out/` is git-ignored */
   out: join(here, "out"),
   /** what is committed */

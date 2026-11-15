@@ -8,7 +8,7 @@ node scripts/package.mjs --target darwin-arm64 --pre-release   # at the reposito
 cd tools/media && npm ci
 node run.mjs --only g1 --stills   # no recording: one screenshot per beat and out/g1/storyboard.html (gate 1 of 04-gifs-v2.md §7)
 node run.mjs --only g1            # record, edit and encode one scene; no --only = all
-node run.mjs --encode-only g1     # edit and encode again from the saved frames and marks: no VS Code, no recording
+node run.mjs --encode-only g1     # automatic pass + edits/g1.json, then the GIF, g1.review.mp4 and review.html, from the saved frames: no VS Code, no recording
 node run.mjs --only g1 --debug    # also a screenshot of every beat: out/debug/ (these add static time to the film: look at the edit list without it)
 node run.mjs --only g1 --dev      # the extension from this repository, not the VSIX (title bar: Extension Development Host; for writing a scene)
 MEDIA_TIMES=1 node run.mjs …      # the film's seconds at each beat
@@ -55,13 +55,17 @@ These cost a day to find out. Read them before writing a scene.
   if its last card is not fully in view. G2 has none. The camera does not follow an expansion and React Flow draws only the cards in view, so the setup (off
   camera) puts the zoom (the canvas's `−` button) and the position where every column of the scene fits. Never Fit View on a deep chain: the text becomes a few
   pixels. A drag is a gesture with a cost (about a second, and a freeze before it); a scene that needs more than one has the wrong setup.
-- **A recording is not timed exactly, and does not try to be** (plan §7.2). It keeps every frame and writes what happened as marks (`wait`, `drag`, `glide`,
-  `typing`, `reveal`, `hold`) to `out/<scene>.marks.json`; the frames' times go to `out/<scene>.frames.json`. `lib/edit.mjs` then cuts every `wait` to 0.3 s,
-  plays a `drag` at 2×, speeds up a long `typing` (1.5×) and a long glide, never touches a `reveal` or the last 2 s, caps unmarked stretches of unchanged frames at 0.7 s,
-  and, if the film is still over the scene's budget, shortens the holds (longest first, down to floors) and then speeds everything else up by at most 1.15×. It prints
-  each change (`G1: recorded 14.0 s → 11.8 s` and one line per segment; a `freeze` line is time the marks did not explain: look at it) and writes
-  `out/<scene>.edit.json`. Add `{ "from": 6.2, "to": 7.9, "speed": 2 }` or `{ "cut": [3.1, 3.6] }` to its `manual` list and run `--encode-only` to correct an edit by hand; delete the
-  file for the automatic one. In a scene, `rec.during(type, label, fn)` marks `fn`, `rec.hold(ms, kind)` marks a hold, and the cursor marks its own glides and drags.
+- **A recording is not timed exactly, and does not try to be** (04 §6). It keeps every frame and writes what happened as marks (`wait`, `drag`, `glide`, `typing`,
+  `reveal`, `hold`) to `out/<scene>.marks.json`, the beats (`rec.beat("name")`) to `.beats.json` and the frames' times to `.frames.json`. Timing is fixed afterwards, twice, with
+  no VS Code (`node run.mjs --encode-only g1`; the rules are `lib/timing.mjs`, pure, with a table test: `npm test`):
+  1. **the automatic pass**: every `wait` cut to 0.3 s, a hold trimmed to its kind (`after` 0.6 s, `read` 1.0 s, `end` 3.0 s; `first` is not), typing over 2 s at 2×, and a
+     stretch where nothing changes that no mark explains capped at 0.7 s (printed as `not marked: look at it`). No budget, no floor, no uniform speed-up.
+  2. **the edit list**, written by a person: `tools/media/edits/<scene>.json` (committed; no file, no manual edits). Entries name a beat and give times *since the beat began on the
+     review film's clock*: `{ "beat": "show-calls", "from": 0.4, "to": 1.6, "cut": true }`, `{ "beat": "explore", "from": 0, "to": 0.9, "speed": 1.5 }` (no `from`/`to`: the whole beat),
+     `{ "beat": "end", "hold": 3.0 }` (how long the beat's last hold stays, longer or shorter). A beat that does not exist, an entry that is not exactly one of cut / speed / hold,
+     a stretch outside its beat and two that overlap are errors, not ignored.
+  `out/<scene>.review.mp4` is the film after the automatic pass with the beat's name and the seconds since it began burned in (`explore +0.8`); `out/review.html` shows the GIF at
+  880 px on GitHub's dark and light backgrounds, that film, the beats on its clock, what the automatic pass did and the edit list as text.
 - **The capture can stall while VS Code is busy** (the first action, an attach, a save), and a frame then stays the latest picture for a second or more; the edit keeps a
   time window of a cut, and for a wait only frames *taken* in the window, never an older one that spans into it.
 - A scene can change settings for itself: `export const settings = { "editor.fontSize": 12 }` (G2 does: its editor groups are narrow).

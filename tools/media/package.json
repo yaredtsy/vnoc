@@ -6,6 +6,7 @@
   "description": "Makes the pictures of the READMEs (docs/18-release-0.2/01-media.md). Not part of the pnpm workspace: it uses npm.",
   "scripts": {
     "media": "node run.mjs",
+    "test": "node --test test/*.test.mjs",
     "overlay": "node lib/make-overlay.mjs"
   },
   "dependencies": {

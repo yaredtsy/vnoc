@@ -1,16 +1,17 @@
 // Makes the pictures. Usage: node run.mjs [--only g1,g2] [--stills] [--encode-only g1] [--vsix <file>] [--dev] [--debug] [--publish]
 //   --only        the scenes to record, edit and encode (default: all)
 //   --stills      run the scenes without recording: one screenshot per beat and out/<scene>/storyboard.html (docs/18-release-0.2/04-gifs-v2.md §7, gate 1)
-//   --encode-only edit and encode again from the saved frames and marks (out/<scene>.frames.json, .marks.json, .edit.json): no VS Code, no recording. A person
-//                 corrects the edit in out/<scene>.edit.json ("manual": [{ "from": 6.2, "to": 7.9, "speed": 2 }, { "cut": [3.1, 3.6] }]); delete the file for the automatic edit
+//   --encode-only apply the automatic pass and the edit list (tools/media/edits/<scene>.json, written by a person) to the saved frames, marks and beats (out/<scene>.frames.json,
+//                 .marks.json, .beats.json) and encode again: no VS Code, no recording. Writes out/<gif>, out/<scene>.review.mp4 (with the clock) and out/review.html
 //   --dev         load the extension from this repository instead of the VSIX (for writing a scene; the title bar then says Extension Development Host)
 //   --debug       also save a screenshot of every beat of a scene to out/debug/
 //   --publish     copy what was made from out/ to extension/media/screenshots/ (review every file first: docs/18-release-0.2/01-media.md §8)
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { paths } from "./config.mjs";
-import { editFilm, encodeFilm, loadFilm, readManual, writeEdit } from "./lib/edit.mjs";
+import { editFilm, encodeFilm, encodeReview, loadFilm, readEdits } from "./lib/edit.mjs";
+import { saveSceneReview, writeReviewPage } from "./lib/review.mjs";
 import { Stage } from "./lib/stage.mjs";
 
 const args = process.argv.slice(2);
@@ -53,15 +54,24 @@ for (const scene of chosen) {
     }
   }
   if (scene.kind === "gif" && !stills) {
+    // the automatic pass, then the person's edit list (edits/<scene>.json; no file, no edits): the GIF; the review film is the automatic pass alone, with its clock
     const film = loadFilm(scene.id);
-    const manual = readManual(scene.id);
-    const result = editFilm(film, { label: scene.id.toUpperCase(), target: scene.target, manual });
-    console.log(result.report.join("\n"));
-    const edit = writeEdit(scene.id, result, manual);
-    const sizes = encodeFilm(film, result.out, { gif: join(paths.out, scene.output), mp4: join(paths.out, scene.output.replace(/\.gif$/, ".mp4")) });
-    console.log(`${scene.output}: ${(sizes.gifBytes / 1e6).toFixed(2)} MB (the budget is 6 MB); the edit is in ${edit}`);
+    const edits = readEdits(scene.id);
+    const result = editFilm(film, { label: scene.id.toUpperCase(), entries: edits.entries, file: edits.file });
+    console.log(result.lines.join("\n"));
+    const gif = join(paths.out, scene.output);
+    const sizes = encodeFilm(film, result.durations, { gif, mp4: gif.replace(/\.gif$/, ".mp4") });
+    const review = `${scene.id}.review.mp4`;
+    encodeReview(film, result.auto, result.beats, join(paths.out, review));
+    saveSceneReview({
+      id: scene.id, gif: scene.output, review, width: 960, recorded: result.recorded, autoSeconds: result.autoTotal, seconds: result.total, gifBytes: sizes.gifBytes, frames: film.frames.length,
+      beats: result.beats, lines: result.lines, editsFile: `tools/media/edits/${scene.id}.json`, editsText: edits.text,
+    });
+    console.log(`${scene.output}: ${result.total.toFixed(1)} s, ${(sizes.gifBytes / 1e6).toFixed(2)} MB (the budget is 6 MB)`);
   }
 }
+
+if (!stills && chosen.some((s) => s.kind === "gif")) console.log(`\nthe review page: ${writeReviewPage(scenes.map((s) => s.id))}`);
 
 if (flag("--publish") && !stills) {
   mkdirSync(paths.screenshots, { recursive: true });
