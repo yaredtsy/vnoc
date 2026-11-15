@@ -91,9 +91,14 @@ export async function run(stage, { stills: onlyStills }) {
     // function: the title box says so. Then the arrow leaves the code, to empty space in the docs tab, and is hidden for the rest of the film
     await rec.beat("add-doc");
     await stage.caption("Right-click → Add Doc…");
-    await cursor.click(name, { button: "right" });
+    // the right-click is the pointer's own, at a measured box: Playwright's `locator.click` retries a click whose hit-target check fails by scrolling the element to the
+    // start of its scroller, and in a film that scrolled the code (up and to the left) for the rest of the film. Nothing is scrolled
+    const where = await cursor.aim(name);
+    await cursor.click(name, { button: "right", box: where });
     await cursor.click(page.getByRole("menuitem", { name: "V-NOC" }));
     await cursor.click(page.getByRole("menuitem", { name: /^Add Doc/ }));
+    const now = await name.boundingBox();
+    if (!now || Math.abs(now.x - where.x) > 2 || Math.abs(now.y - where.y) > 2) throw new Error(`the code moved while the menu was used: the name was at ${Math.round(where.x)}, ${Math.round(where.y)} and is at ${now ? `${Math.round(now.x)}, ${Math.round(now.y)}` : "nowhere"}`);
     await rec.during("reveal", "title box", () => quickInput(page).locator(".quick-input-title", { hasText: /Add doc/i }).waitFor({ timeout: 15_000 }));
     const message = ((await quickInput(page).locator(".quick-input-message").textContent().catch(() => "")) ?? "").trim();
     const value = await quickInput(page).locator("input.input").inputValue();
