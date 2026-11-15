@@ -5,6 +5,8 @@
 !LICENSE
 !dist/extension.js
 !media/vnoc.svg
+!media/tab-light.svg
+!media/tab-dark.svg
 !media/icon.png
 !media/webview/**
 !bin/**

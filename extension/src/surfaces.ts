@@ -98,6 +98,8 @@ export class Surfaces {
   private adopt(mode: Mode, panel: vscode.WebviewPanel, pinTo?: string): vscode.WebviewPanel {
     if (mode === "canvas") this.canvasPanel = panel;
     else this.docsPanel = panel;
+    // the tab's icon: an SVG file does not take the theme's colour, so there is one for each theme kind
+    panel.iconPath = { light: vscode.Uri.joinPath(this.ctx.extensionUri, "media", "tab-light.svg"), dark: vscode.Uri.joinPath(this.ctx.extensionUri, "media", "tab-dark.svg") };
     if (mode === "canvas") void vscode.commands.executeCommand("setContext", "vnoc.canvasOpen", true);
     panel.onDidDispose(() => {
       if (this.canvasPanel === panel) {
