@@ -52,7 +52,7 @@ Each cut below removes work **without changing any frozen format**, so it can co
 |---|---|---|
 | SQLite cache | Holds nothing a user wrote. Without it, start-up re-reads the code (seconds on ~1,000 files **[measure]**). | 0.2, if start-up or call trees need it |
 | Call trees | Independent of docs. | **0.2** |
-| Editing code in the canvas | Blocked on spike S5. "Go to code" opens the real editor. | **0.3** |
+| Editing code in the canvas | "Go to code" opens the real editor. The plan is [`17-edit-in-canvas.md`](17-edit-in-canvas.md): the card edits a draft that is written on ⌘S. | **0.3** |
 | A Markdown **editor** inside the webview | The 0.1 panel only reads. A VS Code tab already edits Markdown, with undo and save. | 0.3, with the canvas editor |
 | Guided setup / Quick look as a separate mode | With an in-memory index, *everything* is Quick look until the first attach. `.vnoc/` is created then, with defaults. | later, when scope needs a UI |
 | Missing vs "not on this branch", `gix`, the `.git` watcher | That rule exists to avoid a **pop-up** on branch switch. 0.1 has no pop-up, only a list. A node that is absent on this branch shows in the list and leaves it when you switch back. | 0.4, with notifications |
@@ -142,7 +142,7 @@ A `.vnoc-id` that exists but cannot be read is listed as a problem and is **neve
 | Release | One job | Main work | Adds to frozen formats |
 |---|---|---|---|
 | **0.2** | **Call trees** | driver `callTree` / `expand` (port S2) · concurrent driver host · lazy expand on the canvas · SQLite **only if** measurements ask for it | nothing |
-| **0.3** | **Edit in the canvas** | run spike S5 · Monaco as a view of VS Code's document · ⌘S · doc panel with a Markdown editor | nothing |
+| **0.3** | **Edit in the canvas** | the card edits a **draft**, written into the file on ⌘S after a version check; the index follows saves only · the doc panel edits Markdown the same way ([`17-edit-in-canvas.md`](17-edit-in-canvas.md)) | nothing |
 | **0.4** | **Docs survive without markers** | matching ladder steps 2–6 · rename listeners · Missing vs "not on this branch" · notifications · archive UI · the **comment** ID style | `[ids] style` in `vnoc.toml` · a second marker syntax |
 | **0.5** | **Teams and privacy** | private docs (`local/nodes/`) · `local.toml` · solo mode · settings UI | `local/` side |
 | **0.6+** | Polish | CodeLens · hover · search · doc freshness · playground | `body_hash` in frontmatter · playground files |

@@ -11,13 +11,18 @@ futureplan
 │   ├── how               two outlines of two versions, matched node by node
 │   └── resolving         revert / keep / merge one function at a time        (design only)
 │
-└── 02-agent-access/      let coding agents (Claude Code, opencode, pi, Codex…) use what V-NOC knows
-    ├── the idea          an agent reads docs, function code and call trees, and writes docs
-    ├── the options       CLI + skill · MCP server · native plugin per agent
-    └── the choice        one core, a CLI first, the others as thin wrappers
+├── 02-agent-access/      let coding agents (Claude Code, opencode, pi, Codex…) use what V-NOC knows
+│   ├── the idea          an agent reads docs, function code and call trees, and writes docs
+│   ├── the options       CLI + skill · MCP server · native plugin per agent
+│   └── the choice        one core, a CLI first, the others as thin wrappers
+│
+└── 03-function-history/  who changed THIS function, when, and what: per function, not per file
+    ├── the idea          "last changed by", a history list, the diff of one function, commit filters
+    ├── safety            running git from the extension: Restricted Mode and a hardened runner
+    └── how               blame for the badge; outline both sides of each commit for the exact history
 ```
 
-## The two ideas in one paragraph each
+## The ideas in one paragraph each
 
 **Graph diff.** Git shows changes per file and per line. V-NOC already knows where every function starts and ends, and (for documented nodes) has an ID
 that survives renames. So it can answer a better question: *which functions were added, removed, updated or moved between two versions?* It can show that
@@ -28,7 +33,11 @@ Git stays the version control system. V-NOC is a different **view** of what git 
 "who calls it?", and to write a doc itself. There are three ways to offer that: a command-line program plus a skill file that teaches the agent to use it,
 an MCP server, or a plugin written for each agent. → [`02-agent-access/`](02-agent-access/README.md)
 
-## How the two meet
+**Function history.** Blame and `git log` work on lines and files. V-NOC can say who last changed *this function*, list every commit that changed it
+(through renames and moves, thanks to the ID), and show the diff of that one function in each commit. It is graph diff pointed at one node across many
+commits, so it shares the same git layer and matching. → [`03-function-history/`](03-function-history/README.md)
+
+## How they meet
 
 They are separate, but they help each other:
 
@@ -38,12 +47,13 @@ They are separate, but they help each other:
 
 ## What these ideas must not break
 
-The rule from [`../02-mvp-and-releases.md`](../02-mvp-and-releases.md) §1 still holds: only what users commit is frozen. Both ideas were checked against it.
+The rule from [`../02-mvp-and-releases.md`](../02-mvp-and-releases.md) §1 still holds: only what users commit is frozen. Every idea was checked against it.
 
 | Idea | Adds to frozen formats | Notes |
 |---|---|---|
 | Graph diff | **nothing** | A diff is computed from git and the code. It belongs in the index (place C in [`../04-storage/README.md`](../04-storage/README.md)). |
 | Agent access | at most one optional frontmatter key in docs (`author`) | Agents write the same `.vnoc/` files, through the same writer. |
+| Function history | **nothing** | Computed from git and the code. An outline cache keyed by blob hash, deletable, under `.vnoc/local/`. |
 
 ## Conventions
 

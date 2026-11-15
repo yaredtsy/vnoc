@@ -24,9 +24,19 @@
 
   /* text and surfaces */
   --font: var(--vscode-font-family, sans-serif);
+  --font-size: var(--vscode-font-size, 13px); /* the page's base size, and the crumbs' */
+  --chip-active: var(--vscode-button-secondaryBackground, #3a3d41); /* the active context's chip, filled */
+  --chip-active-foreground: var(--vscode-button-secondaryForeground, #fff);
+  --toolbar-hover: var(--vscode-toolbar-hoverBackground, #5a5d5e50); /* under the pointer on a bar button */
   --editor-font: var(--vscode-editor-font-family, monospace);
   --link: var(--vscode-textLink-foreground, #3794ff);
   --code-bg: var(--vscode-textCodeBlock-background, #ffffff14);
+
+  /* what a node is: the stripe and the icon of a card (the colours of the Outline view) */
+  --kind-folder: var(--vscode-symbolIcon-folderForeground, #4e94ce);
+  --kind-file: var(--vscode-symbolIcon-fileForeground, #7a7a7a);
+  --kind-class: var(--vscode-symbolIcon-classForeground, #ee9d28);
+  --kind-function: var(--vscode-symbolIcon-functionForeground, #b180d7);
 
   /* the card: how it looks in each state (06-how-it-looks.md §2) */
   --card-border: var(--vscode-editorWidget-border, #454545);
@@ -37,6 +47,35 @@
   --card-cursor: var(--vscode-editorCursor-foreground, #aeafad);
   --card-badge-bg: var(--vscode-badge-background, #4d4d4d);
   --card-badge-fg: var(--vscode-badge-foreground, #fff);
+  /* the sidebar's rows: a VS Code list (06-sidebar.md §6): the selection is bright while the list has the keyboard and dim otherwise */
+  --list-active-fg: var(--vscode-list-activeSelectionForeground, #fff);
+  --list-inactive-bg: var(--vscode-list-inactiveSelectionBackground, #37373d);
+  --list-inactive-fg: var(--vscode-list-inactiveSelectionForeground, var(--foreground));
+  --list-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
+  --indent-guide: var(--vscode-tree-indentGuidesStroke, #585858);
+  /* the search box, and the hover card of a row */
+  --input-bg: var(--vscode-input-background, #3c3c3c);
+  --input-fg: var(--vscode-input-foreground, #ccc);
+  --input-border: var(--vscode-input-border, transparent);
+  --input-placeholder: var(--vscode-input-placeholderForeground, #9d9d9d);
+  --hover-bg: var(--vscode-editorHoverWidget-background, #252526);
+  --hover-fg: var(--vscode-editorHoverWidget-foreground, #ccc);
+  --hover-border: var(--vscode-editorHoverWidget-border, #454545);
+  /* the sidebar's panels: the header of each one, and the splitter between them */
+  --section-header-bg: var(--vscode-sideBarSectionHeader-background, transparent);
+  --section-header-fg: var(--vscode-sideBarSectionHeader-foreground, var(--foreground));
+  --sash: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder, #007fd4));
+  --list-highlight: var(--vscode-list-highlightForeground, #2aaaff); /* the letters that matched a search */
+  /* a row's outline: the list's focus outline while it has the keyboard, and in High Contrast the active border, which is defined there and empty elsewhere */
+  --row-outline-focused: var(--vscode-contrastActiveBorder, var(--vscode-list-focusOutline, transparent));
+  --row-outline-selected: var(--vscode-contrastActiveBorder, transparent);
+  --side-bar-bg: var(--vscode-sideBar-background, var(--background));
+  --side-bar-fg: var(--vscode-sideBar-foreground, var(--foreground));
+  --edge-call: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 70%, transparent); /* a call edge: dashed, blue at 70% */
+
+  /* the bar: the ⚠ when something is cut or unread, and VS Code's own progress line */
+  --warning: var(--vscode-editorWarning-foreground, #cca700);
+  --progress: var(--vscode-progressBar-background, #0e70c0);
 }
 
 /* React Flow draws its own pane, edges, controls and minimap in a dark or a light palette that it picks once, from the <body> class, when the canvas is

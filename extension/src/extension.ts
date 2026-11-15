@@ -1,24 +1,39 @@
 import * as vscode from "vscode";
 
 import type { Notes } from "@vnoc/shared/messages";
-import type { ContextState } from "@vnoc/shared/session.ts";
+import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
+import { CallTrees } from "./callTree";
 import { Commands } from "./commands";
 import { Core, watchFiles } from "./core";
-import { CursorMark } from "./cursorMark";
 import { Docs } from "./docs";
-import { FocusView } from "./focusView";
-import { CANVAS, DOCS, Panels } from "./panels";
+import { CANVAS, DOCS, Surfaces } from "./surfaces";
+import { callLookup } from "@vnoc/shared/calls.ts";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
-import { type Row, StructureView } from "./structureView";
+import { readingStarts, readingTheCode } from "./progress";
+import { registerSidebar } from "./sidebarView";
 import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
 
-// Wires the pieces together: the core, the session, the two webview tabs, the sidebar, the commands. Nothing here decides anything.
+// Wires the pieces together: the core, the session, the webview tabs and the STRUCTURE view, NEEDS ATTENTION, the commands. Nothing here decides anything.
 
 /** What the webview last said it drew (for the test suite). */
-let rendered: { visible: number; hidden: number } | undefined;
-const renderWaiters: ((r: { visible: number; hidden: number }) => void)[] = [];
+type Rendered = { context: string; visible: number; hidden: number; callCards: number; chevrons: number };
+let rendered: Rendered | undefined;
+/** Every drawing a webview reported, in order (for the test suite). */
+const renderedPosts: Rendered[] = [];
+const renderWaiters: ((r: Rendered) => void)[] = [];
+
+/** What the STRUCTURE view last said it drew (for the test suite). */
+type SidebarRendered = { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number };
+const sidebarPosts: SidebarRendered[] = [];
+
+/** What the bar's ⚠ last said (for the test suite). */
+type Warned = { level: "none" | "warning" | "error"; text: string };
+let warned: Warned | undefined;
+/** The context chips the bar last drew (for the test suite). */
+let chips: { id: string; label: string; active: boolean }[] = [];
+const warnedWaiters: (() => void)[] = [];
 
 let core: Core | undefined;
 /** Pages that crashed while drawing (for the test suite). */
@@ -26,91 +41,80 @@ const webviewErrors: string[] = [];
 
 export function activate(ctx: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel("V-NOC");
-  let panels: Panels;
-  let sidebar: StructureView;
-  let sidebarView: vscode.TreeView<Row>;
-  const focusView = new FocusView();
-  const cursorMark = new CursorMark();
+  let panels: Surfaces;
   const attention = new AttentionView();
   let commands: Commands;
 
-  /** The core has a new index: the sidebar redraws, and every open tab asks for the new structure. */
+  /** The core has a new index: every open page (the tabs and the STRUCTURE view) asks for the new structure. */
   const indexChanged = (revision: number) => {
-    refreshSidebar();
+    callTrees.indexChanged(revision); // stale trees are fetched again 800 ms after the last change
     panels.emit("indexChanged", { revision });
   };
-  /** Redraws the sidebar from the new structure, then the header (its names come from that structure). */
-  const refreshSidebar = () => void sidebar.refresh().then(showFocusInSidebar);
-  /** The tree starts at the focused node (with the focus bar above it), and the FOCUS view lists every step. */
-  const showFocusInSidebar = () => {
-    const stack = store.get().contexts[store.get().active].focus;
-    sidebar.setFocus(stack);
-    focusView.update(stack, (id) => sidebar.find(id));
+  /** What the session has open or selected, or a tree that arrived, changes which call trees are wanted. */
+  const wantCalls = () => {
+    if (c.tree) callTrees.update(store.get(), c.tree);
   };
-  /** The row of the selected node, selected in the tree: both surfaces show the same node. (`reveal` fires the selection event; `reduce` returns the same session for it, so nothing loops.) */
-  const revealSelection = () => {
-    const id = store.get().contexts[store.get().active].selected;
-    const row = id ? sidebar.rowForId(id) : undefined;
-    if (row && sidebarView.visible) void Promise.resolve(sidebarView.reveal(row, { select: true, focus: false })).catch(() => {});
-  };
-
   const c = new Core(ctx, output, indexChanged);
   core = c;
-  const store = new SessionStore(ctx.workspaceState, () => c.tree);
+  // the call trees first: the session's lookup of what a call id points at reads them
+  const callTrees = new CallTrees(c, {
+    tree: (key, result) => {
+      panels.emit("callTree", { key, result });
+      store.dispatch({ type: "callsChanged", owner: key }); // what no longer resolves in the new tree is dropped from the session
+      wantCalls(); // a cut call node may now want its callee's tree
+    },
+    probe: (key, count, revision, epoch) => panels.emit("callProbe", { key, count, revision, epoch }),
+    probeDropped: (key) => panels.emit("callProbeDropped", { key }),
+    state: (key, state, message) => panels.emit("callTreeState", { key, state, message }),
+    dropped: (key) => panels.emit("callTreeDropped", { key }),
+    reset: () => panels.emit("callTreesReset", {}),
+  });
+  const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // what a webview may ask of the extension (`shared/messages.ts` lists it, `relay.ts` serves it)
   const handlers = createHandlers({
-    structure: () => c.loadStructure(),
+    // the first read has the progress line on the STRUCTURE view; a read after rows are drawn (the index changed) is quiet
+    structure: () => {
+      const read = async () => ({ ...(await c.loadStructure()), epoch: c.epoch });
+      return c.tree === undefined ? readingTheCode(read) : read();
+    },
     core: (method, params) => c.request(method, params),
     addDoc: (key) => commands.addDocTo(key),
     docs,
     code: (path, range) => commands.codeOf(path, range),
     goToCode: (key) => commands.goToCodeOf(key),
+    callTrees: () => callTrees.all(),
+    openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
+    pickCallSite: (sites) => commands.pickCallSite(sites),
+    focusAttention: async () => void (await vscode.commands.executeCommand("vnoc.attention.focus")),
+    showLog: async () => output.show(),
+    retryCalls: async (key) => callTrees.retry(key),
+    rowClick: (context, id) => commands.rowClick(context, id),
+    command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
   });
-  panels = new Panels(ctx, handlers, (note) => onNote(note, store, output));
-  commands = new Commands(c, store, panels, async (id) => {
-    const row = sidebar.rowForId(id);
-    if (row) await sidebarView.reveal(row, { select: true, focus: true, expand: false }); // shows the V-NOC side bar too
-  });
+  panels = new Surfaces(ctx, handlers, (note) => onNote(note, store, output, (keys, onScreen) => {
+    callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
+    wantCalls();
+  }));
+  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees);
 
-  sidebar = new StructureView(async () => (await c.loadStructure()).root);
-  sidebarView = vscode.window.createTreeView("vnoc.structure", { treeDataProvider: sidebar, showCollapseAll: true });
-  const focusTree = vscode.window.createTreeView("vnoc.focusStack", { treeDataProvider: focusView });
   const attentionTree = vscode.window.createTreeView("vnoc.attention", { treeDataProvider: attention });
-  showFocusInSidebar(); // the focus saved with the workspace
 
   // Registered synchronously, before anything is awaited: on restart VS Code waits for these serializers (S1).
   ctx.subscriptions.push(
     vscode.window.registerWebviewPanelSerializer(CANVAS, { deserializeWebviewPanel: async (panel) => panels.restore("canvas", panel) }),
     vscode.window.registerWebviewPanelSerializer(DOCS, { deserializeWebviewPanel: async (panel) => panels.restore("docs", panel) }),
-    sidebarView,
-    focusTree,
+    // the STRUCTURE view: a webview view (registered here, synchronously, so a restored side bar finds its provider)
+    registerSidebar(panels),
     attentionTree,
-    vscode.window.registerFileDecorationProvider(cursorMark),
-    // the sidebar's four states: loading and error say so in the view, empty and error also show the welcome text (package.json `viewsWelcome`)
-    sidebar.onDidChangeState((state) => {
-      sidebarView.message = state.kind === "loading" ? "Reading the code…" : state.kind === "error" ? state.message : undefined;
-      void vscode.commands.executeCommand("setContext", "vnoc.sidebarState", state.kind);
-    }),
-    // a click or the arrow keys on a row select it; `select` never opens anything (opening is `vnoc.open`'s job)
-    sidebarView.onDidChangeSelection((e) => {
-      const row = e.selection[0];
-      if (row?.row === "node") store.dispatch({ type: "select", id: row.node.id });
-    }),
-    sidebarView.onDidChangeVisibility((e) => e.visible && revealSelection()),
     ...commands.register(),
     watchFiles(c, (fsPath) => docs.changed(fsPath)),
     docs.watchEditors(),
-    // every change of the session goes to the open webviews, whole; the sidebar redraws its header when the focus moved
-    store.onChange(({ prev, next }) => {
+    // every change of the session goes to the open webviews, whole: the canvas, the docs tab and the STRUCTURE view each draw what they need of it
+    store.onChange(({ next }) => {
       panels.emit("session", next);
-      if (prev.contexts[prev.active].focus !== next.contexts[next.active].focus) showFocusInSidebar();
-      if (prev.contexts[prev.active].selected !== next.contexts[next.active].selected) revealSelection();
-      if (prev.cursor !== next.cursor) {
-        cursorMark.update(next.cursor);
-        sidebar.setCursor(next.cursor);
-      }
+      wantCalls();
     }),
     // what the session points at may be gone (a focused node you deleted: you are one step back, not looking at nothing)
     c.onStructure((structure) => {
@@ -118,15 +122,19 @@ export function activate(ctx: vscode.ExtensionContext) {
         void vscode.commands.executeCommand("setContext", "vnoc.hasAttention", attention.hasAttention);
         void vscode.commands.executeCommand("setContext", "vnoc.hasMissing", attention.hasMissing);
       }
+      // the command is offered only when the driver that read the code has the method
+      void vscode.commands.executeCommand("setContext", "vnoc.callTree", structure.capabilities?.callTree === true);
       store.dispatch({ type: "treeChanged" });
+      wantCalls();
       commands.syncCursor();
     }),
+    // every call tree came from the old core, and its revisions mean nothing against the new one: drop them all, fetch what is open again
+    c.onRestarted(() => callTrees.restarted()),
     { dispose: () => void c.stop() },
   );
 
   // the files whose menus carry the V-NOC submenu (later: from the driver manifests)
   void vscode.commands.executeCommand("setContext", "vnoc.extensions", [".py", ".pyi"]);
-  refreshSidebar(); // last: the listeners above hear the "loading" state
 
   // What the test suite drives.
   return {
@@ -136,6 +144,18 @@ export function activate(ctx: vscode.ExtensionContext) {
     saved: () => ctx.workspaceState.get<{ contexts: Record<string, ContextState> }>("vnoc.session.v1"),
     /** the rows of NEEDS ATTENTION: the Missing IDs and the Problems */
     attention: () => attention.snapshot(),
+    /** the call trees the host holds, by entry key */
+    callTrees: () => callTrees.all(),
+    /** the probes held (how many call cards opening each function would show), by key */
+    callProbes: () => callTrees.probes(),
+    /** what happened to the call trees, newest last: states, trees, drops, resets */
+    callTreeLog: () => callTrees.log,
+    /** makes every call tree answer at least this slowly, so a test can cancel a request before it is made */
+    holdCallTrees: (ms: number) => callTrees.hold(ms),
+    /** the run of the core: one more after each restart */
+    coreEpoch: () => c.epoch,
+    /** an intent, as a click on a card would send it */
+    dispatch: (intent: Intent, context?: string) => store.dispatch(intent, context),
     /** a request to the core (the suite attaches docs through it, without the input boxes) */
     request: <T>(method: string, params?: object) => c.request<T>(method, params),
     /** Remove and Restore without the questions (the commands add those) */
@@ -144,14 +164,37 @@ export function activate(ctx: vscode.ExtensionContext) {
     restoreEntry: (entry: string) => restoreEntry(c, entry),
     ping: () => c.request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
     structure: () => c.request<any>("vnoc/structure"),
-    /** selects a node's row in the sidebar tree, as a click would (the session hears it from `onDidChangeSelection`) */
-    selectInTree: async (id: string) => {
-      const row = sidebar.rowForId(id);
-      if (row) await sidebarView.reveal(row, { select: true, focus: false });
-    },
+    /** a click on a sidebar row, as the page sends it (the click rule of 07 §4) */
+    rowClick: (context: string, id: string) => commands.rowClick(context, id),
+    /** every drawing the STRUCTURE view reported, in order; empty until the view was shown */
+    sidebarPosts: () => sidebarPosts,
+    /** how many times the view's progress line was started: once, for the first read of the code */
+    readingStarts: () => readingStarts(),
+    /** whether the STRUCTURE view has been shown (its page exists) */
+    sidebarOpen: () => panels.sidebar !== undefined,
+    /** the context chips the bar draws now: empty with one context */
+    chips: () => chips,
+    /** every drawing the pages reported, in order */
+    renderedPosts: () => renderedPosts,
+    /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
+    breakCore: () => c.stop(),
+    /** starts it again, so the suites after the one that broke it still have a core */
+    restartCore: () => c.restart(),
+    /** tells the open pages the index changed, so each reads the structure again (what a save does) */
+    emitIndexChanged: () => panels.emit("indexChanged", { revision: 0 }),
+    /** resolves when the bar's ⚠ says something that satisfies `ready` (immediately if it already does) */
+    waitWarned: (ready: (w: Warned) => boolean, timeoutMs: number) =>
+      new Promise<Warned>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`the bar's warning never said the expected thing (last: ${JSON.stringify(warned)})`)), timeoutMs);
+        const check = () => {
+          if (warned !== undefined && ready(warned)) return clearTimeout(t), resolve(warned);
+          warnedWaiters.push(check);
+        };
+        check();
+      }),
     /** Resolves when a webview reports that it drew the structure (immediately if one already has). */
     waitRendered: (timeoutMs: number) =>
-      new Promise<{ visible: number; hidden: number }>((resolve, reject) => {
+      new Promise<Rendered>((resolve, reject) => {
         if (rendered) return resolve(rendered);
         const t = setTimeout(() => reject(new Error("the webview did not report a drawing")), timeoutMs);
         renderWaiters.push((r) => (clearTimeout(t), resolve(r)));
@@ -160,15 +203,29 @@ export function activate(ctx: vscode.ExtensionContext) {
 }
 
 /** What a webview says that needs no answer. */
-function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel) {
+function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void) {
   switch (note.type) {
     case "intent":
       store.dispatch(note.intent, note.context);
       break;
     case "rendered":
-      rendered = { visible: note.visible, hidden: note.hidden };
-      output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden)`);
+      rendered = { context: note.context, visible: note.visible, hidden: note.hidden, callCards: note.callCards, chevrons: note.chevrons };
+      renderedPosts.push(rendered);
+      output.appendLine(`webview drew ${note.visible} nodes (${note.hidden} hidden, ${note.callCards} call cards)`);
       renderWaiters.splice(0).forEach((w) => w(rendered!));
+      break;
+    case "cardsDrawn":
+      cardsDrawn(note.keys, note.onScreen);
+      break;
+    case "sidebarRendered":
+      sidebarPosts.push({ context: note.context, rows: note.rows, selected: note.selected, inView: note.inView, drawn: note.drawn, height: note.height });
+      break;
+    case "chipsDrawn":
+      chips = note.chips;
+      break;
+    case "warned":
+      warned = { level: note.level, text: note.text };
+      warnedWaiters.splice(0).forEach((w) => w());
       break;
     case "error":
       webviewErrors.push(note.message);

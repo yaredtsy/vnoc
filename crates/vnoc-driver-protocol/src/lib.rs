@@ -188,3 +188,107 @@ pub struct PlanFileIdResult {
     /// blake3 of the new text, lowercase hex
     pub text_hash: String,
 }
+
+/// The def a call tree starts at: named by `qualname` and which same-named definition it is (`occurrence`, 1-based), as in a location key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallEntry {
+    pub qualname: String,
+    pub occurrence: u32,
+}
+
+/// `vnoc/callTree` (capability `callTree`): the calls made by one function, or by a class's `__init__`. `root` is the project folder,
+/// `file` the entry's file relative to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallTreeParams {
+    pub root: String,
+    pub file: String,
+    pub entry: CallEntry,
+    /// shortens the tree only: nodes deeper than this are marked `cut`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallMark {
+    /// the callee is already above it on this path: shown, not entered
+    Recursive,
+    /// its calls are not in the tree: the depth or the node budget ran out
+    Cut,
+    /// the analysis gave up on part of it (a limit, the deadline)
+    Incomplete,
+    /// the def is the engine's best guess for the one called, not a certainty (analyzer D28). Additive: a reader that does not know it drops the word.
+    Likely,
+}
+
+/// The def a node stands for, named the way the outline names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallTarget {
+    /// relative to `root`, `/` separators; `null` when the def is outside `root`
+    pub file: Option<String>,
+    pub qualname: String,
+    pub occurrence: u32,
+    pub kind: DefKind,
+    /// the ID text as written in the docstring, without a `FunctionSchema/` / `ClassSchema/` prefix; `null` when it has none
+    pub id: Option<String>,
+}
+
+/// One call site: the tree is not merged, so one node per call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallNode {
+    pub target: CallTarget,
+    /// where the call is written; `null` on the root
+    pub call_site: Option<Range>,
+    /// the file `call_site` is in: relative to `root`, `/` separators. Absent: the parent node's `target.file` (a driver from before 7.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_file: Option<String>,
+    #[serde(default)]
+    pub marks: Vec<CallMark>,
+    #[serde(default)]
+    pub children: Vec<CallNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallTreeResult {
+    pub root: CallNode,
+}
+
+/// `vnoc/environmentInputs` (capability `environmentInputs`): the files of `root` whose change means "call trees may differ now".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentInputsParams {
+    pub root: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentInputsResult {
+    /// paths and globs (`requirements*.txt`) relative to `root`, or an absolute path when the environment lives outside it. `/` separators on
+    /// every OS, the absolute ones too (`C:/envs/x/pyvenv.cfg`); the core hashes what they name and never rewrites an entry
+    pub files: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TARGET: &str = r#"{ "file": "a.py", "qualname": "f", "occurrence": 1, "kind": "function", "id": null }"#;
+
+    #[test]
+    fn the_likely_mark_is_a_word_of_its_own() {
+        assert_eq!(serde_json::to_string(&CallMark::Likely).unwrap(), "\"likely\"");
+        assert_eq!(serde_json::from_str::<Vec<CallMark>>(r#"["recursive","likely"]"#).unwrap(), [CallMark::Recursive, CallMark::Likely]);
+    }
+
+    #[test]
+    fn a_call_node_from_a_driver_before_7_7_has_no_site_file() {
+        let node: CallNode = serde_json::from_str(&format!(r#"{{ "target": {TARGET}, "call_site": null }}"#)).unwrap();
+        assert_eq!(node.call_site_file, None);
+    }
+
+    #[test]
+    fn a_site_file_is_written_when_there_is_one_and_left_out_when_there_is_not() {
+        let node: CallNode = serde_json::from_str(&format!(r#"{{ "target": {TARGET}, "call_site": null }}"#)).unwrap();
+        assert!(serde_json::to_value(&node).unwrap().get("call_site_file").is_none(), "None adds no key");
+        let named = CallNode { call_site_file: Some("pkg/base.py".to_string()), ..node };
+        assert_eq!(serde_json::to_value(&named).unwrap()["call_site_file"], "pkg/base.py");
+    }
+}

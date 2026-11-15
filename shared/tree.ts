@@ -22,6 +22,31 @@ export function pathTo(root: TreeNode, id: string): TreeNode[] | null {
   return null;
 }
 
+/**
+ * The focus path of a node: the ids from the project's top level down to it, without the project root `/` (docs/16-ui-redesign/03-canvas.md §3).
+ * It is `pathTo` without the root. `[]` for the root itself; null when the node is not in the tree.
+ */
+export function lineage(root: TreeNode, id: string): string[] | null {
+  const way = pathTo(root, id);
+  return way ? way.slice(1).map((n) => n.id) : null;
+}
+
+/**
+ * The longest start of `steps` that is a path: the first is a child of the root, each next one is a child of the one before.
+ * What is left of a focus path after a step was deleted or renamed, and the test that tells a path from a 0.1 history.
+ */
+export function chainedPrefix(root: TreeNode, steps: readonly string[]): string[] {
+  const kept: string[] = [];
+  let parent = root;
+  for (const id of steps) {
+    const child = parent.children.find((c) => c.id === id);
+    if (!child) break;
+    kept.push(id);
+    parent = child;
+  }
+  return kept;
+}
+
 /** Every node under and including `root`, parents before children (what a search lists). */
 export function allNodes(root: TreeNode): TreeNode[] {
   return [root, ...root.children.flatMap(allNodes)];

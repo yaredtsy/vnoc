@@ -3,6 +3,7 @@
 use async_lsp::lsp_types::notification::Notification;
 use async_lsp::lsp_types::request::Request;
 use serde::{Deserialize, Serialize};
+use vnoc_driver_protocol::{CallMark, DefKind, Range};
 
 use crate::index::Node;
 
@@ -78,6 +79,8 @@ pub struct StructureResult {
     pub truncated: bool,
     /// files the driver could not outline (the rest of the structure is still there)
     pub failed: Vec<FailedFile>,
+    /// which optional methods the driver that read the code has (`"callTree"`, …): the editor shows a command only when its method is there
+    pub capabilities: std::collections::BTreeMap<String, bool>,
     /// documented nodes that are not in the code now, sorted by path
     pub missing: Vec<MissingNode>,
     /// broken `.vnoc/` files and `.vnoc-id` files, and an ID written in two places
@@ -348,4 +351,81 @@ impl Request for RestorePlan {
     type Params = RestorePlanParams;
     type Result = MovePlan;
     const METHOD: &'static str = "vnoc/restorePlan";
+}
+
+/// `vnoc/callTree`: what a function calls (or what a class's `__init__` calls), as a tree, with calls to one function merged (`docs/14` §6).
+/// Waits for the first build. A request that is cancelled (`$/cancelRequest`) cancels the driver's work too.
+pub enum CallTree {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallTreeParams {
+    /// the node's `id` from `vnoc/structure`: `path::qualname[#n]`, as `vnoc/attach` takes it. A function or a class.
+    pub key: String,
+}
+
+/// `vnoc/hasCalls`: how many call cards opening this function would show, without sending the tree (`docs/16-ui-redesign/05-calls-as-nodes.md` §3.1).
+/// One key per request, so each is scheduled and cancelled on its own. The driver is asked for a tree one level deep and the answer goes through the
+/// same merge as `vnoc/callTree`; its marks never leave the core. Waits for the first build.
+pub enum HasCalls {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HasCallsParams {
+    /// as in `vnoc/callTree`
+    pub key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HasCallsResult {
+    /// the index's revision the answer is from (the editor compares it with the structure's, within one run of the core)
+    pub revision: u64,
+    /// how many nodes opening the function would show: the children of its merged tree
+    pub count: u32,
+}
+
+impl Request for HasCalls {
+    type Params = HasCallsParams;
+    type Result = HasCallsResult;
+    const METHOD: &'static str = "vnoc/hasCalls";
+}
+
+/// One place a node is called.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallSite {
+    /// relative to the opened folder, as `CallTreeNode.path`; `null` when the file is not under it
+    pub path: Option<String>,
+    /// the range's fields sit beside `path`, so a site still reads as a range (`site.start.line`)
+    #[serde(flatten)]
+    pub range: Range,
+}
+
+/// One function or class in the tree; calls to it from one place are merged into one node.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallTreeNode {
+    /// the node's `id` from `vnoc/structure`, when the index has it; `null` for code the index does not know (a library, an ignored file)
+    pub key: Option<String>,
+    /// the last part of `qualname`
+    pub name: String,
+    pub qualname: String,
+    /// relative to the opened folder, as in `vnoc/structure`; `null` when the code is not under it
+    pub path: Option<String>,
+    pub kind: DefKind,
+    /// the calls that reach this node, once per copy of a merged parent; not the number of places it is written (that is `call_sites`); 1 for the root
+    pub call_count: u32,
+    /// where it is called, each with the file it is written in, by file and then in source order; empty for the root
+    pub call_sites: Vec<CallSite>,
+    pub marks: Vec<CallMark>,
+    pub children: Vec<CallTreeNode>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CallTreeResult {
+    /// the index's revision the keys were mapped against; an answer older than the structure the editor shows is dropped
+    pub revision: u64,
+    pub root: CallTreeNode,
+}
+
+impl Request for CallTree {
+    type Params = CallTreeParams;
+    type Result = CallTreeResult;
+    const METHOD: &'static str = "vnoc/callTree";
 }

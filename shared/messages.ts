@@ -56,9 +56,13 @@ export interface Problem {
 }
 
 export interface StructureResult {
-  /** which version of the index this answer is from; a lower number than the one shown is a late answer */
+  /** which version of the index this answer is from. Compare two only when their `epoch` is the same: a restarted core counts from the start again */
   revision: number;
+  /** which run of the core this answer is from (the host adds it); 1 for the first, one more after each restart */
+  epoch?: number;
   git_root: string;
+  /** which optional methods the driver has (`callTree`, …); the extension shows a command only when its method is there */
+  capabilities: Record<string, boolean>;
   root: TreeNode;
   stats: { folders: number; files: number; classes: number; functions: number };
   truncated: boolean;
@@ -102,6 +106,40 @@ export interface DocInfo {
   path: string;
 }
 
+/** `likely`: the engine's best guess for the callee, not a certainty (the Python driver sends it from analyzer D28) */
+export type CallMark = "recursive" | "cut" | "incomplete" | "likely";
+
+/** One place a node is called: a range, and the file it is in. */
+export interface CallSite extends Range {
+  /** relative to the opened folder, as `CallTreeNode.path`; null when the file is not under it */
+  path: string | null;
+}
+
+/** One function or class in a call tree; calls to it from one place are merged into one node (`crates/vnoc/src/protocol.rs` has the Rust side). */
+export interface CallTreeNode {
+  /** the node's `id` in the structure; null for code the index does not know (a library, an ignored file) */
+  key: string | null;
+  name: string;
+  qualname: string;
+  /** relative to the opened folder; null when the code is not under it */
+  path: string | null;
+  kind: "function" | "class";
+  /** how many calls were merged into this node; 1 for the root */
+  call_count: number;
+  /** where it is called, each with the file it is written in, by file and then in source order; empty for the root */
+  call_sites: CallSite[];
+  marks: CallMark[];
+  children: CallTreeNode[];
+}
+
+/** `vnoc/callTree`: the tree of one entry, and the index revision its keys were mapped against. */
+export interface CallTreeResult {
+  revision: number;
+  /** which run of the core made it (the host adds it): see `StructureResult.epoch` */
+  epoch?: number;
+  root: CallTreeNode;
+}
+
 /** webview → extension, with an answer. One line per request: its parameters and its result. */
 export interface Requests {
   structure: { params: void; result: StructureResult };
@@ -113,8 +151,24 @@ export interface Requests {
   openDoc: { params: { path: string }; result: void };
   openLink: { params: { href: string; from: string }; result: void };
   goToCode: { params: { key: string }; result: void };
+  /** the call trees the host holds, by the key of their entry: a canvas that opens later asks once, then listens for the `callTree` event */
+  callTrees: { params: void; result: Record<string, CallTreeResult> };
+  /** open a file below the opened folder at a range (a call site) */
+  openAt: { params: { path: string; range: Range }; result: void };
   /** the session as it is now; a webview asks once when it starts, and after that it listens for the `session` event */
   session: { params: void; result: Session };
+  /** Go to Call Site with several sites: a list the host shows, with a preview of each site as it is moved through; the answer is when it closes */
+  pickCallSite: { params: { sites: { path: string; range: Range }[] }; result: void };
+  /** the bar's ⚠: show the NEEDS ATTENTION view (`vnoc.attention.focus`) */
+  focusAttention: { params: void; result: void };
+  /** Show Log next to Try Again: reveals the "V-NOC" output channel */
+  showLog: { params: void; result: void };
+  /** ask the host to fetch an entry's call tree again, after it failed (the footer's Retry) */
+  retryCalls: { params: { key: string }; result: void };
+  /** a click on a sidebar row (07 §4): the host applies the click rule: the canvas is open → reveal the card there (never a code tab over it); closed → the code as a preview tab */
+  rowClick: { params: { context: ContextId; id: string }; result: void };
+  /** the buttons of the sidebar's states (06 §8): Open Folder, and Try Again (the core reads the project again) */
+  command: { params: { name: "openFolder" | "refreshStructure" }; result: void };
 }
 
 /** extension → webview. No answer. */
@@ -125,6 +179,18 @@ export interface Events {
   session: Session;
   /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view */
   viewCommand: { name: "showCode" | "hideCode" | "fitView"; key?: string };
+  /** a call tree arrived: the entry's card shows it in its "Calls" section */
+  callTree: { key: string; result: CallTreeResult };
+  /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
+  callTreeState: { key: string; state: "loading" | "failed" | "idle"; message?: string };
+  /** a probe answered: opening this function would show `count` call cards (0: it calls nothing). `revision` and `epoch` say which index and run of the core */
+  callProbe: { key: string; count: number; revision: number; epoch?: number };
+  /** the host dropped its probe of this function (a new revision, or nothing draws it any more) */
+  callProbeDropped: { key: string };
+  /** the host dropped a call tree (stale and nothing wants it, or the oldest unwanted one): the page drops its copy and what it knew of its state */
+  callTreeDropped: { key: string };
+  /** the core was restarted: every call tree the host held is gone, and so must be the page's (revisions before and after cannot be compared) */
+  callTreesReset: Record<string, never>;
   /** the docs tab beside an editor is already open: show this node and stay on it (pinned) */
   showNode: { id: string };
 }
@@ -132,7 +198,11 @@ export interface Events {
 /** webview → extension, no answer. */
 export type Notes =
   | { type: "intent"; context: ContextId; intent: Intent } // the one way a webview changes the session
-  | { type: "rendered"; visible: number; hidden: number } // the extension's test suite uses it
+  | { type: "rendered"; context: string; visible: number; hidden: number; callCards: number; chevrons: number } // the extension's test suite uses it; `context`: the context the canvas drew; `callCards`: call cards drawn; `chevrons`: function and class cards that show a chevron for their calls
+  | { type: "cardsDrawn"; keys: string[]; onScreen: string[] } // `keys`: the function and class cards on the canvas's screen that show nothing of their calls yet, the one to look at first first: the host probes those. `onScreen`: every function and class card on screen, with or without structure children: the host's prefetch of the selected one is for those
+  | { type: "chipsDrawn"; chips: { id: string; label: string; active: boolean }[] } // the bar's context chips changed (none: one context): the extension's test suite uses it
+  | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
+  | { type: "sidebarRendered"; context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number } // one panel of the STRUCTURE view drew (`context`: whose panel): how many rows, which one is selected (the active context's, or null), whether the list is scrolled to it (`inView`: read from the element), whether its row is in the page (`drawn`: the virtualizer put it there; a different fact), and how high the list is in px (0: the view is hidden or not laid out, and nothing can be in view). The extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 

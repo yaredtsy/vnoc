@@ -9,15 +9,23 @@ interface Saved {
   codeOpen?: string[];
   docsOpen?: boolean;
   docWidth?: number;
+  minimap?: boolean;
   pinned?: string;
+  panelShares?: Record<string, number>;
 }
 
 interface View {
   /** cards that show their code instead of the summary */
   codeOpen: ReadonlySet<string>;
+  /** call cards whose list of sites is open (`N more ▾`); not saved */
+  sitesOpen: ReadonlySet<string>;
   /** the canvas's doc panel, and its width */
   docsOpen: boolean;
   docWidth: number;
+  /** the canvas's minimap: off unless asked for (the bar's ⋯ menu) */
+  minimap: boolean;
+  /** the sidebar's EXPLORE panels: a share of the view's height, kept per depth (1 = an EXPLORE of MAIN, 2 = an EXPLORE of an EXPLORE; 06 §4.1) */
+  panelShares: Readonly<Record<string, number>>;
   /** the docs tab: the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; the page carries it, as a message could be lost) */
   pinned: string | null;
   // not saved: how the canvas points at things (docs/10-ui-rework/06-how-it-looks.md)
@@ -34,8 +42,11 @@ const saved = vscode.getState<Saved>() ?? {};
 
 export const useView = create<View>(() => ({
   codeOpen: new Set(saved.codeOpen),
+  sitesOpen: new Set(),
   docsOpen: saved.docsOpen ?? false,
   docWidth: saved.docWidth ?? 380,
+  minimap: saved.minimap ?? false,
+  panelShares: saved.panelShares ?? {},
   pinned: document.getElementById("root")?.dataset.node ?? saved.pinned ?? null,
   hover: null,
   revealed: null,
@@ -69,11 +80,22 @@ export function setCodeOpen(id: string, open: boolean): void {
   });
 }
 
+export function toggleSites(id: string): void {
+  useView.setState(({ sitesOpen }) => {
+    const next = new Set(sitesOpen);
+    if (!next.delete(id)) next.add(id);
+    return { sitesOpen: next };
+  });
+}
+
 export const setDocsOpen = (docsOpen: boolean) => useView.setState({ docsOpen });
+export const setMinimap = (minimap: boolean) => useView.setState({ minimap });
 export const setDocWidth = (docWidth: number) => useView.setState({ docWidth });
 export const pin = (pinned: string | null) => useView.setState({ pinned });
+/** Keeps the shares of the panels at these depths (a drag or a double-click on a splitter). */
+export const setPanelShares = (shares: Record<string, number>) => useView.setState(({ panelShares }) => ({ panelShares: { ...panelShares, ...shares } }));
 
 // the one place the view is saved
-useView.subscribe(({ codeOpen, docsOpen, docWidth, pinned }) => {
-  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, pinned: pinned ?? undefined });
+useView.subscribe(({ codeOpen, docsOpen, docWidth, minimap, pinned, panelShares }) => {
+  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares });
 });

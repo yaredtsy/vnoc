@@ -69,3 +69,25 @@ test("the file of a node is read from its id (from the git root), not from its p
   assert.equal(repoPathOfId("crates/x/nested.py::Outer.inner#2"), "crates/x/nested.py");
   assert.equal(repoPathOfId("crates/x/nested.py"), "crates/x/nested.py");
 });
+
+import { chainedPrefix, lineage } from "./tree.ts";
+
+test("lineage is the path from the top level down, without the project root", () => {
+  assert.deepEqual(lineage(root, "m"), ["pkg", "pkg/a.py", "C", "m"]);
+  assert.deepEqual(lineage(root, "pkg"), ["pkg"]);
+  assert.deepEqual(lineage(root, "/"), [], "the project itself: no focus");
+  assert.equal(lineage(root, "gone"), null);
+  assert.deepEqual(lineage(root, "m"), pathTo(root, "m")!.slice(1).map((n) => n.id), "it is pathTo without the root");
+});
+
+test("chainedPrefix keeps the steps that form a path from the root, and stops at the first that does not", () => {
+  const table: [string[], string[]][] = [
+    [[], []],
+    [["pkg", "pkg/a.py", "C"], ["pkg", "pkg/a.py", "C"]],
+    [["pkg", "pkg/a.py", "gone"], ["pkg", "pkg/a.py"]],
+    [["pkg", "b.py"], ["pkg"]], // b.py exists, but not under pkg: a history, not a path
+    [["m"], []], // exists, but not a child of the root
+    [["gone", "pkg"], []],
+  ];
+  for (const [steps, expected] of table) assert.deepEqual(chainedPrefix(root, steps), expected, steps.join(" > "));
+});

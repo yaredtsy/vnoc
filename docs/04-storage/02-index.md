@@ -11,6 +11,10 @@ index
 │   └── known limit: unsaved text
 ├── 5. struct now, trait later
 └── 6. when to add SQLite, and what it will look like
+    ├── 6.1 where the file lives
+    ├── 6.2 settings, and two processes on one file
+    ├── 6.3 keeping it true: the start-up check
+    └── 6.4 call trees: four steps, in order
 ```
 
 ## 1. What it holds
@@ -201,12 +205,115 @@ Two small habits now make that afternoon easy:
 **What it will be** (unchanged from `plan_vs/02-technology/04-storage-and-git.md` §8, which is sound):
 
 - `rusqlite` with the `bundled` feature, WAL mode, one writer thread.
-- The file is `.vnoc/local/cache/index.sqlite`. It is under `local/`, so it is never committed.
+- The file is `.vnoc/local/cache/index.sqlite` once `.vnoc/` exists (§6.1). It is under `local/`, so it is never committed.
 - `PRAGMA user_version` is the schema version. Mismatch or corruption → delete the file and rebuild. There are **no migrations**, ever, because nothing in
   it is irreplaceable.
 - It **loads into** the same in-memory `Index` at start and is written behind it. The memory index stays the thing requests read from. SQLite makes
   start-up fast; it does not replace the struct.
 
 That last point is worth stressing: the common mistake is to move every read to SQL. Keep reads in memory; use the database as a saved copy.
+
+One rule decides what may go in the file: **everything in it can be rebuilt from the code and the committed files.** Docs, tasks and anything a person
+wrote never go in it.
+
+§6.1–6.4 were added 2026-11-12, from a review of an outside proposal for a call-tree cache. Nothing in them is built.
+
+### 6.1 Where the file lives
+
+| Situation | File |
+|---|---|
+| `.vnoc/` exists | `.vnoc/local/cache/index.sqlite` |
+| no `.vnoc/` yet (nothing attached: the root is not chosen, `01-vnoc-folder.md` §1) | VS Code's per-workspace `storageUri`, which the extension passes to the core. Call trees work before the first attach, so they need a place too |
+
+- **Model the files on disk, not branches.** A branch switch is the same event as an edit to many files (§6.3). Branches differ in few functions, so
+  little is recomputed.
+- **The cache's paths are relative to the driver's root**, the opened folder (`14-call-trees.md` §6.3), not the git root. A cache made with one folder
+  opened is not read with another folder opened.
+- **Git worktrees** have their own paths, so each gets its own file with no coordination. A new worktree starts cold; copying another worktree's file
+  into it is safe, because the start-up check (§6.3) finds what differs.
+
+### 6.2 Settings, and two processes on one file
+
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA busy_timeout = 5000;
+```
+
+- Two V-NOC windows on one folder, or later the CLI / MCP (`futureplan/02-agent-access`), share one file. WAL allows many readers and one writer; each
+  process has its own writer thread and the others wait up to `busy_timeout`.
+- Two processes can compute the same entry at once. Write with `INSERT OR IGNORE` on the key: either one wins. This is safe **only** for results that
+  are the same whoever computes them (§6.4, the rules).
+- WAL does not work on network file systems, and has failed on some Docker bind mounts on macOS. If `PRAGMA journal_mode = WAL` does not answer `wal`,
+  use the default journal; if the file cannot be opened at all, run without the cache. A missing cache is slower, never wrong.
+- Requests do not query SQLite on each lookup: memory first, SQLite on a miss, new rows sent to the one writer thread in batches.
+
+### 6.3 Keeping it true: the start-up check
+
+While the window is open, the file watcher (`extension/src/core.ts` `watchFiles`) already sees every change on disk: an editor save, an agent writing
+through a CLI, a `git pull`, a branch switch. What is missing is what changed **while V-NOC was not running**. Today the in-memory index needs no check
+because it is rebuilt from nothing at start; a saved copy does.
+
+| Piece | Rule |
+|---|---|
+| table | `file(path, mtime, size, content_hash)`, one row per file in scope |
+| at start | compare each file's `(mtime, size)` with its row; hash the content only when they differ; a file whose hash differs (or is new, or is gone) is a change, handled as the watcher would handle it |
+| a stamp that moved, same content | not a change (a `git checkout` rewrites mtimes) |
+| unsaved text | **never written.** A result computed from buffer text (the 0.3 overlay, §4) stays in memory only |
+
+### 6.4 Call trees: four steps, in order
+
+The proposal stored one row per `(function, context)` with call edges between rows, so a path is a walk over shared rows and an edit marks the rows
+above it by walking the edges backwards. The idea is right, and the analyzer already works that way in memory: one slot per `ContextId`
+(`analyzer_core::graph::ContextId { func, digest }`, `language_driver_rs` `interp/canon.rs`), only the parameters that matter in the key
+(`relevant.rs`), and an early stop when a summary's return value did not change (`same_svals`). But the core never sees a summary: the driver sends
+only the tree (`14-call-trees.md` T1). So most of the speed comes from simpler steps first. Take each step only when the one before it is measured
+and found too slow.
+
+| # | Step | Where | Makes fast |
+|---|---|---|---|
+| **1** | measure (`14-call-trees.md` step 7.6): time opening the project **apart from** the walk, for a first and a second request | — | — (decides the rest) |
+| **2** | keep the project open in the driver between requests; drop the analyzer's summary memo on **any** file change | driver / analyzer, memory only | a second request in the same session |
+| **3** | the core saves **merged trees** in SQLite (key below) | core, SQLite | the same tree after a restart, with no analyzer work at all |
+| **4** | the analyzer saves **summaries** with their edges, and an edit dirties only what depends on it | `language_driver_rs`, its own SQLite | re-expanding after an edit |
+
+**Step 3's key:**
+
+```
+entry (file, qualname, occurrence)
++ the hash of every file the analyzer READ for this request (content hashes from §6.3)
++ the hash of environment_inputs (pyproject.toml, the venv, lock files: 06-drivers.md tier 3)
++ the driver's name and version, and the request's options (depth)
+```
+
+- **"Files read"** means every file ty read to answer the request, **including module-resolution misses**: the paths ty looked for and did not find.
+  A miss is a dependency too: creating `pkg/foo.py` where an import found nothing before changes the tree.
+- That set is not available today. It needs the analyzer to record what it read and the driver to send it with the tree (a new field on the
+  `vnoc/callTree` result, additive). **Until it exists, key on the hash of all the project files' stamps** (§6.3's table, every row). Any change to
+  any file then misses every saved tree: correct, and still instant after a restart with no edits.
+
+**Step 4: what it needs, in this order.** The first item comes before any table design.
+
+1. **A summary with no `'db` handles.** Today `FunctionResult` holds `Definition<'db>`, `Type<'db>` and `ContextId`, which are salsa handles and
+   interner indexes that mean nothing outside one request. It needs a form made of `StableDef`, `StableType`, sites and stable context IDs only, the way
+   `canon.rs` already writes a key. Until that form exists there is nothing to put in a table.
+2. **Reading a stored key back into values.** `Canon` is `Serialize` only; walking a function again from its stored key (`Walk::materialize`) needs
+   the `Fp` values back.
+3. **Dependencies per file, not per function body.** A summary depends on what ty infers, and that changes with other files (an imported annotation, a
+   base class, a re-export in `__init__.py`, module-level code). Each summary records the files it read, misses included, as step 3 does.
+4. **Recursion is one unit.** Functions that call each other are solved together in one fixpoint (`Parked`, `Resolving`, `Heads` in `solver.rs`); a
+   change to one recomputes the whole group.
+5. **The early stop compares everything a caller reads**: `returns`, `effects`, `status`. Writes to `self` outside `__init__` are not modelled, so they
+   cannot be compared.
+6. Then the tables: summaries, edges, dependencies, a last-used time.
+
+**Rules for every saved call-tree result**, step 3 or 4:
+
+| Rule | Why |
+|---|---|
+| never save a result that was cut or marked `incomplete` | a cut depends on the request's history (`contexts_per_func`, `max_contexts` and the deadline are counted per request); it is not the same whoever computes it, so `INSERT OR IGNORE` would keep a wrong one |
+| the analyzer's version and its precision options (`fp_depth`, `max_rounds`, `constructor_effects`) are in the key or the file's header; a change drops the cache | the same code with other options gives another tree |
+| a last-used time on every row, and a size limit, from the first version | each edit makes new keys and the old rows are never read again |
+| a jump target is stored as a range | the canvas opens it as is |
 
 Next: [`03-writing-safely.md`](03-writing-safely.md)

@@ -1,8 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { LanguageClient, TransportKind } from "vscode-languageclient/node";
+import { LanguageClient, State, TransportKind } from "vscode-languageclient/node";
 
+import { chooseBinary } from "@vnoc/shared/binaryChoice.ts";
 import type { MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messages";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio client here, we use
@@ -12,21 +13,25 @@ import type { MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messag
 const CHANGE_DEBOUNCE_MS = 200;
 
 /**
- * A binary path: the setting if set; else, when running from source (F5), the build folder of this repository
- * (`extension/` sits next to `target/` and `drivers/`); else `<extension>/bin/` (the installed VSIX).
- * From source (F5 or the window suite) the build folder wins, because `bin/` may hold a stale copy left by an earlier packaging run.
- * In Restricted Mode VS Code hands us the default instead of a workspace value (`restrictedConfigurations` in package.json),
- * so a cloned repo cannot choose which program we run.
+ * A binary path: the setting if set; from source (F5 or the window suite) the build folder of this repository (`extension/` sits next to `target/` and
+ * `drivers/`) and nothing else; installed, `<extension>/bin/`. From source it never falls back to `bin/`: that may hold a copy from an old packaging run,
+ * and running it fails with a message about the wrong thing. In Restricted Mode VS Code hands us the default instead of a workspace value
+ * (`restrictedConfigurations` in package.json), so a cloned repo cannot choose which program we run.
  */
-function binary(ctx: vscode.ExtensionContext, setting: string, name: string, devPath: string[]): string {
-  const configured = vscode.workspace.getConfiguration("vnoc").get<string>(setting);
-  if (configured) return configured;
+function binary(ctx: vscode.ExtensionContext, setting: string, name: string, devPath: string[], label: string, buildHint: string): string {
   const exe = process.platform === "win32" ? `${name}.exe` : name;
-  const fromSource = path.join(ctx.extensionPath, "..", ...devPath.slice(0, -1), exe);
-  const packaged = path.join(ctx.extensionPath, "bin", exe);
-  // the window test suite runs in Test mode: it must use the build folder too, or it would test a stale `bin/`
-  const developing = ctx.extensionMode !== vscode.ExtensionMode.Production;
-  return developing && fs.existsSync(fromSource) ? fromSource : fs.existsSync(packaged) ? packaged : fromSource;
+  const chosen = chooseBinary({
+    configured: vscode.workspace.getConfiguration("vnoc").get<string>(setting),
+    // the window test suite runs in Test mode: it must use the build folder too, or it would test a stale `bin/`
+    developing: ctx.extensionMode !== vscode.ExtensionMode.Production,
+    fromSource: path.join(ctx.extensionPath, "..", ...devPath.slice(0, -1), exe),
+    packaged: path.join(ctx.extensionPath, "bin", exe),
+    exists: fs.existsSync,
+    buildHint,
+    label,
+  });
+  if ("error" in chosen) throw new Error(chosen.error);
+  return chosen.path;
 }
 
 /** The running core, and the last structure it sent. */
@@ -41,6 +46,15 @@ export class Core {
   missing: MissingNode[] = [];
   /** The absolute path of the git root. Node ids and the paths in `vnoc/attach` start there. */
   gitRoot: string | undefined;
+
+  /**
+   * Which run of the core this is: 1 for the first, one more each time it starts again (a crash, or `restart`). A restarted core counts the index
+   * revision from the start again, so a revision from one epoch must never be compared with one from another.
+   */
+  epoch = 0;
+  private readonly restartedEmitter = new vscode.EventEmitter<void>();
+  /** Fires when the core is running again after it was running before: everything held that came from the old one is meaningless. */
+  readonly onRestarted = this.restartedEmitter.event;
 
   private readonly structureArrived = new vscode.EventEmitter<StructureResult>();
   /** Fires, before `structure()` returns, every time a structure arrives: what the session points at may be gone. */
@@ -61,11 +75,8 @@ export class Core {
 
   private async start(ctx: vscode.ExtensionContext, onIndexChanged: (revision: number) => void): Promise<void> {
     const folder = vscode.workspace.workspaceFolders?.[0];
-    const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"]);
-    const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"]);
-    if (!fs.existsSync(core)) {
-      throw new Error(`The V-NOC core is not at ${core}. Build it: cargo build -p vnoc`);
-    }
+    const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"], "The V-NOC core", "build it: `cargo build -p vnoc`");
+    const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"], "The Python driver", "build it: `cargo build` in drivers/python");
     this.client = new LanguageClient(
       "vnoc",
       "V-NOC core",
@@ -73,14 +84,20 @@ export class Core {
       // not a language server: no document selector. The driver's path and the opened folder travel to the core in `initializationOptions`.
       { documentSelector: [], outputChannel: this.output, initializationOptions: { driverPath: driver, root: folder?.uri.fsPath } },
     );
+    this.client.onDidChangeState(({ newState }) => {
+      if (newState !== State.Running) return;
+      this.epoch++;
+      if (this.epoch > 1) this.restartedEmitter.fire();
+    });
     this.client.onNotification("vnoc/indexChanged", (p: { revision: number }) => onIndexChanged(p.revision));
     await this.client.start();
     this.output.appendLine(`core started: ${core}\ndriver: ${driver}`);
   }
 
-  async request<T>(method: string, params?: object): Promise<T> {
+  /** `token`: cancelling it sends `$/cancelRequest` for this request, and the core stops the work under it. */
+  async request<T>(method: string, params?: object, token?: vscode.CancellationToken): Promise<T> {
     await this.ready;
-    return this.client!.sendRequest<T>(method, params);
+    return token ? this.client!.sendRequest<T>(method, params, token) : this.client!.sendRequest<T>(method, params);
   }
 
   async notify(method: string, params?: object): Promise<void> {
@@ -102,6 +119,11 @@ export class Core {
   /** Shows the V-NOC output channel (the "Show Log" button of the sidebar). */
   showLog(): void {
     this.output.show();
+  }
+
+  /** Stops the core and starts it again (the window suite's way back after it broke the core on purpose). */
+  async restart(): Promise<void> {
+    await this.client?.restart();
   }
 
   async stop(): Promise<void> {

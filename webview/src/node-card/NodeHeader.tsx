@@ -1,61 +1,46 @@
-import { IconChevronRight, IconCode, IconFileText, IconLink } from "@tabler/icons-react";
-
+import { Codicon } from "@/components/Codicon.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
-import type { Placed } from "../canvas/layout.ts";
-import { useView } from "../state/view.ts";
-import { KINDS } from "./kinds.ts";
+import { HEADER_H, type Placed, canOpen } from "../canvas/layout.ts";
+import { ActionStrip } from "./ActionStrip.tsx";
+import { chevronAction } from "./chevronAction.ts";
+import { KINDS, kindIcon } from "./kinds.ts";
+import { CHEVRON, HEADER_PAD, KIND_ICON } from "./rows.ts";
 import { useNodeActions } from "./useNodeActions.ts";
 
-export function NodeHeader({ node, contextId, cursor, focusRoot }: { node: Placed; contextId: string; cursor: boolean; focusRoot: boolean }) {
-  const { toggle, toggleCode, showDocs } = useNodeActions(node.id, contextId);
-  const kind = KINDS[node.kind];
-  // a closed card that holds the selection or the cursor says so: after a collapse neither is lost
-  const hidesSelected = useView((v) => v.hidesSelected === node.id);
-  const hidesCursor = useView((v) => v.hidesCursor === node.id);
+/** Chevron (or ⌖ on the root of a focused view), kind icon, name, buttons. The opened folder, always open, has no chevron. */
+export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Placed; contextId: string; focusRoot: boolean; selected: boolean }) {
+  const actions = useNodeActions(node.id, contextId, node.key);
+  const action = chevronAction(node);
+  const { title, color } = KINDS[node.kind];
+  const icon = kindIcon(node.kind, node.inClass); // a call card shows its callee's kind, never the call icon
   return (
-    <div className="node-header">
-      {node.childCount > 0 ? (
-        // `nodrag nopan`: React Flow must not start a drag or a pan from a click on the button
+    <div className="node-header flex flex-none items-center gap-1 pr-1" style={{ height: HEADER_H, paddingLeft: HEADER_PAD }}>
+      {focusRoot ? (
+        <span className="flex flex-none items-center justify-center text-[color:var(--card-selected)]" style={{ width: CHEVRON, height: CHEVRON }} title="the canvas is focused on this node">
+          <Codicon name="target" />
+        </span>
+      ) : node.depth > 0 && canOpen(node) ? (
         <Button
           variant="ghost"
           size="icon-xs"
-          className="nodrag nopan size-[18px]"
+          className="nodrag nopan" style={{ width: CHEVRON, height: CHEVRON }}
           aria-expanded={!node.collapsed}
-          aria-label={node.collapsed ? `Expand ${node.name}` : `Collapse ${node.name}`}
-          onClick={toggle}
+          aria-label={action === "focus" ? `Focus on ${node.name}` : action === "explore" ? `Explore ${node.name}` : node.collapsed ? `Expand ${node.name}` : `Collapse ${node.name}`}
+          onClick={actions[action]}
         >
-          <IconChevronRight className={cn("size-3.5 transition-transform", !node.collapsed && "rotate-90")} />
+          <Codicon name="chevron-right" className={cn("motion-safe:transition-transform", !node.collapsed && "rotate-90")} />
         </Button>
       ) : (
-        <span className="size-[18px] flex-none" />
+        <span className="flex-none" style={{ width: CHEVRON }} />
       )}
-      <span className="icon">{kind.icon}</span>
-      {cursor && (
-        <span className="cursor-mark" title="the cursor is here" aria-hidden>
-          ▌
-        </span>
-      )}
-      <span className="label">{kind.title(node.name)}</span>
-      {focusRoot && <span className="focus-chip" title="the canvas is focused on this node">⌖ focus</span>}
-      {node.collapsed && <span className="badge">+{node.childCount}</span>}
-      {hidesSelected && <span className="hidden-dot selected" title="the selected node is inside">●</span>}
-      {hidesCursor && <span className="hidden-dot cursor" title="the cursor is inside">○</span>}
-      {node.link && (
-        <span className={`link ${node.link}`} title={node.link === "marker" ? "The ID is in the code: the docs follow it anywhere" : "Found by its stored path and name: the docs are lost if it moves"}>
-          <IconLink className="size-3" />
-        </span>
-      )}
-      {node.docs > 0 && (
-        <Button variant="secondary" size="xs" className="nodrag nopan h-[18px] rounded-full px-1.5" aria-label={`Show the ${node.docs} docs of ${node.name}`} onClick={showDocs}>
-          <IconFileText className="size-3" /> {node.docs}
-        </Button>
-      )}
-      {node.range && (
-        <Button variant={node.codeOpen ? "secondary" : "ghost"} size="icon-xs" className="nodrag nopan size-[18px]" aria-pressed={node.codeOpen} aria-label={`Show the code of ${node.name}`} onClick={toggleCode}>
-          <IconCode className="size-3.5" />
-        </Button>
-      )}
+      <span className="flex flex-none items-center justify-center" style={{ color, width: KIND_ICON }}>
+        <Codicon name={icon} />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" title={node.role === "call" ? node.name : title(node.name)}>
+        {node.role === "call" ? node.name : title(node.name)}
+      </span>
+      <ActionStrip node={node} contextId={contextId} focusRoot={focusRoot} selected={selected} />
     </div>
   );
 }

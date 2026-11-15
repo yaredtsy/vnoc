@@ -99,7 +99,6 @@ fn the_handshake_announces_what_the_driver_can_do() {
     assert_eq!(init["name"], "python");
     assert_eq!(init["capabilities"]["outline"], true);
     assert_eq!(init["capabilities"]["ids.plan"], true);
-    assert_eq!(init["capabilities"]["callTree"], false, "not built yet, and it says so");
     d.finish();
 }
 
@@ -244,6 +243,17 @@ fn plan_ids_puts_the_id_line_in_the_docstring_and_says_what_it_did() {
     let again = d.request("vnoc/planIds", json!({ "text": new_text, "version": 8, "ids": [ask("with_doc", 1, "ZZZZ")] })).unwrap();
     assert_eq!(again["edits"], json!([]));
     assert_eq!(again["skipped"][0]["reason"], "already has an ID");
+    d.finish();
+}
+
+#[test]
+fn plan_ids_with_occurrence_zero_is_invalid_params() {
+    // the protocol counts same-named defs from 1: 0 is a malformed request, and no def is touched for it
+    let (mut d, _) = Driver::start();
+    let ask = |occurrence: u32| json!({ "qualname": "f", "occurrence": occurrence, "id": "AAAA", "replace_existing": false });
+    let err = d.request("vnoc/planIds", json!({ "text": "def f():\n    return 1\n", "version": 1, "ids": [ask(1), ask(0)] })).unwrap_err();
+    assert_eq!(err["code"], -32602);
+    assert_eq!(err["message"], "occurrence of f starts at 1, not 0");
     d.finish();
 }
 
