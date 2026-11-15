@@ -102,11 +102,13 @@ export async function run(stage, { debug, stills: onlyStills }) {
     // 3 · maximise the canvas: ⌘K ⌘M (Toggle Maximize Editor Group, the default binding in 1.146), the canvas takes the window
     await rec.beat("maximise");
     await stage.caption("Maximise the canvas");
-    await stage.key("Meta+k Meta+m");
-    await rec.during("wait", "maximise", async () => {
+    // a `wait` is time in which nothing the viewer should see is happening (the edit cuts it); a `reveal` is what the GIF is for (the edit never cuts it). The change is
+    // the reveal, from the key press until the canvas is wide; the quiet after it is the wait
+    await rec.during("reveal", "maximise", async () => {
+      await stage.key("Meta+k Meta+m");
       for (let i = 0; i < 100 && (await cv.evaluate(() => innerWidth)) < 850; i++) await page.waitForTimeout(100);
-      await settled(page, cv, 300);
     });
+    await rec.during("wait", "maximise", () => settled(page, cv, 300));
     await shot("maximise");
     await rec.hold(HOLD);
 
@@ -125,8 +127,9 @@ export async function run(stage, { debug, stills: onlyStills }) {
     await stage.caption("F: fit the view");
     const request = callCard(cv, "request", "_client.py");
     const before = { view: await viewOf(cv), width: (await request.boundingBox()).width };
-    await stage.key("f");
-    await rec.during("wait", "Fit View", async () => {
+    // the product's own 300 ms glide is what this beat shows: one reveal, from the key press until the view has settled, so the edit never cuts it
+    await rec.during("reveal", "Fit View", async () => {
+      await stage.key("f");
       for (let i = 0; i < 60 && (await viewOf(cv)).every((v, k) => Math.abs(v - before.view[k]) < 0.01); i++) await page.waitForTimeout(50);
       await viewSettled(page, cv);
     });
@@ -142,9 +145,12 @@ export async function run(stage, { debug, stills: onlyStills }) {
     await rec.beat("explore");
     await stage.caption("Enter: follow it to its file");
     await cursor.click(request.locator(".node-header").first());
-    await stage.key("Enter");
-    await rec.during("wait", "Explore", async () => {
+    // the switch to the new context is the reveal (from Enter until its cards are drawn); the quiet after it is the wait
+    await rec.during("reveal", "Explore", async () => {
+      await stage.key("Enter");
       await callCard(cv, "send").waitFor({ timeout: 15_000 });
+    });
+    await rec.during("wait", "Explore", async () => {
       await settled(page, cv, 300);
       await viewSettled(page, cv);
     });

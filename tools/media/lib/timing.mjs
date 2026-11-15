@@ -122,7 +122,7 @@ export function retime(film, edits = [], { label = "film", file } = {}) {
     if (m.type === "wait" && length > RULES.waitKeep + EPS) op = { a: m.from, b: m.to - RULES.waitKeep, f: 0, note: `cut to ${RULES.waitKeep} s` };
     else if (m.type === "hold" && length > (RULES.holds[m.kind ?? "after"] ?? Infinity) + EPS) {
       const keep = RULES.holds[m.kind ?? "after"];
-      op = { a: m.from + keep, b: m.to, f: 0, note: `trimmed to ${keep} s, a ${m.kind ?? "after"} hold` };
+      op = { a: m.from + keep, b: m.to, f: 0, note: `${m.kind ?? "after"}, trimmed to ${keep} s` };
     } else if (m.type === "typing" && length > RULES.typingLong) op = { a: m.from, b: m.to, f: 1 / RULES.typingSpeed, note: `${RULES.typingSpeed}×` };
     if (op) {
       ops.push(op);
