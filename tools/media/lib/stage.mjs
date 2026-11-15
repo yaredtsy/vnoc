@@ -3,7 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { Cursor } from "./cursor.mjs";
+import { Cursor, keyLabel } from "./cursor.mjs";
 import { launch, runCommand, webviewWith } from "./vscode.mjs";
 import { prepareDemo } from "./prepare.mjs";
 
@@ -14,6 +14,10 @@ export class Stage {
     this.app = app;
     this.page = page;
     this.cursor = new Cursor(page);
+    /** the badges of the keys pressed since the last beat (the storyboard of `--stills` lists them) */
+    this.pressed = [];
+    /** set by `Stills`: the badge of a key stays until the next beat */
+    this.stills = false;
   }
 
   static async open({ vsix, dev = false, settings } = {}) {
@@ -30,6 +34,26 @@ export class Stage {
 
   command(title) {
     return runCommand(this.page, title);
+  }
+
+  /**
+   * Presses a key and shows its badge for 0.8 s (04 §3.7). `combo` is Playwright's notation (`Enter`, `Meta+s`, `f`); several, separated by a space, are a chord
+   * (`Meta+k Meta+m`) and one badge (`⌘K ⌘M`). Only keys that work in the shipped product: the film must not teach a shortcut nobody has.
+   */
+  async key(combo) {
+    const presses = combo.split(" ");
+    const label = presses.map(keyLabel).join(" ");
+    await this.cursor.key(label, { sticky: this.stills });
+    for (const [i, press] of presses.entries()) {
+      if (i > 0) await this.page.waitForTimeout(250); // a chord's second key follows the first at a typing pace
+      await this.page.keyboard.press(press);
+    }
+    this.pressed.push(label);
+  }
+
+  /** The caption strip over the status bar: six words or fewer, one per step (04 §3.8). An empty text hides it. */
+  caption(text) {
+    return this.cursor.caption(text);
   }
 
   /**

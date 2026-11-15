@@ -1,5 +1,6 @@
-// Makes the pictures. Usage: node run.mjs [--only g1,g2] [--encode-only g1] [--vsix <file>] [--dev] [--debug] [--publish]
+// Makes the pictures. Usage: node run.mjs [--only g1,g2] [--stills] [--encode-only g1] [--vsix <file>] [--dev] [--debug] [--publish]
 //   --only        the scenes to record, edit and encode (default: all)
+//   --stills      run the scenes without recording: one screenshot per beat and out/<scene>/storyboard.html (docs/18-release-0.2/04-gifs-v2.md §7, gate 1)
 //   --encode-only edit and encode again from the saved frames and marks (out/<scene>.frames.json, .marks.json, .edit.json): no VS Code, no recording. A person
 //                 corrects the edit in out/<scene>.edit.json ("manual": [{ "from": 6.2, "to": 7.9, "speed": 2 }, { "cut": [3.1, 3.6] }]); delete the file for the automatic edit
 //   --dev         load the extension from this repository instead of the VSIX (for writing a scene; the title bar then says Extension Development Host)
@@ -22,6 +23,13 @@ const only = encodeOnly ?? value("--only")?.split(",");
 const chosen = scenes.filter((s) => !only || only.includes(s.id));
 if (chosen.length === 0) throw new Error(`no scene named ${only}; there are ${scenes.map((s) => s.id).join(", ")}`);
 
+const stills = flag("--stills");
+if (stills) {
+  if (encodeOnly) throw new Error("--stills and --encode-only do not go together: stills run the scene, an encode does not");
+  const without = chosen.filter((s) => !s.stills);
+  if (without.length > 0) throw new Error(`${without.map((s) => s.id).join(", ")} cannot run with --stills yet (a scene says \`export const stills = true\` when it can)`);
+}
+
 const vsix = value("--vsix") ?? paths.vsix;
 if (!encodeOnly && !flag("--dev") && !existsSync(vsix)) throw new Error(`${vsix} does not exist: run \`node scripts/package.mjs\` at the root, or pass --vsix`);
 const debug = flag("--debug") ? join(paths.out, "debug") : undefined;
@@ -32,9 +40,10 @@ for (const scene of chosen) {
   if (!encodeOnly) {
     const stage = await Stage.open({ vsix, dev: flag("--dev"), settings: scene.settings });
     try {
-      const { rec, stats } = await scene.run(stage, { debug });
+      const { rec, stats } = await scene.run(stage, { debug, stills });
       rec.save();
-      console.log(`${stats.frames} frames in ${stats.seconds.toFixed(1)} s (${stats.fps.toFixed(1)} fps)`);
+      if (stills) console.log(`${stats.frames} beats; the storyboard is ${rec.file}`);
+      else console.log(`${stats.frames} frames in ${stats.seconds.toFixed(1)} s (${stats.fps.toFixed(1)} fps)`);
     } catch (error) {
       // what the window showed when the scene failed
       await stage.shot(join(paths.out, "debug", `${scene.id}-failure.png`), { cursor: true }).catch(() => {});
@@ -43,7 +52,7 @@ for (const scene of chosen) {
       await stage.close();
     }
   }
-  if (scene.kind === "gif") {
+  if (scene.kind === "gif" && !stills) {
     const film = loadFilm(scene.id);
     const manual = readManual(scene.id);
     const result = editFilm(film, { label: scene.id.toUpperCase(), target: scene.target, manual });
@@ -54,7 +63,7 @@ for (const scene of chosen) {
   }
 }
 
-if (flag("--publish")) {
+if (flag("--publish") && !stills) {
   mkdirSync(paths.screenshots, { recursive: true });
   for (const scene of chosen) {
     copyFileSync(join(paths.out, scene.output), join(paths.screenshots, scene.output));

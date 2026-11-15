@@ -76,10 +76,10 @@ export function readManual(name) {
 const fmt = (n) => n.toFixed(1);
 
 /**
- * Edits a film. Returns the duration of every frame, the lines to print, and the segments for `out/<scene>.edit.json`. `target`: the scene's length in seconds.
+ * Edits a film. Returns the duration of every frame, the lines to print, and the segments for `out/<scene>.edit.json`. `target`: the scene's length in seconds; none, no budget (04 §6).
  * `manual` entries (from the edit file, written by a person) are applied after the automatic edit: `{ from, to, speed }` or `{ cut: [from, to] }`, in recorded seconds.
  */
-export function editFilm(film, { label, target, manual = [] }) {
+export function editFilm(film, { label, target = Infinity, manual = [] }) {
   const { frames, marks } = film;
   const d = durationsOf(frames);
   const mid = frames.map((f, i) => f.t + d[i] / 2);
@@ -177,7 +177,8 @@ export function editFilm(film, { label, target, manual = [] }) {
     }
   }
   const final = total();
-  budget.push(final <= target + 0.05 ? `  budget   ok (target ${target} s)` : `  budget   OVER the target of ${target} s by ${fmt(final - target)} s: cut a beat`);
+  if (!Number.isFinite(target)) budget.push("  budget   none: the scene has no target (04 §6: the length is a person's edit)");
+  else budget.push(final <= target + 0.05 ? `  budget   ok (target ${target} s)` : `  budget   OVER the target of ${target} s by ${fmt(final - target)} s: cut a beat`);
 
   // the final time of a recorded second
   const prefix = [0];

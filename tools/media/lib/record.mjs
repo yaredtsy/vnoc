@@ -41,6 +41,8 @@ export class Recording {
     this.frames = [];
     /** `{ type, label, kind?, from, to }`, in the film's seconds */
     this.marks = [];
+    /** `{ name, t }`: where each beat of the script begins, in the film's seconds (04 §6.1: the edit list refers to beats by name) */
+    this.beats = [];
   }
 
   /**
@@ -120,6 +122,19 @@ export class Recording {
     }
   }
 
+  /**
+   * The start of a beat of the script: a named mark (`rec.beat("explore")`). The edit list of 04 §6.3 refers to beats by name, and its times are relative to
+   * them, so a new recording does not make the list wrong. A name is used once. Async because the stills (`stills.mjs`) take a picture here.
+   */
+  async beat(name) {
+    if (this.beats.some((b) => b.name === name)) throw new Error(`the beat "${name}" is named twice`);
+    this.beats.push({ name, t: this.elapsed });
+    if (process.env.MEDIA_TIMES) console.log(`  ${this.elapsed.toFixed(1)} s  ${name}`);
+  }
+
+  /** A remark for the storyboard of `--stills` (a zoom, a count); a film has no use for it. */
+  note() {}
+
   /** The film stands still for `ms`, on purpose. `kind`: `first` (the first frame), `after` (after an action), `read` (something new to read), `end` (the last frame). */
   hold(ms, kind = "after") {
     return this.during("hold", "", () => this.#page.waitForTimeout(ms), { kind });
@@ -147,8 +162,9 @@ export class Recording {
     return { frames: this.frames.length, seconds, fps: this.frames.length / seconds };
   }
 
-  /** Writes what the edit needs to run again without recording: `out/<scene>.frames.json` and `out/<scene>.marks.json`. */
+  /** Writes what the edit needs to run again without recording: `out/<scene>.frames.json`, `.marks.json` and `.beats.json`. */
   save() {
+    writeFileSync(join(paths.out, `${this.name}.beats.json`), JSON.stringify(this.beats, null, 1));
     writeFileSync(join(paths.out, `${this.name}.frames.json`), JSON.stringify({ frames: this.frames }, null, 1));
     writeFileSync(join(paths.out, `${this.name}.marks.json`), JSON.stringify(this.marks, null, 1));
   }

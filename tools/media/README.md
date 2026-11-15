@@ -6,6 +6,7 @@ not in the pnpm workspace and nothing else imports it.
 ```sh
 node scripts/package.mjs --target darwin-arm64 --pre-release   # at the repository root: the VSIX it installs
 cd tools/media && npm ci
+node run.mjs --only g1 --stills   # no recording: one screenshot per beat and out/g1/storyboard.html (gate 1 of 04-gifs-v2.md §7)
 node run.mjs --only g1            # record, edit and encode one scene; no --only = all
 node run.mjs --encode-only g1     # edit and encode again from the saved frames and marks: no VS Code, no recording
 node run.mjs --only g1 --debug    # also a screenshot of every beat: out/debug/ (these add static time to the film: look at the edit list without it)
@@ -14,9 +15,17 @@ MEDIA_TIMES=1 node run.mjs …      # the film's seconds at each beat
 node run.mjs --only g1 --publish  # copy out/ to extension/media/screenshots/ (after you have looked at every frame: plan §8)
 ```
 
-macOS only
 macOS only (Retina capture, the fonts people expect); not run in CI. Needs `ffmpeg` (`/opt/homebrew/bin/ffmpeg`, or `FFMPEG=`). Everything it makes goes to
 `out/` (git-ignored) first. The VS Code it uses is the one in `extension/.vscode-test` (`vscodeVersion` in `config.mjs`).
+
+## The second design (`docs/18-release-0.2/04-gifs-v2.md`)
+
+It replaces the storyboards of 01 §5 and changes the cursor (01 §4.3) and the edit (01 §7.2). Built so far (step M1, G1 only): the window is **960 × 600**, and
+`lib/cursor.mjs` is the overlay drawn into the page: the arrow (glide 450 ms, ring 350 ms), `stage.key("Meta+k Meta+m")` (presses the keys and shows a badge for 0.8 s)
+and `stage.caption("…")` (a strip over the status bar, six words or fewer). A scene starts every beat with `await rec.beat("name")`: a named mark in a film
+(`out/<scene>.beats.json`), a screenshot of the beat just ended with `--stills`. `lib/canvas.mjs` has what a scene needs to know about the canvas page (`settled`, `zoomOf`, `viewSettled`, `emptySpot`,
+`place`, `closeContexts`). A scene records freely: no warm-up, no put-back, no `target`. The capture (`startScreencast`), the review film and the edit list by beat are M2; G2 is M3 and
+does **not** run at 960 × 600 until then (it still has the 1280 × 800 layout and the old way of timing).
 
 ## The demo project
 

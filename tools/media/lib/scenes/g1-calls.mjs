@@ -1,241 +1,174 @@
-// G1 calls.gif: see what a function calls, follow a call to its own file (docs/18-release-0.2/01-media.md §5.1, §5.2, §7.2).
-// Setup, off camera: the sidebar narrowed, the canvas focused on `Client` (a focused function has no chevron and opens at once; as one of Client's methods
-// `_send_handling_redirects` is a closed card with a chevron, which is the scene), zoom 0.83 and the position set so that three columns fit, the scene run once so
-// the host has every answer ready, and everything put back (§5.4). Then, with the mouse only: the chevron of the closed card, the chevron of `_send_single_request`,
-// a double-click on a function in another file (Explore), its docs. No drag while recording. The recording is not timed exactly: it marks what happens
-// (`rec.during`, `rec.hold`, the cursor's glides) and `edit.mjs` cuts the waits and speeds up the slow parts afterwards.
-import { Recording } from "../record.mjs";
+// G1 calls.gif: "What does httpx.get() do?" (docs/18-release-0.2/04-gifs-v2.md §4). It starts in the code, which a viewer knows: `get` in `_api.py`. Right-click →
+// Show Calls opens the canvas beside it; the canvas is maximised; the chevron of `request` opens one level; `request` in `_client.py` is explored with Enter; the
+// chevron of `send` opens one more; F frames the whole chain.
+//
+// The scene records freely (§6.1): it waits for state and holds 1.5 s after every change, and never thinks about length. Every beat begins with `rec.beat(name)`,
+// which is a named mark in a film and a picture in `--stills`. Speed is the edit's job, afterwards.
+//
+// Setup, off camera: the window 960 × 600, the Activity Bar and the side bar closed, `_api.py` open with `def get(` a third of the way down, no canvas, the arrow
+// resting under the name. No warm-up and no put-back: a slow first fetch is cut in the edit. Only the mouse for what a new user clicks (a menu, a chevron, a card)
+// and keys for what a user does with keys, each with its badge (§3.6): ⌘K ⌘M, Enter, F.
+import { emptySpot, inView, settled, viewOf, viewSettled, zoomOf } from "../canvas.mjs";
+import { recordingFor } from "../stills.mjs";
 
 export const id = "g1";
 export const kind = "gif";
 export const output = "calls.gif";
-export const target = 12; // seconds, the budget of the edit (§5.1 says 13; 10 – 12 was asked for)
+export const stills = true; // `--stills` works for this scene
+// the Activity Bar is closed: G1 does not need it, and the sidebar's change when a card is opened (04 §1.1 #4) is then out of the picture
+export const settings = { "workbench.activityBar.location": "hidden" };
 
-const FN = "_send_handling_redirects";
-const OPEN = "_send_single_request";
-const CALLEE = "handle_request";
+const HOLD = 1500; // after every change (§6.1); the edit trims it
+const END = 3000;
 
-/** the card of the method `FN`, a node card of the canvas focused on Client (labels.ts: `function <name>, collapsed`) */
-const nodeCard = (cv) => cv.locator(`[aria-label^="function ${FN},"]`).first();
-/** the call card of `name`, by its accessible name (labels.ts: `call to function <name>, called …`) */
-const callCard = (cv, name) => cv.locator(`[aria-label^="call to function ${name},"]`).first();
-/** `handle_request` is called on the base class (an abstract method in base.py) and on the real transport: the second one has the doc */
-const calleeCard = (cv) => cv.locator(`[aria-label^="call to function ${CALLEE},"]`).filter({ hasText: "default.py" }).first();
+/** the node card of a function, by its accessible name (labels.ts: `function <name>, …`) */
+const nodeCard = (cv, name) => cv.locator(`[aria-label^="function ${name},"]`).first();
+/** the call card of a function (labels.ts: `call to function <name>, called …`); `file` tells apart two calls of the same name (`request` is in `_api.py` and in `_client.py`) */
+const callCard = (cv, name, file) => {
+  const card = cv.locator(`[aria-label^="call to function ${name},"]`);
+  return (file ? card.filter({ hasText: file }) : card).first();
+};
 
-/**
- * The window is still working: a spinner, `updating…`, a progress `role=status`, the progress badge on the V-NOC icon in the Activity Bar, or "Activating
- * Extensions…" in the status bar (shown while the docs page starts V-NOC's own code). It must be quiet for `quietMs` in a row: that text comes late.
- */
-async function settled(page, cv, quietMs = 0) {
-  let quietSince = performance.now();
-  for (let i = 0; i < 200; i++) {
-    const busy =
-      (cv ? (await cv.locator("[role=status]").count()) + (await cv.getByText(/updating…/).count()) : 0) +
-      (await page.locator(".activitybar .progress-badge").count()) +
-      (await page.locator(".statusbar", { hasText: /Activating Extensions/ }).count());
-    if (busy > 0) quietSince = performance.now();
-    else if (performance.now() - quietSince >= quietMs) return;
-    await page.waitForTimeout(100);
-  }
-}
-
-/** The canvas's zoom (the scale of React Flow's viewport). */
-const zoomOf = (cv) => cv.evaluate(() => Number(/matrix\(([-\d.e]+)/.exec(getComputedStyle(document.querySelector(".react-flow__viewport")).transform)?.[1] ?? 1));
-
-/**
- * A point of the canvas background, in page coordinates: where a hand takes hold of the canvas (`bias`, `yBias`: the part of the pane to prefer), or, with
- * `far`, the point with the most room around it (where the cursor rests at the end).
- */
-async function emptySpot(cv, bias, yBias = 0.5, far = false) {
-  const inFrame = await cv.evaluate(({ bias, yBias, far }) => {
-    const pane = document.querySelector(".react-flow").getBoundingClientRect();
-    const cards = [...document.querySelectorAll(".react-flow__node")].map((n) => n.getBoundingClientRect());
-    const room = (x, y) => Math.min(...cards.map((r) => Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom))), 1e6);
-    let best;
-    for (let x = pane.left + 80; x < pane.right - 40; x += 40) {
-      for (let y = pane.top + 40; y < pane.bottom - 40; y += 30) {
-        if (document.elementFromPoint(x, y)?.classList.contains("react-flow__pane")) {
-          const d = far ? -room(x, y) : Math.hypot(x - (pane.left + pane.width * bias), y - (pane.top + pane.height * yBias));
-          if (!best || d < best.d) best = { x, y, d };
-        }
-      }
-    }
-    return best;
-  }, { bias, yBias, far });
-  if (!inFrame) throw new Error("no empty spot on the canvas to take hold of");
-  const frame = await (await cv.frameElement()).boundingBox();
-  return [frame.x + inFrame.x, frame.y + inFrame.y];
-}
-
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-/**
- * Moves the canvas so that `card` is at (`left`, `top`) from the pane's top left. Only in setup (and in a cut): the camera is never moved while the film runs.
- * One drag moves what fits in the pane, so it is repeated, measuring the card each time.
- */
-async function place(stage, cv, card, left, top) {
-  const pane = await (await cv.frameElement()).boundingBox();
-  for (let round = 0; round < 5; round++) {
-    const box = await card.boundingBox();
-    const dx = pane.x + left - box.x;
-    const dy = pane.y + top - box.y;
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    const from = await emptySpot(cv, dx < 0 ? 0.8 : 0.2, dy < 0 ? 0.85 : 0.15);
-    const to = [clamp(from[0] + dx, pane.x + 40, pane.x + pane.width - 40), clamp(from[1] + dy, pane.y + 40, pane.y + pane.height - 40)];
-    await stage.cursor.drag(from, to, 400);
-    await stage.page.waitForTimeout(150);
-  }
-  throw new Error("the canvas could not be moved to put the card where the scene wants it");
-}
-
-/** The card is fully inside the canvas pane. */
-async function inView(cv, card) {
-  const pane = await (await cv.frameElement()).boundingBox();
-  const box = await card.boundingBox();
-  return !!box && box.x >= pane.x && box.y >= pane.y && box.x + box.width <= pane.x + pane.width && box.y + box.height <= pane.y + pane.height;
-}
-
-/** Closes every EXPLORE context: the chip's `×` in the canvas bar (the panel in the sidebar goes with it). */
-async function closeContexts(page, cv) {
-  for (let i = 0; i < 6; i++) {
-    const chip = cv.getByRole("button", { name: /^Close / });
-    if ((await chip.count()) === 0) return;
-    await chip.first().click();
-    await page.waitForTimeout(450);
-  }
-  throw new Error("an EXPLORE context would not close");
-}
-
-const PANE_LEFT = 30;
-const PANE_TOP = 110; // room above for the card before it: the canvas is seen to continue
-
-/** Everything before the first frame (§5.1, §5.2, §5.4). Returns the canvas page. */
+/** Everything before the first frame. Returns what the beats need. */
 async function setup(stage) {
-  const { page } = stage;
-  await stage.resizeSidebar(260);
+  const { page, cursor } = stage;
   await stage.openRow("folder httpx,");
-  await stage.openRow("file _client.py,");
-  await stage.openRow("class Client,");
-  const row = stage.row("class Client,");
+  await stage.openRow("file _api.py,");
+  const row = stage.row("function get,");
+  await row.click(); // the canvas is closed: the code, at the function
+  // Focus on `get` before the film (04 §4 [check]): without it the canvas of beat 2 is the whole project, a wall of cards with `get` and `request` at their right edge
   await row.hover();
   await row.locator('[aria-label="Focus"]').click();
-  await page.locator('[aria-label="Open Canvas"]').first().click();
-  await page.mouse.move(200, 20); // off the button: its tooltip stays while the pointer is inside a page
-  const cv = await stage.canvasFrame();
-  await nodeCard(cv).waitFor({ timeout: 15_000 });
-  await settled(page, cv, 500);
-
-  // the camera: zoom 0.83 (the card revealed at most 1.2, then two steps of the `−` button), the card at the top left, three columns across the pane
-  await nodeCard(cv).locator(".node-header").first().click();
-  await cv.getByRole("button", { name: "Reveal the selection" }).click();
-  await page.waitForTimeout(700);
-  for (let i = 0; i < 6 && (await zoomOf(cv)) > 0.86; i++) {
-    await cv.locator(".react-flow__controls-zoomout").click();
-    await page.waitForTimeout(450);
-  }
-  const zoom = await zoomOf(cv);
-  if (zoom < 0.78 || zoom > 0.86) throw new Error(`the zoom is ${zoom.toFixed(2)}, not 0.8 – 0.85`);
-  await place(stage, cv, nodeCard(cv), PANE_LEFT, PANE_TOP);
-
-  // the warm-up: the whole scene once, so the host has every answer ready. The third column must fit, or the scene has to change.
-  await nodeCard(cv).getByRole("button", { name: `Expand ${FN}` }).click();
-  await callCard(cv, OPEN).waitFor({ timeout: 15_000 });
-  await callCard(cv, OPEN).getByRole("button", { name: `Expand ${OPEN}` }).click();
-  await calleeCard(cv).waitFor({ timeout: 15_000 });
-  if (!(await inView(cv, calleeCard(cv)))) throw new Error(`the third column does not fit: ${CALLEE} (default.py) is not fully in view at zoom ${zoom.toFixed(2)}`);
-  await calleeCard(cv).locator(".node-header").first().dblclick();
-  await cv.getByRole("button", { name: "Docs of the selected node" }).click();
-  await cv.getByText("Where httpx meets httpcore").first().waitFor({ timeout: 15_000 });
-  await settled(page, cv, 800);
-
-  // …and put back (§5.4): the docs panel (the same button), the EXPLORE context, the open cards, and every context the clicks above opened
-  await cv.getByRole("button", { name: "Docs of the selected node" }).click();
-  await page.waitForTimeout(300);
-  await closeContexts(page, cv);
-  await callCard(cv, OPEN).getByRole("button", { name: `Collapse ${OPEN}` }).click(); // selecting a call card opens its context again: closed next
-  await page.waitForTimeout(400);
-  await closeContexts(page, cv);
-  await nodeCard(cv).getByRole("button", { name: `Collapse ${FN}` }).click();
-  await page.waitForTimeout(400);
-  await closeContexts(page, cv);
-  await place(stage, cv, nodeCard(cv), PANE_LEFT, PANE_TOP); // a no-op unless something moved it
-  const rest = await emptySpot(cv, 0, 0, true);
-  await page.mouse.click(rest[0], rest[1]); // no button keeps a focus highlight
-  await page.waitForTimeout(300);
-  await stage.command("V-NOC: Clear Selection"); // the session owns the selection: a click on the canvas does not clear it
-  await page.waitForTimeout(300);
-  const stale = await cv.locator('[aria-label*=", selected"]').count();
-  if (stale > 0) throw new Error(`${stale} card(s) are still selected at the first frame`);
-  const label = await nodeCard(cv).getAttribute("aria-label");
-  if (!label?.endsWith("collapsed")) throw new Error(`the card of ${FN} is not closed at the first frame: "${label}"`);
+  const line = page.locator(".editor-group-container .view-line", { hasText: "def get(" }).first();
+  await line.waitFor({ timeout: 15_000 });
+  await stage.command("View: Toggle Primary Side Bar Visibility");
+  await page.locator(".part.sidebar").waitFor({ state: "hidden", timeout: 5000 });
   await page.mouse.move(200, 20);
-  await settled(page, cv, 500);
-  return cv;
+
+  // the name of the function, a third of the way down the window: the reveal puts it in the middle, so the editor is scrolled (setup only)
+  const name = page.locator(".view-line", { hasText: "def get(" }).locator("span", { hasText: /^get$/ }).first();
+  let box = await cursor.aim(name);
+  const wanted = 200; // px from the window's top: the tabs and the breadcrumbs above it take about 90
+  for (let round = 0; round < 6 && Math.abs(box.y - wanted) > 15; round++) {
+    await page.mouse.move(box.x + 300, box.y);
+    await page.mouse.wheel(0, box.y - wanted);
+    await page.mouse.move(200, 20);
+    box = await cursor.aim(name);
+  }
+  if (Math.abs(box.y - wanted) > 40) throw new Error(`the name of get is ${Math.round(box.y)} px from the top, not about ${wanted}`);
+
+  // the first frame: a caption, and the arrow resting under the name
+  await stage.caption("What does httpx.get() do?");
+  await cursor.moveToPoint(box.x + box.width / 2, box.y + box.height + 6);
+  return { name };
 }
 
-// Holds in ms (§5.1, §5.2): 0.5 s on the first frame, 1.0 s after each reveal, 1.2 s after Explore, 0.6 s after an action, 2.5 s on the last frame. The recording
-// does not try to keep the film from standing still around them: the edit cuts the waits and caps what the marks miss.
-const FIRST = 500;
-const READ = 1000;
-const EXPLORED = 1200;
-const AFTER = 600;
-const END = 2500;
-
-export async function run(stage, { debug }) {
+export async function run(stage, { debug, stills: onlyStills }) {
   const { page, cursor } = stage;
-  const cv = await setup(stage);
-  const rec = new Recording(page, id);
+  const { name } = await setup(stage);
+  const rec = recordingFor(stage, id, { stills: onlyStills });
   cursor.attach(rec);
-  const beat = async (name) => {
-    if (process.env.MEDIA_TIMES) console.log(`  ${rec.elapsed.toFixed(1)} s  ${name}`);
-    if (debug) await stage.shot(`${debug}/${id}-${name}.png`, { cursor: true });
-  };
+  const shot = async (label) => debug && stage.shot(`${debug}/${id}-${label}.png`, { cursor: true });
 
   await rec.start(); // returns when the capture loop is warm
+  let cv;
   try {
-    await rec.hold(FIRST, "first"); // the closed card of `_send_handling_redirects`, the sidebar showing MAIN
-    await beat("0-start");
+    // 1 · the code of `get`, and the question
+    await rec.beat("start");
+    await rec.hold(HOLD, "first");
 
-    // its chevron: the calls it makes fan out with dashed edges
-    await cursor.click(nodeCard(cv).getByRole("button", { name: `Expand ${FN}` }));
-    await rec.during("reveal", "calls", () => callCard(cv, OPEN).waitFor({ timeout: 10_000 }));
-    await beat("1-calls");
-    await rec.hold(READ, "read");
+    // 2 · right-click `get` → V-NOC ▸ Show Calls: the canvas opens beside the code, `get` open with its one call, `request`
+    await rec.beat("show-calls");
+    await stage.caption("Right-click → Show Calls");
+    await cursor.click(name, { button: "right" });
+    await cursor.click(page.getByRole("menuitem", { name: "V-NOC" }));
+    await cursor.click(page.getByRole("menuitem", { name: "Show Calls" }));
+    await rec.during("wait", "Show Calls", async () => {
+      cv = await stage.canvasFrame();
+      await callCard(cv, "request", "_api.py").waitFor({ timeout: 30_000 });
+      await settled(page, cv, 500);
+    });
+    await rec.during("reveal", "calls", () => nodeCard(cv, "get").waitFor({ timeout: 10_000 }));
+    await shot("show-calls");
+    await rec.hold(HOLD);
 
-    // open `_send_single_request`: its calls appear in a third column, `handle_request · default.py` among them
-    await cursor.click(callCard(cv, OPEN).getByRole("button", { name: `Expand ${OPEN}` }));
-    await rec.during("reveal", "third column", () => calleeCard(cv).waitFor({ timeout: 10_000 }));
-    await beat("2-third-column");
-    await rec.hold(READ, "read");
-
-    // Explore the function in another file: the EXPLORE panel opens in the sidebar, a chip in the bar, the breadcrumb changes
-    await cursor.dblclick(calleeCard(cv).locator(".node-header").first());
-    await rec.during("wait", "Explore", async () => {
-      // the new context is framed by the product with a zoom past 100 %: bring it to a normal size and to the left, so the film shows it settled
-      await cv.getByRole("button", { name: /^Close / }).first().waitFor({ timeout: 10_000 });
-      await settled(page, cv, 300);
-      for (let i = 0; i < 8 && (await zoomOf(cv)) > 1.0; i++) {
-        await cv.locator(".react-flow__controls-zoomout").click();
-        await page.waitForTimeout(450);
-      }
-      await place(stage, cv, cv.locator(`[aria-label^="function ${CALLEE},"]`).first(), PANE_LEFT, 80);
-      await page.mouse.move(200, 20);
+    // 3 · maximise the canvas: ⌘K ⌘M (Toggle Maximize Editor Group, the default binding in 1.146), the canvas takes the window
+    await rec.beat("maximise");
+    await stage.caption("Maximise the canvas");
+    await stage.key("Meta+k Meta+m");
+    await rec.during("wait", "maximise", async () => {
+      for (let i = 0; i < 100 && (await cv.evaluate(() => innerWidth)) < 850; i++) await page.waitForTimeout(100);
       await settled(page, cv, 300);
     });
-    await rec.during("reveal", "Explore", () => page.waitForTimeout(300));
-    await beat("3-explored");
-    await rec.hold(EXPLORED, "read");
+    await shot("maximise");
+    await rec.hold(HOLD);
 
-    // its docs: the panel opens with the doc written for this function
-    await cursor.click(cv.getByRole("button", { name: "Docs of the selected node" }));
-    await rec.during("reveal", "docs", () => cv.getByText("Where httpx meets httpcore").first().waitFor({ timeout: 10_000 }));
-    await beat("4-docs");
-    await rec.hold(AFTER, "after");
+    // 4 · the chevron of `request`: `Client` and `request` in `_client.py`
+    await rec.beat("open-request");
+    await stage.caption("Open a call: one level deeper");
+    await cursor.click(callCard(cv, "request", "_api.py").getByRole("button", { name: "Expand request" }));
+    await rec.during("reveal", "one level deeper", () => callCard(cv, "request", "_client.py").waitFor({ timeout: 15_000 }));
+    await settled(page, cv, 300);
+    await shot("open-request");
+    await rec.hold(HOLD);
 
-    // the cursor leaves the card, to the empty canvas; the end hold
-    const spot = await emptySpot(cv, 0, 0, true);
-    await cursor.moveToPoint(spot[0], spot[1]);
-    await beat("5-end");
+    // 5 · click `request` in `_client.py`, then Enter (Explore): the canvas follows the call to its file
+    await rec.beat("explore");
+    await stage.caption("Enter: follow it to its file");
+    await cursor.click(callCard(cv, "request", "_client.py").locator(".node-header").first());
+    await stage.key("Enter");
+    await rec.during("wait", "Explore", async () => {
+      await callCard(cv, "send").waitFor({ timeout: 15_000 });
+      await settled(page, cv, 300);
+      await viewSettled(page, cv);
+    });
+    // 04 §8 P1: a new context opens at 100 % at most
+    const zoom = await zoomOf(cv);
+    rec.note(`zoom after Explore: ${(zoom * 100).toFixed(0)} %`);
+    console.log(`  zoom after Explore: ${(zoom * 100).toFixed(0)} %`);
+    if (zoom > 1.001) throw new Error(`a new EXPLORE context opened at ${(zoom * 100).toFixed(0)} %, not at 100 % at most (04 §8 P1): is the VSIX built from the commit "canvas: a new context never opens zoomed past 100 %"?`);
+    await shot("explore");
+    await rec.hold(HOLD);
+
+    // 6 · the chevron of `send`: its five calls
+    await rec.beat("open-send");
+    await stage.caption("…and one more level");
+    await cursor.click(callCard(cv, "send").getByRole("button", { name: "Expand send" }));
+    // the third column starts at the window's right edge: React Flow draws only the cards in view, so the first of its calls is what shows that it opened
+    await rec.during("reveal", "send's calls", () => callCard(cv, "_set_timeout").waitFor({ timeout: 15_000 }));
+    await settled(page, cv, 300);
+    await shot("open-send");
+    await rec.hold(HOLD);
+
+    // 7 · F frames the whole chain (the product's own 300 ms glide). The chevron just clicked has the focus and the canvas keys leave a focused button alone, so the
+    // arrow first goes to empty canvas and clicks it: the same place the end rests at, and no change on screen
+    await rec.beat("fit");
+    await stage.caption("F: the whole chain in view");
+    const rest = await emptySpot(cv, 0, 0, true);
+    await cursor.clickPoint(rest[0], rest[1]);
+    const before = await viewOf(cv);
+    await stage.key("f");
+    await rec.during("wait", "Fit View", async () => {
+      for (let i = 0; i < 60 && (await viewOf(cv)).every((v, k) => Math.abs(v - before[k]) < 0.01); i++) await page.waitForTimeout(50);
+      await viewSettled(page, cv);
+    });
+    const after = await viewOf(cv);
+    if (after.every((v, k) => Math.abs(v - before[k]) < 0.01)) throw new Error("F did not change the view: Fit View did not run (04 §8 P4)");
+    await shot("fit");
+    await rec.hold(HOLD);
+
+    // 8 · the end: the arrow on empty canvas, the chain in view, 3 s
+    await rec.beat("end");
+    await stage.caption("get → request → send");
+    const far = await emptySpot(cv, 0, 0, true);
+    await cursor.moveToPoint(far[0], far[1]);
+    const cards = cv.locator('[aria-label^="call to function "], [aria-label^="function "]');
+    const drawn = await cards.count();
+    const outside = [];
+    for (let i = 0; i < drawn; i++) if (!(await inView(cv, cards.nth(i)))) outside.push(((await cards.nth(i).getAttribute("aria-label")) ?? "").split(",")[0]);
+    rec.note(`${drawn} cards drawn; ${outside.length ? `not fully in view: ${outside.join(", ")}` : "all fully in view"}; zoom ${((await zoomOf(cv)) * 100).toFixed(0)} %`);
+    console.log(`  the end: ${drawn} cards drawn, ${outside.length ? `NOT fully in view: ${outside.join(", ")}` : "all fully in view"}`);
+    await shot("end");
     await rec.hold(END, "end");
   } catch (error) {
     await rec.stop().catch(() => {});

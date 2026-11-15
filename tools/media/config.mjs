@@ -16,8 +16,8 @@ export const httpx = {
 /** The VS Code the pictures are taken with: the one the window suite uses (extension/.vscode-test). */
 export const vscodeVersion = "1.146.0";
 
-/** The window, in logical pixels. On a Retina Mac the screenshots are 2x of this and the GIFs 1x. */
-export const window = { width: 1280, height: 800 };
+/** The window, in logical pixels (docs/18-release-0.2/04-gifs-v2.md §6.2). On a Retina Mac the screenshots are 2x of this and the GIFs 1x: a README shows a GIF nearly 1:1. */
+export const window = { width: 960, height: 600 };
 
 export const paths = {
   /** everything made while running: the clone, the profile, the frames. Outside this repository, so the clone is not inside its git repo. */

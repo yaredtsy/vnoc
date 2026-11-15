@@ -1,16 +1,34 @@
-// A screenshot of an Electron page does not contain the mouse pointer, so the pointer is drawn into the page: an arrow that glides to its target, and a ring
-// that plays at a click (docs/18-release-0.2/01-media.md §4.3). The real mouse is moved too, so hover states appear.
-// the arrow's outline; the page is built with DOM calls, not innerHTML: VS Code's workbench requires Trusted Types
+// What the film draws over the page, all of it into the page (a screenshot of an Electron page does not contain the mouse pointer, and a cut or a speed-up of the
+// frames then can never put the picture out of step with what it says): the arrow that glides to its target, the ring that plays at a click, the badge of a key
+// that is pressed, and the caption strip over the status bar (docs/18-release-0.2/04-gifs-v2.md §3, §6.1). The real mouse is moved too, so hover states appear.
+// The page is built with DOM calls, not innerHTML: VS Code's workbench requires Trusted Types.
+import { window as size } from "../config.mjs";
+
+// the arrow's outline
 const ARROW_PATH = "M2 1.5v19l4.9-4.6 3.3 7.6 3.1-1.4-3.2-7.4h6.8z";
 
-export const MOVE_MS = 330;
-export const RING_MS = 180;
+export const MOVE_MS = 450;
+export const RING_MS = 350;
+/** how long the badge of a key stays (a film; the stills keep it until the next beat) */
+export const KEY_MS = 800;
+
+const MODIFIERS = { Meta: "⌘", Control: "⌃", Alt: "⌥", Shift: "⇧" };
+const NAMED = { Enter: "⏎", Escape: "Esc", ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓", Backspace: "⌫", Tab: "⇥", " ": "Space", Space: "Space" };
+
+/** What a badge says for one key combination in Playwright's notation (`Meta+Shift+p` → `⌘⇧P`, `Enter` → `⏎`, `f` → `F`). */
+export function keyLabel(combo) {
+  return combo
+    .split("+")
+    .map((part) => MODIFIERS[part] ?? NAMED[part] ?? (part.length === 1 ? part.toUpperCase() : part))
+    .join("");
+}
 
 export class Cursor {
   #page;
   #rec;
-  #x = 640;
-  #y = 400;
+  #x = size.width / 2;
+  #y = size.height / 2;
+  #caption = "";
 
   constructor(page) {
     this.#page = page;
@@ -21,21 +39,28 @@ export class Cursor {
     this.#rec = recording;
   }
 
-  /** Puts the arrow in the page (again after a reload). */
+  /** Puts the arrow, the key badge and the caption strip in the page (again after a reload). */
   async install() {
     await this.#page.evaluate(
-      ({ path, x, y, move, ring }) => {
-        document.getElementById("media-cursor")?.remove();
+      ({ path, x, y, move, ring, key, caption }) => {
+        for (const id of ["media-cursor", "media-ring", "media-key", "media-caption", "media-cursor-style"]) document.getElementById(id)?.remove();
         const style = document.createElement("style");
         style.id = "media-cursor-style";
         style.textContent = `
           #media-cursor { position: fixed; left: 0; top: 0; z-index: 2147483647; pointer-events: none; transform: translate(${x}px, ${y}px); transition: transform ${move}ms ease-in-out; }
-          #media-cursor.hidden { display: none; }
           #media-ring { position: fixed; left: 0; top: 0; z-index: 2147483646; pointer-events: none; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%;
             border: 3px solid #4db0ff; opacity: 0; }
           #media-ring.play { animation: media-ring ${ring}ms ease-out; }
-          @keyframes media-ring { from { opacity: 0.95; transform: scale(0.3); } to { opacity: 0; transform: scale(1.25); } }`;
-        document.getElementById("media-cursor-style")?.remove();
+          @keyframes media-ring { from { opacity: 0.95; transform: scale(0.3); } to { opacity: 0; transform: scale(1.25); } }
+          #media-key { position: fixed; left: 50%; z-index: 2147483645; pointer-events: none; transform: translateX(-50%); display: none; padding: 7px 18px; border-radius: 9px;
+            background: #0b0d12; color: #fff; border: 2px solid #4db0ff; font: 600 22px/1.2 -apple-system, "SF Pro Text", system-ui, sans-serif; letter-spacing: 1px; white-space: nowrap; }
+          #media-key.on { display: block; }
+          #media-key.timed { animation: media-key ${key}ms linear forwards; }
+          @keyframes media-key { 0% { opacity: 1; } 88% { opacity: 1; } 100% { opacity: 0; } }
+          #media-caption { position: fixed; left: 0; right: 0; z-index: 2147483645; pointer-events: none; display: none; align-items: center; justify-content: center;
+            background: #0b0d12; color: #f2f2f2; border-top: 1px solid #3a3d41; font: 600 14px/1 -apple-system, "SF Pro Text", system-ui, sans-serif; white-space: nowrap; overflow: hidden; }
+          #media-caption.on { display: flex; }
+          .media-hidden { display: none !important; }`;
         document.head.append(style);
         const el = document.createElement("div");
         el.id = "media-cursor";
@@ -48,10 +73,67 @@ export class Cursor {
         el.append(svg);
         const ringEl = document.createElement("div");
         ringEl.id = "media-ring";
-        document.body.append(ringEl, el);
+        const keyEl = document.createElement("div");
+        keyEl.id = "media-key";
+        const captionEl = document.createElement("div");
+        captionEl.id = "media-caption";
+        captionEl.textContent = caption;
+        captionEl.classList.toggle("on", caption !== "");
+        document.body.append(captionEl, keyEl, ringEl, el);
       },
-      { path: ARROW_PATH, x: this.#x, y: this.#y, move: MOVE_MS, ring: RING_MS },
+      { path: ARROW_PATH, x: this.#x, y: this.#y, move: MOVE_MS, ring: RING_MS, key: KEY_MS, caption: this.#caption },
     );
+    await this.#place();
+  }
+
+  /**
+   * The caption strip covers the status bar (the one part of the window no story needs), and the key badge sits above it, at the bottom centre. Measured from
+   * the real status bar, so a different window size or zoom needs nothing here.
+   */
+  async #place() {
+    await this.#page.evaluate(() => {
+      const bar = document.querySelector(".statusbar")?.getBoundingClientRect();
+      const top = bar && bar.height > 0 ? bar.top : window.innerHeight - 22;
+      const height = bar && bar.height > 0 ? bar.height : 22;
+      const caption = document.getElementById("media-caption");
+      caption.style.top = `${top}px`;
+      caption.style.height = `${height}px`;
+      document.getElementById("media-key").style.bottom = `${window.innerHeight - top + 14}px`;
+    });
+  }
+
+  /**
+   * Shows the badge of a key combination (`⏎`, `⌘S`, `⌘K ⌘M`) at the bottom centre for KEY_MS, then it goes by itself. `sticky`: it stays until `clearKey()` (the
+   * stills, which are taken after the key has long gone).
+   */
+  async key(label, { sticky = false } = {}) {
+    await this.#page.evaluate(({ label, sticky }) => {
+      const el = document.getElementById("media-key");
+      el.textContent = label;
+      el.classList.remove("on", "timed");
+      void el.offsetWidth; // restart the animation when a key follows a key
+      el.classList.add("on");
+      if (!sticky) el.classList.add("timed");
+    }, { label, sticky });
+  }
+
+  async clearKey() {
+    await this.#page.evaluate(() => document.getElementById("media-key")?.classList.remove("on", "timed"));
+  }
+
+  /** The caption (six words or fewer): drawn into the page, so no cut can leave it out of step. An empty text hides the strip. */
+  async caption(text) {
+    this.#caption = text;
+    await this.#page.evaluate((text) => {
+      const el = document.getElementById("media-caption");
+      el.textContent = text;
+      el.classList.toggle("on", text !== "");
+    }, text);
+    await this.#place();
+  }
+
+  get captionText() {
+    return this.#caption;
   }
 
   /**
@@ -117,6 +199,14 @@ export class Cursor {
     await this.#page.waitForTimeout(RING_MS);
   }
 
+  /** A click on a point of the page (empty canvas, which no locator names): the arrow glides there, the ring plays, the pointer clicks. */
+  async clickPoint(x, y) {
+    await this.moveToPoint(x, y);
+    await this.#ring();
+    await this.#page.mouse.click(x, y);
+    await this.#page.waitForTimeout(RING_MS);
+  }
+
   async dblclick(locator, { at = [0.5, 0.5], box, hover } = {}) {
     await this.moveTo(locator, at, { box, hover: hover ?? !box });
     await this.#ring();
@@ -157,8 +247,10 @@ export class Cursor {
     end?.();
   }
 
-  /** A screenshot must not show the arrow (except where the scene says so). */
+  /** A screenshot of a picture (not a film, not a still of the storyboard) must not show the arrow, the badge or the caption (except where the scene says so). */
   async hide(hidden = true) {
-    await this.#page.evaluate((h) => document.getElementById("media-cursor")?.classList.toggle("hidden", h), hidden);
+    await this.#page.evaluate((h) => {
+      for (const id of ["media-cursor", "media-ring", "media-key", "media-caption"]) document.getElementById(id)?.classList.toggle("media-hidden", h);
+    }, hidden);
   }
 }
