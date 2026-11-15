@@ -31,14 +31,14 @@ export function loadFilm(name) {
     if (!existsSync(file)) throw new Error(`${file} does not exist: record ${name} first (node run.mjs --only ${name})`);
     return JSON.parse(readFileSync(file, "utf8"));
   };
-  const { frames } = read("frames");
+  const { frames, end } = read("frames");
   const missing = frames.find((f) => !existsSync(f.file));
   if (missing) throw new Error(`the frames of ${name} are gone (${missing.file}): record again`);
-  return { name, frames, marks: read("marks") };
+  return { name, frames, end: end ?? frames.at(-1).t + 0.5, marks: read("marks") };
 }
 
-/** The durations the film's frames have as recorded: until the next frame; the last for half a second. */
-const durationsOf = (frames) => frames.map((f, i) => (frames[i + 1]?.t ?? f.t + 0.5) - f.t);
+/** The durations the film's frames have as recorded: until the next frame; the last until the film ends. */
+const durationsOf = (frames, end) => frames.map((f, i) => (frames[i + 1]?.t ?? end) - f.t);
 
 /** The list file ffmpeg reads: each frame with the time it is on screen (a duration of 0 leaves it out). */
 function writeList(film, durations, file) {
@@ -81,7 +81,7 @@ const fmt = (n) => n.toFixed(1);
  */
 export function editFilm(film, { label, target = Infinity, manual = [] }) {
   const { frames, marks } = film;
-  const d = durationsOf(frames);
+  const d = durationsOf(frames, film.end);
   const mid = frames.map((f, i) => f.t + d[i] / 2);
   const recorded = d.reduce((a, b) => a + b, 0);
   const out = d.slice();
@@ -207,7 +207,7 @@ export function writeEdit(name, result, manual) {
 }
 
 /** The GIF (two-pass palette) and the MP4 for posts, from the edited durations. Returns the sizes. */
-export function encodeFilm(film, out, { gif, mp4, fps = 12, colors = 128 }) {
+export function encodeFilm(film, out, { gif, mp4, fps = 20, colors = 256 }) {
   const list = join(paths.out, "frames", film.name, "frames-edit.txt");
   writeList(film, out, list);
   mkdirSync(paths.out, { recursive: true });

@@ -1,7 +1,8 @@
-// Frames for a GIF, and the marks that say what was happening when (docs/18-release-0.2/01-media.md §7.1, §7.2).
+// Frames for a GIF, and the marks that say what was happening when (docs/18-release-0.2/01-media.md §7.1, docs/18-release-0.2/04-gifs-v2.md §6).
 // The recording is never timed exactly and does not try to be: it keeps every frame, and what happens in the film as a list of marks. `edit.mjs` cuts the
 // waits and speeds up the slow parts afterwards, and can do it again from the saved frames and marks without starting VS Code.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { paths } from "../config.mjs";
@@ -46,50 +47,57 @@ export class Recording {
   }
 
   /**
-   * The frame loop. A frame is `Page.captureScreenshot` through DevTools at the screen's own resolution (2560 x 1600 on a Retina Mac), as a JPEG because that is
-   * fast; ffmpeg scales it to 1280 wide. Neither `page.screenshot({ scale: "css" })` nor a DevTools `clip.scale` may be used here: both change the page's scale
-   * for the capture (the window flickers, hovers and clicks under way are cancelled, and a clip scale can leave the layout zoomed).
+   * Starts taking frames; the promise it returns is settled when the first one is in (04 §6.2). DevTools `Page.startScreencast`: a frame arrives when the screen
+   * changes, with its own time, at the screen's own resolution (1920 x 1200 on a Retina Mac), as a JPEG. A stretch of film with no change has no frames: the last
+   * frame stays until the next. It changes neither the page's scale nor a hover (measured). It replaced a `Page.captureScreenshot` loop, which gave 13.7 different
+   * pictures a second while the screen moved, against 45 for the screencast on the same scene. Neither `page.screenshot({ scale: "css" })` nor a DevTools
+   * `clip.scale` may be used while a film runs: both change the page's scale for the capture (the window flickers, hovers and clicks under way are cancelled).
    */
   start() {
     this.#running = true;
     this.#t0 = performance.now();
     let ready;
     const warm = new Promise((resolve) => (ready = resolve));
-    this.#loop = (async () => {
-      const session = await this.#page.context().newCDPSession(this.#page);
-      // the first captures are slow (a second or more); they are taken, thrown away, and the film's clock starts after them
-      let warming = 6;
-      for (let i = 0; this.#running; ) {
-        if (this.#paused) {
-          await new Promise((resolve) => setTimeout(resolve, 15));
-          continue;
-        }
-        const t = this.elapsed;
-        i++;
-        const file = join(this.dir, `f${String(i).padStart(5, "0")}.jpg`);
-        try {
-          const { data } = await session.send("Page.captureScreenshot", { format: "jpeg", quality: 92, fromSurface: true });
-          writeFileSync(file, Buffer.from(data, "base64"));
-        } catch (error) {
-          // the window went away (the scene failed): that error is the one to show, not this one
-          if (this.#running) this.#error = error;
-          ready();
-          return;
-        }
-        if (warming > 0) {
-          if (--warming === 0) {
-            i = 0;
-            this.frames = [];
-            this.#t0 = performance.now();
-            this.#cut = 0;
-            ready();
-          }
-          continue;
-        }
-        this.frames.push({ file, t });
-      }
-    })();
+    this.#loop = this.#screencast(ready);
     return warm;
+  }
+
+  async #screencast(ready) {
+    const session = await this.#page.context().newCDPSession(this.#page);
+    const writes = [];
+    let first;
+    let offset = 0;
+    let last = -Infinity;
+    session.on("Page.screencastFrame", (frame) => {
+      // every frame is acknowledged, or the stream stops
+      session.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
+      if (!this.#running || this.#paused) return;
+      const stamp = frame.metadata.timestamp; // seconds, the time the screen was captured
+      const raw = (performance.now() - this.#t0) / 1000;
+      if (first === undefined) {
+        // the first frame is the screen as it is: the film starts here
+        first = stamp;
+        this.#t0 = performance.now();
+        this.#cut = 0;
+        offset = 0;
+        ready();
+      } else {
+        // a frame's own time, put on the clock the marks use (`elapsed`), with the delay of the transfer taken out: the smallest delay seen is the real one
+        offset = Math.min(offset, raw - (stamp - first));
+      }
+      // times can arrive a few milliseconds out of order: the film's are never
+      const t = Math.max(last + 0.001, stamp - first + offset - this.#cut / 1000, 0);
+      last = t;
+      const file = join(this.dir, `f${String(this.frames.length + 1).padStart(5, "0")}.jpg`);
+      this.frames.push({ file, t });
+      writes.push(writeFile(file, Buffer.from(frame.data, "base64")).catch((error) => (this.#error ??= error)));
+    });
+    await session.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: 4096, maxHeight: 4096, everyNthFrame: 1 });
+    // runs until `stop()`
+    while (this.#running) await new Promise((resolve) => setTimeout(resolve, 20));
+    await session.send("Page.stopScreencast").catch(() => {});
+    await Promise.all(writes);
+    ready();
   }
 
   /** Seconds of film so far. */
@@ -158,14 +166,23 @@ export class Recording {
     this.#running = false;
     await this.#loop;
     if (this.#error) throw this.#error;
-    const seconds = this.elapsed;
-    return { frames: this.frames.length, seconds, fps: this.frames.length / seconds };
+    this.end = this.elapsed;
+    const seconds = this.end;
+    return { frames: this.frames.length, seconds, fps: this.frames.length / seconds, ...intervalStats(this.frames, this.end) };
   }
 
   /** Writes what the edit needs to run again without recording: `out/<scene>.frames.json`, `.marks.json` and `.beats.json`. */
   save() {
     writeFileSync(join(paths.out, `${this.name}.beats.json`), JSON.stringify(this.beats, null, 1));
-    writeFileSync(join(paths.out, `${this.name}.frames.json`), JSON.stringify({ frames: this.frames }, null, 1));
+    // `end`: where the last frame stops (a frame stays until the next one, and the last until the film ends)
+    writeFileSync(join(paths.out, `${this.name}.frames.json`), JSON.stringify({ end: this.end, frames: this.frames }, null, 1));
     writeFileSync(join(paths.out, `${this.name}.marks.json`), JSON.stringify(this.marks, null, 1));
   }
+}
+
+/** How the frames are spread in time: the interval between one and the next (milliseconds) and the longest stretches with no new frame. */
+export function intervalStats(frames, end) {
+  const gaps = frames.map((f, i) => ((frames[i + 1]?.t ?? end) - f.t) * 1000).sort((a, b) => a - b);
+  const at = (q) => gaps[Math.min(gaps.length - 1, Math.floor(q * gaps.length))] ?? 0;
+  return { medianMs: at(0.5), p95Ms: at(0.95), maxGapMs: gaps.at(-1) ?? 0, over250: gaps.filter((g) => g > 250).length };
 }

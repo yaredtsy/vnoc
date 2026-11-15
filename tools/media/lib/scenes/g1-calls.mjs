@@ -159,7 +159,7 @@ export async function run(stage, { debug, stills: onlyStills }) {
     // 7 · the end: the arrow on empty canvas, 3 s. The caption answers the first one, and it is what the picture shows: `request` builds a request and `send` sends it
     await rec.beat("end");
     await stage.caption("It builds a request and sends it");
-    const far = await emptySpot(cv, 0, 0, true);
+    const far = await emptySpot(cv, 0.9, 0.5); // empty canvas on the right side, not by the zoom buttons at the bottom left
     await cursor.moveToPoint(far[0], far[1]);
     await shot("end");
     await rec.hold(END, "end");

@@ -40,9 +40,10 @@ invented. Commit the new `demo/` and expect every ID to change.
 
 These cost a day to find out. Read them before writing a scene.
 
-- **Frames are taken with `Page.captureScreenshot` at the screen's own resolution, as JPEG** (`lib/record.mjs`), and ffmpeg scales them to 1280 wide. Do not use
-  `page.screenshot({ scale: "css" })` or a DevTools `clip.scale` while a recording runs: both change the page's scale for the capture. The window flickers, hovers
-  and clicks under way are cancelled, and a clip scale can leave the layout zoomed.
+- **Frames come from `Page.startScreencast`** (`lib/record.mjs`, 04 §6.2): a frame arrives when the screen changes, with its own time, at the screen's own resolution, as a JPEG;
+  a still stretch has no frames and the last one stays. Measured on G1 against the `Page.captureScreenshot` loop it replaced: 45 different pictures a second while the
+  screen moves, against 13.7; page scale, resolution and hovers unaffected. Do not use `page.screenshot({ scale: "css" })` or a DevTools `clip.scale` while a recording runs:
+  both change the page's scale for the capture. The window flickers, hovers and clicks under way are cancelled, and a clip scale can leave the layout zoomed. The GIF is 20 fps, 256 colours.
 - **The pointer is drawn into the page** (`lib/cursor.mjs`): a screenshot does not contain the real one. The arrow glides; the real pointer is moved by
   Playwright's `locator.hover()` / `click()` (which reach inside webviews and check what they hit), not along the way: a straight line over a list hovers every row
   and leaves tooltips behind. The arrow is built with DOM calls: VS Code requires Trusted Types, `innerHTML` throws.
@@ -61,8 +62,8 @@ These cost a day to find out. Read them before writing a scene.
   each change (`G1: recorded 14.0 s → 11.8 s` and one line per segment; a `freeze` line is time the marks did not explain: look at it) and writes
   `out/<scene>.edit.json`. Add `{ "from": 6.2, "to": 7.9, "speed": 2 }` or `{ "cut": [3.1, 3.6] }` to its `manual` list and run `--encode-only` to correct an edit by hand; delete the
   file for the automatic one. In a scene, `rec.during(type, label, fn)` marks `fn`, `rec.hold(ms, kind)` marks a hold, and the cursor marks its own glides and drags.
-- **The capture stalls while VS Code is busy** (the first action, an attach, a save), and a stalled frame stays the latest picture for a second or more. The recorder warms up and
-  throws its first frames away; the edit keeps a time window of a cut, and for a wait only frames *taken* in the window, never an older one that spans into it.
+- **The capture can stall while VS Code is busy** (the first action, an attach, a save), and a frame then stays the latest picture for a second or more; the edit keeps a
+  time window of a cut, and for a wait only frames *taken* in the window, never an older one that spans into it.
 - A scene can change settings for itself: `export const settings = { "editor.fontSize": 12 }` (G2 does: its editor groups are narrow).
 - **Wait for state, hold for time**, and `rec.pause()` / `rec.resume()` around a load the viewer would only watch (a cut, not dead time). `settled()` also waits
   for the progress badge and for "Activating Extensions…", which comes late.

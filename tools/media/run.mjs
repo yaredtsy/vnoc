@@ -43,7 +43,7 @@ for (const scene of chosen) {
       const { rec, stats } = await scene.run(stage, { debug, stills });
       rec.save();
       if (stills) console.log(`${stats.frames} beats; the storyboard is ${rec.file}`);
-      else console.log(`${stats.frames} frames in ${stats.seconds.toFixed(1)} s (${stats.fps.toFixed(1)} fps)`);
+      else console.log(`${stats.frames} frames in ${stats.seconds.toFixed(1)} s (${stats.fps.toFixed(1)} frames a second; a frame comes when the screen changes); interval median ${stats.medianMs.toFixed(0)} ms, 95 % ${stats.p95Ms.toFixed(0)} ms, longest ${stats.maxGapMs.toFixed(0)} ms, ${stats.over250} over 250 ms`);
     } catch (error) {
       // what the window showed when the scene failed
       await stage.shot(join(paths.out, "debug", `${scene.id}-failure.png`), { cursor: true }).catch(() => {});
