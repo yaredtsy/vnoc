@@ -1,22 +1,23 @@
-// G1 calls.gif: "What does httpx.get() do?" (docs/18-release-0.2/04-gifs-v2.md §4). It starts in the code, which a viewer knows: `get` in `_api.py`. Right-click →
-// Show Calls opens the canvas beside it; the canvas is maximised; the chevron of `request` opens one level; `request` in `_client.py` is explored with Enter; the
-// chevron of `send` opens one more; F frames the whole chain.
+// G1 calls.gif: "What does httpx.get() do?" (docs/18-release-0.2/04-gifs-v2.md §4, as rewritten after gate 1). It starts in the code, which a viewer knows: `get` in
+// `_api.py`. Right-click → Show Calls opens the canvas beside it; the canvas is maximised; the chevron of `request` opens one level; F fits the view (the four cards,
+// larger); `request` in `_client.py` is explored with Enter. The film ends on Explore, the largest and clearest picture.
 //
 // The scene records freely (§6.1): it waits for state and holds 1.5 s after every change, and never thinks about length. Every beat begins with `rec.beat(name)`,
 // which is a named mark in a film and a picture in `--stills`. Speed is the edit's job, afterwards.
 //
-// Setup, off camera: the window 960 × 600, the Activity Bar and the side bar closed, `_api.py` open with `def get(` a third of the way down, no canvas, the arrow
-// resting under the name. No warm-up and no put-back: a slow first fetch is cut in the edit. Only the mouse for what a new user clicks (a menu, a chevron, a card)
-// and keys for what a user does with keys, each with its badge (§3.6): ⌘K ⌘M, Enter, F.
-import { emptySpot, inView, settled, viewOf, viewSettled, zoomOf } from "../canvas.mjs";
+// Setup, off camera: the window 960 × 600, the Activity Bar and the side bar closed, Focus on `get`, `_api.py` open with `def get(` a third of the way down, nothing
+// selected or highlighted in the code, no canvas, the arrow at rest right of the signature, on no text. No warm-up and no put-back: a slow first fetch is cut in the
+// edit. Only the mouse for what a new user clicks (a menu, a chevron, a card) and keys for what a user does with keys, each with its badge (§3.6): ⌘K ⌘M, F, Enter.
+import { emptySpot, settled, viewOf, viewSettled, zoomOf } from "../canvas.mjs";
 import { recordingFor } from "../stills.mjs";
 
 export const id = "g1";
 export const kind = "gif";
 export const output = "calls.gif";
 export const stills = true; // `--stills` works for this scene
-// the Activity Bar is closed: G1 does not need it, and the sidebar's change when a card is opened (04 §1.1 #4) is then out of the picture
-export const settings = { "workbench.activityBar.location": "hidden" };
+// the Activity Bar is closed: G1 does not need it, and the sidebar's change when a card is opened (04 §1.1 #4) is then out of the picture. Nothing in the code is
+// highlighted: not the other places a word occurs, not the word that is selected, not the bracket the cursor is next to (the line's own box stays: it points at `get`)
+export const settings = { "workbench.activityBar.location": "hidden", "editor.occurrencesHighlight": "off", "editor.selectionHighlight": false, "editor.matchBrackets": "never" };
 
 const HOLD = 1500; // after every change (§6.1); the edit trims it
 const END = 3000;
@@ -57,9 +58,15 @@ async function setup(stage) {
   }
   if (Math.abs(box.y - wanted) > 40) throw new Error(`the name of get is ${Math.round(box.y)} px from the top, not about ${wanted}`);
 
-  // the first frame: a caption, and the arrow resting under the name
+  // nothing selected: the reveal leaves `def` highlighted. A click on the empty part of the signature's line puts the cursor there and clears the selection, and
+  // the arrow rests on the same spot: right of the signature, on no text
+  const rest = [box.x + 260, box.y + box.height / 2];
+  await page.mouse.click(rest[0], rest[1]);
+  await page.mouse.move(200, 20);
+
+  // the first frame: a caption, and the arrow at rest
   await stage.caption("What does httpx.get() do?");
-  await cursor.moveToPoint(box.x + box.width / 2, box.y + box.height + 6);
+  await cursor.moveToPoint(rest[0], rest[1]);
   return { name };
 }
 
@@ -112,10 +119,29 @@ export async function run(stage, { debug, stills: onlyStills }) {
     await shot("open-request");
     await rec.hold(HOLD);
 
-    // 5 · click `request` in `_client.py`, then Enter (Explore): the canvas follows the call to its file
+    // 5 · F fits the view: the four cards centred, and larger (the product's own 300 ms glide). The chevron just clicked has the focus, and F is not a button's key
+    // (04 §8 P5). The size of the cards before and after is measured and written under the picture: 04 §4 says drop this beat if they are not larger
+    await rec.beat("fit");
+    await stage.caption("F: fit the view");
+    const request = callCard(cv, "request", "_client.py");
+    const before = { view: await viewOf(cv), width: (await request.boundingBox()).width };
+    await stage.key("f");
+    await rec.during("wait", "Fit View", async () => {
+      for (let i = 0; i < 60 && (await viewOf(cv)).every((v, k) => Math.abs(v - before.view[k]) < 0.01); i++) await page.waitForTimeout(50);
+      await viewSettled(page, cv);
+    });
+    const after = { view: await viewOf(cv), width: (await request.boundingBox()).width };
+    const sizes = `Fit View: zoom ${(before.view[2] * 100).toFixed(0)} % → ${(after.view[2] * 100).toFixed(0)} %; a card is ${Math.round(before.width)} → ${Math.round(after.width)} px wide`;
+    rec.note(sizes);
+    console.log(`  ${sizes}`);
+    if (after.view.every((v, k) => Math.abs(v - before.view[k]) < 0.01)) throw new Error("F did not change the view: Fit View did not run (04 §8 P5: a chevron has the focus)");
+    await shot("fit");
+    await rec.hold(HOLD);
+
+    // 6 · click `request` in `_client.py`, then Enter (Explore): the canvas follows the call to its file
     await rec.beat("explore");
     await stage.caption("Enter: follow it to its file");
-    await cursor.click(callCard(cv, "request", "_client.py").locator(".node-header").first());
+    await cursor.click(request.locator(".node-header").first());
     await stage.key("Enter");
     await rec.during("wait", "Explore", async () => {
       await callCard(cv, "send").waitFor({ timeout: 15_000 });
@@ -130,44 +156,11 @@ export async function run(stage, { debug, stills: onlyStills }) {
     await shot("explore");
     await rec.hold(HOLD);
 
-    // 6 · the chevron of `send`: its five calls
-    await rec.beat("open-send");
-    await stage.caption("…and one more level");
-    await cursor.click(callCard(cv, "send").getByRole("button", { name: "Expand send" }));
-    // the third column starts at the window's right edge: React Flow draws only the cards in view, so the first of its calls is what shows that it opened
-    await rec.during("reveal", "send's calls", () => callCard(cv, "_set_timeout").waitFor({ timeout: 15_000 }));
-    await settled(page, cv, 300);
-    await shot("open-send");
-    await rec.hold(HOLD);
-
-    // 7 · F frames the whole chain (the product's own 300 ms glide). The chevron just clicked has the focus and the canvas keys leave a focused button alone, so the
-    // arrow first goes to empty canvas and clicks it: the same place the end rests at, and no change on screen
-    await rec.beat("fit");
-    await stage.caption("F: the whole chain in view");
-    const rest = await emptySpot(cv, 0, 0, true);
-    await cursor.clickPoint(rest[0], rest[1]);
-    const before = await viewOf(cv);
-    await stage.key("f");
-    await rec.during("wait", "Fit View", async () => {
-      for (let i = 0; i < 60 && (await viewOf(cv)).every((v, k) => Math.abs(v - before[k]) < 0.01); i++) await page.waitForTimeout(50);
-      await viewSettled(page, cv);
-    });
-    const after = await viewOf(cv);
-    if (after.every((v, k) => Math.abs(v - before[k]) < 0.01)) throw new Error("F did not change the view: Fit View did not run (04 §8 P4)");
-    await shot("fit");
-    await rec.hold(HOLD);
-
-    // 8 · the end: the arrow on empty canvas, the chain in view, 3 s
+    // 7 · the end: the arrow on empty canvas, 3 s. The caption answers the first one, and it is what the picture shows: `request` builds a request and `send` sends it
     await rec.beat("end");
-    await stage.caption("get → request → send");
+    await stage.caption("It builds a request and sends it");
     const far = await emptySpot(cv, 0, 0, true);
     await cursor.moveToPoint(far[0], far[1]);
-    const cards = cv.locator('[aria-label^="call to function "], [aria-label^="function "]');
-    const drawn = await cards.count();
-    const outside = [];
-    for (let i = 0; i < drawn; i++) if (!(await inView(cv, cards.nth(i)))) outside.push(((await cards.nth(i).getAttribute("aria-label")) ?? "").split(",")[0]);
-    rec.note(`${drawn} cards drawn; ${outside.length ? `not fully in view: ${outside.join(", ")}` : "all fully in view"}; zoom ${((await zoomOf(cv)) * 100).toFixed(0)} %`);
-    console.log(`  the end: ${drawn} cards drawn, ${outside.length ? `NOT fully in view: ${outside.join(", ")}` : "all fully in view"}`);
     await shot("end");
     await rec.hold(END, "end");
   } catch (error) {
