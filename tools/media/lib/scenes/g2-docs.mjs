@@ -54,8 +54,17 @@ async function setup(stage) {
   const name = nameInLine(page, `def ${FN}(`, FN);
   await scrollNameTo(stage, name, 200);
 
+  // A click on the name is the pointer's own, at a box that has stopped moving. Playwright's `locator.click` checks what it hits and, when that fails (the editor group
+  // narrows while the docs tab opens), retries with the element scrolled to the start of its scroller: the code ended up scrolled up and to the left, in the first frame
+  // of one take and from the right-click on in another. Nothing is scrolled.
+  const clickName = async (button) => {
+    const box = await cursor.aim(name);
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button });
+  };
+
   // the docs tab beside the code, from the editor's own menu: unpinned, it follows the cursor, and the cursor stays in the code
-  await name.click({ button: "right" });
+  const placed = await cursor.aim(name);
+  await clickName("right");
   // each entry is hovered before it is clicked: a click that lands while the submenu is still opening is lost
   for (const entry of ["V-NOC", "Show Docs"]) {
     const item = page.getByRole("menuitem", { name: entry });
@@ -65,10 +74,12 @@ async function setup(stage) {
   }
   const docs = await webviewWith(page, "text=/No docs on/");
   // the text cursor in the name, and the keyboard in the code
-  await name.click();
+  await clickName("left");
   await page.mouse.move(200, 20);
+  const box = await cursor.aim(name);
+  // the code is where the scene put it, a third of the way down: nothing has scrolled it since (the editor group is narrower now, so only the height is compared)
+  if (Math.abs(box.y - placed.y) > 3) throw new Error(`the code moved during setup: the name was ${Math.round(placed.y)} px from the top and is ${Math.round(box.y)}`);
   // the arrow at rest right of the signature, on no text (the line ends a few characters after the name)
-  const box = await name.boundingBox();
   await cursor.moveToPoint(box.x + box.width + 60, box.y + box.height / 2);
   await stage.caption("A function. No doc yet.");
   return { docs, name };
