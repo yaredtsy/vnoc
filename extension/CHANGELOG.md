@@ -12,6 +12,12 @@ Menus (docs/16-ui-redesign/08-menus.md). **Commands that are gone: a key binding
 - New: **Open in Canvas**, **Explore**, **Go to Call Site…**, **Close** and **Close Others** (the sidebar's panels and the canvas's contexts).
 - The right-click menu of a card and of a sidebar row is one list; a call card has its own menu; the editor's and the Explorer's **V-NOC** submenus are shorter.
 
+Also:
+
+- The canvas and docs tabs show the V-NOC logo.
+- New **Show Selected Node** in the canvas's **…** menu: it centres the selected card.
+- Fixed: the docs tab kept showing the previous node's docs when you moved to a node that has none.
+
 ## 0.1.0
 
 The docs loop, as a pre-release.

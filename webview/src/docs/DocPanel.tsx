@@ -47,7 +47,8 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
     return () => void (current = false);
   }, [nodeId, revision]);
   const loading = nodeId !== null && listed?.nodeId !== nodeId;
-  const docs = !loading && listed ? listed.docs : [];
+  // A node with no docs has no permanent ID (`nodeId` is null): nothing is asked for it, so the last answer belongs to another node and is not shown.
+  const docs = nodeId !== null && listed?.nodeId === nodeId ? listed.docs : [];
 
   // keep the chosen doc while it exists, else the first
   const doc = docs.find((d) => d.path === chosen) ?? docs[0] ?? null;
