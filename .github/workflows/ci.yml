@@ -96,6 +96,11 @@ jobs:
       - name: extension suite in a real VS Code window (downloads VS Code)
         run: ${{ matrix.window }} pnpm --filter vnoc test
 
+  # The four files of every merge, to install by hand before tagging; fills the release caches that a tag run reads. Not in ci-ok's needs: nothing waits for it.
+  package:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/package.yml
+
   # The one required check (docs/18 §7.1). A skip nobody asked for is a failure, not a pass.
   ci-ok:
     if: always()

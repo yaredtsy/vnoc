@@ -1,0 +1,40 @@
+# The four VSIX files, one runner each (docs/18-ci-cd.md §4). Called only: by ci.yml on main, by publish.yml on a tag.
+# No `concurrency:` here: called from one release, it would compute the caller's group and block itself (docs/18 §3.1).
+name: package
+on:
+  workflow_call:
+    inputs:
+      pre-release: { type: boolean, default: false }
+permissions:
+  contents: read
+jobs:
+  package:
+    name: package ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, os: macos-latest }
+          - { target: darwin-x64, os: macos-latest, cross: x86_64-apple-darwin } # cross-built: packaged, not tested (doc 13 §5)
+          - { target: linux-x64, os: ubuntu-22.04 } # the older glibc (doc 13 §5)
+          - { target: win32-x64, os: windows-latest }
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: release-${{ matrix.target }}
+          save-cache: ${{ github.ref == 'refs/heads/main' }} # only main's runs make release caches; a tag run reads them
+      - if: matrix.cross
+        run: |
+          rustup target add ${{ matrix.cross }}
+          (cd drivers/python && rustup target add ${{ matrix.cross }})
+      - run: node scripts/package.mjs --target ${{ matrix.target }} ${{ inputs.pre-release && '--pre-release' || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: vnoc-${{ matrix.target }}.vsix
+          if-no-files-found: error
+          retention-days: 30
