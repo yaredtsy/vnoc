@@ -113,6 +113,7 @@ export async function run(stage, { stills: onlyStills }) {
 
     // 3 · Enter: the title stays Overview, the core writes the ID line, the doc opens as a tab over the code
     await rec.beat("title");
+    await stage.caption("Give it a title");
     await stage.key("Enter");
     await rec.during("reveal", "overview.md", () => tab("overview.md").waitFor({ timeout: 30_000 }));
     await rec.during("wait", "Add Doc", () => settled(page, null, 800));
