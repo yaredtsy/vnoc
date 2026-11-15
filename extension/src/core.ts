@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { LanguageClient, State, TransportKind } from "vscode-languageclient/node";
+import { CloseAction, type ErrorHandler, LanguageClient, State, TransportKind } from "vscode-languageclient/node";
 
 import { chooseBinary } from "@vnoc/shared/binaryChoice.ts";
 import type { MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messages";
@@ -60,32 +60,61 @@ export class Core {
   /** Fires, before `structure()` returns, every time a structure arrives: what the session points at may be gone. */
   readonly onStructure = this.structureArrived.event;
 
+  /** Whether the user was told, in this run, that the core is not coming back (03 §5): once, not on every retry. */
+  private announced = false;
+
   constructor(
     ctx: vscode.ExtensionContext,
     private readonly output: vscode.OutputChannel,
     /** the core has a new index: ask for the structure again */
     onIndexChanged: (revision: number) => void,
+    /** the core is not running and will not start by itself again: it could not start, or the client gave up restarting it. `canRestart`: there is a client to restart. */
+    private readonly onStopped: (reason: string, canRestart: boolean) => void,
   ) {
     this.ready = this.start(ctx, onIndexChanged);
     this.ready.catch((e) => {
       output.appendLine(String(e));
-      vscode.window.showErrorMessage(String(e.message ?? e));
+      this.announceStop(String(e.message ?? e));
     });
+  }
+
+  private announceStop(reason: string): void {
+    if (this.announced) return;
+    this.announced = true;
+    this.onStopped(reason, this.client !== undefined);
+  }
+
+  /** The core's own version (from `initialize`), or undefined when it is not running. A bug report carries it: the extension and the core can differ. */
+  version(): string | undefined {
+    return this.client?.state === State.Running ? this.client.initializeResult?.serverInfo?.version : undefined;
   }
 
   private async start(ctx: vscode.ExtensionContext, onIndexChanged: (revision: number) => void): Promise<void> {
     const folder = vscode.workspace.workspaceFolders?.[0];
     const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"], "The V-NOC core", "build it: `cargo build -p vnoc`");
     const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"], "The Python driver", "build it: `cargo build` in drivers/python");
+    // the client's own handler decides when to restart; when it gives up, the user hears it once, from us, with buttons (its own message is only logged)
+    let defaults: ErrorHandler | undefined;
+    const errorHandler: ErrorHandler = {
+      error: (error, message, count) => defaults!.error(error, message, count),
+      closed: async () => {
+        const result = await defaults!.closed();
+        if (result.action !== CloseAction.DoNotRestart) return result;
+        this.announceStop(result.message ?? "the core closed the connection.");
+        return { ...result, handled: true };
+      },
+    };
     this.client = new LanguageClient(
       "vnoc",
       "V-NOC core",
       { command: core, transport: TransportKind.stdio },
       // not a language server: no document selector. The driver's path and the opened folder travel to the core in `initializationOptions`.
-      { documentSelector: [], outputChannel: this.output, initializationOptions: { driverPath: driver, root: folder?.uri.fsPath } },
+      { documentSelector: [], outputChannel: this.output, errorHandler, initializationOptions: { driverPath: driver, root: folder?.uri.fsPath } },
     );
+    defaults = this.client.createDefaultErrorHandler();
     this.client.onDidChangeState(({ newState }) => {
       if (newState !== State.Running) return;
+      this.announced = false;
       this.epoch++;
       if (this.epoch > 1) this.restartedEmitter.fire();
     });

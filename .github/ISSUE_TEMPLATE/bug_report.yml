@@ -1,0 +1,40 @@
+name: Bug
+description: Something broke, or V-NOC showed the wrong thing.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen
+      description: A small public repo that shows it helps most.
+  - type: input
+    id: vnoc
+    attributes:
+      label: V-NOC version
+      description: "V-NOC: Report Issue… fills this in."
+    validations:
+      required: true
+  - type: input
+    id: vscode
+    attributes:
+      label: Editor and version
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: System
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: "Paste the log here (Report Issue copied it), or use V-NOC: Show Log. It can contain file and function names from your project: remove what you do not want to share."
+      render: text

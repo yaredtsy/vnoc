@@ -36,7 +36,7 @@ export function States({ body, message }: { body: Exclude<SidebarBody, "ready">;
       return (
         <Centered>
           <p className="whitespace-pre-wrap text-destructive">{message || "V-NOC could not read this project."}</p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
               onClick={() => {
@@ -48,6 +48,9 @@ export function States({ body, message }: { body: Exclude<SidebarBody, "ready">;
             </Button>
             <Button size="sm" variant="outline" onClick={() => void request("showLog").catch(() => {})}>
               Show Log
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void request("reportIssue").catch(() => {})}>
+              Report Issue
             </Button>
           </div>
         </Centered>

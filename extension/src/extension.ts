@@ -7,6 +7,8 @@ import { CallTrees } from "./callTree";
 import { Commands } from "./commands";
 import { Core, watchFiles } from "./core";
 import { Docs } from "./docs";
+import { coreStopped, facts, helpAndFeedback, reportIssue } from "./help";
+import { LogTee } from "./report";
 import { CANVAS, DOCS, Surfaces } from "./surfaces";
 import { callLookup } from "@vnoc/shared/calls.ts";
 import { createHandlers } from "./relay";
@@ -40,7 +42,8 @@ let core: Core | undefined;
 const webviewErrors: string[] = [];
 
 export function activate(ctx: vscode.ExtensionContext) {
-  const output = vscode.window.createOutputChannel("V-NOC");
+  // the channel is wrapped so the last lines of the log can be copied into a bug report (the API cannot read a channel back)
+  const output = new LogTee(vscode.window.createOutputChannel("V-NOC"));
   let panels: Surfaces;
   const attention = new AttentionView();
   let commands: Commands;
@@ -54,7 +57,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   const wantCalls = () => {
     if (c.tree) callTrees.update(store.get(), c.tree);
   };
-  const c = new Core(ctx, output, indexChanged);
+  const c = new Core(ctx, output, indexChanged, (reason, canRestart) => void coreStopped(reason, canRestart ? () => c.restart() : undefined));
+  const help = { ctx, log: output, coreVersion: () => c.version() };
   core = c;
   // the call trees first: the session's lookup of what a call id points at reads them
   const callTrees = new CallTrees(c, {
@@ -89,6 +93,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     pickCallSite: (sites) => commands.pickCallSite(sites),
     focusAttention: async () => void (await vscode.commands.executeCommand("vnoc.attention.focus")),
     showLog: async () => output.show(),
+    reportIssue: async () => void (await vscode.commands.executeCommand("vnoc.reportIssue")),
     retryCalls: async (key) => callTrees.retry(key),
     rowClick: (context, id) => commands.rowClick(context, id),
     command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
@@ -109,6 +114,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     registerSidebar(panels),
     attentionTree,
     ...commands.register(),
+    vscode.commands.registerCommand("vnoc.reportIssue", () => reportIssue(help)),
+    vscode.commands.registerCommand("vnoc.help", () => helpAndFeedback(help)),
     watchFiles(c, (fsPath) => docs.changed(fsPath)),
     docs.watchEditors(),
     // every change of the session goes to the open webviews, whole: the canvas, the docs tab and the STRUCTURE view each draw what they need of it
@@ -152,6 +159,9 @@ export function activate(ctx: vscode.ExtensionContext) {
     callTreeLog: () => callTrees.log,
     /** makes every call tree answer at least this slowly, so a test can cancel a request before it is made */
     holdCallTrees: (ms: number) => callTrees.hold(ms),
+    /** what Report Issue fills the form with, and the log it would copy */
+    reportFacts: () => facts(help),
+    logTail: () => output.tail(),
     /** the run of the core: one more after each restart */
     coreEpoch: () => c.epoch,
     /** an intent, as a click on a card would send it */

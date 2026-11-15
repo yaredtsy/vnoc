@@ -29,6 +29,8 @@ export interface Deps {
   focusAttention(): Promise<void>;
   /** reveals the output channel */
   showLog(): Promise<void>;
+  /** the sidebar's error state: Report Issue… (the command asks first, then opens the form) */
+  reportIssue(): Promise<void>;
   /** fetches a call tree again after it failed */
   retryCalls(key: string): Promise<void>;
   /** a click on a sidebar row: the click rule (07 §4) */
@@ -53,6 +55,7 @@ export function createHandlers(d: Deps): Handlers {
     pickCallSite: ({ sites }) => d.pickCallSite(sites),
     focusAttention: () => d.focusAttention(),
     showLog: () => d.showLog(),
+    reportIssue: () => d.reportIssue(),
     retryCalls: ({ key }) => d.retryCalls(key),
     rowClick: ({ context, id }) => d.rowClick(context, id),
     command: ({ name }) => d.command(name),
