@@ -247,6 +247,13 @@ export class Cursor {
     end?.();
   }
 
+  /** The arrow and its ring hidden (G2 is keys only: no mouse is drawn); the key badge and the caption stay. */
+  async hideArrow(hidden = true) {
+    await this.#page.evaluate((h) => {
+      for (const id of ["media-cursor", "media-ring"]) document.getElementById(id)?.classList.toggle("media-hidden", h);
+    }, hidden);
+  }
+
   /** A screenshot of a picture (not a film, not a still of the storyboard) must not show the arrow, the badge or the caption (except where the scene says so). */
   async hide(hidden = true) {
     await this.#page.evaluate((h) => {

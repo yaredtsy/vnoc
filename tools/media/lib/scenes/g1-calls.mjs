@@ -9,6 +9,7 @@
 // selected or highlighted in the code, no canvas, the arrow at rest right of the signature, on no text. No warm-up and no put-back: a slow first fetch is cut in the
 // edit. Only the mouse for what a new user clicks (a menu, a chevron, a card) and keys for what a user does with keys, each with its badge (§3.6): ⌘K ⌘M, F, Enter.
 import { emptySpot, settled, viewOf, viewSettled, zoomOf } from "../canvas.mjs";
+import { nameInLine, scrollNameTo } from "../editor.mjs";
 import { recordingFor } from "../stills.mjs";
 
 export const id = "g1";
@@ -46,17 +47,9 @@ async function setup(stage) {
   await page.locator(".part.sidebar").waitFor({ state: "hidden", timeout: 5000 });
   await page.mouse.move(200, 20);
 
-  // the name of the function, a third of the way down the window: the reveal puts it in the middle, so the editor is scrolled (setup only)
-  const name = page.locator(".view-line", { hasText: "def get(" }).locator("span", { hasText: /^get$/ }).first();
-  let box = await cursor.aim(name);
-  const wanted = 200; // px from the window's top: the tabs and the breadcrumbs above it take about 90
-  for (let round = 0; round < 6 && Math.abs(box.y - wanted) > 15; round++) {
-    await page.mouse.move(box.x + 300, box.y);
-    await page.mouse.wheel(0, box.y - wanted);
-    await page.mouse.move(200, 20);
-    box = await cursor.aim(name);
-  }
-  if (Math.abs(box.y - wanted) > 40) throw new Error(`the name of get is ${Math.round(box.y)} px from the top, not about ${wanted}`);
+  // the name of the function, a third of the way down the window (the tabs and the breadcrumbs above it take about 90 px)
+  const name = nameInLine(page, "def get(", "get");
+  const box = await scrollNameTo(stage, name, 200);
 
   // nothing selected: the reveal leaves `def` highlighted. A click on the empty part of the signature's line puts the cursor there and clears the selection, and
   // the arrow rests on the same spot: right of the signature, on no text

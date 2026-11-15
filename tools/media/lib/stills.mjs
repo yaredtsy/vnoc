@@ -38,6 +38,15 @@ export class Stills {
     this.#pending?.notes.push(text);
   }
 
+  /** An extra picture inside the beat, now (the palette is gone by the end of its beat): shown above the beat's own picture in the storyboard. A film has no use for it. */
+  async look(label) {
+    if (!this.#pending) throw new Error("look() is for inside a beat");
+    await this.#stage.page.waitForTimeout(250);
+    const file = `${String(this.shots.length + 1).padStart(2, "0")}-${this.#pending.name}-${label.replace(/\W+/g, "-")}.jpg`;
+    await this.#stage.page.screenshot({ path: join(this.dir, file), type: "jpeg", quality: 90, scale: "device" });
+    (this.#pending.looks ??= []).push({ file, label });
+  }
+
   async beat(name) {
     await this.#flush();
     if (this.shots.some((s) => s.name === name) || this.#pending?.name === name) throw new Error(`the beat "${name}" is named twice`);
@@ -88,6 +97,8 @@ export class Stills {
       .map(
         (s, i) => `    <figure>
       <figcaption><span class="n">${i + 1}</span> <b>${escape(s.name)}</b>${s.keys.length ? ` <span class="keys">keys: ${s.keys.map(escape).join(" · ")}</span>` : ""}</figcaption>
+${(s.looks ?? []).map((l) => `      <p class="note">in the beat: ${escape(l.label)}</p>\n      <a href="${l.file}"><img src="${l.file}" width="${size.width}" height="${size.height}" alt="${escape(l.label)}"></a>`).join("\n")}
+      <p class="note">${s.looks?.length ? "the end of the beat:" : ""}</p>
       <a href="${s.file}"><img src="${s.file}" width="${size.width}" height="${size.height}" alt="${escape(s.name)}"></a>
       <p class="caption">${s.caption ? `caption: “${escape(s.caption)}”` : "no caption"}</p>${s.notes.map((n) => `\n      <p class="note">${escape(n)}</p>`).join("")}
     </figure>`,

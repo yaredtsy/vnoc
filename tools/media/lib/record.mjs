@@ -140,6 +140,9 @@ export class Recording {
     if (process.env.MEDIA_TIMES) console.log(`  ${this.elapsed.toFixed(1)} s  ${name}`);
   }
 
+  /** An extra picture inside a beat for the storyboard of `--stills`; a film has no use for it. */
+  async look() {}
+
   /** A remark for the storyboard of `--stills` (a zoom, a count); a film has no use for it. */
   note() {}
 
