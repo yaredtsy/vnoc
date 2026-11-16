@@ -1,4 +1,4 @@
-import type { CallTreeResult, EditSaveParams, EditSaveResult, EditStartResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
+import type { CallTreeResult, EditDiffParams, EditSaveParams, EditSaveResult, EditStartResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
 
 import type { Docs } from "./docs";
@@ -21,6 +21,10 @@ export interface Deps {
   editStart(path: string, range: Range, saveFirst: boolean): Promise<EditStartResult>;
   /** Save on a draft: checks the document against what the draft started from, writes it re-indented into the range */
   editSave(params: EditSaveParams): Promise<EditSaveResult>;
+  /** Show Diff: opens the file beside the file with the draft in place */
+  editDiff(params: EditDiffParams): Promise<void>;
+  /** Copy Draft: puts text on the clipboard */
+  copyText(text: string): Promise<void>;
   goToCode(key: string): Promise<void>;
   /** the files with unsaved changes, relative to the opened folder */
   dirtyFiles(): string[];
@@ -53,6 +57,8 @@ export function createHandlers(d: Deps): Handlers {
     code: ({ path, range }) => d.code(path, range),
     editStart: ({ path, range, saveFirst }) => d.editStart(path, range, saveFirst === true),
     editSave: (params) => d.editSave(params),
+    editDiff: (params) => d.editDiff(params),
+    copyText: ({ text }) => d.copyText(text),
     addDoc: async ({ key }) => ({ added: await d.addDoc(key) }),
     openDoc: ({ path }) => d.docs.open(path),
     openLink: ({ href, from }) => d.docs.openLink(href, from),

@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button.tsx";
 import { META_H, type Placed } from "../canvas/layout.ts";
 import { post, request } from "../host.ts";
 import { useDirtyFiles } from "../state/dirty.ts";
-import { type Notice, draftFor, showRefusal } from "../state/draftRules.ts";
+import { ACTION_TEXT, type DraftAction, type Notice, draftFor, showRefusal, stateLine } from "../state/draftRules.ts";
 import { fileStateChanged, setRefused, typeInto, useDrafts } from "../state/drafts.ts";
-import { cardRef, saveAndEdit, saveDraft } from "../state/edit.ts";
+import { cardRef, copyDraft, openInEditor, reloadDraft, saveAndEdit, saveDraft, showDiff } from "../state/edit.ts";
 import { type EditState, editStateOf } from "./editState.ts";
 import { platformNow, staysInCode, swallows } from "./cardKeys.ts";
 import { currentTheme, languageOf, loadMonaco } from "./monaco.ts";
@@ -56,11 +56,26 @@ export function NodeCode({ node }: { node: Placed }) {
     post({ type: "editState", key: node.id, state: editState });
   }, [node.id, editState]);
 
+  const line = draft ? stateLine(draft.state, node.path.slice(node.path.lastIndexOf("/") + 1)) : null;
+  const act: Record<DraftAction, () => void> = {
+    reload: () => void reloadDraft(cardRef(node)),
+    showDiff: () => node.key !== null && showDiff(node.key),
+    openInEditor: () => node.key !== null && openInEditor(node.key),
+    copyDraft: () => node.key !== null && copyDraft(node.key),
+  };
   const shown = draft ? draft.text : state && "text" in state ? dedent(state.text, readingPrefix(node.range?.start.character ?? 0)) : undefined;
   const key = node.key;
   return (
     <>
-      {showRefusal(refused, dirty) ? <Refusal path={node.path} onSaveAndEdit={() => void saveAndEdit(cardRef(node))} /> : notice ? <SaveNotice notice={notice} /> : dirty && <Unsaved path={node.path} />}
+      {showRefusal(refused, dirty) ? (
+        <Refusal path={node.path} onSaveAndEdit={() => void saveAndEdit(cardRef(node))} />
+      ) : line ? (
+        <StateLine text={line.text} actions={line.actions} act={act} />
+      ) : notice ? (
+        <SaveNotice notice={notice} />
+      ) : (
+        dirty && <Unsaved path={node.path} />
+      )}
       {shown !== undefined ? (
         <CodeEditor
           text={shown}
@@ -90,6 +105,23 @@ function Unsaved({ path }: { path: string }) {
     >
       <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
       unsaved in editor
+    </div>
+  );
+}
+
+/** A draft in conflict or gone (§4): what happened, and the buttons for it, in the card's body. */
+function StateLine({ text, actions, act }: { text: string; actions: DraftAction[]; act: Record<DraftAction, () => void> }) {
+  return (
+    <div className="flex flex-none items-center gap-1.5 pr-2 font-mono text-[11px]" style={{ height: META_H, paddingLeft: NAME_X, color: "var(--vscode-descriptionForeground)" }}>
+      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
+      <span className="min-w-0 flex-1 truncate" title={text}>
+        {text}
+      </span>
+      {actions.map((a) => (
+        <Button key={a} variant="secondary" size="xs" className="nodrag nopan h-5 flex-none" title={ACTION_TEXT[a].tip} onClick={act[a]}>
+          {ACTION_TEXT[a].label}
+        </Button>
+      ))}
     </div>
   );
 }

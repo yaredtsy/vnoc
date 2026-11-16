@@ -4,11 +4,12 @@ import * as vscode from "vscode";
 import { type CallId, isCallId, listedSites, resolveCall, siteChoice } from "@vnoc/shared/calls.ts";
 import type { CallTreeNode, Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
-import type { EditSaveParams, EditSaveResult, EditStartResult, Events } from "@vnoc/shared/messages";
+import type { EditDiffParams, EditSaveParams, EditSaveResult, EditStartResult, Events } from "@vnoc/shared/messages";
 import { reindent } from "@vnoc/shared/indent";
 import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
-import { decideSave, outcomeAfterApply } from "./saveDraft";
+import type { DraftDocs } from "./draftDocs";
+import { afterLocate, answerForAlready, firstStep, outcomeAfterApply, withDraft } from "./saveDraft";
 import type { CallTrees } from "./callTree";
 import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
@@ -48,6 +49,9 @@ const command = (run: (arg: unknown, selected?: unknown) => Promise<unknown> | u
   }
 };
 
+/** Where the function of a draft is in a document's text now, or null: the core's `vnoc/locate`. A parameter of Save so that a test can pass its own. */
+export type Locate = (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>;
+
 export class Commands {
   constructor(
     private readonly core: Core,
@@ -56,6 +60,8 @@ export class Commands {
     /** brings the V-NOC side bar up (`vnoc.structure.focus`); the page scrolls the selected row into view by itself */
     private readonly showSidebar: () => Promise<void>,
     private readonly callTrees: CallTrees,
+    /** the in-memory documents "Show Diff" puts beside the file */
+    private readonly draftDocs: DraftDocs,
   ) {}
 
   private readonly request = <T>(method: string, params?: object) => this.core.request<T>(method, params);
@@ -409,23 +415,58 @@ export class Commands {
   }
 
   /**
-   * Save on a draft (docs/17-edit-in-canvas.md §6, E4). `applyEdit` carries no version and applies at any range, so the check is here: the document's version and
-   * the text under the range against the draft's. **No `await` between the read and the call to `applyEdit`**: any await lets the document move on, and nothing
-   * after it would notice. The file is saved only if it was not dirty before: unsaved work of the user's own in a tab is never saved for them.
+   * Save on a draft (docs/17-edit-in-canvas.md §6, E4). `applyEdit` carries no version and applies at any range, so the check is here, in three steps whose rules are
+   * `saveDraft.ts`. The version and the text under the range against the draft's; if the version moved on, the core says where the function is now (`locate`, a
+   * parameter so a test can pass one that edits the document before it answers) and the version is read again after it answers. **No `await` between the last
+   * read and the call to `applyEdit`**: any await lets the document move on, and nothing after it would notice. A draft that was written already answers `saved`,
+   * and writes nothing. The file is saved only if it was not dirty before: unsaved work of the user's own in a tab is never saved for them.
    */
-  async editSaveOf(p: EditSaveParams): Promise<EditSaveResult> {
+  async editSaveOf(p: EditSaveParams, locate: Locate = (key, document) => this.locateInCore(key, document)): Promise<EditSaveResult> {
     const doc = await this.documentIn(p.path);
-    const range = new vscode.Range(p.range.start.line, p.range.start.character, p.range.end.line, p.range.end.character);
-    // from here to `applyEdit`: synchronous
-    const row = decideSave({ draftVersion: p.version, version: doc.version, current: doc.getText(range), base: p.base });
-    if (row === "conflict") return { conflict: true }; // 9.4: the second and third rows (`vnoc/locate`: the function moved, or changed) go here
+    const written = reindent(p.text, p.base, p.prefix, p.eol);
+    const vsRange = (r: Range) => new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+    // from here to the first `await` (the core's answer) or to `applyEdit`: synchronous
+    let at = p.range;
+    const step = firstStep({ draftVersion: p.version, version: doc.version, current: doc.getText(vsRange(p.range)), base: p.base, written });
+    let row: "write" | "already" | "conflict" | "gone";
+    if (step !== "locate") row = step;
+    else {
+      const sent = doc.version;
+      const found = await locate(p.key, { uri: doc.uri.toString(), version: sent, text: doc.getText() });
+      if (found) at = found;
+      row = afterLocate({ found: found !== null, sentVersion: sent, version: doc.version, current: found ? doc.getText(vsRange(found)) : "", base: p.base, written });
+    }
+    if (row === "gone") return { gone: true };
+    if (row === "conflict") return { conflict: true };
+    if (row === "already") return answerForAlready(doc.isDirty) === "saved" ? { saved: true } : { written: true };
     const wasDirty = doc.isDirty;
     const edit = new vscode.WorkspaceEdit();
-    edit.replace(doc.uri, range, reindent(p.text, p.base, p.prefix, p.eol));
+    edit.replace(doc.uri, vsRange(at), written);
     const applied = await vscode.workspace.applyEdit(edit);
     const saved = applied && !wasDirty && (await doc.save());
     const outcome = outcomeAfterApply(applied, saved);
     return outcome === "conflict" ? { conflict: true } : outcome === "saved" ? { saved: true } : { written: true };
+  }
+
+  /** Where the core finds the function in this text, or null. */
+  private async locateInCore(key: string, document: { uri: string; version: number; text: string }): Promise<Range | null> {
+    const found = await this.core.request<{ range: Range } | null>("vnoc/locate", { key, document });
+    return found?.range ?? null;
+  }
+
+  /**
+   * Show Diff on a conflict: the file on the right, on the left the file with the draft in the function's place (where the core finds it now, else where the draft
+   * started), in VS Code's diff editor. The left is a document in memory (`vnoc-draft:`): nothing is written.
+   */
+  async editDiffOf(p: EditDiffParams): Promise<void> {
+    const doc = await this.documentIn(p.path);
+    const found = await this.locateInCore(p.key, { uri: doc.uri.toString(), version: doc.version, text: doc.getText() }).catch(() => null);
+    const range = found ?? p.range;
+    const from = doc.offsetAt(new vscode.Position(range.start.line, range.start.character));
+    const to = doc.offsetAt(new vscode.Position(range.end.line, range.end.character));
+    const left = this.draftDocs.add(doc.uri, withDraft(doc.getText(), from, to, reindent(p.text, p.base, p.prefix, p.eol)));
+    const name = p.key.slice(p.key.indexOf("::") + 2);
+    await vscode.commands.executeCommand("vscode.diff", left, doc.uri, `${name}: your draft ↔ ${path.basename(p.path)}`);
   }
 
   /** The document of a file below the opened folder: the path comes from the webview, so it must stay inside it. */

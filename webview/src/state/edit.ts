@@ -51,16 +51,19 @@ const INDEX_WAIT_MS = 3000;
  * Resolves when the index has moved on from `before` (a newer revision, or another run of the core), or after a few seconds: a save that changed no byte may not
  * bump it. Start it before the save is asked for, so an index that is quick is not missed.
  */
-function indexCaughtUp(before: ReturnType<typeof useData.getState>["structure"]): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(done, INDEX_WAIT_MS);
-    const stop = useData.subscribe((s) => indexMovedOn(before, s.structure) && done());
-    function done() {
+function indexCaughtUp(before: ReturnType<typeof useData.getState>["structure"]): { done: Promise<void>; cancel: () => void } {
+  let done!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, INDEX_WAIT_MS);
+    const stop = useData.subscribe((s) => indexMovedOn(before, s.structure) && finish());
+    function finish() {
       clearTimeout(timer);
       stop();
       resolve();
     }
+    done = finish;
   });
+  return { done: promise, cancel: done };
 }
 
 /**
@@ -75,7 +78,7 @@ export async function saveAndEdit(card: CardRef): Promise<void> {
   } catch {
     // the save failed or was refused: the second step says so again, as a refusal
   }
-  await moved;
+  await moved.done;
   const root = useData.getState().structure?.root;
   const fresh = (root && findNode(root, card.key)?.range) || card.range;
   await beginEdit({ ...card, range: fresh });
@@ -90,9 +93,13 @@ export function discardDraft(key: string): void {
 
 /**
  * Save (the button, and ⌘S in Monaco; docs/17-edit-in-canvas.md §6): nothing is sent when the draft equals its start. Otherwise the draft is `saving` (Save and
- * Discard disabled) while the host checks and writes. `saved` or `written`: the card keeps showing the saved text, read-only, until the index has moved on (read
- * at the old range from the new text it would show the wrong lines), then the draft goes and the card reads its code at the new range. `conflict`: the draft
- * stays, in `conflict`. An error: back to `editing`, with the reason.
+ * Discard disabled) while the host checks and writes.
+ * - `saved`: the card keeps showing the saved text, read-only, until the index has moved on (read at the old range from the new text it would show the wrong
+ *   lines), then the draft goes and the card reads its code at the new range.
+ * - `written` (the file had unsaved changes, so it was not saved): the index will not move, so the draft goes at once, and the card reads its code and says
+ *   "unsaved in editor" (9.1) and "Written into the file, not saved".
+ * - `conflict` or `gone`: nothing was written; the draft stays, in that state, with its line and buttons.
+ * - an error: back to `editing`, with the reason.
  */
 export async function saveDraft(key: string): Promise<void> {
   const d = useDrafts.getState().drafts[key];
@@ -103,19 +110,47 @@ export async function saveDraft(key: string): Promise<void> {
   const moved = indexCaughtUp(useData.getState().structure);
   let answer;
   try {
-    answer = await request("editSave", { path: d.path, range: d.range, version: d.version, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text });
+    answer = await request("editSave", { key, path: d.path, range: d.range, version: d.version, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text });
   } catch (e) {
+    moved.cancel();
     setDraftState(key, "editing");
     setNotice(d.card, noticeFor("error", file, (e as Error).message));
     return;
   }
   const outcome = savedAs(answer);
-  if (outcome === "conflict") {
-    setDraftState(key, "conflict");
-    setNotice(d.card, noticeFor("conflict", file));
+  if (outcome === "conflict" || outcome === "gone") {
+    moved.cancel();
+    setDraftState(key, outcome);
     return;
   }
-  await moved;
-  if (outcome === "written") setNotice(d.card, noticeFor("written", file));
+  if (outcome === "written") {
+    moved.cancel();
+    setNotice(d.card, noticeFor("written", file));
+  } else await moved.done;
   dropDraft(key);
+}
+
+/** Reload, on a conflict: nothing of the draft is kept. The draft goes and a new one starts from the file's text now, at the node's range now. */
+export async function reloadDraft(card: CardRef): Promise<void> {
+  if (card.key === null) return;
+  discardDraft(card.key);
+  await beginEdit(card);
+}
+
+/** Show Diff, on a conflict: the file beside the file with the draft in the function's place. The draft stays. */
+export function showDiff(key: string): void {
+  const d = useDrafts.getState().drafts[key];
+  if (d) void request("editDiff", { key, path: d.path, range: d.range, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text }).catch(() => {});
+}
+
+/** Open in Editor, on a function that is gone: the file, where the draft started. */
+export function openInEditor(key: string): void {
+  const d = useDrafts.getState().drafts[key];
+  if (d) void request("openAt", { path: d.path, range: d.range }).catch(() => {});
+}
+
+/** Copy Draft, on a function that is gone: the draft's text, as the card shows it. The host's clipboard: the page's may be blocked. */
+export function copyDraft(key: string): void {
+  const d = useDrafts.getState().drafts[key];
+  if (d) void request("copyText", { text: d.text }).catch(() => {});
 }

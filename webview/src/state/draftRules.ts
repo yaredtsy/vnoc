@@ -104,16 +104,16 @@ export function withState(drafts: Drafts, key: string, state: DraftState): Draft
 export const canSave = (d: Draft | undefined): d is Draft => d !== undefined && d.state === "editing" && isChanged(d);
 
 /** What the host's answer to `editSave` means for the card. */
-export function savedAs(answer: EditSaveResult): "saved" | "written" | "conflict" {
-  return "conflict" in answer ? "conflict" : "written" in answer ? "written" : "saved";
+export function savedAs(answer: EditSaveResult): "saved" | "written" | "conflict" | "gone" {
+  return "conflict" in answer ? "conflict" : "gone" in answer ? "gone" : "written" in answer ? "written" : "saved";
 }
 
 /**
- * The line above the code that says what happened to the last Save (9.3b). `written`: the text is in the file's buffer, not on disk, because the file was dirty (E4).
- * It stays until the file is saved. `conflict` and `error` stay with the draft.
+ * The line above the code that says what the last Save did (9.3b, 9.4b). `written`: the text is in the file's buffer, not on disk, because the file was dirty (E4); it
+ * stays until the file is saved. `error`: the request failed; it stays with the draft. A conflict and a gone function are states of the draft, and their line is `stateLine`.
  */
 export interface Notice {
-  kind: "written" | "conflict" | "error";
+  kind: "written" | "error";
   text: string;
 }
 
@@ -121,12 +121,35 @@ export function noticeFor(kind: Notice["kind"], file: string, detail?: string): 
   switch (kind) {
     case "written":
       return { kind, text: `Written into ${file}, not saved.` };
-    case "conflict":
-      return { kind, text: "Changed in the editor since you started" };
     case "error":
       return { kind, text: detail ? `Could not save: ${detail}` : "Could not save" };
   }
 }
 
-/** The "written, not saved" line goes when the file is saved (or reverted): nothing is waiting any more. The others are the draft's. */
+/** The "written, not saved" line goes when the file is saved (or reverted): nothing is waiting any more. The error is the draft's. */
 export const noticeAfterFileState = (notice: Notice | undefined, fileDirty: boolean): Notice | undefined => (notice?.kind === "written" && !fileDirty ? undefined : notice);
+
+export type DraftAction = "reload" | "showDiff" | "openInEditor" | "copyDraft";
+
+/**
+ * A draft in `conflict` or `gone` says so in the card's body, with what can be done about it (§4); the header keeps `editing`'s buttons with Save disabled
+ * (`cardButtons`). The line follows the draft's state, so it comes back with the draft after a reload. `editing` and `saving` have none.
+ */
+export function stateLine(state: DraftState, file: string): { text: string; actions: DraftAction[] } | null {
+  switch (state) {
+    case "conflict":
+      return { text: "Changed in the editor since you started", actions: ["reload", "showDiff"] };
+    case "gone":
+      return { text: `Not found in ${file} any more`, actions: ["openInEditor", "copyDraft"] };
+    default:
+      return null;
+  }
+}
+
+/** The button of an action, and what it says it does. Reload keeps nothing, and says so. */
+export const ACTION_TEXT: Record<DraftAction, { label: string; tip: string }> = {
+  reload: { label: "Reload", tip: "Start again from the file's text now: what you typed in the card is lost" },
+  showDiff: { label: "Show Diff", tip: "Your draft against the file, in the diff editor" },
+  openInEditor: { label: "Open in Editor", tip: "Open the file" },
+  copyDraft: { label: "Copy Draft", tip: "Copy the draft's text to the clipboard" },
+};

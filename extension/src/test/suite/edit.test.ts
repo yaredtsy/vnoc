@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import type { EditStartResult, Range, TreeNode } from "@vnoc/shared/messages";
+import type { EditSaveParams, EditSaveResult, EditStartResult, Range, TreeNode } from "@vnoc/shared/messages";
 import type { Intent } from "@vnoc/shared/session.ts";
 import { allNodes } from "@vnoc/shared/tree";
 import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
@@ -17,6 +17,7 @@ interface Api {
   dirtyFiles(): string[];
   editStates(): { key: string; state: string }[];
   viewCommand(data: { name: "setDraft" | "save"; key: string; text?: string }): void;
+  editSave(params: EditSaveParams, locate?: (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>): Promise<EditSaveResult>;
   checkKeys(): void;
   keysChecked(): { found: boolean; target: string; taken: string[] }[];
   editStart(path: string, range: Range, saveFirst?: boolean): Promise<EditStartResult>;
@@ -219,9 +220,24 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     await restoreFixture(file(), original);
   });
 
+  /**
+   * Waits until the index shows the function where the fixture has it. The test before may have deleted it, or moved it a line, and put the file back: the index
+   * reads that a moment later, and a draft started on the way would have the wrong lines.
+   */
+  async function inFixturePlace(id: string): Promise<TreeNode> {
+    const line = (needle: string) => original.split("\n").findIndex((l) => l.includes(needle));
+    const start: Record<string, number> = { "nested.py::decorated": line("@staticmethod"), "nested.py::coro": line("async def coro") };
+    let found: TreeNode | undefined;
+    await waitFor(`the index to have ${id} where the fixture has it`, async () => {
+      found = allNodes((await api.structure()).root).find((n) => n.id === id);
+      return found?.range?.start.line === start[id];
+    }, 30_000);
+    return found!;
+  }
+
   /** Edit on the card, as the menu does, until this canvas says `editing`; the position in the page's notes from which to read what it says next. */
   async function startEditing(id: string): Promise<{ since: number; base: string }> {
-    const node = allNodes((await api.structure()).root).find((n) => n.id === id)!;
+    const node = await inFixturePlace(id);
     assert.ok(node?.range, `${id} is in the fixture`);
     await vscode.commands.executeCommand("vnoc.openCanvas");
     await until("the canvas tab", () => canvasTabs().length === 1);
@@ -288,7 +304,29 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     }
   });
 
-  test("the file changed in a tab and saved since the draft started: Save is a conflict, and the file is as the tab left it", async () => {
+  test("a line added at the top of the file in a tab and saved: Save writes the draft at the function's new place, and not another byte moves (§11 c)", async () => {
+    const id = "nested.py::decorated";
+    try {
+      const { base } = await startEditing(id);
+      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") });
+      // the user, in a tab: a comment added above everything, and saved
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(document.uri, new vscode.Position(0, 0), "# top\n");
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.ok(await document.save());
+
+      api.viewCommand({ name: "save", key: id });
+      const expected = "# top\n" + original.replace("return 9\n", "return 99\n");
+      await waitFor("the file to have the comment and the draft, in the function's new place", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      await closeCanvas();
+      await restoreFixture(file(), original);
+    }
+  });
+
+  test("the file changed in a tab and saved since the draft started: Save is a conflict, and the file is as the tab left it (§11 d)", async () => {
     const id = "nested.py::decorated";
     try {
       const { since, base } = await startEditing(id);
@@ -310,6 +348,104 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     } finally {
       await closeCanvas();
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      await restoreFixture(file(), original);
+    }
+  });
+
+  test("an edit elsewhere in a tab that is not saved: Save writes into the buffer and not the disk, the tab stays dirty (§11 e)", async () => {
+    const id = "nested.py::decorated";
+    try {
+      const { since, base } = await startEditing(id);
+      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") });
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(document.uri, new vscode.Position(0, 0), "# top, not saved\n");
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.ok(document.isDirty);
+
+      api.viewCommand({ name: "save", key: id });
+      await waitFor("the draft to be in the buffer", () => document.getText().includes("return 99"), 30_000);
+      assert.strictEqual(document.getText(), "# top, not saved\n" + original.replace("return 9\n", "return 99\n"), "the draft is in the buffer, at the function's new place, and the user's own edit is still there");
+      assert.ok(document.isDirty, "E4: the user's unsaved work is never saved for them");
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), original, "nothing reached the disk");
+      await waitFor("the card to drop the draft at once", () => statesOf(id, since).at(-1) === "reading", 5_000);
+    } finally {
+      await closeCanvas();
+      await restoreFixture(file(), original);
+    }
+  });
+
+  test("the function is deleted in a tab and saved: Save says gone, and writes nothing", async () => {
+    const id = "nested.py::decorated";
+    try {
+      const { since, base } = await startEditing(id);
+      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") });
+      const node = allNodes((await api.structure()).root).find((n) => n.id === id)!;
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+      const edit = new vscode.WorkspaceEdit();
+      edit.delete(document.uri, new vscode.Range(node.range!.start.line, node.range!.start.character, node.range!.end.line, node.range!.end.character));
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.ok(await document.save());
+      const tab = fs.readFileSync(file(), "utf8");
+      assert.ok(!tab.includes("def decorated"));
+
+      api.viewCommand({ name: "save", key: id });
+      await waitFor("the card to say gone", () => statesOf(id, since).at(-1) === "gone", 30_000);
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), tab, "nothing was written");
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      await closeCanvas();
+      await restoreFixture(file(), original);
+    }
+  });
+
+  /** What the card sends for a draft of `id` whose text has `from` replaced by `to`. */
+  async function draftParams(id: string, from: string, to: string): Promise<EditSaveParams & { range: Range }> {
+    const node = await inFixturePlace(id);
+    const got = await api.editStart("nested.py", node.range!);
+    assert.ok("text" in got);
+    return { key: id, path: "nested.py", range: node.range!, version: got.version, base: got.text, prefix: got.prefix, eol: got.eol, text: got.text.replace(from, to) };
+  }
+
+  test("the core's answer comes after the document moved on: a conflict, and nothing is written (§11 g, §6's re-check)", async () => {
+    try {
+      const params = await draftParams("nested.py::decorated", "return 9", "return 99");
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+      const top = new vscode.WorkspaceEdit();
+      top.insert(document.uri, new vscode.Position(0, 0), "# one\n");
+      assert.ok(await vscode.workspace.applyEdit(top)); // the version moved: the host asks where the function is
+      let asked = 0;
+      // a core that finds the function (one line down) but lets the document change before it says so
+      const answer = await api.editSave(params, async (_key, sent) => {
+        asked++;
+        const during = new vscode.WorkspaceEdit();
+        during.insert(document.uri, new vscode.Position(0, 0), "# two\n");
+        assert.ok(await vscode.workspace.applyEdit(during));
+        assert.ok(document.version > sent.version);
+        return { start: { line: params.range.start.line + 1, character: params.range.start.character }, end: { line: params.range.end.line + 1, character: params.range.end.character } };
+      });
+      assert.strictEqual(asked, 1);
+      assert.deepStrictEqual(answer, { conflict: true });
+      assert.strictEqual(document.getText(), "# two\n# one\n" + original, "only the two edits of the test: the draft was not written");
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), original, "and nothing reached the disk");
+    } finally {
+      await restoreFixture(file(), original);
+    }
+  });
+
+  test("Save twice on the same draft: the second answers saved and writes nothing", async () => {
+    try {
+      const params = await draftParams("nested.py::decorated", "return 9", "return 99");
+      assert.deepStrictEqual(await api.editSave(params), { saved: true });
+      const expected = original.replace("return 9\n", "return 99\n");
+      await waitFor("the first Save to be on disk", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
+      const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file())!;
+      const version = document.version;
+      // the page's Save again, or a Save the page lost with a reload: the version moved, the core finds the function, and it holds what Save would write
+      assert.deepStrictEqual(await api.editSave(params), { saved: true });
+      assert.strictEqual(document.version, version, "the document was not edited");
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), expected);
+    } finally {
       await restoreFixture(file(), original);
     }
   });

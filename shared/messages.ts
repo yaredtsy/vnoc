@@ -145,6 +145,8 @@ export type EditStartResult = { dirty: true } | { text: string; version: number;
 
 /** What a draft sends to be written: where it was, what it started from (`version`, `base`), how to put the indent and the line endings back, and the text. */
 export interface EditSaveParams {
+  /** the draft's key: the structure node, which the core looks for when the document moved on */
+  key: string;
   path: string;
   range: Range;
   version: number;
@@ -153,7 +155,18 @@ export interface EditSaveParams {
   eol: "\n" | "\r\n";
   text: string;
 }
-export type EditSaveResult = { saved: true } | { written: true } | { conflict: true };
+export type EditSaveResult = { saved: true } | { written: true } | { conflict: true } | { gone: true };
+
+/** What "Show Diff" needs: the draft, and what it started from, so the host can put the draft where the function is now. */
+export interface EditDiffParams {
+  key: string;
+  path: string;
+  range: Range;
+  base: string;
+  prefix: string;
+  eol: "\n" | "\r\n";
+  text: string;
+}
 
 /** webview → extension, with an answer. One line per request: its parameters and its result. */
 export interface Requests {
@@ -171,9 +184,14 @@ export interface Requests {
   /**
    * Save on a draft (docs/17-edit-in-canvas.md §6): the host checks the document's version and the text at `range` against the draft's `version` and `base`, and
    * writes the draft re-indented into the range. `saved`: written and the file saved. `written`: written into the buffer, not saved (the file was dirty, E4).
-   * `conflict`: nothing was written (the document moved on).
+   * `conflict`: nothing was written (the document moved on, or the function changed). `gone`: nothing was written (the text has no such function). A draft that was
+   * saved already (a second Save) answers `saved` and writes nothing.
    */
   editSave: { params: EditSaveParams; result: EditSaveResult };
+  /** Show Diff on a conflict: the file beside the file with the draft in the function's place, in VS Code's diff editor */
+  editDiff: { params: EditDiffParams; result: void };
+  /** Copy Draft on a function that is gone: the webview's own clipboard may be blocked, the host's is not */
+  copyText: { params: { text: string }; result: void };
   addDoc: { params: { key: string }; result: { added: boolean } };
   openDoc: { params: { path: string }; result: void };
   openLink: { params: { href: string; from: string }; result: void };

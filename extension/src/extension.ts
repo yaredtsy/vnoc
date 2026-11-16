@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
 
-import type { Events, Notes, Range } from "@vnoc/shared/messages";
+import type { EditSaveParams, Events, Notes, Range } from "@vnoc/shared/messages";
 import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
-import { Commands } from "./commands";
+import { Commands, type Locate } from "./commands";
 import { Core, watchFiles } from "./core";
 import { DirtyFiles } from "./dirtyWatch";
+import { DRAFT_SCHEME, DraftDocs } from "./draftDocs";
 import { Docs } from "./docs";
 import { coreStopped, facts, helpAndFeedback, reportIssue } from "./help";
 import { LogTee } from "./report";
@@ -80,6 +81,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     dropped: (key) => panels.emit("callTreeDropped", { key }),
     reset: () => panels.emit("callTreesReset", {}),
   });
+  const draftDocs = new DraftDocs();
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
@@ -97,6 +99,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     code: (path, range) => commands.codeOf(path, range),
     editStart: (path, range, saveFirst) => commands.editStartOf(path, range, saveFirst),
     editSave: (params) => commands.editSaveOf(params),
+    editDiff: (params) => commands.editDiffOf(params),
+    copyText: async (text) => void (await vscode.env.clipboard.writeText(text)),
     goToCode: (key) => commands.goToCodeOf(key),
     dirtyFiles: () => dirty.paths,
     callTrees: () => callTrees.all(),
@@ -114,7 +118,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
     wantCalls();
   }));
-  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees);
+  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs);
 
   const attentionTree = vscode.window.createTreeView("vnoc.attention", { treeDataProvider: attention });
 
@@ -131,6 +135,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     watchFiles(c, (fsPath) => docs.changed(fsPath)),
     docs.watchEditors(),
     dirty.watch(),
+    vscode.workspace.registerTextDocumentContentProvider(DRAFT_SCHEME, draftDocs),
     // every change of the session goes to the open webviews, whole: the canvas, the docs tab and the STRUCTURE view each draw what they need of it
     store.onChange(({ next }) => {
       panels.emit("session", next);
@@ -210,6 +215,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     keysChecked: () => keysCheckedPosts,
     /** the host's answer to Edit on a range (the request a card makes) */
     editStart: (path: string, range: Range, saveFirst = false) => commands.editStartOf(path, range, saveFirst),
+    /** the host's answer to Save on a draft; `locate` stands in for the core's `vnoc/locate`, so a test can edit the document before it answers */
+    editSave: (params: EditSaveParams, locate?: Locate) => commands.editSaveOf(params, locate),
     /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
     codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */

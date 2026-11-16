@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Draft, type Drafts, canSave, draftFor, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, startText, typed, withDraft, withState, without } from "./draftRules.ts";
+import { type Draft, type Drafts, canSave, draftFor, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
 
 // The rules of a draft (docs/17-edit-in-canvas.md §4, §5, E6).
 
@@ -128,24 +128,49 @@ test("Save does something only while editing a draft that differs from its start
   for (const state of ["saving", "conflict", "gone"] as const) assert.equal(canSave({ ...changed, state }), false, state);
 });
 
-test("the host's answer: saved, written, conflict", () => {
+test("the host's answer: saved, written, conflict, gone", () => {
   assert.equal(savedAs({ saved: true }), "saved");
   assert.equal(savedAs({ written: true }), "written");
   assert.equal(savedAs({ conflict: true }), "conflict");
+  assert.equal(savedAs({ gone: true }), "gone");
 });
 
 test("the line above the code says what happened, with the file's name", () => {
   assert.deepEqual(noticeFor("written", "a.py"), { kind: "written", text: "Written into a.py, not saved." });
-  assert.deepEqual(noticeFor("conflict", "a.py"), { kind: "conflict", text: "Changed in the editor since you started" });
   assert.deepEqual(noticeFor("error", "a.py", "the core is gone"), { kind: "error", text: "Could not save: the core is gone" });
   assert.equal(noticeFor("error", "a.py").text, "Could not save");
 });
 
-test("`written, not saved` goes when the file is saved, and the other lines do not go with the file", () => {
+test("`written, not saved` goes when the file is saved, and the error does not go with the file", () => {
   const written = noticeFor("written", "a.py");
   assert.equal(noticeAfterFileState(written, true), written, "still dirty: still not saved");
   assert.equal(noticeAfterFileState(written, false), undefined);
-  const conflict = noticeFor("conflict", "a.py");
-  assert.equal(noticeAfterFileState(conflict, false), conflict);
+  const error = noticeFor("error", "a.py", "the core is gone");
+  assert.equal(noticeAfterFileState(error, false), error);
   assert.equal(noticeAfterFileState(undefined, false), undefined);
+});
+
+// 9.4b: conflict and gone
+test("a conflict says so and offers Reload and Show Diff; a gone function says so and offers Open in Editor and Copy Draft; editing and saving say nothing", () => {
+  assert.deepEqual(stateLine("conflict", "a.py"), { text: "Changed in the editor since you started", actions: ["reload", "showDiff"] });
+  assert.deepEqual(stateLine("gone", "a.py"), { text: "Not found in a.py any more", actions: ["openInEditor", "copyDraft"] });
+  assert.equal(stateLine("editing", "a.py"), null);
+  assert.equal(stateLine("saving", "a.py"), null);
+});
+
+test("every action has a label and a tooltip; Reload's says what is lost", () => {
+  for (const a of ["reload", "showDiff", "openInEditor", "copyDraft"] as const) {
+    assert.ok(ACTION_TEXT[a].label.length > 0 && ACTION_TEXT[a].tip.length > 0, a);
+  }
+  assert.match(ACTION_TEXT.reload.tip, /lost/);
+  assert.deepEqual(["reload", "showDiff", "openInEditor", "copyDraft"].map((a) => ACTION_TEXT[a as keyof typeof ACTION_TEXT].label), ["Reload", "Show Diff", "Open in Editor", "Copy Draft"]);
+});
+
+test("a draft in conflict or gone keeps its text, and cannot be saved", () => {
+  const d = started({ text: "changed" });
+  for (const state of ["conflict", "gone"] as const) {
+    const held = withState({ k: { ...d, key: "k" } }, "k", state);
+    assert.equal(held.k.text, "changed");
+    assert.equal(canSave(held.k), false);
+  }
 });
