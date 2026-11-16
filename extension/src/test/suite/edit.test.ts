@@ -1108,6 +1108,24 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
     }
   }
   const edited = (text: string) => text.replace("# Why decorated", "# Why decorated, edited\n\nA paragraph written in the panel.");
+  const openDoc = () => vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
+
+  /**
+   * The doc as `before` on disk and in VS Code's copy, through VS Code if it holds the file (as the 9.6a suite's `putBack`): a file written behind its back leaves the document
+   * with the edited text on Linux, and the next test's pencil answers that text as its baseline, so typing the same text starts no draft. It does not close the editors:
+   * the blocks that call it close the pages themselves, in an order.
+   */
+  async function putDocBack() {
+    const open = openDoc();
+    if (open && open.getText() !== before) {
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(open.uri, new vscode.Range(0, 0, open.lineCount, 0), before);
+      await vscode.workspace.applyEdit(edit);
+    }
+    if (open?.isDirty) await open.save();
+    if (fs.readFileSync(docPath, "utf8") !== before) fs.writeFileSync(docPath, before);
+    await waitFor("the doc, on disk and in VS Code, to be as put back", () => fs.readFileSync(docPath, "utf8") === before && (openDoc()?.getText() ?? before) === before);
+  }
 
   test("on the canvas: the pencil in the docs panel shows the source with no draft, typing starts the draft, Save: the .md on disk changed, the panel shows the rendered doc again, and the bar counted the draft meanwhile", async () => {
     try {
@@ -1140,12 +1158,14 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
     } finally {
       discardOnClose();
       await closeCanvas();
-      fs.writeFileSync(docPath, before);
+      await putDocBack();
     }
   });
 
   test("in the docs tab: the same, and the tab's own drafts are the `docs` page's in the host's copy", async () => {
     try {
+      const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
+      assert.ok(!open || open.getText() === before, "VS Code's copy of the doc is the doc on disk: the last test put it back through VS Code");
       const since = api.editStates().length;
       await vscode.commands.executeCommand("vnoc.showDocs", node);
       await until("the docs tab", () => docsTabs().length === 1);
@@ -1159,7 +1179,7 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
     } finally {
       discardOnClose();
       await closeDocsTab();
-      fs.writeFileSync(docPath, before);
+      await putDocBack();
     }
   });
 
@@ -1167,6 +1187,8 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
     const shown: { message: string; buttons: string[] }[] = [];
     api.setDraftNotify(async (message, ...buttons) => (shown.push({ message, buttons }), "Reopen Docs Tab"));
     try {
+      const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
+      assert.ok(!open || open.getText() === before, "VS Code's copy of the doc is the doc on disk: the last test put it back through VS Code");
       const since = api.editStates().length;
       await vscode.commands.executeCommand("vnoc.showDocs", node);
       await until("the docs tab", () => docsTabs().length === 1);
@@ -1207,7 +1229,7 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
       discardOnClose();
       await closeCanvas();
       await closeDocsTab();
-      fs.writeFileSync(docPath, before);
+      await putDocBack();
     }
   });
 });
