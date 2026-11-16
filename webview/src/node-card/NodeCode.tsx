@@ -5,15 +5,10 @@ import { META_H, type Placed } from "../canvas/layout.ts";
 import { post, request } from "../host.ts";
 import { useDirtyFiles } from "../state/dirty.ts";
 import { currentTheme, languageOf, loadMonaco } from "./monaco.ts";
+import { dedent, readingPrefix } from "./indent.ts";
 import { NAME_X } from "./rows.ts";
 
 type State = { text: string } | { error: string } | null;
-
-/** Lines after the first still carry the definition's own indentation (the range starts at `def`, not at the line start): take it off. */
-function dedent(text: string, indent: number): string {
-  const [first, ...rest] = text.split("\n");
-  return [first, ...rest.map((l) => l.slice(Math.min(indent, l.length - l.trimStart().length)))].join("\n");
-}
 
 /**
  * The node's own source, read by the host from VS Code's document (so unsaved edits show), shown in Monaco coloured by Shiki. Read-only for now.
@@ -31,7 +26,7 @@ export function NodeCode({ node }: { node: Placed }) {
       (text) => {
         if (!live) return;
         setState({ text });
-        post({ type: "codeShown", key: node.id, dirty: dirtyNow.current, text: dedent(text, node.range?.start.character ?? 0) });
+        post({ type: "codeShown", key: node.id, dirty: dirtyNow.current, text: dedent(text, readingPrefix(node.range?.start.character ?? 0)) });
       },
       (e: Error) => live && setState({ error: e.message }),
     );
@@ -43,7 +38,7 @@ export function NodeCode({ node }: { node: Placed }) {
   return (
     <>
       {dirty && <Unsaved path={node.path} />}
-      {!state ? <div className="node-code muted">loading…</div> : "error" in state ? <div className="node-code error">{state.error}</div> : <CodeEditor text={dedent(state.text, node.range?.start.character ?? 0)} path={node.path} firstLine={node.line ?? 1} />}
+      {!state ? <div className="node-code muted">loading…</div> : "error" in state ? <div className="node-code error">{state.error}</div> : <CodeEditor text={dedent(state.text, readingPrefix(node.range?.start.character ?? 0))} path={node.path} firstLine={node.line ?? 1} />}
     </>
   );
 }

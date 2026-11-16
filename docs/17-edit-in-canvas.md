@@ -84,13 +84,16 @@ Closing a card in editing asks "Save / Discard / Cancel".
 | code closed | Focus · Go to Code · `</>` · Add Doc (unchanged) |
 | code open, reading | Focus · Go to Code · `</>` · **Edit** · Add Doc |
 | editing | Focus · Go to Code · **Save** · **Discard** · Add Doc |
+| saving | `editing`'s buttons with **Save** and **Discard** disabled |
+| conflict, gone | `editing`'s buttons with **Save** disabled |
+
+**Call cards edit their callee** (decided 2026-11-16). A call card has `</>` today, so in reading it gets **Edit** too: Explore · Go to Code · `</>` · **Edit**. While editing it shows Explore · Go to Code · **Save** · **Discard** (the same states as the table: `saving` disables both, `conflict` disables Save). The draft is keyed by the callee's key, not by the card, so 9.5's one-draft-per-node rule covers a structure card and a call card on the same function. A card with a code slot is a class or function card with a range, or a call card whose callee is known and has a range. A file card has none (below, §7).
 
 - Nothing appears, moves or hides on hover (`04` §3): the buttons change with the card's state only, and **Save** stays in the same place for the whole edit. It is disabled while the draft equals `base` and enabled once the draft differs. The dirty dot before the name shows at the same time.
 - `</>` and **Edit** give their two slots to **Save** and **Discard**, so the code cannot be closed with its button in the middle of a draft. Closing the card still asks Save / Discard / Cancel.
 - Codicons: `edit`, `save`, `discard`. A tooltip names the key where there is one: "Save (⌘S)".
 - The footer has no Save or Discard. The conflict and gone states keep their buttons (**Reload**, **Show Diff**; **Open in Editor**, **Copy Draft**) in the card's body.
 - With the code open in the reading state the header holds five buttons, and a name gets about 11 characters instead of 14.
-- **Gap:** the header in `saving`, `conflict` and `gone` is not decided here. Proposal for 9.2: `saving` is `editing` with Save and Discard disabled; `conflict` and `gone` show `editing`'s buttons with Save disabled.
 
 ## 5. Opening a draft
 
@@ -104,6 +107,8 @@ Closing a card in editing asks "Save / Discard / Cancel".
    - `version`: `document.version`;
    - `prefix`: the text of the first line **before** `range.start` (the `def`'s indentation, tabs or spaces as written).
 4. The card keeps `{ key, path, range, version, base: text, prefix }` and shows the text dedented, as today (`NodeCode.tsx`, `dedent`).
+
+**While a card has a draft it never reads its code again** (decided 2026-11-16). In reading, `NodeCode` reads again on a new range and on a flip of its file's dirty state (9.1). In `editing`, `saving`, `conflict` and `gone` it keeps the draft and the draft's own `{ path, range, version, base, prefix }`, whatever the index or the tab does: a change under it is found at save time, by §6's checks, not by moving the draft. Discard drops the draft, and the card reads again, as in reading.
 
 ## 6. Saving a draft
 
@@ -130,7 +135,17 @@ is the third row, not the second.
 
 The card shows the text with the first line's indent taken off the other lines. On save, every line after the first that is not empty gets
 `prefix` back in front. The first line goes in as it is (the range starts after `prefix`). A test pins that `dedent` then re-indent gives back
-the same bytes for spaces, tabs, empty lines and a docstring with less indent than the `def` (`dedent` takes off only what is there).
+the same bytes for spaces, tabs and empty lines, when every line after the first starts with `prefix` (`dedent` takes off only what is there).
+
+**Gap (found in 9.2a, not decided).** The pair is not an inverse when a line does not start with `prefix`, so the claim "a docstring with less indent than the `def`" cannot hold: `dedent` takes off what is there and `reindent` gives back the whole prefix. Three cases lose bytes, and `indent.test.ts` pins each as a known loss:
+
+| Line in the file | After `dedent` then `reindent` |
+|---|---|
+| a line indented less than `prefix` (a docstring line at the margin) | indented as `prefix`: **a docstring's text changes** |
+| a line of only whitespace | empty |
+| a blank line of a CRLF file | `dedent` drops its `\r`, and a blank `\r` line that is kept gets the prefix |
+
+A draft saves only when it differs from its start, but it rewrites the whole range, so one edit can change a line it did not touch. Options, **ask**: (1) `editStart` refuses a slice that does not round-trip, "This function has lines indented less than its `def`: edit it in the editor" (never changes a byte the user did not type; cannot edit such a function in the card); (2) treat a whitespace-only line as empty in both directions, and refuse only the margin lines and CRLF (fewer refusals); (3) the draft keeps what each line lost and `reindent` gives it back (exact; more code, and a typed edit on such a line needs a rule). Recommendation: (1) in 9.3, before the first write, with (2) if it refuses too much of real code.
 
 ### Writing it
 
@@ -157,7 +172,7 @@ the same bytes for spaces, tabs, empty lines and a docstring with less indent th
 | the same file in two cards (two functions) | each draft is its own range. The first save changes the version, so the second save takes the second row of §6, one `vnoc/locate` |
 | ⌘S when the focus is in the card | **Decided (9.0, check A).** While the card is `editing`, a `keydown` listener on the card's container (bubble phase) calls `stopPropagation()` for ⌘S, ⌘⌥S and ⌘⇧S, and for no other key. Monaco's `addCommand(CtrlCmd + S)` runs first and saves the draft. ⌘⌥S in the card saves the draft only. ⌘⇧S does nothing. **Windows and Linux (decided, not tried):** the same with Ctrl: the card swallows Ctrl+S and Ctrl+Shift+S while editing. Ctrl+K S (Save All) is a chord whose first key must reach VS Code, so it is not swallowed: VS Code saves its dirty files, and the draft, which is not a file, stays in the card, unsaved. Accepted. Every other key passes, so ⌘P, ⌘W, ⌘B… still reach VS Code with the focus in the card. Which keys a card swallows, by edit state, is a pure function next to the card with a table test (9.2, §11 f). `preventDefault()` alone does not stop VS Code (measured; §10) |
 | the window closes with a draft open | the draft is lost. VS Code cannot ask a webview before closing. The canvas's bar shows "1 unsaved draft" while there is one, so it is visible |
-| a file and a folder card | file: the slice is the whole file, same flow. A folder has no code, so no **Edit** |
+| a file and a folder card | **file: later; folder: never** (decided 2026-11-16). A file card has no `</>` (`cardButtons.ts`: code in the card is for a definition with a range), so it has no code to edit and no **Edit**. A folder has no code at all |
 
 ## 8. The doc panel: the same rule for Markdown
 
@@ -188,7 +203,8 @@ On a branch `edit-in-canvas` from `main`. Each row is one commit and leaves `pnp
 |---|---|---|
 | **9.0** | three checks, written into this file: ⌘S in a webview Monaco with `addCommand` and VS Code's Save both bound · `WorkspaceEdit` on a document that has moved on (Q4 in `08`) · `vscode.setState` with a 100 KB draft | **done 2026-11-16.** The answers in §7, §6 and E6, the **[check]** marks removed; the measurements are under the table |
 | **9.1** | **done 2026-11-16.** reading: the host holds the set of files with unsaved changes (`extension/src/dirtyWatch.ts`; the pure part, `dirtyFiles.ts`, has the table test) and pushes it as the event `dirtyFiles { paths }` whenever it changes: on a keystroke that flips `isDirty`, on a save, on an undo back to the saved text, on a revert, on a close without saving. A page does not wait for a push: it asks once when it starts (the request `dirtyFiles`, as it asks for the session), because an event sent before a new page listens is lost. The card (`NodeCode`) marks "unsaved in editor" in one line above its code, in the code area, while its file is in the set, and reads its code again when that flips. A note `codeShown { key, dirty, text }` for the tests. (Not a field of `codeOf`'s answer: an answer is stale the moment the user types in the tab, and the card asks only when it opens or its range changes.) **As built:** the canvas draws only the cards on screen (`03` §6.1), so a card that left the page shows no mark, and one that comes back reads its code, and its file's state, again. | a window test (`edit.test.ts`): code shown, no mark · an edit in the file, the mark · a save, no mark · an edit and a revert, no mark |
-| **9.2** | `editStart` in `shared/messages.ts`, the host's request table (`extension/src/extension.ts:88`) and `commands.ts` · the Edit row in the node menu · the card's editing state, the draft in `setState`, and the header's buttons by state (§4), which come from `cardButtons.ts`: it gets the card's edit state as input and its table test is extended for the three states; `ActionStrip` only draws them · `dedent` / re-indent as a pair · `webview/src/node-card/cardKeys.ts`: which keys an editing card swallows (§7), and the listener on the card's container that uses it | the re-indent tests (§11 a) · the key table test (§11 f) · the `cardButtons` table test (code closed, code open reading, editing) · by hand: Edit, type, Discard, ⌘P with the focus in the card |
+| **9.2a** | **done 2026-11-16.** The pure rules, no change on screen: `webview/src/node-card/indent.ts` (`dedent` and `reindent` with the `prefix` string; `NodeCode` uses it, with today's output) · `cardKeys.ts`: which keys an editing card swallows (§7) · `cardButtons.ts` takes the card's edit state (`closed`, `reading`, `editing`, `saving`, `conflict`, `gone`) and `ActionStrip` can draw Edit, Save and Discard. The card passes none yet, so it draws what it drew (Edit is a button of `reading`, and `reading` is 9.2b's) | the re-indent tests (§11 a) · the key table test (§11 f) · the `cardButtons` table test, every state, for a function card and a call card |
+| **9.2b** | `editStart` in `shared/messages.ts`, the host's request table and `commands.ts` · the Edit row in the node menu · the card's editing state, the draft in `setState`, and Edit, Save and Discard working as far as 9.2 goes (Save does nothing until 9.3) · the listener on the code's container that uses `swallows` | by hand: Edit, type, Discard, ⌘P with the focus in the card · a window test: the menu's Edit, the card says `editing` |
 | **9.3** | `editSave`, the first row of §6, and E4's save rule | a window test: edit a function in the card, ⌘S, the file on disk has the new text and the tree updates |
 | **9.4** | `vnoc/locate` in the core · the second and third rows · the conflict and gone states · the save logic takes `locate` as a parameter (§6, the re-check after it answers) | the core test (§11 b) · window tests (§11 c, d, g) |
 | **9.5** | §7: the `ID:` line warning, one draft per node, the close question, "1 unsaved draft" in the bar | window tests (§11 e) |
@@ -206,7 +222,7 @@ On a branch `edit-in-canvas` from `main`. Each row is one commit and leaves `pnp
 
 | | Where | Checks |
 |---|---|---|
-| a | `webview/src/node-card/indent.test.ts` | `reindent(dedent(x)) == x` for spaces, tabs, empty lines, a short-indented docstring, a one-line function |
+| a | `webview/src/node-card/indent.test.ts` | `reindent(dedent(x, p), p) == x` for spaces, tabs, empty lines, a docstring indented as the body, a one-line function, no prefix · the three cases of the §6 gap pinned as known losses (a margin docstring line, a whitespace-only line, a CRLF blank line) |
 | b | `crates/vnoc/tests/` (lifecycle) | `vnoc/locate` on a text where a function moved down 10 lines: the new range · by qualname when it has no ID · `null` when it was deleted |
 | c | window suite | draft open → a line added at the top of the file in a tab and saved → ⌘S in the card writes at the new place |
 | d | window suite | draft open → the same function changed in a tab and saved → ⌘S in the card: conflict, the file is unchanged |

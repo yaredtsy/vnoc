@@ -47,3 +47,59 @@ test("on the focused row Focus is there and does nothing, as on the card", () =>
   const b = cardButtons({ id: "a.py", kind: "file", range: null, role: "node", key: "a.py" }, true, "sidebar");
   assert.deepEqual(b.map((x) => [x.id, x.disabled]), [["focus", true], ["goToCode", false], ["addDoc", false]]);
 });
+
+// the code's slot by edit state (docs/17-edit-in-canvas.md §4)
+const STATES = ["closed", "reading", "editing", "saving", "conflict", "gone"] as const;
+const strip = (node: Parameters<typeof cardButtons>[0], state: (typeof STATES)[number], changed = false, surface: "canvas" | "sidebar" = "canvas") => cardButtons(node, false, surface, { state, changed });
+const fn = { id: "a.py::f", kind: "function" as const, range: RANGE, role: "node" as const, key: "a.py::f" };
+const calleeCard = { id: "call:[...]", kind: "function" as const, range: RANGE, role: "call" as const, key: "lib.py::leaf" };
+
+const slot: Record<(typeof STATES)[number], string[]> = { closed: ["code"], reading: ["code", "edit"], editing: ["save", "discard"], saving: ["save", "discard"], conflict: ["save", "discard"], gone: ["save", "discard"] };
+for (const state of STATES) {
+  test(`a function card, ${state}: ${["focus", "goToCode", ...slot[state], "addDoc"].join(" · ")}`, () => assert.deepEqual(strip(fn, state).map((b) => b.id), ["focus", "goToCode", ...slot[state], "addDoc"]));
+  test(`a class card, ${state}: the same slot`, () => assert.deepEqual(strip({ ...fn, kind: "class" }, state).map((b) => b.id), ["focus", "goToCode", ...slot[state], "addDoc"]));
+  test(`a call card, ${state}: ${["explore", "goToCode", ...slot[state]].join(" · ")}`, () => assert.deepEqual(strip(calleeCard, state).map((b) => b.id), ["explore", "goToCode", ...slot[state]]));
+}
+
+test("Save is enabled only while editing a draft that differs from its start", () => {
+  const save = (state: (typeof STATES)[number], changed: boolean) => strip(fn, state, changed).find((b) => b.id === "save")?.disabled;
+  assert.equal(save("editing", false), true, "the draft equals its start");
+  assert.equal(save("editing", true), false);
+  for (const state of ["saving", "conflict", "gone"] as const) assert.equal(save(state, true), true, `${state}: disabled even when it differs`);
+  assert.equal(strip(calleeCard, "editing", true).find((b) => b.id === "save")?.disabled, false, "on a call card too");
+});
+
+test("Discard is disabled while it saves, and in no other state", () => {
+  for (const state of ["editing", "conflict", "gone"] as const) assert.equal(strip(fn, state, true).find((b) => b.id === "discard")?.disabled, false, state);
+  assert.equal(strip(fn, "saving", true).find((b) => b.id === "discard")?.disabled, true);
+});
+
+test("Edit is never disabled, and nothing else changes with the state: Focus keeps its rule, Explore is never disabled", () => {
+  assert.equal(strip(fn, "reading").find((b) => b.id === "edit")?.disabled, false);
+  assert.equal(cardButtons(fn, true, "canvas", { state: "editing", changed: true }).find((b) => b.id === "focus")?.disabled, true);
+  assert.ok(strip(calleeCard, "reading").every((b) => !b.disabled));
+});
+
+test("a card without code has no slot in any state: a file, a folder, a function without a range, a callee without a range", () => {
+  for (const state of STATES) {
+    assert.deepEqual(strip({ id: "a.py", kind: "file", range: RANGE, role: "node", key: "a.py" }, state).map((b) => b.id), ["focus", "goToCode", "addDoc"], `file, ${state}`);
+    assert.deepEqual(strip({ id: "pkg", kind: "folder", range: null, role: "node", key: "pkg" }, state).map((b) => b.id), ["focus", "addDoc"], `folder, ${state}`);
+    assert.deepEqual(strip({ ...fn, range: null }, state).map((b) => b.id), ["focus", "goToCode", "addDoc"], `no range, ${state}`);
+    assert.deepEqual(strip({ ...calleeCard, range: null }, state).map((b) => b.id), ["explore", "goToCode"], `callee without range, ${state}`);
+  }
+  assert.deepEqual(strip({ ...calleeCard, key: null, range: null }, "editing"), [], "an unknown callee has none");
+});
+
+test("a sidebar row never shows `</>`, Edit, Save or Discard, whatever it is told", () => {
+  for (const state of STATES) {
+    for (const kind of ["folder", "file", "class", "function"] as const) {
+      const ids = strip({ id: kind, kind, range: kind === "class" || kind === "function" ? RANGE : null, role: "node", key: kind }, state, true, "sidebar").map((b) => b.id);
+      assert.ok(!ids.some((id) => ["code", "edit", "save", "discard"].includes(id)), `${kind} row, ${state}: ${ids}`);
+    }
+  }
+});
+
+test("the default is the card with its code closed: today's buttons", () => {
+  assert.deepEqual(cardButtons(fn, false).map((b) => b.id), ["focus", "goToCode", "code", "addDoc"]);
+  assert.deepEqual(cardButtons(calleeCard, false).map((b) => b.id), ["explore", "goToCode", "code"]);
+});
