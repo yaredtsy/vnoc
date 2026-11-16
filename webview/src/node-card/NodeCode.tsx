@@ -1,18 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import type * as Monaco from "monaco-editor/editor/editor.api.js";
 
 import { dedent, readingPrefix } from "@vnoc/shared/indent.ts";
-import { Button } from "@/components/ui/button.tsx";
 import { META_H, type Placed } from "../canvas/layout.ts";
 import { post, request } from "../host.ts";
 import { useDirtyFiles } from "../state/dirty.ts";
-import { ACTION_TEXT, type DraftAction, ELSEWHERE_TEXT, type Notice, draftFor, editBlock, showElsewhere, showRefusal, stateLine } from "../state/draftRules.ts";
+import { type DraftAction, ELSEWHERE_TEXT, draftFor, editBlock, showElsewhere, showRefusal, stateLine } from "../state/draftRules.ts";
 import { fileStateChanged, setElsewhere, setRefused, typeInto, useDrafts } from "../state/drafts.ts";
 import { cardRef, copyDraft, openInEditor, reloadDraft, saveAndEdit, saveDraft, showDiff } from "../state/edit.ts";
-import { type EditState, editStateOf } from "./editState.ts";
-import { platformNow, staysInCode, swallows } from "./cardKeys.ts";
-import { currentTheme, languageOf, loadMonaco } from "./monaco.ts";
-import { CODE_FIELD_CLASS } from "./codeField.ts";
+import { CodeEditor } from "./CodeEditor.tsx";
+import { Elsewhere, Refusal, SaveNotice, StateLine } from "./DraftLines.tsx";
+import { editStateOf } from "./editState.ts";
 import { NAME_X } from "./rows.ts";
 
 type State = { text: string } | { error: string } | null;
@@ -73,9 +70,9 @@ export function NodeCode({ node }: { node: Placed }) {
   return (
     <>
       {showRefusal(refused, dirty) ? (
-        <Refusal path={node.path} onSaveAndEdit={() => void saveAndEdit(cardRef(node))} />
+        <Refusal path={node.path} tip={(file) => `${file} has unsaved changes. Edit needs the saved file: the card's lines come from the last save.`} onSaveAndEdit={() => void saveAndEdit(cardRef(node))} />
       ) : elsewhere ? (
-        <Elsewhere />
+        <Elsewhere text={ELSEWHERE_TEXT} tip={`${ELSEWHERE_TEXT}: one draft per function`} />
       ) : line ? (
         <StateLine text={line.text} actions={line.actions} act={act} />
       ) : notice ? (
@@ -116,152 +113,3 @@ function Unsaved({ path }: { path: string }) {
   );
 }
 
-/** §7: Edit was refused because another card holds this node's draft (that card is brought into view). */
-function Elsewhere() {
-  return (
-    <div className="flex flex-none items-center gap-1.5 pr-3 font-mono text-[11px]" style={{ height: META_H, paddingLeft: NAME_X, color: "var(--vscode-descriptionForeground)" }} title={`${ELSEWHERE_TEXT}: one draft per function`}>
-      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
-      <span className="min-w-0 flex-1 truncate">{ELSEWHERE_TEXT}</span>
-    </div>
-  );
-}
-
-/** A draft in conflict or gone (§4): what happened, and the buttons for it, in the card's body. */
-function StateLine({ text, actions, act }: { text: string; actions: DraftAction[]; act: Record<DraftAction, () => void> }) {
-  return (
-    <div className="flex flex-none items-center gap-1.5 pr-2 font-mono text-[11px]" style={{ height: META_H, paddingLeft: NAME_X, color: "var(--vscode-descriptionForeground)" }}>
-      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
-      <span className="min-w-0 flex-1 truncate" title={text}>
-        {text}
-      </span>
-      {actions.map((a) => (
-        <Button key={a} variant="secondary" size="xs" className="nodrag nopan h-5 flex-none" title={ACTION_TEXT[a].tip} onClick={act[a]}>
-          {ACTION_TEXT[a].label}
-        </Button>
-      ))}
-    </div>
-  );
-}
-
-/** What the last Save did (9.3b), in the same line as the other marks: written but not saved, a conflict, or the reason a save failed. */
-function SaveNotice({ notice }: { notice: Notice }) {
-  const color = notice.kind === "error" ? "var(--vscode-editorError-foreground)" : "var(--vscode-editorWarning-foreground)";
-  return (
-    <div className="flex flex-none items-center gap-1.5 pr-3 font-mono text-[11px]" style={{ height: META_H, paddingLeft: NAME_X, color: "var(--vscode-descriptionForeground)" }} title={notice.text}>
-      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: color }} />
-      <span className="min-w-0 flex-1 truncate">{notice.text}</span>
-    </div>
-  );
-}
-
-/** E5, in the card's body: Edit was refused because the file has unsaved changes. The card's range comes from the last save. */
-function Refusal({ path, onSaveAndEdit }: { path: string; onSaveAndEdit: () => void }) {
-  const file = path.slice(path.lastIndexOf("/") + 1);
-  return (
-    <div className="flex flex-none items-center gap-1.5 pr-2 font-mono text-[11px]" style={{ height: META_H, paddingLeft: NAME_X, color: "var(--vscode-descriptionForeground)" }}>
-      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
-      <span className="min-w-0 flex-1 truncate" title={`${file} has unsaved changes. Edit needs the saved file: the card's lines come from the last save.`}>
-        Save {file} first
-      </span>
-      <Button variant="secondary" size="xs" className="nodrag nopan h-5 flex-none" onClick={onSaveAndEdit}>
-        Save and Edit
-      </Button>
-    </div>
-  );
-}
-
-interface EditorProps {
-  text: string;
-  path: string;
-  firstLine: number;
-  editState: EditState;
-  /** the user typed: the draft's text */
-  onText: (text: string) => void;
-  /** ⌘S, or ⌘⌥S, in the editor */
-  onSave: () => void;
-}
-
-function CodeEditor({ text, path, firstLine, editState, onText, onSave }: EditorProps) {
-  const host = useRef<HTMLDivElement>(null);
-  const editor = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const editable = editState === "editing";
-  // the first value for the editor when it is created; later changes go through `setValue` / options below
-  const initial = useRef({ text, path, firstLine, editable });
-  // what the editor's handlers read when they run: the latest props, without making the editor again
-  const live = useRef({ editable, editState, onText, onSave });
-  live.current = { editable, editState, onText, onSave };
-
-  useEffect(() => {
-    let disposed = false;
-    loadMonaco().then((monaco) => {
-      if (disposed || !host.current) return;
-      const i = initial.current;
-      editor.current = monaco.editor.create(host.current, {
-        value: i.text,
-        language: languageOf(i.path),
-        // Monaco's own hidden textarea, not its EditContext (a div): VS Code's webview takes ⌘X and ⌘V, and sends them back to the page to run on the focused
-        // element, where a textarea cuts and pastes and the EditContext div did nothing (⌘C only reads the selection, so it worked)
-        editContext: false,
-        readOnly: !i.editable,
-        theme: currentTheme(), // Shiki builds its colour map when an editor is created with a theme; without it everything is one colour
-        automaticLayout: true, // the card is resized by the canvas; Monaco follows its container
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-        lineNumbers: (n) => String(n + i.firstLine - 1), // lines of the file, not of the slice
-        lineNumbersMinChars: 4,
-        folding: false,
-        glyphMargin: false,
-        renderLineHighlight: "none",
-        domReadOnly: !i.editable,
-        contextmenu: false,
-        fontSize: 11,
-        fontFamily: getComputedStyle(document.body).getPropertyValue("--editor-font") || "monospace",
-        overviewRulerLanes: 0,
-        hideCursorInOverviewRuler: true,
-        scrollbar: { alwaysConsumeMouseWheel: false, verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-      });
-      const e = editor.current;
-      // ⌘S and ⌘⌥S (Ctrl+S elsewhere) save the draft, and only the draft; `swallows` below keeps VS Code from also running its own Save
-      e.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => live.current.onSave());
-      e.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyS, () => live.current.onSave());
-      // typing is the draft; `setValue` (a read, a discard) is not typing
-      e.onDidChangeModelContent(() => live.current.editable && live.current.onText(e.getValue()));
-    });
-    return () => {
-      disposed = true;
-      editor.current?.dispose();
-      editor.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const box = host.current;
-    if (!box) return;
-    // The card's container, bubble phase: Monaco's own handler runs first (it is lower down), then this one keeps the key from VS Code (docs/17 §7, measured in 9.0)
-    const onKey = (ev: KeyboardEvent) => {
-      const key = { key: ev.key, code: ev.code, meta: ev.metaKey, ctrl: ev.ctrlKey, alt: ev.altKey, shift: ev.shiftKey };
-      // VS Code's own Save keys (9.0), and the typing keys React Flow would take from a field because a modifier is held (9.2c)
-      if (swallows(live.current.editState, key, platformNow()) || staysInCode(live.current.editState, key)) ev.stopPropagation();
-    };
-    box.addEventListener("keydown", onKey);
-    return () => box.removeEventListener("keydown", onKey);
-  }, []);
-
-  useEffect(() => {
-    editor.current?.updateOptions({ readOnly: !editable, domReadOnly: !editable });
-  }, [editable]);
-
-  useEffect(() => {
-    const e = editor.current;
-    if (!e) {
-      initial.current = { text, path, firstLine, editable };
-      return;
-    }
-    if (e.getValue() !== text) e.setValue(text);
-    const model = e.getModel();
-    if (model) loadMonaco().then((m) => !model.isDisposed() && m.editor.setModelLanguage(model, languageOf(path)));
-    e.updateOptions({ lineNumbers: (n) => String(n + firstLine - 1) });
-  }, [text, path, firstLine]);
-
-  return <div ref={host} className={CODE_FIELD_CLASS} />;
-}

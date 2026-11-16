@@ -86,7 +86,7 @@ function ViewCommands({ laid }: { laid: Layout }) {
         // the suite cannot type or press keys in a webview: these two are the draft's text and Save, as a person's typing and ⌘S would make them
         else if (name === "setDraft" && card.key !== null && text !== undefined) typeInto(card.key, text);
         else if (name === "save" && card.key !== null) void saveDraft(card.key);
-      } else if (key) setCodeOpen(key, name === "showCode");
+      } else if (key && (name === "showCode" || name === "hideCode")) setCodeOpen(key, name === "showCode");
     });
     window.addEventListener(FIT_VIEW_EVENT, fit); // the F key (canvas/keys.ts)
     return () => {

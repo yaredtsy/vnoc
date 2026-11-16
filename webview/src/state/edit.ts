@@ -7,11 +7,12 @@ import { findNode } from "@vnoc/shared/tree.ts";
 import type { Placed } from "../canvas/layout.ts";
 import { request } from "../host.ts";
 import { unsavedDrafts, nextCard } from "../canvas/top-bar/unsavedDrafts.ts";
-import { canSave, editBlock, indexMovedOn, newDraft, noticeFor, savedAs } from "./draftRules.ts";
+import { canSave, editBlock, indexMovedOn, markKey, newDocDraft, newDraft, noticeFor, savedAs } from "./draftRules.ts";
+import { PAGE } from "./page.ts";
 import { useData } from "./data.ts";
 import { dropDraft, putDraft, setDraftState, setElsewhere, setNotice, setRefused, useDrafts } from "./drafts.ts";
 import { dispatch } from "./session.ts";
-import { setCodeOpen } from "./view.ts";
+import { setCodeOpen, setDocsOpen } from "./view.ts";
 
 /** What an edit starts from: the card, and the code it shows (a call card's is its callee's). */
 export interface CardRef {
@@ -68,6 +69,8 @@ export function revealNextDraft(): void {
   if (next === null) return;
   lastCycled = next;
   revealCard(next);
+  // a doc's draft shows in the doc panel: open it, for the node the draft was started on (the reveal selected it)
+  if (Object.values(useDrafts.getState().drafts).some((d) => d.kind === "doc" && d.card === next)) setDocsOpen(true);
 }
 
 /** The longest the card waits for the index to catch up with a save. */
@@ -113,7 +116,7 @@ export async function saveAndEdit(card: CardRef): Promise<void> {
 /** Discard: the draft goes, and the card reads its code again (`NodeCode` does it when the draft is gone). */
 export function discardDraft(key: string): void {
   const d = useDrafts.getState().drafts[key];
-  if (d) setNotice(d.card, null);
+  if (d) setNotice(markKey(d), null);
   dropDraft(key);
 }
 
@@ -132,16 +135,18 @@ export async function saveDraft(key: string): Promise<void> {
   const d = useDrafts.getState().drafts[key];
   if (!canSave(d)) return;
   const file = d.path.slice(d.path.lastIndexOf("/") + 1);
-  setNotice(d.card, null);
+  const mark = markKey(d);
+  setNotice(mark, null);
   setDraftState(key, "saving");
-  const moved = indexCaughtUp(useData.getState().structure);
+  // a doc is not in the index: there is nothing to wait for, and the draft goes as soon as the host has written it (§8)
+  const moved = d.kind === "doc" ? { done: Promise.resolve(), cancel: () => {} } : indexCaughtUp(useData.getState().structure);
   let answer;
   try {
-    answer = await request("editSave", { key, path: d.path, range: d.range, version: d.version, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text });
+    answer = await request("editSave", { ...(d.kind ? { kind: d.kind } : {}), key, path: d.path, range: d.range, version: d.version, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text });
   } catch (e) {
     moved.cancel();
     setDraftState(key, "editing");
-    setNotice(d.card, noticeFor("error", file, (e as Error).message));
+    setNotice(mark, noticeFor("error", file, (e as Error).message));
     return;
   }
   const outcome = savedAs(answer);
@@ -157,7 +162,7 @@ export async function saveDraft(key: string): Promise<void> {
   }
   if (outcome === "written") {
     moved.cancel();
-    setNotice(d.card, noticeFor("written", file));
+    setNotice(mark, noticeFor("written", file));
   } else await moved.done;
   dropDraft(key);
 }
@@ -172,17 +177,60 @@ export async function reloadDraft(card: CardRef): Promise<void> {
 /** Show Diff, on a conflict: the file beside the file with the draft in the function's place. The draft stays. */
 export function showDiff(key: string): void {
   const d = useDrafts.getState().drafts[key];
-  if (d) void request("editDiff", { key, path: d.path, range: d.range, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text }).catch(() => {});
+  if (d) void request("editDiff", { ...(d.kind ? { kind: d.kind } : {}), key, path: d.path, range: d.range, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text }).catch(() => {});
 }
 
-/** Open in Editor, on a function that is gone: the file, where the draft started. */
+/** Open in Editor, on a function that is gone (the file, where the draft started) or a doc that is gone (the `.md`). */
 export function openInEditor(key: string): void {
   const d = useDrafts.getState().drafts[key];
-  if (d) void request("openAt", { path: d.path, range: d.range }).catch(() => {});
+  if (!d) return;
+  // a doc is opened as a doc, from anywhere in the repository (`openAt` is for a file below the opened folder)
+  void (d.kind === "doc" ? request("openDoc", { path: d.path }) : request("openAt", { path: d.path, range: d.range })).catch(() => {});
 }
 
 /** Copy Draft, on a function that is gone: the draft's text, as the card shows it. The host's clipboard: the page's may be blocked. */
 export function copyDraft(key: string): void {
   const d = useDrafts.getState().drafts[key];
   if (d) void request("copyText", { text: d.text }).catch(() => {});
+}
+
+/** What an Edit on a doc starts from (§8): the Markdown file's absolute path, and the node the panel shows it for (the draft's `card`). */
+export interface DocRef {
+  path: string;
+  node: string;
+}
+
+/**
+ * Edit on a doc in the panel (§8): the host opens the document. If the `.md` has unsaved changes in a tab it says so and the panel shows E5's message (`refused`); if the other page has a
+ * draft of it, `busy`, and the panel says which page; otherwise a draft of the whole file starts in `editing`. A doc this page already has a draft of is left alone. `saveFirst` is Save and
+ * Edit: there is no range to wait for, so the host saves and answers the draft's start at once.
+ */
+export async function beginDocEdit(doc: DocRef, saveFirst = false): Promise<"started" | "refused" | "busy" | "ignored" | "failed"> {
+  if (useDrafts.getState().drafts[doc.path]) return "ignored";
+  setNotice(doc.path, null);
+  try {
+    const got = await request("editStart", { kind: "doc", path: doc.path, page: PAGE, saveFirst });
+    if ("dirty" in got) {
+      setElsewhere(doc.path, false);
+      setRefused(doc.path, true);
+      return "refused";
+    }
+    if ("busy" in got) {
+      setRefused(doc.path, false);
+      setElsewhere(doc.path, true);
+      return "busy";
+    }
+    setRefused(doc.path, false);
+    setElsewhere(doc.path, false);
+    putDraft(newDocDraft(doc, got));
+    return "started";
+  } catch {
+    return "failed";
+  }
+}
+
+/** Reload, on a conflict in a doc: nothing of the draft is kept, and a new one starts from the file's text now. */
+export async function reloadDocDraft(doc: DocRef): Promise<void> {
+  discardDraft(doc.path);
+  await beginDocEdit(doc);
 }

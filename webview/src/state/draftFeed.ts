@@ -2,15 +2,13 @@
 // host's copy when it starts with none of its own. What counts as a change, and what a start takes, are the rules in `draftRules.ts` and `shared/drafts.ts`.
 
 import { adopt } from "@vnoc/shared/drafts.ts";
-import type { Page } from "@vnoc/shared/messages.ts";
 
 import { post, request } from "../host.ts";
 import { feedFor } from "./draftRules.ts";
+import { PAGE } from "./page.ts";
 import { useDrafts } from "./drafts.ts";
-import { setCodeOpen } from "./view.ts";
-
-/** Which page this is: the bundle is the canvas, or the docs tab (`data-mode`). The host keeps one list per page (§8, 9.6). */
-export const PAGE: Page = document.getElementById("root")?.dataset.mode === "docs" ? "docs" : "canvas";
+import { revealCard } from "./edit.ts";
+import { setCodeOpen, setDocsOpen } from "./view.ts";
 
 /** Typing is sent this long after the last keystroke. */
 export const TYPING_MS = 500;
@@ -50,7 +48,14 @@ else
       const next = adopt(own, drafts);
       const taken = Object.values(next).filter((d) => !own[d.key]);
       if (taken.length === 0) return;
-      for (const d of taken) setCodeOpen(d.card, true);
+      for (const d of taken) {
+        if (d.kind !== "doc") setCodeOpen(d.card, true);
+        // a doc's draft shows in the panel, for the node it was started on: the canvas opens the panel and brings the node into view; the docs tab pins itself to it (`DocsApp`)
+        else if (PAGE === "canvas") {
+          setDocsOpen(true);
+          revealCard(d.card);
+        }
+      }
       useDrafts.setState({ drafts: next });
     },
     () => {},

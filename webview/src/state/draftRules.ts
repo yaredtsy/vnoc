@@ -44,6 +44,19 @@ export function newDraft(card: { id: string; key: string; path: string; range: R
   return { ...d, text: startText(d) };
 }
 
+/**
+ * A new draft of a doc (§8), in `editing`, from what `editStart` answered: the whole file as the range, no prefix. `path` is the Markdown file's absolute path and the draft's key;
+ * `node` is the node the panel showed it for (`card`), which is what a page shows again to bring the draft back.
+ */
+export function newDocDraft(doc: { path: string; node: string }, got: { text: string; version: number; eol: "\n" | "\r\n"; range?: Range }): Draft {
+  const range = got.range ?? { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
+  const d = { kind: "doc" as const, key: doc.path, card: doc.node, path: doc.path, range, version: got.version, base: got.text, prefix: "", eol: got.eol, state: "editing" as const };
+  return { ...d, text: startText(d) };
+}
+
+/** The key of a draft's notice and refusal marks: a card's id, or a doc's path (a doc has no card of its own: its `card` is the node, which a node's docs share). */
+export const markKey = (d: Pick<Draft, "kind" | "card" | "path">): string => (d.kind === "doc" ? d.path : d.card);
+
 /** One draft per node: a second one for the same key is not started. */
 export function withDraft(drafts: Drafts, d: Draft): Drafts {
   return drafts[d.key] ? drafts : { ...drafts, [d.key]: d };

@@ -20,7 +20,8 @@ interface Api {
   draftsChip(): { count: number; label: string };
   session(): Session;
   callTrees(): Record<string, unknown>;
-  viewCommand(data: { name: "edit" | "setDraft" | "save"; key: string; text?: string }): void;
+  viewCommand(data: { name: "edit" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave"; key?: string; text?: string }): void;
+  request<T>(method: string, params?: object): Promise<T>;
   editSave(params: EditSaveParams, locate?: (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>, ask?: (key: string) => Promise<boolean>): Promise<EditSaveResult>;
   draftCopy(): Draft[];
   draftCopyOf(page: Page): Draft[];
@@ -978,6 +979,152 @@ suite("a doc's Markdown saves through the same rows (docs/17-edit-in-canvas.md s
       api.feedDrafts("docs", []);
       await closeCanvas();
       await putBack();
+    }
+  });
+});
+
+suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/17-edit-in-canvas.md step 9.6b)", () => {
+  const NODE = "nested.py::decorated";
+  let docPath: string;
+  let before: string;
+  let docDir: string;
+  let madeVnoc = false;
+  let vnoc: string;
+  let node: TreeNode;
+
+  suiteSetup(async function () {
+    this.timeout(90_000);
+    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    discardOnClose();
+    const { root, git_root } = { root: (await api.structure()).root, git_root: (await api.structure()).git_root };
+    vnoc = path.join(git_root, ".vnoc");
+    madeVnoc = !fs.existsSync(vnoc);
+    node = allNodes(root).find((n) => n.id === NODE)!;
+    const file = path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, "nested.py");
+    // a doc on the function, through the core, as Add Doc does; no marker, so nothing is written into the code
+    const { id } = await api.request<{ id: string }>("vnoc/attach", { key: NODE, title: "Why decorated", markers: false, document: { uri: vscode.Uri.file(file).toString(), version: 1, text: fs.readFileSync(file, "utf8") } });
+    const docs = await api.request<{ path: string }[]>("vnoc/docs", { id });
+    docPath = docs[0].path;
+    docDir = path.dirname(docPath);
+    before = fs.readFileSync(docPath, "utf8");
+    await waitFor("the doc on the function", async () => allNodes((await api.structure()).root).find((n) => n.id === NODE)?.docs === 1, 30_000);
+    node = allNodes((await api.structure()).root).find((n) => n.id === NODE)!;
+  });
+
+  suiteTeardown(async () => {
+    discardOnClose();
+    await closeCanvas();
+    await closeDocsTab();
+    fs.rmSync(madeVnoc ? vnoc : docDir, { recursive: true, force: true });
+  });
+
+  const docsTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith("vnoc.docs"));
+  async function closeDocsTab() {
+    await vscode.window.tabGroups.close(docsTabs());
+    await until("the docs tab to close", () => docsTabs().length === 0);
+  }
+  const stateOf = (since: number) => api.editStates().slice(since).filter((p) => p.key === docPath).at(-1);
+  /** Asks the page that shows the doc to start an edit, until it says `editing`: an event sent before a new page listens is lost, and a second Edit on the doc does nothing. */
+  async function editing(since: number, show?: () => void) {
+    for (let waited = 0; stateOf(since)?.state !== "editing"; waited += 500) {
+      assert.ok(waited < 30_000, `the panel never said editing (last: ${JSON.stringify(stateOf(since))})`);
+      show?.();
+      api.viewCommand({ name: "docEdit", key: docPath });
+      await sleep(500);
+    }
+  }
+  const edited = (text: string) => text.replace("# Why decorated", "# Why decorated, edited\n\nA paragraph written in the panel.");
+
+  test("on the canvas: Edit in the docs panel, type, Save: the .md on disk changed, the panel shows the rendered doc again, and the bar counted the draft meanwhile", async () => {
+    try {
+      await vscode.commands.executeCommand("vnoc.openCanvas");
+      await until("the canvas tab", () => canvasTabs().length === 1);
+      const since = api.editStates().length;
+      api.dispatch({ type: "expand", ids: ["nested.py"] });
+      api.dispatch({ type: "select", id: NODE });
+      await editing(since, () => api.viewCommand({ name: "showDocPanel" }));
+      assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "nothing typed: nothing to lose");
+      api.viewCommand({ name: "docSetDraft", key: docPath, text: edited(before) });
+      await waitFor("the bar to count the doc draft and the host to hold it", () => api.draftsChip().count === 1 && api.draftCopyOf("canvas").some((d) => d.kind === "doc" && d.path === docPath && d.text === edited(before)), 10_000);
+      assert.strictEqual(fs.readFileSync(docPath, "utf8"), before, "nothing is written until Save");
+      api.viewCommand({ name: "docSave", key: docPath });
+      await waitFor("the .md on disk to be the edited text, byte for byte", () => fs.readFileSync(docPath, "utf8") === edited(before), 30_000);
+      await waitFor("the panel to be reading again", () => stateOf(since)?.state === "reading", 10_000);
+      await waitFor("the copy to be empty and the bar's count gone", () => api.draftCopyOf("canvas").length === 0 && api.draftsChip().count === 0, 10_000);
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      discardOnClose();
+      await closeCanvas();
+      fs.writeFileSync(docPath, before);
+    }
+  });
+
+  test("in the docs tab: the same, and the tab's own drafts are the `docs` page's in the host's copy", async () => {
+    try {
+      const since = api.editStates().length;
+      await vscode.commands.executeCommand("vnoc.showDocs", node);
+      await until("the docs tab", () => docsTabs().length === 1);
+      await editing(since);
+      api.viewCommand({ name: "docSetDraft", key: docPath, text: edited(before) });
+      await waitFor("the host to hold the draft as the docs tab's", () => api.draftCopyOf("docs").some((d) => d.kind === "doc" && d.path === docPath && d.text === edited(before)), 10_000);
+      assert.deepStrictEqual(api.draftCopyOf("canvas"), [], "and not the canvas's");
+      api.viewCommand({ name: "docSave", key: docPath });
+      await waitFor("the .md on disk to be the edited text", () => fs.readFileSync(docPath, "utf8") === edited(before), 30_000);
+      await waitFor("the tab to be reading again and the copy empty", () => stateOf(since)?.state === "reading" && api.draftCopyOf("docs").length === 0, 10_000);
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      discardOnClose();
+      await closeDocsTab();
+      fs.writeFileSync(docPath, before);
+    }
+  });
+
+  test("one draft per doc across the pages, and a docs tab closed with a draft asks: the canvas's panel is busy while the docs tab edits; Reopen Docs Tab brings the draft back (§8)", async () => {
+    const shown: { message: string; buttons: string[] }[] = [];
+    api.setDraftNotify(async (message, ...buttons) => (shown.push({ message, buttons }), "Reopen Docs Tab"));
+    try {
+      const since = api.editStates().length;
+      await vscode.commands.executeCommand("vnoc.showDocs", node);
+      await until("the docs tab", () => docsTabs().length === 1);
+      await editing(since);
+      api.viewCommand({ name: "docSetDraft", key: docPath, text: edited(before) });
+      await waitFor("the host to hold the draft", () => api.draftCopyOf("docs").some((d) => d.text === edited(before)), 10_000);
+
+      // the canvas, on the same node: its Edit is refused, and says which page has the doc
+      await vscode.commands.executeCommand("vnoc.openCanvas");
+      await until("the canvas tab", () => canvasTabs().length === 1);
+      api.dispatch({ type: "expand", ids: ["nested.py"] });
+      api.dispatch({ type: "select", id: NODE });
+      for (let waited = 0; !api.editStates().slice(since).some((p) => p.key === docPath && p.elsewhere); waited += 500) {
+        assert.ok(waited < 30_000, "the canvas's panel never said the doc is being edited elsewhere");
+        api.viewCommand({ name: "showDocPanel" });
+        api.viewCommand({ name: "docEdit", key: docPath });
+        await sleep(500);
+      }
+      assert.deepStrictEqual(api.draftCopyOf("canvas"), [], "the canvas has no draft of it");
+      assert.strictEqual(api.draftCopyOf("docs").length, 1, "and the docs tab still has its own");
+      await closeCanvas();
+
+      // the docs tab is closed with its draft: the notification names it, and Reopen brings it back
+      const reopened = api.editStates().length;
+      await vscode.window.tabGroups.close(docsTabs());
+      await waitFor("the notification", () => shown.length === 1, 10_000);
+      assert.deepStrictEqual(shown[0], { message: "1 unsaved draft from the docs tab", buttons: ["Save All", "Reopen Docs Tab", "Discard"] });
+      await until("the docs tab to open again", () => docsTabs().length === 1);
+      for (let waited = 0; stateOf(reopened)?.state !== "editing"; waited += 500) {
+        assert.ok(waited < 30_000, `the reopened tab never said editing (last: ${JSON.stringify(stateOf(reopened))})`);
+        await sleep(500);
+      }
+      // with its text: Save writes what was typed before the tab was closed
+      api.viewCommand({ name: "docSave", key: docPath });
+      await waitFor("the .md on disk to be the draft typed before the close", () => fs.readFileSync(docPath, "utf8") === edited(before), 30_000);
+      await waitFor("the copy to be empty", () => api.draftCopyOf("docs").length === 0, 10_000);
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      discardOnClose();
+      await closeCanvas();
+      await closeDocsTab();
+      fs.writeFileSync(docPath, before);
     }
   });
 });

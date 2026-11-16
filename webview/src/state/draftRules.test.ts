@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Draft, type Drafts, ELSEWHERE_TEXT, feedFor, canSave, draftFor, editBlock, isUnsaved, showElsewhere, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
+import { type Draft, type Drafts, ELSEWHERE_TEXT, feedFor, markKey, newDocDraft, canSave, draftFor, editBlock, isUnsaved, showElsewhere, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
 
 // The rules of a draft (docs/17-edit-in-canvas.md §4, §5, E6).
 
@@ -225,3 +225,26 @@ const feeds: { name: string; before: Drafts; after: Drafts; feed: "none" | "now"
   { name: "a draft replaced by an equal one (a new object, the same content)", before: withDraft({}, started()), after: { "a.py::C::m": started() }, feed: "none" },
 ];
 for (const r of feeds) test(`the page feeds the host: ${r.name}`, () => assert.equal(feedFor(r.before, r.after), r.feed));
+
+// ── a doc's draft (§8, 9.6) ─────────────────────────────────────────────────────────────────────────────────────────
+
+test("a new doc draft: whole file as the range, no prefix, editing, the text as the file has it, keyed by the path and held by the node", () => {
+  const range = { start: { line: 0, character: 0 }, end: { line: 6, character: 0 } };
+  const text = "---\nnode: X\n---\n# T\n\nbody  \n";
+  const d = newDocDraft({ path: "/r/.vnoc/nodes/AA/X/a.md", node: "src/a.py::f" }, { text, version: 3, eol: "\n", range });
+  assert.deepEqual([d.kind, d.key, d.path, d.card, d.prefix, d.state, d.range, d.version, d.base, d.text], ["doc", "/r/.vnoc/nodes/AA/X/a.md", "/r/.vnoc/nodes/AA/X/a.md", "src/a.py::f", "", "editing", range, 3, text, text]);
+  assert.equal(isChanged(d), false);
+  assert.equal(isChanged({ ...d, text: text + "more\n" }), true);
+  assert.equal(newDocDraft({ path: "/d.md", node: "n" }, { text: "a\r\nb", version: 1, eol: "\r\n", range }).eol, "\r\n");
+});
+
+test("the key of a draft's marks: a card's id, or a doc's path", () => {
+  assert.equal(markKey(started()), "a.py::C::m");
+  assert.equal(markKey(newDocDraft({ path: "/d.md", node: "n" }, { text: "", version: 1, eol: "\n" })), "/d.md");
+});
+
+test("a doc draft is kept by the store and restored with the page like any other, kind and all", () => {
+  const d = newDocDraft({ path: "/d.md", node: "n" }, { text: "# T\n", version: 1, eol: "\n", range: RANGE });
+  assert.deepEqual(restoreDrafts({ "/d.md": { ...d, state: "saving" } }), { "/d.md": { ...d, state: "editing" } });
+  assert.equal(draftFor({ "/d.md": d }, { id: "n", key: "/d.md" })?.kind, "doc", "the node's card id and the doc's path find it");
+});

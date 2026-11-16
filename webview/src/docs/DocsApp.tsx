@@ -8,9 +8,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconPin, IconPinFilled } from "@tabler/icons-react";
 
 import { Toggle } from "@/components/ui/toggle.tsx";
+import { TooltipProvider } from "@/components/ui/tooltip.tsx";
 import type { StructureResult } from "@vnoc/shared/messages.ts";
 import { MISSING_PIN, docTarget, findNode, missingAsNode, pathTo } from "@vnoc/shared/tree.ts";
 import { on, post, request } from "../host.ts";
+import "../state/draftFeed.ts"; // the docs tab tells the host its drafts, and takes the host's copy when it starts with none (docs/17-edit-in-canvas.md §8, 9.6)
+import { useDrafts } from "../state/drafts.ts";
 import { useSession } from "../state/session.ts";
 import { pin, useView } from "../state/view.ts";
 import { DocPanel } from "./DocPanel.tsx";
@@ -28,6 +31,12 @@ export function DocsApp() {
 
   // the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; saved with the tab by state/view.ts)
   const pinned = useView((v) => v.pinned);
+  // The node of a doc this tab has a draft of (§8). While there is one the tab stays on that node: it does not follow the cursor away from a draft, and a tab that was closed and reopened
+  // with the drafts the host kept comes back on it.
+  const drafting = useDrafts((s) => Object.values(s.drafts).find((d) => d.kind === "doc")?.card ?? null);
+  useEffect(() => {
+    if (drafting !== null && pinned !== drafting) pin(drafting);
+  }, [drafting, pinned]);
 
   // Only the newest ask speaks: two asks can cross, and the older answer must not replace the newer one. Not by index revision: a core that was
   // restarted counts revisions from the start again, and its answers would be dropped for ever.
@@ -55,27 +64,29 @@ export function DocsApp() {
   const addDoc = (key: string) => void request("addDoc", { key }).catch(() => {});
 
   return (
-    <div className="flex h-screen">
-      <DocPanel
-        fill
-        emptyText="Put the cursor in a function or class, or click a node on the canvas, to see its docs here."
-        node={node}
-        revision={structure?.revision ?? 0}
-        onAddDoc={addDoc}
-        onClose={() => post({ type: "close" })}
-        extra={
-          <Toggle
-            size="sm"
-            pressed={pinned !== null}
-            disabled={!node}
-            aria-label="Keep showing this node"
-            title={pinned ? "Pinned: click to follow the cursor and the canvas again" : "Stop following the cursor and the canvas"}
-            onPressedChange={(pressed) => pin(pressed && node ? node.id : null)}
-          >
-            {pinned ? <IconPinFilled /> : <IconPin />}
-          </Toggle>
-        }
-      />
-    </div>
+    <TooltipProvider>
+      <div className="flex h-screen">
+        <DocPanel
+          fill
+          emptyText="Put the cursor in a function or class, or click a node on the canvas, to see its docs here."
+          node={node}
+          revision={structure?.revision ?? 0}
+          onAddDoc={addDoc}
+          onClose={() => post({ type: "close" })}
+          extra={
+            <Toggle
+              size="sm"
+              pressed={pinned !== null}
+              disabled={!node || drafting !== null}
+              aria-label="Keep showing this node"
+              title={pinned ? "Pinned: click to follow the cursor and the canvas again" : "Stop following the cursor and the canvas"}
+              onPressedChange={(pressed) => pin(pressed && node ? node.id : null)}
+            >
+              {pinned ? <IconPinFilled /> : <IconPin />}
+            </Toggle>
+          }
+        />
+      </div>
+    </TooltipProvider>
   );
 }
