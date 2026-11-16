@@ -164,25 +164,33 @@ export interface Draft {
   version: number;
   base: string;
   prefix: string;
-  /** the document's line ending, as `editStart` said; a draft saved before it was there has `"\n"` */
+  /** the document's line ending, as the baseline said; a draft saved before it was there has `"\n"` */
   eol: "\n" | "\r\n";
   text: string;
   state: DraftState;
 }
 
-/** `eol`: the document's line ending (`document.eol`), which `reindent` joins the written lines with. */
-export type EditStartResult =
-  | { dirty: true }
-  /** a doc that the other page is editing (§8): one draft per doc, across the canvas and the docs tab */
-  | { busy: true }
-  /** `range` is only there for a doc: the whole file, as the host reads it now (a function's range is the one the card sent) */
-  | { text: string; version: number; prefix: string; eol: "\n" | "\r\n"; range?: Range };
+/**
+ * What a card's code is, as the host reads it (docs/17-edit-in-canvas.md §4, §5): the text of the range, the document's `version`, the `prefix` (the first line's text before
+ * `range.start`: the `def`'s own indentation, as written), `eol` (the document's line ending, which `reindent` joins the written lines with) and whether the file has unsaved
+ * changes in a tab (`dirty`). The card keeps it as its **baseline**: the first keystroke that makes the text differ from it starts a draft from it.
+ */
+export interface CodeResult {
+  text: string;
+  version: number;
+  prefix: string;
+  eol: "\n" | "\r\n";
+  dirty: boolean;
+}
 
 /**
- * What Edit sends. A function or class: the file below the opened folder and the range the card has. A doc (`kind: "doc"`, §8): the Markdown file's absolute path (`DocInfo.path`,
- * which the host checks lies in `<git root>/.vnoc/nodes/`), no range (the host answers the whole file), and the page that asks, so the host can say the other page has it.
+ * What the doc panel's pencil answers (§8): the same baseline for a whole doc, with the whole file as the range as the host reads it now. Or that the `.md` has unsaved changes in
+ * a tab (`dirty`), or that the other page has a draft of it (`busy`): one draft per doc, across the canvas and the docs tab.
  */
-export type EditStartParams = { path: string; range: Range; saveFirst?: boolean } | { kind: "doc"; path: string; saveFirst?: boolean; page: Page };
+export type EditStartResult = { dirty: true } | { busy: true } | { text: string; version: number; prefix: string; eol: "\n" | "\r\n"; range: Range };
+
+/** What the pencil sends: the Markdown file's absolute path (`DocInfo.path`, which the host checks lies in `<git root>/.vnoc/nodes/`), and the page that asks, so the host can say the other page has it. */
+export type EditStartParams = { kind: "doc"; path: string; saveFirst?: boolean; page: Page };
 
 /** What a draft sends to be written: where it was, what it started from (`version`, `base`), how to put the indent and the line endings back, and the text. */
 export interface EditSaveParams {
@@ -218,11 +226,15 @@ export interface Requests {
   /** the permanent ID (`TreeNode.node_id`), not the location key; the relay renames it for the core */
   docs: { params: { nodeId: string }; result: DocInfo[] };
   docText: { params: { path: string }; result: string };
-  code: { params: { path: string; range: Range }; result: string };
   /**
-   * Edit on a card (docs/17-edit-in-canvas.md §5): the host opens the document. Dirty (and no `saveFirst`): `{ dirty: true }`, nothing else. Otherwise the text of
-   * the range, the document's `version`, and the `prefix`: the first line's text before `range.start`. `saveFirst` saves a dirty document first ("Save and Edit"):
-   * the range is the one the card sent, which is stale until the index has read the save, so the card does not start a draft from that answer.
+   * A card's code and its baseline (see `CodeResult`), from VS Code's document (so unsaved edits show). `saveFirst` saves a document with unsaved changes first (the card's **Save** in
+   * "Save `<file>` to edit here"): the range is the one the card sent, which is stale until the index has read the save, so the card waits for it before it trusts the answer.
+   */
+  code: { params: { path: string; range: Range; saveFirst?: boolean }; result: CodeResult };
+  /**
+   * The doc panel's pencil (§8): the host opens the doc. Dirty (and no `saveFirst`): `{ dirty: true }`, nothing else; the other page has a draft of it: `{ busy: true }`. Otherwise
+   * the baseline of the whole file. `saveFirst` saves a dirty document first ("Save and Edit"); there is no range to wait for, so it answers at once. A function's code has no such
+   * request: its baseline is the answer to `code`.
    */
   editStart: { params: EditStartParams; result: EditStartResult };
   /**
@@ -276,8 +288,8 @@ export interface Events {
   docText: { path: string; text: string };
   /** the whole session, every time it changes: whole snapshots cannot get out of step, and `seq` drops one that arrives late */
   session: Session;
-  /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view, start an edit of a card (it shows its code first). `checkKeys`, `setDraft` and `save` are for the extension's test suite: it cannot press keys in a webview. `showDocPanel` opens the canvas's doc panel; `docEdit`, `docSetDraft` and `docSave` (`key`: the doc's path) are Edit, typing and Save in a doc panel, on whichever page shows that doc */
-  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave"; key?: string; text?: string };
+  /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view, start an edit of a card (it shows its code first). `checkKeys`, `setDraft` and `save` are for the extension's test suite: it cannot press keys in a webview. `saveFile` is the Save button of "Save `<file>` to edit here" on a card; `showDocPanel` opens the canvas's doc panel; `docEdit`, `docSetDraft` and `docSave` (`key`: the doc's path) are Edit, typing and Save in a doc panel, on whichever page shows that doc */
+  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave" | "saveFile"; key?: string; text?: string };
   /** a call tree arrived: the entry's card shows it in its "Calls" section */
   callTree: { key: string; result: CallTreeResult };
   /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
@@ -307,7 +319,7 @@ export type Notes =
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
   | { type: "sidebarRendered"; context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number } // one panel of the STRUCTURE view drew (`context`: whose panel): how many rows, which one is selected (the active context's, or null), whether the list is scrolled to it (`inView`: read from the element), whether its row is in the page (`drawn`: the virtualizer put it there; a different fact), and how high the list is in px (0: the view is hidden or not laid out, and nothing can be in view). The extension's test suite uses it
   | { type: "codeShown"; key: string; dirty: boolean; text: string } // a card drew the code it read (`key`: the card's id; `text`: as Monaco shows it, the first line's indent taken off the others; `dirty`: whether the card showed its "unsaved in editor" mark when it drew): the extension's test suite uses it
-  | { type: "editState"; key: string; state: "closed" | "reading" | "editing" | "saving" | "conflict" | "gone"; elsewhere: boolean } // a card's code is in this state (`key`: the card's id; posted when it shows its code and whenever the state or `elsewhere` changes; `elsewhere`: the card says "Already being edited in another card"): the extension's test suite uses it
+  | { type: "editState"; key: string; state: "closed" | "reading" | "editing" | "saving" | "conflict" | "gone"; elsewhere: boolean; mark: string | null } // a card's code is in this state (`key`: the card's id; posted when it shows its code and whenever the state or `elsewhere` changes; `elsewhere`: the card says "Being edited in another card", or the doc panel "Already being edited in the canvas"; `mark`: which line is above the code, `saveFirst`, `saving`, `elsewhere`, `state`, `notice`, `refusal`, `busy`, or null): the extension's test suite uses it
   | { type: "keysChecked"; found: boolean; target: string; taken: string[] } // the answer to the viewCommand `checkKeys`: the page dispatched keys at the editor of a code card (`found`: there was one, `target`: its tag), and these were taken by something other than the editor (React Flow's Space, say): the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it

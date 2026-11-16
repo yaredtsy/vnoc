@@ -1,18 +1,17 @@
-// What the card's Edit, Save and Discard do (docs/17-edit-in-canvas.md §5). The rules are `draftRules.ts`; the store is `drafts.ts`. Plain functions, so a button
-// and a menu command (`viewCommand` "edit") start an edit the same way.
+// What typing in a card, and its Save and Discard, do (docs/17-edit-in-canvas.md §5, 9.7). The rules are `draftRules.ts`; the store is `drafts.ts`. Plain functions, so Monaco's
+// handlers, a button and the test suite's `viewCommand`s do the same thing.
 
 import type { Range } from "@vnoc/shared/messages.ts";
-import { findNode } from "@vnoc/shared/tree.ts";
 
 import type { Placed } from "../canvas/layout.ts";
 import { request } from "../host.ts";
 import { unsavedDrafts, nextCard } from "../canvas/top-bar/unsavedDrafts.ts";
-import { canSave, editBlock, indexMovedOn, markKey, newDocDraft, newDraft, noticeFor, savedAs } from "./draftRules.ts";
+import { canSave, docBaselineOf, draftFrom, indexMovedOn, markKey, noticeFor, savedAs, settleTyping } from "./draftRules.ts";
 import { PAGE } from "./page.ts";
 import { useData } from "./data.ts";
-import { dropDraft, putDraft, setDraftState, setElsewhere, setNotice, setRefused, useDrafts } from "./drafts.ts";
+import { dropDraft, putDraft, setBaseline, setDraftState, setElsewhere, setNotice, setRefused, setSettling, useDrafts } from "./drafts.ts";
 import { dispatch } from "./session.ts";
-import { setCodeOpen, setDocsOpen } from "./view.ts";
+import { requestCodeFocus, setDocsOpen } from "./view.ts";
 
 /** What an edit starts from: the card, and the code it shows (a call card's is its callee's). */
 export interface CardRef {
@@ -25,35 +24,22 @@ export interface CardRef {
 export const cardRef = (n: Pick<Placed, "id" | "key" | "path" | "range">): CardRef => ({ id: n.id, key: n.key, path: n.path, range: n.range });
 
 /**
- * Edit: the code is shown (the card needs it to say anything), then the host opens the document. If the file has unsaved changes the host says so and the card
- * shows E5's message (`refused`); otherwise a draft starts in `editing`. A node has one draft (§7): on the card that holds it Edit does nothing (`ignored`); on any
- * other card on the same node it is refused (`elsewhere`): that card says so, and the holder is brought into view.
+ * Typing in the editor of a card (`id`: the card's id; `key`: its node) or of a doc's source view (`id` and `key`: the doc's path): the text is what Monaco holds.
+ * - A draft of this node exists and this card holds it: the draft follows the text, and is dropped when the text is the original again (`settleTyping`).
+ * - Another card holds the node's draft: nothing (that card's Monaco is read-only).
+ * - No draft: the first text that differs from the card's baseline creates the draft from it, locally, with no request (`draftFrom`). No baseline (the file has unsaved changes, the
+ *   code is not read yet): nothing.
+ * The test suite's `setDraft` is this too: what typing makes.
  */
-export async function beginEdit(card: CardRef, saveFirst = false): Promise<"started" | "refused" | "elsewhere" | "ignored" | "failed"> {
-  if (card.key === null || card.range === null) return "ignored";
-  setCodeOpen(card.id, true);
-  const block = editBlock(useDrafts.getState().drafts, card);
-  if (block?.kind === "same") return "ignored";
-  if (block) {
-    setElsewhere(card.id, true);
-    revealCard(block.holder);
-    return "elsewhere";
+export function typeIn(id: string, key: string, text: string): void {
+  const { drafts, baselines } = useDrafts.getState();
+  const held = drafts[key];
+  if (held) {
+    if (held.kind === "doc" || held.card === id) useDrafts.setState(({ drafts: now }) => ({ drafts: settleTyping(now, key, text) }));
+    return;
   }
-  setElsewhere(card.id, false);
-  setNotice(card.id, null);
-  try {
-    const got = await request("editStart", { path: card.path, range: card.range, saveFirst });
-    if ("dirty" in got) {
-      setRefused(card.id, true);
-      return "refused";
-    }
-    if ("busy" in got) return "failed"; // only a doc can be busy (§8); a function is edited in the canvas alone
-    setRefused(card.id, false);
-    putDraft(newDraft({ id: card.id, key: card.key, path: card.path, range: card.range }, got));
-    return "started";
-  } catch {
-    return "failed";
-  }
+  const fresh = baselines[id] ? draftFrom(baselines[id], text) : null;
+  if (fresh) putDraft(fresh);
 }
 
 /** Brings a card into view with the session's `reveal`, which a sidebar click sends too: its parents open so it is drawn, and the canvas centres on it and pulses it. */
@@ -96,28 +82,28 @@ function indexCaughtUp(before: ReturnType<typeof useData.getState>["structure"])
 }
 
 /**
- * "Save and Edit": the host saves the document, and the card's range, which came from the last save, is stale until the index has read the new one. So the draft
- * does not start from the host's answer: it waits for a newer index, reads the node's range again, and starts from step 1 of §5 with that.
+ * "Save `<file>` to edit here" (E5, up front): the host saves the document, and the card's range, which came from the last save, is stale until the index has read the new one. So the
+ * card stays read-only (`settling`) until a newer index has come, or a few seconds have passed; it reads its code again by itself when the file's dirty state flips and its range moves.
  */
-export async function saveAndEdit(card: CardRef): Promise<void> {
-  if (card.key === null || card.range === null) return;
+export async function saveFile(card: CardRef): Promise<void> {
+  if (card.range === null) return;
+  setSettling(card.id, true);
   const moved = indexCaughtUp(useData.getState().structure);
   try {
-    await request("editStart", { path: card.path, range: card.range, saveFirst: true }); // the answer is for the old range: only the save is wanted
+    await request("code", { path: card.path, range: card.range, saveFirst: true }); // the answer is for the old range: only the save is wanted
   } catch {
-    // the save failed or was refused: the second step says so again, as a refusal
+    moved.cancel(); // the save failed or was refused: the card says so again, as a dirty file
   }
   await moved.done;
-  const root = useData.getState().structure?.root;
-  const fresh = (root && findNode(root, card.key)?.range) || card.range;
-  await beginEdit({ ...card, range: fresh });
+  setSettling(card.id, false);
 }
 
-/** Discard: the draft goes, and the card reads its code again (`NodeCode` does it when the draft is gone). */
+/** Discard: the draft goes, and the card reads its code again (`NodeCode` does it when the draft is gone); a doc shows the rendered Markdown again. */
 export function discardDraft(key: string): void {
   const d = useDrafts.getState().drafts[key];
   if (d) setNotice(markKey(d), null);
   dropDraft(key);
+  if (d?.kind === "doc") closeDocSource(d.path); // a doc goes back to the rendered Markdown
 }
 
 /**
@@ -165,14 +151,11 @@ export async function saveDraft(key: string): Promise<void> {
     setNotice(mark, noticeFor("written", file));
   } else await moved.done;
   dropDraft(key);
+  if (d.kind === "doc") closeDocSource(d.path); // saved: the panel shows the rendered doc again, from the `docText` event
 }
 
-/** Reload, on a conflict: nothing of the draft is kept. The draft goes and a new one starts from the file's text now, at the node's range now. */
-export async function reloadDraft(card: CardRef): Promise<void> {
-  if (card.key === null) return;
-  discardDraft(card.key);
-  await beginEdit(card);
-}
+/** Reload, on a conflict: nothing of the draft is kept, and the card shows the file's text now, which it reads again once the draft is gone. */
+export const reloadDraft = (key: string): void => discardDraft(key);
 
 /** Show Diff, on a conflict: the file beside the file with the draft in the function's place. The draft stays. */
 export function showDiff(key: string): void {
@@ -194,43 +177,53 @@ export function copyDraft(key: string): void {
   if (d) void request("copyText", { text: d.text }).catch(() => {});
 }
 
-/** What an Edit on a doc starts from (§8): the Markdown file's absolute path, and the node the panel shows it for (the draft's `card`). */
+/** What the doc panel's pencil starts from (§8): the Markdown file's absolute path, and the node the panel shows it for (the draft's `card`). */
 export interface DocRef {
   path: string;
   node: string;
 }
 
 /**
- * Edit on a doc in the panel (§8): the host opens the document. If the `.md` has unsaved changes in a tab it says so and the panel shows E5's message (`refused`); if the other page has a
- * draft of it, `busy`, and the panel says which page; otherwise a draft of the whole file starts in `editing`. A doc this page already has a draft of is left alone. `saveFirst` is Save and
- * Edit: there is no range to wait for, so the host saves and answers the draft's start at once.
+ * The doc panel's pencil (§8, 9.7): the panel shows the source of the `.md` in Monaco, with no draft yet. The host opens the document. If the `.md` has unsaved changes in a tab it says
+ * so and the panel shows "Save `<file>` first" (`refused`); if the other page has a draft of it, `busy`, and the panel says which page; otherwise the doc's baseline is kept (the panel
+ * shows its source, which takes typing: the first keystroke that differs starts the draft, as on a card) and the editor takes the keyboard. `saveFirst` is Save and Edit: there is no range
+ * to wait for, so the host saves and answers at once. Asked again while the source is shown, it refreshes the baseline (the doc changed under it) without taking the keyboard.
  */
-export async function beginDocEdit(doc: DocRef, saveFirst = false): Promise<"started" | "refused" | "busy" | "ignored" | "failed"> {
+export async function openDocSource(doc: DocRef, saveFirst = false, refresh = false): Promise<"shown" | "refused" | "busy" | "ignored" | "failed"> {
   if (useDrafts.getState().drafts[doc.path]) return "ignored";
   setNotice(doc.path, null);
   try {
     const got = await request("editStart", { kind: "doc", path: doc.path, page: PAGE, saveFirst });
+    if (useDrafts.getState().drafts[doc.path]) return "ignored"; // typed while the host answered: the draft has its own base
     if ("dirty" in got) {
       setElsewhere(doc.path, false);
       setRefused(doc.path, true);
+      setBaseline(doc.path, null);
       return "refused";
     }
     if ("busy" in got) {
       setRefused(doc.path, false);
       setElsewhere(doc.path, true);
+      setBaseline(doc.path, null);
       return "busy";
     }
     setRefused(doc.path, false);
     setElsewhere(doc.path, false);
-    putDraft(newDocDraft(doc, got));
-    return "started";
+    setBaseline(doc.path, docBaselineOf(doc, got));
+    if (!refresh) requestCodeFocus(doc.path);
+    return "shown";
   } catch {
     return "failed";
   }
 }
 
-/** Reload, on a conflict in a doc: nothing of the draft is kept, and a new one starts from the file's text now. */
+/** The pencil again, with no draft: back to the rendered Markdown. */
+export function closeDocSource(path: string): void {
+  setBaseline(path, null);
+}
+
+/** Reload, on a conflict in a doc: nothing of the draft is kept, and the source shows the file's text now. */
 export async function reloadDocDraft(doc: DocRef): Promise<void> {
   discardDraft(doc.path);
-  await beginDocEdit(doc);
+  await openDocSource(doc);
 }

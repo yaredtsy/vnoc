@@ -3,7 +3,8 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import type { Draft, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Range, TreeNode } from "@vnoc/shared/messages";
+import { dedent } from "@vnoc/shared/indent";
+import type { CodeResult, Draft, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Range, TreeNode } from "@vnoc/shared/messages";
 import { callId } from "@vnoc/shared/calls.ts";
 import type { Intent, Session } from "@vnoc/shared/session.ts";
 import { allNodes } from "@vnoc/shared/tree";
@@ -16,11 +17,11 @@ interface Api {
   structure(): Promise<{ root: TreeNode; git_root: string }>;
   codeShown(): { key: string; dirty: boolean; text: string }[];
   dirtyFiles(): string[];
-  editStates(): { key: string; state: string; elsewhere: boolean }[];
+  editStates(): { key: string; state: string; elsewhere: boolean; mark: string | null }[];
   draftsChip(): { count: number; label: string };
   session(): Session;
   callTrees(): Record<string, unknown>;
-  viewCommand(data: { name: "edit" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave"; key?: string; text?: string }): void;
+  viewCommand(data: { name: "edit" | "showCode" | "setDraft" | "save" | "saveFile" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave"; key?: string; text?: string }): void;
   request<T>(method: string, params?: object): Promise<T>;
   editSave(params: EditSaveParams, locate?: (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>, ask?: (key: string) => Promise<boolean>): Promise<EditSaveResult>;
   draftCopy(): Draft[];
@@ -31,7 +32,7 @@ interface Api {
   draftsAtStart(): Promise<void>;
   checkKeys(): void;
   keysChecked(): { found: boolean; target: string; taken: string[] }[];
-  editStart(path: string, range: Range, saveFirst?: boolean): Promise<EditStartResult>;
+  codeOf(path: string, range: Range, saveFirst?: boolean): Promise<CodeResult>;
   dispatch(intent: Intent): void;
   webviewErrors(): string[];
 }
@@ -42,6 +43,19 @@ let api: Api;
  * canvas all the time and want it as it was before: the draft is dropped. The 9.5c tests answer for themselves.
  */
 const discardOnClose = () => api.setDraftNotify(async () => "Discard");
+
+/**
+ * Types `text` into a card, as typing does (docs/17 §5, 9.7): the first text that differs from the card's baseline starts the draft. The baseline arrives with the code, so it is asked until the
+ * card says `editing`; the suite cannot press keys in a webview, and `setDraft` is what the editor's handler calls.
+ */
+async function typing(id: string, text: string): Promise<void> {
+  const from = api.editStates().length;
+  for (let waited = 0; api.editStates().slice(from).filter((p) => p.key === id).at(-1)?.state !== "editing"; waited += 250) {
+    assert.ok(waited < 15_000, `typing never started a draft on ${id} (last: ${JSON.stringify(api.editStates().slice(from).filter((p) => p.key === id).at(-1))})`);
+    api.viewCommand({ name: "setDraft", key: id, text });
+    await sleep(250);
+  }
+}
 
 const KEY = "nested.py::decorated";
 
@@ -132,50 +146,63 @@ suite("reading: a card marks a file with unsaved changes", () => {
   });
 });
 
-suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
+suite("editing: typing in a card's code starts a draft (docs/17-edit-in-canvas.md steps 9.2, 9.7)", () => {
   suiteSetup(async () => {
     api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
     discardOnClose();
   });
 
-  test("the menu's Edit in Card opens the card's code and starts a draft: the card says `editing`", async () => {
+  /** The card's code shown, as the menu's Edit in Card does, until the card says `reading`. Returns where in the page's notes to read what it says next. */
+  async function codeShown(node: TreeNode): Promise<number> {
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await until("the canvas tab", () => canvasTabs().length === 1);
+    api.dispatch({ type: "expand", ids: ["nested.py"] });
+    // only what this canvas says counts: the one the test before closed said the same for the same card
+    const since = api.editStates().length;
+    // an event sent before the new page listens is lost: ask until the card says so
+    for (let waited = 0; api.editStates().slice(since).filter((p) => p.key === node.id).at(-1)?.state !== "reading"; waited += 500) {
+      assert.ok(waited < 30_000, `the card never showed its code (last: ${JSON.stringify(api.editStates().slice(since).filter((p) => p.key === node.id).at(-1))})`);
+      api.dispatch({ type: "reveal", id: node.id, canvas: true });
+      await vscode.commands.executeCommand("vnoc.editInCard", node);
+      await sleep(500);
+    }
+    return since;
+  }
+
+  test("the menu's Edit in Card shows the code, with no draft; typing starts the draft (`editing`, the bar counts it); typing back to the original drops it (`reading` again) (9.7)", async () => {
     const node = allNodes((await api.structure()).root).find((n) => n.id === KEY)!;
     try {
-      await vscode.commands.executeCommand("vnoc.openCanvas");
-      await until("the canvas tab", () => canvasTabs().length === 1);
-      api.dispatch({ type: "expand", ids: ["nested.py"] });
-      const latest = () => api.editStates().filter((p) => p.key === KEY).at(-1)?.state;
-      // an event sent before the new page listens is lost, and a second Edit on a node that has a draft is ignored: ask until the card says so
-      for (let waited = 0; latest() !== "editing"; waited += 500) {
-        assert.ok(waited < 30_000, `the card never said editing (last: ${latest()})`);
-        api.dispatch({ type: "reveal", id: KEY, canvas: true });
-        await vscode.commands.executeCommand("vnoc.editInCard", node);
-        await sleep(500);
-      }
-      assert.ok(api.editStates().some((p) => p.key === KEY && p.state === "reading"), "it showed its code before it started the draft");
-      assert.deepStrictEqual(api.webviewErrors(), [], "the page drew the editing card without crashing");
+      const since = await codeShown(node);
+      const states = () => api.editStates().slice(since).filter((p) => p.key === KEY).map((p) => p.state);
+      const got = await api.codeOf("nested.py", node.range!);
+      const start = dedent(got.text, got.prefix); // what Monaco shows of the baseline
+      assert.deepStrictEqual(states().filter((st) => st !== "reading"), [], "the code is shown and no draft was started");
+      assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" });
+
+      await typing(KEY, start.replace("return 9", "return 99"));
+      await waitFor("the bar to count the draft", () => api.draftsChip().count === 1, 10_000);
+      assert.strictEqual(states().at(-1), "editing");
+
+      // typed back to the original, or undone to it: nothing to lose, so no draft
+      api.viewCommand({ name: "setDraft", key: KEY, text: start });
+      await waitFor("the draft to be dropped", () => states().at(-1) === "reading", 10_000);
+      await waitFor("the bar's count to go", () => api.draftsChip().count === 0, 10_000);
+      await waitFor("the host's copy to be empty", () => api.draftCopy().length === 0, 10_000);
+
+      // and typing again (a redo) starts a new one from a fresh baseline
+      await typing(KEY, start.replace("return 9", "return 98"));
+      assert.deepStrictEqual(api.webviewErrors(), [], "the page drew the card without crashing");
     } finally {
       await closeCanvas(); // the draft lives in the page: closing the tab drops it
     }
   });
 
-  test("keys typed in an editing card's code stay in the code: the canvas takes none of them (Space, Backspace, F…) (9.2c)", async () => {
+  test("keys typed in a card's code stay in the code: the canvas takes none of them (Space, Backspace, F…) (9.2c)", async () => {
     const node = allNodes((await api.structure()).root).find((n) => n.id === KEY)!;
     try {
-      await vscode.commands.executeCommand("vnoc.openCanvas");
-      await until("the canvas tab", () => canvasTabs().length === 1);
-      api.dispatch({ type: "expand", ids: ["nested.py"] });
-      // only what this canvas says counts: the one the test before closed said `editing` for the same card
-      const since = api.editStates().length;
-      const latest = () => api.editStates().slice(since).filter((p) => p.key === KEY).at(-1)?.state;
-      for (let waited = 0; latest() !== "editing"; waited += 500) {
-        assert.ok(waited < 30_000, `the card never said editing (last: ${latest()})`);
-        api.dispatch({ type: "reveal", id: KEY, canvas: true });
-        await vscode.commands.executeCommand("vnoc.editInCard", node);
-        await sleep(500);
-      }
+      await codeShown(node);
       // a keydown dispatched on the editor's own element runs every handler of the page: one that takes the key calls preventDefault (React Flow does for Space)
-      // Monaco is made a moment after the card starts editing: ask again until the page finds its editor
+      // Monaco is made a moment after the card shows its code: ask again until the page finds its editor
       for (let waited = 0; api.keysChecked().at(-1)?.found !== true; waited += 500) {
         assert.ok(waited < 30_000, `the page never found the editor (last answer: ${JSON.stringify(api.keysChecked().at(-1))})`);
         api.checkKeys();
@@ -187,7 +214,46 @@ suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
     }
   });
 
-  test("E5, at the host: a file with unsaved changes is refused, a saved one answers text, version and prefix, and Save and Edit saves first", async () => {
+  test("a file with unsaved changes in a tab: the code is read-only and says Save to edit here, typing starts no draft, and the Save button saves the file so the card takes typing again (E5, 9.7)", async () => {
+    const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
+    const file = path.join(folder, "nested.py");
+    const original = fs.readFileSync(file, "utf8");
+    const node = allNodes((await api.structure()).root).find((n) => n.id === KEY)!;
+    const mark = (since: number) => api.editStates().slice(since).filter((p) => p.key === KEY).at(-1)?.mark;
+    try {
+      const since = await codeShown(node);
+      assert.strictEqual(mark(since), null, "a saved file: no line");
+      const got = await api.codeOf("nested.py", node.range!);
+      const start = dedent(got.text, got.prefix);
+
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(document.uri, new vscode.Position(document.lineCount, 0), "# unsaved, at the end\n");
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.ok(document.isDirty);
+      await waitFor("the card to say Save to edit here", () => mark(since) === "saveFirst", 30_000);
+
+      // typing is the editor's handler, which is read-only; the suite's `setDraft` is the same handler and finds no baseline
+      api.viewCommand({ name: "setDraft", key: KEY, text: start.replace("return 9", "return 99") });
+      await sleep(1500);
+      assert.ok(!api.editStates().slice(since).some((p) => p.key === KEY && p.state === "editing"), "no draft was started in a file with unsaved changes");
+      assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" });
+      assert.ok(document.isDirty, "and nothing was saved");
+
+      // the Save button: the document is saved, the card waits for the index, then takes typing
+      api.viewCommand({ name: "saveFile", key: KEY });
+      await waitFor("the document to be saved", () => !document.isDirty && fs.readFileSync(file, "utf8").endsWith("# unsaved, at the end\n"), 30_000);
+      await waitFor("the line to go", () => mark(since) === null, 30_000);
+      await typing(KEY, start.replace("return 9", "return 99"));
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      await closeCanvas();
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      await restoreFixture(file, original);
+    }
+  });
+
+  test("E5, at the host: the code answers its baseline (text, version, prefix, eol) and whether the file has unsaved changes; saveFirst saves it (9.7)", async () => {
     const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
     const file = path.join(folder, "nested.py");
     const original = fs.readFileSync(file, "utf8");
@@ -196,25 +262,26 @@ suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
     const range = node.range;
     try {
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const text = document.getText(new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character));
+      const clean = await api.codeOf("nested.py", range);
+      assert.deepStrictEqual(clean, { text, version: document.version, prefix: "        ", eol: "\n", dirty: false });
+      assert.match(clean.text, /^def method\(self\):/, "the range starts at `def`, the prefix is the indentation before it");
+
       const edit = new vscode.WorkspaceEdit();
       edit.insert(document.uri, new vscode.Position(document.lineCount, 0), "# unsaved\n");
       assert.ok(await vscode.workspace.applyEdit(edit));
       assert.ok(document.isDirty);
-
-      assert.deepStrictEqual(await api.editStart("nested.py", range), { dirty: true }, "refused: nothing else is answered");
+      const dirty = await api.codeOf("nested.py", range);
+      assert.strictEqual(dirty.dirty, true, "the file has unsaved changes: the card is read-only");
+      assert.strictEqual(dirty.text, text, "the text is still answered, so the card can show it");
       assert.ok(document.isDirty, "and nothing was saved");
 
-      // the same folder check as `code`: a path outside the opened folder is an error
-      await assert.rejects(api.editStart("../outside.py", range), /outside the opened folder/);
+      // the same folder check as before: a path outside the opened folder is an error
+      await assert.rejects(api.codeOf("../outside.py", range), /outside the opened folder/);
 
-      const saved = await api.editStart("nested.py", range, true);
-      assert.ok(!document.isDirty, "Save and Edit saved the document");
-      assert.ok("text" in saved);
-      assert.deepStrictEqual(saved, { text: document.getText(new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character)), version: document.version, prefix: "        ", eol: "\n" });
-      assert.match(saved.text, /^def method\(self\):/, "the range starts at `def`, the prefix is the indentation before it");
-
-      // a clean document just answers
-      assert.deepStrictEqual(await api.editStart("nested.py", range), saved);
+      const saved = await api.codeOf("nested.py", range, true);
+      assert.ok(!document.isDirty, "Save saved the document");
+      assert.deepStrictEqual(saved, { text, version: document.version, prefix: "        ", eol: "\n", dirty: false });
     } finally {
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
       await restoreFixture(file, original);
@@ -255,7 +322,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     return found!;
   }
 
-  /** Edit on the card, as the menu does, until this canvas says `editing`; the position in the page's notes from which to read what it says next. */
+  /** The card's code shown, as the menu's Edit in Card does, until this canvas says `reading` and has the card's baseline; the position in the page's notes from which to read what it says next. */
   async function startEditing(id: string): Promise<{ since: number; base: string }> {
     const node = await inFixturePlace(id);
     assert.ok(node?.range, `${id} is in the fixture`);
@@ -264,15 +331,16 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     api.dispatch({ type: "expand", ids: ["nested.py"] });
     await waitFor("the file on disk to be what the fixture is", () => fs.readFileSync(file(), "utf8") === original);
     const since = api.editStates().length;
+    const shown = api.codeShown().length;
     const latest = () => api.editStates().slice(since).filter((p) => p.key === id).at(-1)?.state;
-    for (let waited = 0; latest() !== "editing"; waited += 500) {
-      assert.ok(waited < 30_000, `the card never said editing (last: ${latest()})`);
+    // the card posts `codeShown` after it has set its baseline: from then on typing starts a draft
+    for (let waited = 0; latest() !== "reading" || !api.codeShown().slice(shown).some((p) => p.key === id); waited += 500) {
+      assert.ok(waited < 30_000, `the card never showed its code (last: ${latest()})`);
       api.dispatch({ type: "reveal", id, canvas: true });
       await vscode.commands.executeCommand("vnoc.editInCard", node);
       await sleep(500);
     }
-    const got = await api.editStart("nested.py", node.range);
-    assert.ok("text" in got);
+    const got = await api.codeOf("nested.py", node.range);
     return { since, base: got.text };
   }
   const statesOf = (id: string, since: number) => api.editStates().slice(since).filter((p) => p.key === id).map((p) => p.state);
@@ -282,7 +350,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     try {
       const { since, base } = await startEditing(id);
       const shown = api.codeShown().length;
-      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") }); // what typing in the card makes
+      await typing(id, base.replace("return 9", "return 99")); // what typing in the card makes
       api.viewCommand({ name: "save", key: id }); // what the button and ⌘S call
       // the whole file, compared with the expected string: the function has the new text and every other byte is as it was. Waited for, not read once: VS Code
       // writes a file by emptying it and then filling it, and a read in between sees nothing
@@ -310,7 +378,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     const id = "nested.py::coro";
     try {
       const { base } = await startEditing(id);
-      api.viewCommand({ name: "setDraft", key: id, text: base.replace("coro", "renamed_coro") });
+      await typing(id, base.replace("coro", "renamed_coro"));
       api.viewCommand({ name: "save", key: id });
       const expected = original.replace("async def coro():", "async def renamed_coro():");
       await waitFor("the file on disk to be the original with the function renamed", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
@@ -328,7 +396,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     const id = "nested.py::decorated";
     try {
       const { base } = await startEditing(id);
-      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") });
+      await typing(id, base.replace("return 9", "return 99"));
       // the user, in a tab: a comment added above everything, and saved
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
       const edit = new vscode.WorkspaceEdit();
@@ -350,7 +418,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     const id = "nested.py::decorated";
     try {
       const { since, base } = await startEditing(id);
-      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") });
+      await typing(id, base.replace("return 9", "return 99"));
       // the user, in a tab: the same function changed, and saved
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
       const edit = new vscode.WorkspaceEdit();
@@ -376,7 +444,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     const id = "nested.py::decorated";
     try {
       const { since, base } = await startEditing(id);
-      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") });
+      await typing(id, base.replace("return 9", "return 99"));
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
       const edit = new vscode.WorkspaceEdit();
       edit.insert(document.uri, new vscode.Position(0, 0), "# top, not saved\n");
@@ -399,7 +467,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     const id = "nested.py::decorated";
     try {
       const { since, base } = await startEditing(id);
-      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") });
+      await typing(id, base.replace("return 9", "return 99"));
       const node = allNodes((await api.structure()).root).find((n) => n.id === id)!;
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
       const edit = new vscode.WorkspaceEdit();
@@ -422,8 +490,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
   /** What the card sends for a draft of `id` whose text has `from` replaced by `to`. */
   async function draftParams(id: string, from: string, to: string): Promise<EditSaveParams & { range: Range }> {
     const node = await inFixturePlace(id);
-    const got = await api.editStart("nested.py", node.range!);
-    assert.ok("text" in got);
+    const got = await api.codeOf("nested.py", node.range!);
     return { key: id, path: "nested.py", range: node.range!, version: got.version, base: got.text, prefix: got.prefix, eol: got.eol, text: got.text.replace(from, to) };
   }
 
@@ -483,7 +550,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
   async function typedDraft(id: string): Promise<string> {
     const { base } = await startEditing(id);
     const typedText = base.replace("return 9", "return 99");
-    api.viewCommand({ name: "setDraft", key: id, text: typedText });
+    await typing(id, typedText);
     await waitFor("the host's copy to hold the draft", () => api.draftCopy().some((d) => d.key === id && d.text === typedText && d.state === "editing"), 10_000);
     return typedText;
   }
@@ -616,15 +683,15 @@ suite("one draft per function: the bar counts the drafts (docs/17-edit-in-canvas
     fs.rmSync(file(), { force: true });
   });
 
-  test("Edit on the call card of a function its structure card is editing is refused, and the bar counts the draft while it is unsaved (§7, §11)", async () => {
+  test("while the structure card holds a function's draft, its call card is read-only and says so, typing there starts nothing, and the bar counts the draft while it is unsaved (§7, 9.7)", async () => {
     let helper: TreeNode | undefined;
     await waitFor("the index to have both functions", async () => {
       const all = allNodes((await api.structure()).root);
       helper = all.find((n) => n.id === HELPER);
       return helper?.range !== undefined && all.some((n) => n.id === CALLER);
     }, 30_000);
-    const base = await api.editStart("edit_calls.py", helper!.range!);
-    assert.ok("text" in base);
+    const base = await api.codeOf("edit_calls.py", helper!.range!);
+    const start = dedent(base.text, base.prefix);
     const call = callId(CALLER, [HELPER]);
     const last = (id: string) => api.editStates().filter((p) => p.key === id).at(-1);
 
@@ -635,36 +702,39 @@ suite("one draft per function: the bar counts the drafts (docs/17-edit-in-canvas
     await waitFor("the call tree of caller", () => api.callTrees()[CALLER] !== undefined, 30_000);
     assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "no draft, no chip");
 
-    // Edit in the structure card; an event sent before the page listens is lost, so ask until it says editing (a second Edit on the holder does nothing)
-    for (let waited = 0; last(HELPER)?.state !== "editing"; waited += 500) {
-      assert.ok(waited < 30_000, `the structure card never said editing (last: ${JSON.stringify(last(HELPER))})`);
+    // the structure card shows its code (an event sent before the page listens is lost, so ask until it says so)
+    for (let waited = 0; last(HELPER)?.state !== "reading"; waited += 500) {
+      assert.ok(waited < 30_000, `the structure card never showed its code (last: ${JSON.stringify(last(HELPER))})`);
       api.dispatch({ type: "reveal", id: HELPER, canvas: true });
       api.viewCommand({ name: "edit", key: HELPER });
       await sleep(500);
     }
-    assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "a draft nothing was typed into is not counted");
+    assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "the code is shown and nothing was typed: no draft, nothing to count");
 
-    api.viewCommand({ name: "setDraft", key: HELPER, text: base.text.replace("return 1", "return 11") });
+    await typing(HELPER, start.replace("return 1", "return 11"));
     await waitFor("the bar to count the draft", () => api.draftsChip().count === 1, 10_000);
     assert.strictEqual(api.draftsChip().label, "1 unsaved draft");
 
-    // Edit on the call card of the same function: refused, said on that card; the first card is still editing
-    api.dispatch({ type: "select", id: null });
+    // the call card of the same function shows its code: read-only, and says another card holds the draft
     for (let waited = 0; last(call)?.elsewhere !== true; waited += 500) {
-      assert.ok(waited < 30_000, `the call card never said "already being edited in another card" (last: ${JSON.stringify(last(call))})`);
+      assert.ok(waited < 30_000, `the call card never said "being edited in another card" (last: ${JSON.stringify(last(call))})`);
       api.dispatch({ type: "reveal", id: CALLER, canvas: true });
-      api.viewCommand({ name: "edit", key: call });
+      api.viewCommand({ name: "showCode", key: call });
       await sleep(500);
     }
-    assert.strictEqual(last(call)!.state, "reading", "the call card shows its code and no draft");
+    assert.deepStrictEqual([last(call)!.state, last(call)!.mark], ["reading", "elsewhere"], "the call card shows its code, no draft, and the line");
     assert.strictEqual(last(HELPER)!.state, "editing", "the first card is still editing");
-    assert.strictEqual(api.draftsChip().count, 1, "still one draft: nothing was started");
-    await waitFor("the holder to be revealed (the session selects it)", () => api.session().contexts.main.selected === HELPER, 10_000);
 
-    // typed back to where it started: nothing to lose, the bar's count goes (and so does the call card's line, as the draft is still the holder's)
-    api.viewCommand({ name: "setDraft", key: HELPER, text: base.text });
+    // typing there starts nothing: the first card's draft is untouched, and still one
+    api.viewCommand({ name: "setDraft", key: call, text: start.replace("return 1", "return 12") });
+    await sleep(1500);
+    assert.strictEqual(api.draftsChip().count, 1, "still one draft");
+    assert.ok(api.draftCopy().every((d) => d.card === HELPER && d.text === start.replace("return 1", "return 11")), "the draft is the structure card's, with its own text");
+
+    // typed back to where it started: nothing to lose, the draft goes, the bar's count goes, and so does the call card's line
+    api.viewCommand({ name: "setDraft", key: HELPER, text: start });
     await waitFor("the bar's count to go", () => api.draftsChip().count === 0, 10_000);
-    assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" });
+    await waitFor("the call card's line to go", () => last(call)?.elsewhere === false && last(call)?.mark === null, 10_000);
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
 });
@@ -694,8 +764,7 @@ suite("Save asks before it removes a function's ID (docs/17-edit-in-canvas.md st
 
   /** What the card sends for a draft of `keeper` whose text has `from` replaced by `to`. */
   async function params(from: string, to: string): Promise<EditSaveParams> {
-    const got = await api.editStart("edit_id.py", node.range!);
-    assert.ok("text" in got);
+    const got = await api.codeOf("edit_id.py", node.range!);
     assert.ok(got.text.includes(from), `the draft's start has ${JSON.stringify(from)}`);
     return { key: node.id, path: "edit_id.py", range: node.range!, version: got.version, base: got.text, prefix: got.prefix, eol: got.eol, text: got.text.replace(from, to) };
   }
@@ -1024,27 +1093,42 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
     await until("the docs tab to close", () => docsTabs().length === 0);
   }
   const stateOf = (since: number) => api.editStates().slice(since).filter((p) => p.key === docPath).at(-1);
-  /** Asks the page that shows the doc to start an edit, until it says `editing`: an event sent before a new page listens is lost, and a second Edit on the doc does nothing. */
-  async function editing(since: number, show?: () => void) {
+  /**
+   * The pencil, then typing, on the page that shows the doc, until it says `editing` (§8, 9.7): the pencil shows the source with no draft yet, and the first text that differs from its
+   * baseline starts the draft. An event sent before a new page listens is lost, and the baseline arrives with the pencil's answer, so both are asked until it says so.
+   */
+  async function editing(since: number, text: string, show?: () => void) {
     for (let waited = 0; stateOf(since)?.state !== "editing"; waited += 500) {
       assert.ok(waited < 30_000, `the panel never said editing (last: ${JSON.stringify(stateOf(since))})`);
       show?.();
       api.viewCommand({ name: "docEdit", key: docPath });
+      api.viewCommand({ name: "docSetDraft", key: docPath, text });
       await sleep(500);
     }
   }
   const edited = (text: string) => text.replace("# Why decorated", "# Why decorated, edited\n\nA paragraph written in the panel.");
 
-  test("on the canvas: Edit in the docs panel, type, Save: the .md on disk changed, the panel shows the rendered doc again, and the bar counted the draft meanwhile", async () => {
+  test("on the canvas: the pencil in the docs panel shows the source with no draft, typing starts the draft, Save: the .md on disk changed, the panel shows the rendered doc again, and the bar counted the draft meanwhile", async () => {
     try {
       await vscode.commands.executeCommand("vnoc.openCanvas");
       await until("the canvas tab", () => canvasTabs().length === 1);
       const since = api.editStates().length;
       api.dispatch({ type: "expand", ids: ["nested.py"] });
       api.dispatch({ type: "select", id: NODE });
-      await editing(since, () => api.viewCommand({ name: "showDocPanel" }));
-      assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "nothing typed: nothing to lose");
-      api.viewCommand({ name: "docSetDraft", key: docPath, text: edited(before) });
+      // the pencil: the source of the `.md`, with no draft yet (the panel says `reading`, and the bar has nothing to count)
+      for (let waited = 0; stateOf(since)?.state !== "reading"; waited += 500) {
+        assert.ok(waited < 30_000, "the panel never showed the doc");
+        api.viewCommand({ name: "showDocPanel" });
+        await sleep(500);
+      }
+      api.viewCommand({ name: "docEdit", key: docPath });
+      await sleep(1500);
+      assert.deepStrictEqual([stateOf(since)?.state, api.draftsChip()], ["reading", { count: 0, label: "" }], "the source is shown and nothing was typed: no draft, nothing to count");
+      await editing(since, edited(before), () => api.viewCommand({ name: "showDocPanel" }));
+      // typed back to the original: nothing to lose, and no draft
+      api.viewCommand({ name: "docSetDraft", key: docPath, text: before });
+      await waitFor("the draft to be dropped by typing back", () => stateOf(since)?.state === "reading" && api.draftCopyOf("canvas").length === 0, 10_000);
+      await editing(since, edited(before));
       await waitFor("the bar to count the doc draft and the host to hold it", () => api.draftsChip().count === 1 && api.draftCopyOf("canvas").some((d) => d.kind === "doc" && d.path === docPath && d.text === edited(before)), 10_000);
       assert.strictEqual(fs.readFileSync(docPath, "utf8"), before, "nothing is written until Save");
       api.viewCommand({ name: "docSave", key: docPath });
@@ -1064,8 +1148,7 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
       const since = api.editStates().length;
       await vscode.commands.executeCommand("vnoc.showDocs", node);
       await until("the docs tab", () => docsTabs().length === 1);
-      await editing(since);
-      api.viewCommand({ name: "docSetDraft", key: docPath, text: edited(before) });
+      await editing(since, edited(before));
       await waitFor("the host to hold the draft as the docs tab's", () => api.draftCopyOf("docs").some((d) => d.kind === "doc" && d.path === docPath && d.text === edited(before)), 10_000);
       assert.deepStrictEqual(api.draftCopyOf("canvas"), [], "and not the canvas's");
       api.viewCommand({ name: "docSave", key: docPath });
@@ -1086,8 +1169,7 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
       const since = api.editStates().length;
       await vscode.commands.executeCommand("vnoc.showDocs", node);
       await until("the docs tab", () => docsTabs().length === 1);
-      await editing(since);
-      api.viewCommand({ name: "docSetDraft", key: docPath, text: edited(before) });
+      await editing(since, edited(before));
       await waitFor("the host to hold the draft", () => api.draftCopyOf("docs").some((d) => d.text === edited(before)), 10_000);
 
       // the canvas, on the same node: its Edit is refused, and says which page has the doc

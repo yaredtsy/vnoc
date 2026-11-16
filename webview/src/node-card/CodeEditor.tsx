@@ -14,23 +14,28 @@ export interface EditorProps {
   path: string;
   firstLine: number;
   editState: EditState;
-  /** the user typed: the draft's text */
+  /** whether Monaco takes typing: the card decides (`isWritable`): a draft that is `editing`, or the code with no draft, a saved file and no other card holding the node's draft (9.7) */
+  writable: boolean;
+  /** the user typed: the text Monaco holds now */
   onText: (text: string) => void;
   /** ⌘S, or ⌘⌥S, in the editor */
   onSave: () => void;
   /** the Monaco language id, when the path does not say (a doc is Markdown whatever the path is) */
   language?: string;
+  /** "Edit in Card" and the doc's pencil ask the editor to take the keyboard: a number that changes with each ask, 0 for none. `onFocused` says it did */
+  focusRequest?: number;
+  onFocused?: (request: number) => void;
 }
 
-export function CodeEditor({ text, path, firstLine, editState, onText, onSave, language }: EditorProps) {
+export function CodeEditor({ text, path, firstLine, editState, writable, onText, onSave, language, focusRequest = 0, onFocused }: EditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const editor = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const editable = editState === "editing";
+  const editable = writable;
   // the first value for the editor when it is created; later changes go through `setValue` / options below
   const initial = useRef({ text, path, firstLine, editable, language });
   // what the editor's handlers read when they run: the latest props, without making the editor again
-  const live = useRef({ editable, editState, onText, onSave });
-  live.current = { editable, editState, onText, onSave };
+  const live = useRef({ editable, editState, onText, onSave, focusRequest, onFocused });
+  live.current = { editable, editState, onText, onSave, focusRequest, onFocused };
 
   useEffect(() => {
     let disposed = false;
@@ -65,8 +70,13 @@ export function CodeEditor({ text, path, firstLine, editState, onText, onSave, l
       // ⌘S and ⌘⌥S (Ctrl+S elsewhere) save the draft, and only the draft; `swallows` below keeps VS Code from also running its own Save
       e.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => live.current.onSave());
       e.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyS, () => live.current.onSave());
-      // typing is the draft; `setValue` (a read, a discard) is not typing
+      // typing is the draft; `setValue` (a read, a discard) is not typing, and the caller's rule (`typeIn`) ignores a text that is the baseline's own
       e.onDidChangeModelContent(() => live.current.editable && live.current.onText(e.getValue()));
+      // an ask for the keyboard that came before the editor was made
+      if (live.current.focusRequest) {
+        e.focus();
+        live.current.onFocused?.(live.current.focusRequest);
+      }
     });
     return () => {
       disposed = true;
@@ -91,6 +101,12 @@ export function CodeEditor({ text, path, firstLine, editState, onText, onSave, l
   useEffect(() => {
     editor.current?.updateOptions({ readOnly: !editable, domReadOnly: !editable });
   }, [editable]);
+
+  useEffect(() => {
+    if (!focusRequest || !editor.current) return;
+    editor.current.focus();
+    onFocused?.(focusRequest);
+  }, [focusRequest, onFocused]);
 
   useEffect(() => {
     const e = editor.current;

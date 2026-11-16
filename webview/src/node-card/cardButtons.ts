@@ -3,7 +3,7 @@
 import type { Placed } from "../canvas/layout.ts";
 import { type CardEdit, type EditState, NOT_EDITING } from "./editState.ts";
 
-export type ButtonId = "focus" | "explore" | "goToCode" | "code" | "edit" | "save" | "discard" | "addDoc";
+export type ButtonId = "focus" | "explore" | "goToCode" | "code" | "save" | "discard" | "addDoc";
 export interface CardButton {
   id: ButtonId;
   disabled: boolean;
@@ -16,8 +16,8 @@ export interface CardButton {
  * The opened folder (id "/") is not a node: no buttons (Focus on it would push "/" into the focus path, and no doc attaches to it).
  * On the root of a focused view Focus is there but does nothing. A file's code is the whole file, so `</>` is for a definition with a range.
  * A sidebar row has the same buttons without `</>`: it changes a card, and a row has none (07 §3).
- * The code's slot (docs/17-edit-in-canvas.md §4): code closed: `</>`; shown, read-only: `</>` · Edit; a draft in any of its states: Save · Discard in the same
- * two places (so the code cannot be closed with its button in the middle of a draft). Save is enabled only while editing a draft that differs from its start;
+ * The code's slot (docs/17-edit-in-canvas.md §4): code closed, or shown with no draft: `</>` (there is no Edit button: the code takes typing, and the first keystroke starts the draft,
+ * 9.7); a draft in any of its states: Save · Discard in the same place (so the code cannot be closed with its button in the middle of a draft). Save is enabled only while editing a draft that differs from its start;
  * Discard is disabled while it saves. In `conflict` and `gone` Save is disabled and Discard is not. A call card has the same slot, for its callee's code.
  * A sidebar row never shows any of them.
  */
@@ -40,7 +40,5 @@ export function cardButtons(node: Pick<Placed, "id" | "kind" | "range" | "role" 
 }
 
 function codeSlot(state: EditState): ButtonId[] {
-  if (state === "closed") return ["code"];
-  if (state === "reading") return ["code", "edit"];
-  return ["save", "discard"];
+  return state === "closed" || state === "reading" ? ["code"] : ["save", "discard"];
 }

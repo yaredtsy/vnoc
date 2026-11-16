@@ -54,7 +54,7 @@ const strip = (node: Parameters<typeof cardButtons>[0], state: (typeof STATES)[n
 const fn = { id: "a.py::f", kind: "function" as const, range: RANGE, role: "node" as const, key: "a.py::f" };
 const calleeCard = { id: "call:[...]", kind: "function" as const, range: RANGE, role: "call" as const, key: "lib.py::leaf" };
 
-const slot: Record<(typeof STATES)[number], string[]> = { closed: ["code"], reading: ["code", "edit"], editing: ["save", "discard"], saving: ["save", "discard"], conflict: ["save", "discard"], gone: ["save", "discard"] };
+const slot: Record<(typeof STATES)[number], string[]> = { closed: ["code"], reading: ["code"], editing: ["save", "discard"], saving: ["save", "discard"], conflict: ["save", "discard"], gone: ["save", "discard"] };
 for (const state of STATES) {
   test(`a function card, ${state}: ${["focus", "goToCode", ...slot[state], "addDoc"].join(" · ")}`, () => assert.deepEqual(strip(fn, state).map((b) => b.id), ["focus", "goToCode", ...slot[state], "addDoc"]));
   test(`a class card, ${state}: the same slot`, () => assert.deepEqual(strip({ ...fn, kind: "class" }, state).map((b) => b.id), ["focus", "goToCode", ...slot[state], "addDoc"]));
@@ -74,8 +74,9 @@ test("Discard is disabled while it saves, and in no other state", () => {
   assert.equal(strip(fn, "saving", true).find((b) => b.id === "discard")?.disabled, true);
 });
 
-test("Edit is never disabled, and nothing else changes with the state: Focus keeps its rule, Explore is never disabled", () => {
-  assert.equal(strip(fn, "reading").find((b) => b.id === "edit")?.disabled, false);
+test("there is no Edit button in any state (9.7: typing starts the draft), and nothing else changes with the state: Focus keeps its rule, Explore is never disabled", () => {
+  for (const state of STATES) assert.ok(!strip(fn, state).some((b) => (b.id as string) === "edit"), state);
+  assert.ok(!strip(calleeCard, "reading").some((b) => (b.id as string) === "edit"), "a call card has none either");
   assert.equal(cardButtons(fn, true, "canvas", { state: "editing", changed: true }).find((b) => b.id === "focus")?.disabled, true);
   assert.ok(strip(calleeCard, "reading").every((b) => !b.disabled));
 });

@@ -16,9 +16,10 @@ const swallowed: { name: string; platform: Platform; key: KeyPress }[] = [
   { name: "Ctrl+S", platform: "other", key: press("s", { ctrl: true }) },
   { name: "Ctrl+Shift+S", platform: "other", key: press("S", { ctrl: true, shift: true }) },
 ];
+// 9.7: wherever the code is shown, with a draft or without; a card whose code is closed has no editor to type in
 for (const s of swallowed) {
   for (const state of STATES) {
-    test(`${s.platform}: ${s.name} is ${state === "editing" ? "swallowed" : "not swallowed"} in ${state}`, () => assert.equal(swallows(state, s.key, s.platform), state === "editing"));
+    test(`${s.platform}: ${s.name} is ${state !== "closed" ? "swallowed" : "not swallowed"} in ${state}`, () => assert.equal(swallows(state, s.key, s.platform), state !== "closed"));
   }
 }
 
@@ -66,6 +67,6 @@ const staying: { name: string; key: KeyPress; stays: boolean }[] = [
 ];
 for (const s of staying) {
   for (const state of STATES) {
-    test(`${s.name} ${s.stays && state === "editing" ? "stays in the code" : "is left alone"} in ${state}`, () => assert.equal(staysInCode(state, s.key), s.stays && state === "editing"));
+    test(`${s.name} ${s.stays && state !== "closed" ? "stays in the code" : "is left alone"} in ${state}`, () => assert.equal(staysInCode(state, s.key), s.stays && state !== "closed"));
   }
 }

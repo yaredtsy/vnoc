@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import { type CallId, isCallId, listedSites, resolveCall, siteChoice } from "@vnoc/shared/calls.ts";
 import type { CallTreeNode, Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
-import type { EditDiffParams, EditSaveParams, EditSaveResult, EditStartResult, Events } from "@vnoc/shared/messages";
+import type { CodeResult, EditDiffParams, EditSaveParams, EditSaveResult, EditStartResult, Events } from "@vnoc/shared/messages";
 import { reindent } from "@vnoc/shared/indent";
 import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
@@ -396,28 +396,21 @@ export class Commands {
     return addDoc((method, params) => this.core.request(method, params), root, node, node.docs);
   }
 
-  /** The text of a definition, from VS Code's document (so unsaved edits show). The path comes from the webview, so it must stay inside the opened folder. */
-  async codeOf(relative: string, r: Range): Promise<string> {
-    const doc = await this.documentIn(relative);
-    return doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character));
-  }
-
   /**
-   * Edit on a card (docs/17-edit-in-canvas.md §5): a document with unsaved changes is refused (E5), because the card's range comes from the last save and in a
-   * dirty file it can point at the wrong lines. `saveFirst` saves it first. Otherwise the range's text, the version it was read at, and the first line's text
-   * before the range (the `def`'s own indentation, as written).
+   * A definition's text and its baseline (docs/17-edit-in-canvas.md §4, §5), from VS Code's document (so unsaved edits show): the range's text, the version it was read at, the first
+   * line's text before the range (the `def`'s own indentation, as written), the line ending, and whether the document has unsaved changes. A card is editable only while it does not:
+   * its range comes from the last save and in a dirty file it can point at the wrong lines (E5). `saveFirst` saves it first (the card's Save button). The path comes from the webview,
+   * so it must stay inside the opened folder.
    */
-  async editStartOf(relative: string, r: Range, saveFirst: boolean): Promise<EditStartResult> {
+  async codeOf(relative: string, r: Range, saveFirst = false): Promise<CodeResult> {
     const doc = await this.documentIn(relative);
-    if (doc.isDirty) {
-      if (!saveFirst) return { dirty: true };
-      if (!(await doc.save())) throw new Error(`${relative} could not be saved.`);
-    }
+    if (saveFirst && doc.isDirty && !(await doc.save())) throw new Error(`${relative} could not be saved.`);
     return {
       text: doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character)),
       version: doc.version,
-      prefix: doc.lineAt(r.start.line).text.slice(0, r.start.character),
+      prefix: doc.lineAt(Math.min(r.start.line, doc.lineCount - 1)).text.slice(0, r.start.character),
       eol: doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n",
+      dirty: doc.isDirty,
     };
   }
 

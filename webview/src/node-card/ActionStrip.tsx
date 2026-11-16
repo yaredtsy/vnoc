@@ -2,7 +2,7 @@ import { Codicon } from "@/components/Codicon.tsx";
 import { IconButton } from "@/components/IconButton.tsx";
 import { cn } from "@/lib/utils.ts";
 import type { Placed } from "../canvas/layout.ts";
-import { beginEdit, cardRef, discardDraft, saveDraft } from "../state/edit.ts";
+import { discardDraft, saveDraft } from "../state/edit.ts";
 import { type ButtonId, cardButtons } from "./cardButtons.ts";
 import { platformNow, saveTip } from "./cardKeys.ts";
 import { type CardEdit, NOT_EDITING } from "./editState.ts";
@@ -13,7 +13,6 @@ const BUTTONS: Record<ButtonId, { icon: string; label: (codeOpen: boolean) => st
   explore: { icon: "compass", label: () => "Explore" },
   goToCode: { icon: "link-external", label: () => "Go to Code" },
   code: { icon: "code", label: (open) => (open ? "Hide Code in Card" : "Code in Card") },
-  edit: { icon: "edit", label: () => "Edit" },
   save: { icon: "save", label: () => saveTip(platformNow()) },
   discard: { icon: "discard", label: () => "Discard" },
   addDoc: { icon: "add", label: () => "Add Doc…" },
@@ -33,7 +32,6 @@ export function ActionStrip({ node, contextId, focusRoot, selected, surface = "c
     explore: actions.explore,
     goToCode: actions.goToCode,
     code: actions.toggleCode,
-    edit: () => void beginEdit(cardRef(node)),
     save: () => void (key !== null && saveDraft(key)),
     discard: () => key !== null && discardDraft(key),
     addDoc: actions.addDoc,

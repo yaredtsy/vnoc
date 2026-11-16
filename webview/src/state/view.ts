@@ -40,6 +40,8 @@ interface View {
   /** the drawn cards that hold the selection / the cursor inside a closed card: they show a dot */
   hidesSelected: string | null;
   hidesCursor: string | null;
+  /** "Edit in Card" (and a doc's pencil) asks the editor of this card or doc to take the keyboard, once it exists; the editor clears it (9.7). `n` makes a second ask a new one */
+  focusCode: { id: string; n: number } | null;
 }
 
 const saved = vscode.getState<Saved>() ?? {};
@@ -56,7 +58,13 @@ export const useView = create<View>(() => ({
   revealed: null,
   hidesSelected: null,
   hidesCursor: null,
+  focusCode: null,
 }));
+
+/** Asks the editor of this card (or doc) to take the keyboard, so typing starts the draft. */
+export const requestCodeFocus = (id: string) => useView.setState(({ focusCode }) => ({ focusCode: { id, n: (focusCode?.n ?? 0) + 1 } }));
+/** The editor took it: nothing is waiting any more. Only the ask it answered is cleared. */
+export const clearCodeFocus = (id: string, n: number) => useView.setState(({ focusCode }) => (focusCode?.id === id && focusCode.n === n ? { focusCode: null } : {}));
 
 export const setHover = (hover: string | null) => useView.setState({ hover });
 

@@ -38,7 +38,7 @@ const sidebarPosts: SidebarRendered[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
-const editStatePosts: { key: string; state: string; elsewhere: boolean }[] = [];
+const editStatePosts: { key: string; state: string; elsewhere: boolean; mark: string | null }[] = [];
 /** The answers of the pages to "check the keys of a code editor" (for the test suite). */
 const keysCheckedPosts: { found: boolean; target: string; taken: string[] }[] = [];
 
@@ -95,8 +95,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     reopen: (page) => void (page === "canvas" ? panels.showCanvas() : panels.showDocs()),
     pageOpen: (page) => (page === "canvas" ? panels.canvas !== undefined || tabOf(CANVAS) : panels.docs !== undefined || tabOf(DOCS)),
   });
-  // Edit on a function or class, or on a doc (§8): a doc the other page has a draft of is `busy`, and the host is the only one that can say so
-  const editStart = (p: EditStartParams) => ("kind" in p ? (draftCopy.busy(p.path, p.page) ? Promise.resolve({ busy: true as const }) : commands.editStartDocOf(p.path, p.saveFirst === true)) : commands.editStartOf(p.path, p.range, p.saveFirst === true));
+  // the doc panel's pencil (§8): a doc the other page has a draft of is `busy`, and the host is the only one that can say so
+  const editStart = (p: EditStartParams) => (draftCopy.busy(p.path, p.page) ? Promise.resolve({ busy: true as const }) : commands.editStartDocOf(p.path, p.saveFirst === true));
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
@@ -111,7 +111,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     core: (method, params) => c.request(method, params),
     addDoc: (key) => commands.addDocTo(key),
     docs,
-    code: (path, range) => commands.codeOf(path, range),
+    code: (path, range, saveFirst) => commands.codeOf(path, range, saveFirst),
     editStart,
     editSave: (params) => commands.editSaveOf(params),
     editDiff: (params) => commands.editDiffOf(params),
@@ -238,7 +238,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     draftCopyOf: (page: Page) => draftCopy.drafts(page),
     /** what a page's `drafts` note does: that page's list in the copy is replaced */
     feedDrafts: (page: Page, drafts: Draft[]) => draftCopy.replace(page, drafts),
-    /** the request a page makes for Edit, with the busy rule: a doc (`kind: "doc"`) or a function */
+    /** the request the doc panel's pencil makes, with the busy rule */
     editStartRequest: (params: EditStartParams) => editStart(params),
     /** how the copy shows its notifications; a test answers them. No argument: VS Code's own */
     setDraftNotify: (notify?: Notify) => void (draftCopy.notify = notify ?? showNotification),
@@ -246,15 +246,15 @@ export function activate(ctx: vscode.ExtensionContext) {
     draftsAtStart: () => draftCopy.atStart(),
     /** the files with unsaved changes the host holds now (what the `dirtyFiles` event carries) */
     dirtyFiles: () => dirty.paths,
-    /** a card's edit state each time it changed, in order: which card, the state, and whether it says "Already being edited in another card" */
+    /** a card's edit state each time it changed, in order: which card, the state, whether it says it is being edited elsewhere, and which line is above its code */
     editStates: () => editStatePosts,
     /** a command for the canvas page that only the test suite sends: set a draft's text, press Save on a card (the suite cannot type or press keys in a webview) */
     viewCommand: (data: Events["viewCommand"]) => panels.emit("viewCommand", data),
     /** asks the canvas to dispatch keys at a code editor and say which the canvas took (`keysChecked` answers), and what it has said so far */
     checkKeys: () => panels.emit("viewCommand", { name: "checkKeys" }),
     keysChecked: () => keysCheckedPosts,
-    /** the host's answer to Edit on a range (the request a card makes) */
-    editStart: (path: string, range: Range, saveFirst = false) => commands.editStartOf(path, range, saveFirst),
+    /** the host's answer to a card's code (the request a card makes): the text and the baseline of a range */
+    codeOf: (path: string, range: Range, saveFirst = false) => commands.codeOf(path, range, saveFirst),
     /** the host's answer to Save on a draft; `locate` stands in for the core's `vnoc/locate`, so a test can edit the document before it answers, and `ask` for the modal about a draft that takes the ID away */
     editSave: (params: EditSaveParams, locate?: Locate, ask?: AskToDropId) => commands.editSaveOf(params, locate, ask),
     /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
@@ -304,7 +304,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken });
       break;
     case "editState":
-      editStatePosts.push({ key: note.key, state: note.state, elsewhere: note.elsewhere });
+      editStatePosts.push({ key: note.key, state: note.state, elsewhere: note.elsewhere, mark: note.mark });
       break;
     case "codeShown":
       codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });

@@ -20,10 +20,37 @@ export function DraftLine({ pad = NAME_X, dot = DOT_WARNING, title, children, ri
   );
 }
 
-/** Edit was refused because another card holds the node's draft, or another page the doc's (§7, §8). */
-export function Elsewhere({ text, tip, pad }: { text: string; tip: string; pad?: number }) {
+/** Another card holds the node's draft (§7, 9.7), or another page the doc's (§8). With `onClick` the line brings the holder into view. */
+export function Elsewhere({ text, tip, pad, onClick }: { text: string; tip: string; pad?: number; onClick?: () => void }) {
   return (
     <DraftLine pad={pad} rightPad="pr-3" title={tip}>
+      {onClick ? (
+        <button type="button" className="nodrag nopan min-w-0 flex-1 cursor-pointer truncate text-left underline decoration-dotted underline-offset-2 hover:text-foreground" onClick={onClick}>
+          {text}
+        </button>
+      ) : (
+        <span className="min-w-0 flex-1 truncate">{text}</span>
+      )}
+    </DraftLine>
+  );
+}
+
+/** The file has unsaved changes in a tab, and the code is read-only until it is saved (E5, §5, 9.7): the line says so, with a Save button. `disabled` while Save waits for the index. */
+export function SaveFirst({ text, tip, pad, disabled, onSave }: { text: string; tip: string; pad?: number; disabled?: boolean; onSave: () => void }) {
+  return (
+    <DraftLine pad={pad} title={tip}>
+      <span className="min-w-0 flex-1 truncate">{text}</span>
+      <Button variant="secondary" size="xs" className="nodrag nopan h-5 flex-none" disabled={disabled} onClick={onSave}>
+        Save
+      </Button>
+    </DraftLine>
+  );
+}
+
+/** Save was pressed on the file and the card waits for the index to read it. */
+export function Waiting({ text, pad }: { text: string; pad?: number }) {
+  return (
+    <DraftLine pad={pad} rightPad="pr-3">
       <span className="min-w-0 flex-1 truncate">{text}</span>
     </DraftLine>
   );

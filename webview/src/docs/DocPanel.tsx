@@ -2,7 +2,7 @@
 // draft of the whole `.md` (the drafts store, `state/drafts.ts`) and shows it in Monaco in place of the rendered Markdown; Save writes it through the host. The panel never writes a file itself,
 // and it never holds the truth: the host lists the docs and sends their text. Which buttons and which line are `docEdit.ts`.
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { IconFileText, IconPlus, IconPointer, IconX } from "@tabler/icons-react";
 
@@ -14,12 +14,12 @@ import { on, post, request } from "../host.ts";
 import { platformNow, saveTip } from "../node-card/cardKeys.ts";
 import { CodeEditor } from "../node-card/CodeEditor.tsx";
 import { Elsewhere, Refusal, SaveNotice, StateLine } from "../node-card/DraftLines.tsx";
-import { type DraftAction, isChanged } from "../state/draftRules.ts";
+import { type DraftAction, isChanged, isWritable } from "../state/draftRules.ts";
 import { editStateOf } from "../node-card/editState.ts";
-import { typeInto, useDrafts } from "../state/drafts.ts";
-import { beginDocEdit, copyDraft, discardDraft, openInEditor, reloadDocDraft, saveDraft, showDiff } from "../state/edit.ts";
+import { useDrafts } from "../state/drafts.ts";
+import { closeDocSource, copyDraft, discardDraft, openDocSource, openInEditor, reloadDocDraft, saveDraft, showDiff, typeIn } from "../state/edit.ts";
 import { PAGE } from "../state/page.ts";
-import { setDocWidth, useView } from "../state/view.ts";
+import { clearCodeFocus, setDocWidth, useView } from "../state/view.ts";
 import { type DocSubject, calledByText } from "@vnoc/shared/docSubject.ts";
 import type { DocInfo, TreeNode } from "@vnoc/shared/messages.ts";
 import { type DocButtonId, docButtons, docLine } from "./docEdit.ts";
@@ -74,31 +74,55 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
   const notice = useDrafts((s) => (path ? s.notices[path] : undefined));
   const ref = path && node ? { path, node: node.id } : null;
   const hasDraft = draft !== undefined;
+  // the pencil shows the source of the `.md` with no draft yet (§8, 9.7): its baseline is what a draft starts from, as a card's is
+  const baseline = useDrafts((s) => (path ? s.baselines[path] : undefined));
+  const source = baseline !== undefined;
+  const focusRequest = useView((v) => (path !== null && v.focusCode?.id === path ? v.focusCode.n : 0));
+  const onFocused = useCallback((n: number) => path !== null && clearCodeFocus(path, n), [path]);
+  const file = path ? path.slice(path.lastIndexOf("/") + 1) : "";
+  const line = docLine({ refused, busy, asking: PAGE, state: draft?.state ?? null, file, notice });
+  // the latest of what a change of the doc needs, without listening again each time
+  const latest = useRef({ source, hasDraft, ref });
+  latest.current = { source, hasDraft, ref };
 
   useEffect(() => {
     if (!path) return;
     let current = true;
     request("docText", { path }).then((t) => current && setRead({ path, text: t }), () => current && setRead({ path, text: null }));
     // typing in the editor tab, or a change on disk: the host sends the new text
-    const stop = on("docText", (changed) => changed.path === path && setRead({ path, text: changed.text }));
+    const stop = on("docText", (changed) => {
+      if (changed.path !== path) return;
+      setRead({ path, text: changed.text });
+      // the source is shown with nothing typed and the doc changed under it: its baseline is the doc as it is now (it may also have unsaved changes in a tab now, which refuses)
+      const { source: shown, hasDraft: drafted, ref: doc } = latest.current;
+      if (shown && !drafted && doc) void openDocSource(doc, false, true);
+    });
     return () => {
       current = false;
       stop();
     };
   }, [path, hasDraft]); // and again when a draft starts or ends: a save, a Discard, shows the doc as the host has it now (§8: no index to wait for)
 
+  // a doc that leaves the panel (another node, another doc, the panel closes) with no draft goes back to the rendered Markdown: nothing was typed
+  useEffect(
+    () => () => {
+      if (path && !useDrafts.getState().drafts[path]) closeDocSource(path);
+    },
+    [path],
+  );
+
   // what the panel says, for the extension's test suite (as a card does): the doc's state, and whether Edit was refused because the other page has it
   useEffect(() => {
-    if (path) post({ type: "editState", key: path, state: editState, elsewhere: busy });
-  }, [path, editState, busy]);
+    if (path) post({ type: "editState", key: path, state: editState, elsewhere: busy, mark: line?.kind ?? null });
+  }, [path, editState, busy, line?.kind]);
 
   // the test suite cannot click or type in a webview: Edit, typing and Save of the doc it names (the doc's path is the key)
   useEffect(
     () =>
       on("viewCommand", ({ name, key, text }) => {
         if (!path || key !== path) return;
-        if (name === "docEdit" && ref) void beginDocEdit(ref);
-        else if (name === "docSetDraft" && text !== undefined) typeInto(path, text);
+        if (name === "docEdit" && ref) void openDocSource(ref);
+        else if (name === "docSetDraft" && text !== undefined) typeIn(path, path, text);
         else if (name === "docSave") void saveDraft(path);
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -107,15 +131,14 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
 
   const html = useMemo(() => (text === null ? "" : renderMarkdown(text)), [text]);
 
-  const file = path ? path.slice(path.lastIndexOf("/") + 1) : "";
   const run: Record<DocButtonId, () => void> = {
-    edit: () => ref && void beginDocEdit(ref),
+    edit: () => (source ? path && closeDocSource(path) : ref && void openDocSource(ref)),
     openInEditor: () => path && void request("openDoc", { path }).catch(() => {}),
     save: () => path && void saveDraft(path),
     discard: () => path && discardDraft(path),
   };
   const BUTTONS: Record<DocButtonId, { icon: string; label: string }> = {
-    edit: { icon: "edit", label: "Edit" },
+    edit: { icon: "edit", label: source ? "Show the rendered doc" : "Edit" },
     openInEditor: { icon: "go-to-file", label: "Open in Editor" },
     save: { icon: "save", label: saveTip(platformNow()) },
     discard: { icon: "discard", label: "Discard" },
@@ -126,10 +149,9 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
     openInEditor: () => path && openInEditor(path),
     copyDraft: () => path && copyDraft(path),
   };
-  const line = docLine({ refused, busy, asking: PAGE, state: draft?.state ?? null, file, notice });
   const lineEl =
     line?.kind === "refusal" ? (
-      <Refusal pad={16} path={path ?? ""} tip={(f) => `${f} has unsaved changes in an editor tab. Edit needs the saved file.`} onSaveAndEdit={() => ref && void beginDocEdit(ref, true)} />
+      <Refusal pad={16} path={path ?? ""} tip={(f) => `${f} has unsaved changes in an editor tab. Edit needs the saved file.`} onSaveAndEdit={() => ref && void openDocSource(ref, true)} />
     ) : line?.kind === "busy" ? (
       <Elsewhere pad={16} text={line.text} tip={`${line.text}: one draft per doc`} />
     ) : line?.kind === "state" ? (
@@ -177,7 +199,7 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
           )}
         </div>
         {docs.length > 0 && (
-          <Select value={doc?.path ?? ""} items={docs.map((d) => ({ value: d.path, label: d.title }))} disabled={hasDraft} onValueChange={(value) => value && pick(value)}>
+          <Select value={doc?.path ?? ""} items={docs.map((d) => ({ value: d.path, label: d.title }))} disabled={hasDraft || source} onValueChange={(value) => value && pick(value)}>
             <SelectTrigger size="sm" className="max-w-[45%] min-w-0 font-medium" aria-label="Doc">
               <SelectValue />
             </SelectTrigger>
@@ -193,8 +215,8 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
             </SelectContent>
           </Select>
         )}
-        {docButtons(editState, draft ? isChanged(draft) : false).map(({ id, disabled }) => (
-          <IconButton key={id} size="icon-sm" label={BUTTONS[id].label} disabled={disabled} onClick={run[id]}>
+        {docButtons(editState, draft ? isChanged(draft) : false, source).map(({ id, disabled, pressed }) => (
+          <IconButton key={id} size="icon-sm" label={BUTTONS[id].label} disabled={disabled} aria-pressed={pressed} variant={pressed ? "secondary" : "ghost"} onClick={run[id]}>
             <Codicon name={BUTTONS[id].icon} />
           </IconButton>
         ))}
@@ -205,8 +227,19 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
       </header>
       <div className="flex min-h-0 flex-1 flex-col">
         {lineEl}
-        {draft ? (
-          <CodeEditor text={draft.text} path={draft.path} language="markdown" firstLine={1} editState={editState} onText={(t) => typeInto(draft.key, t)} onSave={() => void saveDraft(draft.key)} />
+        {draft || baseline ? (
+          <CodeEditor
+            text={draft ? draft.text : baseline!.text}
+            path={draft?.path ?? baseline!.path}
+            language="markdown"
+            firstLine={1}
+            editState={editState}
+            writable={isWritable({ hasDraft, holder: null, state: draft?.state ?? null, dirty: false, settling: false })}
+            focusRequest={focusRequest}
+            onFocused={onFocused}
+            onText={(t) => path !== null && typeIn(path, path, t)}
+            onSave={() => path !== null && void saveDraft(path)}
+          />
         ) : (
           <div className="min-h-0 flex-1 overflow-auto px-4 py-4" onClick={onBodyClick}>
             {!node && (

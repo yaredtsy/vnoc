@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Draft, type Drafts, ELSEWHERE_TEXT, feedFor, markKey, newDocDraft, canSave, draftFor, editBlock, isUnsaved, showElsewhere, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
+import { type Baseline, type Draft, type Drafts, ELSEWHERE_TEXT, type CodeFacts, baselineOf, codeMark, docBaselineOf, draftFrom, isWritable, settleTyping, feedFor, markKey, newDocDraft, canSave, draftFor, editBlock, isUnsaved, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
 
 // The rules of a draft (docs/17-edit-in-canvas.md §4, §5, E6).
 
@@ -103,12 +103,6 @@ test("the index moved on: a newer revision of the same run, or another run; not 
   assert.equal(indexMovedOn({ revision: 4, epoch: 1 }, null), false);
 });
 
-test("the refusal shows while the file is dirty, and goes when it is not", () => {
-  assert.equal(showRefusal(true, true), true);
-  assert.equal(showRefusal(true, false), false);
-  assert.equal(showRefusal(false, true), false);
-});
-
 // 9.3b: Save
 test("a draft changes state, and the same state is the same object", () => {
   const drafts = withDraft({}, started());
@@ -180,7 +174,7 @@ test("a draft in conflict or gone keeps its text, and cannot be saved", () => {
 
 const CALL_CARD = { id: 'call:["x.py::main","a.py::C::m"]', key: "a.py::C::m" };
 
-test("an Edit on a node that has a draft: the holder's own card does nothing, any other card on the node is refused and names the holder", () => {
+test("a node that has a draft: the holder's own card holds it, any other card on the node is `other` and names the holder", () => {
   const drafts = withDraft({}, started());
   assert.equal(editBlock({}, { id: "a.py::C::m", key: "a.py::C::m" }), null, "no draft: Edit starts one");
   assert.deepEqual(editBlock(drafts, { id: "a.py::C::m", key: "a.py::C::m" }), { kind: "same" });
@@ -189,15 +183,6 @@ test("an Edit on a node that has a draft: the holder's own card does nothing, an
   assert.equal(editBlock(drafts, { id: "call:[...]", key: null }), null, "a callee the project does not know has nothing to edit, and nothing to be refused for");
   const byCall = withDraft({}, started({ card: CALL_CARD.id }));
   assert.deepEqual(editBlock(byCall, { id: "a.py::C::m", key: "a.py::C::m" }), { kind: "other", holder: CALL_CARD.id }, "the other way round: the call card holds it");
-});
-
-test("the refusal's line shows while the draft that refused the card is still in another card", () => {
-  const drafts = withDraft({}, started());
-  assert.equal(showElsewhere(true, drafts, CALL_CARD), true);
-  assert.equal(showElsewhere(false, drafts, CALL_CARD), false, "the card was never refused");
-  assert.equal(showElsewhere(true, {}, CALL_CARD), false, "the draft was saved or discarded: the line goes");
-  assert.equal(showElsewhere(true, drafts, { id: "a.py::C::m", key: "a.py::C::m" }), false, "the holder itself is not refused by its own draft");
-  assert.equal(ELSEWHERE_TEXT, "Already being edited in another card");
 });
 
 test("unsaved: changed, or saving, conflict or gone; an untouched editing draft is not", () => {
@@ -248,3 +233,86 @@ test("a doc draft is kept by the store and restored with the page like any other
   assert.deepEqual(restoreDrafts({ "/d.md": { ...d, state: "saving" } }), { "/d.md": { ...d, state: "editing" } });
   assert.equal(draftFor({ "/d.md": d }, { id: "n", key: "/d.md" })?.kind, "doc", "the node's card id and the doc's path find it");
 });
+
+// ── typing starts the draft (9.7) ──────────────────────────────────────────────────────────────────────────────────
+
+const BASELINE: Baseline = baselineOf({ id: "a.py::C::m", key: "a.py::C::m", path: "a.py", range: RANGE }, { text: "def m(self):\n        return 1", version: 7, prefix: "    ", eol: "\n" });
+const START = "def m(self):\n    return 1"; // what Monaco shows of the baseline
+
+test("the baseline of a card holds everything a draft starts from", () => {
+  assert.deepEqual(BASELINE, { card: "a.py::C::m", key: "a.py::C::m", path: "a.py", range: RANGE, version: 7, text: "def m(self):\n        return 1", prefix: "    ", eol: "\n" });
+});
+
+test("the first keystroke that makes the text differ creates the draft from the baseline, in `editing`, with the text as typed", () => {
+  const d = draftFrom(BASELINE, START.replace("1", "12"));
+  assert.ok(d);
+  assert.deepEqual([d.state, d.text, d.base, d.version, d.prefix, d.eol, d.card, d.key, d.path, d.range], ["editing", "def m(self):\n    return 12", "def m(self):\n        return 1", 7, "    ", "\n", "a.py::C::m", "a.py::C::m", "a.py", RANGE]);
+  assert.equal(isChanged(d), true);
+  assert.deepEqual(d, { ...started(), text: START.replace("1", "12") }, "the same draft Edit used to start");
+});
+
+test("no draft while the text is what the baseline says: Monaco's own setValue, typing back, undo", () => {
+  assert.equal(draftFrom(BASELINE, START), null);
+  assert.equal(draftFrom(BASELINE, START.replace(/\n/g, "\r\n")), null, "line endings do not count: Monaco gives its own back");
+});
+
+test("a doc's baseline makes a doc draft: the whole file, no prefix, held by the node, keyed by the path", () => {
+  const range = { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } };
+  const b = docBaselineOf({ path: "/r/.vnoc/nodes/AA/X/a.md", node: "a.py::f" }, { text: "# T\n\ntext\n", version: 2, eol: "\n", range });
+  assert.equal(draftFrom(b, "# T\n\ntext\n"), null);
+  const d = draftFrom(b, "# T\n\nmore text\n");
+  assert.ok(d);
+  assert.deepEqual([d.kind, d.key, d.path, d.card, d.prefix, d.range, d.version, d.base, d.text, d.state], ["doc", "/r/.vnoc/nodes/AA/X/a.md", "/r/.vnoc/nodes/AA/X/a.md", "a.py::f", "", range, 2, "# T\n\ntext\n", "# T\n\nmore text\n", "editing"]);
+});
+
+test("typing into a draft keeps it while the text differs, and drops it when it is typed back to the original or undone to it", () => {
+  const one = withDraft({}, { ...started(), text: START.replace("1", "12") });
+  const key = "a.py::C::m";
+  assert.equal(settleTyping(one, key, START.replace("1", "123"))[key].text, "def m(self):\n    return 123", "still differs: the text follows the typing");
+  assert.deepEqual(settleTyping(one, key, START), {}, "typed back to the original: no draft");
+  assert.deepEqual(settleTyping(one, key, START.replace(/\n/g, "\r\n")), {}, "the same with Monaco's own line endings");
+  assert.equal(settleTyping(one, key, one[key].text), one, "nothing changed: the same object");
+  const none: Drafts = {};
+  assert.equal(settleTyping(none, key, "x"), none, "no draft here: typing creates none (the card's baseline does, `draftFrom`)");
+});
+
+test("typing is for an `editing` draft only: a draft that is saving, in conflict or gone keeps its text, and is not dropped", () => {
+  const key = "a.py::C::m";
+  for (const state of ["saving", "conflict", "gone"] as const) {
+    const held = withDraft({}, started({ state, text: START.replace("1", "12") }));
+    assert.equal(settleTyping(held, key, START), held, state);
+    assert.equal(settleTyping(held, key, "def m(self):\n    return 99"), held, state);
+  }
+});
+
+// ── the line above a card's code, and whether it takes typing (9.7) ──────────────────────────────────────────────────
+
+const facts = (over: Partial<CodeFacts> = {}): CodeFacts => ({ hasDraft: false, holder: null, state: null, dirty: false, settling: false, file: "m.py", ...over });
+const written = { kind: "written" as const, text: "Written into m.py, not saved." };
+const failed = { kind: "error" as const, text: "Could not save: the host is gone" };
+
+const marks: { name: string; facts: CodeFacts; mark: unknown; writable: boolean }[] = [
+  { name: "code shown, a saved file, no draft: nothing to say, and it takes typing", facts: facts(), mark: null, writable: true },
+  { name: "a draft that is editing: nothing to say, writable", facts: facts({ hasDraft: true, state: "editing" }), mark: null, writable: true },
+  { name: "a draft that is saving: read-only while the host writes", facts: facts({ hasDraft: true, state: "saving" }), mark: null, writable: false },
+  { name: "a conflict: the line and its buttons, read-only", facts: facts({ hasDraft: true, state: "conflict" }), mark: { kind: "state", text: "Changed in the editor since you started", actions: ["reload", "showDiff"] }, writable: false },
+  { name: "gone: the file's name, Open in Editor and Copy Draft, read-only", facts: facts({ hasDraft: true, state: "gone" }), mark: { kind: "state", text: "Not found in m.py any more", actions: ["openInEditor", "copyDraft"] }, writable: false },
+  { name: "the file has unsaved changes in a tab, no draft (E5, up front): Save to edit here, read-only", facts: facts({ dirty: true }), mark: { kind: "saveFirst", text: "Save m.py to edit here" }, writable: false },
+  { name: "the same, and the last Save wrote into the buffer: the line says what happened and what to do", facts: facts({ dirty: true, notice: written }), mark: { kind: "saveFirst", text: "Written into m.py, not saved. Save to edit here" }, writable: false },
+  { name: "Save was pressed and the card waits for the index: still read-only, and says so", facts: facts({ dirty: false, settling: true }), mark: { kind: "saving", text: "Saving m.py…" }, writable: false },
+  { name: "waiting, the file still dirty: waiting wins over the request to save", facts: facts({ dirty: true, settling: true }), mark: { kind: "saving", text: "Saving m.py…" }, writable: false },
+  { name: "a draft in a file that is dirty in a tab: the draft is editable, the file's state is §6's to check at save time", facts: facts({ hasDraft: true, state: "editing", dirty: true }), mark: null, writable: true },
+  { name: "another card holds the node's draft: read-only, and names it", facts: facts({ holder: "a.py::m" }), mark: { kind: "elsewhere", holder: "a.py::m", text: "Being edited in another card" }, writable: false },
+  { name: "another card holds it and the file is dirty: the holder is what matters", facts: facts({ holder: "a.py::m", dirty: true }), mark: { kind: "elsewhere", holder: "a.py::m", text: "Being edited in another card" }, writable: false },
+  { name: "what the last Save did, written, in a file that is saved now", facts: facts({ notice: written }), mark: { kind: "notice", notice: written }, writable: true },
+  { name: "a failed save keeps the draft editing, with the reason", facts: facts({ hasDraft: true, state: "editing", notice: failed }), mark: { kind: "notice", notice: failed }, writable: true },
+  { name: "a conflict wins over a notice", facts: facts({ hasDraft: true, state: "conflict", notice: failed }), mark: { kind: "state", text: "Changed in the editor since you started", actions: ["reload", "showDiff"] }, writable: false },
+];
+for (const r of marks) {
+  test(`a card's code: ${r.name}`, () => {
+    assert.deepEqual(codeMark(r.facts), r.mark);
+    assert.equal(isWritable(r.facts), r.writable);
+  });
+}
+
+test("the text a card says when another card holds the draft", () => assert.equal(ELSEWHERE_TEXT, "Being edited in another card"));

@@ -10,17 +10,20 @@ export type DocButtonId = "edit" | "openInEditor" | "save" | "discard";
 export interface DocButton {
   id: DocButtonId;
   disabled: boolean;
+  /** Edit while the source is shown with no draft: the pencil is down, and pressing it shows the rendered doc again */
+  pressed: boolean;
 }
 
 /**
- * Reading: **Edit** (in place) and **Open in Editor** (the `.md` in a tab, as the pencil did before 9.6). A draft in any of its states: **Save** · **Discard**. As the card's: Save is enabled
- * only while editing a draft that differs from its start; Discard is disabled while it saves; in `conflict` and `gone` Save is disabled and Discard is not. Nothing without a doc.
- * `state` is the draft's, or `reading` when there is none, and `closed` when the panel has no doc to show.
+ * Reading, no draft: the pencil, **Edit**, and **Open in Editor** (the `.md` in a tab). The panel shows rendered Markdown, which cannot take typing, so the pencil switches to the source (Monaco)
+ * with no draft yet (9.7): from there it works as on a card, typing starts the draft. `source`: the source is shown; the pencil is down, and pressing it shows the rendered doc again. A draft in
+ * any of its states: **Save** · **Discard** in the pencil's place, as on a card: Save is enabled only while editing a draft that differs from its start; Discard is disabled while it saves; in
+ * `conflict` and `gone` Save is disabled and Discard is not. Nothing without a doc. `state` is the draft's, or `reading` when there is none, and `closed` when the panel has no doc to show.
  */
-export function docButtons(state: EditState, changed: boolean): DocButton[] {
+export function docButtons(state: EditState, changed: boolean, source = false): DocButton[] {
   if (state === "closed") return [];
   const ids: DocButtonId[] = state === "reading" ? ["edit", "openInEditor"] : ["save", "discard"];
-  return ids.map((id) => ({ id, disabled: (id === "save" && (state !== "editing" || !changed)) || (id === "discard" && state === "saving") }));
+  return ids.map((id) => ({ id, disabled: (id === "save" && (state !== "editing" || !changed)) || (id === "discard" && state === "saving"), pressed: id === "edit" && source }));
 }
 
 export type DocLine =

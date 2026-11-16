@@ -48,3 +48,12 @@ const lines: { name: string; input: Parameters<typeof docLine>[0]; expect: unkno
   { name: "a conflict wins over a notice", input: { refused: false, busy: false, asking: "docs", state: "conflict", file, notice: noticeFor("written", file) }, expect: { kind: "state", text: "Changed in the editor since you started", actions: ["reload", "showDiff"] } },
 ];
 for (const r of lines) test(`the line above the editor: ${r.name}`, () => assert.deepEqual(docLine(r.input), r.expect));
+
+// 9.7: the pencil switches to the source with no draft yet; it is pressed there, and pressing it again shows the rendered doc
+test("reading, the source shown with no draft: the pencil is down; rendered: it is up; with a draft the pencil's place is Save and Discard", () => {
+  assert.deepEqual(docButtons("reading", false, false).map((b) => [b.id, b.pressed]), [["edit", false], ["openInEditor", false]]);
+  assert.deepEqual(docButtons("reading", false, true).map((b) => [b.id, b.pressed]), [["edit", true], ["openInEditor", false]]);
+  assert.deepEqual(docButtons("editing", true, true).map((b) => [b.id, b.pressed]), [["save", false], ["discard", false]], "typing made a draft: Save and Discard, whatever the source flag says");
+  assert.deepEqual(docButtons("closed", false, true), []);
+  assert.deepEqual(docButtons("reading", false).map((b) => b.disabled), [false, false], "the source flag is optional");
+});
