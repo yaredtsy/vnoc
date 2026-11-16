@@ -120,7 +120,8 @@ test("08 §8: the new commands are declared, the removed ones are gone from ever
     assert.ok(!(pkg.contributes.keybindings as { command: string }[]).some((k) => k.command === gone), `${gone} still has a key binding`);
   }
   const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
-  for (const gone of ["vnoc.showOnCanvas", "vnoc.openCanvasBeside", "vnoc.showCallTree", "vnoc.focusDrop", "vnoc.focusSelection"]) assert.ok(changelog.includes(gone), `CHANGELOG.md does not say ${gone} is gone`);
+  // vnoc.showCallTree was never released, so the CHANGELOG does not name it.
+  for (const gone of ["vnoc.showOnCanvas", "vnoc.openCanvasBeside", "vnoc.focusDrop", "vnoc.focusSelection"]) assert.ok(changelog.includes(gone), `CHANGELOG.md does not say ${gone} is gone`);
 });
 
 // ── 2. one list for a card and a row ────────────────────────────────────────────────────────────────────────────────────
