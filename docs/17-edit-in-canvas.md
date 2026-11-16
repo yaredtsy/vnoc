@@ -43,7 +43,7 @@ and the call trees follow after the save, as they do today when you save in a no
 | **E3** | **Save checks before it writes:** the document's version, then the function's text against the draft's starting text (§6). A function changed in the editor is never overwritten. | One check replaces a live view. |
 | **E4** | **Save writes through a `WorkspaceEdit`, then saves the file only if it was not dirty before**: the rule `relink.ts`, `addDoc.ts` and `writeId.ts` already follow. | Unsaved work of the user's own in a tab is never saved for them. |
 | **E5** | **Editing a file that has unsaved changes is refused**: "Save `<file>` first", with a **Save and Edit** button. | The card's range comes from the last save. In a dirty file it can point at the wrong lines (§5). |
-| **E6** | **A draft lives in the webview** (a store beside `webview/src/state/view.ts`, saved with the same `vscode.setState` call: `setState` keeps one object per webview, so the draft must go into `view.ts`'s `Saved`, not a second call that would overwrite it), not in the extension. | The panel already has `retainContextWhenHidden`, so hiding the tab keeps the draft; `setState` keeps it through a webview reload. The extension stays stateless about drafts. |
+| **E6** | **A draft lives in the webview** (a store beside `webview/src/state/view.ts`, saved with the same `vscode.setState` call: `setState` keeps one object per webview, so the draft must go into `view.ts`'s `Saved`, not a second call that would overwrite it), not in the extension. | The panel already has `retainContextWhenHidden`, so hiding the tab keeps the draft; `setState` keeps it through a webview reload. The extension stays stateless about drafts. Measured in 9.0 (check C): 100 KB and 1 MB survive hiding the tab and *Developer: Reload Webviews*, and one `setState` call takes about 1 ms at either size. **A `setState` that is not `view.ts`'s own is dropped within seconds**: its subscriber writes its own object at the first view change, even a hover, and `probe` was gone in under 2 s with nothing touched. That is why the draft goes into `Saved`. |
 | **E7** | **The live view (S5's first question) is later**, and it is not a format change. | Nothing on disk depends on how the card edits. |
 
 ## 3. Why a draft, not a live view
@@ -119,12 +119,17 @@ the same bytes for spaces, tabs, empty lines and a docstring with less indent th
 
 ### Writing it
 
-1. `wasDirty = document.isDirty` (false, by E5, unless the user typed in the tab since the draft started).
-2. A `WorkspaceEdit` that replaces the range with the re-indented text. If `applyEdit` returns false, answer `{ conflict: true }`.
-3. If `!wasDirty`, `document.save()`. The watcher sends `vnoc/filesChanged`; the index updates; the card gets its new range with the next
+**The check is ours** (step 9.0, check B). A plain `WorkspaceEdit` carries no document version, and `vscode.workspace.applyEdit` applies it even after the document changed: with a line added at the top, an edit at the old range returned `true` and replaced the wrong lines. VS Code does no version check. The only one in the product is the language client's, for the core's `workspace/applyEdit` (`vscode-languageclient` 9.0.1, `lib/common/client.js:1457`; its converter drops the version from the edit), and it protects only the core's edits (`vnoc/attach`, `vnoc/writeId`, relink). `editSave` is the first extension-side text write, so the version and `base` checks of the table above are written in our code.
+
+1. Read `document.version` and the text at the range. Choose the row of the table from those two. **No `await` between that read and the call to `applyEdit`**: any await lets the document move on, and nothing after it would notice.
+2. `wasDirty = document.isDirty` (false, by E5, unless the user typed in the tab since the draft started).
+3. A `WorkspaceEdit` that replaces the range with the re-indented text. If `applyEdit` returns false, answer `{ conflict: true }`.
+4. If `!wasDirty`, `document.save()`. The watcher sends `vnoc/filesChanged`; the index updates; the card gets its new range with the next
    structure, as any card does after a save.
-4. If `wasDirty`, the text is in the editor's buffer but not on disk. The card says "Written into `<file>`, not saved", and the index follows when
+5. If `wasDirty`, the text is in the editor's buffer but not on disk. The card says "Written into `<file>`, not saved", and the index follows when
    the user saves the tab.
+
+**Gap (found writing this, not decided):** the second row of the table awaits `vnoc/locate`, and the document can change during that await. The rule above covers it only if the row is chosen again after the answer: the version read after `vnoc/locate` must equal the one the core was given, else answer `{ conflict: true }`. One `applyEdit` round trip stays open however carefully we check (the edit is applied in the main thread after our call), and `applyEdit` cannot close it. A draft is a person's typing, so the window is small. **ask:** state this rule in 9.4's proof (a window test that edits the document during `vnoc/locate`), or accept it as it is.
 
 ## 7. Edge cases
 
@@ -135,7 +140,7 @@ the same bytes for spaces, tabs, empty lines and a docstring with less indent th
 | the file was deleted or renamed while the draft was open | `openTextDocument` fails, or `vnoc/locate` finds nothing: gone |
 | two cards on the same function | the second **Edit** is refused: "Already being edited in another card"; that card is revealed |
 | the same file in two cards (two functions) | each draft is its own range. The first save changes the version, so the second save takes the second row of §6, one `vnoc/locate` |
-| ⌘S when the focus is in the card | Monaco's `addCommand(CtrlCmd + S)` saves the draft. VS Code must not also run its own Save **[check in 9.0]** |
+| ⌘S when the focus is in the card | **Decided (9.0, check A).** While the card is `editing`, a `keydown` listener on the card's container (bubble phase) calls `stopPropagation()` for ⌘S, ⌘⌥S and ⌘⇧S, and for no other key. Monaco's `addCommand(CtrlCmd + S)` runs first and saves the draft. ⌘⌥S in the card saves the draft only. ⌘⇧S does nothing. Every other key passes, so ⌘P, ⌘W, ⌘B… still reach VS Code with the focus in the card. Which keys a card swallows, by edit state, is a pure function next to the card with a table test (9.2, §11 f). `preventDefault()` alone does not stop VS Code (measured; §10) |
 | the window closes with a draft open | the draft is lost. VS Code cannot ask a webview before closing. The canvas's bar shows "1 unsaved draft" while there is one, so it is visible |
 | a file and a folder card | file: the slice is the whole file, same flow. A folder has no code, so no **Edit** |
 
@@ -166,13 +171,21 @@ On a branch `edit-in-canvas` from `main`. Each row is one commit and leaves `pnp
 
 | # | Build | Proof |
 |---|---|---|
-| **9.0** | three checks, written into this file: ⌘S in a webview Monaco with `addCommand` and VS Code's Save both bound · `WorkspaceEdit` on a document that has moved on (Q4 in `08`) · `vscode.setState` with a 100 KB draft | the answers in §7 and §6, the **[check]** marks removed |
+| **9.0** | three checks, written into this file: ⌘S in a webview Monaco with `addCommand` and VS Code's Save both bound · `WorkspaceEdit` on a document that has moved on (Q4 in `08`) · `vscode.setState` with a 100 KB draft | **done 2026-11-16.** The answers in §7, §6 and E6, the **[check]** marks removed; the measurements are under the table |
 | **9.1** | reading: the card marks "unsaved in editor" when the document is dirty (`codeOf` returns `dirty` beside the text) | a window test: type in a tab, the card shows the mark |
-| **9.2** | `editStart` in `shared/messages.ts`, the host's request table (`extension/src/extension.ts:88`) and `commands.ts` · the Edit row in the node menu and the card's button · the card's editing state, Save and Discard, the draft in `setState` · `dedent` / re-indent as a pair | the re-indent tests (§11 a) · by hand: Edit, type, Discard |
+| **9.2** | `editStart` in `shared/messages.ts`, the host's request table (`extension/src/extension.ts:88`) and `commands.ts` · the Edit row in the node menu and the card's button · the card's editing state, Save and Discard, the draft in `setState` · `dedent` / re-indent as a pair · `webview/src/node-card/cardKeys.ts`: which keys an editing card swallows (§7), and the listener on the card's container that uses it | the re-indent tests (§11 a) · the key table test (§11 f) · by hand: Edit, type, Discard, ⌘P with the focus in the card |
 | **9.3** | `editSave`, the first row of §6, and E4's save rule | a window test: edit a function in the card, ⌘S, the file on disk has the new text and the tree updates |
 | **9.4** | `vnoc/locate` in the core · the second and third rows · the conflict and gone states | the core test (§11 b) · window tests (§11 c, d) |
 | **9.5** | §7: the `ID:` line warning, one draft per node, the close question, "1 unsaved draft" in the bar | window tests (§11 e) |
 | **9.6** | §8: the doc panel's editor | a window test: edit a doc in the panel, ⌘S, the `.md` on disk changed |
+
+**Answers (2026-11-16).** A was done by hand in a real project, with a dirty `Untitled-1` as the witness and the key log of *Developer: Toggle Keyboard Shortcuts Troubleshooting*. B and C ran as throwaway probes (a window test and a self-reporting page), removed.
+
+| Check | Answer |
+|---|---|
+| ⌘S in a webview Monaco | **VS Code runs its own Save as well, and `preventDefault()` does not stop it; `stopPropagation()` on the card does.** *No blocker, ⌘S:* Monaco's command ran (`PROBE save`), the key was `defaultPrevented` on the card and on `window` (Monaco prevents the default of a key it handles), and VS Code still logged `Invoking command workbench.action.files.save`. So the webview forwards a key that is `defaultPrevented`. Nothing was saved only because the active editor was the canvas. *`stopPropagation()` in a bubble-phase listener on the card:* ⌘S and ⌘⌥S both ran Monaco's command, VS Code received only the Meta and Alt keydowns, never the S, no `Invoking command`, no Save As dialog. *Capture phase on the card:* blocks ⌘S and ⌘⇧S too, but Monaco's command did not run (the key never reached it), so the save would have to be called from that listener. **Not run:** ⌘⌥S with no blocker (**inferred** to invoke `workbench.action.files.saveAll` as ⌘S invokes `files.save`: it is the reason to swallow it); ⌘⇧S with the bubble-phase blocker (**inferred** from ⌘S and ⌘⌥S: Monaco has no command on it, so the key reaches the listener); `preventDefault()` alone as a blocker, `both` and the React `onKeyDown` (not needed); a dirty tab in another group or in the same group (the witness was `Untitled-1`, the key log is the evidence); Ctrl+S in Monaco; ⌘S on the canvas outside Monaco. The decision is in §7. **Gap:** this is measured on macOS only. On Windows and Linux `CtrlCmd` is Ctrl and Save All is a chord (Ctrl+K S) that one `keydown` cannot swallow. 9.2 decides what the card does there, with `cardKeys.ts` taking the platform |
+| `WorkspaceEdit` on a document that has moved on | **a plain one applies at the old range. The check is ours.** The document at version 1; a line inserted at the top (version 2, dirty); a second `WorkspaceEdit` at the old range of `def beta():`..`return 2`, no version: `applyEdit` returned `true`, version 3, and the text had `# REPLACED` over the blank line and the `def beta():` line, with `    return 2` left behind. For Q4: the **core's** `workspace/applyEdit` with a stale `version` (`vnoc/attach` told version 1 of a document at 2) was refused by `vscode-languageclient` itself (`lib/common/client.js:1457`; the converter drops the version from the edit): `{ applied: false }`, the core said "the editor did not apply the edit; the document changed meanwhile?", the text did not change. Every write to source text today goes through the core's `workspace/applyEdit` (`vnoc/attach`, `vnoc/writeId`, relink). The one extension-side `WorkspaceEdit` is `trash.ts:19`, which renames files. Written into §6 and Q4 |
+| `vscode.setState` with a 100 KB draft | **works, and one call is cheap.** *100 KB:* three calls took 0.4, 1.2, 0.5 ms (the call only: the copy to the host is not in it). *1 MB:* 1.2, 0.8, 0.8 ms. Both survived hiding the tab and showing it (the page did not reload) and *Developer: Reload Webviews*: the next load read `probe` back at its full length (100 000, then 1 000 000), in the same object as `view.ts`'s fields (`codeOpen`, `docsOpen`, `docWidth`, `minimap`, `panelShares`; only their default values were read, as a probe cannot click a card). **The overwrite:** when `probe` was set by its own `setState`, it was gone at the first check, under 2 s later, with nothing touched: `view.ts`'s subscriber had written its own object. When every `setState` carried `probe`, as a draft inside `Saved` would, it stayed. Written into E6. Not measured: *Developer: Reload Window*; a draft typed in a card |
 
 ## 11. Tests
 
@@ -183,5 +196,6 @@ On a branch `edit-in-canvas` from `main`. Each row is one commit and leaves `pnp
 | c | window suite | draft open → a line added at the top of the file in a tab and saved → ⌘S in the card writes at the new place |
 | d | window suite | draft open → the same function changed in a tab and saved → ⌘S in the card: conflict, the file is unchanged |
 | e | window suite | a draft that removes the `ID:` line asks first · a tab that was dirty is not saved by the card's ⌘S |
+| f | `webview/src/node-card/cardKeys.test.ts` | a table of state × key: ⌘S, ⌘⌥S and ⌘⇧S are swallowed in `editing` and in no other state · ⌘P, ⌘W, ⌘B, ⌘C, a plain `s` and (on macOS) Ctrl+S pass in every state |
 
 Next: back to [`README.md`](README.md)
