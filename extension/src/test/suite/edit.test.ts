@@ -59,6 +59,10 @@ async function typing(id: string, text: string): Promise<void> {
 
 const KEY = "nested.py::decorated";
 
+/** The line ending of a fixture's text: git checks the fixtures out with CRLF on Windows, so the tests build what they expect from the fixture's own (the CRLF run: `VNOC_FIXTURE_EOL=crlf`). */
+const eolOf = (text: string) => (text.includes("\r\n") ? "\r\n" : "\n");
+const inEol = (text: string, eol: string) => text.replace(/\r?\n/g, eol);
+
 /**
  * Puts the fixture back. If VS Code holds the file open it does it, with an edit and a save: a file written behind its back leaves the document older than the disk,
  * and the next save of it is refused ("the content of the file is newer") or waits on VS Code's own prompt, so the card stays `saving` (what made 9.3's tests fail
@@ -218,6 +222,7 @@ suite("editing: typing in a card's code starts a draft (docs/17-edit-in-canvas.m
     const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
     const file = path.join(folder, "nested.py");
     const original = fs.readFileSync(file, "utf8");
+    const eol = eolOf(original);
     const node = allNodes((await api.structure()).root).find((n) => n.id === KEY)!;
     const mark = (since: number) => api.editStates().slice(since).filter((p) => p.key === KEY).at(-1)?.mark;
     try {
@@ -242,7 +247,7 @@ suite("editing: typing in a card's code starts a draft (docs/17-edit-in-canvas.m
 
       // the Save button: the document is saved, the card waits for the index, then takes typing
       api.viewCommand({ name: "saveFile", key: KEY });
-      await waitFor("the document to be saved", () => !document.isDirty && fs.readFileSync(file, "utf8").endsWith("# unsaved, at the end\n"), 30_000);
+      await waitFor("the document to be saved", () => !document.isDirty && fs.readFileSync(file, "utf8").endsWith(inEol("# unsaved, at the end\n", eol)), 30_000);
       await waitFor("the line to go", () => mark(since) === null, 30_000);
       await typing(KEY, start.replace("return 9", "return 99"));
       assert.deepStrictEqual(api.webviewErrors(), []);
@@ -257,6 +262,7 @@ suite("editing: typing in a card's code starts a draft (docs/17-edit-in-canvas.m
     const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
     const file = path.join(folder, "nested.py");
     const original = fs.readFileSync(file, "utf8");
+    const eol = eolOf(original);
     const node = allNodes((await api.structure()).root).find((n) => n.id === "nested.py::Outer.Nested.method")!;
     assert.ok(node?.range, "a method of a nested class is in the fixture");
     const range = node.range;
@@ -264,7 +270,7 @@ suite("editing: typing in a card's code starts a draft (docs/17-edit-in-canvas.m
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
       const text = document.getText(new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character));
       const clean = await api.codeOf("nested.py", range);
-      assert.deepStrictEqual(clean, { text, version: document.version, prefix: "        ", eol: "\n", dirty: false });
+      assert.deepStrictEqual(clean, { text, version: document.version, prefix: "        ", eol, dirty: false });
       assert.match(clean.text, /^def method\(self\):/, "the range starts at `def`, the prefix is the indentation before it");
 
       const edit = new vscode.WorkspaceEdit();
@@ -281,7 +287,7 @@ suite("editing: typing in a card's code starts a draft (docs/17-edit-in-canvas.m
 
       const saved = await api.codeOf("nested.py", range, true);
       assert.ok(!document.isDirty, "Save saved the document");
-      assert.deepStrictEqual(saved, { text, version: document.version, prefix: "        ", eol: "\n", dirty: false });
+      assert.deepStrictEqual(saved, { text, version: document.version, prefix: "        ", eol, dirty: false });
     } finally {
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
       await restoreFixture(file, original);
@@ -293,11 +299,13 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
   const folder = () => vscode.workspace.workspaceFolders![0].uri.fsPath;
   const file = () => path.join(folder(), "nested.py");
   let original: string;
+  let eol: string;
 
   suiteSetup(async () => {
     api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
     discardOnClose();
     original = fs.readFileSync(file(), "utf8");
+    eol = eolOf(original);
   });
 
   suiteTeardown(async () => {
@@ -354,7 +362,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       api.viewCommand({ name: "save", key: id }); // what the button and ⌘S call
       // the whole file, compared with the expected string: the function has the new text and every other byte is as it was. Waited for, not read once: VS Code
       // writes a file by emptying it and then filling it, and a read in between sees nothing
-      const expected = original.replace("return 9\n", "return 99\n");
+      const expected = original.replace(inEol("return 9\n", eol), inEol("return 99\n", eol));
       await waitFor("the file on disk to be the original with the one line changed", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
       const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file());
       assert.ok(document && !document.isDirty, "E4: the file was not dirty before, so it is saved");
@@ -405,7 +413,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       assert.ok(await document.save());
 
       api.viewCommand({ name: "save", key: id });
-      const expected = "# top\n" + original.replace("return 9\n", "return 99\n");
+      const expected = "# top" + eol + original.replace(inEol("return 9\n", eol), inEol("return 99\n", eol));
       await waitFor("the file to have the comment and the draft, in the function's new place", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
       assert.deepStrictEqual(api.webviewErrors(), []);
     } finally {
@@ -422,12 +430,12 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       // the user, in a tab: the same function changed, and saved
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
       const edit = new vscode.WorkspaceEdit();
-      const at = document.getText().indexOf("return 9\n");
+      const at = document.getText().indexOf(inEol("return 9\n", eol));
       edit.replace(document.uri, new vscode.Range(document.positionAt(at), document.positionAt(at + "return 9".length)), "return 90");
       assert.ok(await vscode.workspace.applyEdit(edit));
       assert.ok(await document.save());
       const tab = fs.readFileSync(file(), "utf8");
-      assert.strictEqual(tab, original.replace("return 9\n", "return 90\n"));
+      assert.strictEqual(tab, original.replace(inEol("return 9\n", eol), inEol("return 90\n", eol)));
 
       api.viewCommand({ name: "save", key: id });
       await waitFor("the card to say conflict", () => statesOf(id, since).at(-1) === "conflict", 30_000);
@@ -453,7 +461,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
 
       api.viewCommand({ name: "save", key: id });
       await waitFor("the draft to be in the buffer", () => document.getText().includes("return 99"), 30_000);
-      assert.strictEqual(document.getText(), "# top, not saved\n" + original.replace("return 9\n", "return 99\n"), "the draft is in the buffer, at the function's new place, and the user's own edit is still there");
+      assert.strictEqual(document.getText(), "# top, not saved" + eol + original.replace(inEol("return 9\n", eol), inEol("return 99\n", eol)), "the draft is in the buffer, at the function's new place, and the user's own edit is still there");
       assert.ok(document.isDirty, "E4: the user's unsaved work is never saved for them");
       assert.strictEqual(fs.readFileSync(file(), "utf8"), original, "nothing reached the disk");
       await waitFor("the card to drop the draft at once", () => statesOf(id, since).at(-1) === "reading", 5_000);
@@ -513,7 +521,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       });
       assert.strictEqual(asked, 1);
       assert.deepStrictEqual(answer, { conflict: true });
-      assert.strictEqual(document.getText(), "# two\n# one\n" + original, "only the two edits of the test: the draft was not written");
+      assert.strictEqual(document.getText(), "# two" + eol + "# one" + eol + original, "only the two edits of the test: the draft was not written");
       assert.strictEqual(fs.readFileSync(file(), "utf8"), original, "and nothing reached the disk");
     } finally {
       await restoreFixture(file(), original);
@@ -524,7 +532,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     try {
       const params = await draftParams("nested.py::decorated", "return 9", "return 99");
       assert.deepStrictEqual(await api.editSave(params), { saved: true });
-      const expected = original.replace("return 9\n", "return 99\n");
+      const expected = original.replace(inEol("return 9\n", eol), inEol("return 99\n", eol));
       await waitFor("the first Save to be on disk", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
       const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file())!;
       const version = document.version;
@@ -578,7 +586,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       }
       // with its text: Save writes exactly what was typed before the canvas was closed
       api.viewCommand({ name: "save", key: id });
-      await waitFor("the file to have the draft that was typed before the close", () => fs.readFileSync(file(), "utf8") === original.replace("return 9\n", "return 99\n"), 30_000);
+      await waitFor("the file to have the draft that was typed before the close", () => fs.readFileSync(file(), "utf8") === original.replace(inEol("return 9\n", eol), inEol("return 99\n", eol)), 30_000);
       assert.ok(typedText.includes("return 99"));
       await waitFor("the copy to be empty: the draft was saved", () => api.draftCopy().length === 0, 10_000);
       assert.strictEqual(shown.length, 1, "one notification, not one per step");
@@ -596,7 +604,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     try {
       await typedDraft(id);
       await closeTab();
-      await waitFor("the file to have the draft", () => fs.readFileSync(file(), "utf8") === original.replace("return 9\n", "return 99\n"), 30_000);
+      await waitFor("the file to have the draft", () => fs.readFileSync(file(), "utf8") === original.replace(inEol("return 9\n", eol), inEol("return 99\n", eol)), 30_000);
       await waitFor("the copy to be empty", () => api.draftCopy().length === 0, 10_000);
       await sleep(500);
       assert.strictEqual(shown.length, 1, "nothing could not be saved: no second notification");
