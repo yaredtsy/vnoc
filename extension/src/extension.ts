@@ -40,7 +40,7 @@ const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
 const editStatePosts: { key: string; state: string; elsewhere: boolean; mark: string | null }[] = [];
 /** The answers of the pages to "check the keys of a code editor" (for the test suite). */
-const keysCheckedPosts: { found: boolean; target: string; taken: string[] }[] = [];
+const keysCheckedPosts: { found: boolean; target: string; taken: string[]; hosts: number }[] = [];
 
 /** What the bar's ⚠ last said (for the test suite). */
 type Warned = { level: "none" | "warning" | "error"; text: string };
@@ -253,7 +253,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     editStates: () => editStatePosts,
     /** a command for the canvas page that only the test suite sends: set a draft's text, press Save on a card (the suite cannot type or press keys in a webview) */
     viewCommand: (data: Events["viewCommand"]) => panels.emit("viewCommand", data),
-    /** asks the canvas to dispatch keys at a code editor and say which the canvas took (`keysChecked` answers), and what it has said so far */
+    /** asks the canvas to dispatch keys at a code editor and say which the canvas took (`keysChecked` answers, with the number of code areas it had: `hosts`), and what it has said so far */
     checkKeys: () => panels.emit("viewCommand", { name: "checkKeys" }),
     keysChecked: () => keysCheckedPosts,
     /** the host's answer to a card's code (the request a card makes): the text and the baseline of a range */
@@ -304,7 +304,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       cardsDrawn(note.keys, note.onScreen);
       break;
     case "keysChecked":
-      keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken });
+      keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken, hosts: note.hosts });
       break;
     case "editState":
       editStatePosts.push({ key: note.key, state: note.state, elsewhere: note.elsewhere, mark: note.mark });

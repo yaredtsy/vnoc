@@ -31,7 +31,8 @@ interface Api {
   setDraftNotify(notify?: (message: string, ...buttons: string[]) => Promise<string | undefined>): void;
   draftsAtStart(): Promise<void>;
   checkKeys(): void;
-  keysChecked(): { found: boolean; target: string; taken: string[] }[];
+  keysChecked(): { found: boolean; target: string; taken: string[]; hosts: number }[];
+  renderedPosts(): unknown[];
   codeOf(path: string, range: Range, saveFirst?: boolean): Promise<CodeResult>;
   dispatch(intent: Intent): void;
   webviewErrors(): string[];
@@ -206,13 +207,22 @@ suite("editing: typing in a card's code starts a draft (docs/17-edit-in-canvas.m
     try {
       await codeShown(node);
       // a keydown dispatched on the editor's own element runs every handler of the page: one that takes the key calls preventDefault (React Flow does for Space)
-      // Monaco is made a moment after the card shows its code: ask again until the page finds its editor
+      // Monaco is made a moment after the card shows its code: ask again until the page finds its editor. The card's first "reading" comes before its editor exists, and a card that
+      // left the page since (the canvas draws only what is on screen) must be shown again, as `codeShown` does
       for (let waited = 0; api.keysChecked().at(-1)?.found !== true; waited += 500) {
-        assert.ok(waited < 30_000, `the page never found the editor (last answer: ${JSON.stringify(api.keysChecked().at(-1))})`);
+        assert.ok(
+          waited < 30_000,
+          `the page never found the editor (last answer: ${JSON.stringify(api.keysChecked().at(-1))}; the card's last state: ${JSON.stringify(api.editStates().filter((p) => p.key === KEY).at(-1))}; ` +
+            `the last drawing: ${JSON.stringify(api.renderedPosts().at(-1))}; the canvas tab is active: ${canvasTabs()[0]?.isActive})`,
+        );
+        api.dispatch({ type: "reveal", id: node.id, canvas: true });
+        await vscode.commands.executeCommand("vnoc.editInCard", node);
         api.checkKeys();
         await sleep(500);
       }
-      assert.deepStrictEqual(api.keysChecked().at(-1), { found: true, target: "TEXTAREA", taken: [] }, "the editor was there, typing into a textarea (so VS Code's cut and paste land: 9.2d), and the canvas took none of its keys");
+      const answer = api.keysChecked().at(-1)!;
+      assert.deepStrictEqual({ found: answer.found, target: answer.target, taken: answer.taken }, { found: true, target: "TEXTAREA", taken: [] }, "the editor was there, typing into a textarea (so VS Code's cut and paste land: 9.2d), and the canvas took none of its keys");
+      assert.ok(answer.hosts >= 1, `the page had a code area (${answer.hosts})`);
     } finally {
       await closeCanvas();
     }
