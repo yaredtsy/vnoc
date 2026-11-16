@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Draft, type Drafts, canSave, draftFor, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
+import { type Draft, type Drafts, ELSEWHERE_TEXT, canSave, draftFor, editBlock, isUnsaved, showElsewhere, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
 
 // The rules of a draft (docs/17-edit-in-canvas.md §4, §5, E6).
 
@@ -173,4 +173,37 @@ test("a draft in conflict or gone keeps its text, and cannot be saved", () => {
     assert.equal(held.k.text, "changed");
     assert.equal(canSave(held.k), false);
   }
+});
+
+// ── one draft per node (§7, 9.5a) ────────────────────────────────────────────────────────────────────────────────────
+
+const CALL_CARD = { id: 'call:["x.py::main","a.py::C::m"]', key: "a.py::C::m" };
+
+test("an Edit on a node that has a draft: the holder's own card does nothing, any other card on the node is refused and names the holder", () => {
+  const drafts = withDraft({}, started());
+  assert.equal(editBlock({}, { id: "a.py::C::m", key: "a.py::C::m" }), null, "no draft: Edit starts one");
+  assert.deepEqual(editBlock(drafts, { id: "a.py::C::m", key: "a.py::C::m" }), { kind: "same" });
+  assert.deepEqual(editBlock(drafts, CALL_CARD), { kind: "other", holder: "a.py::C::m" }, "the call card of the function the structure card is editing");
+  assert.equal(editBlock(drafts, { id: "b.py::f", key: "b.py::f" }), null, "another function");
+  assert.equal(editBlock(drafts, { id: "call:[...]", key: null }), null, "a callee the project does not know has nothing to edit, and nothing to be refused for");
+  const byCall = withDraft({}, started({ card: CALL_CARD.id }));
+  assert.deepEqual(editBlock(byCall, { id: "a.py::C::m", key: "a.py::C::m" }), { kind: "other", holder: CALL_CARD.id }, "the other way round: the call card holds it");
+});
+
+test("the refusal's line shows while the draft that refused the card is still in another card", () => {
+  const drafts = withDraft({}, started());
+  assert.equal(showElsewhere(true, drafts, CALL_CARD), true);
+  assert.equal(showElsewhere(false, drafts, CALL_CARD), false, "the card was never refused");
+  assert.equal(showElsewhere(true, {}, CALL_CARD), false, "the draft was saved or discarded: the line goes");
+  assert.equal(showElsewhere(true, drafts, { id: "a.py::C::m", key: "a.py::C::m" }), false, "the holder itself is not refused by its own draft");
+  assert.equal(ELSEWHERE_TEXT, "Already being edited in another card");
+});
+
+test("unsaved: changed, or saving, conflict or gone; an untouched editing draft is not", () => {
+  const d = started();
+  assert.equal(isUnsaved(d), false);
+  assert.equal(isUnsaved({ ...d, text: d.text + "!" }), true);
+  assert.equal(isUnsaved({ ...d, state: "saving" }), true);
+  assert.equal(isUnsaved({ ...d, state: "conflict" }), true);
+  assert.equal(isUnsaved({ ...d, state: "gone" }), true);
 });

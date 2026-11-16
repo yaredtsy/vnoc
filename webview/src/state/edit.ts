@@ -6,9 +6,11 @@ import { findNode } from "@vnoc/shared/tree.ts";
 
 import type { Placed } from "../canvas/layout.ts";
 import { request } from "../host.ts";
-import { canSave, indexMovedOn, newDraft, noticeFor, savedAs } from "./draftRules.ts";
+import { unsavedDrafts, nextCard } from "../canvas/top-bar/unsavedDrafts.ts";
+import { canSave, editBlock, indexMovedOn, newDraft, noticeFor, savedAs } from "./draftRules.ts";
 import { useData } from "./data.ts";
-import { dropDraft, putDraft, setDraftState, setNotice, setRefused, useDrafts } from "./drafts.ts";
+import { dropDraft, putDraft, setDraftState, setElsewhere, setNotice, setRefused, useDrafts } from "./drafts.ts";
+import { dispatch } from "./session.ts";
 import { setCodeOpen } from "./view.ts";
 
 /** What an edit starts from: the card, and the code it shows (a call card's is its callee's). */
@@ -23,12 +25,20 @@ export const cardRef = (n: Pick<Placed, "id" | "key" | "path" | "range">): CardR
 
 /**
  * Edit: the code is shown (the card needs it to say anything), then the host opens the document. If the file has unsaved changes the host says so and the card
- * shows E5's message (`refused`); otherwise a draft starts in `editing`. A node that already has a draft is left alone: 9.5 tells the user why.
+ * shows E5's message (`refused`); otherwise a draft starts in `editing`. A node has one draft (§7): on the card that holds it Edit does nothing (`ignored`); on any
+ * other card on the same node it is refused (`elsewhere`): that card says so, and the holder is brought into view.
  */
-export async function beginEdit(card: CardRef, saveFirst = false): Promise<"started" | "refused" | "ignored" | "failed"> {
+export async function beginEdit(card: CardRef, saveFirst = false): Promise<"started" | "refused" | "elsewhere" | "ignored" | "failed"> {
   if (card.key === null || card.range === null) return "ignored";
   setCodeOpen(card.id, true);
-  if (useDrafts.getState().drafts[card.key]) return "ignored";
+  const block = editBlock(useDrafts.getState().drafts, card);
+  if (block?.kind === "same") return "ignored";
+  if (block) {
+    setElsewhere(card.id, true);
+    revealCard(block.holder);
+    return "elsewhere";
+  }
+  setElsewhere(card.id, false);
   setNotice(card.id, null);
   try {
     const got = await request("editStart", { path: card.path, range: card.range, saveFirst });
@@ -42,6 +52,21 @@ export async function beginEdit(card: CardRef, saveFirst = false): Promise<"star
   } catch {
     return "failed";
   }
+}
+
+/** Brings a card into view with the session's `reveal`, which a sidebar click sends too: its parents open so it is drawn, and the canvas centres on it and pulses it. */
+export const revealCard = (id: string): void => dispatch({ type: "reveal", id, canvas: true });
+
+/** The last card the bar's chip took you to: the next click goes to the one after it. */
+let lastCycled: string | null = null;
+
+/** The bar's "N unsaved drafts": reveals the next draft's card, cycling through them. */
+export function revealNextDraft(): void {
+  const found = unsavedDrafts(useDrafts.getState().drafts);
+  const next = found ? nextCard(found.cards, lastCycled) : null;
+  if (next === null) return;
+  lastCycled = next;
+  revealCard(next);
 }
 
 /** The longest the card waits for the index to catch up with a save. */

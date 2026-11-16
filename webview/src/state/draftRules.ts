@@ -40,6 +40,27 @@ export function draftFor(drafts: Drafts, card: { id: string; key: string | null 
   return d && d.card === card.id ? d : undefined;
 }
 
+/**
+ * What an Edit on a card does about the drafts there are (§7, 9.5): a node has one draft (E6), so the card that holds it is already editing (`same`: nothing to do) and
+ * any other card on that node, a call card or the structure card, is refused (`other`), with the holder to bring into view.
+ */
+export type EditBlock = null | { kind: "same" } | { kind: "other"; holder: string };
+
+export function editBlock(drafts: Drafts, card: { id: string; key: string | null }): EditBlock {
+  const d = card.key === null ? undefined : drafts[card.key];
+  if (!d) return null;
+  return d.card === card.id ? { kind: "same" } : { kind: "other", holder: d.card };
+}
+
+/** The line a refused card shows (§7). */
+export const ELSEWHERE_TEXT = "Already being edited in another card";
+
+/** It shows while the card was refused and the draft that refused it is still there in another card: once that draft is saved or discarded the line goes. */
+export const showElsewhere = (refused: boolean, drafts: Drafts, card: { id: string; key: string | null }): boolean => refused && editBlock(drafts, card)?.kind === "other";
+
+/** A draft the user would lose: typed into, or in a state that waits on the user (saving, or a save that found a conflict or a function that is gone). The bar counts these (§7). */
+export const isUnsaved = (d: Draft): boolean => d.state !== "editing" || isChanged(d);
+
 /** A new draft in `editing`, from what `editStart` answered. */
 export function newDraft(card: { id: string; key: string; path: string; range: Range }, got: { text: string; version: number; prefix: string; eol: "\n" | "\r\n" }): Draft {
   const d = { key: card.key, card: card.id, path: card.path, range: card.range, version: got.version, base: got.text, prefix: got.prefix, eol: got.eol, state: "editing" as const };

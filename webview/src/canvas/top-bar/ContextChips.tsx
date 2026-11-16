@@ -7,11 +7,8 @@ import { post } from "@/host.ts";
 import { useCalls } from "@/state/calls.ts";
 import { dispatch, useSession } from "@/state/session.ts";
 import { cn } from "@/lib/utils.ts";
+import { CHIP, filled, outlined } from "./chipStyle.ts";
 import { type ContextChip, chipsFor } from "./chipsFor.ts";
-
-const CHIP = "flex h-[22px] flex-none items-center gap-1 rounded-[5px] border px-1.5 text-[length:var(--font-size)]";
-const filled = "border-transparent bg-chip-active text-chip-active-foreground";
-const outlined = "border-border text-muted-foreground hover:bg-toolbar-hover hover:text-foreground";
 
 /** One chip: the name activates the context; an EXPLORE chip has a ✕ that closes it (and its children). */
 function Chip({ chip }: { chip: ContextChip }) {

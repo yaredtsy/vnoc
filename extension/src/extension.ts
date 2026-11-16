@@ -34,7 +34,7 @@ const sidebarPosts: SidebarRendered[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
-const editStatePosts: { key: string; state: string }[] = [];
+const editStatePosts: { key: string; state: string; elsewhere: boolean }[] = [];
 /** The answers of the pages to "check the keys of a code editor" (for the test suite). */
 const keysCheckedPosts: { found: boolean; target: string; taken: string[] }[] = [];
 
@@ -44,6 +44,8 @@ let warned: Warned | undefined;
 /** The context chips the bar last drew (for the test suite). */
 let chips: { id: string; label: string; active: boolean }[] = [];
 const warnedWaiters: (() => void)[] = [];
+/** What the bar's "unsaved drafts" chip last said (for the test suite): `count` 0 is no chip. */
+let draftsChip = { count: 0, label: "" };
 
 let core: Core | undefined;
 /** Pages that crashed while drawing (for the test suite). */
@@ -202,11 +204,13 @@ export function activate(ctx: vscode.ExtensionContext) {
     sidebarOpen: () => panels.sidebar !== undefined,
     /** the context chips the bar draws now: empty with one context */
     chips: () => chips,
+    /** the bar's "N unsaved drafts" chip as the page last drew it: `count` 0 and `label` "" when there is none */
+    draftsChip: () => draftsChip,
     /** every drawing the pages reported, in order */
     renderedPosts: () => renderedPosts,
     /** the files with unsaved changes the host holds now (what the `dirtyFiles` event carries) */
     dirtyFiles: () => dirty.paths,
-    /** a card's edit state each time it changed, in order: which card, and the state */
+    /** a card's edit state each time it changed, in order: which card, the state, and whether it says "Already being edited in another card" */
     editStates: () => editStatePosts,
     /** a command for the canvas page that only the test suite sends: set a draft's text, press Save on a card (the suite cannot type or press keys in a webview) */
     viewCommand: (data: Events["viewCommand"]) => panels.emit("viewCommand", data),
@@ -264,7 +268,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken });
       break;
     case "editState":
-      editStatePosts.push({ key: note.key, state: note.state });
+      editStatePosts.push({ key: note.key, state: note.state, elsewhere: note.elsewhere });
       break;
     case "codeShown":
       codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });
@@ -274,6 +278,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "chipsDrawn":
       chips = note.chips;
+      break;
+    case "draftsDrawn":
+      draftsChip = { count: note.count, label: note.label };
       break;
     case "warned":
       warned = { level: note.level, text: note.text };

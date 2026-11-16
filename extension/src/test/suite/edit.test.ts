@@ -4,7 +4,8 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 import type { EditSaveParams, EditSaveResult, EditStartResult, Range, TreeNode } from "@vnoc/shared/messages";
-import type { Intent } from "@vnoc/shared/session.ts";
+import { callId } from "@vnoc/shared/calls.ts";
+import type { Intent, Session } from "@vnoc/shared/session.ts";
 import { allNodes } from "@vnoc/shared/tree";
 import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
 
@@ -15,8 +16,11 @@ interface Api {
   structure(): Promise<{ root: TreeNode }>;
   codeShown(): { key: string; dirty: boolean; text: string }[];
   dirtyFiles(): string[];
-  editStates(): { key: string; state: string }[];
-  viewCommand(data: { name: "setDraft" | "save"; key: string; text?: string }): void;
+  editStates(): { key: string; state: string; elsewhere: boolean }[];
+  draftsChip(): { count: number; label: string };
+  session(): Session;
+  callTrees(): Record<string, unknown>;
+  viewCommand(data: { name: "edit" | "setDraft" | "save"; key: string; text?: string }): void;
   editSave(params: EditSaveParams, locate?: (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>): Promise<EditSaveResult>;
   checkKeys(): void;
   keysChecked(): { found: boolean; target: string; taken: string[] }[];
@@ -448,5 +452,76 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     } finally {
       await restoreFixture(file(), original);
     }
+  });
+});
+
+suite("one draft per function: the bar counts the drafts (docs/17-edit-in-canvas.md step 9.5a)", () => {
+  const folder = () => vscode.workspace.workspaceFolders![0].uri.fsPath;
+  const file = () => path.join(folder(), "edit_calls.py");
+  const SOURCE = "def helper():\n    return 1\n\n\ndef caller():\n    helper()\n    return 2\n";
+  const HELPER = "edit_calls.py::helper";
+  const CALLER = "edit_calls.py::caller";
+
+  suiteSetup(async () => {
+    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    fs.writeFileSync(file(), SOURCE);
+  });
+
+  suiteTeardown(async () => {
+    await closeCanvas();
+    api.dispatch({ type: "collapseAll" });
+    fs.rmSync(file(), { force: true });
+  });
+
+  test("Edit on the call card of a function its structure card is editing is refused, and the bar counts the draft while it is unsaved (§7, §11)", async () => {
+    let helper: TreeNode | undefined;
+    await waitFor("the index to have both functions", async () => {
+      const all = allNodes((await api.structure()).root);
+      helper = all.find((n) => n.id === HELPER);
+      return helper?.range !== undefined && all.some((n) => n.id === CALLER);
+    }, 30_000);
+    const base = await api.editStart("edit_calls.py", helper!.range!);
+    assert.ok("text" in base);
+    const call = callId(CALLER, [HELPER]);
+    const last = (id: string) => api.editStates().filter((p) => p.key === id).at(-1);
+
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await until("the canvas tab", () => canvasTabs().length === 1);
+    api.dispatch({ type: "select", id: null });
+    api.dispatch({ type: "expand", ids: ["edit_calls.py", CALLER] }); // the structure cards, and the call card under `caller`
+    await waitFor("the call tree of caller", () => api.callTrees()[CALLER] !== undefined, 30_000);
+    assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "no draft, no chip");
+
+    // Edit in the structure card; an event sent before the page listens is lost, so ask until it says editing (a second Edit on the holder does nothing)
+    for (let waited = 0; last(HELPER)?.state !== "editing"; waited += 500) {
+      assert.ok(waited < 30_000, `the structure card never said editing (last: ${JSON.stringify(last(HELPER))})`);
+      api.dispatch({ type: "reveal", id: HELPER, canvas: true });
+      api.viewCommand({ name: "edit", key: HELPER });
+      await sleep(500);
+    }
+    assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "a draft nothing was typed into is not counted");
+
+    api.viewCommand({ name: "setDraft", key: HELPER, text: base.text.replace("return 1", "return 11") });
+    await waitFor("the bar to count the draft", () => api.draftsChip().count === 1, 10_000);
+    assert.strictEqual(api.draftsChip().label, "1 unsaved draft");
+
+    // Edit on the call card of the same function: refused, said on that card; the first card is still editing
+    api.dispatch({ type: "select", id: null });
+    for (let waited = 0; last(call)?.elsewhere !== true; waited += 500) {
+      assert.ok(waited < 30_000, `the call card never said "already being edited in another card" (last: ${JSON.stringify(last(call))})`);
+      api.dispatch({ type: "reveal", id: CALLER, canvas: true });
+      api.viewCommand({ name: "edit", key: call });
+      await sleep(500);
+    }
+    assert.strictEqual(last(call)!.state, "reading", "the call card shows its code and no draft");
+    assert.strictEqual(last(HELPER)!.state, "editing", "the first card is still editing");
+    assert.strictEqual(api.draftsChip().count, 1, "still one draft: nothing was started");
+    await waitFor("the holder to be revealed (the session selects it)", () => api.session().contexts.main.selected === HELPER, 10_000);
+
+    // typed back to where it started: nothing to lose, the bar's count goes (and so does the call card's line, as the draft is still the holder's)
+    api.viewCommand({ name: "setDraft", key: HELPER, text: base.text });
+    await waitFor("the bar's count to go", () => api.draftsChip().count === 0, 10_000);
+    assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" });
+    assert.deepStrictEqual(api.webviewErrors(), []);
   });
 });

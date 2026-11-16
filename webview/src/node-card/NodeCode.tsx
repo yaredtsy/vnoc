@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button.tsx";
 import { META_H, type Placed } from "../canvas/layout.ts";
 import { post, request } from "../host.ts";
 import { useDirtyFiles } from "../state/dirty.ts";
-import { ACTION_TEXT, type DraftAction, type Notice, draftFor, showRefusal, stateLine } from "../state/draftRules.ts";
-import { fileStateChanged, setRefused, typeInto, useDrafts } from "../state/drafts.ts";
+import { ACTION_TEXT, type DraftAction, ELSEWHERE_TEXT, type Notice, draftFor, editBlock, showElsewhere, showRefusal, stateLine } from "../state/draftRules.ts";
+import { fileStateChanged, setElsewhere, setRefused, typeInto, useDrafts } from "../state/drafts.ts";
 import { cardRef, copyDraft, openInEditor, reloadDraft, saveAndEdit, saveDraft, showDiff } from "../state/edit.ts";
 import { type EditState, editStateOf } from "./editState.ts";
 import { platformNow, staysInCode, swallows } from "./cardKeys.ts";
@@ -32,6 +32,8 @@ export function NodeCode({ node }: { node: Placed }) {
   const hasDraft = draft !== undefined;
   const refused = useDrafts((s) => s.refused.has(node.id));
   const notice = useDrafts((s) => s.notices[node.id]);
+  const blocked = useDrafts((s) => editBlock(s.drafts, node)?.kind === "other"); // another card holds this node's draft
+  const elsewhere = useDrafts((s) => showElsewhere(s.elsewhere.has(node.id), s.drafts, node));
   const editState = editStateOf(true, draft); // NodeCode is drawn only while the code is shown
   useEffect(() => {
     if (hasDraft) return;
@@ -53,8 +55,11 @@ export function NodeCode({ node }: { node: Placed }) {
     fileStateChanged(node.id, dirty); // and a "written, not saved" line has nothing left to wait for
   }, [dirty, node.id]);
   useEffect(() => {
-    post({ type: "editState", key: node.id, state: editState });
-  }, [node.id, editState]);
+    if (!blocked) setElsewhere(node.id, false); // the other card's draft is saved or discarded: the refusal is over
+  }, [blocked, node.id]);
+  useEffect(() => {
+    post({ type: "editState", key: node.id, state: editState, elsewhere });
+  }, [node.id, editState, elsewhere]);
 
   const line = draft ? stateLine(draft.state, node.path.slice(node.path.lastIndexOf("/") + 1)) : null;
   const act: Record<DraftAction, () => void> = {
@@ -69,6 +74,8 @@ export function NodeCode({ node }: { node: Placed }) {
     <>
       {showRefusal(refused, dirty) ? (
         <Refusal path={node.path} onSaveAndEdit={() => void saveAndEdit(cardRef(node))} />
+      ) : elsewhere ? (
+        <Elsewhere />
       ) : line ? (
         <StateLine text={line.text} actions={line.actions} act={act} />
       ) : notice ? (
@@ -105,6 +112,16 @@ function Unsaved({ path }: { path: string }) {
     >
       <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
       unsaved in editor
+    </div>
+  );
+}
+
+/** §7: Edit was refused because another card holds this node's draft (that card is brought into view). */
+function Elsewhere() {
+  return (
+    <div className="flex flex-none items-center gap-1.5 pr-3 font-mono text-[11px]" style={{ height: META_H, paddingLeft: NAME_X, color: "var(--vscode-descriptionForeground)" }} title={`${ELSEWHERE_TEXT}: one draft per function`}>
+      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
+      <span className="min-w-0 flex-1 truncate">{ELSEWHERE_TEXT}</span>
     </div>
   );
 }
