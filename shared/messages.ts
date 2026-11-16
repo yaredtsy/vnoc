@@ -140,7 +140,8 @@ export interface CallTreeResult {
   root: CallTreeNode;
 }
 
-export type EditStartResult = { dirty: true } | { text: string; version: number; prefix: string };
+/** `eol`: the document's line ending (`document.eol`), which `reindent` joins the written lines with. */
+export type EditStartResult = { dirty: true } | { text: string; version: number; prefix: string; eol: "\n" | "\r\n" };
 
 /** webview → extension, with an answer. One line per request: its parameters and its result. */
 export interface Requests {

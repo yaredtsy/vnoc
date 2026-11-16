@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor/editor/editor.api.js";
 
+import { dedent, readingPrefix } from "@vnoc/shared/indent.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { META_H, type Placed } from "../canvas/layout.ts";
 import { post, request } from "../host.ts";
@@ -12,7 +13,6 @@ import { type EditState, editStateOf } from "./editState.ts";
 import { platformNow, staysInCode, swallows } from "./cardKeys.ts";
 import { currentTheme, languageOf, loadMonaco } from "./monaco.ts";
 import { CODE_FIELD_CLASS } from "./codeField.ts";
-import { dedent, readingPrefix } from "./indent.ts";
 import { NAME_X } from "./rows.ts";
 
 type State = { text: string } | { error: string } | null;

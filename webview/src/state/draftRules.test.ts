@@ -7,12 +7,17 @@ import { type Draft, type Drafts, draftFor, indexMovedOn, isChanged, newDraft, r
 
 const RANGE = { start: { line: 3, character: 4 }, end: { line: 5, character: 14 } };
 const CARD = { id: "a.py::C::m", key: "a.py::C::m", path: "a.py", range: RANGE };
-const started = (over: Partial<Draft> = {}): Draft => ({ ...newDraft(CARD, { text: "def m(self):\n        return 1", version: 7, prefix: "    " }), ...over });
+const started = (over: Partial<Draft> = {}): Draft => ({ ...newDraft(CARD, { text: "def m(self):\n        return 1", version: 7, prefix: "    ", eol: "\n" }), ...over });
 
 test("a new draft: editing, the text dedented, the host's version and prefix kept, `base` as it was read", () => {
   const d = started();
   assert.deepEqual([d.state, d.text, d.base, d.version, d.prefix, d.card, d.key], ["editing", "def m(self):\n    return 1", "def m(self):\n        return 1", 7, "    ", "a.py::C::m", "a.py::C::m"]);
   assert.equal(startText(d), d.text);
+});
+
+test("a new draft keeps the document's line ending", () => {
+  assert.equal(started().eol, "\n");
+  assert.equal(newDraft(CARD, { text: "def m(self):\r\n        return 1", version: 7, prefix: "    ", eol: "\r\n" }).eol, "\r\n");
 });
 
 test("changed: only when the text differs from where it started", () => {
@@ -21,6 +26,13 @@ test("changed: only when the text differs from where it started", () => {
   assert.equal(isChanged({ ...d, text: d.text + "\n" }), true);
   assert.equal(isChanged({ ...d, text: d.text.replace("1", "2") }), true);
   assert.equal(isChanged({ ...d, text: d.text.replace("1", "2").replace("2", "1") }), false, "typed and typed back");
+});
+
+test("changed ignores the line ending: Monaco gives back its own, the host's text may have mixed ones", () => {
+  const crlf = newDraft(CARD, { text: "def m(self):\r\n        a = 1\r\n\r\n        return a", version: 1, prefix: "    ", eol: "\r\n" });
+  assert.equal(isChanged(crlf), false);
+  assert.equal(isChanged({ ...crlf, text: "def m(self):\r\n    a = 1\r\n\r\n    return a" }), false, "Monaco's text, every line ending CRLF");
+  assert.equal(isChanged({ ...crlf, text: "def m(self):\r\n    a = 2\r\n\r\n    return a" }), true);
 });
 
 test("one draft per node: a second one for the same key is not started", () => {
@@ -62,6 +74,13 @@ test("restore: a draft comes back as it was; one that was saving comes back edit
   const back = restoreDrafts(JSON.parse(JSON.stringify(saved)));
   assert.deepEqual(Object.fromEntries(Object.entries(back).map(([k, d]) => [k, d.state])), { a: "editing", b: "editing", c: "conflict", d: "gone" });
   assert.deepEqual(back.a, saved.a, "everything else as saved: text, base, version, prefix, range, card");
+});
+
+test("restore: a draft saved before the line ending was kept has `\\n`, and one with `\\r\\n` keeps it", () => {
+  const { eol: _eol, ...old } = started({ key: "a" });
+  const back = restoreDrafts(JSON.parse(JSON.stringify({ a: old, b: started({ key: "b", eol: "\r\n" }) })));
+  assert.equal(back.a.eol, "\n");
+  assert.equal(back.b.eol, "\r\n");
 });
 
 test("restore: nothing saved, something that is not an object, an entry that is not a whole draft or is under the wrong key", () => {

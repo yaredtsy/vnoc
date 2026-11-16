@@ -402,6 +402,7 @@ export class Commands {
       text: doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character)),
       version: doc.version,
       prefix: doc.lineAt(r.start.line).text.slice(0, r.start.character),
+      eol: doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n",
     };
   }
 

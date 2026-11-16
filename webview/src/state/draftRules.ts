@@ -3,12 +3,12 @@
 import type { Range } from "@vnoc/shared/messages.ts";
 
 import { type DraftState } from "../node-card/editState.ts";
-import { dedent } from "../node-card/indent.ts";
+import { dedent } from "@vnoc/shared/indent.ts";
 
 /**
  * One function's unsaved edit. `key` is the structure node's key (a call card's callee's), so two cards on one function have one draft. `card` is the id of
  * the card that started it: the only card that shows it editing (9.5 refuses a second one with a message; until then the other card shows its code).
- * `path`, `range`, `version`, `base` and `prefix` are what the host said when it started: §6's checks compare against them at save time. `text` is what Monaco
+ * `path`, `range`, `version`, `base`, `prefix` and `eol` are what the host said when it started: §6's checks compare against them at save time. `text` is what Monaco
  * holds, the first line's indent taken off the others (`dedent(base, prefix)` when nothing was typed).
  */
 export interface Draft {
@@ -19,6 +19,8 @@ export interface Draft {
   version: number;
   base: string;
   prefix: string;
+  /** the document's line ending, as `editStart` said; a draft saved before it was there has `"\n"` */
+  eol: "\n" | "\r\n";
   text: string;
   state: DraftState;
 }
@@ -27,8 +29,10 @@ export type Drafts = Readonly<Record<string, Draft>>;
 /** What Monaco shows when nothing was typed. */
 export const startText = (d: Pick<Draft, "base" | "prefix">): string => dedent(d.base, d.prefix);
 
-/** Whether the draft differs from its start: Save is enabled, and the card's dirty dot shows. */
-export const isChanged = (d: Draft): boolean => d.text !== startText(d);
+const unix = (text: string): string => text.replace(/\r\n/g, "\n");
+
+/** Whether the draft differs from its start: Save is enabled, and the card's dirty dot shows. Line endings do not count: Monaco gives its own back. */
+export const isChanged = (d: Draft): boolean => unix(d.text) !== unix(startText(d));
 
 /** The draft of the function this card shows, if this card is the one that started it. */
 export function draftFor(drafts: Drafts, card: { id: string; key: string | null }): Draft | undefined {
@@ -37,8 +41,8 @@ export function draftFor(drafts: Drafts, card: { id: string; key: string | null 
 }
 
 /** A new draft in `editing`, from what `editStart` answered. */
-export function newDraft(card: { id: string; key: string; path: string; range: Range }, got: { text: string; version: number; prefix: string }): Draft {
-  const d = { key: card.key, card: card.id, path: card.path, range: card.range, version: got.version, base: got.text, prefix: got.prefix, state: "editing" as const };
+export function newDraft(card: { id: string; key: string; path: string; range: Range }, got: { text: string; version: number; prefix: string; eol: "\n" | "\r\n" }): Draft {
+  const d = { key: card.key, card: card.id, path: card.path, range: card.range, version: got.version, base: got.text, prefix: got.prefix, eol: got.eol, state: "editing" as const };
   return { ...d, text: startText(d) };
 }
 
@@ -75,7 +79,7 @@ export function restoreDrafts(saved: unknown): Drafts {
     const whole =
       v.key === key && typeof v.card === "string" && typeof v.path === "string" && typeof v.version === "number" && typeof v.base === "string" && typeof v.prefix === "string" && typeof v.text === "string" && typeof v.state === "string" && range && isPosition(range.start) && isPosition(range.end);
     if (!whole) continue;
-    out[key] = { ...(v as unknown as Draft), state: v.state === "saving" || !STATES.includes(v.state as string) ? "editing" : (v.state as DraftState) };
+    out[key] = { ...(v as unknown as Draft), eol: v.eol === "\r\n" ? "\r\n" : "\n", state: v.state === "saving" || !STATES.includes(v.state as string) ? "editing" : (v.state as DraftState) };
   }
   return out;
 }

@@ -172,7 +172,7 @@ suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
       const saved = await api.editStart("nested.py", range, true);
       assert.ok(!document.isDirty, "Save and Edit saved the document");
       assert.ok("text" in saved);
-      assert.deepStrictEqual(saved, { text: document.getText(new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character)), version: document.version, prefix: "        " });
+      assert.deepStrictEqual(saved, { text: document.getText(new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character)), version: document.version, prefix: "        ", eol: "\n" });
       assert.match(saved.text, /^def method\(self\):/, "the range starts at `def`, the prefix is the indentation before it");
 
       // a clean document just answers
