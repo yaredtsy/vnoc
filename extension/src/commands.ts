@@ -4,9 +4,11 @@ import * as vscode from "vscode";
 import { type CallId, isCallId, listedSites, resolveCall, siteChoice } from "@vnoc/shared/calls.ts";
 import type { CallTreeNode, Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
-import type { EditStartResult, Events } from "@vnoc/shared/messages";
+import type { EditSaveParams, EditSaveResult, EditStartResult, Events } from "@vnoc/shared/messages";
+import { reindent } from "@vnoc/shared/indent";
 import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
+import { decideSave, outcomeAfterApply } from "./saveDraft";
 import type { CallTrees } from "./callTree";
 import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
@@ -404,6 +406,26 @@ export class Commands {
       prefix: doc.lineAt(r.start.line).text.slice(0, r.start.character),
       eol: doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n",
     };
+  }
+
+  /**
+   * Save on a draft (docs/17-edit-in-canvas.md §6, E4). `applyEdit` carries no version and applies at any range, so the check is here: the document's version and
+   * the text under the range against the draft's. **No `await` between the read and the call to `applyEdit`**: any await lets the document move on, and nothing
+   * after it would notice. The file is saved only if it was not dirty before: unsaved work of the user's own in a tab is never saved for them.
+   */
+  async editSaveOf(p: EditSaveParams): Promise<EditSaveResult> {
+    const doc = await this.documentIn(p.path);
+    const range = new vscode.Range(p.range.start.line, p.range.start.character, p.range.end.line, p.range.end.character);
+    // from here to `applyEdit`: synchronous
+    const row = decideSave({ draftVersion: p.version, version: doc.version, current: doc.getText(range), base: p.base });
+    if (row === "conflict") return { conflict: true }; // 9.4: the second and third rows (`vnoc/locate`: the function moved, or changed) go here
+    const wasDirty = doc.isDirty;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, range, reindent(p.text, p.base, p.prefix, p.eol));
+    const applied = await vscode.workspace.applyEdit(edit);
+    const saved = applied && !wasDirty && (await doc.save());
+    const outcome = outcomeAfterApply(applied, saved);
+    return outcome === "conflict" ? { conflict: true } : outcome === "saved" ? { saved: true } : { written: true };
   }
 
   /** The document of a file below the opened folder: the path comes from the webview, so it must stay inside it. */

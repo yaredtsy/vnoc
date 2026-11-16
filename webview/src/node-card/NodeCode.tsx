@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button.tsx";
 import { META_H, type Placed } from "../canvas/layout.ts";
 import { post, request } from "../host.ts";
 import { useDirtyFiles } from "../state/dirty.ts";
-import { draftFor, showRefusal } from "../state/draftRules.ts";
-import { setRefused, typeInto, useDrafts } from "../state/drafts.ts";
+import { type Notice, draftFor, showRefusal } from "../state/draftRules.ts";
+import { fileStateChanged, setRefused, typeInto, useDrafts } from "../state/drafts.ts";
 import { cardRef, saveAndEdit, saveDraft } from "../state/edit.ts";
 import { type EditState, editStateOf } from "./editState.ts";
 import { platformNow, staysInCode, swallows } from "./cardKeys.ts";
@@ -31,6 +31,7 @@ export function NodeCode({ node }: { node: Placed }) {
   const draft = useDrafts((s) => draftFor(s.drafts, node));
   const hasDraft = draft !== undefined;
   const refused = useDrafts((s) => s.refused.has(node.id));
+  const notice = useDrafts((s) => s.notices[node.id]);
   const editState = editStateOf(true, draft); // NodeCode is drawn only while the code is shown
   useEffect(() => {
     if (hasDraft) return;
@@ -49,6 +50,7 @@ export function NodeCode({ node }: { node: Placed }) {
   }, [node.id, node.path, node.range, dirty, hasDraft]); // a new range (the code above moved, or the index changed) reads the code again, and so does a save or a revert of the file, and a Discard
   useEffect(() => {
     if (!dirty) setRefused(node.id, false); // the file was saved or reverted: the refusal is over
+    fileStateChanged(node.id, dirty); // and a "written, not saved" line has nothing left to wait for
   }, [dirty, node.id]);
   useEffect(() => {
     post({ type: "editState", key: node.id, state: editState });
@@ -58,7 +60,7 @@ export function NodeCode({ node }: { node: Placed }) {
   const key = node.key;
   return (
     <>
-      {showRefusal(refused, dirty) ? <Refusal path={node.path} onSaveAndEdit={() => void saveAndEdit(cardRef(node))} /> : dirty && <Unsaved path={node.path} />}
+      {showRefusal(refused, dirty) ? <Refusal path={node.path} onSaveAndEdit={() => void saveAndEdit(cardRef(node))} /> : notice ? <SaveNotice notice={notice} /> : dirty && <Unsaved path={node.path} />}
       {shown !== undefined ? (
         <CodeEditor
           text={shown}
@@ -88,6 +90,17 @@ function Unsaved({ path }: { path: string }) {
     >
       <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
       unsaved in editor
+    </div>
+  );
+}
+
+/** What the last Save did (9.3b), in the same line as the other marks: written but not saved, a conflict, or the reason a save failed. */
+function SaveNotice({ notice }: { notice: Notice }) {
+  const color = notice.kind === "error" ? "var(--vscode-editorError-foreground)" : "var(--vscode-editorWarning-foreground)";
+  return (
+    <div className="flex flex-none items-center gap-1.5 pr-3 font-mono text-[11px]" style={{ height: META_H, paddingLeft: NAME_X, color: "var(--vscode-descriptionForeground)" }} title={notice.text}>
+      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: color }} />
+      <span className="min-w-0 flex-1 truncate">{notice.text}</span>
     </div>
   );
 }

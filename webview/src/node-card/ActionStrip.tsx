@@ -34,7 +34,7 @@ export function ActionStrip({ node, contextId, focusRoot, selected, surface = "c
     goToCode: actions.goToCode,
     code: actions.toggleCode,
     edit: () => void beginEdit(cardRef(node)),
-    save: () => key !== null && saveDraft(key),
+    save: () => void (key !== null && saveDraft(key)),
     discard: () => key !== null && discardDraft(key),
     addDoc: actions.addDoc,
   };

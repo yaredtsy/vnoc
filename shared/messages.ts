@@ -143,6 +143,18 @@ export interface CallTreeResult {
 /** `eol`: the document's line ending (`document.eol`), which `reindent` joins the written lines with. */
 export type EditStartResult = { dirty: true } | { text: string; version: number; prefix: string; eol: "\n" | "\r\n" };
 
+/** What a draft sends to be written: where it was, what it started from (`version`, `base`), how to put the indent and the line endings back, and the text. */
+export interface EditSaveParams {
+  path: string;
+  range: Range;
+  version: number;
+  base: string;
+  prefix: string;
+  eol: "\n" | "\r\n";
+  text: string;
+}
+export type EditSaveResult = { saved: true } | { written: true } | { conflict: true };
+
 /** webview → extension, with an answer. One line per request: its parameters and its result. */
 export interface Requests {
   structure: { params: void; result: StructureResult };
@@ -156,6 +168,12 @@ export interface Requests {
    * the range is the one the card sent, which is stale until the index has read the save, so the card does not start a draft from that answer.
    */
   editStart: { params: { path: string; range: Range; saveFirst?: boolean }; result: EditStartResult };
+  /**
+   * Save on a draft (docs/17-edit-in-canvas.md §6): the host checks the document's version and the text at `range` against the draft's `version` and `base`, and
+   * writes the draft re-indented into the range. `saved`: written and the file saved. `written`: written into the buffer, not saved (the file was dirty, E4).
+   * `conflict`: nothing was written (the document moved on).
+   */
+  editSave: { params: EditSaveParams; result: EditSaveResult };
   addDoc: { params: { key: string }; result: { added: boolean } };
   openDoc: { params: { path: string }; result: void };
   openLink: { params: { href: string; from: string }; result: void };
@@ -190,8 +208,8 @@ export interface Events {
   docText: { path: string; text: string };
   /** the whole session, every time it changes: whole snapshots cannot get out of step, and `seq` drops one that arrives late */
   session: Session;
-  /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view, start an edit of a card (it shows its code first) */
-  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys"; key?: string };
+  /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view, start an edit of a card (it shows its code first). `checkKeys`, `setDraft` and `save` are for the extension's test suite: it cannot press keys in a webview */
+  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save"; key?: string; text?: string };
   /** a call tree arrived: the entry's card shows it in its "Calls" section */
   callTree: { key: string; result: CallTreeResult };
   /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */

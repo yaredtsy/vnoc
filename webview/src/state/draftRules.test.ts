@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Draft, type Drafts, draftFor, indexMovedOn, isChanged, newDraft, restoreDrafts, showRefusal, startText, typed, without, withDraft } from "./draftRules.ts";
+import { type Draft, type Drafts, canSave, draftFor, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, startText, typed, withDraft, withState, without } from "./draftRules.ts";
 
 // The rules of a draft (docs/17-edit-in-canvas.md §4, §5, E6).
 
@@ -107,4 +107,45 @@ test("the refusal shows while the file is dirty, and goes when it is not", () =>
   assert.equal(showRefusal(true, true), true);
   assert.equal(showRefusal(true, false), false);
   assert.equal(showRefusal(false, true), false);
+});
+
+// 9.3b: Save
+test("a draft changes state, and the same state is the same object", () => {
+  const drafts = withDraft({}, started());
+  const saving = withState(drafts, "a.py::C::m", "saving");
+  assert.equal(saving["a.py::C::m"].state, "saving");
+  assert.equal(saving["a.py::C::m"].text, drafts["a.py::C::m"].text, "only the state");
+  assert.equal(withState(saving, "a.py::C::m", "saving"), saving);
+  assert.equal(withState(drafts, "nope", "saving"), drafts);
+});
+
+test("Save does something only while editing a draft that differs from its start", () => {
+  const same = started();
+  const changed = started({ text: same.text + "\n# x" });
+  assert.equal(canSave(undefined), false);
+  assert.equal(canSave(same), false, "nothing was typed: nothing is sent");
+  assert.equal(canSave(changed), true);
+  for (const state of ["saving", "conflict", "gone"] as const) assert.equal(canSave({ ...changed, state }), false, state);
+});
+
+test("the host's answer: saved, written, conflict", () => {
+  assert.equal(savedAs({ saved: true }), "saved");
+  assert.equal(savedAs({ written: true }), "written");
+  assert.equal(savedAs({ conflict: true }), "conflict");
+});
+
+test("the line above the code says what happened, with the file's name", () => {
+  assert.deepEqual(noticeFor("written", "a.py"), { kind: "written", text: "Written into a.py, not saved." });
+  assert.deepEqual(noticeFor("conflict", "a.py"), { kind: "conflict", text: "Changed in the editor since you started" });
+  assert.deepEqual(noticeFor("error", "a.py", "the core is gone"), { kind: "error", text: "Could not save: the core is gone" });
+  assert.equal(noticeFor("error", "a.py").text, "Could not save");
+});
+
+test("`written, not saved` goes when the file is saved, and the other lines do not go with the file", () => {
+  const written = noticeFor("written", "a.py");
+  assert.equal(noticeAfterFileState(written, true), written, "still dirty: still not saved");
+  assert.equal(noticeAfterFileState(written, false), undefined);
+  const conflict = noticeFor("conflict", "a.py");
+  assert.equal(noticeAfterFileState(conflict, false), conflict);
+  assert.equal(noticeAfterFileState(undefined, false), undefined);
 });

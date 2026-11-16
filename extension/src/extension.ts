@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-import type { Notes, Range } from "@vnoc/shared/messages";
+import type { Events, Notes, Range } from "@vnoc/shared/messages";
 import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
@@ -96,6 +96,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     docs,
     code: (path, range) => commands.codeOf(path, range),
     editStart: (path, range, saveFirst) => commands.editStartOf(path, range, saveFirst),
+    editSave: (params) => commands.editSaveOf(params),
     goToCode: (key) => commands.goToCodeOf(key),
     dirtyFiles: () => dirty.paths,
     callTrees: () => callTrees.all(),
@@ -202,6 +203,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     dirtyFiles: () => dirty.paths,
     /** a card's edit state each time it changed, in order: which card, and the state */
     editStates: () => editStatePosts,
+    /** a command for the canvas page that only the test suite sends: set a draft's text, press Save on a card (the suite cannot type or press keys in a webview) */
+    viewCommand: (data: Events["viewCommand"]) => panels.emit("viewCommand", data),
     /** asks the canvas to dispatch keys at a code editor and say which the canvas took (`keysChecked` answers), and what it has said so far */
     checkKeys: () => panels.emit("viewCommand", { name: "checkKeys" }),
     keysChecked: () => keysCheckedPosts,

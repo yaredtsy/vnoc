@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import type { EditStartResult, Range, TreeNode } from "@vnoc/shared/messages";
 import type { Intent } from "@vnoc/shared/session.ts";
 import { allNodes } from "@vnoc/shared/tree";
-import { canvasTabs, closeCanvas, sleep, until } from "./util";
+import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
 
 // Editing in the canvas (docs/17-edit-in-canvas.md), step 9.1: a card that shows the code of a file with unsaved changes says so. The suite cannot see the
 // page, so it listens to what the page posts (`codeShown`: each time a card drew the code it read, and whether it showed the mark).
@@ -16,6 +16,7 @@ interface Api {
   codeShown(): { key: string; dirty: boolean; text: string }[];
   dirtyFiles(): string[];
   editStates(): { key: string; state: string }[];
+  viewCommand(data: { name: "setDraft" | "save"; key: string; text?: string }): void;
   checkKeys(): void;
   keysChecked(): { found: boolean; taken: string[] }[];
   editStart(path: string, range: Range, saveFirst?: boolean): Promise<EditStartResult>;
@@ -180,6 +181,116 @@ suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
     } finally {
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
       fs.writeFileSync(file, original);
+    }
+  });
+});
+
+suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md step 9.3)", () => {
+  const folder = () => vscode.workspace.workspaceFolders![0].uri.fsPath;
+  const file = () => path.join(folder(), "nested.py");
+  let original: string;
+
+  suiteSetup(async () => {
+    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    original = fs.readFileSync(file(), "utf8");
+  });
+
+  suiteTeardown(async () => {
+    await closeCanvas();
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor").then(undefined, () => {});
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    fs.writeFileSync(file(), original);
+  });
+
+  /** Edit on the card, as the menu does, until this canvas says `editing`; the position in the page's notes from which to read what it says next. */
+  async function startEditing(id: string): Promise<{ since: number; base: string }> {
+    const node = allNodes((await api.structure()).root).find((n) => n.id === id)!;
+    assert.ok(node?.range, `${id} is in the fixture`);
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await until("the canvas tab", () => canvasTabs().length === 1);
+    api.dispatch({ type: "expand", ids: ["nested.py"] });
+    const since = api.editStates().length;
+    const latest = () => api.editStates().slice(since).filter((p) => p.key === id).at(-1)?.state;
+    for (let waited = 0; latest() !== "editing"; waited += 500) {
+      assert.ok(waited < 30_000, `the card never said editing (last: ${latest()})`);
+      api.dispatch({ type: "reveal", id, canvas: true });
+      await vscode.commands.executeCommand("vnoc.editInCard", node);
+      await sleep(500);
+    }
+    const got = await api.editStart("nested.py", node.range);
+    assert.ok("text" in got);
+    return { since, base: got.text };
+  }
+  const statesOf = (id: string, since: number) => api.editStates().slice(since).filter((p) => p.key === id).map((p) => p.state);
+
+  test("a draft changed and saved: the file has the new text and not another byte moved, the file is saved, and the card shows the new text, read-only again", async () => {
+    const id = "nested.py::decorated";
+    try {
+      const { since, base } = await startEditing(id);
+      const shown = api.codeShown().length;
+      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") }); // what typing in the card makes
+      api.viewCommand({ name: "save", key: id }); // what the button and ⌘S call
+      await until("the file on disk to change", () => fs.readFileSync(file(), "utf8") !== original, 30_000);
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), original.replace("return 9\n", "return 99\n"), "the function has the new text, and every other byte is as it was");
+      const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file());
+      assert.ok(document && !document.isDirty, "E4: the file was not dirty before, so it is saved");
+
+      // the card kept the saved text until the index moved on, then dropped the draft and read its code again
+      await waitFor("the card to be reading again", () => statesOf(id, since).at(-1) === "reading", 30_000);
+      assert.ok(statesOf(id, since).includes("saving"), `it was saving on the way (${statesOf(id, since)})`);
+      for (let waited = 0; !api.codeShown().slice(shown).some((p) => p.key === id && p.text.includes("return 99")); waited += 500) {
+        assert.ok(waited < 30_000, "the card never showed the new text");
+        api.dispatch({ type: "reveal", id, canvas: true });
+        await sleep(500);
+      }
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      await closeCanvas();
+      fs.writeFileSync(file(), original);
+    }
+  });
+
+  test("a function renamed in the draft: the file has the new name, and the index follows", async () => {
+    const id = "nested.py::coro";
+    try {
+      const { base } = await startEditing(id);
+      api.viewCommand({ name: "setDraft", key: id, text: base.replace("coro", "renamed_coro") });
+      api.viewCommand({ name: "save", key: id });
+      await until("the file on disk to change", () => fs.readFileSync(file(), "utf8") !== original, 30_000);
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), original.replace("async def coro():", "async def renamed_coro():"));
+      await waitFor("the tree to have the new name and not the old one", async () => {
+        const ids = allNodes((await api.structure()).root).map((n) => n.id);
+        return ids.includes("nested.py::renamed_coro") && !ids.includes("nested.py::coro");
+      }, 30_000);
+    } finally {
+      await closeCanvas();
+      fs.writeFileSync(file(), original);
+    }
+  });
+
+  test("the file changed in a tab and saved since the draft started: Save is a conflict, and the file is as the tab left it", async () => {
+    const id = "nested.py::decorated";
+    try {
+      const { since, base } = await startEditing(id);
+      api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") });
+      // the user, in a tab: the same function changed, and saved
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+      const edit = new vscode.WorkspaceEdit();
+      const at = document.getText().indexOf("return 9\n");
+      edit.replace(document.uri, new vscode.Range(document.positionAt(at), document.positionAt(at + "return 9".length)), "return 90");
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.ok(await document.save());
+      const tab = fs.readFileSync(file(), "utf8");
+      assert.strictEqual(tab, original.replace("return 9\n", "return 90\n"));
+
+      api.viewCommand({ name: "save", key: id });
+      await waitFor("the card to say conflict", () => statesOf(id, since).at(-1) === "conflict", 30_000);
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), tab, "nothing was written");
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      await closeCanvas();
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      fs.writeFileSync(file(), original);
     }
   });
 });

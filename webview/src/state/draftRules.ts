@@ -1,6 +1,6 @@
 // The rules of a draft (docs/17-edit-in-canvas.md §4, §5, E6). Pure, so the table is tested; `drafts.ts` holds the store and `edit.ts` talks to the host.
 
-import type { Range } from "@vnoc/shared/messages.ts";
+import type { EditSaveResult, Range } from "@vnoc/shared/messages.ts";
 
 import { type DraftState } from "../node-card/editState.ts";
 import { dedent } from "@vnoc/shared/indent.ts";
@@ -93,3 +93,40 @@ export function indexMovedOn(before: { revision: number; epoch?: number } | null
 
 /** The refusal (E5, "Save `<file>` first") shows while the file is still dirty: once it is saved or reverted it goes, and Edit can be pressed again. */
 export const showRefusal = (refused: boolean, fileDirty: boolean): boolean => refused && fileDirty;
+
+/** The same draft in another state; the same object when it is already in it, or there is no such draft. */
+export function withState(drafts: Drafts, key: string, state: DraftState): Drafts {
+  const d = drafts[key];
+  return !d || d.state === state ? drafts : { ...drafts, [key]: { ...d, state } };
+}
+
+/** Save does something only while editing a draft that differs from its start (the same rule as the button's: `cardButtons`). */
+export const canSave = (d: Draft | undefined): d is Draft => d !== undefined && d.state === "editing" && isChanged(d);
+
+/** What the host's answer to `editSave` means for the card. */
+export function savedAs(answer: EditSaveResult): "saved" | "written" | "conflict" {
+  return "conflict" in answer ? "conflict" : "written" in answer ? "written" : "saved";
+}
+
+/**
+ * The line above the code that says what happened to the last Save (9.3b). `written`: the text is in the file's buffer, not on disk, because the file was dirty (E4).
+ * It stays until the file is saved. `conflict` and `error` stay with the draft.
+ */
+export interface Notice {
+  kind: "written" | "conflict" | "error";
+  text: string;
+}
+
+export function noticeFor(kind: Notice["kind"], file: string, detail?: string): Notice {
+  switch (kind) {
+    case "written":
+      return { kind, text: `Written into ${file}, not saved.` };
+    case "conflict":
+      return { kind, text: "Changed in the editor since you started" };
+    case "error":
+      return { kind, text: detail ? `Could not save: ${detail}` : "Could not save" };
+  }
+}
+
+/** The "written, not saved" line goes when the file is saved (or reverted): nothing is waiting any more. The others are the draft's. */
+export const noticeAfterFileState = (notice: Notice | undefined, fileDirty: boolean): Notice | undefined => (notice?.kind === "written" && !fileDirty ? undefined : notice);

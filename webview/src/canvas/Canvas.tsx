@@ -9,7 +9,8 @@ import { on, post } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
 import { checkKeys } from "../node-card/keyCheck.ts";
-import { beginEdit, cardRef } from "../state/edit.ts";
+import { typeInto } from "../state/drafts.ts";
+import { beginEdit, cardRef, saveDraft } from "../state/edit.ts";
 import { rememberViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
@@ -75,12 +76,16 @@ function ViewCommands({ laid }: { laid: Layout }) {
   cards.current = laid.nodes;
   useEffect(() => {
     const fit = () => void fitView({ duration: motionMs(300, prefersReducedMotion()) });
-    const stop = on("viewCommand", ({ name, key }) => {
+    const stop = on("viewCommand", ({ name, key, text }) => {
       if (name === "fitView") fit();
       else if (name === "checkKeys") post({ type: "keysChecked", ...checkKeys() });
-      else if (key && name === "edit") {
+      else if (key && (name === "edit" || name === "setDraft" || name === "save")) {
         const card = cards.current.find((p) => p.id === key);
-        if (card) void beginEdit(cardRef(card));
+        if (!card) return;
+        if (name === "edit") void beginEdit(cardRef(card));
+        // the suite cannot type or press keys in a webview: these two are the draft's text and Save, as a person's typing and ⌘S would make them
+        else if (name === "setDraft" && card.key !== null && text !== undefined) typeInto(card.key, text);
+        else if (name === "save" && card.key !== null) void saveDraft(card.key);
       } else if (key) setCodeOpen(key, name === "showCode");
     });
     window.addEventListener(FIT_VIEW_EVENT, fit); // the F key (canvas/keys.ts)
