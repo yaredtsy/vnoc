@@ -1,6 +1,6 @@
 # Future 02. Agent access: letting coding agents use V-NOC
 
-**Status: idea only. Not scheduled.** The first useful step (§4, layer 0) costs nothing and works the day 0.1 ships.
+**Status (2026-11-16): layers 0, 1a, 1b, 1c and 2c are scheduled** as release 0.5 (read, check, and write docs): [`../../21-agent-cli/`](../../21-agent-cli/README.md), which wins where it is more exact. Layers 2a, 2b and 3 are still ideas; [`../../21-agent-cli/08-mcp-and-plugins.md`](../../21-agent-cli/08-mcp-and-plugins.md) says what would schedule them.
 
 ```
 agent access

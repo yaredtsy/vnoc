@@ -275,6 +275,11 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.editInCard",
+        "title": "Edit in Card",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.fitView",
         "title": "Fit View",
         "category": "V-NOC"
@@ -455,6 +460,10 @@
           "when": "false"
         },
         {
+          "command": "vnoc.editInCard",
+          "when": "false"
+        },
+        {
           "command": "vnoc.fitView",
           "when": "vnoc.canvasOpen"
         },
@@ -598,6 +607,11 @@
           "group": "4_code@2"
         },
         {
+          "command": "vnoc.editInCard",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && surface == canvas && hasCode && (kind == function || kind == class)",
+          "group": "4_code@3"
+        },
+        {
           "command": "vnoc.revealInExplorer",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && (kind == file || kind == folder)",
           "group": "4_code@3"
@@ -661,6 +675,11 @@
           "command": "vnoc.hideCodeInCard",
           "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && role == call && surface == canvas && calleeKnown && codeOpen",
           "group": "4_code@3"
+        },
+        {
+          "command": "vnoc.editInCard",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && role == call && surface == canvas && calleeKnown && hasCode",
+          "group": "4_code@4"
         },
         {
           "command": "vnoc.showDocs",
@@ -821,8 +840,8 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts src/test/suite/bar.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
-    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts"
+    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts src/test/suite/edit.test.ts src/test/suite/bar.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
+    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts src/dirtyFiles.test.ts src/saveDraft.test.ts"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

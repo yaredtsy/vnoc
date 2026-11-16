@@ -7,6 +7,7 @@ supersedes, my suggestions that still need your yes or no, and the open question
 for the log
 ├── 1. decided on 2026-11-10 (your answers)
 ├── 1b. decided on 2026-11-12: editing in the canvas (E1–E7)
+├── 1c. decided on 2026-11-16: the core is the product, search, agents (P1, R1–R9)
 ├── 2. suggestions waiting for your answer
 ├── 3. where this plan differs from plan_vs
 └── 4. open questions
@@ -44,6 +45,21 @@ From [`17-edit-in-canvas.md`](17-edit-in-canvas.md) §2. They replace "Monaco as
 | **E5** | Editing a file with unsaved changes is refused: "Save the file first" (with **Save and Edit**). | — |
 | **E6** | A draft lives in the webview (`vscode.setState`). It is lost if the window closes; the canvas shows how many drafts are open. | — |
 | **E7** | The live view is later, and not a format change. | S5 shrinks to three checks (17 §10, step 9.0) |
+
+## 1c. Decided on 2026-11-16: the core is the product; what comes after editing
+
+| Draft row | Decision | Supersedes / changes | Details |
+|---|---|---|---|
+| **P1** | **Logic lives in the Rust core; UI code only draws and calls the core.** Ranking, filtering, matching, and every rule a second editor would need, go in `crates/vnoc`. TypeScript keeps drawing, keys and focus. New editor features that LSP already has a method for (CodeLens, hover) are built as the core's LSP features, not as VS Code providers. | `13` §"Not needed for 0.1": "V-NOC is a VS Code extension only" stays true of what ships, but is no longer the design limit. The TypeScript search (`rankNodes`) moves into the core (20 S2) | V-NOC will be ported to other editors (JetBrains, Neovim, Zed…). [`20-search/`](20-search/README.md) §2 |
+| **R1** | After edit-in-canvas: **0.4 search** ([`20`](20-search/README.md)), **0.5 the `vnoc` command and the agent skill** ([`21`](21-agent-cli/README.md)), **0.6 docs survive without markers**, 0.7+ polish. | `02` §3's old 0.4–0.6 | [`02`](02-mvp-and-releases.md) §3 |
+| **R2** | **Teams and privacy is dropped**: no private docs (`local/nodes/`), no `local.toml`, no solo mode. `local/` keeps the trash and caches. | `02` §3's 0.5, `04-storage` stage 4 | — |
+| **R3** | The agent command **reads, checks, and writes docs** (`init`, `doc new`, `relink`, `repair`); it never removes. Layers 0, 1a, 1b, 1c and 2c of `futureplan/02-agent-access`. MCP and plugins stay in the futureplan. *(First written the same day as "read and check only"; changed when you asked for agents that write docs and plans.)* | futureplan 02 §4 is now mostly scheduled | [`21`](21-agent-cli/README.md) §2 (C3, C10) |
+| **R4** | **Search is its own crate, `vnoc-search`**, with no disk, no async and no editor types, so "portable" is checked by the compiler. *(Your yes, same day.)* | P1 said `crates/vnoc` | [`20`](20-search/README.md) §2 |
+| **R5** | **Two layers teach an agent:** five always-on lines in `AGENTS.md`, and one skill; `vnoc agent install` writes both **for the agents the user picks** (asked, or `--agent`); every pick maps to one of two folders, `.agents/skills/` or `.claude/skills/`. | — | [`21`](21-agent-cli/README.md) §2 (C11, C12) |
+| **R6** | **MCP is postponed**: a warm index is its one gain here, and a cache gives the command line most of it. | futureplan 02.05's order (MCP second) | [`21/08`](21-agent-cli/08-mcp-and-plugins.md) |
+| **R7** | Doc frontmatter gains optional **`author:` and `tags:`**. They filter wherever docs are asked for: the query (`tag:`, `author:`), `doc list` / `doc read --where`, and `vnoc/docs` carries them. | an addition to a frozen format (`04-storage/01` §5 rule 1) | [`21`](21-agent-cli/README.md) §2 (C16), [`21/04`](21-agent-cli/04-write-commands.md) §4 |
+| **R8** | **The project root can have docs**, in one fixed folder `.vnoc/root/`, with no ID, no marker, no `node.toml`. Planned, not urgent (21 step A17). | `index/tree.rs`: "the root has none" | [`21/10`](21-agent-cli/10-root-docs.md) |
+| **R9** | **Callers stay out of 0.5.** Call trees are solved lazily from one entry, so there is no reverse map. `vnoc grep` is the by-text stand-in; the next step is "text, then solve each candidate" (as Jedi does); an eager index belongs with the storage work. | `14` §"later": callers | [`21/08`](21-agent-cli/08-mcp-and-plugins.md) §3 |
 
 ## 2. Suggestions waiting for your answer
 
@@ -97,7 +113,7 @@ would say something else.
 | **Q1** | Docs on the **project root** (the root folder has no path, so it cannot be a node today). | Later: a fixed node, or simply `.vnoc/README.md`. Not in 0.1. |
 | **Q2** | Should the tree show **non-code files** (README, YAML) so they can be documented? | A "show all files" toggle, after 0.1. The identity model already handles them (attached by path). |
 | **Q3** | Does ruff / pydocstyle complain about an `ID:` line in a docstring with default rules? | Check before 0.1; it affects how F1's comment style is prioritised. |
-| **Q4** | Does `vscode-languageclient` refuse a versioned `workspace/applyEdit` when the document has moved on? | Test it in Step 2. If not, compare versions in the extension before applying. |
+| **Q4** | Does `vscode-languageclient` refuse a versioned `workspace/applyEdit` when the document has moved on? | **Answered (2026-11-16, [`17`](17-edit-in-canvas.md) step 9.0).** The client does, for the core's edits: it compares the versions itself before it calls VS Code (`vscode-languageclient` 9.0.1, `lib/common/client.js:1457`), answers `{ applied: false }`, and the text does not change (a stale `vnoc/attach` was refused). VS Code does not: a plain extension-side `WorkspaceEdit` carries no version and applies at the old range after the document changed. So the extension compares the version and the text before it writes (17 §6). All source writes today go through the core's `workspace/applyEdit`; the only extension-side `WorkspaceEdit` is the rename in `trash.ts`. |
 | **Q5** | The pylspt repo is named `rust_python_parser` on GitHub, and `vendor/ruff` must be reachable from a git dependency. | Checked: `vendor/ruff` is committed (no submodule), so a git dependency carries it. Use the real URL, pinned by `rev`; the driver's own three ruff path dependencies must go first. Steps in [`06-drivers.md`](06-drivers.md) §7. Still blocks CI (R4) until done. |
 | **Q6** | macOS Gatekeeper and Windows Defender on binaries inside a VSIX (spike item C11, still open). | Test in Step 0 on a second machine. May require signing before a public release. |
 | **Q7** | The real start-up time of the in-memory index on a 1,000-file and a 10,000-file repo. | Measure at the end of Step 1. This number decides whether SQLite is 0.2 or later. |

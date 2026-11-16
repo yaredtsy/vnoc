@@ -1,4 +1,4 @@
-import type { CallTreeResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
+import type { CallTreeResult, CodeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
 
 import type { Docs } from "./docs";
@@ -15,9 +15,21 @@ export interface Deps {
   /** the "Add doc" flow for a node; resolves to whether a doc was added */
   addDoc(key: string): Promise<boolean>;
   docs: Docs;
-  /** the text of a definition, from VS Code's document */
-  code(path: string, range: Range): Promise<string>;
+  /** a definition's text and its baseline, from VS Code's document; `saveFirst` saves a document with unsaved changes first */
+  code(path: string, range: Range, saveFirst: boolean): Promise<CodeResult>;
+  /** The doc panel's pencil: the baseline of the whole file, that the file has unsaved changes, or that the other page has the doc */
+  editStart(params: EditStartParams): Promise<EditStartResult>;
+  /** Save on a draft: checks the document against what the draft started from, writes it re-indented into the range */
+  editSave(params: EditSaveParams): Promise<EditSaveResult>;
+  /** Show Diff: opens the file beside the file with the draft in place */
+  editDiff(params: EditDiffParams): Promise<void>;
+  /** Copy Draft: puts text on the clipboard */
+  copyText(text: string): Promise<void>;
   goToCode(key: string): Promise<void>;
+  /** the files with unsaved changes, relative to the opened folder */
+  dirtyFiles(): string[];
+  /** the host's copy of a page's drafts */
+  drafts(page: Page): Draft[];
   /** the call trees held, by entry key */
   callTrees(): Record<string, CallTreeResult>;
   /** opens a file below the opened folder at a range */
@@ -44,11 +56,17 @@ export function createHandlers(d: Deps): Handlers {
     structure: () => d.structure(),
     docs: ({ nodeId }) => d.core("vnoc/docs", { id: nodeId }), // the core calls the permanent ID `id`; every other id in the UI is the location key
     docText: ({ path }) => d.docs.text(path),
-    code: ({ path, range }) => d.code(path, range),
+    code: ({ path, range, saveFirst }) => d.code(path, range, saveFirst === true),
+    editStart: (params) => d.editStart(params),
+    editSave: (params) => d.editSave(params),
+    editDiff: (params) => d.editDiff(params),
+    copyText: ({ text }) => d.copyText(text),
     addDoc: async ({ key }) => ({ added: await d.addDoc(key) }),
     openDoc: ({ path }) => d.docs.open(path),
     openLink: ({ href, from }) => d.docs.openLink(href, from),
     goToCode: ({ key }) => d.goToCode(key),
+    dirtyFiles: async () => ({ paths: d.dirtyFiles() }),
+    drafts: async ({ page }) => ({ drafts: d.drafts(page) }),
     callTrees: async () => d.callTrees(),
     openAt: ({ path, range }) => d.openAt(path, range),
     session: async () => d.session(),

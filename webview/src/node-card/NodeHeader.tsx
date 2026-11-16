@@ -2,8 +2,11 @@ import { Codicon } from "@/components/Codicon.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
 import { HEADER_H, type Placed, canOpen } from "../canvas/layout.ts";
+import { draftFor, isChanged } from "../state/draftRules.ts";
+import { useDrafts } from "../state/drafts.ts";
 import { ActionStrip } from "./ActionStrip.tsx";
 import { chevronAction } from "./chevronAction.ts";
+import { editStateOf } from "./editState.ts";
 import { KINDS, kindIcon } from "./kinds.ts";
 import { CHEVRON, HEADER_PAD, KIND_ICON } from "./rows.ts";
 import { useNodeActions } from "./useNodeActions.ts";
@@ -14,6 +17,10 @@ export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Pla
   const action = chevronAction(node);
   const { title, color } = KINDS[node.kind];
   const icon = kindIcon(node.kind, node.inClass); // a call card shows its callee's kind, never the call icon
+  // the card's edit state decides the code's slot of the buttons (`cardButtons`), and a dot before the name says the draft differs from its start
+  const draft = useDrafts((s) => draftFor(s.drafts, node));
+  const changed = draft !== undefined && isChanged(draft);
+  const edit = { state: editStateOf(node.codeOpen, draft), changed };
   return (
     <div className="node-header flex flex-none items-center gap-1 pr-1" style={{ height: HEADER_H, paddingLeft: HEADER_PAD }}>
       {focusRoot ? (
@@ -37,10 +44,13 @@ export function NodeHeader({ node, contextId, focusRoot, selected }: { node: Pla
       <span className="flex flex-none items-center justify-center" style={{ color, width: KIND_ICON }}>
         <Codicon name={icon} />
       </span>
+      {changed && (
+        <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-gitDecoration-modifiedResourceForeground, currentColor)" }} title="The draft has changes that are not saved" />
+      )}
       <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" title={node.role === "call" ? node.name : title(node.name)}>
         {node.role === "call" ? node.name : title(node.name)}
       </span>
-      <ActionStrip node={node} contextId={contextId} focusRoot={focusRoot} selected={selected} />
+      <ActionStrip node={node} contextId={contextId} focusRoot={focusRoot} selected={selected} edit={edit} />
     </div>
   );
 }

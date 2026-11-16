@@ -26,6 +26,11 @@ export class Docs {
     return resolved;
   }
 
+  /** The path of a doc, checked: inside `<git root>/.vnoc/nodes/` and a `.md`, else an error. Editing a doc (§8) goes through this too. */
+  resolve(file: string): string {
+    return this.check(file);
+  }
+
   async text(file: string): Promise<string> {
     return (await vscode.workspace.openTextDocument(vscode.Uri.file(this.check(file)))).getText();
   }

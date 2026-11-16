@@ -8,8 +8,10 @@ import { NodeCard } from "../node-card/NodeCard.tsx";
 import { on, post } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
+import { checkKeys } from "../node-card/keyCheck.ts";
+import { cardRef, saveDraft, saveFile, typeIn } from "../state/edit.ts";
 import { rememberViewport, savedViewport } from "../state/viewports.ts";
-import { pulse, setCodeOpen, useView } from "../state/view.ts";
+import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
@@ -66,14 +68,29 @@ function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | n
   return null;
 }
 
-/** Menu commands (and the F key) that change only what this canvas draws: show or hide a card's code, fit the view. */
-function ViewCommands() {
+/** Menu commands (and the F key) that change only what this canvas draws: show or hide a card's code, fit the view, "Edit in Card" (the card shows its code and its editor takes the keyboard). */
+function ViewCommands({ laid }: { laid: Layout }) {
   const { fitView } = useReactFlow();
+  const cards = useRef(laid.nodes); // the latest layout, without listening again each time it changes
+  cards.current = laid.nodes;
   useEffect(() => {
     const fit = () => void fitView({ duration: motionMs(300, prefersReducedMotion()) });
-    const stop = on("viewCommand", ({ name, key }) => {
+    const stop = on("viewCommand", ({ name, key, text }) => {
       if (name === "fitView") fit();
-      else if (key) setCodeOpen(key, name === "showCode");
+      else if (name === "checkKeys") post({ type: "keysChecked", ...checkKeys() });
+      else if (key && (name === "edit" || name === "setDraft" || name === "save" || name === "saveFile")) {
+        const card = cards.current.find((p) => p.id === key);
+        if (!card) return;
+        // "Edit in Card" (9.7): the code is shown, and its editor takes the keyboard, so typing starts the draft
+        if (name === "edit" && card.key !== null && card.range !== null) {
+          setCodeOpen(card.id, true);
+          requestCodeFocus(card.id);
+        }
+        // the suite cannot type or press keys in a webview: these two are the draft's text and Save, as a person's typing and ⌘S would make them
+        else if (name === "setDraft" && card.key !== null && text !== undefined) typeIn(card.id, card.key, text);
+        else if (name === "save" && card.key !== null) void saveDraft(card.key);
+        else if (name === "saveFile") void saveFile(cardRef(card)); // the Save button of "Save <file> to edit here"
+      } else if (key && (name === "showCode" || name === "hideCode")) setCodeOpen(key, name === "showCode");
     });
     window.addEventListener(FIT_VIEW_EVENT, fit); // the F key (canvas/keys.ts)
     return () => {
@@ -149,7 +166,7 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
       {minimap && <MiniMap pannable zoomable nodeColor={(node) => (node.id === selected ? "var(--card-selected)" : node.id === cursor ? "var(--card-cursor)" : "var(--muted-foreground)")} />}
       <CenterOn laid={laid} context={context} />
       <OnScreenReport laid={laid} selected={selected} />
-      <ViewCommands />
+      <ViewCommands laid={laid} />
     </ReactFlow>
   );
 }

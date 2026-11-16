@@ -19,7 +19,7 @@ export function SiteList({ node }: { node: Placed }) {
     sites.forEach((site, i) => {
       if (site.path === null) return;
       const range = { start: { line: site.start.line, character: 0 }, end: { line: site.start.line + 1, character: 0 } };
-      request("code", { path: site.path, range }).then((text) => live && setTexts((t) => ({ ...t, [i]: text.trim() })), () => {});
+      request("code", { path: site.path, range }).then((got) => live && setTexts((t) => ({ ...t, [i]: got.text.trim() })), () => {});
     });
     return () => {
       live = false;

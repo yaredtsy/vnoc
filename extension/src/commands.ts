@@ -4,9 +4,14 @@ import * as vscode from "vscode";
 import { type CallId, isCallId, listedSites, resolveCall, siteChoice } from "@vnoc/shared/calls.ts";
 import type { CallTreeNode, Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
-import type { Events } from "@vnoc/shared/messages";
+import type { CodeResult, EditDiffParams, EditSaveParams, EditSaveResult, EditStartResult, Events } from "@vnoc/shared/messages";
+import { reindent } from "@vnoc/shared/indent";
 import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
+import type { DraftDocs } from "./draftDocs";
+import { dropsId } from "@vnoc/shared/idLine";
+import { SAVE_ANYWAY, afterLocate, answerForAlready, docLocate, firstStep, idQuestion, outcomeAfterApply, wholeRange, withDraft } from "./saveDraft";
+import type { Docs } from "./docs";
 import type { CallTrees } from "./callTree";
 import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
@@ -46,6 +51,12 @@ const command = (run: (arg: unknown, selected?: unknown) => Promise<unknown> | u
   }
 };
 
+/** Where the function of a draft is in a document's text now, or null: the core's `vnoc/locate`. A parameter of Save so that a test can pass its own. */
+export type Locate = (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>;
+
+/** Asks whether a draft that takes its function's `ID:` away may be saved (§7): the draft's key; true is Save Anyway. A parameter of Save so that a test can answer. */
+export type AskToDropId = (key: string) => Promise<boolean>;
+
 export class Commands {
   constructor(
     private readonly core: Core,
@@ -54,6 +65,10 @@ export class Commands {
     /** brings the V-NOC side bar up (`vnoc.structure.focus`); the page scrolls the selected row into view by itself */
     private readonly showSidebar: () => Promise<void>,
     private readonly callTrees: CallTrees,
+    /** the in-memory documents "Show Diff" puts beside the file */
+    private readonly draftDocs: DraftDocs,
+    /** a doc's path is checked here (§8): inside `<git root>/.vnoc/nodes/`, a `.md` */
+    private readonly docs: Docs,
   ) {}
 
   private readonly request = <T>(method: string, params?: object) => this.core.request<T>(method, params);
@@ -96,6 +111,8 @@ export class Commands {
       on("vnoc.collapseAll", () => this.store.dispatch({ type: "collapseAll" })),
       on("vnoc.showCodeInCard", async (arg, selected) => this.viewCommand({ name: "showCode", key: await this.cardIdOf(arg, selected) })),
       on("vnoc.hideCodeInCard", async (arg, selected) => this.viewCommand({ name: "hideCode", key: await this.cardIdOf(arg, selected) })),
+      // the page shows the card's code if it is not shown, then asks `editStart`: the draft lives in the page (docs/17 E6)
+      on("vnoc.editInCard", async (arg, selected) => this.viewCommand({ name: "edit", key: await this.cardIdOf(arg, selected) })),
       on("vnoc.fitView", () => this.viewCommand({ name: "fitView" })),
       on("vnoc.copyPath", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
@@ -379,14 +396,133 @@ export class Commands {
     return addDoc((method, params) => this.core.request(method, params), root, node, node.docs);
   }
 
-  /** The text of a definition, from VS Code's document (so unsaved edits show). The path comes from the webview, so it must stay inside the opened folder. */
-  async codeOf(relative: string, r: Range): Promise<string> {
+  /**
+   * A definition's text and its baseline (docs/17-edit-in-canvas.md §4, §5), from VS Code's document (so unsaved edits show): the range's text, the version it was read at, the first
+   * line's text before the range (the `def`'s own indentation, as written), the line ending, and whether the document has unsaved changes. A card is editable only while it does not:
+   * its range comes from the last save and in a dirty file it can point at the wrong lines (E5). `saveFirst` saves it first (the card's Save button). The path comes from the webview,
+   * so it must stay inside the opened folder.
+   */
+  async codeOf(relative: string, r: Range, saveFirst = false): Promise<CodeResult> {
+    const doc = await this.documentIn(relative);
+    if (saveFirst && doc.isDirty && !(await doc.save())) throw new Error(`${relative} could not be saved.`);
+    return {
+      text: doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character)),
+      version: doc.version,
+      prefix: doc.lineAt(Math.min(r.start.line, doc.lineCount - 1)).text.slice(0, r.start.character),
+      eol: doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n",
+      dirty: doc.isDirty,
+    };
+  }
+
+  /**
+   * Edit on a doc (§8): the same answer as for a function, with the whole file as the range and no prefix. A doc with unsaved changes in a tab is refused (E5), or saved first.
+   * There is no range to refresh after the save, so "Save and Edit" answers the draft's start at once. The path is the Markdown file's own (`DocInfo.path`), checked by `Docs`.
+   */
+  async editStartDocOf(file: string, saveFirst: boolean): Promise<EditStartResult> {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(this.docs.resolve(file)));
+    if (doc.isDirty) {
+      if (!saveFirst) return { dirty: true };
+      if (!(await doc.save())) throw new Error(`${path.basename(file)} could not be saved.`);
+    }
+    const text = doc.getText();
+    return { text, version: doc.version, prefix: "", eol: doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n", range: wholeRange(text) };
+  }
+
+  /**
+   * The document a draft is of: a function's file below the opened folder, or, for a doc (§8), the Markdown file. A doc that cannot be opened (deleted or renamed since the draft
+   * started) is `null`: the function is gone, as for a function the core cannot find (§7). A path that is not a V-NOC doc is an error, not "gone".
+   */
+  private async draftDocument(p: { kind?: "doc"; path: string }): Promise<vscode.TextDocument | null> {
+    if (p.kind !== "doc") return this.documentIn(p.path);
+    const file = this.docs.resolve(p.path);
+    return vscode.workspace.openTextDocument(vscode.Uri.file(file)).then(
+      (doc) => doc,
+      () => null,
+    );
+  }
+
+  /**
+   * Save on a draft (docs/17-edit-in-canvas.md §6, E4). `applyEdit` carries no version and applies at any range, so the check is here, in three steps whose rules are
+   * `saveDraft.ts`. The version and the text under the range against the draft's; if the version moved on, the core says where the function is now (`locate`, a
+   * parameter so a test can pass one that edits the document before it answers) and the version is read again after it answers. **No `await` between the last
+   * read and the call to `applyEdit`**: any await lets the document move on, and nothing after it would notice. A draft that was written already answers `saved`,
+   * and writes nothing. The file is saved only if it was not dirty before: unsaved work of the user's own in a tab is never saved for them.
+   *
+   * §7: a draft that takes the function's `ID:` away asks first (`ask`, a parameter so a test can answer), in the row that writes and in no other. The question is the one
+   * await before the write, so the document may have changed while it was open: after Save Anyway the rows run again from the top, reading the version again, and the
+   * second pass does not ask again. Cancel answers `{ cancelled: true }` and writes nothing.
+   */
+  async editSaveOf(p: EditSaveParams, locate?: Locate, ask: AskToDropId = (key) => this.askToDropId(key)): Promise<EditSaveResult> {
+    const doc = await this.draftDocument(p);
+    if (doc === null) return { gone: true }; // §8: the `.md` was deleted or renamed
+    // §8: a doc is all of one file, so the core has nothing to look for (the whole document is where it is), and a Markdown file has no ID line to take away
+    const where: Locate = locate ?? (p.kind === "doc" ? docLocate : (key, document) => this.locateInCore(key, document));
+    const written = reindent(p.text, p.base, p.prefix, p.eol);
+    const vsRange = (r: Range) => new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+    const takesId = p.kind !== "doc" && dropsId(p.base, written);
+    for (let asked = false; ; asked = true) {
+      // from here to the first `await` (the core's answer, or the question) or to `applyEdit`: synchronous
+      let at = p.range;
+      const step = firstStep({ draftVersion: p.version, version: doc.version, current: doc.getText(vsRange(p.range)), base: p.base, written });
+      let row: "write" | "already" | "conflict" | "gone";
+      if (step !== "locate") row = step;
+      else {
+        const sent = doc.version;
+        const found = await where(p.key, { uri: doc.uri.toString(), version: sent, text: doc.getText() });
+        if (found) at = found;
+        row = afterLocate({ found: found !== null, sentVersion: sent, version: doc.version, current: found ? doc.getText(vsRange(found)) : "", base: p.base, written });
+      }
+      if (row === "gone") return { gone: true };
+      if (row === "conflict") return { conflict: true };
+      if (row === "already") return answerForAlready(doc.isDirty) === "saved" ? { saved: true } : { written: true };
+      if (takesId && !asked) {
+        if (!(await ask(p.key))) return { cancelled: true };
+        continue; // the document may have moved while the question was open: choose the row again
+      }
+      const wasDirty = doc.isDirty;
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(doc.uri, vsRange(at), written);
+      const applied = await vscode.workspace.applyEdit(edit);
+      const saved = applied && !wasDirty && (await doc.save());
+      const outcome = outcomeAfterApply(applied, saved);
+      return outcome === "conflict" ? { conflict: true } : outcome === "saved" ? { saved: true } : { written: true };
+    }
+  }
+
+  /** The modal of §7: Save Anyway, or Cancel (VS Code adds it). Dismissing it is Cancel. */
+  private async askToDropId(key: string): Promise<boolean> {
+    return (await vscode.window.showWarningMessage(idQuestion(key), { modal: true }, SAVE_ANYWAY)) === SAVE_ANYWAY;
+  }
+
+  /** Where the core finds the function in this text, or null. */
+  private async locateInCore(key: string, document: { uri: string; version: number; text: string }): Promise<Range | null> {
+    const found = await this.core.request<{ range: Range } | null>("vnoc/locate", { key, document });
+    return found?.range ?? null;
+  }
+
+  /**
+   * Show Diff on a conflict: the file on the right, on the left the file with the draft in the function's place (where the core finds it now, else where the draft
+   * started), in VS Code's diff editor. The left is a document in memory (`vnoc-draft:`): nothing is written.
+   */
+  async editDiffOf(p: EditDiffParams): Promise<void> {
+    const doc = await this.draftDocument(p);
+    if (doc === null) throw new Error(`${path.basename(p.path)} is not there any more.`);
+    const found = p.kind === "doc" ? wholeRange(doc.getText()) : await this.locateInCore(p.key, { uri: doc.uri.toString(), version: doc.version, text: doc.getText() }).catch(() => null);
+    const range = found ?? p.range;
+    const from = doc.offsetAt(new vscode.Position(range.start.line, range.start.character));
+    const to = doc.offsetAt(new vscode.Position(range.end.line, range.end.character));
+    const left = this.draftDocs.add(doc.uri, withDraft(doc.getText(), from, to, reindent(p.text, p.base, p.prefix, p.eol)));
+    const name = p.kind === "doc" ? path.basename(p.path) : p.key.slice(p.key.indexOf("::") + 2);
+    await vscode.commands.executeCommand("vscode.diff", left, doc.uri, `${name}: your draft ↔ ${path.basename(p.path)}`);
+  }
+
+  /** The document of a file below the opened folder: the path comes from the webview, so it must stay inside it. */
+  private async documentIn(relative: string): Promise<vscode.TextDocument> {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) throw new Error("Open a folder first.");
     const file = path.resolve(folder.uri.fsPath, relative);
     if (!file.startsWith(folder.uri.fsPath + path.sep)) throw new Error(`${relative} is outside the opened folder`);
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-    return doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character));
+    return vscode.workspace.openTextDocument(vscode.Uri.file(file));
   }
 
   // ── the cursor ────────────────────────────────────────────────────────────────────────────────────────────────────────

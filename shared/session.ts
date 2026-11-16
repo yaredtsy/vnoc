@@ -3,7 +3,7 @@
 // Pure: no `vscode`, no React, tested with `node --test`.
 
 import type { TreeNode } from "./messages";
-import { type CallId, type CallLookup, callExists, isCallId, parseCallId } from "./calls.ts";
+import { type CallId, type CallLookup, callExists, callId, isCallId, parseCallId } from "./calls.ts";
 import { jump, pop } from "./focusStack.ts";
 import { MAX_ROOTS, NONE, NO_ROOT, openOf, rootOf } from "./open.ts";
 import { chainedPrefix, findNode, lineage, pathTo } from "./tree.ts";
@@ -180,7 +180,10 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
       return change(s, context, setOpen(c, NONE));
 
     case "reveal": {
-      const way = pathTo(tree, intent.id);
+      // A call card: its owner function opens, and so do the call cards above it in the owner's tree, so the card is drawn. Nothing is selected: selecting a call
+      // card follows it (a preview EXPLORE), and a reveal only brings a card into view.
+      const call = parseCallId(intent.id);
+      const way = pathTo(tree, call ? call.owner : intent.id);
       if (!way) return s;
       // the focus is a path: steps are dropped from the end until the last one contains the node, never added
       let kept = c.focus.length;
@@ -188,10 +191,11 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
       const focus = kept === c.focus.length ? c.focus : c.focus.slice(0, kept);
       // the ancestors between the root of what is drawn and the node open, in that root's set only (03 §2.1)
       const from = focus.length === 0 ? 1 : way.findIndex((n) => n.id === rootOf(focus)) + 1; // the project's root, and a focus root, are always open
-      const ancestors = way.slice(from, -1).map((n) => n.id);
+      const ancestors = way.slice(from, call ? undefined : -1).map((n) => n.id);
+      const above = call ? call.steps.slice(0, -1).map((_, i) => callId(call.owner, call.steps.slice(0, i + 1))) : [];
       const moved = { ...c, ...focusTo(c, focus, tree) };
       const next = closeStale(
-        change(s, context, { ...focusTo(c, focus, tree), ...setOpen(moved, keep(openOf(moved), [...new Set([...openOf(moved), ...ancestors])])), selected: intent.id }, { highlight: null }),
+        change(s, context, { ...focusTo(c, focus, tree), ...setOpen(moved, keep(openOf(moved), [...new Set([...openOf(moved), ...ancestors, ...above])])), selected: call ? c.selected : intent.id }, { highlight: null }),
         context,
       );
       // `canvas: false` is the native sidebar's reveal (it scrolls its own row); it goes when the sidebar is a webview (step 8.5)

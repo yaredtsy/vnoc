@@ -1,89 +1,109 @@
-import { useEffect, useRef, useState } from "react";
-import type * as Monaco from "monaco-editor/editor/editor.api.js";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { dedent } from "@vnoc/shared/indent.ts";
 import type { Placed } from "../canvas/layout.ts";
-import { request } from "../host.ts";
-import { currentTheme, languageOf, loadMonaco } from "./monaco.ts";
+import { post, request } from "../host.ts";
+import { useDirtyFiles } from "../state/dirty.ts";
+import { type CodeFacts, type DraftAction, baselineOf, codeMark, draftFor, editBlock, isWritable } from "../state/draftRules.ts";
+import { fileStateChanged, setBaseline, useDrafts } from "../state/drafts.ts";
+import { cardRef, copyDraft, openInEditor, reloadDraft, revealCard, saveDraft, saveFile, showDiff, typeIn } from "../state/edit.ts";
+import { clearCodeFocus, useView } from "../state/view.ts";
+import { CodeEditor } from "./CodeEditor.tsx";
+import { Elsewhere, SaveFirst, SaveNotice, StateLine, Waiting } from "./DraftLines.tsx";
+import { editStateOf } from "./editState.ts";
 
-type State = { text: string } | { error: string } | null;
+type State = { text: string; prefix: string; dirty: boolean } | { error: string } | null;
 
-/** Lines after the first still carry the definition's own indentation (the range starts at `def`, not at the line start): take it off. */
-function dedent(text: string, indent: number): string {
-  const [first, ...rest] = text.split("\n");
-  return [first, ...rest.map((l) => l.slice(Math.min(indent, l.length - l.trimStart().length)))].join("\n");
-}
-
-/** The node's own source, read by the host from VS Code's document (so unsaved edits show), shown in Monaco coloured by Shiki. Read-only for now. */
+/**
+ * The node's own source, read by the host from VS Code's document (so unsaved edits show), shown in Monaco coloured by Shiki. **It takes typing whenever it is shown** (docs/17-edit-in-canvas.md
+ * §4, §5, 9.7): what the host answered is the card's baseline (`state/drafts.ts`), and the first keystroke that makes the text differ from it starts the draft, locally; typing back to the original
+ * drops it. Not while the file has unsaved changes in a tab (the card's range comes from the last save and can point at the wrong lines): then it is read-only, and the line above the code says
+ * "Save `<file>` to edit here" with a Save button; and not while another card holds the node's draft. A card with a draft never reads its code again (§5): the draft keeps its own path, range,
+ * version and base. Which line and whether it types are `codeMark` and `isWritable` (`draftRules.ts`); this draws them.
+ */
 export function NodeCode({ node }: { node: Placed }) {
   const [state, setState] = useState<State>(null);
+  const dirty = useDirtyFiles((s) => s.paths.has(node.path));
+  const dirtyNow = useRef(dirty);
+  dirtyNow.current = dirty;
+  const draft = useDrafts((s) => draftFor(s.drafts, node));
+  const hasDraft = draft !== undefined;
+  const holder = useDrafts((s) => {
+    const block = editBlock(s.drafts, node);
+    return block?.kind === "other" ? block.holder : null; // another card holds this node's draft
+  });
+  const settling = useDrafts((s) => s.settling.has(node.id));
+  const notice = useDrafts((s) => s.notices[node.id]);
+  const editState = editStateOf(true, draft); // NodeCode is drawn only while the code is shown
+  const focusRequest = useView((v) => (v.focusCode?.id === node.id ? v.focusCode.n : 0));
+  const onFocused = useCallback((n: number) => clearCodeFocus(node.id, n), [node.id]);
   useEffect(() => {
+    if (hasDraft) return;
     let live = true;
     request("code", { path: node.path, range: node.range! }).then(
-      (text) => live && setState({ text }),
+      (got) => {
+        if (!live) return;
+        setState({ text: got.text, prefix: got.prefix, dirty: got.dirty });
+        // the baseline a draft starts from: not of a file with unsaved changes (the card is read-only then)
+        setBaseline(node.id, got.dirty || node.key === null ? null : baselineOf({ id: node.id, key: node.key, path: node.path, range: node.range! }, got));
+        post({ type: "codeShown", key: node.id, dirty: dirtyNow.current, text: dedent(got.text, got.prefix) });
+      },
       (e: Error) => live && setState({ error: e.message }),
     );
     return () => {
       live = false;
     };
-  }, [node.path, node.range]); // a new range (the code above moved, or the index changed) reads the code again
-
-  if (!state) return <div className="node-code muted">loading…</div>;
-  if ("error" in state) return <div className="node-code error">{state.error}</div>;
-  return <CodeEditor text={dedent(state.text, node.range?.start.character ?? 0)} path={node.path} firstLine={node.line ?? 1} />;
-}
-
-function CodeEditor({ text, path, firstLine }: { text: string; path: string; firstLine: number }) {
-  const host = useRef<HTMLDivElement>(null);
-  const editor = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  // the first value for the editor when it is created; later changes go through `setValue` / options below
-  const initial = useRef({ text, path, firstLine });
-
+  }, [node.id, node.key, node.path, node.range, dirty, hasDraft]); // a new range (the code above moved, or the index changed) reads the code again, and so does a save or a revert of the file, and a Discard
+  useEffect(() => () => setBaseline(node.id, null), [node.id]); // a card that hides its code (or leaves the page) has no baseline to start a draft from
   useEffect(() => {
-    let disposed = false;
-    loadMonaco().then((monaco) => {
-      if (disposed || !host.current) return;
-      const i = initial.current;
-      editor.current = monaco.editor.create(host.current, {
-        value: i.text,
-        language: languageOf(i.path),
-        readOnly: true,
-        theme: currentTheme(), // Shiki builds its colour map when an editor is created with a theme; without it everything is one colour
-        automaticLayout: true, // the card is resized by the canvas; Monaco follows its container
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-        lineNumbers: (n) => String(n + i.firstLine - 1), // lines of the file, not of the slice
-        lineNumbersMinChars: 4,
-        folding: false,
-        glyphMargin: false,
-        renderLineHighlight: "none",
-        domReadOnly: true,
-        contextmenu: false,
-        fontSize: 11,
-        fontFamily: getComputedStyle(document.body).getPropertyValue("--editor-font") || "monospace",
-        overviewRulerLanes: 0,
-        hideCursorInOverviewRuler: true,
-        scrollbar: { alwaysConsumeMouseWheel: false, verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-      });
-    });
-    return () => {
-      disposed = true;
-      editor.current?.dispose();
-      editor.current = null;
-    };
-  }, []);
-
+    fileStateChanged(node.id, dirty); // a "written, not saved" line has nothing left to wait for once the file is saved or reverted
+  }, [dirty, node.id]);
+  const file = node.path.slice(node.path.lastIndexOf("/") + 1);
+  const fileDirty = dirty || (state !== null && "text" in state && state.dirty);
+  const facts: CodeFacts = { hasDraft, holder, state: draft?.state ?? null, dirty: fileDirty, settling, file, notice };
+  const mark = codeMark(facts);
   useEffect(() => {
-    const e = editor.current;
-    if (!e) {
-      initial.current = { text, path, firstLine };
-      return;
-    }
-    if (e.getValue() !== text) e.setValue(text);
-    const model = e.getModel();
-    if (model) loadMonaco().then((m) => !model.isDisposed() && m.editor.setModelLanguage(model, languageOf(path)));
-    e.updateOptions({ lineNumbers: (n) => String(n + firstLine - 1) });
-  }, [text, path, firstLine]);
+    post({ type: "editState", key: node.id, state: editState, elsewhere: holder !== null, mark: mark?.kind ?? null });
+  }, [node.id, editState, holder, mark?.kind]);
 
-  // `nodrag nopan nowheel`: selecting text must not drag the card, and the wheel scrolls the code, not the canvas
-  return <div ref={host} className="node-code monaco-host nodrag nopan nowheel" />;
+  const act: Record<DraftAction, () => void> = {
+    reload: () => node.key !== null && reloadDraft(node.key),
+    showDiff: () => node.key !== null && showDiff(node.key),
+    openInEditor: () => node.key !== null && openInEditor(node.key),
+    copyDraft: () => node.key !== null && copyDraft(node.key),
+  };
+  const shown = draft ? draft.text : state && "text" in state ? dedent(state.text, state.prefix) : undefined;
+  const key = node.key;
+  return (
+    <>
+      {mark?.kind === "elsewhere" ? (
+        <Elsewhere text={mark.text} tip={`${mark.text}: one draft per function. Click to show that card.`} onClick={() => revealCard(mark.holder)} />
+      ) : mark?.kind === "state" ? (
+        <StateLine text={mark.text} actions={mark.actions} act={act} />
+      ) : mark?.kind === "saveFirst" ? (
+        <SaveFirst text={mark.text} tip={`${file} has unsaved changes. The card's lines come from the last save, so the code is read-only until it is saved.`} onSave={() => void saveFile(cardRef(node))} />
+      ) : mark?.kind === "saving" ? (
+        <Waiting text={mark.text} />
+      ) : mark?.kind === "notice" ? (
+        <SaveNotice notice={mark.notice} />
+      ) : null}
+      {shown !== undefined ? (
+        <CodeEditor
+          text={shown}
+          path={draft?.path ?? node.path}
+          firstLine={draft ? draft.range.start.line + 1 : node.line ?? 1}
+          editState={editState}
+          writable={isWritable(facts)}
+          focusRequest={focusRequest}
+          onFocused={onFocused}
+          onText={(text) => key !== null && typeIn(node.id, key, text)}
+          onSave={() => key !== null && saveDraft(key)}
+        />
+      ) : state && "error" in state ? (
+        <div className="node-code error">{state.error}</div>
+      ) : (
+        <div className="node-code muted">loading…</div>
+      )}
+    </>
+  );
 }

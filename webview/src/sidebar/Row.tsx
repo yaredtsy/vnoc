@@ -98,7 +98,7 @@ export function Row({ row, domId, start, contextId, selected, highlighted, curso
           </span>
         )}
         <div className="absolute inset-y-0 right-0 hidden items-center bg-[var(--row-bg)] pl-1 group-hover:flex data-[on=true]:flex" data-on={selected}>
-          <ActionStrip node={{ id: row.id, key: row.id, role: "node", kind: node.kind, range: node.range, codeOpen: false }} contextId={contextId} focusRoot={row.focusRoot} selected={selected} surface="sidebar" before={() => activate(contextId)} />
+          <ActionStrip node={{ id: row.id, key: row.id, role: "node", kind: node.kind, range: node.range, codeOpen: false, path: node.path }} contextId={contextId} focusRoot={row.focusRoot} selected={selected} surface="sidebar" before={() => activate(contextId)} />
         </div>
       </TooltipTrigger>
       <TooltipContent side="right" align="start" arrow={false} className="border border-[color:var(--hover-border)] bg-[color:var(--hover-bg)] text-[length:var(--font-size)] text-[color:var(--hover-fg)]">

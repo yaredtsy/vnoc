@@ -1272,6 +1272,130 @@ fn link_of_is(core: &mut Core, name: &str, link: &str) -> Value {
     })
 }
 
+fn locate_params(root: &std::path::Path, key: &str, text: &str) -> Value {
+    let file = root.join("orders.py");
+    json!({ "key": key, "document": { "uri": file_uri(&file), "version": 9, "text": text } })
+}
+
+/// The first line of the range `vnoc/locate` answered, or `None` for `null`.
+fn located_line(answer: &Value) -> Option<u64> {
+    answer["range"]["start"]["line"].as_u64()
+}
+
+/// `vnoc/locate` (docs/17-edit-in-canvas.md §6, §11 b): where a node is in the text the editor holds now.
+#[test]
+fn locate_finds_a_function_where_it_moved_by_name_and_says_null_when_it_is_gone() {
+    let (mut core, root) = orders_project("locate-name", None);
+    let key = "orders.py::OrderService.parse_order";
+
+    // the same text: the node is where the index has it, on the second line
+    let same = core
+        .request("vnoc/locate", locate_params(&root, key, ORDERS))
+        .unwrap();
+    assert_eq!(located_line(&same), Some(1), "{same}");
+
+    // ten lines were added above: it is ten lines down, and the range is as long as it was
+    let moved = format!("{}{}", "# pad\n".repeat(10), ORDERS);
+    let down = core
+        .request("vnoc/locate", locate_params(&root, key, &moved))
+        .unwrap();
+    assert_eq!(located_line(&down), Some(11), "{down}");
+    assert_eq!(
+        down["range"]["end"]["line"].as_u64().unwrap() - 11,
+        same["range"]["end"]["line"].as_u64().unwrap() - 1
+    );
+
+    // a sibling is found by its own name, not by the order of the defs
+    let other = core
+        .request(
+            "vnoc/locate",
+            locate_params(&root, "orders.py::OrderService.other", &moved),
+        )
+        .unwrap();
+    assert_eq!(located_line(&other), Some(14), "{other}");
+
+    // deleted: null
+    let deleted = "class OrderService:\n    def other(self):\n        pass\n";
+    assert_eq!(
+        core.request("vnoc/locate", locate_params(&root, key, deleted))
+            .unwrap(),
+        Value::Null
+    );
+    // a key the index never had is looked for by name too
+    assert_eq!(
+        core.request(
+            "vnoc/locate",
+            locate_params(&root, "orders.py::OrderService.nope", ORDERS)
+        )
+        .unwrap(),
+        Value::Null
+    );
+    core.finish();
+}
+
+#[test]
+fn locate_follows_an_id_through_a_rename_and_a_move_and_looks_by_name_when_the_id_is_gone() {
+    let (mut core, root) = orders_project("locate-id", None);
+    let key = "orders.py::OrderService.parse_order";
+    core.request(
+        "vnoc/attach",
+        attach_params(&root, key, "Parsing", Some(true)),
+    )
+    .expect("attach answers");
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py")] }),
+    );
+    link_of_is(&mut core, "parse_order", "marker"); // the index has the ID written in the code
+    let with_id = std::fs::read_to_string(root.join("orders.py")).unwrap();
+    assert!(with_id.contains("ID: "), "{with_id}");
+
+    // renamed and moved down ten lines, the ID still in its docstring: found by the ID, under its new name
+    let renamed = format!(
+        "{}{}",
+        "# pad\n".repeat(10),
+        with_id.replace("parse_order", "parse_renamed")
+    );
+    let found = core
+        .request("vnoc/locate", locate_params(&root, key, &renamed))
+        .unwrap();
+    assert_eq!(located_line(&found), Some(11), "{found}");
+
+    // renamed and its ID line deleted: nothing is left to find it by
+    let without_id = |text: &str| -> String {
+        text.lines()
+            .filter(|l| !l.contains("ID: "))
+            .map(|l| format!("{l}\n"))
+            .collect()
+    };
+    assert_eq!(
+        core.request(
+            "vnoc/locate",
+            locate_params(&root, key, &without_id(&renamed))
+        )
+        .unwrap(),
+        Value::Null
+    );
+    // the same, not renamed: found by name
+    let kept_name = without_id(&format!("{}{}", "# pad\n".repeat(10), with_id));
+    let by_name = core
+        .request("vnoc/locate", locate_params(&root, key, &kept_name))
+        .unwrap();
+    assert_eq!(located_line(&by_name), Some(11), "{by_name}");
+    core.finish();
+}
+
+#[test]
+fn locate_refuses_a_key_that_is_not_a_definition_and_a_document_that_is_not_its_file() {
+    let (mut core, root) = orders_project("locate-refuses", None);
+    let message = |e: Value| e["message"].as_str().unwrap_or_default().to_string();
+    let file = core.request("vnoc/locate", locate_params(&root, "orders.py", ORDERS));
+    assert!(message(file.unwrap_err()).contains("not a function or a class"));
+    let other = json!({ "key": "orders.py::OrderService.other", "document": { "uri": file_uri(&root.join("elsewhere.py")), "version": 1, "text": ORDERS } });
+    assert!(message(core.request("vnoc/locate", other).unwrap_err()).contains("not the file"));
+    core.finish();
+}
+
 #[test]
 fn write_id_puts_the_id_back_in_the_code_of_a_node_found_by_name() {
     let (mut core, root) = orders_project("writeid", Some("format = 1\n"));

@@ -277,6 +277,30 @@ impl Request for WriteId {
     const METHOD: &'static str = "vnoc/writeId";
 }
 
+/// `vnoc/locate`: where a function or class is in a document's current text (`docs/17-edit-in-canvas.md` §6). The editor asks it when a draft saves and the
+/// document has changed since the draft started: the function may have moved. The core outlines the text it is given (the driver's `vnoc/outline` takes `text`),
+/// and finds the node by its ID first, then by its qualname, as `identity::resolve` does. Nothing is cached. `null` when the text has no such node.
+pub enum Locate {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LocateParams {
+    /// the node's `id` from `vnoc/structure`: `path::qualname[#n]` of a function or class
+    pub key: String,
+    /// the open document of the node's file, as for `vnoc/attach`; its `text` is what is outlined
+    pub document: Document,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Located {
+    pub range: Range,
+}
+
+impl Request for Locate {
+    type Params = LocateParams;
+    type Result = Option<Located>;
+    const METHOD: &'static str = "vnoc/locate";
+}
+
 /// `vnoc/trash`: Remove, step 1 (`docs/11` §5). Writes the entry's `trashed.toml` and says where the node folder moves; the editor moves it.
 /// Refused unless the node is in the index's Missing list now: the core holds the rule, not only the menu.
 pub enum Trash {}

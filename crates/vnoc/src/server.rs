@@ -37,6 +37,7 @@ use crate::protocol::{
     RestorePlanParams, Stats, Structure, StructureResult, Trash, TrashInfo, TrashInfoResult,
     TrashItem, TrashList, TrashParams, WriteId, WriteIdParams, WriteIdResult,
 };
+use crate::protocol::{Locate, LocateParams, Located};
 use crate::userdata::{TrashError, UserData};
 use crate::watchdog::timed;
 use vnoc_domain::{LocationKey, NodeId};
@@ -184,6 +185,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<Attach, _>(attach)
         .request::<Relink, _>(relink)
         .request::<WriteId, _>(write_id)
+        .request::<Locate, _>(locate)
         .request::<Trash, _>(trash)
         .request::<TrashList, _>(trash_list)
         .request::<TrashInfo, _>(trash_info)
@@ -421,6 +423,27 @@ fn write_id(
             core.spawn_update(Work::Files(vec![])); // node.toml changed: the node is found by its ID from now on
         }
         Ok(result)
+    })
+}
+
+/// `vnoc/locate`: see `identity::locate`. Reads the index and asks the driver about the text it is given; changes nothing.
+fn locate(
+    core: &mut Core,
+    params: LocateParams,
+) -> impl std::future::Future<Output = Result<Option<Located>, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("locate", async move {
+        let project = core
+            .state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
+        identity::locate(project, &core.state.index, &core.host, params)
+            .await
+            .map_err(|e| match e {
+                identity::LocateError::Driver(_) => internal(e),
+                _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
+            })
     })
 }
 

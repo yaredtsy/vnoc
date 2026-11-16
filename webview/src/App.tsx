@@ -10,9 +10,11 @@ import { Canvas } from "./canvas/Canvas.tsx";
 import { CanvasMessage } from "./canvas/CanvasMessage.tsx";
 import { TopBar } from "./canvas/top-bar/TopBar.tsx";
 import { DocPanel } from "./docs/DocPanel.tsx";
-import { request } from "./host.ts";
+import { on, request } from "./host.ts";
 import { useData } from "./state/data.ts";
+import "./state/draftFeed.ts"; // the canvas page tells the host its drafts, and takes the host's copy when it starts with none (9.5c)
 import { setDocsOpen, useView } from "./state/view.ts";
+import { useEffect } from "react";
 
 // The canvas page: the bar, the cards, the doc panel. It reads the stores and draws; nothing here keeps state of its own.
 
@@ -24,6 +26,8 @@ export function App() {
   const docsOpen = useView((v) => v.docsOpen);
   const { root, top, laid, selected, active, subject } = useFocusedView(structure);
   useCanvasKeys(laid, root, selected);
+  // the test suite cannot click the bar's ⓘ: this opens the doc panel the way it does
+  useEffect(() => on("viewCommand", ({ name }) => name === "showDocPanel" && setDocsOpen(true)), []);
   useRenderedReport(laid, active);
   const body = pageBody(status, laid !== null);
 

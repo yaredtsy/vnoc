@@ -1,11 +1,14 @@
 import * as vscode from "vscode";
 
-import type { Notes } from "@vnoc/shared/messages";
+import type { Draft, EditSaveParams, EditStartParams, Events, Notes, Page, Range } from "@vnoc/shared/messages";
 import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
-import { Commands } from "./commands";
+import { type AskToDropId, Commands, type Locate } from "./commands";
 import { Core, watchFiles } from "./core";
+import { DraftCopy, type Notify, showNotification } from "./draftCopy";
+import { DirtyFiles } from "./dirtyWatch";
+import { DRAFT_SCHEME, DraftDocs } from "./draftDocs";
 import { Docs } from "./docs";
 import { coreStopped, facts, helpAndFeedback, reportIssue } from "./help";
 import { LogTee } from "./report";
@@ -16,6 +19,9 @@ import { SessionStore } from "./session";
 import { readingStarts, readingTheCode } from "./progress";
 import { registerSidebar } from "./sidebarView";
 import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
+
+/** How long after the extension starts it checks for drafts a closed canvas left: the tabs of the window are read by then, and a canvas tab VS Code restores is not mistaken for a missing one. */
+const START_CHECK_MS = 1500;
 
 // Wires the pieces together: the core, the session, the webview tabs and the STRUCTURE view, NEEDS ATTENTION, the commands. Nothing here decides anything.
 
@@ -29,6 +35,12 @@ const renderWaiters: ((r: Rendered) => void)[] = [];
 /** What the STRUCTURE view last said it drew (for the test suite). */
 type SidebarRendered = { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number };
 const sidebarPosts: SidebarRendered[] = [];
+/** What the cards drew of their code (for the test suite). */
+const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
+/** What the cards said about their edit state (for the test suite). */
+const editStatePosts: { key: string; state: string; elsewhere: boolean; mark: string | null }[] = [];
+/** The answers of the pages to "check the keys of a code editor" (for the test suite). */
+const keysCheckedPosts: { found: boolean; target: string; taken: string[]; hosts: number }[] = [];
 
 /** What the bar's ⚠ last said (for the test suite). */
 type Warned = { level: "none" | "warning" | "error"; text: string };
@@ -36,6 +48,8 @@ let warned: Warned | undefined;
 /** The context chips the bar last drew (for the test suite). */
 let chips: { id: string; label: string; active: boolean }[] = [];
 const warnedWaiters: (() => void)[] = [];
+/** What the bar's "unsaved drafts" chip last said (for the test suite): the canvas page's last post, and `count` 0 (no chip) while no canvas page is open. */
+let draftsChip = { count: 0, label: "" };
 
 let core: Core | undefined;
 /** Pages that crashed while drawing (for the test suite). */
@@ -73,8 +87,20 @@ export function activate(ctx: vscode.ExtensionContext) {
     dropped: (key) => panels.emit("callTreeDropped", { key }),
     reset: () => panels.emit("callTreesReset", {}),
   });
+  const draftDocs = new DraftDocs();
+  // the host's copy of the canvas's drafts: fed by the page, acted on only when the canvas is closed or at start (docs/17 E6, §7)
+  const tabOf = (viewType: string) => vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith(viewType));
+  const draftCopy = new DraftCopy(ctx.workspaceState, {
+    save: (params) => commands.editSaveOf(params),
+    reopen: (page) => void (page === "canvas" ? panels.showCanvas() : panels.showDocs()),
+    pageOpen: (page) => (page === "canvas" ? panels.canvas !== undefined || tabOf(CANVAS) : panels.docs !== undefined || tabOf(DOCS)),
+  });
+  // the doc panel's pencil (§8): a doc the other page has a draft of is `busy`, and the host is the only one that can say so
+  const editStart = (p: EditStartParams) => (draftCopy.busy(p.path, p.page) ? Promise.resolve({ busy: true as const }) : commands.editStartDocOf(p.path, p.saveFirst === true));
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
+  // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
+  const dirty = new DirtyFiles((paths) => panels.emit("dirtyFiles", { paths }));
   // what a webview may ask of the extension (`shared/messages.ts` lists it, `relay.ts` serves it)
   const handlers = createHandlers({
     // the first read has the progress line on the STRUCTURE view; a read after rows are drawn (the index changed) is quiet
@@ -85,8 +111,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     core: (method, params) => c.request(method, params),
     addDoc: (key) => commands.addDocTo(key),
     docs,
-    code: (path, range) => commands.codeOf(path, range),
+    code: (path, range, saveFirst) => commands.codeOf(path, range, saveFirst),
+    editStart,
+    editSave: (params) => commands.editSaveOf(params),
+    editDiff: (params) => commands.editDiffOf(params),
+    copyText: async (text) => void (await vscode.env.clipboard.writeText(text)),
     goToCode: (key) => commands.goToCodeOf(key),
+    dirtyFiles: () => dirty.paths,
+    drafts: (page) => draftCopy.drafts(page),
     callTrees: () => callTrees.all(),
     openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
@@ -98,11 +130,23 @@ export function activate(ctx: vscode.ExtensionContext) {
     rowClick: (context, id) => commands.rowClick(context, id),
     command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
   });
-  panels = new Surfaces(ctx, handlers, (note) => onNote(note, store, output, (keys, onScreen) => {
-    callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
-    wantCalls();
-  }));
-  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees);
+  panels = new Surfaces(
+    ctx,
+    handlers,
+    (note) =>
+      onNote(note, store, output, (keys, onScreen) => {
+        callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
+        wantCalls();
+      }, (page, drafts) => draftCopy.replace(page, drafts)),
+    (page) => {
+      if (page === "canvas") draftsChip = { count: 0, label: "" }; // the chip it drew is gone with the page, which posts nothing on its way out
+      void draftCopy.onPageClosed(page);
+    },
+  );
+  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs, docs);
+
+  // drafts a canvas left in a window that was reloaded or closed (§7): asked once, a moment after the start
+  const startCheck = setTimeout(() => void draftCopy.atStart(), START_CHECK_MS);
 
   const attentionTree = vscode.window.createTreeView("vnoc.attention", { treeDataProvider: attention });
 
@@ -118,6 +162,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.help", () => helpAndFeedback(help)),
     watchFiles(c, (fsPath) => docs.changed(fsPath)),
     docs.watchEditors(),
+    dirty.watch(),
+    vscode.workspace.registerTextDocumentContentProvider(DRAFT_SCHEME, draftDocs),
     // every change of the session goes to the open webviews, whole: the canvas, the docs tab and the STRUCTURE view each draw what they need of it
     store.onChange(({ next }) => {
       panels.emit("session", next);
@@ -138,6 +184,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     // every call tree came from the old core, and its revisions mean nothing against the new one: drop them all, fetch what is open again
     c.onRestarted(() => callTrees.restarted()),
     { dispose: () => void c.stop() },
+    { dispose: () => clearTimeout(startCheck) },
   );
 
   // the files whose menus carry the V-NOC submenu (later: from the driver manifests)
@@ -184,8 +231,37 @@ export function activate(ctx: vscode.ExtensionContext) {
     sidebarOpen: () => panels.sidebar !== undefined,
     /** the context chips the bar draws now: empty with one context */
     chips: () => chips,
+    /** the bar's "N unsaved drafts" chip as the canvas page last drew it: `count` 0 and `label` "" when there is none, and while no canvas page is open */
+    draftsChip: () => draftsChip,
     /** every drawing the pages reported, in order */
     renderedPosts: () => renderedPosts,
+    /** the host's copy of the canvas's drafts now (what the page's `drafts` notes left, and the flows on close and at start changed) */
+    draftCopy: () => draftCopy.all,
+    /** one page's part of the copy */
+    draftCopyOf: (page: Page) => draftCopy.drafts(page),
+    /** what a page's `drafts` note does: that page's list in the copy is replaced */
+    feedDrafts: (page: Page, drafts: Draft[]) => draftCopy.replace(page, drafts),
+    /** the request the doc panel's pencil makes, with the busy rule */
+    editStartRequest: (params: EditStartParams) => editStart(params),
+    /** how the copy shows its notifications; a test answers them. No argument: VS Code's own */
+    setDraftNotify: (notify?: Notify) => void (draftCopy.notify = notify ?? showNotification),
+    /** the check made when the extension starts, run now */
+    draftsAtStart: () => draftCopy.atStart(),
+    /** the files with unsaved changes the host holds now (what the `dirtyFiles` event carries) */
+    dirtyFiles: () => dirty.paths,
+    /** a card's edit state each time it changed, in order: which card, the state, whether it says it is being edited elsewhere, and which line is above its code */
+    editStates: () => editStatePosts,
+    /** a command for the canvas page that only the test suite sends: set a draft's text, press Save on a card (the suite cannot type or press keys in a webview) */
+    viewCommand: (data: Events["viewCommand"]) => panels.emit("viewCommand", data),
+    /** asks the canvas to dispatch keys at a code editor and say which the canvas took (`keysChecked` answers, with the number of code areas it had: `hosts`), and what it has said so far */
+    checkKeys: () => panels.emit("viewCommand", { name: "checkKeys" }),
+    keysChecked: () => keysCheckedPosts,
+    /** the host's answer to a card's code (the request a card makes): the text and the baseline of a range */
+    codeOf: (path: string, range: Range, saveFirst = false) => commands.codeOf(path, range, saveFirst),
+    /** the host's answer to Save on a draft; `locate` stands in for the core's `vnoc/locate`, so a test can edit the document before it answers, and `ask` for the modal about a draft that takes the ID away */
+    editSave: (params: EditSaveParams, locate?: Locate, ask?: AskToDropId) => commands.editSaveOf(params, locate, ask),
+    /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
+    codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
     breakCore: () => c.stop(),
     /** starts it again, so the suites after the one that broke it still have a core */
@@ -213,7 +289,7 @@ export function activate(ctx: vscode.ExtensionContext) {
 }
 
 /** What a webview says that needs no answer. */
-function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void) {
+function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void, drafts: (page: Page, drafts: Draft[]) => void) {
   switch (note.type) {
     case "intent":
       store.dispatch(note.intent, note.context);
@@ -227,11 +303,26 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
     case "cardsDrawn":
       cardsDrawn(note.keys, note.onScreen);
       break;
+    case "keysChecked":
+      keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken, hosts: note.hosts });
+      break;
+    case "editState":
+      editStatePosts.push({ key: note.key, state: note.state, elsewhere: note.elsewhere, mark: note.mark });
+      break;
+    case "codeShown":
+      codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });
+      break;
     case "sidebarRendered":
       sidebarPosts.push({ context: note.context, rows: note.rows, selected: note.selected, inView: note.inView, drawn: note.drawn, height: note.height });
       break;
     case "chipsDrawn":
       chips = note.chips;
+      break;
+    case "drafts":
+      drafts(note.page, note.drafts);
+      break;
+    case "draftsDrawn":
+      draftsChip = { count: note.count, label: note.label };
       break;
     case "warned":
       warned = { level: note.level, text: note.text };

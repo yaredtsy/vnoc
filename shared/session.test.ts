@@ -386,6 +386,19 @@ test("reveal opens the ancestors and selects; it asks the canvas only when told 
   assert.equal(run(s, { type: "reveal", id: "gone", canvas: true }), s, "a node that is not in the tree");
 });
 
+test("reveal on a call card opens its owner and the call cards above it, selects nothing, and asks the canvas for the card (9.5a)", () => {
+  const before = run(emptySession(), { type: "select", id: "g" });
+  const shown = run(before, { type: "reveal", id: Cmg, canvas: true });
+  assert.deepEqual([...openOf(ctx(shown))], ["b.py", "f", Cm], "the owner's ancestors, the owner, and the call card above the one asked for");
+  assert.equal(ctx(shown).selected, "g", "the selection is where it was: selecting a call card would follow it");
+  assert.deepEqual(shown.reveal, { context: "main", id: Cmg, n: shown.seq });
+  const top = run(emptySession(), { type: "reveal", id: Cm, canvas: true });
+  assert.deepEqual([...openOf(ctx(top))], ["b.py", "f"], "a call card of the owner itself: no call card above it");
+  assert.equal(run(emptySession(), { type: "reveal", id: callId("gone", ["m"]), canvas: true }).reveal, null, "an owner that is not in the tree: nothing");
+  const focused = run(emptySession(), { type: "focus", id: "a.py" }, { type: "reveal", id: Cmg, canvas: true });
+  assert.deepEqual(ctx(focused).focus, [], "the owner is outside the focus: the path drops to what contains it, as for a structure card");
+});
+
 test("revealed clears the request, and only the one it names", () => {
   const shown = run(emptySession(), { type: "reveal", id: "m", canvas: true });
   const n = shown.reveal!.n;

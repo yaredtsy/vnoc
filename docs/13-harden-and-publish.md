@@ -77,7 +77,7 @@ Those editors cannot use Microsoft's Marketplace. They install from `open-vsx.or
 | What | Why not |
 |---|---|
 | an Apple Developer ID, a Windows code-signing certificate | VS Code unpacks the VSIX itself, so the two programs in `bin/` are not "downloaded files" to the system. Rust signs macOS arm64 programs ad hoc at link time. **[check]** on a clean Mac and a clean Windows machine in §10 |
-| Visual Studio (the IDE), JetBrains | a different kind of extension. V-NOC is a VS Code extension only |
+| Visual Studio (the IDE), JetBrains | a different kind of extension. V-NOC is a VS Code extension only. (2026-11-16: ports to other editors are now a goal, so logic goes into the core, P1 in `08` §1c; nothing ships for them yet) |
 
 ## 3. What you must decide
 

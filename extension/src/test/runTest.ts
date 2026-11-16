@@ -25,6 +25,15 @@ async function vscodeExecutable(): Promise<string> {
   throw new Error(`The downloaded VS Code has no program at ${downloaded}${downloaded.endsWith(electron) ? " or beside it as Code" : ""}.`);
 }
 
+/** Every `.py` and `.md` file under `dir` with each "\n" that is not already part of "\r\n" turned into "\r\n". */
+function crlfAll(dir: string): void {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) crlfAll(file);
+    else if (/\.(py|md)$/.test(entry.name)) fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/(?<!\r)\n/g, "\r\n"));
+  }
+}
+
 async function main() {
   const root = path.resolve(__dirname, "../..");
   const repo = path.resolve(root, "..");
@@ -32,6 +41,8 @@ async function main() {
   const workspace = path.join(tmp, "ws");
   fs.mkdirSync(workspace);
   fs.cpSync(path.join(repo, "crates/vnoc-domain/tests/fixtures"), workspace, { recursive: true });
+  // on Windows git checks the fixtures out with CRLF (there is no .gitattributes, and the CRLF run of Save on a .py is wanted); VNOC_FIXTURE_EOL=crlf gives the suite that checkout anywhere
+  if (process.env.VNOC_FIXTURE_EOL === "crlf") crlfAll(workspace);
   // a git repository, so the refactor suite can `git mv` (the runners have no git identity: it is given here)
   const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace, stdio: "ignore" });
   git("init", "-q");

@@ -4,6 +4,8 @@
 import { create } from "zustand";
 
 import { vscode } from "../host.ts";
+import { type Drafts } from "./draftRules.ts";
+import { useDrafts } from "./drafts.ts";
 
 interface Saved {
   codeOpen?: string[];
@@ -12,6 +14,8 @@ interface Saved {
   minimap?: boolean;
   pinned?: string;
   panelShares?: Record<string, number>;
+  /** the drafts of the cards being edited (docs/17 E6): in the one object, so the one `setState` below keeps them */
+  drafts?: Drafts;
 }
 
 interface View {
@@ -36,6 +40,8 @@ interface View {
   /** the drawn cards that hold the selection / the cursor inside a closed card: they show a dot */
   hidesSelected: string | null;
   hidesCursor: string | null;
+  /** "Edit in Card" (and a doc's pencil) asks the editor of this card or doc to take the keyboard, once it exists; the editor clears it (9.7). `n` makes a second ask a new one */
+  focusCode: { id: string; n: number } | null;
 }
 
 const saved = vscode.getState<Saved>() ?? {};
@@ -52,7 +58,13 @@ export const useView = create<View>(() => ({
   revealed: null,
   hidesSelected: null,
   hidesCursor: null,
+  focusCode: null,
 }));
+
+/** Asks the editor of this card (or doc) to take the keyboard, so typing starts the draft. */
+export const requestCodeFocus = (id: string) => useView.setState(({ focusCode }) => ({ focusCode: { id, n: (focusCode?.n ?? 0) + 1 } }));
+/** The editor took it: nothing is waiting any more. Only the ask it answered is cleared. */
+export const clearCodeFocus = (id: string, n: number) => useView.setState(({ focusCode }) => (focusCode?.id === id && focusCode.n === n ? { focusCode: null } : {}));
 
 export const setHover = (hover: string | null) => useView.setState({ hover });
 
@@ -95,7 +107,10 @@ export const pin = (pinned: string | null) => useView.setState({ pinned });
 /** Keeps the shares of the panels at these depths (a drag or a double-click on a splitter). */
 export const setPanelShares = (shares: Record<string, number>) => useView.setState(({ panelShares }) => ({ panelShares: { ...panelShares, ...shares } }));
 
-// the one place the view is saved
-useView.subscribe(({ codeOpen, docsOpen, docWidth, minimap, pinned, panelShares }) => {
-  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares });
-});
+// the one place the view is saved: the view and the drafts are one object, because `setState` keeps one object per webview (a second call would wipe this one)
+function save() {
+  const { codeOpen, docsOpen, docWidth, minimap, pinned, panelShares } = useView.getState();
+  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares, drafts: useDrafts.getState().drafts });
+}
+useView.subscribe(save);
+useDrafts.subscribe(save);

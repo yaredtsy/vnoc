@@ -174,6 +174,15 @@ impl DriverClient {
         self.call(method::OUTLINE, &params).await
     }
 
+    /// The defs of this text, which need not be on disk (the editor's buffer).
+    pub async fn outline_text(&self, text: &str) -> Result<OutlineResult, HostError> {
+        let params = OutlineParams {
+            text: Some(text.to_string()),
+            ..Default::default()
+        };
+        self.call(method::OUTLINE, &params).await
+    }
+
     pub async fn plan_ids(&self, params: &PlanIdsParams) -> Result<PlanIdsResult, HostError> {
         if !self
             .info
@@ -439,6 +448,13 @@ impl DriverHost {
     /// The outline of one file (repo path relative to `root`), starting the driver on first use.
     pub async fn outline(&self, root: &Path, file: &str) -> Result<OutlineResult, HostError> {
         self.with_client(|client| async move { client.outline_file(root, file).await })
+            .await
+    }
+
+    /// The outline of this text, starting the driver on first use. Nothing is cached: the text is the editor's buffer, and it changes with every keystroke.
+    pub async fn outline_text(&self, text: &str) -> Result<OutlineResult, HostError> {
+        let text = text.to_string();
+        self.with_client(|client| async move { client.outline_text(&text).await })
             .await
     }
 

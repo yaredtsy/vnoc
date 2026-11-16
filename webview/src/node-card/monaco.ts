@@ -18,6 +18,7 @@ const LANGUAGES: Record<string, string> = {
   rs: "rust",
   ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript",
   json: "json",
+  md: "markdown",
 };
 
 export function languageOf(path: string): string {
@@ -44,6 +45,7 @@ export function loadMonaco(): Promise<typeof monaco> {
         import("@shikijs/langs/javascript"),
         import("@shikijs/langs/jsx"),
         import("@shikijs/langs/json"),
+        import("@shikijs/langs/markdown"),
       ],
       engine: createJavaScriptRegexEngine(),
     });
