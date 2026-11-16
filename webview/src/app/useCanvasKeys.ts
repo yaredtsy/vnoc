@@ -4,6 +4,7 @@ import type { TreeNode } from "@vnoc/shared/messages.ts";
 import { FIT_VIEW_EVENT, canvasChord, canvasKey, canvasViewKey } from "@/canvas/keys.ts";
 import type { Layout } from "@/canvas/layout.ts";
 import { request } from "@/host.ts";
+import { TEXT_FIELD } from "@/node-card/codeField.ts";
 import { goToCallSite } from "@/node-card/goToSite.ts";
 import { dispatch } from "@/state/session.ts";
 
@@ -17,7 +18,7 @@ export function useCanvasKeys(laid: Layout | null, root: TreeNode | null, select
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target instanceof Element ? e.target : null;
-      const inField = !!target?.closest("input, textarea, select, [contenteditable], .monaco-editor");
+      const inField = !!target?.closest(TEXT_FIELD); // a code card's editor is one: its container is `nokey`, as React Flow wants
       if (inField) return;
       if (e.altKey && e.key === "ArrowLeft") return void dispatch({ type: "focusBack" });
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && laid && !target?.closest("button, a")) {

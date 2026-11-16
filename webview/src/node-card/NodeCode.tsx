@@ -9,8 +9,9 @@ import { draftFor, showRefusal } from "../state/draftRules.ts";
 import { setRefused, typeInto, useDrafts } from "../state/drafts.ts";
 import { cardRef, saveAndEdit, saveDraft } from "../state/edit.ts";
 import { type EditState, editStateOf } from "./editState.ts";
-import { platformNow, swallows } from "./cardKeys.ts";
+import { platformNow, staysInCode, swallows } from "./cardKeys.ts";
 import { currentTheme, languageOf, loadMonaco } from "./monaco.ts";
+import { CODE_FIELD_CLASS } from "./codeField.ts";
 import { dedent, readingPrefix } from "./indent.ts";
 import { NAME_X } from "./rows.ts";
 
@@ -174,7 +175,8 @@ function CodeEditor({ text, path, firstLine, editState, onText, onSave }: Editor
     // The card's container, bubble phase: Monaco's own handler runs first (it is lower down), then this one keeps the key from VS Code (docs/17 §7, measured in 9.0)
     const onKey = (ev: KeyboardEvent) => {
       const key = { key: ev.key, code: ev.code, meta: ev.metaKey, ctrl: ev.ctrlKey, alt: ev.altKey, shift: ev.shiftKey };
-      if (swallows(live.current.editState, key, platformNow())) ev.stopPropagation();
+      // VS Code's own Save keys (9.0), and the typing keys React Flow would take from a field because a modifier is held (9.2c)
+      if (swallows(live.current.editState, key, platformNow()) || staysInCode(live.current.editState, key)) ev.stopPropagation();
     };
     box.addEventListener("keydown", onKey);
     return () => box.removeEventListener("keydown", onKey);
@@ -196,6 +198,5 @@ function CodeEditor({ text, path, firstLine, editState, onText, onSave }: Editor
     e.updateOptions({ lineNumbers: (n) => String(n + firstLine - 1) });
   }, [text, path, firstLine]);
 
-  // `nodrag nopan nowheel`: selecting text must not drag the card, and the wheel scrolls the code, not the canvas
-  return <div ref={host} className="node-code monaco-host nodrag nopan nowheel" />;
+  return <div ref={host} className={CODE_FIELD_CLASS} />;
 }

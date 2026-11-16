@@ -16,6 +16,8 @@ interface Api {
   codeShown(): { key: string; dirty: boolean; text: string }[];
   dirtyFiles(): string[];
   editStates(): { key: string; state: string }[];
+  checkKeys(): void;
+  keysChecked(): { found: boolean; taken: string[] }[];
   editStart(path: string, range: Range, saveFirst?: boolean): Promise<EditStartResult>;
   dispatch(intent: Intent): void;
   webviewErrors(): string[];
@@ -63,6 +65,7 @@ suite("reading: a card marks a file with unsaved changes", () => {
       // an event sent before the new page listens is lost, and showing the code twice is the same as once: ask until a card draws it
       for (let waited = 0; !last(); waited += 500) {
         assert.ok(waited < 30_000, "the card never drew its code");
+        api.dispatch({ type: "reveal", id: KEY, canvas: true }); // the canvas draws only the cards on screen: bring this one into view
         await vscode.commands.executeCommand("vnoc.showCodeInCard", node);
         await sleep(500);
       }
@@ -115,6 +118,34 @@ suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
       assert.deepStrictEqual(api.webviewErrors(), [], "the page drew the editing card without crashing");
     } finally {
       await closeCanvas(); // the draft lives in the page: closing the tab drops it
+    }
+  });
+
+  test("keys typed in an editing card's code stay in the code: the canvas takes none of them (Space, Backspace, F…) (9.2c)", async () => {
+    const node = allNodes((await api.structure()).root).find((n) => n.id === KEY)!;
+    try {
+      await vscode.commands.executeCommand("vnoc.openCanvas");
+      await until("the canvas tab", () => canvasTabs().length === 1);
+      api.dispatch({ type: "expand", ids: ["nested.py"] });
+      // only what this canvas says counts: the one the test before closed said `editing` for the same card
+      const since = api.editStates().length;
+      const latest = () => api.editStates().slice(since).filter((p) => p.key === KEY).at(-1)?.state;
+      for (let waited = 0; latest() !== "editing"; waited += 500) {
+        assert.ok(waited < 30_000, `the card never said editing (last: ${latest()})`);
+        api.dispatch({ type: "reveal", id: KEY, canvas: true });
+        await vscode.commands.executeCommand("vnoc.editInCard", node);
+        await sleep(500);
+      }
+      // a keydown dispatched on the editor's own element runs every handler of the page: one that takes the key calls preventDefault (React Flow does for Space)
+      // Monaco is made a moment after the card starts editing: ask again until the page finds its editor
+      for (let waited = 0; api.keysChecked().at(-1)?.found !== true; waited += 500) {
+        assert.ok(waited < 30_000, `the page never found the editor (last answer: ${JSON.stringify(api.keysChecked().at(-1))})`);
+        api.checkKeys();
+        await sleep(500);
+      }
+      assert.deepStrictEqual(api.keysChecked().at(-1), { found: true, taken: [] }, "the editor was there, and the canvas took none of its keys");
+    } finally {
+      await closeCanvas();
     }
   });
 

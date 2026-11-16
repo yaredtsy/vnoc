@@ -31,6 +31,16 @@ export function swallows(state: EditState, k: KeyPress, platform: Platform): boo
   return k.ctrl && !k.meta && !k.alt; // Ctrl+S, Ctrl+Shift+S; Ctrl+Alt is AltGr on some layouts
 }
 
+/**
+ * Keys React Flow takes from inside a text field when a modifier is held (9.2c). `.nokey` on the editor's container keeps plain Space, Backspace and the rest
+ * from React Flow, but its `useKeyPress` acts inside a field when Shift, Alt, Ctrl or Meta is down (`actInsideInputWithModifier`, true unless asked), and the
+ * pan key, Space, takes Shift+Space and Alt+Space and calls `preventDefault()`: no space is typed. Those two type a space, so while editing they stop at the
+ * editor's container. Ctrl and ⌘ with Space are not here: Monaco has its own (suggest), and ⌘Space is the system's.
+ */
+export function staysInCode(state: EditState, k: KeyPress): boolean {
+  return state === "editing" && (k.key === " " || k.code === "Space") && (k.shift || k.alt) && !k.ctrl && !k.meta;
+}
+
 /** The Save button's tooltip: it names the key. */
 export const saveTip = (platform: Platform): string => (platform === "mac" ? "Save (⌘S)" : "Save (Ctrl+S)");
 

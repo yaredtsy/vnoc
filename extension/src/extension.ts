@@ -34,6 +34,8 @@ const sidebarPosts: SidebarRendered[] = [];
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
 const editStatePosts: { key: string; state: string }[] = [];
+/** The answers of the pages to "check the keys of a code editor" (for the test suite). */
+const keysCheckedPosts: { found: boolean; taken: string[] }[] = [];
 
 /** What the bar's ⚠ last said (for the test suite). */
 type Warned = { level: "none" | "warning" | "error"; text: string };
@@ -200,6 +202,9 @@ export function activate(ctx: vscode.ExtensionContext) {
     dirtyFiles: () => dirty.paths,
     /** a card's edit state each time it changed, in order: which card, and the state */
     editStates: () => editStatePosts,
+    /** asks the canvas to dispatch keys at a code editor and say which the canvas took (`keysChecked` answers), and what it has said so far */
+    checkKeys: () => panels.emit("viewCommand", { name: "checkKeys" }),
+    keysChecked: () => keysCheckedPosts,
     /** the host's answer to Edit on a range (the request a card makes) */
     editStart: (path: string, range: Range, saveFirst = false) => commands.editStartOf(path, range, saveFirst),
     /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
@@ -244,6 +249,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "cardsDrawn":
       cardsDrawn(note.keys, note.onScreen);
+      break;
+    case "keysChecked":
+      keysCheckedPosts.push({ found: note.found, taken: note.taken });
       break;
     case "editState":
       editStatePosts.push({ key: note.key, state: note.state });

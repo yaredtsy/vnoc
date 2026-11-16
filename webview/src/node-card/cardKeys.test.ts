@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type KeyPress, type Platform, saveTip, swallows } from "./cardKeys.ts";
+import { type KeyPress, type Platform, saveTip, staysInCode, swallows } from "./cardKeys.ts";
 import type { EditState } from "./editState.ts";
 
 // docs/17-edit-in-canvas.md §11 f: state × key. The key comes in as a plain object, so no DOM is needed.
@@ -50,3 +50,22 @@ test("the Save tooltip names the key of the platform", () => {
   assert.equal(saveTip("mac"), "Save (⌘S)");
   assert.equal(saveTip("other"), "Save (Ctrl+S)");
 });
+
+// 9.2c: Space with a modifier that types a space is kept from React Flow's pan key, while editing
+const space = (mods: Partial<Pick<KeyPress, "meta" | "ctrl" | "alt" | "shift">> = {}, key = " "): KeyPress => press(key, mods, "Space");
+const staying: { name: string; key: KeyPress; stays: boolean }[] = [
+  { name: "Shift+Space", key: space({ shift: true }), stays: true },
+  { name: "Alt+Space (a non-breaking space on macOS: the key is not a plain space)", key: space({ alt: true }, "\u00a0"), stays: true },
+  { name: "Shift+Alt+Space", key: space({ shift: true, alt: true }), stays: true },
+  { name: "plain Space (`nokey` keeps it, no rule needed)", key: space(), stays: false },
+  { name: "Ctrl+Space (Monaco's suggest)", key: space({ ctrl: true }), stays: false },
+  { name: "⌘Space (the system's)", key: space({ meta: true }), stays: false },
+  { name: "Ctrl+Shift+Space", key: space({ ctrl: true, shift: true }), stays: false },
+  { name: "Shift+S", key: press("S", { shift: true }), stays: false },
+  { name: "Shift+Enter", key: press("Enter", { shift: true }, "Enter"), stays: false },
+];
+for (const s of staying) {
+  for (const state of STATES) {
+    test(`${s.name} ${s.stays && state === "editing" ? "stays in the code" : "is left alone"} in ${state}`, () => assert.equal(staysInCode(state, s.key), s.stays && state === "editing"));
+  }
+}

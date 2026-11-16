@@ -8,6 +8,7 @@ import { NodeCard } from "../node-card/NodeCard.tsx";
 import { on, post } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
+import { checkKeys } from "../node-card/keyCheck.ts";
 import { beginEdit, cardRef } from "../state/edit.ts";
 import { rememberViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, setCodeOpen, useView } from "../state/view.ts";
@@ -76,6 +77,7 @@ function ViewCommands({ laid }: { laid: Layout }) {
     const fit = () => void fitView({ duration: motionMs(300, prefersReducedMotion()) });
     const stop = on("viewCommand", ({ name, key }) => {
       if (name === "fitView") fit();
+      else if (name === "checkKeys") post({ type: "keysChecked", ...checkKeys() });
       else if (key && name === "edit") {
         const card = cards.current.find((p) => p.id === key);
         if (card) void beginEdit(cardRef(card));
