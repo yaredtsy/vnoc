@@ -4,7 +4,7 @@ import type { EditSaveParams, Events, Notes, Range } from "@vnoc/shared/messages
 import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
-import { Commands, type Locate } from "./commands";
+import { type AskToDropId, Commands, type Locate } from "./commands";
 import { Core, watchFiles } from "./core";
 import { DirtyFiles } from "./dirtyWatch";
 import { DRAFT_SCHEME, DraftDocs } from "./draftDocs";
@@ -219,8 +219,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     keysChecked: () => keysCheckedPosts,
     /** the host's answer to Edit on a range (the request a card makes) */
     editStart: (path: string, range: Range, saveFirst = false) => commands.editStartOf(path, range, saveFirst),
-    /** the host's answer to Save on a draft; `locate` stands in for the core's `vnoc/locate`, so a test can edit the document before it answers */
-    editSave: (params: EditSaveParams, locate?: Locate) => commands.editSaveOf(params, locate),
+    /** the host's answer to Save on a draft; `locate` stands in for the core's `vnoc/locate`, so a test can edit the document before it answers, and `ask` for the modal about a draft that takes the ID away */
+    editSave: (params: EditSaveParams, locate?: Locate, ask?: AskToDropId) => commands.editSaveOf(params, locate, ask),
     /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
     codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */

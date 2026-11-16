@@ -72,3 +72,16 @@ export function outcomeAfterApply(applied: boolean, saved: boolean): "saved" | "
 export function withDraft(file: string, from: number, to: number, written: string): string {
   return file.slice(0, from) + written + file.slice(to);
 }
+
+/**
+ * The name the question uses (§7): the node's own name from its key, `path::Outer.inner` → `inner`, `path::f#2` → `f` (the card's name). A class that holds methods
+ * is asked about by its own name even when it is a method's ID that goes: the text does not say whose it was.
+ */
+export function nodeName(key: string): string {
+  const qualname = key.includes("::") ? key.slice(key.indexOf("::") + 2) : key;
+  return qualname.replace(/#\d+$/, "").split(".").pop() || qualname;
+}
+
+/** The modal's text, and the button that goes on (Cancel is VS Code's own). */
+export const idQuestion = (key: string): string => `This removes ${nodeName(key)}'s ID: its docs will be Missing.`;
+export const SAVE_ANYWAY = "Save Anyway";

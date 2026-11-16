@@ -9,7 +9,8 @@ import { reindent } from "@vnoc/shared/indent";
 import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
 import type { DraftDocs } from "./draftDocs";
-import { afterLocate, answerForAlready, firstStep, outcomeAfterApply, withDraft } from "./saveDraft";
+import { dropsId } from "@vnoc/shared/idLine";
+import { SAVE_ANYWAY, afterLocate, answerForAlready, firstStep, idQuestion, outcomeAfterApply, withDraft } from "./saveDraft";
 import type { CallTrees } from "./callTree";
 import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
@@ -51,6 +52,9 @@ const command = (run: (arg: unknown, selected?: unknown) => Promise<unknown> | u
 
 /** Where the function of a draft is in a document's text now, or null: the core's `vnoc/locate`. A parameter of Save so that a test can pass its own. */
 export type Locate = (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>;
+
+/** Asks whether a draft that takes its function's `ID:` away may be saved (§7): the draft's key; true is Save Anyway. A parameter of Save so that a test can answer. */
+export type AskToDropId = (key: string) => Promise<boolean>;
 
 export class Commands {
   constructor(
@@ -420,32 +424,48 @@ export class Commands {
    * parameter so a test can pass one that edits the document before it answers) and the version is read again after it answers. **No `await` between the last
    * read and the call to `applyEdit`**: any await lets the document move on, and nothing after it would notice. A draft that was written already answers `saved`,
    * and writes nothing. The file is saved only if it was not dirty before: unsaved work of the user's own in a tab is never saved for them.
+   *
+   * §7: a draft that takes the function's `ID:` away asks first (`ask`, a parameter so a test can answer), in the row that writes and in no other. The question is the one
+   * await before the write, so the document may have changed while it was open: after Save Anyway the rows run again from the top, reading the version again, and the
+   * second pass does not ask again. Cancel answers `{ cancelled: true }` and writes nothing.
    */
-  async editSaveOf(p: EditSaveParams, locate: Locate = (key, document) => this.locateInCore(key, document)): Promise<EditSaveResult> {
+  async editSaveOf(p: EditSaveParams, locate: Locate = (key, document) => this.locateInCore(key, document), ask: AskToDropId = (key) => this.askToDropId(key)): Promise<EditSaveResult> {
     const doc = await this.documentIn(p.path);
     const written = reindent(p.text, p.base, p.prefix, p.eol);
     const vsRange = (r: Range) => new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
-    // from here to the first `await` (the core's answer) or to `applyEdit`: synchronous
-    let at = p.range;
-    const step = firstStep({ draftVersion: p.version, version: doc.version, current: doc.getText(vsRange(p.range)), base: p.base, written });
-    let row: "write" | "already" | "conflict" | "gone";
-    if (step !== "locate") row = step;
-    else {
-      const sent = doc.version;
-      const found = await locate(p.key, { uri: doc.uri.toString(), version: sent, text: doc.getText() });
-      if (found) at = found;
-      row = afterLocate({ found: found !== null, sentVersion: sent, version: doc.version, current: found ? doc.getText(vsRange(found)) : "", base: p.base, written });
+    const takesId = dropsId(p.base, written);
+    for (let asked = false; ; asked = true) {
+      // from here to the first `await` (the core's answer, or the question) or to `applyEdit`: synchronous
+      let at = p.range;
+      const step = firstStep({ draftVersion: p.version, version: doc.version, current: doc.getText(vsRange(p.range)), base: p.base, written });
+      let row: "write" | "already" | "conflict" | "gone";
+      if (step !== "locate") row = step;
+      else {
+        const sent = doc.version;
+        const found = await locate(p.key, { uri: doc.uri.toString(), version: sent, text: doc.getText() });
+        if (found) at = found;
+        row = afterLocate({ found: found !== null, sentVersion: sent, version: doc.version, current: found ? doc.getText(vsRange(found)) : "", base: p.base, written });
+      }
+      if (row === "gone") return { gone: true };
+      if (row === "conflict") return { conflict: true };
+      if (row === "already") return answerForAlready(doc.isDirty) === "saved" ? { saved: true } : { written: true };
+      if (takesId && !asked) {
+        if (!(await ask(p.key))) return { cancelled: true };
+        continue; // the document may have moved while the question was open: choose the row again
+      }
+      const wasDirty = doc.isDirty;
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(doc.uri, vsRange(at), written);
+      const applied = await vscode.workspace.applyEdit(edit);
+      const saved = applied && !wasDirty && (await doc.save());
+      const outcome = outcomeAfterApply(applied, saved);
+      return outcome === "conflict" ? { conflict: true } : outcome === "saved" ? { saved: true } : { written: true };
     }
-    if (row === "gone") return { gone: true };
-    if (row === "conflict") return { conflict: true };
-    if (row === "already") return answerForAlready(doc.isDirty) === "saved" ? { saved: true } : { written: true };
-    const wasDirty = doc.isDirty;
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(doc.uri, vsRange(at), written);
-    const applied = await vscode.workspace.applyEdit(edit);
-    const saved = applied && !wasDirty && (await doc.save());
-    const outcome = outcomeAfterApply(applied, saved);
-    return outcome === "conflict" ? { conflict: true } : outcome === "saved" ? { saved: true } : { written: true };
+  }
+
+  /** The modal of §7: Save Anyway, or Cancel (VS Code adds it). Dismissing it is Cancel. */
+  private async askToDropId(key: string): Promise<boolean> {
+    return (await vscode.window.showWarningMessage(idQuestion(key), { modal: true }, SAVE_ANYWAY)) === SAVE_ANYWAY;
   }
 
   /** Where the core finds the function in this text, or null. */

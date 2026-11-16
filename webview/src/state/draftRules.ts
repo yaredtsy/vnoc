@@ -125,8 +125,8 @@ export function withState(drafts: Drafts, key: string, state: DraftState): Draft
 export const canSave = (d: Draft | undefined): d is Draft => d !== undefined && d.state === "editing" && isChanged(d);
 
 /** What the host's answer to `editSave` means for the card. */
-export function savedAs(answer: EditSaveResult): "saved" | "written" | "conflict" | "gone" {
-  return "conflict" in answer ? "conflict" : "gone" in answer ? "gone" : "written" in answer ? "written" : "saved";
+export function savedAs(answer: EditSaveResult): "saved" | "written" | "conflict" | "gone" | "cancelled" {
+  return "conflict" in answer ? "conflict" : "gone" in answer ? "gone" : "cancelled" in answer ? "cancelled" : "written" in answer ? "written" : "saved";
 }
 
 /**

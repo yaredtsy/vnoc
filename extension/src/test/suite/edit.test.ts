@@ -21,7 +21,7 @@ interface Api {
   session(): Session;
   callTrees(): Record<string, unknown>;
   viewCommand(data: { name: "edit" | "setDraft" | "save"; key: string; text?: string }): void;
-  editSave(params: EditSaveParams, locate?: (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>): Promise<EditSaveResult>;
+  editSave(params: EditSaveParams, locate?: (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>, ask?: (key: string) => Promise<boolean>): Promise<EditSaveResult>;
   checkKeys(): void;
   keysChecked(): { found: boolean; target: string; taken: string[] }[];
   editStart(path: string, range: Range, saveFirst?: boolean): Promise<EditStartResult>;
@@ -523,5 +523,120 @@ suite("one draft per function: the bar counts the drafts (docs/17-edit-in-canvas
     await waitFor("the bar's count to go", () => api.draftsChip().count === 0, 10_000);
     assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" });
     assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});
+
+suite("Save asks before it removes a function's ID (docs/17-edit-in-canvas.md step 9.5b)", () => {
+  const folder = () => vscode.workspace.workspaceFolders![0].uri.fsPath;
+  const file = () => path.join(folder(), "edit_id.py");
+  const ID = "0Q8V5W4T2F7KX9M3B6D1RZ4H7K";
+  const SOURCE = `def keeper():\n    """Keeps its ID.\n\n    ID: ${ID}\n    """\n    return 1\n`;
+  let node: TreeNode;
+
+  suiteSetup(async () => {
+    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    fs.writeFileSync(file(), SOURCE);
+    await waitFor("the index to have the function", async () => {
+      const found = allNodes((await api.structure()).root).find((n) => n.id === "edit_id.py::keeper");
+      if (found) node = found;
+      return !!found?.range && found.range.end.line > 3;
+    }, 30_000);
+  });
+
+  suiteTeardown(async () => {
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    fs.rmSync(file(), { force: true });
+  });
+
+  /** What the card sends for a draft of `keeper` whose text has `from` replaced by `to`. */
+  async function params(from: string, to: string): Promise<EditSaveParams> {
+    const got = await api.editStart("edit_id.py", node.range!);
+    assert.ok("text" in got);
+    assert.ok(got.text.includes(from), `the draft's start has ${JSON.stringify(from)}`);
+    return { key: node.id, path: "edit_id.py", range: node.range!, version: got.version, base: got.text, prefix: got.prefix, eol: got.eol, text: got.text.replace(from, to) };
+  }
+  /** The file is put back through VS Code, as the other suites do: a document held open that is written behind its back is older than the disk. */
+  async function putBack() {
+    await restoreFixture(file(), SOURCE);
+    await waitFor("the file to be the fixture", () => fs.readFileSync(file(), "utf8") === SOURCE);
+  }
+
+  test("a draft that deletes the ID line makes the host ask: Cancel writes nothing, Save Anyway writes the draft (§11 e, first half)", async () => {
+    try {
+      const idLine = `\n    ID: ${ID}\n`;
+      const asked: string[] = [];
+      const cancel = await api.editSave(await params(idLine, "\n"), undefined, async (key) => (asked.push(key), false));
+      assert.deepStrictEqual(cancel, { cancelled: true });
+      assert.deepStrictEqual(asked, [node.id], "asked once, about this function");
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), SOURCE, "Cancel: the file is unchanged");
+      const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file());
+      assert.ok(!document || (document.getText() === SOURCE && !document.isDirty), "and so is the document");
+
+      const anyway = await api.editSave(await params(idLine, "\n"), undefined, async (key) => (asked.push(key), true));
+      assert.deepStrictEqual(anyway, { saved: true });
+      assert.strictEqual(asked.length, 2);
+      const expected = SOURCE.replace(idLine, "\n");
+      await waitFor("the file on disk to be the draft", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
+    } finally {
+      await putBack();
+    }
+  });
+
+  test("a draft that keeps the ID is not asked, and neither is one that changes it to a text that holds it elsewhere", async () => {
+    try {
+      let asked = 0;
+      const ask = async () => (asked++, false);
+      assert.deepStrictEqual(await api.editSave(await params("return 1", "return 2"), undefined, ask), { saved: true });
+      assert.strictEqual(asked, 0, "the ID is kept: no question");
+      await waitFor("the file to have the edit", () => fs.readFileSync(file(), "utf8") === SOURCE.replace("return 1", "return 2"), 30_000);
+      await putBack();
+      // the ID line moved up into the first line of the docstring: not a loss
+      const moved = await params(`Keeps its ID.\n\n    ID: ${ID}\n`, `Keeps its ID. ID: ${ID}\n`);
+      assert.deepStrictEqual(await api.editSave(moved, undefined, ask), { saved: true });
+      assert.strictEqual(asked, 0, "the ID moved: no question");
+    } finally {
+      await putBack();
+    }
+  });
+
+  test("a draft that changes the ID asks; and the question is asked only in the row that writes: a conflict is answered without it", async () => {
+    try {
+      const swapped = await params(ID, "1Q8V5W4T2F7KX9M3B6D1RZ4H7K");
+      let asked = 0;
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+      // the same function changed in the document since the draft started: a conflict, and nobody is asked about an ID that will not be written
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(document.uri, new vscode.Range(5, 0, 5, 12), "    return 90");
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.deepStrictEqual(await api.editSave(swapped, undefined, async () => (asked++, true)), { conflict: true });
+      assert.strictEqual(asked, 0);
+      await putBack();
+      assert.deepStrictEqual(await api.editSave(await params(ID, "1Q8V5W4T2F7KX9M3B6D1RZ4H7K"), undefined, async () => (asked++, false)), { cancelled: true });
+      assert.strictEqual(asked, 1, "a changed ID asks");
+    } finally {
+      await putBack();
+    }
+  });
+
+  test("the document moves while the question is open: after Save Anyway the rows run again from the top, and the draft is written at the function's new place", async () => {
+    try {
+      const draft = await params(`\n    ID: ${ID}\n`, "\n");
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+      let asked = 0;
+      const answer = await api.editSave(draft, undefined, async () => {
+        asked++;
+        const during = new vscode.WorkspaceEdit();
+        during.insert(document.uri, new vscode.Position(0, 0), "# added while the question was open\n");
+        assert.ok(await vscode.workspace.applyEdit(during));
+        assert.ok(document.version > draft.version);
+        return true;
+      });
+      assert.strictEqual(asked, 1, "the second pass does not ask again");
+      assert.deepStrictEqual(answer, { written: true }, "the user's own edit is unsaved, so the draft is in the buffer and not on disk (E4)");
+      assert.strictEqual(document.getText(), "# added while the question was open\n" + SOURCE.replace(`\n    ID: ${ID}\n`, "\n"), "the draft is at the function's new place, nothing else moved");
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), SOURCE, "nothing reached the disk");
+    } finally {
+      await putBack();
+    }
   });
 });

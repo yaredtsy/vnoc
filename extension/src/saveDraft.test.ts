@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { afterLocate, answerForAlready, firstStep, outcomeAfterApply, withDraft } from "./saveDraft.ts";
+import { SAVE_ANYWAY, afterLocate, answerForAlready, firstStep, idQuestion, nodeName, outcomeAfterApply, withDraft } from "./saveDraft.ts";
 
 // docs/17-edit-in-canvas.md §6, the table of the three cases, and the "already saved" rule of 9.4.
 
@@ -49,4 +49,20 @@ test("withDraft puts the draft in place of the range, and nothing else moves", (
   const to = file.indexOf("return 1") + "return 1".length;
   assert.equal(withDraft(file, from, to, "def f():\n    return 2"), "a = 1\n\ndef f():\n    return 2\n\nb = 2\n");
   assert.equal(withDraft(file, from, from, "# new\n"), "a = 1\n\n# new\ndef f():\n    return 1\n\nb = 2\n", "an empty range inserts");
+});
+
+// §7: the question about an ID the draft takes away names the node by its own name.
+const names: { key: string; name: string }[] = [
+  { key: "app/orders.py::parse_order", name: "parse_order" },
+  { key: "app/orders.py::Order.parse", name: "parse" },
+  { key: "app/orders.py::Outer.Inner.method", name: "method" },
+  { key: "app/orders.py::parse_order#2", name: "parse_order" },
+  { key: "app/orders.py::Order.parse#3", name: "parse" },
+  { key: "app/orders.py::Order", name: "Order" },
+];
+for (const r of names) test(`the question names ${r.key} as ${r.name}`, () => assert.equal(nodeName(r.key), r.name));
+
+test("the question's text, and the button", () => {
+  assert.equal(idQuestion("app/orders.py::Order.parse"), "This removes parse's ID: its docs will be Missing.");
+  assert.equal(SAVE_ANYWAY, "Save Anyway");
 });

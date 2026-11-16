@@ -155,7 +155,7 @@ export interface EditSaveParams {
   eol: "\n" | "\r\n";
   text: string;
 }
-export type EditSaveResult = { saved: true } | { written: true } | { conflict: true } | { gone: true };
+export type EditSaveResult = { saved: true } | { written: true } | { conflict: true } | { gone: true } | { cancelled: true };
 
 /** What "Show Diff" needs: the draft, and what it started from, so the host can put the draft where the function is now. */
 export interface EditDiffParams {
@@ -185,7 +185,8 @@ export interface Requests {
    * Save on a draft (docs/17-edit-in-canvas.md §6): the host checks the document's version and the text at `range` against the draft's `version` and `base`, and
    * writes the draft re-indented into the range. `saved`: written and the file saved. `written`: written into the buffer, not saved (the file was dirty, E4).
    * `conflict`: nothing was written (the document moved on, or the function changed). `gone`: nothing was written (the text has no such function). A draft that was
-   * saved already (a second Save) answers `saved` and writes nothing.
+   * saved already (a second Save) answers `saved` and writes nothing. `cancelled`: the draft takes the function's `ID:` away, the host asked, and the answer was Cancel:
+   * nothing was written, and the draft stays as it was (§7).
    */
   editSave: { params: EditSaveParams; result: EditSaveResult };
   /** Show Diff on a conflict: the file beside the file with the draft in the function's place, in VS Code's diff editor */

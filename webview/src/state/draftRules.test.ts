@@ -128,7 +128,8 @@ test("Save does something only while editing a draft that differs from its start
   for (const state of ["saving", "conflict", "gone"] as const) assert.equal(canSave({ ...changed, state }), false, state);
 });
 
-test("the host's answer: saved, written, conflict, gone", () => {
+test("the host's answer: saved, written, conflict, gone, cancelled", () => {
+  assert.equal(savedAs({ cancelled: true }), "cancelled");
   assert.equal(savedAs({ saved: true }), "saved");
   assert.equal(savedAs({ written: true }), "written");
   assert.equal(savedAs({ conflict: true }), "conflict");

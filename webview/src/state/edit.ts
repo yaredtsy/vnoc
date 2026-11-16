@@ -124,6 +124,7 @@ export function discardDraft(key: string): void {
  * - `written` (the file had unsaved changes, so it was not saved): the index will not move, so the draft goes at once, and the card reads its code and says
  *   "unsaved in editor" (9.1) and "Written into the file, not saved".
  * - `conflict` or `gone`: nothing was written; the draft stays, in that state, with its line and buttons.
+ * - `cancelled`: the draft takes the function's `ID:` away and the user said Cancel to the host's question: back to `editing`, nothing else changes.
  * - an error: back to `editing`, with the reason.
  */
 export async function saveDraft(key: string): Promise<void> {
@@ -143,6 +144,11 @@ export async function saveDraft(key: string): Promise<void> {
     return;
   }
   const outcome = savedAs(answer);
+  if (outcome === "cancelled") {
+    moved.cancel();
+    setDraftState(key, "editing"); // the question about the ID was answered Cancel (§7): nothing was written, and the draft is as it was
+    return;
+  }
   if (outcome === "conflict" || outcome === "gone") {
     moved.cancel();
     setDraftState(key, outcome);
