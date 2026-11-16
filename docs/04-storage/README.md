@@ -58,9 +58,9 @@ That gives a clean order of work:
 |---|---|---|---|---|---|
 | **1. Basic** | 0.1 | docstring `ID:` · `# FileID:` · `.vnoc-id` | `vnoc.toml` · `nodes/` · `local/trash/` | in memory, rebuilt at start | webview `setState` |
 | **2. Faster** | 0.2 | — | — | + call-tree results; SQLite if measured | — |
-| **3. Richer** | 0.4 | + comment style | `[ids]` keys in `vnoc.toml` | + fingerprints for matching | — |
-| **4. Private** | 0.5 | — | + `local/nodes/` · `local.toml` | — | — |
-| **5. Advanced** | 0.6+ | — | + `body_hash` · playgrounds · assets | + doc links · search | — |
+| **3. Richer** | 0.6 | + comment style | `[ids]` keys in `vnoc.toml` | + fingerprints for matching | — |
+| **4. Private** | dropped (2026-11-16) | — | + `local/nodes/` · `local.toml` | — | — |
+| **5. Advanced** | 0.7+ | — | + `body_hash` · playgrounds · assets | + doc links (search: 0.4, in memory, [`../20-search/`](../20-search/README.md)) | — |
 
 Every later stage is a `+`. Details: [`04-growth-path.md`](04-growth-path.md).
 

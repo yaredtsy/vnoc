@@ -1,6 +1,6 @@
 # Future plan: ideas that are not scheduled
 
-Written 2026-11-10. **Nothing in this folder is being built.** None of it is in a release in [`../02-mvp-and-releases.md`](../02-mvp-and-releases.md),
+Written 2026-11-10. **Nothing in this folder is being built**, except agent access's CLI and skill (read and write), scheduled on 2026-11-16 as [`../21-agent-cli/`](../21-agent-cli/README.md). The rest is in no release in [`../02-mvp-and-releases.md`](../02-mvp-and-releases.md),
 and none of it should delay 0.1–0.3. The folder exists so the ideas are written down once, with what is possible, what each option costs, and which one
 I would pick, instead of being re-thought every time they come up.
 
