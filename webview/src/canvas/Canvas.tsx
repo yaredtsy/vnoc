@@ -8,6 +8,7 @@ import { NodeCard } from "../node-card/NodeCard.tsx";
 import { on, post } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
+import { beginEdit, cardRef } from "../state/edit.ts";
 import { rememberViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
@@ -66,14 +67,19 @@ function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | n
   return null;
 }
 
-/** Menu commands (and the F key) that change only what this canvas draws: show or hide a card's code, fit the view. */
-function ViewCommands() {
+/** Menu commands (and the F key) that change only what this canvas draws: show or hide a card's code, fit the view, start an edit (the card shows its code first). */
+function ViewCommands({ laid }: { laid: Layout }) {
   const { fitView } = useReactFlow();
+  const cards = useRef(laid.nodes); // the latest layout, without listening again each time it changes
+  cards.current = laid.nodes;
   useEffect(() => {
     const fit = () => void fitView({ duration: motionMs(300, prefersReducedMotion()) });
     const stop = on("viewCommand", ({ name, key }) => {
       if (name === "fitView") fit();
-      else if (key) setCodeOpen(key, name === "showCode");
+      else if (key && name === "edit") {
+        const card = cards.current.find((p) => p.id === key);
+        if (card) void beginEdit(cardRef(card));
+      } else if (key) setCodeOpen(key, name === "showCode");
     });
     window.addEventListener(FIT_VIEW_EVENT, fit); // the F key (canvas/keys.ts)
     return () => {
@@ -149,7 +155,7 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
       {minimap && <MiniMap pannable zoomable nodeColor={(node) => (node.id === selected ? "var(--card-selected)" : node.id === cursor ? "var(--card-cursor)" : "var(--muted-foreground)")} />}
       <CenterOn laid={laid} context={context} />
       <OnScreenReport laid={laid} selected={selected} />
-      <ViewCommands />
+      <ViewCommands laid={laid} />
     </ReactFlow>
   );
 }

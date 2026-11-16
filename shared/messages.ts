@@ -140,6 +140,8 @@ export interface CallTreeResult {
   root: CallTreeNode;
 }
 
+export type EditStartResult = { dirty: true } | { text: string; version: number; prefix: string };
+
 /** webview → extension, with an answer. One line per request: its parameters and its result. */
 export interface Requests {
   structure: { params: void; result: StructureResult };
@@ -147,6 +149,12 @@ export interface Requests {
   docs: { params: { nodeId: string }; result: DocInfo[] };
   docText: { params: { path: string }; result: string };
   code: { params: { path: string; range: Range }; result: string };
+  /**
+   * Edit on a card (docs/17-edit-in-canvas.md §5): the host opens the document. Dirty (and no `saveFirst`): `{ dirty: true }`, nothing else. Otherwise the text of
+   * the range, the document's `version`, and the `prefix`: the first line's text before `range.start`. `saveFirst` saves a dirty document first ("Save and Edit"):
+   * the range is the one the card sent, which is stale until the index has read the save, so the card does not start a draft from that answer.
+   */
+  editStart: { params: { path: string; range: Range; saveFirst?: boolean }; result: EditStartResult };
   addDoc: { params: { key: string }; result: { added: boolean } };
   openDoc: { params: { path: string }; result: void };
   openLink: { params: { href: string; from: string }; result: void };
@@ -181,8 +189,8 @@ export interface Events {
   docText: { path: string; text: string };
   /** the whole session, every time it changes: whole snapshots cannot get out of step, and `seq` drops one that arrives late */
   session: Session;
-  /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view */
-  viewCommand: { name: "showCode" | "hideCode" | "fitView"; key?: string };
+  /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view, start an edit of a card (it shows its code first) */
+  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit"; key?: string };
   /** a call tree arrived: the entry's card shows it in its "Calls" section */
   callTree: { key: string; result: CallTreeResult };
   /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
@@ -210,6 +218,7 @@ export type Notes =
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
   | { type: "sidebarRendered"; context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number } // one panel of the STRUCTURE view drew (`context`: whose panel): how many rows, which one is selected (the active context's, or null), whether the list is scrolled to it (`inView`: read from the element), whether its row is in the page (`drawn`: the virtualizer put it there; a different fact), and how high the list is in px (0: the view is hidden or not laid out, and nothing can be in view). The extension's test suite uses it
   | { type: "codeShown"; key: string; dirty: boolean; text: string } // a card drew the code it read (`key`: the card's id; `text`: as Monaco shows it, the first line's indent taken off the others; `dirty`: whether the card showed its "unsaved in editor" mark when it drew): the extension's test suite uses it
+  | { type: "editState"; key: string; state: "closed" | "reading" | "editing" | "saving" | "conflict" | "gone" } // a card's code is in this state (`key`: the card's id; posted when it shows its code and whenever the state changes): the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 

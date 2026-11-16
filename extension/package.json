@@ -275,6 +275,11 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.editInCard",
+        "title": "Edit in Card",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.fitView",
         "title": "Fit View",
         "category": "V-NOC"
@@ -455,6 +460,10 @@
           "when": "false"
         },
         {
+          "command": "vnoc.editInCard",
+          "when": "false"
+        },
+        {
           "command": "vnoc.fitView",
           "when": "vnoc.canvasOpen"
         },
@@ -598,6 +607,11 @@
           "group": "4_code@2"
         },
         {
+          "command": "vnoc.editInCard",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && surface == canvas && hasCode && (kind == function || kind == class)",
+          "group": "4_code@3"
+        },
+        {
           "command": "vnoc.revealInExplorer",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && (kind == file || kind == folder)",
           "group": "4_code@3"
@@ -661,6 +675,11 @@
           "command": "vnoc.hideCodeInCard",
           "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && role == call && surface == canvas && calleeKnown && codeOpen",
           "group": "4_code@3"
+        },
+        {
+          "command": "vnoc.editInCard",
+          "when": "webviewId == 'vnoc.canvas' && webviewSection == 'node' && role == call && surface == canvas && calleeKnown && hasCode",
+          "group": "4_code@4"
         },
         {
           "command": "vnoc.showDocs",

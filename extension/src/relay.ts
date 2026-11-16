@@ -1,4 +1,4 @@
-import type { CallTreeResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
+import type { CallTreeResult, EditStartResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
 
 import type { Docs } from "./docs";
@@ -17,6 +17,8 @@ export interface Deps {
   docs: Docs;
   /** the text of a definition, from VS Code's document */
   code(path: string, range: Range): Promise<string>;
+  /** Edit on a card: the text, version and prefix of a range, or that the file has unsaved changes */
+  editStart(path: string, range: Range, saveFirst: boolean): Promise<EditStartResult>;
   goToCode(key: string): Promise<void>;
   /** the files with unsaved changes, relative to the opened folder */
   dirtyFiles(): string[];
@@ -47,6 +49,7 @@ export function createHandlers(d: Deps): Handlers {
     docs: ({ nodeId }) => d.core("vnoc/docs", { id: nodeId }), // the core calls the permanent ID `id`; every other id in the UI is the location key
     docText: ({ path }) => d.docs.text(path),
     code: ({ path, range }) => d.code(path, range),
+    editStart: ({ path, range, saveFirst }) => d.editStart(path, range, saveFirst === true),
     addDoc: async ({ key }) => ({ added: await d.addDoc(key) }),
     openDoc: ({ path }) => d.docs.open(path),
     openLink: ({ href, from }) => d.docs.openLink(href, from),

@@ -11,3 +11,9 @@ export interface CardEdit {
 }
 
 export const NOT_EDITING: CardEdit = { state: "closed", changed: false };
+
+/** The card's state: a draft's own when it has one, else whether its code is shown. */
+export function editStateOf(codeOpen: boolean, draft: { state: DraftState } | undefined): EditState {
+  if (draft) return draft.state;
+  return codeOpen ? "reading" : "closed";
+}

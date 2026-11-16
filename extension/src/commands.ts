@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import { type CallId, isCallId, listedSites, resolveCall, siteChoice } from "@vnoc/shared/calls.ts";
 import type { CallTreeNode, Range, TreeNode } from "@vnoc/shared/messages";
 import { chainAt, findNode, nodeAtPath } from "@vnoc/shared/tree";
-import type { Events } from "@vnoc/shared/messages";
+import type { EditStartResult, Events } from "@vnoc/shared/messages";
 import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
 import type { CallTrees } from "./callTree";
@@ -96,6 +96,8 @@ export class Commands {
       on("vnoc.collapseAll", () => this.store.dispatch({ type: "collapseAll" })),
       on("vnoc.showCodeInCard", async (arg, selected) => this.viewCommand({ name: "showCode", key: await this.cardIdOf(arg, selected) })),
       on("vnoc.hideCodeInCard", async (arg, selected) => this.viewCommand({ name: "hideCode", key: await this.cardIdOf(arg, selected) })),
+      // the page shows the card's code if it is not shown, then asks `editStart`: the draft lives in the page (docs/17 E6)
+      on("vnoc.editInCard", async (arg, selected) => this.viewCommand({ name: "edit", key: await this.cardIdOf(arg, selected) })),
       on("vnoc.fitView", () => this.viewCommand({ name: "fitView" })),
       on("vnoc.copyPath", async (arg, selected) => {
         const node = await this.nodeFor(arg, selected);
@@ -381,12 +383,35 @@ export class Commands {
 
   /** The text of a definition, from VS Code's document (so unsaved edits show). The path comes from the webview, so it must stay inside the opened folder. */
   async codeOf(relative: string, r: Range): Promise<string> {
+    const doc = await this.documentIn(relative);
+    return doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character));
+  }
+
+  /**
+   * Edit on a card (docs/17-edit-in-canvas.md §5): a document with unsaved changes is refused (E5), because the card's range comes from the last save and in a
+   * dirty file it can point at the wrong lines. `saveFirst` saves it first. Otherwise the range's text, the version it was read at, and the first line's text
+   * before the range (the `def`'s own indentation, as written).
+   */
+  async editStartOf(relative: string, r: Range, saveFirst: boolean): Promise<EditStartResult> {
+    const doc = await this.documentIn(relative);
+    if (doc.isDirty) {
+      if (!saveFirst) return { dirty: true };
+      if (!(await doc.save())) throw new Error(`${relative} could not be saved.`);
+    }
+    return {
+      text: doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character)),
+      version: doc.version,
+      prefix: doc.lineAt(r.start.line).text.slice(0, r.start.character),
+    };
+  }
+
+  /** The document of a file below the opened folder: the path comes from the webview, so it must stay inside it. */
+  private async documentIn(relative: string): Promise<vscode.TextDocument> {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) throw new Error("Open a folder first.");
     const file = path.resolve(folder.uri.fsPath, relative);
     if (!file.startsWith(folder.uri.fsPath + path.sep)) throw new Error(`${relative} is outside the opened folder`);
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-    return doc.getText(new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character));
+    return vscode.workspace.openTextDocument(vscode.Uri.file(file));
   }
 
   // ── the cursor ────────────────────────────────────────────────────────────────────────────────────────────────────────

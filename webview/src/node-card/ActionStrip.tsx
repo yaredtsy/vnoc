@@ -2,6 +2,7 @@ import { Codicon } from "@/components/Codicon.tsx";
 import { IconButton } from "@/components/IconButton.tsx";
 import { cn } from "@/lib/utils.ts";
 import type { Placed } from "../canvas/layout.ts";
+import { beginEdit, cardRef, discardDraft, saveDraft } from "../state/edit.ts";
 import { type ButtonId, cardButtons } from "./cardButtons.ts";
 import { platformNow, saveTip } from "./cardKeys.ts";
 import { type CardEdit, NOT_EDITING } from "./editState.ts";
@@ -24,11 +25,19 @@ const BUTTONS: Record<ButtonId, { icon: string; label: (codeOpen: boolean) => st
  * the tab order: the row's keys do the same things. `before` runs first: a row's buttons make its panel's context the active one (06 §4), as every other
  * gesture in the panel does.
  */
-export function ActionStrip({ node, contextId, focusRoot, selected, surface = "canvas", before, edit = NOT_EDITING }: { node: Pick<Placed, "id" | "kind" | "range" | "role" | "key" | "codeOpen">; contextId: string; focusRoot: boolean; selected: boolean; surface?: "canvas" | "sidebar"; before?: () => void; edit?: CardEdit }) {
+export function ActionStrip({ node, contextId, focusRoot, selected, surface = "canvas", before, edit = NOT_EDITING }: { node: Pick<Placed, "id" | "kind" | "range" | "role" | "key" | "codeOpen" | "path">; contextId: string; focusRoot: boolean; selected: boolean; surface?: "canvas" | "sidebar"; before?: () => void; edit?: CardEdit }) {
   const actions = useNodeActions(node.id, contextId, node.key);
-  // Edit, Save and Discard do nothing yet: the card passes `closed`, so none of them is drawn (they come with the draft, 9.2b)
-  const nothing = () => {};
-  const run: Record<ButtonId, () => void> = { focus: actions.focus, explore: actions.explore, goToCode: actions.goToCode, code: actions.toggleCode, edit: nothing, save: nothing, discard: nothing, addDoc: actions.addDoc };
+  const key = node.key;
+  const run: Record<ButtonId, () => void> = {
+    focus: actions.focus,
+    explore: actions.explore,
+    goToCode: actions.goToCode,
+    code: actions.toggleCode,
+    edit: () => void beginEdit(cardRef(node)),
+    save: () => key !== null && saveDraft(key),
+    discard: () => key !== null && discardDraft(key),
+    addDoc: actions.addDoc,
+  };
   return (
     <div className={cn("flex flex-none items-center", selected ? "text-[color:var(--card-selected-fg)]" : "text-muted-foreground")}>
       {cardButtons(node, focusRoot, surface, edit).map(({ id, disabled }) => {

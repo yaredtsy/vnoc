@@ -126,10 +126,10 @@ test("08 §8: the new commands are declared, the removed ones are gone from ever
 
 // ── 2. one list for a card and a row ────────────────────────────────────────────────────────────────────────────────────
 
-/** The entries that only make sense on one surface (08 §2): the four that test `surface`. */
-const SURFACE_ENTRIES = ["vnoc.openInCanvas", "vnoc.revealInSidebar", "vnoc.showCodeInCard", "vnoc.hideCodeInCard"];
+/** The entries that only make sense on one surface (08 §2): the five that test `surface` (Edit is a card's: a row has no code to edit). */
+const SURFACE_ENTRIES = ["vnoc.openInCanvas", "vnoc.revealInSidebar", "vnoc.showCodeInCard", "vnoc.hideCodeInCard", "vnoc.editInCard"];
 
-test("08 §9.2: every node entry names both surfaces, except the four that test `surface`; no other entry mentions it", () => {
+test("08 §9.2: every node entry names both surfaces, except the five that test `surface`; no other entry mentions it", () => {
   assert.ok(nodeMenu.length > 0);
   for (const e of nodeMenu) {
     const usesSurface = /\bsurface\b/.test(whenOf(e));
@@ -158,9 +158,9 @@ test("08 §1: the groups, in this order everywhere: 1_nav · 2_open · 3_calls �
   for (const e of menus["vnoc.editorMenu"]) if (first(nodeMenu).has(e.command)) assert.equal(e.group!.split("@")[0], first(nodeMenu).get(e.command)!.split("@")[0], `the editor submenu puts ${e.command} in the group the node menu does`);
 });
 
-// a node, in every state a menu's `when` reads: the row's menu and the card's menu are one list, but for the four
+// a node, in every state a menu's `when` reads: the row's menu and the card's menu are one list, but for the five
 const kinds = ["folder", "file", "class", "function"] as const;
-test("08 §1: a node has the same menu on a row and on its card, in every state, but for the four", () => {
+test("08 §1: a node has the same menu on a row and on its card, in every state, but for the five", () => {
   for (const kind of kinds) {
     for (const linked of [false, true]) {
       for (const hasMissing of [false, true]) {
@@ -175,7 +175,11 @@ test("08 §1: a node has the same menu on a row and on its card, in every state,
                 const label = JSON.stringify({ kind, linked, hasMissing, callTree, open, isFocusRoot, codeOpen });
                 assert.deepEqual(row.filter((c) => !card.includes(c)), ["openInCanvas"], `row only, ${label}`);
                 const cardOnly = card.filter((c) => !row.includes(c));
-                assert.ok(cardOnly.includes("revealInSidebar") && cardOnly.every((c) => ["revealInSidebar", "showCodeInCard", "hideCodeInCard"].includes(c)), `card only ${cardOnly}, ${label}`);
+                assert.ok(cardOnly.includes("revealInSidebar") && cardOnly.every((c) => ["revealInSidebar", "showCodeInCard", "hideCodeInCard", "editInCard"].includes(c)), `card only ${cardOnly}, ${label}`);
+                // 17: Edit is for a function or a class, on a card; never a row, never a file or a folder, whatever the code's state
+                assert.equal(card.includes("editInCard"), kind === "class" || kind === "function", `Edit in Card on a card ${label}`);
+                assert.equal(row.includes("editInCard"), false, `Edit in Card on a row ${label}`);
+                if (card.includes("editInCard")) assert.ok(card.indexOf("editInCard") > card.indexOf("goToCode"), `Edit comes after Go to Code ${label}`);
                 // what a node's entries are about
                 assert.equal(row.includes("goToCode"), kind !== "folder", `Go to Code ${label}`);
                 assert.equal(row.includes("writeId"), linked, `Write ID ${label}`);
@@ -205,11 +209,11 @@ const NODE_ONLY = ["focus", "focusBack", "openInCanvas", "revealInSidebar", "exp
 
 // the table of 08 §3: a call card's state → what its menu shows, in menu order
 const callRows: { name: string; card: ReturnType<typeof callCard>; expect: string[] }[] = [
-  { name: "a known callee, called once, closed", card: callCard(), expect: ["explore", "expand", "goToCallSite", "goToCode", "showCodeInCard", "showDocs", "addDoc", "copyPath"] },
-  { name: "…called in several places: the same entry asks which", card: callCard({}, 3), expect: ["explore", "expand", "goToCallSite", "goToCode", "showCodeInCard", "showDocs", "addDoc", "copyPath"] },
-  { name: "…open", card: callCard({ collapsed: false }), expect: ["explore", "collapse", "goToCallSite", "goToCode", "showCodeInCard", "showDocs", "addDoc", "copyPath"] },
-  { name: "…its code in the card", card: callCard({ codeOpen: true }), expect: ["explore", "expand", "goToCallSite", "goToCode", "hideCodeInCard", "showDocs", "addDoc", "copyPath"] },
-  { name: "…with nothing under it: no Expand", card: callCard({ callsChevron: false }), expect: ["explore", "goToCallSite", "goToCode", "showCodeInCard", "showDocs", "addDoc", "copyPath"] },
+  { name: "a known callee, called once, closed", card: callCard(), expect: ["explore", "expand", "goToCallSite", "goToCode", "showCodeInCard", "editInCard", "showDocs", "addDoc", "copyPath"] },
+  { name: "…called in several places: the same entry asks which", card: callCard({}, 3), expect: ["explore", "expand", "goToCallSite", "goToCode", "showCodeInCard", "editInCard", "showDocs", "addDoc", "copyPath"] },
+  { name: "…open", card: callCard({ collapsed: false }), expect: ["explore", "collapse", "goToCallSite", "goToCode", "showCodeInCard", "editInCard", "showDocs", "addDoc", "copyPath"] },
+  { name: "…its code in the card", card: callCard({ codeOpen: true }), expect: ["explore", "expand", "goToCallSite", "goToCode", "hideCodeInCard", "editInCard", "showDocs", "addDoc", "copyPath"] },
+  { name: "…with nothing under it: no Expand", card: callCard({ callsChevron: false }), expect: ["explore", "goToCallSite", "goToCode", "showCodeInCard", "editInCard", "showDocs", "addDoc", "copyPath"] },
   { name: "a known callee with no range: no code in the card", card: callCard({ range: null }), expect: ["explore", "expand", "goToCallSite", "goToCode", "showDocs", "addDoc", "copyPath"] },
   { name: "a callee the project does not know: only what is about the call itself", card: callCard({ key: null, range: null }), expect: ["expand", "goToCallSite"] },
   { name: "…and with no site in a file of the project's list (none given): nothing to go to", card: callCard({ key: null, range: null, callsChevron: false }, 0), expect: [] },

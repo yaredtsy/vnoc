@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-import type { Notes } from "@vnoc/shared/messages";
+import type { Notes, Range } from "@vnoc/shared/messages";
 import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
@@ -32,6 +32,8 @@ type SidebarRendered = { context: string; rows: number; selected: string | null;
 const sidebarPosts: SidebarRendered[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
+/** What the cards said about their edit state (for the test suite). */
+const editStatePosts: { key: string; state: string }[] = [];
 
 /** What the bar's ⚠ last said (for the test suite). */
 type Warned = { level: "none" | "warning" | "error"; text: string };
@@ -91,6 +93,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     addDoc: (key) => commands.addDocTo(key),
     docs,
     code: (path, range) => commands.codeOf(path, range),
+    editStart: (path, range, saveFirst) => commands.editStartOf(path, range, saveFirst),
     goToCode: (key) => commands.goToCodeOf(key),
     dirtyFiles: () => dirty.paths,
     callTrees: () => callTrees.all(),
@@ -195,6 +198,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     renderedPosts: () => renderedPosts,
     /** the files with unsaved changes the host holds now (what the `dirtyFiles` event carries) */
     dirtyFiles: () => dirty.paths,
+    /** a card's edit state each time it changed, in order: which card, and the state */
+    editStates: () => editStatePosts,
+    /** the host's answer to Edit on a range (the request a card makes) */
+    editStart: (path: string, range: Range, saveFirst = false) => commands.editStartOf(path, range, saveFirst),
     /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
     codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
@@ -237,6 +244,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "cardsDrawn":
       cardsDrawn(note.keys, note.onScreen);
+      break;
+    case "editState":
+      editStatePosts.push({ key: note.key, state: note.state });
       break;
     case "codeShown":
       codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });

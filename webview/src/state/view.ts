@@ -4,6 +4,8 @@
 import { create } from "zustand";
 
 import { vscode } from "../host.ts";
+import { type Drafts } from "./draftRules.ts";
+import { useDrafts } from "./drafts.ts";
 
 interface Saved {
   codeOpen?: string[];
@@ -12,6 +14,8 @@ interface Saved {
   minimap?: boolean;
   pinned?: string;
   panelShares?: Record<string, number>;
+  /** the drafts of the cards being edited (docs/17 E6): in the one object, so the one `setState` below keeps them */
+  drafts?: Drafts;
 }
 
 interface View {
@@ -95,7 +99,10 @@ export const pin = (pinned: string | null) => useView.setState({ pinned });
 /** Keeps the shares of the panels at these depths (a drag or a double-click on a splitter). */
 export const setPanelShares = (shares: Record<string, number>) => useView.setState(({ panelShares }) => ({ panelShares: { ...panelShares, ...shares } }));
 
-// the one place the view is saved
-useView.subscribe(({ codeOpen, docsOpen, docWidth, minimap, pinned, panelShares }) => {
-  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares });
-});
+// the one place the view is saved: the view and the drafts are one object, because `setState` keeps one object per webview (a second call would wipe this one)
+function save() {
+  const { codeOpen, docsOpen, docWidth, minimap, pinned, panelShares } = useView.getState();
+  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares, drafts: useDrafts.getState().drafts });
+}
+useView.subscribe(save);
+useDrafts.subscribe(save);
