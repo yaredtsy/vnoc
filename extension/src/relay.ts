@@ -1,4 +1,4 @@
-import type { CallTreeResult, EditDiffParams, EditSaveParams, EditSaveResult, EditStartResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
+import type { CallTreeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
 
 import type { Docs } from "./docs";
@@ -28,6 +28,8 @@ export interface Deps {
   goToCode(key: string): Promise<void>;
   /** the files with unsaved changes, relative to the opened folder */
   dirtyFiles(): string[];
+  /** the host's copy of the canvas's drafts */
+  drafts(): Draft[];
   /** the call trees held, by entry key */
   callTrees(): Record<string, CallTreeResult>;
   /** opens a file below the opened folder at a range */
@@ -64,6 +66,7 @@ export function createHandlers(d: Deps): Handlers {
     openLink: ({ href, from }) => d.docs.openLink(href, from),
     goToCode: ({ key }) => d.goToCode(key),
     dirtyFiles: async () => ({ paths: d.dirtyFiles() }),
+    drafts: async () => ({ drafts: d.drafts() }),
     callTrees: async () => d.callTrees(),
     openAt: ({ path, range }) => d.openAt(path, range),
     session: async () => d.session(),

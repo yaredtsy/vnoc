@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import type { EditSaveParams, EditSaveResult, EditStartResult, Range, TreeNode } from "@vnoc/shared/messages";
+import type { Draft, EditSaveParams, EditSaveResult, EditStartResult, Range, TreeNode } from "@vnoc/shared/messages";
 import { callId } from "@vnoc/shared/calls.ts";
 import type { Intent, Session } from "@vnoc/shared/session.ts";
 import { allNodes } from "@vnoc/shared/tree";
@@ -22,6 +22,9 @@ interface Api {
   callTrees(): Record<string, unknown>;
   viewCommand(data: { name: "edit" | "setDraft" | "save"; key: string; text?: string }): void;
   editSave(params: EditSaveParams, locate?: (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>, ask?: (key: string) => Promise<boolean>): Promise<EditSaveResult>;
+  draftCopy(): Draft[];
+  setDraftNotify(notify?: (message: string, ...buttons: string[]) => Promise<string | undefined>): void;
+  draftsAtStart(): Promise<void>;
   checkKeys(): void;
   keysChecked(): { found: boolean; target: string; taken: string[] }[];
   editStart(path: string, range: Range, saveFirst?: boolean): Promise<EditStartResult>;
@@ -29,6 +32,12 @@ interface Api {
   webviewErrors(): string[];
 }
 let api: Api;
+
+/**
+ * Closing the canvas with a draft that has something to lose asks (docs/17 §7, 9.5c), and an answer that is not given leaves the draft in the host's copy for the next canvas. These suites close the
+ * canvas all the time and want it as it was before: the draft is dropped. The 9.5c tests answer for themselves.
+ */
+const discardOnClose = () => api.setDraftNotify(async () => "Discard");
 
 const KEY = "nested.py::decorated";
 
@@ -52,6 +61,7 @@ async function restoreFixture(file: string, original: string): Promise<void> {
 suite("reading: a card marks a file with unsaved changes", () => {
   suiteSetup(async () => {
     api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    discardOnClose();
   });
 
   test("a card's code is marked while its file is dirty, and not after a save or a revert", async () => {
@@ -121,6 +131,7 @@ suite("reading: a card marks a file with unsaved changes", () => {
 suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
   suiteSetup(async () => {
     api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    discardOnClose();
   });
 
   test("the menu's Edit in Card opens the card's code and starts a draft: the card says `editing`", async () => {
@@ -214,6 +225,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
 
   suiteSetup(async () => {
     api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    discardOnClose();
     original = fs.readFileSync(file(), "utf8");
   });
 
@@ -453,6 +465,132 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       await restoreFixture(file(), original);
     }
   });
+
+  // ── 9.5c: the host keeps a copy of the drafts, and asks right after the canvas is closed ─────────────────────────────
+
+  /** Answers the notifications of the copy with `answer` (`undefined`: dismissed), and records each one. */
+  function answering(answer: string | undefined) {
+    const shown: { message: string; buttons: string[] }[] = [];
+    api.setDraftNotify(async (message, ...buttons) => (shown.push({ message, buttons }), answer));
+    return shown;
+  }
+
+  /** A draft with typed text, and the host's copy holding it (typing is sent 500 ms after the last keystroke). Returns the text. */
+  async function typedDraft(id: string): Promise<string> {
+    const { base } = await startEditing(id);
+    const typedText = base.replace("return 9", "return 99");
+    api.viewCommand({ name: "setDraft", key: id, text: typedText });
+    await waitFor("the host's copy to hold the draft", () => api.draftCopy().some((d) => d.key === id && d.text === typedText && d.state === "editing"), 10_000);
+    return typedText;
+  }
+
+  /** Closes the canvas tab (not hides it). Not `closeCanvas`: an answer that reopens the canvas would race its wait for the tab to be gone. */
+  const closeTab = () => vscode.window.tabGroups.close(canvasTabs());
+
+  test("a draft, the canvas closed: a notification at once; Reopen Canvas brings the draft back, editing, with its text (9.5c)", async () => {
+    const id = "nested.py::decorated";
+    const shown = answering("Reopen Canvas");
+    try {
+      const typedText = await typedDraft(id);
+      await closeTab();
+      await waitFor("the notification", () => shown.length === 1, 10_000);
+      assert.deepStrictEqual(shown[0], { message: "1 unsaved draft from the canvas", buttons: ["Save All", "Reopen Canvas", "Discard"] });
+      // Reopen: the canvas opens, and its page asks the host for the drafts
+      await until("the canvas to open again", () => canvasTabs().length === 1);
+      const since = api.editStates().length;
+      const latest = () => api.editStates().slice(since).filter((p) => p.key === id).at(-1)?.state;
+      for (let waited = 0; latest() !== "editing"; waited += 500) {
+        assert.ok(waited < 30_000, `the card never said editing after the canvas was reopened (last: ${latest()})`);
+        api.dispatch({ type: "expand", ids: ["nested.py"] });
+        api.dispatch({ type: "reveal", id, canvas: true });
+        await sleep(500);
+      }
+      // with its text: Save writes exactly what was typed before the canvas was closed
+      api.viewCommand({ name: "save", key: id });
+      await waitFor("the file to have the draft that was typed before the close", () => fs.readFileSync(file(), "utf8") === original.replace("return 9\n", "return 99\n"), 30_000);
+      assert.ok(typedText.includes("return 99"));
+      await waitFor("the copy to be empty: the draft was saved", () => api.draftCopy().length === 0, 10_000);
+      assert.strictEqual(shown.length, 1, "one notification, not one per step");
+      assert.deepStrictEqual(api.webviewErrors(), []);
+    } finally {
+      discardOnClose();
+      await closeCanvas();
+      await restoreFixture(file(), original);
+    }
+  });
+
+  test("a draft, the canvas closed, Save All: the file on disk has the draft, and the copy is empty (9.5c)", async () => {
+    const id = "nested.py::decorated";
+    const shown = answering("Save All");
+    try {
+      await typedDraft(id);
+      await closeTab();
+      await waitFor("the file to have the draft", () => fs.readFileSync(file(), "utf8") === original.replace("return 9\n", "return 99\n"), 30_000);
+      await waitFor("the copy to be empty", () => api.draftCopy().length === 0, 10_000);
+      await sleep(500);
+      assert.strictEqual(shown.length, 1, "nothing could not be saved: no second notification");
+      assert.strictEqual(shown[0].message, "1 unsaved draft from the canvas");
+      const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file());
+      assert.ok(document && !document.isDirty, "the file was saved (E4: it was not dirty before)");
+    } finally {
+      discardOnClose();
+      await closeCanvas();
+      await restoreFixture(file(), original);
+    }
+  });
+
+  test("a draft, the canvas closed, Discard: the canvas opens later with no draft (9.5c)", async () => {
+    const id = "nested.py::decorated";
+    const shown = answering("Discard");
+    try {
+      await typedDraft(id);
+      await closeTab();
+      await waitFor("the notification", () => shown.length === 1, 10_000);
+      await waitFor("the copy to be empty", () => api.draftCopy().length === 0, 10_000);
+      await vscode.commands.executeCommand("vnoc.openCanvas");
+      await until("the canvas tab", () => canvasTabs().length === 1);
+      const since = api.editStates().length;
+      api.dispatch({ type: "expand", ids: ["nested.py"] });
+      for (let i = 0; i < 6; i++) {
+        api.dispatch({ type: "reveal", id, canvas: true });
+        await sleep(500);
+      }
+      assert.ok(!api.editStates().slice(since).some((p) => p.key === id && p.state === "editing"), "no card is editing");
+      assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "and the bar counts nothing");
+      assert.deepStrictEqual(api.draftCopy(), []);
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), original, "nothing was written");
+    } finally {
+      discardOnClose();
+      await closeCanvas();
+      await restoreFixture(file(), original);
+    }
+  });
+
+  test("the notification dismissed: the copy stays; at start the host asks again, with Reopen Canvas and Discard (9.5c)", async () => {
+    const id = "nested.py::decorated";
+    const dismissed = answering(undefined);
+    try {
+      await typedDraft(id);
+      await closeTab();
+      await waitFor("the notification", () => dismissed.length === 1, 10_000);
+      await sleep(300);
+      assert.strictEqual(api.draftCopy().length, 1, "dismissed or ignored: the copy stays, and the draft comes back the next time the canvas opens");
+      assert.strictEqual(fs.readFileSync(file(), "utf8"), original, "nothing was written");
+      // what the extension does when it starts (a window reload, a new window): no canvas is open, so it asks
+      const atStart = answering("Discard");
+      await api.draftsAtStart();
+      assert.deepStrictEqual(atStart, [{ message: "1 unsaved draft from the canvas", buttons: ["Reopen Canvas", "Discard"] }]);
+      assert.deepStrictEqual(api.draftCopy(), [], "Discard clears the copy");
+      // nothing counts any more: it does not ask
+      const none = answering("Discard");
+      await api.draftsAtStart();
+      assert.deepStrictEqual(none, []);
+    } finally {
+      discardOnClose();
+      await closeCanvas();
+      await restoreFixture(file(), original);
+    }
+  });
 });
 
 suite("one draft per function: the bar counts the drafts (docs/17-edit-in-canvas.md step 9.5a)", () => {
@@ -464,6 +602,7 @@ suite("one draft per function: the bar counts the drafts (docs/17-edit-in-canvas
 
   suiteSetup(async () => {
     api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    discardOnClose();
     fs.writeFileSync(file(), SOURCE);
   });
 
@@ -535,6 +674,7 @@ suite("Save asks before it removes a function's ID (docs/17-edit-in-canvas.md st
 
   suiteSetup(async () => {
     api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    discardOnClose();
     fs.writeFileSync(file(), SOURCE);
     await waitFor("the index to have the function", async () => {
       const found = allNodes((await api.structure()).root).find((n) => n.id === "edit_id.py::keeper");

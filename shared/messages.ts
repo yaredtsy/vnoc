@@ -140,6 +140,29 @@ export interface CallTreeResult {
   root: CallTreeNode;
 }
 
+/** A draft's state (docs/17-edit-in-canvas.md §4): `editing`, `saving` (a Save is asking the host), `conflict` (the function changed in the editor), `gone` (it is not in the file any more). */
+export type DraftState = "editing" | "saving" | "conflict" | "gone";
+
+/**
+ * One function's unsaved edit (§4, E6), as the page holds it and as the host keeps its copy (§7, 9.5c). `key` is the structure node's key (a call card's callee's), so two cards
+ * on one function have one draft. `card` is the id of the card that started it: the only card that shows it editing. `path`, `range`, `version`, `base`, `prefix` and `eol` are
+ * what the host said when it started: §6's checks compare against them at save time. `text` is what Monaco holds, the first line's indent taken off the others
+ * (`dedent(base, prefix)` when nothing was typed).
+ */
+export interface Draft {
+  key: string;
+  card: string;
+  path: string;
+  range: Range;
+  version: number;
+  base: string;
+  prefix: string;
+  /** the document's line ending, as `editStart` said; a draft saved before it was there has `"\n"` */
+  eol: "\n" | "\r\n";
+  text: string;
+  state: DraftState;
+}
+
 /** `eol`: the document's line ending (`document.eol`), which `reindent` joins the written lines with. */
 export type EditStartResult = { dirty: true } | { text: string; version: number; prefix: string; eol: "\n" | "\r\n" };
 
@@ -199,6 +222,11 @@ export interface Requests {
   goToCode: { params: { key: string }; result: void };
   /** the files under the opened folder that have unsaved changes, as they are now; a canvas asks once when it starts, and after that it listens for the `dirtyFiles` event */
   dirtyFiles: { params: void; result: { paths: string[] } };
+  /**
+   * the host's copy of the drafts (§7, 9.5c), as the last `drafts` note left it; a canvas asks once when it starts, and takes them only when its own saved state has none (a
+   * webview reload keeps its own). Reading them does not clear them: only the page's empty list, Discard and a Save All that handled them do
+   */
+  drafts: { params: void; result: { drafts: Draft[] } };
   /** the call trees the host holds, by the key of their entry: a canvas that opens later asks once, then listens for the `callTree` event */
   callTrees: { params: void; result: Record<string, CallTreeResult> };
   /** open a file below the opened folder at a range (a call site) */
@@ -253,6 +281,7 @@ export type Notes =
   | { type: "rendered"; context: string; visible: number; hidden: number; callCards: number; chevrons: number } // the extension's test suite uses it; `context`: the context the canvas drew; `callCards`: call cards drawn; `chevrons`: function and class cards that show a chevron for their calls
   | { type: "cardsDrawn"; keys: string[]; onScreen: string[] } // `keys`: the function and class cards on the canvas's screen that show nothing of their calls yet, the one to look at first first: the host probes those. `onScreen`: every function and class card on screen, with or without structure children: the host's prefetch of the selected one is for those
   | { type: "chipsDrawn"; chips: { id: string; label: string; active: boolean }[] } // the bar's context chips changed (none: one context): the extension's test suite uses it
+  | { type: "drafts"; drafts: Draft[] } // the canvas's drafts, the whole list: the host keeps a copy so a closed canvas does not lose them (§7, 9.5c). At once when a draft starts, changes state or goes; 500 ms after the last keystroke for typing; at once when the page is hidden
   | { type: "draftsDrawn"; count: number; label: string } // the bar's "N unsaved drafts" chip changed (`count` 0, `label` "": no chip): the extension's test suite uses it
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
   | { type: "sidebarRendered"; context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number } // one panel of the STRUCTURE view drew (`context`: whose panel): how many rows, which one is selected (the active context's, or null), whether the list is scrolled to it (`inView`: read from the element), whether its row is in the page (`drawn`: the virtualizer put it there; a different fact), and how high the list is in px (0: the view is hidden or not laid out, and nothing can be in view). The extension's test suite uses it

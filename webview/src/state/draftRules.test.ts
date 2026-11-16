@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Draft, type Drafts, ELSEWHERE_TEXT, canSave, draftFor, editBlock, isUnsaved, showElsewhere, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
+import { type Draft, type Drafts, ELSEWHERE_TEXT, feedFor, canSave, draftFor, editBlock, isUnsaved, showElsewhere, indexMovedOn, isChanged, newDraft, noticeAfterFileState, noticeFor, restoreDrafts, savedAs, showRefusal, stateLine, ACTION_TEXT, startText, typed, withDraft, withState, without } from "./draftRules.ts";
 
 // The rules of a draft (docs/17-edit-in-canvas.md §4, §5, E6).
 
@@ -208,3 +208,20 @@ test("unsaved: changed, or saving, conflict or gone; an untouched editing draft 
   assert.equal(isUnsaved({ ...d, state: "conflict" }), true);
   assert.equal(isUnsaved({ ...d, state: "gone" }), true);
 });
+
+// ── what the page tells the host (9.5c) ──────────────────────────────────────────────────────────────────────────────
+
+const other = (over: Partial<Draft> = {}): Draft => started({ key: "b.py::f", card: "b.py::f", ...over });
+const feeds: { name: string; before: Drafts; after: Drafts; feed: "none" | "now" | "later" }[] = [
+  { name: "the same drafts", before: withDraft({}, started()), after: withDraft({}, started()), feed: "none" },
+  { name: "a draft starts", before: {}, after: withDraft({}, started()), feed: "now" },
+  { name: "the last draft goes (a save, a Discard): the host must hear it, so its copy clears", before: withDraft({}, started()), after: {}, feed: "now" },
+  { name: "typing: later", before: withDraft({}, started()), after: typed(withDraft({}, started()), "a.py::C::m", "def m(self):\n    return 2"), feed: "later" },
+  { name: "saving", before: withDraft({}, started()), after: withState(withDraft({}, started()), "a.py::C::m", "saving"), feed: "now" },
+  { name: "conflict", before: withState(withDraft({}, started()), "a.py::C::m", "saving"), after: withState(withDraft({}, started()), "a.py::C::m", "conflict"), feed: "now" },
+  { name: "a state and text together: now", before: withDraft({}, started()), after: { "a.py::C::m": { ...started(), state: "gone", text: "other" } }, feed: "now" },
+  { name: "one draft goes while another is typed into", before: { ...withDraft({}, started()), "b.py::f": other() }, after: { "b.py::f": other({ text: "x" }) }, feed: "now" },
+  { name: "two drafts, one typed into", before: { ...withDraft({}, started()), "b.py::f": other() }, after: { ...withDraft({}, started()), "b.py::f": other({ text: "x" }) }, feed: "later" },
+  { name: "a draft replaced by an equal one (a new object, the same content)", before: withDraft({}, started()), after: { "a.py::C::m": started() }, feed: "none" },
+];
+for (const r of feeds) test(`the page feeds the host: ${r.name}`, () => assert.equal(feedFor(r.before, r.after), r.feed));

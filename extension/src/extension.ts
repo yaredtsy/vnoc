@@ -1,11 +1,12 @@
 import * as vscode from "vscode";
 
-import type { EditSaveParams, Events, Notes, Range } from "@vnoc/shared/messages";
+import type { Draft, EditSaveParams, Events, Notes, Range } from "@vnoc/shared/messages";
 import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
 import { type AskToDropId, Commands, type Locate } from "./commands";
 import { Core, watchFiles } from "./core";
+import { DraftCopy, type Notify, showNotification } from "./draftCopy";
 import { DirtyFiles } from "./dirtyWatch";
 import { DRAFT_SCHEME, DraftDocs } from "./draftDocs";
 import { Docs } from "./docs";
@@ -18,6 +19,9 @@ import { SessionStore } from "./session";
 import { readingStarts, readingTheCode } from "./progress";
 import { registerSidebar } from "./sidebarView";
 import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
+
+/** How long after the extension starts it checks for drafts a closed canvas left: the tabs of the window are read by then, and a canvas tab VS Code restores is not mistaken for a missing one. */
+const START_CHECK_MS = 1500;
 
 // Wires the pieces together: the core, the session, the webview tabs and the STRUCTURE view, NEEDS ATTENTION, the commands. Nothing here decides anything.
 
@@ -84,6 +88,9 @@ export function activate(ctx: vscode.ExtensionContext) {
     reset: () => panels.emit("callTreesReset", {}),
   });
   const draftDocs = new DraftDocs();
+  // the host's copy of the canvas's drafts: fed by the page, acted on only when the canvas is closed or at start (docs/17 E6, §7)
+  const canvasTab = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith(CANVAS));
+  const draftCopy = new DraftCopy(ctx.workspaceState, { save: (params) => commands.editSaveOf(params), reopen: () => void panels.showCanvas(), canvasOpen: () => panels.canvas !== undefined || canvasTab() });
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
@@ -105,6 +112,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     copyText: async (text) => void (await vscode.env.clipboard.writeText(text)),
     goToCode: (key) => commands.goToCodeOf(key),
     dirtyFiles: () => dirty.paths,
+    drafts: () => draftCopy.drafts,
     callTrees: () => callTrees.all(),
     openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
@@ -116,11 +124,20 @@ export function activate(ctx: vscode.ExtensionContext) {
     rowClick: (context, id) => commands.rowClick(context, id),
     command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
   });
-  panels = new Surfaces(ctx, handlers, (note) => onNote(note, store, output, (keys, onScreen) => {
-    callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
-    wantCalls();
-  }));
+  panels = new Surfaces(
+    ctx,
+    handlers,
+    (note) =>
+      onNote(note, store, output, (keys, onScreen) => {
+        callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
+        wantCalls();
+      }, (drafts) => draftCopy.replace(drafts)),
+    () => void draftCopy.onCanvasClosed(),
+  );
   commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs);
+
+  // drafts a canvas left in a window that was reloaded or closed (§7): asked once, a moment after the start
+  const startCheck = setTimeout(() => void draftCopy.atStart(), START_CHECK_MS);
 
   const attentionTree = vscode.window.createTreeView("vnoc.attention", { treeDataProvider: attention });
 
@@ -158,6 +175,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     // every call tree came from the old core, and its revisions mean nothing against the new one: drop them all, fetch what is open again
     c.onRestarted(() => callTrees.restarted()),
     { dispose: () => void c.stop() },
+    { dispose: () => clearTimeout(startCheck) },
   );
 
   // the files whose menus carry the V-NOC submenu (later: from the driver manifests)
@@ -208,6 +226,12 @@ export function activate(ctx: vscode.ExtensionContext) {
     draftsChip: () => draftsChip,
     /** every drawing the pages reported, in order */
     renderedPosts: () => renderedPosts,
+    /** the host's copy of the canvas's drafts now (what the page's `drafts` notes left, and the flows on close and at start changed) */
+    draftCopy: () => draftCopy.drafts,
+    /** how the copy shows its notifications; a test answers them. No argument: VS Code's own */
+    setDraftNotify: (notify?: Notify) => void (draftCopy.notify = notify ?? showNotification),
+    /** the check made when the extension starts, run now */
+    draftsAtStart: () => draftCopy.atStart(),
     /** the files with unsaved changes the host holds now (what the `dirtyFiles` event carries) */
     dirtyFiles: () => dirty.paths,
     /** a card's edit state each time it changed, in order: which card, the state, and whether it says "Already being edited in another card" */
@@ -250,7 +274,7 @@ export function activate(ctx: vscode.ExtensionContext) {
 }
 
 /** What a webview says that needs no answer. */
-function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void) {
+function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void, drafts: (drafts: Draft[]) => void) {
   switch (note.type) {
     case "intent":
       store.dispatch(note.intent, note.context);
@@ -278,6 +302,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "chipsDrawn":
       chips = note.chips;
+      break;
+    case "drafts":
+      drafts(note.drafts);
       break;
     case "draftsDrawn":
       draftsChip = { count: note.count, label: note.label };

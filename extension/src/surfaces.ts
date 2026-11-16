@@ -23,6 +23,8 @@ export class Surfaces {
     private readonly handlers: Handlers,
     /** what a webview says that needs no answer (`Notes`); `close` is handled here */
     private readonly onNote: (note: Notes) => void,
+    /** the canvas tab was closed (not hidden): a webview panel cannot veto its own close, so the host asks after it (docs/17-edit-in-canvas.md §7, 9.5c) */
+    private readonly onCanvasClosed: () => void = () => {},
   ) {}
 
   get canvas(): vscode.WebviewPanel | undefined {
@@ -105,6 +107,7 @@ export class Surfaces {
       if (this.canvasPanel === panel) {
         this.canvasPanel = undefined;
         void vscode.commands.executeCommand("setContext", "vnoc.canvasOpen", false);
+        this.onCanvasClosed();
       }
       if (this.docsPanel === panel) this.docsPanel = undefined;
     });

@@ -12,6 +12,7 @@ import { TopBar } from "./canvas/top-bar/TopBar.tsx";
 import { DocPanel } from "./docs/DocPanel.tsx";
 import { request } from "./host.ts";
 import { useData } from "./state/data.ts";
+import "./state/draftFeed.ts"; // the canvas page tells the host its drafts, and takes the host's copy when it starts with none (9.5c)
 import { setDocsOpen, useView } from "./state/view.ts";
 
 // The canvas page: the bar, the cards, the doc panel. It reads the stores and draws; nothing here keeps state of its own.

@@ -1,38 +1,15 @@
 // The rules of a draft (docs/17-edit-in-canvas.md §4, §5, E6). Pure, so the table is tested; `drafts.ts` holds the store and `edit.ts` talks to the host.
 
-import type { EditSaveResult, Range } from "@vnoc/shared/messages.ts";
+import type { Draft, Range } from "@vnoc/shared/messages.ts";
+import { countsOnClose, isChanged, readDraft, savedAs, startText } from "@vnoc/shared/drafts.ts";
 
 import { type DraftState } from "../node-card/editState.ts";
-import { dedent } from "@vnoc/shared/indent.ts";
 
-/**
- * One function's unsaved edit. `key` is the structure node's key (a call card's callee's), so two cards on one function have one draft. `card` is the id of
- * the card that started it: the only card that shows it editing (9.5 refuses a second one with a message; until then the other card shows its code).
- * `path`, `range`, `version`, `base`, `prefix` and `eol` are what the host said when it started: §6's checks compare against them at save time. `text` is what Monaco
- * holds, the first line's indent taken off the others (`dedent(base, prefix)` when nothing was typed).
- */
-export interface Draft {
-  key: string;
-  card: string;
-  path: string;
-  range: Range;
-  version: number;
-  base: string;
-  prefix: string;
-  /** the document's line ending, as `editStart` said; a draft saved before it was there has `"\n"` */
-  eol: "\n" | "\r\n";
-  text: string;
-  state: DraftState;
-}
+export type { Draft };
+// the rules both sides share (the page holds the drafts, the host keeps a copy): `shared/drafts.ts`
+export { isChanged, savedAs, startText };
+
 export type Drafts = Readonly<Record<string, Draft>>;
-
-/** What Monaco shows when nothing was typed. */
-export const startText = (d: Pick<Draft, "base" | "prefix">): string => dedent(d.base, d.prefix);
-
-const unix = (text: string): string => text.replace(/\r\n/g, "\n");
-
-/** Whether the draft differs from its start: Save is enabled, and the card's dirty dot shows. Line endings do not count: Monaco gives its own back. */
-export const isChanged = (d: Draft): boolean => unix(d.text) !== unix(startText(d));
 
 /** The draft of the function this card shows, if this card is the one that started it. */
 export function draftFor(drafts: Drafts, card: { id: string; key: string | null }): Draft | undefined {
@@ -59,7 +36,7 @@ export const ELSEWHERE_TEXT = "Already being edited in another card";
 export const showElsewhere = (refused: boolean, drafts: Drafts, card: { id: string; key: string | null }): boolean => refused && editBlock(drafts, card)?.kind === "other";
 
 /** A draft the user would lose: typed into, or in a state that waits on the user (saving, or a save that found a conflict or a function that is gone). The bar counts these (§7). */
-export const isUnsaved = (d: Draft): boolean => d.state !== "editing" || isChanged(d);
+export const isUnsaved = (d: Draft): boolean => countsOnClose(d) || d.state === "saving";
 
 /** A new draft in `editing`, from what `editStart` answered. */
 export function newDraft(card: { id: string; key: string; path: string; range: Range }, got: { text: string; version: number; prefix: string; eol: "\n" | "\r\n" }): Draft {
@@ -84,9 +61,6 @@ export function without(drafts: Drafts, key: string): Drafts {
   return rest;
 }
 
-const STATES: readonly string[] = ["editing", "saving", "conflict", "gone"];
-const isPosition = (p: unknown): boolean => typeof p === "object" && p !== null && typeof (p as { line: unknown }).line === "number" && typeof (p as { character: unknown }).character === "number";
-
 /**
  * What `vscode.getState()` held (E6: the drafts go in `Saved` with the view). A draft that was `saving` comes back as `editing`: the request that was saving it
  * is gone with the page, and the save is asked for again. An entry that is not a whole draft is dropped, and so is anything that is not an object.
@@ -94,13 +68,9 @@ const isPosition = (p: unknown): boolean => typeof p === "object" && p !== null 
 export function restoreDrafts(saved: unknown): Drafts {
   if (typeof saved !== "object" || saved === null) return {};
   const out: Record<string, Draft> = {};
-  for (const [key, v] of Object.entries(saved as Record<string, Record<string, unknown>>)) {
-    if (typeof v !== "object" || v === null) continue;
-    const range = v.range as { start: unknown; end: unknown } | undefined;
-    const whole =
-      v.key === key && typeof v.card === "string" && typeof v.path === "string" && typeof v.version === "number" && typeof v.base === "string" && typeof v.prefix === "string" && typeof v.text === "string" && typeof v.state === "string" && range && isPosition(range.start) && isPosition(range.end);
-    if (!whole) continue;
-    out[key] = { ...(v as unknown as Draft), eol: v.eol === "\r\n" ? "\r\n" : "\n", state: v.state === "saving" || !STATES.includes(v.state as string) ? "editing" : (v.state as DraftState) };
+  for (const [key, v] of Object.entries(saved)) {
+    const d = readDraft(v);
+    if (d && d.key === key) out[key] = d.state === "saving" ? { ...d, state: "editing" } : d;
   }
   return out;
 }
@@ -123,11 +93,6 @@ export function withState(drafts: Drafts, key: string, state: DraftState): Draft
 
 /** Save does something only while editing a draft that differs from its start (the same rule as the button's: `cardButtons`). */
 export const canSave = (d: Draft | undefined): d is Draft => d !== undefined && d.state === "editing" && isChanged(d);
-
-/** What the host's answer to `editSave` means for the card. */
-export function savedAs(answer: EditSaveResult): "saved" | "written" | "conflict" | "gone" | "cancelled" {
-  return "conflict" in answer ? "conflict" : "gone" in answer ? "gone" : "cancelled" in answer ? "cancelled" : "written" in answer ? "written" : "saved";
-}
 
 /**
  * The line above the code that says what the last Save did (9.3b, 9.4b). `written`: the text is in the file's buffer, not on disk, because the file was dirty (E4); it
@@ -174,3 +139,24 @@ export const ACTION_TEXT: Record<DraftAction, { label: string; tip: string }> = 
   openInEditor: { label: "Open in Editor", tip: "Open the file" },
   copyDraft: { label: "Copy Draft", tip: "Copy the draft's text to the clipboard" },
 };
+
+/**
+ * What the page tells the host about its drafts when they change (§7, 9.5c: the host keeps a copy). `now`: a draft started, went, or changed in anything but its text (a state, a
+ * range); the copy must not lag a Discard or a save. `later`: only text changed: typing, sent 500 ms after the last keystroke. `none`: nothing the host keeps changed.
+ */
+export function feedFor(prev: Drafts, next: Drafts): "none" | "now" | "later" {
+  if (prev === next) return "none";
+  const keys = Object.keys(next);
+  if (keys.length !== Object.keys(prev).length) return "now";
+  let typing = false;
+  for (const key of keys) {
+    const a = prev[key];
+    const b = next[key];
+    if (!a || a === b) continue;
+    const { text: textA, ...restA } = a;
+    const { text: textB, ...restB } = b;
+    if (JSON.stringify(restA) !== JSON.stringify(restB)) return "now";
+    if (textA !== textB) typing = true;
+  }
+  return typing ? "later" : "none";
+}
