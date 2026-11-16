@@ -48,7 +48,7 @@ let warned: Warned | undefined;
 /** The context chips the bar last drew (for the test suite). */
 let chips: { id: string; label: string; active: boolean }[] = [];
 const warnedWaiters: (() => void)[] = [];
-/** What the bar's "unsaved drafts" chip last said (for the test suite): `count` 0 is no chip. */
+/** What the bar's "unsaved drafts" chip last said (for the test suite): the canvas page's last post, and `count` 0 (no chip) while no canvas page is open. */
 let draftsChip = { count: 0, label: "" };
 
 let core: Core | undefined;
@@ -138,7 +138,10 @@ export function activate(ctx: vscode.ExtensionContext) {
         callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
         wantCalls();
       }, (page, drafts) => draftCopy.replace(page, drafts)),
-    (page) => void draftCopy.onPageClosed(page),
+    (page) => {
+      if (page === "canvas") draftsChip = { count: 0, label: "" }; // the chip it drew is gone with the page, which posts nothing on its way out
+      void draftCopy.onPageClosed(page);
+    },
   );
   commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs, docs);
 
@@ -228,7 +231,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     sidebarOpen: () => panels.sidebar !== undefined,
     /** the context chips the bar draws now: empty with one context */
     chips: () => chips,
-    /** the bar's "N unsaved drafts" chip as the page last drew it: `count` 0 and `label` "" when there is none */
+    /** the bar's "N unsaved drafts" chip as the canvas page last drew it: `count` 0 and `label` "" when there is none, and while no canvas page is open */
     draftsChip: () => draftsChip,
     /** every drawing the pages reported, in order */
     renderedPosts: () => renderedPosts,

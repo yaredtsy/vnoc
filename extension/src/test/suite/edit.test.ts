@@ -643,6 +643,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     try {
       await typedDraft(id);
       await closeTab();
+      assert.deepStrictEqual(api.draftsChip(), { count: 0, label: "" }, "the canvas is closed: no bar, no chip");
       await waitFor("the notification", () => dismissed.length === 1, 10_000);
       await sleep(300);
       assert.strictEqual(api.draftCopy().length, 1, "dismissed or ignored: the copy stays, and the draft comes back the next time the canvas opens");
