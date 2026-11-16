@@ -151,6 +151,8 @@ export interface Requests {
   openDoc: { params: { path: string }; result: void };
   openLink: { params: { href: string; from: string }; result: void };
   goToCode: { params: { key: string }; result: void };
+  /** the files under the opened folder that have unsaved changes, as they are now; a canvas asks once when it starts, and after that it listens for the `dirtyFiles` event */
+  dirtyFiles: { params: void; result: { paths: string[] } };
   /** the call trees the host holds, by the key of their entry: a canvas that opens later asks once, then listens for the `callTree` event */
   callTrees: { params: void; result: Record<string, CallTreeResult> };
   /** open a file below the opened folder at a range (a call site) */
@@ -195,6 +197,8 @@ export interface Events {
   callTreesReset: Record<string, never>;
   /** the docs tab beside an editor is already open: show this node and stay on it (pinned) */
   showNode: { id: string };
+  /** the set of files with unsaved changes changed: `paths` are all of them, relative to the opened folder, sorted (the whole set, as the session is: nothing to get out of step). A card marks its code while its file is in it */
+  dirtyFiles: { paths: string[] };
 }
 
 /** webview → extension, no answer. */
@@ -205,6 +209,7 @@ export type Notes =
   | { type: "chipsDrawn"; chips: { id: string; label: string; active: boolean }[] } // the bar's context chips changed (none: one context): the extension's test suite uses it
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
   | { type: "sidebarRendered"; context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number } // one panel of the STRUCTURE view drew (`context`: whose panel): how many rows, which one is selected (the active context's, or null), whether the list is scrolled to it (`inView`: read from the element), whether its row is in the page (`drawn`: the virtualizer put it there; a different fact), and how high the list is in px (0: the view is hidden or not laid out, and nothing can be in view). The extension's test suite uses it
+  | { type: "codeShown"; key: string; dirty: boolean; text: string } // a card drew the code it read (`key`: the card's id; `text`: as Monaco shows it, the first line's indent taken off the others; `dirty`: whether the card showed its "unsaved in editor" mark when it drew): the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 

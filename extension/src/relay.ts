@@ -18,6 +18,8 @@ export interface Deps {
   /** the text of a definition, from VS Code's document */
   code(path: string, range: Range): Promise<string>;
   goToCode(key: string): Promise<void>;
+  /** the files with unsaved changes, relative to the opened folder */
+  dirtyFiles(): string[];
   /** the call trees held, by entry key */
   callTrees(): Record<string, CallTreeResult>;
   /** opens a file below the opened folder at a range */
@@ -49,6 +51,7 @@ export function createHandlers(d: Deps): Handlers {
     openDoc: ({ path }) => d.docs.open(path),
     openLink: ({ href, from }) => d.docs.openLink(href, from),
     goToCode: ({ key }) => d.goToCode(key),
+    dirtyFiles: async () => ({ paths: d.dirtyFiles() }),
     callTrees: async () => d.callTrees(),
     openAt: ({ path, range }) => d.openAt(path, range),
     session: async () => d.session(),

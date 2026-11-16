@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor/editor/editor.api.js";
 
-import type { Placed } from "../canvas/layout.ts";
-import { request } from "../host.ts";
+import { META_H, type Placed } from "../canvas/layout.ts";
+import { post, request } from "../host.ts";
+import { useDirtyFiles } from "../state/dirty.ts";
 import { currentTheme, languageOf, loadMonaco } from "./monaco.ts";
+import { NAME_X } from "./rows.ts";
 
 type State = { text: string } | { error: string } | null;
 
@@ -13,23 +15,52 @@ function dedent(text: string, indent: number): string {
   return [first, ...rest.map((l) => l.slice(Math.min(indent, l.length - l.trimStart().length)))].join("\n");
 }
 
-/** The node's own source, read by the host from VS Code's document (so unsaved edits show), shown in Monaco coloured by Shiki. Read-only for now. */
+/**
+ * The node's own source, read by the host from VS Code's document (so unsaved edits show), shown in Monaco coloured by Shiki. Read-only for now.
+ * The card's range comes from the last save, so while the file has unsaved changes the lines shown may be off: a line above the code says so (not in the
+ * header, whose buttons never move).
+ */
 export function NodeCode({ node }: { node: Placed }) {
   const [state, setState] = useState<State>(null);
+  const dirty = useDirtyFiles((s) => s.paths.has(node.path));
+  const dirtyNow = useRef(dirty);
+  dirtyNow.current = dirty;
   useEffect(() => {
     let live = true;
     request("code", { path: node.path, range: node.range! }).then(
-      (text) => live && setState({ text }),
+      (text) => {
+        if (!live) return;
+        setState({ text });
+        post({ type: "codeShown", key: node.id, dirty: dirtyNow.current, text: dedent(text, node.range?.start.character ?? 0) });
+      },
       (e: Error) => live && setState({ error: e.message }),
     );
     return () => {
       live = false;
     };
-  }, [node.path, node.range]); // a new range (the code above moved, or the index changed) reads the code again
+  }, [node.id, node.path, node.range, dirty]); // a new range (the code above moved, or the index changed) reads the code again, and so does a save or a revert of the file
 
-  if (!state) return <div className="node-code muted">loading…</div>;
-  if ("error" in state) return <div className="node-code error">{state.error}</div>;
-  return <CodeEditor text={dedent(state.text, node.range?.start.character ?? 0)} path={node.path} firstLine={node.line ?? 1} />;
+  return (
+    <>
+      {dirty && <Unsaved path={node.path} />}
+      {!state ? <div className="node-code muted">loading…</div> : "error" in state ? <div className="node-code error">{state.error}</div> : <CodeEditor text={dedent(state.text, node.range?.start.character ?? 0)} path={node.path} firstLine={node.line ?? 1} />}
+    </>
+  );
+}
+
+/** One line above the code, at the meta line's size: a filled dot and "unsaved in editor". */
+function Unsaved({ path }: { path: string }) {
+  const file = path.slice(path.lastIndexOf("/") + 1);
+  return (
+    <div
+      className="flex flex-none items-center gap-1.5 pr-3 font-mono text-[11px]"
+      style={{ height: META_H, paddingLeft: NAME_X, color: "var(--vscode-descriptionForeground)" }}
+      title={`${file} has unsaved changes. The lines shown may be off until it is saved.`}
+    >
+      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: "var(--vscode-editorWarning-foreground)" }} />
+      unsaved in editor
+    </div>
+  );
 }
 
 function CodeEditor({ text, path, firstLine }: { text: string; path: string; firstLine: number }) {

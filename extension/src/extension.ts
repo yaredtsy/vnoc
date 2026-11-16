@@ -6,6 +6,7 @@ import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
 import { Commands } from "./commands";
 import { Core, watchFiles } from "./core";
+import { DirtyFiles } from "./dirtyWatch";
 import { Docs } from "./docs";
 import { coreStopped, facts, helpAndFeedback, reportIssue } from "./help";
 import { LogTee } from "./report";
@@ -29,6 +30,8 @@ const renderWaiters: ((r: Rendered) => void)[] = [];
 /** What the STRUCTURE view last said it drew (for the test suite). */
 type SidebarRendered = { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number };
 const sidebarPosts: SidebarRendered[] = [];
+/** What the cards drew of their code (for the test suite). */
+const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 
 /** What the bar's ⚠ last said (for the test suite). */
 type Warned = { level: "none" | "warning" | "error"; text: string };
@@ -75,6 +78,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   });
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
+  // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
+  const dirty = new DirtyFiles((paths) => panels.emit("dirtyFiles", { paths }));
   // what a webview may ask of the extension (`shared/messages.ts` lists it, `relay.ts` serves it)
   const handlers = createHandlers({
     // the first read has the progress line on the STRUCTURE view; a read after rows are drawn (the index changed) is quiet
@@ -87,6 +92,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     docs,
     code: (path, range) => commands.codeOf(path, range),
     goToCode: (key) => commands.goToCodeOf(key),
+    dirtyFiles: () => dirty.paths,
     callTrees: () => callTrees.all(),
     openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
@@ -118,6 +124,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.help", () => helpAndFeedback(help)),
     watchFiles(c, (fsPath) => docs.changed(fsPath)),
     docs.watchEditors(),
+    dirty.watch(),
     // every change of the session goes to the open webviews, whole: the canvas, the docs tab and the STRUCTURE view each draw what they need of it
     store.onChange(({ next }) => {
       panels.emit("session", next);
@@ -186,6 +193,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     chips: () => chips,
     /** every drawing the pages reported, in order */
     renderedPosts: () => renderedPosts,
+    /** the files with unsaved changes the host holds now (what the `dirtyFiles` event carries) */
+    dirtyFiles: () => dirty.paths,
+    /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
+    codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
     breakCore: () => c.stop(),
     /** starts it again, so the suites after the one that broke it still have a core */
@@ -226,6 +237,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "cardsDrawn":
       cardsDrawn(note.keys, note.onScreen);
+      break;
+    case "codeShown":
+      codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });
       break;
     case "sidebarRendered":
       sidebarPosts.push({ context: note.context, rows: note.rows, selected: note.selected, inView: note.inView, drawn: note.drawn, height: note.height });
