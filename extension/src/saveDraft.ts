@@ -85,3 +85,25 @@ export function nodeName(key: string): string {
 /** The modal's text, and the button that goes on (Cancel is VS Code's own). */
 export const idQuestion = (key: string): string => `This removes ${nodeName(key)}'s ID: its docs will be Missing.`;
 export const SAVE_ANYWAY = "Save Anyway";
+
+/** The end of a text as a position, lines counted the way VS Code counts them: a line ends at `\r\n`, `\n` or a lone `\r`. */
+export function endOf(text: string): { line: number; character: number } {
+  let line = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n" || (text[i] === "\r" && text[i + 1] !== "\n")) {
+      line++;
+      start = i + 1;
+    }
+  }
+  return { line, character: text.length - start };
+}
+
+/** The whole text as a range: a doc's draft is of the whole file (§8). */
+export const wholeRange = (text: string): { start: { line: number; character: number }; end: { line: number; character: number } } => ({ start: { line: 0, character: 0 }, end: endOf(text) });
+
+/**
+ * `locate` for a doc (§8): there is one thing in a Markdown file, all of it, so wherever the file has moved to the function is the whole document it is now. The rows of §6 do the
+ * rest: the version moved and the text still equals `base` is a write at the whole range; any other text is a conflict, and a text that already holds what Save would write is "already saved".
+ */
+export const docLocate = async (_key: string, document: { text: string }) => wholeRange(document.text);

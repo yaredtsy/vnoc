@@ -10,7 +10,8 @@ import { MISSING_PIN } from "@vnoc/shared/tree";
 import { addDoc } from "./addDoc";
 import type { DraftDocs } from "./draftDocs";
 import { dropsId } from "@vnoc/shared/idLine";
-import { SAVE_ANYWAY, afterLocate, answerForAlready, firstStep, idQuestion, outcomeAfterApply, withDraft } from "./saveDraft";
+import { SAVE_ANYWAY, afterLocate, answerForAlready, docLocate, firstStep, idQuestion, outcomeAfterApply, wholeRange, withDraft } from "./saveDraft";
+import type { Docs } from "./docs";
 import type { CallTrees } from "./callTree";
 import { type AttentionRow, goToProblem } from "./attentionView";
 import type { Core } from "./core";
@@ -66,6 +67,8 @@ export class Commands {
     private readonly callTrees: CallTrees,
     /** the in-memory documents "Show Diff" puts beside the file */
     private readonly draftDocs: DraftDocs,
+    /** a doc's path is checked here (§8): inside `<git root>/.vnoc/nodes/`, a `.md` */
+    private readonly docs: Docs,
   ) {}
 
   private readonly request = <T>(method: string, params?: object) => this.core.request<T>(method, params);
@@ -419,6 +422,33 @@ export class Commands {
   }
 
   /**
+   * Edit on a doc (§8): the same answer as for a function, with the whole file as the range and no prefix. A doc with unsaved changes in a tab is refused (E5), or saved first.
+   * There is no range to refresh after the save, so "Save and Edit" answers the draft's start at once. The path is the Markdown file's own (`DocInfo.path`), checked by `Docs`.
+   */
+  async editStartDocOf(file: string, saveFirst: boolean): Promise<EditStartResult> {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(this.docs.resolve(file)));
+    if (doc.isDirty) {
+      if (!saveFirst) return { dirty: true };
+      if (!(await doc.save())) throw new Error(`${path.basename(file)} could not be saved.`);
+    }
+    const text = doc.getText();
+    return { text, version: doc.version, prefix: "", eol: doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n", range: wholeRange(text) };
+  }
+
+  /**
+   * The document a draft is of: a function's file below the opened folder, or, for a doc (§8), the Markdown file. A doc that cannot be opened (deleted or renamed since the draft
+   * started) is `null`: the function is gone, as for a function the core cannot find (§7). A path that is not a V-NOC doc is an error, not "gone".
+   */
+  private async draftDocument(p: { kind?: "doc"; path: string }): Promise<vscode.TextDocument | null> {
+    if (p.kind !== "doc") return this.documentIn(p.path);
+    const file = this.docs.resolve(p.path);
+    return vscode.workspace.openTextDocument(vscode.Uri.file(file)).then(
+      (doc) => doc,
+      () => null,
+    );
+  }
+
+  /**
    * Save on a draft (docs/17-edit-in-canvas.md §6, E4). `applyEdit` carries no version and applies at any range, so the check is here, in three steps whose rules are
    * `saveDraft.ts`. The version and the text under the range against the draft's; if the version moved on, the core says where the function is now (`locate`, a
    * parameter so a test can pass one that edits the document before it answers) and the version is read again after it answers. **No `await` between the last
@@ -429,11 +459,14 @@ export class Commands {
    * await before the write, so the document may have changed while it was open: after Save Anyway the rows run again from the top, reading the version again, and the
    * second pass does not ask again. Cancel answers `{ cancelled: true }` and writes nothing.
    */
-  async editSaveOf(p: EditSaveParams, locate: Locate = (key, document) => this.locateInCore(key, document), ask: AskToDropId = (key) => this.askToDropId(key)): Promise<EditSaveResult> {
-    const doc = await this.documentIn(p.path);
+  async editSaveOf(p: EditSaveParams, locate?: Locate, ask: AskToDropId = (key) => this.askToDropId(key)): Promise<EditSaveResult> {
+    const doc = await this.draftDocument(p);
+    if (doc === null) return { gone: true }; // §8: the `.md` was deleted or renamed
+    // §8: a doc is all of one file, so the core has nothing to look for (the whole document is where it is), and a Markdown file has no ID line to take away
+    const where: Locate = locate ?? (p.kind === "doc" ? docLocate : (key, document) => this.locateInCore(key, document));
     const written = reindent(p.text, p.base, p.prefix, p.eol);
     const vsRange = (r: Range) => new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
-    const takesId = dropsId(p.base, written);
+    const takesId = p.kind !== "doc" && dropsId(p.base, written);
     for (let asked = false; ; asked = true) {
       // from here to the first `await` (the core's answer, or the question) or to `applyEdit`: synchronous
       let at = p.range;
@@ -442,7 +475,7 @@ export class Commands {
       if (step !== "locate") row = step;
       else {
         const sent = doc.version;
-        const found = await locate(p.key, { uri: doc.uri.toString(), version: sent, text: doc.getText() });
+        const found = await where(p.key, { uri: doc.uri.toString(), version: sent, text: doc.getText() });
         if (found) at = found;
         row = afterLocate({ found: found !== null, sentVersion: sent, version: doc.version, current: found ? doc.getText(vsRange(found)) : "", base: p.base, written });
       }
@@ -479,13 +512,14 @@ export class Commands {
    * started), in VS Code's diff editor. The left is a document in memory (`vnoc-draft:`): nothing is written.
    */
   async editDiffOf(p: EditDiffParams): Promise<void> {
-    const doc = await this.documentIn(p.path);
-    const found = await this.locateInCore(p.key, { uri: doc.uri.toString(), version: doc.version, text: doc.getText() }).catch(() => null);
+    const doc = await this.draftDocument(p);
+    if (doc === null) throw new Error(`${path.basename(p.path)} is not there any more.`);
+    const found = p.kind === "doc" ? wholeRange(doc.getText()) : await this.locateInCore(p.key, { uri: doc.uri.toString(), version: doc.version, text: doc.getText() }).catch(() => null);
     const range = found ?? p.range;
     const from = doc.offsetAt(new vscode.Position(range.start.line, range.start.character));
     const to = doc.offsetAt(new vscode.Position(range.end.line, range.end.character));
     const left = this.draftDocs.add(doc.uri, withDraft(doc.getText(), from, to, reindent(p.text, p.base, p.prefix, p.eol)));
-    const name = p.key.slice(p.key.indexOf("::") + 2);
+    const name = p.kind === "doc" ? path.basename(p.path) : p.key.slice(p.key.indexOf("::") + 2);
     await vscode.commands.executeCommand("vscode.diff", left, doc.uri, `${name}: your draft ↔ ${path.basename(p.path)}`);
   }
 

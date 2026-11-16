@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-import type { Events, Notes, RequestMessage } from "@vnoc/shared/messages";
+import type { Events, Notes, Page, RequestMessage } from "@vnoc/shared/messages";
 
 import { type Handlers, event, serve } from "./relay";
 
@@ -23,8 +23,8 @@ export class Surfaces {
     private readonly handlers: Handlers,
     /** what a webview says that needs no answer (`Notes`); `close` is handled here */
     private readonly onNote: (note: Notes) => void,
-    /** the canvas tab was closed (not hidden): a webview panel cannot veto its own close, so the host asks after it (docs/17-edit-in-canvas.md §7, 9.5c) */
-    private readonly onCanvasClosed: () => void = () => {},
+    /** the canvas tab or the docs tab was closed (not hidden): a webview panel cannot veto its own close, so the host asks after it (docs/17-edit-in-canvas.md §7, 9.5c, §8) */
+    private readonly onPageClosed: (page: Page) => void = () => {},
   ) {}
 
   get canvas(): vscode.WebviewPanel | undefined {
@@ -107,9 +107,12 @@ export class Surfaces {
       if (this.canvasPanel === panel) {
         this.canvasPanel = undefined;
         void vscode.commands.executeCommand("setContext", "vnoc.canvasOpen", false);
-        this.onCanvasClosed();
+        this.onPageClosed("canvas");
       }
-      if (this.docsPanel === panel) this.docsPanel = undefined;
+      if (this.docsPanel === panel) {
+        this.docsPanel = undefined;
+        this.onPageClosed("docs");
+      }
     });
     panel.webview.html = this.html(panel.webview, { script: "assets/index.js", css: "assets/index.css", attributes: `data-mode="${mode}"${pinTo ? ` data-node="${escapeAttribute(pinTo)}"` : ""}` });
     panel.webview.onDidReceiveMessage((m: RequestMessage | Notes) => void this.receive(panel.webview, m, () => panel.dispose()));

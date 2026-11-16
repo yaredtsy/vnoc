@@ -140,6 +140,9 @@ export interface CallTreeResult {
   root: CallTreeNode;
 }
 
+/** The two pages that hold drafts: the canvas, and the docs tab beside an editor (docs/17-edit-in-canvas.md §8, 9.6). Both are the one bundle; `data-mode` says which. */
+export type Page = "canvas" | "docs";
+
 /** A draft's state (docs/17-edit-in-canvas.md §4): `editing`, `saving` (a Save is asking the host), `conflict` (the function changed in the editor), `gone` (it is not in the file any more). */
 export type DraftState = "editing" | "saving" | "conflict" | "gone";
 
@@ -148,8 +151,12 @@ export type DraftState = "editing" | "saving" | "conflict" | "gone";
  * on one function have one draft. `card` is the id of the card that started it: the only card that shows it editing. `path`, `range`, `version`, `base`, `prefix` and `eol` are
  * what the host said when it started: §6's checks compare against them at save time. `text` is what Monaco holds, the first line's indent taken off the others
  * (`dedent(base, prefix)` when nothing was typed).
+ *
+ * `kind: "doc"` (§8, 9.6): the draft of a doc's Markdown file, not of a function. Its `key` and `path` are the file's absolute path, its `range` is the whole file, its `prefix` is `""`, and
+ * its `card` is the node the panel showed it for (what the page shows again to bring the draft back). Everything else is the same draft.
  */
 export interface Draft {
+  kind?: "doc";
   key: string;
   card: string;
   path: string;
@@ -164,10 +171,23 @@ export interface Draft {
 }
 
 /** `eol`: the document's line ending (`document.eol`), which `reindent` joins the written lines with. */
-export type EditStartResult = { dirty: true } | { text: string; version: number; prefix: string; eol: "\n" | "\r\n" };
+export type EditStartResult =
+  | { dirty: true }
+  /** a doc that the other page is editing (§8): one draft per doc, across the canvas and the docs tab */
+  | { busy: true }
+  /** `range` is only there for a doc: the whole file, as the host reads it now (a function's range is the one the card sent) */
+  | { text: string; version: number; prefix: string; eol: "\n" | "\r\n"; range?: Range };
+
+/**
+ * What Edit sends. A function or class: the file below the opened folder and the range the card has. A doc (`kind: "doc"`, §8): the Markdown file's absolute path (`DocInfo.path`,
+ * which the host checks lies in `<git root>/.vnoc/nodes/`), no range (the host answers the whole file), and the page that asks, so the host can say the other page has it.
+ */
+export type EditStartParams = { path: string; range: Range; saveFirst?: boolean } | { kind: "doc"; path: string; saveFirst?: boolean; page: Page };
 
 /** What a draft sends to be written: where it was, what it started from (`version`, `base`), how to put the indent and the line endings back, and the text. */
 export interface EditSaveParams {
+  /** `"doc"`: `path` is a doc's absolute path and `range` is the whole file; Save runs the same rows with a `locate` that answers the whole document, and never asks about an ID (§8) */
+  kind?: "doc";
   /** the draft's key: the structure node, which the core looks for when the document moved on */
   key: string;
   path: string;
@@ -182,6 +202,7 @@ export type EditSaveResult = { saved: true } | { written: true } | { conflict: t
 
 /** What "Show Diff" needs: the draft, and what it started from, so the host can put the draft where the function is now. */
 export interface EditDiffParams {
+  kind?: "doc";
   key: string;
   path: string;
   range: Range;
@@ -203,7 +224,7 @@ export interface Requests {
    * the range, the document's `version`, and the `prefix`: the first line's text before `range.start`. `saveFirst` saves a dirty document first ("Save and Edit"):
    * the range is the one the card sent, which is stale until the index has read the save, so the card does not start a draft from that answer.
    */
-  editStart: { params: { path: string; range: Range; saveFirst?: boolean }; result: EditStartResult };
+  editStart: { params: EditStartParams; result: EditStartResult };
   /**
    * Save on a draft (docs/17-edit-in-canvas.md §6): the host checks the document's version and the text at `range` against the draft's `version` and `base`, and
    * writes the draft re-indented into the range. `saved`: written and the file saved. `written`: written into the buffer, not saved (the file was dirty, E4).
@@ -226,7 +247,7 @@ export interface Requests {
    * the host's copy of the drafts (§7, 9.5c), as the last `drafts` note left it; a canvas asks once when it starts, and takes them only when its own saved state has none (a
    * webview reload keeps its own). Reading them does not clear them: only the page's empty list, Discard and a Save All that handled them do
    */
-  drafts: { params: void; result: { drafts: Draft[] } };
+  drafts: { params: { page: Page }; result: { drafts: Draft[] } };
   /** the call trees the host holds, by the key of their entry: a canvas that opens later asks once, then listens for the `callTree` event */
   callTrees: { params: void; result: Record<string, CallTreeResult> };
   /** open a file below the opened folder at a range (a call site) */
@@ -281,7 +302,7 @@ export type Notes =
   | { type: "rendered"; context: string; visible: number; hidden: number; callCards: number; chevrons: number } // the extension's test suite uses it; `context`: the context the canvas drew; `callCards`: call cards drawn; `chevrons`: function and class cards that show a chevron for their calls
   | { type: "cardsDrawn"; keys: string[]; onScreen: string[] } // `keys`: the function and class cards on the canvas's screen that show nothing of their calls yet, the one to look at first first: the host probes those. `onScreen`: every function and class card on screen, with or without structure children: the host's prefetch of the selected one is for those
   | { type: "chipsDrawn"; chips: { id: string; label: string; active: boolean }[] } // the bar's context chips changed (none: one context): the extension's test suite uses it
-  | { type: "drafts"; drafts: Draft[] } // the canvas's drafts, the whole list: the host keeps a copy so a closed canvas does not lose them (§7, 9.5c). At once when a draft starts, changes state or goes; 500 ms after the last keystroke for typing; at once when the page is hidden
+  | { type: "drafts"; page: Page; drafts: Draft[] } // a page's drafts (`page`: the canvas, or the docs tab: the host merges both into one copy), the whole list: the host keeps a copy so a closed canvas does not lose them (§7, 9.5c). At once when a draft starts, changes state or goes; 500 ms after the last keystroke for typing; at once when the page is hidden
   | { type: "draftsDrawn"; count: number; label: string } // the bar's "N unsaved drafts" chip changed (`count` 0, `label` "": no chip): the extension's test suite uses it
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
   | { type: "sidebarRendered"; context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number } // one panel of the STRUCTURE view drew (`context`: whose panel): how many rows, which one is selected (the active context's, or null), whether the list is scrolled to it (`inView`: read from the element), whether its row is in the page (`drawn`: the virtualizer put it there; a different fact), and how high the list is in px (0: the view is hidden or not laid out, and nothing can be in view). The extension's test suite uses it

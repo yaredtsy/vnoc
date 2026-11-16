@@ -1,4 +1,4 @@
-import type { CallTreeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartResult, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
+import type { CallTreeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
 
 import type { Docs } from "./docs";
@@ -17,8 +17,8 @@ export interface Deps {
   docs: Docs;
   /** the text of a definition, from VS Code's document */
   code(path: string, range: Range): Promise<string>;
-  /** Edit on a card: the text, version and prefix of a range, or that the file has unsaved changes */
-  editStart(path: string, range: Range, saveFirst: boolean): Promise<EditStartResult>;
+  /** Edit on a card, or on a doc: the text, version and prefix of a range (a doc's is the whole file), that the file has unsaved changes, or that the other page has the doc */
+  editStart(params: EditStartParams): Promise<EditStartResult>;
   /** Save on a draft: checks the document against what the draft started from, writes it re-indented into the range */
   editSave(params: EditSaveParams): Promise<EditSaveResult>;
   /** Show Diff: opens the file beside the file with the draft in place */
@@ -28,8 +28,8 @@ export interface Deps {
   goToCode(key: string): Promise<void>;
   /** the files with unsaved changes, relative to the opened folder */
   dirtyFiles(): string[];
-  /** the host's copy of the canvas's drafts */
-  drafts(): Draft[];
+  /** the host's copy of a page's drafts */
+  drafts(page: Page): Draft[];
   /** the call trees held, by entry key */
   callTrees(): Record<string, CallTreeResult>;
   /** opens a file below the opened folder at a range */
@@ -57,7 +57,7 @@ export function createHandlers(d: Deps): Handlers {
     docs: ({ nodeId }) => d.core("vnoc/docs", { id: nodeId }), // the core calls the permanent ID `id`; every other id in the UI is the location key
     docText: ({ path }) => d.docs.text(path),
     code: ({ path, range }) => d.code(path, range),
-    editStart: ({ path, range, saveFirst }) => d.editStart(path, range, saveFirst === true),
+    editStart: (params) => d.editStart(params),
     editSave: (params) => d.editSave(params),
     editDiff: (params) => d.editDiff(params),
     copyText: ({ text }) => d.copyText(text),
@@ -66,7 +66,7 @@ export function createHandlers(d: Deps): Handlers {
     openLink: ({ href, from }) => d.docs.openLink(href, from),
     goToCode: ({ key }) => d.goToCode(key),
     dirtyFiles: async () => ({ paths: d.dirtyFiles() }),
-    drafts: async () => ({ drafts: d.drafts() }),
+    drafts: async ({ page }) => ({ drafts: d.drafts(page) }),
     callTrees: async () => d.callTrees(),
     openAt: ({ path, range }) => d.openAt(path, range),
     session: async () => d.session(),

@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import type { Draft, EditSaveParams, EditSaveResult, EditStartResult, Range, TreeNode } from "@vnoc/shared/messages";
+import type { Draft, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Range, TreeNode } from "@vnoc/shared/messages";
 import { callId } from "@vnoc/shared/calls.ts";
 import type { Intent, Session } from "@vnoc/shared/session.ts";
 import { allNodes } from "@vnoc/shared/tree";
@@ -13,7 +13,7 @@ import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
 // page, so it listens to what the page posts (`codeShown`: each time a card drew the code it read, and whether it showed the mark).
 
 interface Api {
-  structure(): Promise<{ root: TreeNode }>;
+  structure(): Promise<{ root: TreeNode; git_root: string }>;
   codeShown(): { key: string; dirty: boolean; text: string }[];
   dirtyFiles(): string[];
   editStates(): { key: string; state: string; elsewhere: boolean }[];
@@ -23,6 +23,9 @@ interface Api {
   viewCommand(data: { name: "edit" | "setDraft" | "save"; key: string; text?: string }): void;
   editSave(params: EditSaveParams, locate?: (key: string, document: { uri: string; version: number; text: string }) => Promise<Range | null>, ask?: (key: string) => Promise<boolean>): Promise<EditSaveResult>;
   draftCopy(): Draft[];
+  draftCopyOf(page: Page): Draft[];
+  feedDrafts(page: Page, drafts: Draft[]): void;
+  editStartRequest(params: EditStartParams): Promise<EditStartResult>;
   setDraftNotify(notify?: (message: string, ...buttons: string[]) => Promise<string | undefined>): void;
   draftsAtStart(): Promise<void>;
   checkKeys(): void;
@@ -776,6 +779,204 @@ suite("Save asks before it removes a function's ID (docs/17-edit-in-canvas.md st
       assert.strictEqual(document.getText(), "# added while the question was open\n" + SOURCE.replace(`\n    ID: ${ID}\n`, "\n"), "the draft is at the function's new place, nothing else moved");
       assert.strictEqual(fs.readFileSync(file(), "utf8"), SOURCE, "nothing reached the disk");
     } finally {
+      await putBack();
+    }
+  });
+});
+
+suite("a doc's Markdown saves through the same rows (docs/17-edit-in-canvas.md step 9.6a)", () => {
+  const ID = "0Q8V5W4T2F7KX9M3B6D1RZ4H7K";
+  const DOC = `---\nnode: ${ID}\nhint: src/orders.py::parse_order\n---\n# Why we parse twice\n\nThe upstream API sends  \nthe same field twice. ID: not-an-ID-line\n\n    an indented code block\n\nLast line\n`;
+  let dir: string;
+  let file: string;
+  let madeVnoc = false;
+
+  suiteSetup(async () => {
+    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    discardOnClose();
+    const root = (await api.structure()).git_root;
+    madeVnoc = !fs.existsSync(path.join(root, ".vnoc"));
+    dir = path.join(root, ".vnoc", "nodes", "7K", ID);
+    file = path.join(dir, "overview.md");
+    fs.mkdirSync(dir, { recursive: true });
+  });
+
+  suiteTeardown(async () => {
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    fs.rmSync(madeVnoc ? path.join(path.dirname(path.dirname(path.dirname(dir))), ".vnoc") : dir, { recursive: true, force: true });
+  });
+
+  /** The doc on disk as `text`, through VS Code if it holds the file (a file written behind its back leaves the document older than the disk). */
+  async function putBack(text = DOC) {
+    const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
+    if (open && open.getText() !== text) {
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(open.uri, new vscode.Range(0, 0, open.lineCount, 0), text);
+      await vscode.workspace.applyEdit(edit);
+    }
+    if (open?.isDirty) await open.save();
+    if (!fs.existsSync(file) || fs.readFileSync(file, "utf8") !== text) fs.writeFileSync(file, text);
+    await waitFor("the doc to be as put back", () => fs.readFileSync(file, "utf8") === text);
+  }
+
+  /** What the panel sends for a draft of the doc whose text has `from` replaced by `to`. */
+  async function docParams(from: string, to: string, page: Page = "docs"): Promise<EditSaveParams> {
+    const got = await api.editStartRequest({ kind: "doc", path: file, page });
+    assert.ok("text" in got, `Edit on the doc answered ${JSON.stringify(got)}`);
+    assert.ok(got.text.includes(from), `the doc has ${JSON.stringify(from)}`);
+    return { kind: "doc", key: file, path: file, range: got.range!, version: got.version, base: got.text, prefix: got.prefix, eol: got.eol, text: got.text.replace(from, to) };
+  }
+
+  test("Edit on a doc answers its whole text, the version, no prefix and the whole file as the range", async () => {
+    try {
+      await putBack();
+      const got = await api.editStartRequest({ kind: "doc", path: file, page: "docs" });
+      assert.ok("text" in got);
+      assert.deepStrictEqual({ ...got, range: undefined }, { text: DOC, version: got.version, prefix: "", eol: "\n", range: undefined });
+      assert.deepStrictEqual(got.range, { start: { line: 0, character: 0 }, end: { line: DOC.split("\n").length - 1, character: 0 } });
+      // the path is checked as the panel's own reads are: only a Markdown file inside `.vnoc/nodes/`
+      await assert.rejects(api.editStartRequest({ kind: "doc", path: path.join(path.dirname(path.dirname(path.dirname(path.dirname(dir)))), "nested.py"), page: "docs" }), /is not a V-NOC doc/);
+      await assert.rejects(api.editSave({ ...(await docParams("Last line", "Last line")), path: path.join(dir, "..", "..", "..", "..", "nested.py") }), /is not a V-NOC doc/);
+    } finally {
+      await putBack();
+    }
+  });
+
+  test("a doc's text edited and saved: the .md on disk changed byte for byte, the file saved, and no question about an ID (§8)", async () => {
+    try {
+      await putBack();
+      // `ID: not-an-ID-line` is a line the question would be asked about in a function; in a doc it is text
+      const params = await docParams("the same field twice. ID: not-an-ID-line", "the same field twice.");
+      let asked = 0;
+      const answer = await api.editSave(params, undefined, async () => (asked++, false));
+      assert.deepStrictEqual(answer, { saved: true });
+      assert.strictEqual(asked, 0, "a Markdown file has no ID line to take away");
+      const expected = DOC.replace("the same field twice. ID: not-an-ID-line", "the same field twice.");
+      await waitFor("the .md on disk to be the edited text", () => fs.readFileSync(file, "utf8") === expected, 30_000);
+      const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
+      assert.ok(document && !document.isDirty, "E4: it was not dirty before, so it is saved");
+    } finally {
+      await putBack();
+    }
+  });
+
+  test("a CRLF doc comes back with CRLF, whatever line endings Monaco's text has, and a second Save of the same draft writes nothing (already saved)", async () => {
+    // a file nothing has opened: a document already open keeps its own line ending, whatever is written into it
+    const crlfFile = path.join(dir, "crlf.md");
+    const crlf = DOC.replace(/\n/g, "\r\n");
+    fs.writeFileSync(crlfFile, crlf);
+    try {
+      const got = await api.editStartRequest({ kind: "doc", path: crlfFile, page: "docs" });
+      assert.ok("text" in got);
+      assert.strictEqual(got.eol, "\r\n");
+      const params: EditSaveParams = { kind: "doc", key: crlfFile, path: crlfFile, range: got.range!, version: got.version, base: got.text, prefix: "", eol: got.eol, text: got.text.replace("Last line", "The last line") };
+      // Monaco's text, as it may hold it: its own line endings do not matter
+      assert.deepStrictEqual(await api.editSave({ ...params, text: params.text.replace(/\r\n/g, "\n") }), { saved: true });
+      await waitFor("the file to have the edit and CRLF", () => fs.readFileSync(crlfFile, "utf8") === crlf.replace("Last line", "The last line"), 30_000);
+      const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === crlfFile)!;
+      const version = document.version;
+      assert.deepStrictEqual(await api.editSave(params), { saved: true }, "a second Save of the same draft");
+      assert.strictEqual(document.version, version, "nothing was written");
+    } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      fs.rmSync(crlfFile, { force: true });
+    }
+  });
+
+  test("the doc changed in a tab and saved since the draft started: Save is a conflict, and the file is as the tab left it", async () => {
+    try {
+      await putBack();
+      const params = await docParams("Last line", "Last line, edited in the panel");
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const edit = new vscode.WorkspaceEdit();
+      const at = document.getText().indexOf("Last line");
+      edit.replace(document.uri, new vscode.Range(document.positionAt(at), document.positionAt(at + "Last line".length)), "Last line, edited in the tab");
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.ok(await document.save());
+      const tab = fs.readFileSync(file, "utf8");
+      assert.strictEqual(tab, DOC.replace("Last line", "Last line, edited in the tab"));
+      assert.deepStrictEqual(await api.editSave(params), { conflict: true });
+      assert.strictEqual(fs.readFileSync(file, "utf8"), tab, "nothing was written");
+    } finally {
+      await putBack();
+    }
+  });
+
+  test("an edit in the tab that left the text as it was (typed and undone): the version moved, the text still equals base, and Save writes at the whole range", async () => {
+    try {
+      await putBack();
+      const params = await docParams("Last line", "Last line, written");
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const add = new vscode.WorkspaceEdit();
+      add.insert(document.uri, new vscode.Position(0, 0), "x");
+      assert.ok(await vscode.workspace.applyEdit(add));
+      const remove = new vscode.WorkspaceEdit();
+      remove.delete(document.uri, new vscode.Range(0, 0, 0, 1));
+      assert.ok(await vscode.workspace.applyEdit(remove));
+      assert.ok(document.version > params.version, "the version moved");
+      assert.strictEqual(document.getText(), DOC, "and the text is what it was");
+      const answer = await api.editSave(params);
+      assert.ok("saved" in answer || "written" in answer, `Save answered ${JSON.stringify(answer)}`);
+      assert.strictEqual(document.getText(), DOC.replace("Last line", "Last line, written"));
+    } finally {
+      await putBack();
+    }
+  });
+
+  test("a doc with unsaved changes in a tab is refused, and Save and Edit saves it first and answers at once (E5, §8)", async () => {
+    try {
+      await putBack();
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(document.uri, new vscode.Position(document.lineCount - 1, 0), "unsaved\n");
+      assert.ok(await vscode.workspace.applyEdit(edit));
+      assert.ok(document.isDirty);
+      assert.deepStrictEqual(await api.editStartRequest({ kind: "doc", path: file, page: "docs" }), { dirty: true });
+      assert.ok(document.isDirty, "nothing was saved");
+      const got = await api.editStartRequest({ kind: "doc", path: file, page: "docs", saveFirst: true });
+      assert.ok(!document.isDirty, "Save and Edit saved the document");
+      assert.ok("text" in got && got.text === document.getText() && got.text.includes("unsaved"), "and the answer is the draft's start: no range to wait for");
+    } finally {
+      await putBack();
+    }
+  });
+
+  test("the .md was deleted since the draft started: Save is gone, and nothing is written", async () => {
+    const lost = path.join(dir, "lost.md");
+    fs.writeFileSync(lost, "# Lost\n\ntext\n");
+    try {
+      // a draft of a file nothing has opened: its version is whatever the page was told, and the file goes
+      const params: EditSaveParams = { kind: "doc", key: lost, path: lost, range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } }, version: 1, base: "# Lost\n\ntext\n", prefix: "", eol: "\n", text: "# Lost\n\nnew text\n" };
+      fs.rmSync(lost);
+      assert.deepStrictEqual(await api.editSave(params), { gone: true });
+      assert.ok(!fs.existsSync(lost), "and the file was not made again");
+    } finally {
+      fs.rmSync(lost, { force: true });
+    }
+  });
+
+  test("one draft per doc across the pages: while the canvas holds a draft of the doc, the docs tab's Edit is busy; the canvas's own is not", async () => {
+    try {
+      await putBack();
+      await vscode.commands.executeCommand("vnoc.openCanvas");
+      await until("the canvas tab", () => canvasTabs().length === 1);
+      await sleep(1000); // the page asks the host for its drafts once, when it starts: let it ask before the copy is fed
+      const got = await api.editStartRequest({ kind: "doc", path: file, page: "canvas" });
+      assert.ok("text" in got);
+      const held: Draft = { kind: "doc", key: file, card: "overview", path: file, range: got.range!, version: got.version, base: got.text, prefix: "", eol: "\n", text: got.text + "typed\n", state: "editing" };
+      api.feedDrafts("canvas", [held]); // what the canvas page's `drafts` note does
+      assert.deepStrictEqual(await api.editStartRequest({ kind: "doc", path: file, page: "docs" }), { busy: true });
+      const own = await api.editStartRequest({ kind: "doc", path: file, page: "canvas" });
+      assert.ok("text" in own, "the canvas asking again is the canvas's own page: its store decides");
+      api.feedDrafts("canvas", []);
+      assert.ok("text" in (await api.editStartRequest({ kind: "doc", path: file, page: "docs" })), "the draft is saved or discarded: the doc is free");
+      // the other way round, with the docs tab not open: nobody is editing, so a draft the user has not answered for does not block
+      api.feedDrafts("docs", [held]);
+      assert.ok("text" in (await api.editStartRequest({ kind: "doc", path: file, page: "canvas" })), "the docs tab is not open in this test: a draft it was left with does not block");
+    } finally {
+      api.feedDrafts("canvas", []);
+      api.feedDrafts("docs", []);
+      await closeCanvas();
       await putBack();
     }
   });

@@ -46,6 +46,7 @@ export async function beginEdit(card: CardRef, saveFirst = false): Promise<"star
       setRefused(card.id, true);
       return "refused";
     }
+    if ("busy" in got) return "failed"; // only a doc can be busy (§8); a function is edited in the canvas alone
     setRefused(card.id, false);
     putDraft(newDraft({ id: card.id, key: card.key, path: card.path, range: card.range }, got));
     return "started";

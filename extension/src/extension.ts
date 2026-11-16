@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-import type { Draft, EditSaveParams, Events, Notes, Range } from "@vnoc/shared/messages";
+import type { Draft, EditSaveParams, EditStartParams, Events, Notes, Page, Range } from "@vnoc/shared/messages";
 import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
@@ -89,8 +89,14 @@ export function activate(ctx: vscode.ExtensionContext) {
   });
   const draftDocs = new DraftDocs();
   // the host's copy of the canvas's drafts: fed by the page, acted on only when the canvas is closed or at start (docs/17 E6, §7)
-  const canvasTab = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith(CANVAS));
-  const draftCopy = new DraftCopy(ctx.workspaceState, { save: (params) => commands.editSaveOf(params), reopen: () => void panels.showCanvas(), canvasOpen: () => panels.canvas !== undefined || canvasTab() });
+  const tabOf = (viewType: string) => vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith(viewType));
+  const draftCopy = new DraftCopy(ctx.workspaceState, {
+    save: (params) => commands.editSaveOf(params),
+    reopen: (page) => void (page === "canvas" ? panels.showCanvas() : panels.showDocs()),
+    pageOpen: (page) => (page === "canvas" ? panels.canvas !== undefined || tabOf(CANVAS) : panels.docs !== undefined || tabOf(DOCS)),
+  });
+  // Edit on a function or class, or on a doc (§8): a doc the other page has a draft of is `busy`, and the host is the only one that can say so
+  const editStart = (p: EditStartParams) => ("kind" in p ? (draftCopy.busy(p.path, p.page) ? Promise.resolve({ busy: true as const }) : commands.editStartDocOf(p.path, p.saveFirst === true)) : commands.editStartOf(p.path, p.range, p.saveFirst === true));
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
@@ -106,13 +112,13 @@ export function activate(ctx: vscode.ExtensionContext) {
     addDoc: (key) => commands.addDocTo(key),
     docs,
     code: (path, range) => commands.codeOf(path, range),
-    editStart: (path, range, saveFirst) => commands.editStartOf(path, range, saveFirst),
+    editStart,
     editSave: (params) => commands.editSaveOf(params),
     editDiff: (params) => commands.editDiffOf(params),
     copyText: async (text) => void (await vscode.env.clipboard.writeText(text)),
     goToCode: (key) => commands.goToCodeOf(key),
     dirtyFiles: () => dirty.paths,
-    drafts: () => draftCopy.drafts,
+    drafts: (page) => draftCopy.drafts(page),
     callTrees: () => callTrees.all(),
     openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
@@ -131,10 +137,10 @@ export function activate(ctx: vscode.ExtensionContext) {
       onNote(note, store, output, (keys, onScreen) => {
         callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
         wantCalls();
-      }, (drafts) => draftCopy.replace(drafts)),
-    () => void draftCopy.onCanvasClosed(),
+      }, (page, drafts) => draftCopy.replace(page, drafts)),
+    (page) => void draftCopy.onPageClosed(page),
   );
-  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs);
+  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs, docs);
 
   // drafts a canvas left in a window that was reloaded or closed (§7): asked once, a moment after the start
   const startCheck = setTimeout(() => void draftCopy.atStart(), START_CHECK_MS);
@@ -227,7 +233,13 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** every drawing the pages reported, in order */
     renderedPosts: () => renderedPosts,
     /** the host's copy of the canvas's drafts now (what the page's `drafts` notes left, and the flows on close and at start changed) */
-    draftCopy: () => draftCopy.drafts,
+    draftCopy: () => draftCopy.all,
+    /** one page's part of the copy */
+    draftCopyOf: (page: Page) => draftCopy.drafts(page),
+    /** what a page's `drafts` note does: that page's list in the copy is replaced */
+    feedDrafts: (page: Page, drafts: Draft[]) => draftCopy.replace(page, drafts),
+    /** the request a page makes for Edit, with the busy rule: a doc (`kind: "doc"`) or a function */
+    editStartRequest: (params: EditStartParams) => editStart(params),
     /** how the copy shows its notifications; a test answers them. No argument: VS Code's own */
     setDraftNotify: (notify?: Notify) => void (draftCopy.notify = notify ?? showNotification),
     /** the check made when the extension starts, run now */
@@ -274,7 +286,7 @@ export function activate(ctx: vscode.ExtensionContext) {
 }
 
 /** What a webview says that needs no answer. */
-function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void, drafts: (drafts: Draft[]) => void) {
+function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void, drafts: (page: Page, drafts: Draft[]) => void) {
   switch (note.type) {
     case "intent":
       store.dispatch(note.intent, note.context);
@@ -304,7 +316,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       chips = note.chips;
       break;
     case "drafts":
-      drafts(note.drafts);
+      drafts(note.page, note.drafts);
       break;
     case "draftsDrawn":
       draftsChip = { count: note.count, label: note.label };

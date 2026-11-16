@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
 
-import { CLOSE_BUTTONS, DISCARD, REOPEN_CANVAS, SAVE_ALL, type SaveAnswer, START_BUTTONS, closeNotice, countingDrafts, countsOnClose, failedNotice, readDrafts, savedAs, settle, startNotice } from "@vnoc/shared/drafts";
-import type { Draft, EditSaveParams, EditSaveResult } from "@vnoc/shared/messages";
+import { type Copy, DISCARD, PAGES, SAVE_ALL, type SaveAnswer, busyWith, closeButtons, closeNotice, countingDrafts, countsOnClose, emptyCopy, failedNotice, isEmptyCopy, readCopy, reopenButton, savedAs, settle, sourceOf, startButtons, startNotice, withPage } from "@vnoc/shared/drafts";
+import type { Draft, EditSaveParams, EditSaveResult, Page } from "@vnoc/shared/messages";
 
-// The host's copy of the canvas's drafts (docs/17-edit-in-canvas.md E6, §7, 9.5c). A webview panel cannot be dirty and cannot veto its own close, so VS Code cannot ask before it closes the
-// canvas: the page feeds this copy as the drafts change, and the host acts on it only when the canvas is closed or at start, to ask. Everything it decides is `shared/drafts.ts`.
+// The host's copy of the drafts of the pages (docs/17-edit-in-canvas.md E6, §7, §8, 9.5c, 9.6): the canvas and the docs tab each hold their drafts and feed this copy as they change. A webview
+// panel cannot be dirty and cannot veto its own close, so VS Code cannot ask before it closes one: the host acts on the copy only when a page is closed or at start, to ask. Everything it
+// decides is `shared/drafts.ts`.
 
-/** The key of the copy in `workspaceState`: the whole list, replaced each time. */
+/** The key of the copy in `workspaceState`: a list per page, replaced as a whole each time. */
 export const DRAFTS_KEY = "vnoc.drafts";
 
 /** A notification with buttons: the button pressed, or `undefined` when it was dismissed. A parameter of the copy, so a test can answer it. */
@@ -17,14 +18,14 @@ export const showNotification: Notify = async (message, ...buttons) => vscode.wi
 export interface DraftCopyDeps {
   /** Save on a draft: every row of §6, the question about an ID included */
   save(params: EditSaveParams): Promise<EditSaveResult>;
-  /** brings the canvas up: its page asks for the copy */
-  reopen(): void;
-  /** whether a canvas is open, or a tab of one is waiting to be shown */
-  canvasOpen(): boolean;
+  /** brings a page up: it asks for its drafts */
+  reopen(page: Page): void;
+  /** whether a page is open, or a tab of it is waiting to be shown */
+  pageOpen(page: Page): boolean;
 }
 
 export class DraftCopy {
-  private held: Draft[];
+  private held: Copy;
   /** how a notification is shown; a test replaces it */
   notify: Notify = showNotification;
 
@@ -32,69 +33,92 @@ export class DraftCopy {
     private readonly memento: vscode.Memento,
     private readonly deps: DraftCopyDeps,
   ) {
-    this.held = readDrafts(memento.get(DRAFTS_KEY));
+    this.held = readCopy(memento.get(DRAFTS_KEY));
   }
 
-  get drafts(): Draft[] {
-    return this.held;
+  /** One page's drafts. */
+  drafts(page: Page): Draft[] {
+    return this.held[page];
   }
 
-  /** What the page said (the whole list): the copy is replaced. An empty list clears it: the last draft was saved or discarded. */
-  replace(drafts: unknown): void {
-    this.set(readDrafts(drafts));
+  /** Every draft of both pages (the test suite reads this). */
+  get all(): Draft[] {
+    return [...this.held.canvas, ...this.held.docs];
   }
 
-  clear(): void {
-    this.set([]);
+  /** What a page said (its whole list): that page's list is replaced, the other's is kept. An empty list clears it: the last draft was saved or discarded. */
+  replace(page: Page, drafts: unknown): void {
+    this.set(withPage(this.held, page, readCopy({ [page]: drafts })[page]));
   }
 
-  private set(next: Draft[]): void {
+  clear(page: Page): void {
+    this.set(withPage(this.held, page, []));
+  }
+
+  /** Whether `asking` may not edit this doc because the other page has a draft of it (§8). */
+  busy(path: string, asking: Page): boolean {
+    return busyWith(this.held, path, asking, (page) => this.deps.pageOpen(page));
+  }
+
+  private set(next: Copy): void {
     this.held = next;
-    void this.memento.update(DRAFTS_KEY, next.length > 0 ? next : undefined);
+    void this.memento.update(DRAFTS_KEY, isEmptyCopy(next) ? undefined : next);
   }
 
   /**
-   * The canvas was closed. Drafts that count: a notification at once, with Save All, Reopen Canvas and Discard; dismissed or ignored, the copy stays and the drafts come back the next
-   * time the canvas opens. Nothing counts (an Edit nothing was typed into): there is nothing to lose, and an untouched draft would only be stale when the canvas opens again, so the copy goes.
+   * A page was closed. Drafts that count: a notification at once, with Save All, Reopen and Discard, naming the page; dismissed or ignored, the copy stays and the drafts come back the next
+   * time the page opens. Nothing counts (an Edit nothing was typed into): there is nothing to lose, and an untouched draft would only be stale when the page opens again, so its list goes.
    */
-  async onCanvasClosed(): Promise<void> {
-    const counting = countingDrafts(this.held);
-    if (counting.length === 0) return this.clear();
-    const answer = await this.notify(closeNotice(counting.length), ...CLOSE_BUTTONS);
-    if (answer === SAVE_ALL) await this.saveAll();
-    else if (answer === REOPEN_CANVAS) this.deps.reopen();
-    else if (answer === DISCARD) this.clear();
+  async onPageClosed(page: Page): Promise<void> {
+    const counting = countingDrafts(this.held[page]);
+    if (counting.length === 0) return this.clear(page);
+    const answer = await this.notify(closeNotice(counting.length, page), ...closeButtons(page));
+    if (answer === SAVE_ALL) await this.saveAll([page]);
+    else if (answer === reopenButton(page)) this.deps.reopen(page);
+    else if (answer === DISCARD) this.clear(page);
   }
 
-  /** The extension started (a window reload or a new window): the copy has drafts that count and no canvas is open, so say so; Reopen Canvas or Discard. Save All is not offered here. */
+  /**
+   * The extension started (a window reload or a new window): the pages that have drafts that count and are not open, said in one notification (the canvas, the docs tab, or V-NOC for both);
+   * Reopen brings those pages back, Discard clears their lists. Save All is not offered here.
+   */
   async atStart(): Promise<void> {
-    const counting = countingDrafts(this.held);
-    if (counting.length === 0 || this.deps.canvasOpen()) return;
-    const answer = await this.notify(startNotice(counting.length), ...START_BUTTONS);
-    if (answer === REOPEN_CANVAS) this.deps.reopen();
-    else if (answer === DISCARD) this.clear();
+    const pages = PAGES.filter((page) => countingDrafts(this.held[page]).length > 0 && !this.deps.pageOpen(page));
+    const source = sourceOf(pages);
+    if (source === null) return;
+    const n = pages.reduce((sum, page) => sum + countingDrafts(this.held[page]).length, 0);
+    const answer = await this.notify(startNotice(n, source), ...startButtons(source));
+    if (answer === reopenButton(source)) pages.forEach((page) => this.deps.reopen(page));
+    else if (answer === DISCARD) pages.forEach((page) => this.clear(page));
   }
 
   /**
    * Save All: each draft that counts goes through Save, one after the other (two in one file: the first changes the version, so the second takes §6's second row). Saved or written, it leaves
-   * the copy; a conflict or a gone function stays in that state, and a save the user cancelled or that failed stays as it was. What stays is said in a second notification, with Reopen Canvas.
+   * the copy; a conflict or a gone function stays in that state, and a save the user cancelled or that failed stays as it was. What stays is said in a second notification, with the reopen button.
    */
-  private async saveAll(): Promise<void> {
-    const drafts = this.held;
-    const answers: (SaveAnswer | "error" | undefined)[] = [];
-    for (const d of drafts) {
-      if (!countsOnClose(d)) {
-        answers.push(undefined);
-        continue;
+  private async saveAll(pages: Page[]): Promise<void> {
+    let failed = 0;
+    for (const page of pages) {
+      const drafts = this.held[page];
+      const answers: (SaveAnswer | "error" | undefined)[] = [];
+      for (const d of drafts) {
+        if (!countsOnClose(d)) {
+          answers.push(undefined);
+          continue;
+        }
+        try {
+          answers.push(savedAs(await this.deps.save({ ...(d.kind ? { kind: d.kind } : {}), key: d.key, path: d.path, range: d.range, version: d.version, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text })));
+        } catch {
+          answers.push("error");
+        }
       }
-      try {
-        answers.push(savedAs(await this.deps.save({ key: d.key, path: d.path, range: d.range, version: d.version, base: d.base, prefix: d.prefix, eol: d.eol, text: d.text })));
-      } catch {
-        answers.push("error");
-      }
+      const settled = settle(drafts, answers);
+      this.set(withPage(this.held, page, settled.remaining));
+      failed += settled.failed;
     }
-    const { remaining, failed } = settle(drafts, answers);
-    this.set(remaining);
-    if (failed > 0 && (await this.notify(failedNotice(failed), REOPEN_CANVAS)) === REOPEN_CANVAS) this.deps.reopen();
+    const source = sourceOf(pages)!;
+    if (failed > 0 && (await this.notify(failedNotice(failed, source), reopenButton(source))) === reopenButton(source)) pages.forEach((page) => this.deps.reopen(page));
   }
 }
+
+export { emptyCopy };

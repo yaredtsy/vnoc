@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { SAVE_ANYWAY, afterLocate, answerForAlready, firstStep, idQuestion, nodeName, outcomeAfterApply, withDraft } from "./saveDraft.ts";
+import { SAVE_ANYWAY, afterLocate, answerForAlready, docLocate, endOf, firstStep, idQuestion, nodeName, outcomeAfterApply, wholeRange, withDraft } from "./saveDraft.ts";
 
 // docs/17-edit-in-canvas.md §6, the table of the three cases, and the "already saved" rule of 9.4.
 
@@ -65,4 +65,34 @@ for (const r of names) test(`the question names ${r.key} as ${r.name}`, () => as
 test("the question's text, and the button", () => {
   assert.equal(idQuestion("app/orders.py::Order.parse"), "This removes parse's ID: its docs will be Missing.");
   assert.equal(SAVE_ANYWAY, "Save Anyway");
+});
+
+// §8: a doc's draft is of the whole file; `locate` for a doc answers the whole document as it is now.
+const ends: { name: string; text: string; end: { line: number; character: number } }[] = [
+  { name: "empty", text: "", end: { line: 0, character: 0 } },
+  { name: "one line, no newline", text: "# Title", end: { line: 0, character: 7 } },
+  { name: "a trailing newline: the last line is empty", text: "# Title\n", end: { line: 1, character: 0 } },
+  { name: "two lines", text: "a\nbc", end: { line: 1, character: 2 } },
+  { name: "CRLF counts once", text: "a\r\nbc\r\n", end: { line: 2, character: 0 } },
+  { name: "a lone CR ends a line, as VS Code counts", text: "a\rb", end: { line: 1, character: 1 } },
+  { name: "blank lines", text: "a\n\n\nb", end: { line: 3, character: 1 } },
+  { name: "frontmatter and a body", text: "---\nnode: X\n---\n# T\n\ntext\n", end: { line: 6, character: 0 } },
+];
+for (const r of ends) test(`the end of a doc: ${r.name}`, () => assert.deepEqual(endOf(r.text), r.end));
+
+test("a doc's whole range starts at 0:0 and ends at the end of the text", () => {
+  assert.deepEqual(wholeRange("a\nbc"), { start: { line: 0, character: 0 }, end: { line: 1, character: 2 } });
+});
+
+test("locate for a doc finds the whole document it is given, whatever the key", async () => {
+  assert.deepEqual(await docLocate("/abs/overview.md", { text: "# A\n\nmore\n" }), wholeRange("# A\n\nmore\n"));
+});
+
+test("the rows of §6 with a whole-file locate: moved and unchanged writes, changed conflicts, already saved is saved", () => {
+  const base = "# A\n\ntext\n";
+  const written = "# A\n\nnew text\n";
+  assert.equal(afterLocate({ found: true, sentVersion: 5, version: 5, current: base, base, written }), "write");
+  assert.equal(afterLocate({ found: true, sentVersion: 5, version: 5, current: "# A\n\nother\n", base, written }), "conflict");
+  assert.equal(afterLocate({ found: true, sentVersion: 5, version: 5, current: written, base, written }), "already");
+  assert.equal(afterLocate({ found: true, sentVersion: 5, version: 6, current: base, base, written }), "conflict", "the document moved while the core looked: still the re-check");
 });

@@ -31,6 +31,36 @@ for (const c of round) {
   test(`reindent(dedent(x), x) is x: ${c.name}`, () => assert.equal(reindent(dedent(c.text, c.prefix), c.text, c.prefix, c.eol), c.text));
 }
 
+// §8: a doc's draft is the whole file, with no prefix. The same function, so a Markdown file comes back byte for byte, `eol` honoured.
+const DOC = "---\nnode: 0Q8V5W4T2F7KX9M3B6D1RZ4H7K\nhint: src/orders.py::parse_order\n---\n# Why we parse twice\n\nThe upstream API sends  \nthe same field twice.\n\n    an indented code block\n\n- one\n  - nested\n\n\tA tab-indented line\n\nLast line, trailing spaces   \n";
+const docs: { name: string; eol: string; text: string }[] = [
+  { name: "a doc with frontmatter, hard breaks, an indented code block, a tab and a trailing newline", eol: LF, text: DOC },
+  { name: "the same in a CRLF file", eol: CRLF, text: DOC.replace(/\n/g, CRLF) },
+  { name: "no trailing newline", eol: LF, text: DOC.replace(/\n$/, "") },
+  { name: "several trailing newlines", eol: LF, text: DOC + "\n\n" },
+  { name: "an empty file", eol: LF, text: "" },
+  { name: "one line", eol: LF, text: "# Title" },
+  { name: "only newlines", eol: LF, text: "\n\n\n" },
+  { name: "lines of only whitespace", eol: LF, text: "a\n   \n\t\nb" },
+  { name: "a doc of a long run of identical lines (the diff's head and tail)", eol: LF, text: "x\n".repeat(2000) },
+];
+for (const c of docs) {
+  test(`a doc, empty prefix: reindent(dedent(x), x) is x: ${c.name}`, () => assert.equal(reindent(dedent(c.text, ""), c.text, "", c.eol), c.text));
+}
+
+test("a doc, empty prefix: an edit changes that line and nothing else; an added line has no indent and the file's line ending", () => {
+  assert.equal(reindent(DOC.replace("twice\n", "three times\n"), DOC, "", LF), DOC.replace("twice\n", "three times\n"));
+  assert.equal(reindent(DOC.replace("- one\n", "- one\n- one and a half\n"), DOC, "", LF), DOC.replace("- one\n", "- one\n- one and a half\n"));
+  const crlf = DOC.replace(/\n/g, CRLF);
+  assert.equal(reindent(DOC.replace("- one\n", "- one\n- one and a half\n"), crlf, "", CRLF), crlf.replace("- one\r\n", "- one\r\n- one and a half\r\n"), "Monaco's text with LF, written into a CRLF file: the file's ending");
+  assert.equal(reindent(DOC.replace(/\n/g, CRLF), DOC, "", LF), DOC, "Monaco's CRLF text written into an LF file: the file's ending");
+});
+
+test("a doc, empty prefix: a deleted line is gone, and a doc emptied is empty", () => {
+  assert.equal(reindent(DOC.replace("# Why we parse twice\n\n", ""), DOC, "", LF), DOC.replace("# Why we parse twice\n\n", ""));
+  assert.equal(reindent("", DOC, "", LF), "");
+});
+
 const BASE = 'def method(self):\n        """Does it.\nat the margin\n        """\n        a = 1   \n\n        b = 2\n        return a + b';
 const P = "    ".repeat(2);
 const shown = dedent(BASE, P);

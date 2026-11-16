@@ -2,11 +2,15 @@
 // host's copy when it starts with none of its own. What counts as a change, and what a start takes, are the rules in `draftRules.ts` and `shared/drafts.ts`.
 
 import { adopt } from "@vnoc/shared/drafts.ts";
+import type { Page } from "@vnoc/shared/messages.ts";
 
 import { post, request } from "../host.ts";
 import { feedFor } from "./draftRules.ts";
 import { useDrafts } from "./drafts.ts";
 import { setCodeOpen } from "./view.ts";
+
+/** Which page this is: the bundle is the canvas, or the docs tab (`data-mode`). The host keeps one list per page (§8, 9.6). */
+export const PAGE: Page = document.getElementById("root")?.dataset.mode === "docs" ? "docs" : "canvas";
 
 /** Typing is sent this long after the last keystroke. */
 export const TYPING_MS = 500;
@@ -18,7 +22,7 @@ let pending = false;
 function send(): void {
   clearTimeout(timer);
   pending = false;
-  post({ type: "drafts", drafts: Object.values(useDrafts.getState().drafts) });
+  post({ type: "drafts", page: PAGE, drafts: Object.values(useDrafts.getState().drafts) });
 }
 
 useDrafts.subscribe((state, before) => {
@@ -40,7 +44,7 @@ window.addEventListener("pagehide", flush);
 // the host's copy is told so; else it takes the host's copy, each draft in its saved state. A draft the page takes shows its code, so the card says what it holds.
 if (Object.keys(useDrafts.getState().drafts).length > 0) send();
 else
-  request("drafts").then(
+  request("drafts", { page: PAGE }).then(
     ({ drafts }) => {
       const own = useDrafts.getState().drafts;
       const next = adopt(own, drafts);
