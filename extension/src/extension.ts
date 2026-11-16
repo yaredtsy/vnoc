@@ -35,7 +35,7 @@ const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
 const editStatePosts: { key: string; state: string }[] = [];
 /** The answers of the pages to "check the keys of a code editor" (for the test suite). */
-const keysCheckedPosts: { found: boolean; taken: string[] }[] = [];
+const keysCheckedPosts: { found: boolean; target: string; taken: string[] }[] = [];
 
 /** What the bar's ⚠ last said (for the test suite). */
 type Warned = { level: "none" | "warning" | "error"; text: string };
@@ -254,7 +254,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       cardsDrawn(note.keys, note.onScreen);
       break;
     case "keysChecked":
-      keysCheckedPosts.push({ found: note.found, taken: note.taken });
+      keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken });
       break;
     case "editState":
       editStatePosts.push({ key: note.key, state: note.state });

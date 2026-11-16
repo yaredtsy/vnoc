@@ -18,7 +18,7 @@ interface Api {
   editStates(): { key: string; state: string }[];
   viewCommand(data: { name: "setDraft" | "save"; key: string; text?: string }): void;
   checkKeys(): void;
-  keysChecked(): { found: boolean; taken: string[] }[];
+  keysChecked(): { found: boolean; target: string; taken: string[] }[];
   editStart(path: string, range: Range, saveFirst?: boolean): Promise<EditStartResult>;
   dispatch(intent: Intent): void;
   webviewErrors(): string[];
@@ -161,7 +161,7 @@ suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
         api.checkKeys();
         await sleep(500);
       }
-      assert.deepStrictEqual(api.keysChecked().at(-1), { found: true, taken: [] }, "the editor was there, and the canvas took none of its keys");
+      assert.deepStrictEqual(api.keysChecked().at(-1), { found: true, target: "TEXTAREA", taken: [] }, "the editor was there, typing into a textarea (so VS Code's cut and paste land: 9.2d), and the canvas took none of its keys");
     } finally {
       await closeCanvas();
     }

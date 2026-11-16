@@ -23,14 +23,14 @@ export const CHECKED_KEYS: { name: string; key: string; code: string; meta?: boo
   { name: "⌘V", key: "v", code: "KeyV", meta: true },
 ];
 
-/** `found`: whether a code editor's element was there to dispatch on. `taken`: the keys some handler called `preventDefault()` on. */
-export function checkKeys(): { found: boolean; taken: string[] } {
+/** `found`: whether a code editor's element was there to dispatch on, and `target` its tag (a `TEXTAREA`: cut and paste work in it). `taken`: the keys some handler called `preventDefault()` on. */
+export function checkKeys(): { found: boolean; target: string; taken: string[] } {
   const target = document.querySelector(".monaco-host .native-edit-context, .monaco-host textarea");
-  if (!target) return { found: false, taken: [] };
+  if (!target) return { found: false, target: "", taken: [] };
   const taken = CHECKED_KEYS.filter((k) => {
     const event = new KeyboardEvent("keydown", { key: k.key, code: k.code, metaKey: !!k.meta, shiftKey: !!k.shift, altKey: !!k.alt, bubbles: true, cancelable: true, composed: true });
     target.dispatchEvent(event);
     return event.defaultPrevented;
   }).map((k) => k.name);
-  return { found: true, taken };
+  return { found: true, target: target.nodeName, taken };
 }

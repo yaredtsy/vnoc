@@ -150,6 +150,9 @@ function CodeEditor({ text, path, firstLine, editState, onText, onSave }: Editor
       editor.current = monaco.editor.create(host.current, {
         value: i.text,
         language: languageOf(i.path),
+        // Monaco's own hidden textarea, not its EditContext (a div): VS Code's webview takes ⌘X and ⌘V, and sends them back to the page to run on the focused
+        // element, where a textarea cuts and pastes and the EditContext div did nothing (⌘C only reads the selection, so it worked)
+        editContext: false,
         readOnly: !i.editable,
         theme: currentTheme(), // Shiki builds its colour map when an editor is created with a theme; without it everything is one colour
         automaticLayout: true, // the card is resized by the canvas; Monaco follows its container
