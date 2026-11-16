@@ -27,6 +27,23 @@ let api: Api;
 
 const KEY = "nested.py::decorated";
 
+/**
+ * Puts the fixture back. If VS Code holds the file open it does it, with an edit and a save: a file written behind its back leaves the document older than the disk,
+ * and the next save of it is refused ("the content of the file is newer") or waits on VS Code's own prompt, so the card stays `saving` (what made 9.3's tests fail
+ * one run in three). A file nothing holds open is written directly.
+ */
+async function restoreFixture(file: string, original: string): Promise<void> {
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
+  if (open && open.getText() !== original) {
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(open.uri, new vscode.Range(0, 0, open.lineCount, 0), original);
+    await vscode.workspace.applyEdit(edit);
+  }
+  if (open?.isDirty) await open.save();
+  if (fs.readFileSync(file, "utf8") !== original) fs.writeFileSync(file, original);
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+}
+
 suite("reading: a card marks a file with unsaved changes", () => {
   suiteSetup(async () => {
     api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
@@ -91,7 +108,7 @@ suite("reading: a card marks a file with unsaved changes", () => {
       await vscode.commands.executeCommand("vnoc.hideCodeInCard", node);
       api.dispatch({ type: "collapseAll" });
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
-      fs.writeFileSync(file, original);
+      await restoreFixture(file, original);
     }
   });
 });
@@ -180,7 +197,7 @@ suite("editing: Edit on a card (docs/17-edit-in-canvas.md step 9.2)", () => {
       assert.deepStrictEqual(await api.editStart("nested.py", range), saved);
     } finally {
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
-      fs.writeFileSync(file, original);
+      await restoreFixture(file, original);
     }
   });
 });
@@ -199,7 +216,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     await closeCanvas();
     await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor").then(undefined, () => {});
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
-    fs.writeFileSync(file(), original);
+    await restoreFixture(file(), original);
   });
 
   /** Edit on the card, as the menu does, until this canvas says `editing`; the position in the page's notes from which to read what it says next. */
@@ -209,6 +226,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     await vscode.commands.executeCommand("vnoc.openCanvas");
     await until("the canvas tab", () => canvasTabs().length === 1);
     api.dispatch({ type: "expand", ids: ["nested.py"] });
+    await waitFor("the file on disk to be what the fixture is", () => fs.readFileSync(file(), "utf8") === original);
     const since = api.editStates().length;
     const latest = () => api.editStates().slice(since).filter((p) => p.key === id).at(-1)?.state;
     for (let waited = 0; latest() !== "editing"; waited += 500) {
@@ -246,7 +264,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       assert.deepStrictEqual(api.webviewErrors(), []);
     } finally {
       await closeCanvas();
-      fs.writeFileSync(file(), original);
+      await restoreFixture(file(), original);
     }
   });
 
@@ -264,7 +282,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       }, 30_000);
     } finally {
       await closeCanvas();
-      fs.writeFileSync(file(), original);
+      await restoreFixture(file(), original);
     }
   });
 
@@ -290,7 +308,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
     } finally {
       await closeCanvas();
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
-      fs.writeFileSync(file(), original);
+      await restoreFixture(file(), original);
     }
   });
 });
