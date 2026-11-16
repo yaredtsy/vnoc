@@ -1,11 +1,12 @@
-# 17. Release 0.3: edit in the canvas
+# 17. Edit in the canvas
 
-Written 2026-11-12. The build plan for 0.3. It replaces the 0.3 row of [`02-mvp-and-releases.md`](02-mvp-and-releases.md) §3 ("Monaco as a view of
+Written 2026-11-12; brought up to date with the code on 2026-11-16 (after 0.2). The build plan for editing in the canvas. **It is not tied
+to a release number** (your call, 2026-11-16): it ships in whichever release comes next, and no step here changes the version. It replaces the 0.3 row of [`02-mvp-and-releases.md`](02-mvp-and-releases.md) §3 ("Monaco as a view of
 VS Code's document"), and it makes spike S5 much smaller. Where this file is more exact, it wins.
 
 ```
 edit in the canvas
-├── 1. what 0.3 ships
+├── 1. what it ships
 ├── 2. decisions
 ├── 3. why a draft, not a live view
 ├── 4. a draft: its states
@@ -21,7 +22,7 @@ edit in the canvas
 └── 11. tests
 ```
 
-## 1. What 0.3 ships
+## 1. What it ships
 
 Open a function's code on its card, press **Edit**, type, press **⌘S**. The function in the file now has the new text. The tree, the doc badges
 and the call trees follow after the save, as they do today when you save in a normal editor.
@@ -38,11 +39,11 @@ and the call trees follow after the save, as they do today when you save in a no
 | # | Decision | Why |
 |---|---|---|
 | **E1** | **The card edits a draft.** Nothing leaves the card until ⌘S. | Nothing to send per keystroke, so nothing re-runs, and no edit bounces back and forth between the card and VS Code's document. |
-| **E2** | **The index follows saves only**, as now (`extension/src/core.ts:122`, the file watcher). No outline, range or call tree of unsaved text. | Following unsaved text means a re-outline, moved ranges and a new call tree on every keystroke. |
+| **E2** | **The index follows saves only**, as now (`extension/src/core.ts:172`, the file watcher). No outline, range or call tree of unsaved text. | Following unsaved text means a re-outline, moved ranges and a new call tree on every keystroke. |
 | **E3** | **Save checks before it writes:** the document's version, then the function's text against the draft's starting text (§6). A function changed in the editor is never overwritten. | One check replaces a live view. |
 | **E4** | **Save writes through a `WorkspaceEdit`, then saves the file only if it was not dirty before**: the rule `relink.ts`, `addDoc.ts` and `writeId.ts` already follow. | Unsaved work of the user's own in a tab is never saved for them. |
 | **E5** | **Editing a file that has unsaved changes is refused**: "Save `<file>` first", with a **Save and Edit** button. | The card's range comes from the last save. In a dirty file it can point at the wrong lines (§5). |
-| **E6** | **A draft lives in the webview** (React state, copied to `vscode.setState`), not in the extension. | The panel already has `retainContextWhenHidden`, so hiding the tab keeps the draft; `setState` keeps it through a webview reload. The extension stays stateless about drafts. |
+| **E6** | **A draft lives in the webview** (a store beside `webview/src/state/view.ts`, saved with the same `vscode.setState` call: `setState` keeps one object per webview, so the draft must go into `view.ts`'s `Saved`, not a second call that would overwrite it), not in the extension. | The panel already has `retainContextWhenHidden`, so hiding the tab keeps the draft; `setState` keeps it through a webview reload. The extension stays stateless about drafts. |
 | **E7** | **The live view (S5's first question) is later**, and it is not a format change. | Nothing on disk depends on how the card edits. |
 
 ## 3. Why a draft, not a live view
@@ -78,13 +79,13 @@ Closing a card in editing asks "Save / Discard / Cancel".
 
 ## 5. Opening a draft
 
-**Edit** on the card (and on the node menu, `16-ui-redesign/08`) does this:
+**Edit** on the card (and on the node menu, `16-ui-redesign/08`; **that list has no Edit row yet**: 9.2 adds one in `4_code`, after Go to Code, `kind != folder`, and the card's button in `cardButtons.ts`) does this:
 
 1. The webview asks the host `editStart { path, range }`.
 2. The host opens the document. **If it is dirty, it answers `{ dirty: true }`** and the card shows E5's message. **Save and Edit** saves the
    document and starts again from 1; the save makes the index update, so the range is fresh.
 3. Otherwise the host answers `{ text, version, prefix }`:
-   - `text`: the range's text, as `codeOf` reads it today (`extension/src/commands.ts:300`);
+   - `text`: the range's text, as `codeOf` reads it today (`extension/src/commands.ts:383`);
    - `version`: `document.version`;
    - `prefix`: the text of the first line **before** `range.start` (the `def`'s indentation, tabs or spaces as written).
 4. The card keeps `{ key, path, range, version, base: text, prefix }` and shows the text dedented, as today (`NodeCode.tsx`, `dedent`).
@@ -140,7 +141,12 @@ the same bytes for spaces, tabs, empty lines and a docstring with less indent th
 
 ## 8. The doc panel: the same rule for Markdown
 
-F7 (`08-decisions-to-log.md`) moved editing a doc inside the panel to 0.3. It uses the same draft, with the whole file as the range:
+F7 (`08-decisions-to-log.md`) moved editing a doc inside the panel to this plan. It uses the same draft, with the whole file as the range.
+
+**Open since the redesign (decide before 9.6):** there are now two places that show a doc: the **docs panel** on the canvas (ⓘ,
+`webview/src/docs/DocPanel.tsx`) and the **docs tab** beside the editor (`webview/src/docs/DocsApp.tsx`). Recommendation: both, since they
+share `markdown.ts` and the draft rule is the same; if only one, the docs tab, because it is where J6 sends you with the canvas hidden.
+
 
 - **Edit** in the panel starts a draft of the `.md`, refused if the file is dirty (E5).
 - **⌘S**: if the version is the same, write it; if not, and the file's text still equals `base`, write it; otherwise conflict. There is no
@@ -156,13 +162,13 @@ F7 (`08-decisions-to-log.md`) moved editing a doc inside the panel to 0.3. It us
 
 ## 10. Order of work
 
-On a branch `0.3-edit` from `main` after 0.2 is merged. Each row is one commit and leaves `pnpm -r test`, `cargo test` and the window suite green.
+On a branch `edit-in-canvas` from `main`. Each row is one commit and leaves `pnpm -r test`, `cargo test` and the window suite green.
 
 | # | Build | Proof |
 |---|---|---|
 | **9.0** | three checks, written into this file: ⌘S in a webview Monaco with `addCommand` and VS Code's Save both bound · `WorkspaceEdit` on a document that has moved on (Q4 in `08`) · `vscode.setState` with a 100 KB draft | the answers in §7 and §6, the **[check]** marks removed |
 | **9.1** | reading: the card marks "unsaved in editor" when the document is dirty (`codeOf` returns `dirty` beside the text) | a window test: type in a tab, the card shows the mark |
-| **9.2** | `editStart` in the relay and `commands.ts` · the card's editing state, Save and Discard, the draft in `setState` · `dedent` / re-indent as a pair | the re-indent tests (§11 a) · by hand: Edit, type, Discard |
+| **9.2** | `editStart` in `shared/messages.ts`, the host's request table (`extension/src/extension.ts:88`) and `commands.ts` · the Edit row in the node menu and the card's button · the card's editing state, Save and Discard, the draft in `setState` · `dedent` / re-indent as a pair | the re-indent tests (§11 a) · by hand: Edit, type, Discard |
 | **9.3** | `editSave`, the first row of §6, and E4's save rule | a window test: edit a function in the card, ⌘S, the file on disk has the new text and the tree updates |
 | **9.4** | `vnoc/locate` in the core · the second and third rows · the conflict and gone states | the core test (§11 b) · window tests (§11 c, d) |
 | **9.5** | §7: the `ID:` line warning, one draft per node, the close question, "1 unsaved draft" in the bar | window tests (§11 e) |

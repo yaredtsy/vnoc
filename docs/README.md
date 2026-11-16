@@ -111,7 +111,7 @@ V-NOC
 ├── CI AND RELEASES ───────────────────────────────── 19-ci-cd.md
 │   └── test every PR once · package.yml · publish.yml (CHANGELOG notes, checksums) · Dependabot
 │
-├── RELEASE 0.3: EDIT IN THE CANVAS ─────────────── 17-edit-in-canvas.md
+├── EDIT IN THE CANVAS ───────────────────────────── 17-edit-in-canvas.md
 │   └── a draft, not a live view · save checks first · the index follows saves · the doc panel the same way · steps 9.0 – 9.6
 │
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
