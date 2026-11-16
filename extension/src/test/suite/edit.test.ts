@@ -248,8 +248,10 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       const shown = api.codeShown().length;
       api.viewCommand({ name: "setDraft", key: id, text: base.replace("return 9", "return 99") }); // what typing in the card makes
       api.viewCommand({ name: "save", key: id }); // what the button and ⌘S call
-      await until("the file on disk to change", () => fs.readFileSync(file(), "utf8") !== original, 30_000);
-      assert.strictEqual(fs.readFileSync(file(), "utf8"), original.replace("return 9\n", "return 99\n"), "the function has the new text, and every other byte is as it was");
+      // the whole file, compared with the expected string: the function has the new text and every other byte is as it was. Waited for, not read once: VS Code
+      // writes a file by emptying it and then filling it, and a read in between sees nothing
+      const expected = original.replace("return 9\n", "return 99\n");
+      await waitFor("the file on disk to be the original with the one line changed", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
       const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file());
       assert.ok(document && !document.isDirty, "E4: the file was not dirty before, so it is saved");
 
@@ -274,8 +276,8 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       const { base } = await startEditing(id);
       api.viewCommand({ name: "setDraft", key: id, text: base.replace("coro", "renamed_coro") });
       api.viewCommand({ name: "save", key: id });
-      await until("the file on disk to change", () => fs.readFileSync(file(), "utf8") !== original, 30_000);
-      assert.strictEqual(fs.readFileSync(file(), "utf8"), original.replace("async def coro():", "async def renamed_coro():"));
+      const expected = original.replace("async def coro():", "async def renamed_coro():");
+      await waitFor("the file on disk to be the original with the function renamed", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
       await waitFor("the tree to have the new name and not the old one", async () => {
         const ids = allNodes((await api.structure()).root).map((n) => n.id);
         return ids.includes("nested.py::renamed_coro") && !ids.includes("nested.py::coro");
