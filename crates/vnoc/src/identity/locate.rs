@@ -30,6 +30,7 @@ pub enum LocateError {
 ///
 /// 1. By ID: a def of the text that carries it. With several (a copy-paste), the one at the key's own place, else the first.
 /// 2. By qualname: the def with the key's qualname and the key's occurrence (which same-named definition it is).
+///
 /// A node with an ID that the text no longer carries is looked for by name, as a documented node is: the ID may have been deleted.
 pub fn locate_in(defs: &[Def], key: &LocationKey, id: Option<&NodeId>) -> Option<Range> {
     let which = occurrences(defs.iter().map(|d| d.qualname.as_str()));
