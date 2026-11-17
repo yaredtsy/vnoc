@@ -36,7 +36,9 @@ const renderWaiters: ((r: Rendered) => void)[] = [];
 type SidebarRendered = { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number };
 const sidebarPosts: SidebarRendered[] = [];
 /** The answers the STRUCTURE view drew for its search box (for the test suite). */
-const searchDrawnPosts: { query: string; ids: string[]; total: number; notes: string[]; ms: number; trip: number }[] = [];
+const searchDrawnPosts: { query: string; ids: string[]; docs: string[]; total: number; notes: string[]; ms: number; trip: number }[] = [];
+/** What the docs tab said it shows (for the test suite). */
+const docsShownPosts: { pinned: string | null; node: string | null; doc: string | null }[] = [];
 /** What the STRUCTURE view said when it handled `focusSearch`: whether the cursor is in the box, and what the box holds (for the test suite). */
 const searchFocusedPosts: { focused: boolean; text: string }[] = [];
 /** What the cards drew of their code (for the test suite). */
@@ -132,6 +134,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     reportIssue: async () => void (await vscode.commands.executeCommand("vnoc.reportIssue")),
     retryCalls: async (key) => callTrees.retry(key),
     rowClick: (context, id) => commands.rowClick(context, id),
+    showDoc: (params) => commands.showDoc(params),
     command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
   });
   panels = new Surfaces(
@@ -270,6 +273,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     searchDrawn: () => searchDrawnPosts,
     /** puts text in the STRUCTURE view's search box as typing would (the view command reaches the sidebar through `panels.emit`, like every other page) */
     setSearch: (text: string) => panels.emit("viewCommand", { name: "setSearch", text }),
+    /** what the docs tab showed each time it changed, in order: the node it is pinned to, the node it draws, and the doc's path */
+    docsShown: () => docsShownPosts,
     /** every `focusSearch` the STRUCTURE view handled (*V-NOC: Search…*), in order: was the cursor in the box, and what did it hold */
     searchFocused: () => searchFocusedPosts,
     /** a key pressed in the STRUCTURE view's search box (`ArrowDown`, `Enter`, `Escape`), as the page handles it: the suite cannot press keys in a webview */
@@ -327,7 +332,10 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });
       break;
     case "searchDrawn":
-      searchDrawnPosts.push({ query: note.query, ids: note.ids, total: note.total, notes: note.notes, ms: note.ms, trip: note.trip });
+      searchDrawnPosts.push({ query: note.query, ids: note.ids, docs: note.docs, total: note.total, notes: note.notes, ms: note.ms, trip: note.trip });
+      break;
+    case "docsShown":
+      docsShownPosts.push({ pinned: note.pinned, node: note.node, doc: note.doc });
       break;
     case "searchFocused":
       searchFocusedPosts.push({ focused: note.focused, text: note.text });

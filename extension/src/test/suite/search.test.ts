@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 
 import type { SearchResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
+import { MISSING_PIN } from "@vnoc/shared/tree";
 import { sleep, until, waitFor } from "./util";
 
 // Search in a real window (docs/20-search/06-build-order.md S3): the STRUCTURE view's box asks the core and draws what it answers, and *V-NOC: Search…* puts the cursor in that box (a QuickPick re-sorted the core's order: S3b).
@@ -14,6 +15,7 @@ import { sleep, until, waitFor } from "./util";
 interface Drawn {
   query: string;
   ids: string[];
+  docs: string[];
   total: number;
   notes: string[];
   ms: number;
@@ -27,6 +29,7 @@ interface Api {
   setSearch(text: string): void;
   searchFocused(): { focused: boolean; text: string }[];
   searchKey(key: string): void;
+  docsShown(): { pinned: string | null; node: string | null; doc: string | null }[];
   sidebarOpen(): boolean;
   sidebarVisible(): boolean;
   webviewErrors(): string[];
@@ -167,7 +170,7 @@ suite("search", () => {
     await until("the pointer to clear", () => api.session().highlight === null);
   });
 
-  test("`kind:method` draws exactly the fixture's four methods, in reading order, and no note", async () => {
+  test("`kind:method` draws exactly the fixture's methods, in reading order, and no note", async () => {
     await showSidebar();
     // a method is a function whose parent is a class; the tree's depth-first order is the reading order
     const methods: string[] = [];
@@ -176,12 +179,13 @@ suite("search", () => {
       n.children.forEach((c) => walk(c, n));
     };
     (await api.structure()).root.children.forEach((c) => walk(c, null));
-    assert.strictEqual(methods.length, 4, `the fixture defines four methods (${methods.join(", ")})`);
+    // the `calls` suite leaves `calls_cls.py` (`Widget.__init__`) in the fixture, so a full run has five: the rows are checked against the structure's own methods
+    assert.ok(methods.length >= 4, `the fixture defines at least four methods (${methods.join(", ")})`);
     const from = api.searchDrawn().length;
     api.setSearch("kind:method");
     const got = await drawn("the answer for `kind:method`", from, (d) => d.query === "kind:method");
     assert.deepStrictEqual(got.ids, methods);
-    assert.strictEqual(got.total, 4);
+    assert.strictEqual(got.total, methods.length);
     assert.deepStrictEqual(got.notes, []);
     api.setSearch("");
   });
@@ -206,5 +210,164 @@ suite("search", () => {
     const fixed = (v: number) => v.toFixed(1);
     console.log(`[measure] search, ${own.length} answers: key to drawn (ms) median ${fixed(median(ms))} worst ${fixed(Math.max(...ms))}; request to drawn (trip) median ${fixed(median(trip))} worst ${fixed(Math.max(...trip))}`);
     assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+  // Docs in the results (docs/20-search/06-build-order.md S7). The fixture gets three docs on `nested.py::decorated` (one attached, two written beside it) and a node that is Missing with one
+  // doc; the words in them are found nowhere in the code, so a query for one draws no node row.
+  suite("docs", () => {
+    const NODE = "nested.py::decorated";
+    const GONE = "quokka_gone.py::quokka_gone";
+    let nodeId = "";
+    let goneId = "";
+    let docDir = "";
+    let goneDir = "";
+    let madeVnoc = false;
+    let vnoc = "";
+    let docSecond = "";
+    let docThird = "";
+    let docGone = "";
+
+    const docsTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith("vnoc.docs"));
+    const closeDocsTab = async () => {
+      await vscode.window.tabGroups.close(docsTabs());
+      await until("the docs tab to close", () => docsTabs().length === 0);
+    };
+    const write = (file: string, id: string, title: string, body: string) => fs.writeFileSync(file, `---\nnode: ${id}\nhint: x\n---\n# ${title}\n\n${body}\n`);
+    /** the core's own answer, for what the page drew */
+    const asked = (query: string) => api.request<SearchResult>("vnoc/search", { query });
+    /** waits until the core finds a doc for `query` (a new file is read a moment after it is written) */
+    const docFound = (query: string, doc: string) => waitFor(`the core to find ${doc} for ${query}`, async () => (await asked(query)).docs.some((d) => d.doc_path === doc), 30_000);
+
+    suiteSetup(async function () {
+      this.timeout(120_000);
+      const structure = await api.structure();
+      vnoc = path.join(structure.git_root, ".vnoc");
+      madeVnoc = !fs.existsSync(vnoc);
+      const attach = async (key: string, file: string, title: string) => {
+        const r = await api.request<{ id: string }>("vnoc/attach", { key, title, markers: false, document: { uri: vscode.Uri.file(file).toString(), version: 1, text: fs.readFileSync(file, "utf8") } });
+        const docs = await api.request<{ path: string }[]>("vnoc/docs", { id: r.id });
+        return { id: r.id, dir: path.dirname(docs[0].path), doc: docs[0].path };
+      };
+      const nested = path.join(folder(), "nested.py");
+      const first = await attach(NODE, nested, "Why decorated");
+      nodeId = first.id;
+      docDir = first.dir;
+      // two more docs on the node, named to come after the attached one: a doc chosen by the pick is not the first
+      docThird = path.join(docDir, "yyy-third.md");
+      docSecond = path.join(docDir, "zzz-second.md");
+      write(first.doc, nodeId, "Why decorated", "Nothing special here.");
+      write(docThird, nodeId, "Third notes", "A word only here: quokkayak.");
+      write(docSecond, nodeId, "Second notes", "A word only here: quokkazebra, and the outer shell.");
+      // a node whose code is deleted after its doc is attached: Missing, with its doc kept
+      const gone = path.join(folder(), "quokka_gone.py");
+      fs.writeFileSync(gone, "def quokka_gone():\n    pass\n");
+      await waitFor("quokka_gone.py in the structure", async () => (await nodesOf()).some((n) => n.id === GONE), 30_000);
+      const g = await attach(GONE, gone, "Where it went");
+      goneId = g.id;
+      goneDir = g.dir;
+      docGone = g.doc;
+      write(docGone, goneId, "Where it went", "The wombatzebra left no code.");
+      fs.rmSync(gone);
+      await waitFor("the node to be Missing", async () => (await api.structure()).missing.some((m: { id: string }) => m.id === goneId), 30_000);
+      await docFound("quokkazebra", docSecond);
+      await docFound("quokkayak", docThird);
+      await docFound("wombatzebra", docGone);
+    });
+
+    suiteTeardown(async function () {
+      this.timeout(60_000);
+      api.setSearch("");
+      await closeDocsTab();
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      fs.rmSync(path.join(folder(), "quokka_gone.py"), { force: true });
+      fs.rmSync(madeVnoc ? vnoc : goneDir, { recursive: true, force: true });
+      if (!madeVnoc) fs.rmSync(docDir, { recursive: true, force: true });
+      // the core has read it, as `indexChanged` says: the node is not Missing, and the fixture's node has no docs, as the later suites expect
+      await waitFor("the core to read the removal", async () => {
+        const s = await api.structure();
+        return !s.missing.some((m: { id: string }) => m.id === goneId) && (await nodesOf()).find((n) => n.id === NODE)?.docs === 0;
+      }, 30_000);
+    });
+
+    /** the answer for `text`, drawn: it has been asked for in the box */
+    async function searched(text: string): Promise<Drawn> {
+      await showSidebar();
+      const from = api.searchDrawn().length;
+      api.setSearch(text);
+      return drawn(`the answer for ${text}`, from, (d) => d.query === text);
+    }
+
+    test("a word only a doc holds finds the doc: no node row, one doc row, and the row's node is pointed at", async () => {
+      const got = await searched("quokkazebra");
+      assert.deepStrictEqual(got.ids, [], "the word is in no name");
+      assert.deepStrictEqual(got.docs, [docSecond]);
+      const core = await asked("quokkazebra");
+      assert.deepStrictEqual(got.docs, core.docs.map((d) => d.doc_path), "what is drawn is what the core says");
+      assert.strictEqual(core.docs[0].node, NODE);
+      assert.strictEqual(core.docs[0].missing, false);
+      await until("the doc's node to be pointed at", () => api.session().highlight === NODE);
+      api.searchKey("Escape");
+      await until("the pointer to clear", () => api.session().highlight === null);
+    });
+
+    test("picking a doc reveals its node and shows that doc in the docs tab, pinned: in a tab the pick opens, and in one that is open", async () => {
+      await closeDocsTab();
+      const from = api.docsShown().length;
+      await searched("quokkazebra");
+      await until("the doc's node to be pointed at", () => api.session().highlight === NODE);
+      api.searchKey("Enter");
+      await until("the node to be selected", () => api.session().contexts.main.selected === NODE);
+      await until("the docs tab", () => docsTabs().length === 1);
+      await until("the tab to show the picked doc, not the node's first", () => api.docsShown().slice(from).some((d) => d.doc === docSecond));
+      assert.deepStrictEqual(api.docsShown().at(-1), { pinned: NODE, node: NODE, doc: docSecond }, "pinned to the node, showing the doc the pick chose");
+      await until("the box to clear", () => api.session().highlight === null);
+
+      // the tab is open now: another doc of the same node reaches it as an event
+      const open = api.docsShown().length;
+      await searched("quokkayak");
+      await until("the doc's node to be pointed at", () => api.session().highlight === NODE);
+      api.searchKey("Enter");
+      await until("the open tab to show the other doc", () => api.docsShown().slice(open).some((d) => d.doc === docThird));
+      assert.deepStrictEqual(api.docsShown().at(-1), { pinned: NODE, node: NODE, doc: docThird });
+      assert.strictEqual(docsTabs().length, 1, "the same tab");
+      await sleep(500);
+      assert.deepStrictEqual(api.webviewErrors(), []);
+      await closeDocsTab();
+    });
+
+    test("a Missing node's doc is marked, points at nothing, and its pick pins the tab to the Missing node with that doc", async () => {
+      await closeDocsTab();
+      const from = api.docsShown().length;
+      const got = await searched("wombatzebra");
+      assert.deepStrictEqual(got.docs, [docGone]);
+      const row = (await asked("wombatzebra")).docs[0];
+      assert.deepStrictEqual([row.missing, row.node, row.node_id], [true, null, goneId]);
+      assert.strictEqual(api.session().highlight, null, "a node that is not in the tree is not pointed at");
+      api.searchKey("Enter");
+      await until("the docs tab", () => docsTabs().length === 1);
+      await until("the tab to show the doc of the Missing node", () => api.docsShown().slice(from).some((d) => d.doc === docGone));
+      assert.deepStrictEqual(api.docsShown().at(-1), { pinned: MISSING_PIN + goneId, node: MISSING_PIN + goneId, doc: docGone });
+      await sleep(500);
+      assert.deepStrictEqual(api.webviewErrors(), []);
+      await closeDocsTab();
+    });
+
+    test("↓ walks from the last node row to the first doc row", async () => {
+      const got = await searched("outer");
+      const core = await asked("outer");
+      assert.ok(core.nodes.length >= 2 && core.docs.length >= 1, `a query that finds both (${core.nodes.length} nodes, ${core.docs.length} docs)`);
+      assert.deepStrictEqual(got.ids, core.nodes.map((n) => n.id));
+      assert.deepStrictEqual(got.docs, core.docs.map((d) => d.doc_path));
+      const last = core.nodes.length - 1;
+      assert.ok(core.docs[0].node !== null && core.docs[0].node !== core.nodes[last].id, "the doc's node is not the last node row's, so the pointer tells them apart");
+      await until("the first row to be pointed at", () => api.session().highlight === core.nodes[0].id);
+      for (let i = 1; i <= last; i++) {
+        api.searchKey("ArrowDown");
+        await until(`node row ${i}`, () => api.session().highlight === core.nodes[i].id, 5_000);
+      }
+      api.searchKey("ArrowDown");
+      await until("the first doc row to be active", () => api.session().highlight === core.docs[0].node, 5_000);
+      api.searchKey("Escape");
+      await until("the pointer to clear", () => api.session().highlight === null);
+    });
   });
 });

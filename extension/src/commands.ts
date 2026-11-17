@@ -380,6 +380,16 @@ export class Commands {
     await vscode.window.showTextDocument(vscode.Uri.file(file), { selection, preserveFocus: opts.preserveFocus, ...(this.panels.canvas?.active ? { viewColumn: vscode.ViewColumn.Beside } : {}) });
   }
 
+  /**
+   * A doc row of the search was picked (`Requests.showDoc`). The page revealed the node and sent the click already. A node in the tree: the docs tab pinned to it with the doc chosen.
+   * A Missing node: the tab pinned to it the way *Needs attention* does. Neither: its code was not read, there is nothing to pin, and the `.md` opens in an editor tab.
+   */
+  async showDoc({ node, nodeId, missing, path }: { node: string | null; nodeId: string; missing: boolean; path: string }): Promise<void> {
+    if (node !== null) this.panels.showDocs(node, path);
+    else if (missing) this.panels.showDocs(MISSING_PIN + nodeId, path);
+    else await this.docs.open(path);
+  }
+
   /** Opens (or reuses) the docs tab beside the editor. From a card or a row it shows that node; from the editor's menu it follows the cursor. */
   private async showDocsBeside(arg: unknown, selected: unknown) {
     const otherTab = arg instanceof vscode.Uri && vscode.window.activeTextEditor?.document.uri.toString() !== arg.toString();

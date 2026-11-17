@@ -304,6 +304,12 @@ export interface Requests {
   copyText: { params: { text: string }; result: void };
   addDoc: { params: { key: string }; result: { added: boolean } };
   openDoc: { params: { path: string }; result: void };
+  /**
+   * A doc row of the search was picked (docs/20-search/05-on-screen.md §1). `node`: the tree's node id, null when the node is not in the tree; `nodeId`: the permanent ID; `missing`:
+   * the node is Missing; `path`: the doc. A node in the tree: the page has revealed it, and the host shows the docs tab pinned to it with that doc chosen. Missing: the tab pinned to
+   * the Missing node (`MISSING_PIN` + `nodeId`), that doc chosen. Neither (its code was not read): there is nothing to pin, so the `.md` opens in an editor tab.
+   */
+  showDoc: { params: { node: string | null; nodeId: string; missing: boolean; path: string }; result: void };
   openLink: { params: { href: string; from: string }; result: void };
   goToCode: { params: { key: string }; result: void };
   /** the files under the opened folder that have unsaved changes, as they are now; a canvas asks once when it starts, and after that it listens for the `dirtyFiles` event */
@@ -355,8 +361,8 @@ export interface Events {
   callTreeDropped: { key: string };
   /** the core was restarted: every call tree the host held is gone, and so must be the page's (revisions before and after cannot be compared) */
   callTreesReset: Record<string, never>;
-  /** the docs tab beside an editor is already open: show this node and stay on it (pinned) */
-  showNode: { id: string };
+  /** the docs tab beside an editor is already open: show this node and stay on it (pinned); `path`: and show this doc of it (a search pick) */
+  showNode: { id: string; path?: string };
   /** the set of files with unsaved changes changed: `paths` are all of them, relative to the opened folder, sorted (the whole set, as the session is: nothing to get out of step). A card marks its code while its file is in it */
   dirtyFiles: { paths: string[] };
 }
@@ -374,7 +380,8 @@ export type Notes =
   | { type: "codeShown"; key: string; dirty: boolean; text: string } // a card drew the code it read (`key`: the card's id; `text`: as Monaco shows it, the first line's indent taken off the others; `dirty`: whether the card showed its "unsaved in editor" mark when it drew): the extension's test suite uses it
   | { type: "editState"; key: string; state: "closed" | "reading" | "editing" | "saving" | "conflict" | "gone"; elsewhere: boolean; mark: string | null } // a card's code is in this state (`key`: the card's id; posted when it shows its code and whenever the state or `elsewhere` changes; `elsewhere`: the card says "Being edited in another card", or the doc panel "Already being edited in the canvas"; `mark`: which line is above the code, `saveFirst`, `saving`, `elsewhere`, `state`, `notice`, `refusal`, `busy`, or null): the extension's test suite uses it
   | { type: "keysChecked"; found: boolean; target: string; taken: string[]; hosts: number } // the answer to the viewCommand `checkKeys`: the page dispatched keys at the editor of a code card (`found`: there was one, `target`: its tag, `hosts`: how many code areas the page had, editor made or not), and these were taken by something other than the editor (React Flow's Space, say): the extension's test suite uses it
-  | { type: "searchDrawn"; query: string; ids: string[]; total: number; notes: string[]; ms: number; trip: number } // the STRUCTURE view drew the rows of an answer (`query`: the box's text it answers, `ids`: the rows in order, `total`: how many matched before the limit, `notes`: the lines drawn under the box about its filters, `ms`: from the change of the box to the draw, `trip`: from sending the request to the draw): the extension's test suite uses it
+  | { type: "searchDrawn"; query: string; ids: string[]; docs: string[]; total: number; notes: string[]; ms: number; trip: number } // the STRUCTURE view drew the rows of an answer (`query`: the box's text it answers, `ids`: the node rows in order, `docs`: the doc rows' `doc_path`s in order, `total`: how many matched before the limit, `notes`: the lines drawn under the box about its filters, `ms`: from the change of the box to the draw, `trip`: from sending the request to the draw): the extension's test suite uses it
+  | { type: "docsShown"; pinned: string | null; node: string | null; doc: string | null } // the docs tab shows this: `pinned`: the node it is held on (a Missing node's carries `MISSING_PIN`), `node`: the node it draws, `doc`: the doc's path (null: none yet): the extension's test suite uses it
   | { type: "searchFocused"; focused: boolean; text: string } // the STRUCTURE view handled the view command `focusSearch` (*V-NOC: Search…*): `focused`: the cursor is in the box now, `text`: what the box holds: the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it

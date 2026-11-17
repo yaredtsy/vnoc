@@ -38,17 +38,24 @@ interface DocPanelProps {
   onClose: () => void;
   /** take the whole width (the docs tab beside a code editor) instead of a resizable column next to the canvas */
   fill?: boolean;
+  /** the doc to show, when the node has it (a search pick): `n` makes a second ask for the same doc a new one. A doc with a draft still wins */
+  choose?: { path: string; n: number } | null;
+  /** the path of the doc the panel shows now, null when none: told each time it changes */
+  onShown?: (path: string | null) => void;
   /** extra header buttons, before the close button */
   extra?: ReactNode;
   /** what to say when there is no node (the canvas: nothing is selected; the docs tab: the cursor is not in a function or class) */
   emptyText?: string;
 }
 
-export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, fill = false, extra, emptyText = "Select a node to see its docs." }: DocPanelProps) {
+export function DocPanel({ node, calledBy = null, choose = null, onShown, revision, onAddDoc, onClose, fill = false, extra, emptyText = "Select a node to see its docs." }: DocPanelProps) {
   const nodeId = node?.node_id ?? null;
   // Each answer keeps what it was asked for, so another node's docs (or another doc's text) are never shown while the new ones load.
   const [listed, setListed] = useState<{ nodeId: string; docs: DocInfo[] } | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(choose?.path ?? null);
+  useEffect(() => {
+    if (choose) setChosen(choose.path);
+  }, [choose]);
   const [read, setRead] = useState<{ path: string; text: string | null } | null>(null);
 
   // the docs of this node: again whenever the index changes (a doc was added, removed or renamed)
@@ -66,6 +73,7 @@ export function DocPanel({ node, calledBy = null, revision, onAddDoc, onClose, f
   const drafts = useDrafts((s) => s.drafts);
   const doc = docs.find((d) => drafts[d.path]?.kind === "doc") ?? docs.find((d) => d.path === chosen) ?? docs[0] ?? null;
   const path = doc?.path ?? null;
+  useEffect(() => onShown?.(path), [path]); // eslint-disable-line react-hooks/exhaustive-deps
   const text = read && read.path === path ? read.text : null;
   const draft = path ? drafts[path] : undefined;
   const editState = editStateOf(path !== null, draft);

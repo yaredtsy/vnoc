@@ -55,13 +55,13 @@ export function Sidebar() {
             inputRef={search.input}
             disabled={body === "loading"}
             expanded={search.searching}
-            activeId={search.searching && search.rows.length > 0 ? resultId(search.active) : undefined}
+            activeId={search.searching && search.count > 0 ? resultId(search.active) : undefined}
             onClear={search.clear}
           />
         )}
         {body === "ready" && structure ? (
           search.searching ? (
-            <SearchResults rows={search.rows} total={search.total} notes={search.notes} noMatches={search.noMatches} active={search.active} onPick={search.pick} />
+            <SearchResults rows={search.rows} docs={search.docs} total={search.total} docsTotal={search.docsTotal} notes={search.notes} noMatches={search.noMatches} active={search.active} onPick={search.pickAt} />
           ) : (
             <Panels structure={structure} onList={(id, el) => (el ? lists.current.set(id, el) : lists.current.delete(id))} focusList={focusList} />
           )

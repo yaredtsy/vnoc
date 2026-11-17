@@ -98,15 +98,16 @@ export class Surfaces {
 
   /**
    * The one docs tab, in the column beside the editor, with the cursor left in the code. It follows the cursor, unless `pinTo` names a node
-   * (Show Docs on a row or a card): then it shows that one until the pin is released. A new tab learns it from its page (no message can be lost).
+   * (Show Docs on a row or a card): then it shows that one until the pin is released; `doc` (a doc's path, with `pinTo`) is the doc of it to show. A new tab learns both from its
+   * page (no message can be lost).
    */
-  showDocs(pinTo?: string): vscode.WebviewPanel {
+  showDocs(pinTo?: string, doc?: string): vscode.WebviewPanel {
     if (this.docsPanel) {
       this.docsPanel.reveal(undefined, true);
-      if (pinTo) this.docsPanel.webview.postMessage(event("showNode", { id: pinTo }));
+      if (pinTo) this.docsPanel.webview.postMessage(event("showNode", doc ? { id: pinTo, path: doc } : { id: pinTo }));
       return this.docsPanel;
     }
-    return this.adopt("docs", vscode.window.createWebviewPanel(DOCS, "V-NOC docs", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, this.options()), pinTo);
+    return this.adopt("docs", vscode.window.createWebviewPanel(DOCS, "V-NOC docs", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, this.options()), pinTo, doc);
   }
 
   /** A tab VS Code restored after a restart. */
@@ -123,7 +124,7 @@ export class Surfaces {
     return vscode.Uri.joinPath(this.ctx.extensionUri, "media", "webview");
   }
 
-  private adopt(mode: Mode, panel: vscode.WebviewPanel, pinTo?: string): vscode.WebviewPanel {
+  private adopt(mode: Mode, panel: vscode.WebviewPanel, pinTo?: string, doc?: string): vscode.WebviewPanel {
     if (mode === "canvas") this.canvasPanel = panel;
     else this.docsPanel = panel;
     // the tab's icon: an SVG file does not take the theme's colour, so there is one for each theme kind
@@ -140,7 +141,7 @@ export class Surfaces {
         this.onPageClosed("docs");
       }
     });
-    panel.webview.html = this.html(panel.webview, { script: "assets/index.js", css: "assets/index.css", attributes: `data-mode="${mode}"${pinTo ? ` data-node="${escapeAttribute(pinTo)}"` : ""}` });
+    panel.webview.html = this.html(panel.webview, { script: "assets/index.js", css: "assets/index.css", attributes: `data-mode="${mode}"${pinTo ? ` data-node="${escapeAttribute(pinTo)}"` : ""}${pinTo && doc ? ` data-doc="${escapeAttribute(doc)}"` : ""}` });
     panel.webview.onDidReceiveMessage((m: RequestMessage | Notes) => void this.receive(panel.webview, m, () => panel.dispose()));
     return panel;
   }

@@ -3,7 +3,8 @@ import { test } from "node:test";
 
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 import { MAIN, emptySession, reduce } from "@vnoc/shared/session.ts";
-import { nodesHeader, pickIntent, searchKey, splitMatch } from "./search.ts";
+import type { SearchDoc, SearchNode } from "@vnoc/shared/messages.ts";
+import { docsHeader, nodesHeader, pickIntent, pointedAt, rowAt, searchKey, splitMatch } from "./search.ts";
 
 const n = (id: string, kind: Kind, path: string, name: string, children: TreeNode[] = []): TreeNode => ({ id, kind, name, path, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
 const file = (path: string, ...fns: string[]) => n(path, "file", path, path.split("/").pop()!, fns.map((f) => n(`${path}::${f}`, "function", path, f)));
@@ -43,6 +44,30 @@ test("the header says how many rows, and of how many when the limit cut them", (
   assert.equal(nodesHeader(12, 12), "Nodes 12");
   assert.equal(nodesHeader(200, 1340), "Nodes 200 of 1,340");
   assert.equal(nodesHeader(1, 2), "Nodes 1 of 2");
+});
+
+test("the doc header says how many rows, and of how many when the limit cut them", () => {
+  assert.equal(docsHeader(3, 3), "Docs 3");
+  assert.equal(docsHeader(50, 212), "Docs 50 of 212");
+});
+
+// the keys run through the node rows and then the doc rows as one list; a doc points at its node when it is in the tree
+const nodeRow = (id: string) => ({ id }) as SearchNode;
+const docRow = (node: string | null, path: string) => ({ node, doc_path: path }) as SearchDoc;
+test("one list: the node rows, then the doc rows; the pointer follows the active row", () => {
+  const nodes = [nodeRow("a"), nodeRow("b")];
+  const docs = [docRow("c", "/x.md"), docRow(null, "/y.md")];
+  assert.deepEqual(
+    [0, 1, 2, 3, 4, -1].map((at) => rowAt(nodes, docs, at)?.type ?? null),
+    ["node", "node", "doc", "doc", null, null],
+  );
+  assert.equal(rowAt(nodes, docs, 2)?.row === docs[0], true);
+  assert.deepEqual(
+    [0, 1, 2, 3, 4].map((at) => pointedAt(rowAt(nodes, docs, at))),
+    ["a", "b", "c", null, null],
+    "a doc of a node that is not in the tree points at nothing",
+  );
+  assert.deepEqual(searchKey("ArrowDown", nodes.length + docs.length, 1), { type: "move", to: 2 }, "↓ from the last node row goes to the first doc row");
 });
 
 // the box's keys

@@ -1,6 +1,7 @@
 // The search box (docs/16-ui-redesign/06-sidebar.md §5, docs/20-search/05-on-screen.md §4): what its keys mean, what a pick does, and a name cut around the
 // letters to draw bold. Pure, so the rules are tests; the page draws. What matches, and in what order, is the core's (`vnoc/search`): nothing here ranks.
 
+import type { SearchDoc, SearchNode } from "@vnoc/shared/messages.ts";
 import type { Intent } from "@vnoc/shared/session.ts";
 
 /** What a key means in the box while the results are shown: the active result moves, the active one is picked, or the box clears. */
@@ -56,5 +57,23 @@ export function splitMatch(name: string, ranges: readonly [number, number][]): P
   return pieces;
 }
 
-/** The header over the rows: `Nodes 12`, or `Nodes 200 of 1,340` when the limit cut them. */
-export const nodesHeader = (shown: number, total: number): string => (total > shown ? `Nodes ${shown.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}` : `Nodes ${shown.toLocaleString("en-US")}`);
+const header = (name: string, shown: number, total: number): string => (total > shown ? `${name} ${shown.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}` : `${name} ${shown.toLocaleString("en-US")}`);
+
+/** The header over the node rows: `Nodes 12`, or `Nodes 200 of 1,340` when the limit cut them. */
+export const nodesHeader = (shown: number, total: number): string => header("Nodes", shown, total);
+
+/** The header over the doc rows: `Docs 3`, or `Docs 50 of 212`. */
+export const docsHeader = (shown: number, total: number): string => header("Docs", shown, total);
+
+/** The row at a place of the one list the keys run through: the node rows, then the doc rows. */
+export type ActiveRow = { type: "node"; row: SearchNode } | { type: "doc"; row: SearchDoc };
+
+export function rowAt(nodes: readonly SearchNode[], docs: readonly SearchDoc[], at: number): ActiveRow | null {
+  if (at < 0) return null;
+  if (at < nodes.length) return { type: "node", row: nodes[at] };
+  const doc = docs[at - nodes.length];
+  return doc ? { type: "doc", row: doc } : null;
+}
+
+/** The node on the canvas a row points at: a node's own, a doc's node when it is in the tree, and nothing for a doc of a node that is not. */
+export const pointedAt = (active: ActiveRow | null): string | null => (active === null ? null : active.type === "node" ? active.row.id : active.row.node);
