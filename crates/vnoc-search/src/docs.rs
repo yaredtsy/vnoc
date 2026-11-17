@@ -528,6 +528,7 @@ mod tests {
             node_name: String::new(),
             node_kind: None,
             node_path: String::new(),
+            missing: false,
             file: String::new(),
             doc_path: String::new(),
             title: title.to_string(),

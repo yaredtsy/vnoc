@@ -376,6 +376,7 @@ fn search(
                     &state.doc_index,
                     project.prefix(),
                     |id| index.record_toml(id).and_then(anchor_of),
+                    |id| index.is_missing(id),
                 )
             });
             let found = reference.map(|r| index.resolve_ref(project, &r));

@@ -423,6 +423,7 @@ mod tests {
                 node_name: String::new(),
                 node_kind: None,
                 node_path: String::new(),
+                missing: false,
                 file: file.to_string(),
                 doc_path: d.path.to_string_lossy().into_owned(),
                 title: d.title.clone(),

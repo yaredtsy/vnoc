@@ -53,12 +53,15 @@ pub struct NodeEntry {
 /// A doc of a node. Declared now; nothing reads it until the doc text is searched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocEntry {
-    /// Index into the nodes; none for a node that is missing.
+    /// Index into the nodes; none for a node that is not in the tree (see `missing`).
     pub node: Option<usize>,
     pub node_id: String,
     pub node_name: String,
     pub node_kind: Option<Kind>,
     pub node_path: String,
+    /// The node is in the core's Missing list. Only reported, never used to rank or filter: a doc with no `node` and `missing` false is one whose
+    /// code was not read (ignored, outside the opened folder, past the cap).
+    pub missing: bool,
     pub file: String,
     pub doc_path: String,
     pub title: String,
@@ -208,6 +211,7 @@ mod tests {
             node_name: String::new(),
             node_kind: None,
             node_path: String::new(),
+            missing: false,
             file: String::new(),
             doc_path: String::new(),
             title: String::new(),

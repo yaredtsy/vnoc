@@ -2513,6 +2513,10 @@ fn wait_for_doc_rows(core: &mut Core, query: &str) -> Vec<Value> {
 fn search_finds_doc_text_and_an_edited_body_neither_moves_the_revision_nor_announces() {
     let root = fixtures("search-docs");
     std::fs::write(root.join("orders.py"), ORDERS).unwrap(); // `attach_params` reads this file; the document is replaced below
+    // code the scan does not read, with a doc: its node is neither in the tree nor Missing
+    std::fs::create_dir_all(root.join("ignored")).unwrap();
+    std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
+    std::fs::write(root.join("ignored/x.py"), "def f():\n    pass\n").unwrap();
     let mut core = Core::start(Some(driver_path()), &root);
     core.request("vnoc/structure", Value::Null).unwrap();
 
@@ -2637,6 +2641,27 @@ fn search_finds_doc_text_and_an_edited_body_neither_moves_the_revision_nor_annou
         "{row}"
     );
     assert_eq!(row["doc_path"], json!(notes), "{row}");
+
+    // a doc of a node whose code is not read (ignored): no node, and not Missing
+    let unread = "0000000000000000000000000B";
+    write_record(&root, unread, "ignored/x.py", "f");
+    let hush = root
+        .join(".vnoc/nodes")
+        .join(&unread[24..])
+        .join(unread)
+        .join("notes.md");
+    std::fs::write(&hush, "# Hush\nthe savannah of tanganyika\n").unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [&hush] }));
+    let rows = wait_for_doc_rows(&mut core, "tanganyika");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (rows[0]["missing"].clone(), rows[0]["node"].clone()),
+        (json!(false), Value::Null),
+        "{}",
+        rows[0]
+    );
+    assert_eq!(rows[0]["node_id"], unread, "{}", rows[0]);
+    assert_eq!(rows[0]["node_path"], "ignored/x.py", "{}", rows[0]);
 
     // `kind:` and `in:` narrow the docs by their node
     write_body("zanzibar");

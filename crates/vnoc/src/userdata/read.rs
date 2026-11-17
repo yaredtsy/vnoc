@@ -148,16 +148,24 @@ fn title_of(text: &str) -> Option<String> {
     split_doc(text).0
 }
 
+/// The text after the frontmatter: `---` opens the doc and a line of `---` closes it, each line ended by `\n` or `\r\n` (a doc checked out on
+/// Windows has the second). `None` when the doc has no frontmatter.
+fn after_frontmatter(text: &str) -> Option<&str> {
+    let rest = text
+        .strip_prefix("---\r\n")
+        .or_else(|| text.strip_prefix("---\n"))?;
+    rest.match_indices("\n---").find_map(|(at, closer)| {
+        let after = &rest[at + closer.len()..];
+        after
+            .strip_prefix("\r\n")
+            .or_else(|| after.strip_prefix('\n'))
+    })
+}
+
 /// A doc's text cut as search keeps it (`docs/20-search/03-doc-text.md` §1): its title, the first `# heading` after the frontmatter (`None` when
 /// there is none, or it is empty), and its body, the text after the frontmatter **without** the title's own line. The frontmatter is in neither.
 pub(super) fn split_doc(text: &str) -> (Option<String>, Cow<'_, str>) {
-    let body = match text
-        .strip_prefix("---\n")
-        .and_then(|rest| rest.split_once("\n---\n"))
-    {
-        Some((_, body)) => body,
-        None => text,
-    };
+    let body = after_frontmatter(text).unwrap_or(text);
     let mut before = 0;
     for line in body.split_inclusive('\n') {
         if let Some(heading) = line.strip_prefix("# ") {
@@ -183,6 +191,10 @@ mod tests {
     #[test]
     fn the_title_is_the_first_heading_after_the_frontmatter() {
         assert_eq!(
+            title_of("---\r\nnode: X\r\n---\r\n# Why we parse twice\r\n\r\ntext").as_deref(),
+            Some("Why we parse twice")
+        );
+        assert_eq!(
             title_of("---\nnode: X\nhint: a::b\n---\n# Why we parse twice\n\ntext").as_deref(),
             Some("Why we parse twice")
         );
@@ -193,7 +205,7 @@ mod tests {
 
     #[test]
     fn a_doc_splits_into_its_title_and_its_body() {
-        let cases: [(&str, Option<&str>, &str); 9] = [
+        let cases: [(&str, Option<&str>, &str); 13] = [
             // with frontmatter: the body starts after it, without the title's line
             (
                 "---\nnode: X\nhint: a::b\n---\n# Why\n\ntext\n",
@@ -218,6 +230,17 @@ mod tests {
             ("---\n# comment\n---\n# Real\ntext", Some("Real"), "text"),
             // an empty heading is no title, and stays in the body
             ("# \ntext\n", None, "# \ntext\n"),
+            // CRLF frontmatter, and the title's own line end is not part of the title
+            (
+                "---\r\nnode: X\r\n---\r\n# Why\r\n\r\ntext\r\n",
+                Some("Why"),
+                "\r\ntext\r\n",
+            ),
+            // a CRLF body, no frontmatter
+            ("# Why\r\ntext\r\n", Some("Why"), "text\r\n"),
+            // mixed line ends: opened with CRLF and closed with LF, and the other way round
+            ("---\r\nnode: X\n---\n# Why\ntext", Some("Why"), "text"),
+            ("---\nnode: X\r\n---\r\ntext\r\n", None, "text\r\n"),
         ];
         for (text, title, body) in cases {
             let (got_title, got_body) = split_doc(text);

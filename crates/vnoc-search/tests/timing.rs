@@ -182,6 +182,7 @@ fn a_thousand_docs_of_two_kb_on_ten_thousand_names() {
                 node_name: node.name.clone(),
                 node_kind: Some(node.kind),
                 node_path: node.path.clone(),
+                missing: false,
                 file: format!("{d}.md"),
                 doc_path: format!(".vnoc/nodes/{d}/{d}.md"),
                 title: text.text(30),

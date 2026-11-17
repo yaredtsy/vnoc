@@ -65,6 +65,7 @@ pub fn corpus_of(
     doc_slot: &Mutex<Option<(u64, Arc<DocIndex>)>>,
     prefix: &str,
     anchor: impl Fn(&NodeId) -> Option<Anchor>,
+    is_missing: impl Fn(&NodeId) -> bool,
 ) -> Corpus {
     let (nodes, by_node_id) = entries_of(root);
     let docs: Vec<DocEntry> = texts
@@ -73,6 +74,7 @@ pub fn corpus_of(
             let node_id = id.to_string();
             let doc = |node, name, kind, path| DocEntry {
                 node,
+                missing: node.is_none() && is_missing(id),
                 node_id: node_id.clone(),
                 node_name: name,
                 node_kind: kind,
@@ -214,7 +216,7 @@ pub fn answer(revision: u64, corpus: &Corpus, query: &Query, results: Results) -
                 node_name: doc.node_name.clone(),
                 node_kind: doc.node_kind.map(kind_out),
                 node_path: doc.node_path.clone(),
-                missing: doc.node.is_none(),
+                missing: doc.missing,
                 file: doc.file.clone(),
                 doc_path: doc.doc_path.clone(),
                 title: doc.title.clone(),
@@ -288,7 +290,14 @@ mod tests {
             ]),
             &HashMap::new(),
         );
-        let corpus = corpus_of(&tree, &DocTexts::default(), &Mutex::new(None), "", |_| None);
+        let corpus = corpus_of(
+            &tree,
+            &DocTexts::default(),
+            &Mutex::new(None),
+            "",
+            |_| None,
+            |_| false,
+        );
         let rows: Vec<_> = corpus
             .nodes()
             .iter()
@@ -416,7 +425,7 @@ mod tests {
             anchor_of(&toml)
         };
         let slot = Mutex::new(None);
-        let corpus = corpus_of(&tree, &texts, &slot, "", anchors);
+        let corpus = corpus_of(&tree, &texts, &slot, "", anchors, |id| *id == missing);
 
         let docs: Vec<_> = corpus
             .docs()
@@ -471,16 +480,21 @@ mod tests {
                     && d.doc_path.starts_with(git_root.to_str().unwrap()))
         );
         assert_eq!(corpus.docs()[1].node_id, missing.to_string());
+        assert_eq!(
+            corpus.docs().iter().map(|d| d.missing).collect::<Vec<_>>(),
+            [false, true, false],
+            "Missing only for the node the index lists as Missing, not for any node without a tree place"
+        );
 
         // the doc index is kept under the generation: a rebuilt corpus joins the same one
         let first = slot.lock().unwrap().as_ref().unwrap().1.clone();
-        corpus_of(&tree, &texts, &slot, "", |_| None);
+        corpus_of(&tree, &texts, &slot, "", |_| None, |_| false);
         let (generation, second) = slot.lock().unwrap().as_ref().unwrap().clone();
         assert_eq!(generation, texts.generation());
         assert!(Arc::ptr_eq(&first, &second));
 
         // a node whose `node.toml` cannot be read has no fields to show, and is still found by its words
-        let bare = corpus_of(&tree, &texts, &Mutex::new(None), "", |_| None);
+        let bare = corpus_of(&tree, &texts, &Mutex::new(None), "", |_| None, |_| false);
         assert_eq!(bare.docs()[1].node_path, "");
         assert!(bare.docs()[1].node_kind.is_none());
     }
