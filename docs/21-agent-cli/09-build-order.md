@@ -87,7 +87,8 @@ Commit: `cli A2: vnoc is a command too; status`.
 Tests: `show` by each of the four forms gives the same node; a line inside a method gives the method; three nodes in one call, one of them
 wrong → two answers, one error in place, exit `2`; every row of 02 §4's table, each from its `Why`; `code --context 2`; a 200-line function is
 cut with the count; a Missing node by ID: `show` answers, `code` is `2`; from a subfolder, a path relative to it and one relative to the root
-both work, **for each form that has a path** (`a.py`, `a.py:12`, `a.py::f`). `nearest` (a table: one letter dropped, added, changed, two
+both work, **for each form that has a path** (`a.py`, `a.py:12`, `a.py::f`); a file name alone with a line finds the one file of that name,
+and with two such files is `2` with both paths (`Why::Ambiguous`). `nearest` (a table: one letter dropped, added, changed, two
 swapped; a name of 3 letters is not a suggestion for another of 3; the file's own first). `suggest`: a name without its class finds the
 method; `parse_ordr` finds `parse_order`; a path with a space in it. `node_ref`'s parse table, with the location's two parts. `lifecycle.rs`
 passes with no edits (the box resolves references through the same functions).

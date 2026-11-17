@@ -142,7 +142,9 @@ now. Finding nothing prints `no matches`, the `notes` if a filter was wrong, and
   tree by its id** (`Node::find`, 02 §2); the search's types do not grow for it.
 - An ID of a **Missing** node: `prepare` keeps only a reference that named a node of the tree. It gains `reference: Option<Found>` (what the
   reference resolved to, kept), and `find` prints the `MISSING  was …` line of 02 §4 above the rows. The box ignores the new field.
-- A path as the query (`vnoc find src/orders.py`) is not a reference here, as in the box: the path tiers find it, with what is in it.
+- A path with a `/` as the query (`vnoc find src/orders.py`) is a reference since S9a, as in the box: that file or folder is first, marked
+  exact, and the path tiers list what is in it below. A name with no `/` (`orders.py`) is only words. A call's `()` or `(` at the end of a
+  word is dropped, and a traceback line (`File "a.py", line 12`) is the reference `a.py:12`.
 
 ## 6. `grep`
 

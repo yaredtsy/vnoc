@@ -16,7 +16,7 @@ built there in step S5: the search box and the command line resolve a reference 
 | Form | Example | Resolved by |
 |---|---|---|
 | **location** | `src/orders.py::OrderService.parse_order` (`#2` for a second def of the same name) | the tree's node id |
-| **file + line** | `src/orders.py:142` (`:142:7` is taken, the column ignored) | the innermost function or class whose range holds the line, else the file |
+| **file + line** | `src/orders.py:142` (`:142:7` is taken, the column ignored); also `:L142`, `#L142`, `#L142-L150` (S9a) | the innermost function or class whose range holds the line, else the file |
 | **ID** | `0Q8V5W4T2F7KX9M3B6D1RZ4H7K` | where the index found that ID, or its Missing record |
 | **file / folder** | `src/orders.py` · `src/billing/` | the path |
 
@@ -39,9 +39,12 @@ repository open.
 
 Windows: `C:\repo\a.py:12` is a file and a line (the drive's colon is not the line's); `\` is accepted in and never printed.
 
-**As built (S5), and what A3 adds.** `Index::resolve_ref` reads a reference's path as relative to the **opened folder**, or absolute; for the
-CLI the opened folder is the root, so that is the second half of the "in" rule. The first half, the current folder, is the command line's
-alone, and it needs the path of a parsed reference:
+**As built (S5, S9a), and what A3 adds.** `Index::resolve_ref` tries a reference's path in this order and takes the first the index has
+(20, 04 §4): relative to the **opened folder**; as a repo path; with the opened folder's own name dropped from the front; and, for a name
+with no `/`, **the one file of that name** (`orders.py:142` when there is one `orders.py`). An absolute path is only itself. For the CLI the
+opened folder is the root, so the first two are the same and that is the second half of the "in" rule, with the last two as a gift: a path
+from a stack trace that starts with the repository's own name, or has no folder at all, still lands. The first half, the current folder, is
+the command line's alone, and it needs the path of a parsed reference:
 
 ```rust
 impl NodeRef {
@@ -52,7 +55,11 @@ impl NodeRef {
 
 `Location` keeps its whole text today; it becomes `Location { path, rest }` (the split at the first `::` moves from `resolve_ref` into
 `parse`). `cli/nodes.rs` then does: parse → if the path is relative, try it joined to the current folder (as a path relative to the root) →
-`Found::Nothing` → try it as written. No second parser in `cli/`.
+`Found::Nothing` → try it as written. No second parser in `cli/`. The joined path has a `/`, so the file-name rule cannot answer for the
+current folder's try: it only answers the text as written, last.
+
+A traceback line (`File "a.py", line 12, in f`) is read by the **query's** parse (`vnoc_search::parse`, S9a), not by `node_ref::parse`: it
+works in `vnoc find`, and is not a `<node>` argument.
 
 `Found::Node` carries the tree's id, not the node. The commands read the node from the tree `Index::tree` gives (kind, both lines, the ID,
 the doc count, the children for a file or a folder) through one walk, `Node::find(&self, id) -> Option<&Node>` (`index/tree.rs`, A3).
@@ -72,6 +79,7 @@ One that cannot be found does not stop the others: it prints its error in place,
 | a qualified name with no file | `"OrderService.parse_order" names no file · found: src/orders.py::OrderService.parse_order` (one hit: the hint is the whole answer; several: the first five) |
 | the file is not in the index | `src/app.ts is not read by V-NOC (it reads Python files that git does not ignore)` |
 | the file failed in the driver | `src/bad.py could not be read: <the driver's message>` |
+| a file name that several files have | `metering.py names 2 files: core/metering.py · billing/metering.py` (each can be pasted back with the line; more than five: the first five and the count) |
 | a line past the end | `src/orders.py has 210 lines` |
 | an ID nobody has | `no node has the ID 0Q8V…` |
 | an ID of a Missing node | not an error for `show`, `doc`: `MISSING  was src/old.py::parse_order  ID 0Q8V…  docs 2` and its docs are readable. An error (`2`) for `code`, `calls`: there is no code |
@@ -84,13 +92,14 @@ no reason. The reason is asked only after a miss, by one library function, so th
 
 ```rust
 // crates/vnoc/src/node_ref.rs
-pub enum Why { NoDef { path, name }, NoFile(String), NotRead(String), Failed { path, message }, PastEnd { path, lines }, NoId(NodeId), Outside(String) }
+pub enum Why { NoDef { path, name }, NoFile(String), NotRead(String), Failed { path, message }, Ambiguous { name, files }, PastEnd { path, lines }, NoId(NodeId), Outside(String) }
 impl Index { pub fn why_not(&self, project: &Project, r: &NodeRef) -> Why }
 ```
 
 `NotRead` is a file that is on disk and not in the index; `NoFile` one that is not on disk either (`no file src/ordrs.py`: a row the table
 did not have). `PastEnd` needs the file's line count, which the index does not keep: `why_not` reads the file (it runs once, on an error).
-The sentences are `cli/`'s; which case it is, is the library's (C2).
+`Ambiguous` is `Index::files_named` (S9a) giving more than one: the box finds nothing exact there (seen in `backend-api`, two
+`metering.py`), and the command can say which. The sentences are `cli/`'s; which case it is, is the library's (C2).
 
 **`suggest`, the "did you mean"** (changed 2026-11-17). Search has no typo tolerance (20 README §1), so `run` on `parse_ordr` finds nothing:
 the first version's example could not be printed by the function it named. Two passes, in the library (`crates/vnoc/src/suggest.rs`,

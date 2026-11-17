@@ -117,13 +117,14 @@ is in, and V-NOC reads Python. Worth weighing against 0.6 when 0.5 ships.
 
 ## 6. What search gives the commands, as built
 
-Read from the code at `e531e01` on 2026-11-17, with the crate's and the core's tests run (85, 106, 42: all pass). **The commands can start:**
+Read from the code at `e531e01` on 2026-11-17, and again at `c340db1` after S9 (the crate's and the core's tests: 89, 106, 45, all pass;
+clippy clean). S9 changed what a reference can be (02 §1, §2) and nothing else a command stands on. **The commands can start:**
 nothing they need from search is missing or wrong. What follows is where the built functions are not yet the shape a command wants; each gap
 is small, is library code (C2), and has its step.
 
 | A command needs | Search has | The gap, and the step that closes it |
 |---|---|---|
-| every `<node>` argument (02) | `node_ref::parse(text) -> Option<NodeRef>`; `Index::resolve_ref(project, &NodeRef) -> Found::{Node(tree id), Missing(NodeId), Nothing}` | **a.** `resolve_ref` reads a path as relative to the opened folder, or absolute. The current-folder rule (02 §2) is the CLI's, so `NodeRef` must give and take its path: today `Location` keeps the whole text. **b.** `Nothing` has no reason, and 02 §4 has six. **c.** A tree id is not a node: the header of `show` needs the kind, both lines and the ID. All three in **A3** |
+| every `<node>` argument (02) | `node_ref::parse(text) -> Option<NodeRef>`; `Index::resolve_ref(project, &NodeRef) -> Found::{Node(tree id), Missing(NodeId), Nothing}` | **a.** `resolve_ref` reads a path from the opened folder (then as a repo path, without the folder's name, or as the one file of that name: S9a), or absolute. The current-folder rule (02 §2) is the CLI's, so `NodeRef` must give and take its path: today `Location` keeps the whole text. **b.** `Nothing` has no reason, and 02 §4 has a sentence for each (S9a added one: a file name that several files have). **c.** A tree id is not a node: the header of `show` needs the kind, both lines and the ID. All three in **A3** |
 | `find` (03 §5) | `search::prepare(project, &RwLock<Index>, &corpus_slot, &doc_slot, text) -> Prepared { revision, corpus, query, exact }`, then `run`, then `search::answer`: exactly what `vnoc/search` does. The two slots are plain `Mutex<Option<…>>`; a one-shot passes two empty ones | **d.** A node row has its first line only (`line`), and no ID; `find` prints `lines 40-71` and C5 wants the ID: the rows are joined to the tree by id. **e.** `prepare` keeps only a reference that named a node of the tree: an ID of a Missing node is dropped, and `find <ID>` must say `MISSING was …`. Both in **A5** |
 | `tree --where` (03 §4) | `matches(corpus, query, exact, ids) -> Vec<bool>`: by name, or because a doc of the node is a hit, as the canvas dims | none. `tree_view` asks it about every id of the tree (**A4**) |
 | "did you mean" (02 §4) | `run` | **f.** Search has no typo tolerance (20 README §1, Out): `parse_ordr` finds nothing, so the sentence the first version of 02 §4 showed could not be printed. **A3** adds the nearest names |
