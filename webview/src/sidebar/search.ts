@@ -1,7 +1,6 @@
 // The search box (docs/16-ui-redesign/06-sidebar.md §5, docs/20-search/05-on-screen.md §4): what its keys mean, what a pick does, and a name cut around the
 // letters to draw bold. Pure, so the rules are tests; the page draws. What matches, and in what order, is the core's (`vnoc/search`): nothing here ranks.
 
-import type { SearchNode } from "@vnoc/shared/messages.ts";
 import type { Intent } from "@vnoc/shared/session.ts";
 
 /** What a key means in the box while the results are shown: the active result moves, the active one is picked, or the box clears. */
@@ -56,9 +55,6 @@ export function splitMatch(name: string, ranges: readonly [number, number][]): P
   if (at < name.length) pieces.push({ text: name.slice(at), bold: false });
   return pieces;
 }
-
-/** Where a result is, for its dim second part: the file, with the 1-based line of the definition for a class or function. */
-export const placeOf = (row: Pick<SearchNode, "path" | "line">): string => (row.line === null ? row.path : `${row.path}:${row.line + 1}`);
 
 /** The header over the rows: `Nodes 12`, or `Nodes 200 of 1,340` when the limit cut them. */
 export const nodesHeader = (shown: number, total: number): string => (total > shown ? `Nodes ${shown.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}` : `Nodes ${shown.toLocaleString("en-US")}`);

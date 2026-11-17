@@ -3,8 +3,9 @@ import { useEffect } from "react";
 import { Codicon } from "@/components/Codicon.tsx";
 import { cn } from "@/lib/utils.ts";
 import type { SearchNode } from "@vnoc/shared/messages.ts";
+import { placeOf } from "@vnoc/shared/search.ts";
 import { KINDS, kindIcon } from "../node-card/kinds.ts";
-import { nodesHeader, placeOf, splitMatch } from "./search.ts";
+import { nodesHeader, splitMatch } from "./search.ts";
 
 /** The id of a result's element (the box's `aria-activedescendant`). */
 export const resultId = (i: number): string => `result-${i}`;

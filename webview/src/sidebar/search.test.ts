@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 import { MAIN, emptySession, reduce } from "@vnoc/shared/session.ts";
-import { nodesHeader, pickIntent, placeOf, searchKey, splitMatch } from "./search.ts";
+import { nodesHeader, pickIntent, searchKey, splitMatch } from "./search.ts";
 
 const n = (id: string, kind: Kind, path: string, name: string, children: TreeNode[] = []): TreeNode => ({ id, kind, name, path, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
 const file = (path: string, ...fns: string[]) => n(path, "file", path, path.split("/").pop()!, fns.map((f) => n(`${path}::${f}`, "function", path, f)));
@@ -38,12 +38,6 @@ const splits: { name: string; text: string; ranges: [number, number][]; expect: 
   { name: "an empty name has no pieces", text: "", ranges: [], expect: [] },
 ];
 for (const t of splits) test(`splitMatch: ${t.name}`, () => assert.deepEqual(pieces(t.text, t.ranges), t.expect));
-
-test("where a result is: the path, with the 1-based line of a definition", () => {
-  assert.equal(placeOf({ path: "billing/invoice.py", line: null }), "billing/invoice.py");
-  assert.equal(placeOf({ path: "billing/invoice.py", line: 0 }), "billing/invoice.py:1");
-  assert.equal(placeOf({ path: "billing/invoice.py", line: 41 }), "billing/invoice.py:42");
-});
 
 test("the header says how many rows, and of how many when the limit cut them", () => {
   assert.equal(nodesHeader(12, 12), "Nodes 12");

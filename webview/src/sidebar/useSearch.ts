@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { SearchNode, SearchResult } from "@vnoc/shared/messages.ts";
+import { newest } from "@vnoc/shared/search.ts";
 import { on, post, request } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { pickIntent, searchKey } from "./search.ts";
-
-/** How long the box must be still before the page asks the core (05 §1). */
-const DEBOUNCE_MS = 50;
 
 /** An answer that was drawn: the text it answers, and when the box changed and the request was sent (for the test suite's note). */
 interface Answer {
@@ -21,8 +19,9 @@ interface Answer {
  * the rows; the active row is pointed at on the canvas (`highlight`: nothing is selected); `Enter` or a click picks it; `Esc` clears. `focusList` gives the
  * keyboard to the active panel's list when the search ends. Keeps no state a gesture could need elsewhere: the session has the rest.
  *
- * The core finds and ranks. The page numbers its requests and draws only the answer to the newest (Q8); it does not compare the answer's `revision` (Q5: a
- * restarted core counts from the start again). While an answer is on its way the last rows stay; an empty box asks nothing and clears them at once.
+ * The core finds and ranks. The page asks on each change of the box (no debounce: a round trip is about 5 ms) and draws only the answer to the newest request (Q8, `newest`);
+ * it does not compare the answer's `revision` (Q5: a restarted core counts from the start again). While an answer is on its way the last rows stay; an empty box asks
+ * nothing and clears them at once.
  */
 export function useSearch(focusList: () => void) {
   const [query, setQueryState] = useState("");
@@ -33,20 +32,20 @@ export function useSearch(focusList: () => void) {
   const searching = query.trim() !== "";
   const rows: SearchNode[] = searching ? (answer?.result.nodes ?? []) : [];
 
-  /** The number of the newest request: an answer to an older one is dropped. Moves on when the box empties, so an answer on its way then is dropped too. */
-  const newest = useRef(0);
+  /** The numbering of the requests: an answer to an older one is dropped, and so is one on its way when the box empties. */
+  const [numbering] = useState(newest);
   /** When the box last changed. */
   const changedAt = useRef(0);
   const latestQuery = useRef(query);
   latestQuery.current = query;
 
   const ask = (text: string) => {
-    const number = ++newest.current;
+    const number = numbering.next();
     const sentAt = performance.now();
     const started = changedAt.current;
     request("search", { query: text }).then(
       (result) => {
-        if (number !== newest.current) return;
+        if (!numbering.isNewest(number)) return;
         setAnswer({ query: text, result, changedAt: started, sentAt });
         setActive((a) => Math.min(a, Math.max(result.nodes.length - 1, 0)));
       },
@@ -62,15 +61,14 @@ export function useSearch(focusList: () => void) {
     setActive(0);
   };
 
-  // each change of the box asks the core after a pause; an empty box asks nothing and drops what was on its way
+  // each change of the box asks the core at once; an empty box asks nothing and drops what was on its way
   useEffect(() => {
     if (!searching) {
-      newest.current++;
+      numbering.drop();
       setAnswer(null);
       return;
     }
-    const timer = setTimeout(() => askLatest.current(query), DEBOUNCE_MS);
-    return () => clearTimeout(timer);
+    askLatest.current(query);
   }, [query, searching]);
 
   // the tree changed while the box has text: the rows may be different now

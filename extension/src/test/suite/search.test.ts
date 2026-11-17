@@ -138,16 +138,32 @@ suite("search", () => {
     await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
     await until("the pointer to clear", () => api.session().highlight === null);
 
-    // [check] 05 §2: VS Code keeps the order it was given. `outer` is a class (tier 0), then the nodes whose qualified name holds it, in reading order: not alphabetical.
-    const ranked = (await api.request<SearchResult>("vnoc/search", { query: "outer" })).nodes.map((n) => n.id);
-    assert.ok(ranked.length >= 4, `enough rows to tell an order (${ranked.length})`);
-    await vscode.commands.executeCommand("vnoc.search", "outer");
+    // [check] 05 §2: VS Code keeps the order it was given. The query is `e`: every row's label holds it, so VS Code has a match to score on every item and a re-sort would show.
+    // (`outer` could not tell: one label matched, the rest were found by their qualified name.) First, that this query *can* tell: the core's order is not the labels sorted.
+    const rows = (await api.request<SearchResult>("vnoc/search", { query: "e" })).nodes;
+    const labels = rows.map((n) => n.name);
+    const sorted = [...labels].sort((a, b) => a.localeCompare(b));
+    console.log(`[search] order check on \`e\`, ${rows.length} rows\n  core:   ${labels.join(" ")}\n  sorted: ${sorted.join(" ")}`);
+    assert.ok(rows.length >= 10, `enough rows to tell an order (${rows.length})`);
+    assert.notDeepStrictEqual(labels, sorted, "the core's order is the labels' sorted order: this query cannot tell a re-sort from the core's order, pick another");
+    await vscode.commands.executeCommand("vnoc.search", "e");
+    const nameOf = new Map(rows.map((n) => [n.id, n.name]));
     try {
-      await until(`the first item to be ${ranked[0]}`, () => api.session().highlight === ranked[0]);
-      for (let i = 1; i < 4; i++) {
+      await until(`the first item to be ${rows[0].id} (${rows[0].name})`, () => api.session().highlight === rows[0].id, 5_000);
+      for (let i = 1; i < rows.length; i++) {
         await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
-        await until(`item ${i} to be ${ranked[i]}`, () => api.session().highlight === ranked[i]);
+        await until(`item ${i} to be ${rows[i].id} (${rows[i].name})`, () => api.session().highlight === rows[i].id, 5_000);
       }
+    } catch (e) {
+      // the walk failed: say what VS Code shows (not part of the check, which has failed): the highlight now, then the next items as it walks them
+      const shown: string[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        await sleep(200);
+        const id = api.session().highlight;
+        shown.push(id === null ? "(none)" : (nameOf.get(id) ?? id));
+        await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
+      }
+      throw new Error(`${(e as Error).message}. The core's order: ${labels.join(" ")}. What VS Code highlights, walking from the top: ${shown.join(" ")}`);
     } finally {
       await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
     }
