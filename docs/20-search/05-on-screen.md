@@ -22,8 +22,8 @@ it. A group with nothing is not drawn. `↑` `↓` run through both groups as on
 
 | Row | Shows |
 |---|---|
-| a node | as today: the kind's icon (a method's for `inClass`), the name with its `match` ranges bold, the path dim |
-| a doc | the doc icon, the title with `titleMatch` bold, the node's name dim on the right, and the snippet as a second, dim line with `snippetMatch` bold. A Missing node's doc has the Missing mark |
+| a node | as today: the kind's icon (a method's for `in_class`), the name with its `match` ranges bold, the path dim |
+| a doc | the doc icon, the title with `title_match` bold, the node's name dim on the right, and the snippet as a second, dim line with `snippet_match` bold. A Missing node's doc has the Missing mark |
 
 A line of `notes` (01 §2), when there are any, sits under the box in the dim colour: `kind:fnn is not a kind (folder, file, class, function,
 method)`.

@@ -68,8 +68,8 @@ The first draft's shape was right (one request, tiers, BM25, P1). These are the 
 | 6 | "all words together are matched … every word must match" (§5, twice, differently) | — | 02 §4: each word alone, the node's tier is its worst word's |
 | 7 | names and paths only | a method's `name` is `parse_order`; `OrderService.parse` finds nothing | a tier for the qualified name (02 §2) |
 | 8 | `searchHits: string[]` in the session, at most the limit | the limit is 200 | Q12 |
-| 9 | limits with no totals | — | `nodesTotal`, `docsTotal`: the header can say "200 of 1,340" |
-| 10 | one `match` on a doc result | the title and the snippet are two strings | `titleMatch` and `snippetMatch` |
+| 9 | limits with no totals | — | `nodes_total`, `docs_total`: the header can say "200 of 1,340" |
+| 10 | one `match` on a doc result | the title and the snippet are two strings | `title_match` and `snippet_match` |
 | 11 | QuickPick `matchOnLabel: false` | VS Code has no such property (`matchOnDescription`, `matchOnDetail` only) | 05 §2: `alwaysShow` on each item **[check]** in S0, with a fallback that needs no check |
 | 12 | phrases need a search crate | the text is in memory | Q11 |
 | 13 | a wrong filter value finds nothing, silently | — | `notes` in the answer: "`kind:fnn` is not a kind (folder, file, class, function, method)" |

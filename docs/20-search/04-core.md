@@ -56,6 +56,9 @@ pub struct DocHit  { /* S6 (03); an empty struct until then */ }
 
 `exact` is the node a reference resolved to (§4): the crate puts it first; it does not find it.
 
+Its row has `tier: 0`, `exact: true` and no ranges; it counts once in `nodes_total` and takes one slot of the limit. A query with no words gives
+nothing even with `exact`: the core passes `exact` only for a one-token query (§4), which is a word. (Settled in S1, 2026-11-17.)
+
 ## 2. The corpus
 
 The index has no reading order of its own (`Index::tree` builds and sorts the tree on each call), and splitting 10,000 names into words on every
@@ -63,18 +66,23 @@ key would be waste. So the core builds a `Corpus` **once per change** and keeps 
 
 ```
 crates/vnoc/src/search.rs
-  corpus_of(&Index, &Project) -> Corpus                the tree, walked in reading order (as indexNodes does today), without the root;
-                                                       a function under a class is in_class; the index's doc texts (03 §5) joined to
-                                                       their node, or Missing
-  State.corpus: Mutex<Option<(revision, generation, Arc<Corpus>)>>
-  the handler:  the pair (index revision, doc-text generation) is the key; a different pair → build, store; then run on the Arc
+  corpus_of(root: &index::Node) -> Corpus             the tree `Index::tree` gives (the one vnoc/structure sends), walked depth-first in
+                                                       its order, without the root; a function whose parent is a class is in_class;
+                                                       line = range.start.line. S6 adds the doc texts (03 §5) as a second argument
+  kept(slot: &Mutex<Option<(u64, Arc<Corpus>)>>, key: u64, build: impl FnOnce() -> Corpus) -> Arc<Corpus>
+                                                       the same key → the kept Arc; another → build, keep, return. The lock is held while
+                                                       building, so two searches at once build once
+  State.corpus: Mutex<Option<(u64, Arc<Corpus>)>>      the key is the index revision; S6 makes it (revision, doc-text generation)
+  the handler:  index read lock, then State.corpus (nothing else takes it, so the order cannot deadlock); run on the Arc
 ```
 
 - Built on the first search after a change, not on every update: a project nobody searches pays nothing.
 - **Measured** (S1, 2026-11-17; `cargo test -p vnoc-search --release -- --ignored --nocapture`; Apple M1, macOS 14.7.6): 10,000 generated names in 100 files.
   `Corpus::new` took **14 – 20 ms** (19.0, 15.3 and 14.2 ms in three runs; 20.5 ms in a fourth), and one `run` for `co` (2,796 found, 200 shown)
   **1.6 – 2.4 ms**. The run is small; the build sits **on the 20 ms line**: under it, it stays in the request; over it, it is built at the end of
-  `refresh` instead, off the request. S2 measures it again with `corpus_of` and the real tree.
+  `refresh` instead, off the request. S2 measures `corpus_of` and `Corpus::new` together on 10,000 nodes and applies the rule. If it is over, the first fix is in
+  the crate, not a move: `Prepared::new` folds each node's path on its own, so the 100 paths of the test are folded 10,000 times; folding each
+  distinct path once and sharing it is cheaper than building off the request.
 - A node's `id` and `path` are the tree's: the id is what the pages already use (the repo path, or the location key); the path is relative to the
   opened folder. `in:` therefore means what the user sees.
 
@@ -84,12 +92,12 @@ crates/vnoc/src/search.rs
 vnoc/search  { query: string, nodes?: number, docs?: number }          → SearchResult
 SearchResult {
   revision: number,
-  nodes: [{ id, kind, name, path, line?, inClass, docs, tier, exact, match: [start, end][] }],
-  nodesTotal: number,                      // how many matched before the limit
+  nodes: [{ id, kind, name, path, line?, in_class, docs, tier, exact, match: [start, end][] }],
+  nodes_total: number,                      // how many matched before the limit
   docs:  [{ node: string | null,           // the tree's node id; null for a Missing node
-            nodeId, nodeName, nodeKind?, nodePath, missing,
-            file, docPath, title, titleMatch: [start, end][], snippet, snippetMatch: [start, end][] }],
-  docsTotal: number,
+            node_id, node_name, node_kind?, node_path, missing,
+            file, doc_path, title, title_match: [start, end][], snippet, snippet_match: [start, end][] }],
+  docs_total: number,
   notes: string[],                         // 01 §2: what was wrong with a filter
 }
 ```
@@ -98,6 +106,7 @@ SearchResult {
 - **Waits for the first build**, as `vnoc/structure` does.
 - The handler takes the read lock, gets the corpus (§2), resolves a reference (§4), calls `run`. No `await` after the lock: it cannot be
   cancelled, and need not be (Q8).
+- Field names are snake_case on the wire, as every other request's are (`git_root`, `syntax_error`, `call_count`); no `rename_all`.
 - Types in `crates/vnoc/src/protocol.rs` and `shared/messages.ts`, as every request. The crate's `Results` and the protocol's `SearchResult` are
   two types with a plain conversion: the crate does not know the revision.
 

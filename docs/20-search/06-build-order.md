@@ -64,14 +64,15 @@ Commit: `search S1: the vnoc-search crate, names in six tiers, fuzzy by word`.
 | Files | What |
 |---|---|
 | `crates/vnoc/Cargo.toml` | `vnoc-search = { path = "../vnoc-search" }` |
-| `crates/vnoc/src/search.rs` (new) | `corpus_of(&Index, &Project)` (nodes only: no doc texts yet); the kept corpus and its key (04 §2) |
+| `crates/vnoc/src/search.rs` (new) | `corpus_of(&Node)` over `Index::tree` (nodes only: no doc texts yet); `kept`, the kept corpus and its key (04 §2) |
 | `crates/vnoc/src/protocol.rs` | `Search`, `SearchParams`, `SearchResult` and its rows (04 §3) |
 | `crates/vnoc/src/server.rs` | the `search` handler: wait for the first build, read lock, corpus, `run`. `State.corpus` |
 | `shared/messages.ts` | the result types only. The pages' `search` request is declared in S3, with its handler: `relay.ts` must serve every request `Requests` names, or the typecheck fails |
 
-Tests: unit, `corpus_of` on a small index gives the nodes in the tree's reading order, without the root, a method `in_class`; `lifecycle.rs`,
-`vnoc/search` on the fixtures answers before and after a file change with the new revision, and the corpus is built once for two searches
-(a counter behind `#[cfg(test)]`, or a `tracing` line the test reads). Nothing on screen changes yet.
+Tests: unit, `corpus_of` on a small tree gives the nodes in the tree's reading order, without the root, a method `in_class`; `kept` builds
+once for two calls with one key and again for a new key (a counting closure, `Arc::ptr_eq`); `#[ignore]` timing, `tree::build` + `corpus_of` +
+`Corpus::new` on 10,000 defs **[measure]** (04 §2); `lifecycle.rs`, `vnoc/search` on the fixtures answers before and after a file change with
+the new revision. Nothing on screen changes yet.
 
 Commit: `search S2: vnoc/search over a kept corpus`.
 

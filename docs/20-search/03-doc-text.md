@@ -82,7 +82,7 @@ About 120 characters of the **body** around the first hit (a word of the query, 
 spaces, `…` at a cut end. Markdown is left as it is (no rendering in a result row). When the only hits are in the title, the snippet is the
 start of the body after the title line.
 
-The answer gives the hits inside the snippet as ranges (`snippetMatch`), and the hits inside the title as ranges (`titleMatch`), both in UTF-16
+The answer gives the hits inside the snippet as ranges (`snippet_match`), and the hits inside the title as ranges (`title_match`), both in UTF-16
 units (Q4).
 
 ## 7. Cost
