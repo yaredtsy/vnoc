@@ -64,7 +64,56 @@ A0 measures with docs in the project (the generated one gets 1,000). If that par
 flag and the commands that read no doc text (`show`, `code`, `tree` without `--where`, `calls`, `missing`, `check`, `status`) skip it; not
 before the number says so.
 
-**[measure]**, written here. Inside the budget: nothing more is built. Outside it: step **A16**, designed now so it is not a new plan then:
+### Measured in A0 (2026-11-17)
+
+`crates/vnoc/examples/oneshot.rs` (commit `29d9538` on `agent-cli`; `oneshot measure`). Apple M1, release builds of the example and the driver,
+warm disk, a load average of about 3 (a browser was open). Each cell is the **median (min – max) in ms over 9 runs**, after one run that is
+thrown away; every run starts from a new `Project`, `DriverHost`, `Index` and two empty search slots, as a new process would.
+
+| Phase | httpx, no `.vnoc/` | httpx + 50 docs | generated: 1,000 files, 1,000 docs |
+|---|---|---|---|
+| walk (`scan::python_files`) | 0.7 (0.7 – 0.8) | 0.8 (0.7 – 2.4) | 1.5 (1.4 – 3.4) |
+| **`refresh(All)` in all** (≈ `vnoc status`) | **28.6** (28.0 – 31.1) | **31.7** (31.4 – 32.9) | **237.4** (235.5 – 264.5) |
+| · `.vnoc/` read (`load_all`) | 0.0 | 2.0 (2.0 – 2.2) | 42.6 (42.5 – 43.8) |
+| · doc texts, from empty (`refresh_doc_texts`) | 0.0 | 0.7 (0.7 – 0.8) | 17.0 (16.9 – 17.5) |
+| · outlines (a **difference**: total − walk − the two above) | 27.9 (27.3 – 30.3) | 28.2 (26.6 – 29.1) | 175.3 (174.3 – 203.6) |
+| search: `prepare`, both slots empty | 1.4 (1.3 – 1.4) | 2.6 (2.6 – 2.8) | 27.0 (26.8 – 27.7) |
+| · `prepare`, corpus alone (doc index kept) | 1.4 (1.3 – 1.4) | 1.5 (1.4 – 1.5) | 12.7 (11.6 – 13.4) |
+| · of which `Index::tree` alone | 1.0 (1.0 – 1.1) | 1.1 (1.0 – 1.1) | 8.8 (8.5 – 9.5) |
+| search: `run`, no limits | 0.2 | 0.2 | 14.2 (14.1 – 14.4) |
+| `calls` depth 2, driver already running | 166.1 (165.4 – 169.1) | 166.7 (165.5 – 176.1) | 50.3 (42.8 – 52.4) |
+| `calls` depth 2, cold driver (start included) | 172.0 (166.3 – 214.0) | 168.9 (167.6 – 177.3) | 47.4 (43.3 – 105.9) |
+| driver start + one empty outline (a probe) | 3.1 (2.9 – 3.7) | 3.1 (2.9 – 5.4) | 2.9 (2.8 – 27.0) |
+
+What was measured: **httpx** is `encode/httpx` at `7cff5f79bc78` (a shallow clone, dated 2026-11-16), the whole repository: `httpx/`, `tests/`,
+`scripts/`, 60 Python files, 13 folders, 107 classes and 1,134 functions and methods. **+ 50 docs** is a copy of it with 50 docs on defs spread
+evenly through the index (`oneshot docs`). **Generated** is `oneshot generate` (a fixed seed): 1,000 files in 20 folders, 10 defs each (1,000
+classes, 9,000 functions and methods), 1,000 docs of about 2.1 KB, one on each file, with no `ID:` line in the code. `calls` is
+`httpx/_client.py::Client.send` (a 24-node tree) and, on the generated one, a function of one generated file (4 nodes: that number says what the
+driver costs to start, not what a call analysis costs). The search word is `request` (110 nodes, 1 doc) on httpx and `parse` (737
+nodes, 735 docs) on the generated project. The log line `refresh` writes itself agrees with these (httpx 27 – 31 ms, generated 235 – 264 ms).
+
+**Verdicts, by the rules above:**
+
+- **`status` ≈ the refresh total: inside the budget.** httpx 28.6 ms (31.7 with 50 docs) against 300 ms; generated 237 ms against 1 s. `status`
+  itself is not built; it adds `Index::tree` (1.0 / 8.8 ms) and the process's own start and print. **A16 is not scheduled** after A6; it stays
+  designed, below, for a bigger project or a slower machine.
+- **Doc texts alone: under a tenth of the budget, so `refresh` gets no flag.** 0.7 ms against 30 ms on httpx with 50 docs; 17.0 ms against 100 ms on
+  the generated one (20, 03 §7 measured 17 – 32 ms). **A surprise next to it:** reading `.vnoc/` itself (`load_all`: 1,000 `node.toml` files and
+  the listing of their docs) is 42.6 ms, two and a half times the doc texts, and with them 25 % of the refresh. Neither is over its budget; it is
+  where the next ms would come from if a bigger project needed them.
+- **`calls` depth 2 on httpx: 166 ms (172 cold) against 5 s.** The driver's start is 3 ms: the cold and the warm call differ by noise.
+- **Search, next to doc 20's.** The doc index is 14.3 ms on 1,000 docs (`prepare` with both slots empty, 27.0, minus corpus alone, 12.7; doc 20:
+  about 16 ms). The corpus is 12.7 ms on 10,000 names, **twice doc 20's "about 6 ms"**, and the reason is what `prepare` does that doc 20's number
+  did not: 8.8 ms of it is `Index::tree`, the tree made from the index, so the corpus itself is about 4 ms. A one-shot makes the tree anyway;
+  a command that already has one (`status`, `tree`) makes it once. `run` with no limits is 14.2 ms for a word with 737 node hits and 735 doc hits;
+  doc 20's 1.3 – 1.6 ms was a run with the default limits (200 nodes, 50 docs), which `find` also has.
+- **One more number, outside the budget:** the first run made right after the driver binary was built took 1,163 ms on the generated project
+  (`index: … 1163 ms in all`), and the thrown-away first run of the final series 502 ms (httpx 62 ms, with 50 docs 59 ms). The 1,163 ms did not
+  come back. It was not looked into:
+  probably the first launch of a new binary. A user's first `vnoc` after an install may see it.
+
+Inside the budget: nothing more is built. Outside it, it would have been step **A16**, designed now so it is not a new plan then:
 
 ```
 the outline cache      .vnoc/local/cache/outline-1.json      (local/ is git-ignored; V-NOC's own caches already belong there: 04-storage)
@@ -106,7 +155,13 @@ One function maps a library error to a code (`cli::exit_code`), with a table tes
 | Crate | For | Note |
 |---|---|---|
 | `clap` (derive) | arguments, `--help` | the help text is part of the interface: each command's `about` is written for an agent reading it cold |
-| `regex` | `grep` | already in the tree through `ignore` → `globset` **[check]** `cargo tree -i regex-automata`: the cost is then small |
+| `regex` | `grep` | `regex-automata` is already in the tree (through `ignore` → `globset`, and `tracing-subscriber` → `matchers`); `regex` itself is **not** (checked in A0, below) |
+
+**Checked in A0 (2026-11-17):** `cargo tree -p vnoc -i regex-automata` shows `regex-automata` 0.4.18; `-i regex` finds no such package. `regex-syntax`
+0.8.11, `aho-corasick` 1.1.5 and `memchr` 2.8.3 are there too, and those four are all that `regex` 1.13.1 depends on. In a scratch copy of the
+workspace with `regex = "1"` added, the list of crates in `cargo tree -p vnoc` grew by **one line, `regex` itself**. What grows is the compile
+time of crates already there (`regex-automata` gets its `meta` and `nfa-pikevm` parts, `aho-corasick` its literal search), not the count. The step
+that adds the dependency (A5) measures the build time and the release size.
 
 Each new crate needs `node scripts/notices.mjs` run again and `extension/THIRD_PARTY_NOTICES.md` committed (`scripts/package.mjs` refuses to
 package without it). The step that adds the crate does it.

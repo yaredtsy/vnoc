@@ -180,6 +180,14 @@ What is added (A7), because "one attach at a time" is today a mutex **inside** o
 - **A lock file, `.vnoc/local/write.lock`**, held with `std::fs::File::lock` (in the standard library since Rust 1.89; the toolchain is 1.94)
   for the length of an attach, a relink or a write-ID, by the server and by the commands. A writer that cannot get it within 5 seconds stops with
   `another V-NOC is writing in this project` (exit `3` for a command). `local/` is git-ignored. **[check]** on Windows, by hand once.
+- **Checked in A0 (2026-11-17, Rust 1.94.1, macOS; `oneshot lock <dir>`).** Two separate `File` handles on one `write.lock`, as two processes
+  have them: the first `lock()` returns at once; while it is held, the second's `try_lock()` returns `Err(TryLockError::WouldBlock)` (its text:
+  "lock acquisition failed because the operation would block"); after the first handle is dropped, the second `try_lock()` gets the lock.
+  Any other failure is the other variant, `TryLockError::Error(io::Error)`. **`std` has no wait with a timeout:** `File` has `lock`,
+  `lock_shared`, `try_lock`, `try_lock_shared` and `unlock`, and `lock_timeout` does not exist (the compiler says so). `lock()` alone waits
+  for ever. So "within 5 seconds" is a loop: `try_lock`; on `WouldBlock` sleep about 50 ms and try again until 5 s have passed, then stop with
+  the message above; on `Error(e)` stop at once (a failure to lock is not a busy lock; also exit `3`). The lock is held by the handle, so
+  the guard in A7 is a value that owns the `File` and releases on `Drop`.
 - It is taken **only in a project that is initialized**: the first attach in the extension creates `.vnoc/` itself and must not leave a
   `.vnoc/local/` behind if it fails early. Before `init` a command cannot write anyway (§3).
 - **The order inside a flow is checked against the other writer acting between two steps** (futureplan 02.02 §2's `[check]`):
