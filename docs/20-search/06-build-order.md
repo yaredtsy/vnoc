@@ -90,12 +90,12 @@ Commit: `search S2b: ASCII names are matched in place; the corpus build is cheap
 | Files | What |
 |---|---|
 | `shared/messages.ts`, `extension/src/relay.ts` | the `search` request in `Requests`, and its handler: `d.core("vnoc/search", params)` |
-| `webview/src/sidebar/useSearch.ts` | asks on change (debounce), numbers the requests, drops old answers and answers from an older revision (05 §1); asks again on `indexChanged` |
+| `webview/src/sidebar/useSearch.ts` | asks on change (debounce), numbers the requests, draws only the newest answer (05 §1; the revision is not compared, Q5); asks again on `indexChanged`; `setSearch` and `searchDrawn` for the tests |
 | `webview/src/sidebar/search.ts` | `rankNodes`, `matchRange`, `indexNodes`, `Tier` deleted; `splitMatch` takes several ranges; `searchKey`, `pickIntent` stay |
 | `webview/src/sidebar/` (the result row) | bold from `match[]`; the header with the count and `of N` |
 | `extension/src/search.ts` | the QuickPick on `vnoc/search`: every item `alwaysShow: true`, `items` set again on each answer. By hand: type a query whose core order is not alphabetical; if VS Code re-sorts it, a second commit takes 05 §2's fallback (the command focuses the sidebar's box; this file is deleted) |
 | `webview/src/sidebar/search.test.ts` | the ranking rows deleted (they are in Rust); `splitMatch` with two ranges; `searchKey` rows stay |
-| `extension/src/test/suite/` | the `search` suite |
+| `extension/src/test/suite/` | the `search` suite; the two palette tests of `sidebar.test.ts` pass a starting query to `vnoc.search` (an empty value lists nothing now) |
 
 Window tests: type in the box, the rows are the core's, in its order (a fixture where the core's order differs from the old one: a tier 2 hit);
 type fast, only the last query's rows are drawn; a file saved while the box has text gives rows from the new tree. **[measure]** key to drawn
