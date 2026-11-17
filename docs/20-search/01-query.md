@@ -103,7 +103,10 @@ pub struct Query {
 pub fn parse(query: &str) -> Query      // pure; never fails
 ```
 
-`vnoc-search` only **recognises the shape** of a reference, and only for a query that is one token: it has `::`, or ends in `:<digits>` or
-`:<digits>:<digits>`, or is 26 ASCII letters and digits with no `U` (Crockford base32 as `NodeId::parse` reads it: any case, `I` `L` `O` allowed).
+`vnoc-search` only **recognises the shape** of a reference, and only for a query that is one token: it has `::` or a `/`, or ends in a line
+(`:<digits>`, `:<digits>:<digits>`, `:L<digits>`, `#L<digits>` or `#L<digits>-L<digits>`, `L` in either case), or is 26 ASCII letters and digits
+with no `U` (Crockford base32 as `NodeId::parse` reads it: any case, `I` `L` `O` allowed). A URL has a `/`, so it is one; it names nothing.
+A whole query shaped `File "<path>", line <n>` (a Python traceback line; what follows `<n>` is ignored, the path may have spaces) is the
+reference `<path>:<n>`, and that text is its one word.
 The token **stays a word too**: if the core cannot resolve it, the words still find what they find. Finding the node needs the
 index, so that is the core's (`crates/vnoc/src/node_ref.rs`): the crate stays free of paths and disks.

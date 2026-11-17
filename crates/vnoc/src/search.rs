@@ -11,7 +11,7 @@ use vnoc_domain::{NodeId, NodeKind, NodeToml};
 use vnoc_search::{Corpus, DocEntry, DocIndex, NodeEntry, Query, Results, parse};
 
 use crate::index::{self, Index, Kind, Node};
-use crate::node_ref::{self, Found, NodeRef};
+use crate::node_ref::{self, Found};
 use crate::project::Project;
 use crate::protocol::{SearchDoc, SearchNode, SearchResult};
 use crate::userdata::DocTexts;
@@ -208,12 +208,7 @@ pub fn prepare(
     text: &str,
 ) -> Prepared {
     let query = parse(text);
-    // a bare path is found by the path tiers, so only the forms they cannot find are tried (04 §4)
-    let reference = query
-        .reference
-        .as_deref()
-        .and_then(node_ref::parse)
-        .filter(|r| !matches!(r, NodeRef::Path(_)));
+    let reference = query.reference.as_deref().and_then(node_ref::parse);
     let index = index.read().unwrap();
     let revision = index.revision();
     let texts = index.doc_texts();

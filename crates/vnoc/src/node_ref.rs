@@ -4,7 +4,8 @@
 //! [`parse`] reads the text and only the text; [`Index::resolve_ref`] says which node it names, from what the index holds. The search box tries a
 //! query of one token as a reference, and the CLI (doc 21) tries every `<node>` argument, so both go through these two functions.
 //!
-//! A path in a reference is relative to the opened folder, which is what a person sees, or absolute. A pasted line is 1-based, as an editor and a
+//! A path in a reference is relative to the opened folder, which is what a person sees, or absolute; failing that it is read as a repo path, or with
+//! the opened folder's name in front, or (a file name with no `/`) as the one file of that name. A pasted line is 1-based, as an editor and a
 //! stack trace show it, and a def's range is 0-based.
 
 use std::path::Path;
@@ -63,17 +64,42 @@ pub fn parse(text: &str) -> Option<NodeRef> {
     })
 }
 
-/// `path:line` or `path:line:column`, as the path and the line.
+/// `path:line`, `path:line:column`, `path:L<line>`, `path#L<line>` or `path#L<line>-L<line>`, as the path and the (first) line.
 fn file_line(text: &str) -> Option<(&str, u32)> {
+    if let Some((path, fragment)) = text.rsplit_once('#')
+        && !path.is_empty()
+        && let Some(line) = hash_line(fragment)
+    {
+        return Some((path, line));
+    }
     let (rest, last) = text.rsplit_once(':')?;
-    let last = number(last)?;
-    if let Some((path, line)) = rest.rsplit_once(':')
-        && let Some(line) = number(line)
+    if number(last).is_some()
+        && let Some((path, line)) = rest.rsplit_once(':')
+        && let Some(line) = l_number(line)
         && !path.is_empty()
     {
         return Some((path, line));
     }
+    let last = l_number(last)?;
     (!rest.is_empty()).then_some((rest, last))
+}
+
+/// What follows a `#`: `L<n>` or `L<n>-L<m>`, `L` in either case; the line is `n`.
+fn hash_line(fragment: &str) -> Option<u32> {
+    let (first, second) = match fragment.split_once('-') {
+        Some((first, second)) => (first, Some(second)),
+        None => (fragment, None),
+    };
+    let line = l_number(first).filter(|_| first.starts_with(['L', 'l']))?;
+    if let Some(second) = second {
+        l_number(second).filter(|_| second.starts_with(['L', 'l']))?;
+    }
+    Some(line)
+}
+
+/// A number, with an `L` before it or not.
+fn l_number(text: &str) -> Option<u32> {
+    number(text.strip_prefix(['L', 'l']).unwrap_or(text))
 }
 
 /// Digits only, and at least one; a number too big for a line is the biggest line, which no file has.
@@ -92,16 +118,6 @@ fn is_absolute(path: &str) -> bool {
             && matches!(b[2], b'\\' | b'/'))
 }
 
-/// The repo path of a pasted path: relative to the opened folder, or absolute under it. `None` when it is neither.
-fn repo_path(project: &Project, text: &str) -> Option<RepoPath> {
-    if is_absolute(text) {
-        return project.repo_path_of(Path::new(text));
-    }
-    let text = text.replace('\\', "/");
-    let text = text.strip_prefix("./").unwrap_or(&text);
-    project.repo_path(text.trim_end_matches('/')).ok()
-}
-
 impl Index {
     /// The node `r` names, by the tree's id. Reads only what the index holds (no disk). A reference to a path that is not in the opened folder, to
     /// a def that is not there, or to an ID found nowhere, is [`Found::Nothing`]; an ID the index knows as Missing is [`Found::Missing`].
@@ -112,22 +128,26 @@ impl Index {
                 let Some((path, rest)) = text.split_once("::") else {
                     return Found::Nothing;
                 };
-                let Some(path) = repo_path(project, path) else {
-                    return Found::Nothing;
-                };
-                let Ok(location) = format!("{path}::{rest}").parse::<LocationKey>() else {
-                    return Found::Nothing;
-                };
-                if location.qualname().is_empty() {
-                    self.file_or_folder(&path)
-                } else if self.def_at(&location).is_some() {
-                    node(location.to_string())
-                } else {
-                    Found::Nothing
+                let found = self.first_path(project, path, |p| {
+                    let location = format!("{p}::{rest}").parse::<LocationKey>().ok()?;
+                    if location.qualname().is_empty() {
+                        (self.is_file(p) || self.is_folder(p)).then_some(location)
+                    } else {
+                        self.def_at(&location).map(|_| location)
+                    }
+                });
+                match found {
+                    Some(location) if location.qualname().is_empty() => {
+                        node(location.path().to_string())
+                    }
+                    Some(location) => node(location.to_string()),
+                    None => Found::Nothing,
                 }
             }
             NodeRef::FileLine { path, line } => {
-                let Some(path) = repo_path(project, path) else {
+                let Some(path) =
+                    self.first_path(project, path, |p| self.is_file(p).then(|| p.clone()))
+                else {
                     return Found::Nothing;
                 };
                 // line 0 is no line
@@ -136,8 +156,7 @@ impl Index {
                     .and_then(|l| self.innermost_def(&path, l));
                 match def {
                     Some(location) => node(location.to_string()),
-                    None if self.is_file(&path) => node(path.to_string()),
-                    None => Found::Nothing,
+                    None => node(path.to_string()),
                 }
             }
             NodeRef::Id(id) => match self.found_at(id) {
@@ -148,18 +167,50 @@ impl Index {
                 None if self.is_missing(id) => Found::Missing(*id),
                 None => Found::Nothing,
             },
-            NodeRef::Path(text) => match repo_path(project, text) {
-                Some(path) => self.file_or_folder(&path),
-                None => Found::Nothing,
-            },
+            NodeRef::Path(text) => {
+                match self.first_path(project, text, |p| {
+                    (self.is_file(p) || self.is_folder(p)).then(|| p.clone())
+                }) {
+                    Some(path) => node(path.to_string()),
+                    None => Found::Nothing,
+                }
+            }
         }
     }
 
-    fn file_or_folder(&self, path: &RepoPath) -> Found {
-        if self.is_file(path) || self.is_folder(path) {
-            Found::Node(path.to_string())
-        } else {
-            Found::Nothing
+    /// What `has` makes of the first repo path the pasted `text` can be, and the index has: relative to the opened folder, as a repo path (the
+    /// tree's own ids), with the opened folder's name dropped from the front; then, for a text with no `/`, the one file that has that name.
+    /// An absolute path is only itself.
+    fn first_path<T>(
+        &self,
+        project: &Project,
+        text: &str,
+        has: impl Fn(&RepoPath) -> Option<T>,
+    ) -> Option<T> {
+        if is_absolute(text) {
+            return has(&project.repo_path_of(Path::new(text))?);
+        }
+        let text = text.replace('\\', "/");
+        let text = text.strip_prefix("./").unwrap_or(&text);
+        let text = text.trim_end_matches('/');
+        let name = project.name();
+        let candidates = [
+            project.repo_path(text).ok(),
+            RepoPath::new(text).ok(),
+            text.strip_prefix(name.as_str())
+                .and_then(|rest| rest.strip_prefix('/'))
+                .and_then(|rest| project.repo_path(rest).ok()),
+        ];
+        if let Some(found) = candidates.iter().flatten().find_map(&has) {
+            return Some(found);
+        }
+        if text.contains('/') {
+            return None;
+        }
+        // a file name alone: only when one file has it
+        match &self.files_named(text)[..] {
+            [only] => has(only),
+            _ => None,
         }
     }
 }
@@ -207,6 +258,16 @@ mod tests {
             ("nested.py:25:9", line("nested.py", 25)),
             ("src/orders.py:142", line("src/orders.py", 142)),
             ("nested.py:0", line("nested.py", 0)),
+            ("nested.py:L25", line("nested.py", 25)),
+            ("nested.py:l25", line("nested.py", 25)),
+            ("nested.py:L25:9", line("nested.py", 25)),
+            ("nested.py#L25", line("nested.py", 25)),
+            ("nested.py#l25", line("nested.py", 25)),
+            ("src/orders.py#L25-L30", line("src/orders.py", 25)),
+            ("src/orders.py#L25-l30", line("src/orders.py", 25)),
+            ("nested.py#L0", line("nested.py", 0)),
+            ("nested.py#L99999999999", line("nested.py", u32::MAX)),
+            ("C:\\repo\\a.py#L12", line("C:\\repo\\a.py", 12)),
             ("nested.py:99999999999", line("nested.py", u32::MAX)),
             ("C:\\repo\\a.py:12", line("C:\\repo\\a.py", 12)),
             ("C:/repo/a.py:12", line("C:/repo/a.py", 12)),
@@ -221,6 +282,13 @@ mod tests {
             ("C:\\repo\\a.py", path("C:\\repo\\a.py")),
             ("nested.py:", path("nested.py:")),
             ("nested.py:x", path("nested.py:x")),
+            ("nested.py:Lx", path("nested.py:Lx")),
+            ("nested.py#Lx", path("nested.py#Lx")),
+            ("nested.py#L", path("nested.py#L")),
+            ("nested.py#25", path("nested.py#25")),
+            ("nested.py#L25-", path("nested.py#L25-")),
+            ("nested.py#L25-30", path("nested.py#L25-30")),
+            ("#L25", path("#L25")),
             (":12", path(":12")),
             // 26 characters `NodeId::parse` refuses: a `U`, a first character over 7, 25 and 27 characters
             (

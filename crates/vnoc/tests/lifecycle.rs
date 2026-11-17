@@ -726,6 +726,123 @@ fn a_pasted_reference_finds_its_node_first() {
     core.finish();
 }
 
+/// `pkg/nested.py` is a file, `pkg/` a folder: a path with a `/` is a reference, so the file or the folder is first, and exact.
+#[test]
+fn a_pasted_path_puts_its_file_or_folder_first() {
+    let root = fixtures("search-bare-path");
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::rename(root.join("nested.py"), root.join("pkg/nested.py")).unwrap();
+    let mut core = Core::start(Some(driver_path()), &root);
+    let mut ask = |query: &str| {
+        let found = core
+            .request("vnoc/search", json!({ "query": query }))
+            .unwrap();
+        (first_row(&found), exact_ids(&found).len())
+    };
+    for (query, id) in [
+        ("pkg/nested.py", "pkg/nested.py"),
+        ("./pkg/nested.py", "pkg/nested.py"),
+        ("pkg/", "pkg"),
+        ("pkg/nested.py#L25", "pkg/nested.py::Outer.Nested.method"),
+        ("pkg/nested.py:L25", "pkg/nested.py::Outer.Nested.method"),
+        (
+            "pkg/nested.py#L25-L28",
+            "pkg/nested.py::Outer.Nested.method",
+        ),
+        (
+            "File \"pkg/nested.py\", line 25, in method",
+            "pkg/nested.py::Outer.Nested.method",
+        ),
+    ] {
+        let (first, exact_rows) = ask(query);
+        assert_eq!(first, Some((id.to_string(), true, 1)), "{query}");
+        assert_eq!(exact_rows, 1, "{query}");
+    }
+    // a path that names nothing marks no row
+    for query in ["pkg/none.py", "nope/", "pkg/nested.py#Lx"] {
+        assert_eq!(ask(query).1, 0, "{query}");
+    }
+    core.finish();
+}
+
+/// A folder below the git root is open: the pasted path is tried relative to it, as a repo path, and with its name dropped; a file name alone
+/// needs exactly one file of that name.
+#[test]
+fn a_pasted_path_is_tried_against_each_base_then_a_file_name() {
+    let repo = fixtures("search-bases");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let svc = repo.join("svc");
+    std::fs::create_dir_all(svc.join("pkg")).unwrap();
+    std::fs::create_dir_all(svc.join("other")).unwrap();
+    std::fs::rename(repo.join("nested.py"), svc.join("pkg/nested.py")).unwrap();
+    std::fs::copy(svc.join("pkg/nested.py"), svc.join("other/nested.py")).unwrap();
+    std::fs::write(svc.join("pkg/only_here.py"), "def solo():\n    pass\n").unwrap();
+    let mut core = Core::start(Some(driver_path()), &svc);
+    let mut ask = |query: &str| {
+        let found = core
+            .request("vnoc/search", json!({ "query": query }))
+            .unwrap();
+        (first_row(&found), exact_ids(&found).len())
+    };
+    let method = "svc/pkg/nested.py::Outer.Nested.method";
+    let rows = [
+        // relative to the opened folder
+        ("pkg/nested.py:25", method),
+        // as a repo path, the tree's own ids
+        ("svc/pkg/nested.py:25", method),
+        ("svc/pkg/nested.py#L25", method),
+        ("svc/pkg/nested.py::Outer.Nested.method", method),
+        ("svc/pkg/nested.py::Outer", "svc/pkg/nested.py::Outer"),
+        ("svc/pkg/nested.py", "svc/pkg/nested.py"),
+        ("svc/pkg/", "svc/pkg"),
+        // a file name alone, when only one file has it (a bare name is no reference in the box: the path tiers find it)
+        ("only_here.py:2", "svc/pkg/only_here.py::solo"),
+        ("only_here.py::solo", "svc/pkg/only_here.py::solo"),
+    ];
+    for (query, id) in rows {
+        let (first, exact_rows) = ask(query);
+        assert_eq!(first, Some((id.to_string(), true, 1)), "{query}");
+        assert_eq!(exact_rows, 1, "{query}");
+    }
+    // two files have the name: nothing is exact, the words still find
+    for query in ["nested.py:25", "nested.py::Outer"] {
+        assert_eq!(ask(query).1, 0, "{query}");
+    }
+    core.finish();
+}
+
+/// A reference pasted with the opened folder's own name in front (no git folder, so the root is the opened folder and only that try can find it).
+#[test]
+fn a_pasted_path_may_start_with_the_opened_folders_name() {
+    let root = fixtures("search-folder-name");
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::rename(root.join("nested.py"), root.join("pkg/nested.py")).unwrap();
+    let name = root.file_name().unwrap().to_str().unwrap().to_string();
+    let mut core = Core::start(Some(driver_path()), &root);
+    for (query, id) in [
+        (
+            format!("{name}/pkg/nested.py:25"),
+            "pkg/nested.py::Outer.Nested.method",
+        ),
+        (
+            format!("{name}/pkg/nested.py::Outer"),
+            "pkg/nested.py::Outer",
+        ),
+        (format!("{name}/pkg/nested.py"), "pkg/nested.py"),
+        (format!("{name}/pkg/"), "pkg"),
+    ] {
+        let found = core
+            .request("vnoc/search", json!({ "query": query }))
+            .unwrap();
+        assert_eq!(
+            first_row(&found),
+            Some((id.to_string(), true, 1)),
+            "{query}"
+        );
+    }
+    core.finish();
+}
+
 /// Lines of `nested.py` that are not a statement of a body, and what the driver's ranges make of them. The rule is the plan's (the innermost def
 /// whose range holds the line, else the file), not bent: a def's range starts at its decorator and ends at its last line, so a blank line
 /// inside a def belongs to it, and one between two defs, or an `else:`, to the file.

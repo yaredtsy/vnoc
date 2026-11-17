@@ -223,6 +223,10 @@ the filters, the parse, BM25, the UTF-16 ranges, the wire types, the request num
 | 12 | **A file name without its folder** finds nothing (VS Code's Quick Open takes it) | `metering.py:110` → nothing | after the four tries of #3: if exactly one file in the index has that file name, that file; two or more, nothing exact (the words still find) | `lifecycle.rs`: a unique name resolves; a name two folders share does not |
 | 13 | A name pasted from code with its call parens finds nothing | `parse_order(` and `parse_order()` → nothing (moved here from the by-hand list) | the parse: a word loses a trailing `()` or `(` | the parse table |
 
+*(Built in S9a, settled where the rows did not say.)* A file name alone also serves `Location` and a bare `Path` (CLI), not only `:line`; in the
+box a bare `orders.py` is still no reference. A file that failed to outline counts for a file name. `#L25-L30` is line 25 (the end is checked
+for its shape, not used). `:L25:9` is line 25. A URL is reference-shaped (it has a `/`) and names nothing.
+
 Three commits, in this order:
 
 - **S9a** `search S9a: references as people paste them`: #3, #4, #10, #11, #12 (node_ref.rs, query.rs, search.rs, index).

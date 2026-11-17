@@ -230,6 +230,16 @@ impl Index {
         self.knows(path)
     }
 
+    /// The files in scope whose last path part is `name`, outlined or not.
+    pub fn files_named(&self, name: &str) -> Vec<RepoPath> {
+        self.files
+            .keys()
+            .chain(self.failed.keys())
+            .filter(|p| p.as_str().rsplit('/').next() == Some(name))
+            .cloned()
+            .collect()
+    }
+
     /// Whether this path is a folder in scope (the opened folder itself is not one).
     pub fn is_folder(&self, path: &RepoPath) -> bool {
         self.folders.contains_key(path)

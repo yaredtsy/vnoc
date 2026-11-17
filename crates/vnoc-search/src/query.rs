@@ -201,22 +201,48 @@ fn split(text: &str) -> Vec<Token> {
     tokens
 }
 
-/// Whether `token` has the shape of a reference (01 §5): `::`, or ending in `:<digits>`, or 26 letters and digits with no `U`. Whether it names a node is the core's.
+/// Whether `token` has the shape of a reference (01 §5): `::`, a `/`, a line (`:<digits>`, `:L<digits>`, `#L<digits>`, `#L<digits>-L<digits>`),
+/// or 26 letters and digits with no `U`. Whether it names a node is the core's.
 fn is_reference(token: &str) -> bool {
     if token.contains(char::is_whitespace) {
         return false;
     }
-    let line = token
-        .rsplit_once(':')
-        .is_some_and(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    let digits = |n: &str| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit());
+    let l_digits = |n: &str| n.strip_prefix(['L', 'l']).is_some_and(digits);
+    let hash = token
+        .rsplit_once('#')
+        .is_some_and(|(_, f)| match f.split_once('-') {
+            Some((a, b)) => l_digits(a) && l_digits(b),
+            None => l_digits(f),
+        });
+    let line = hash
+        || token
+            .rsplit_once(':')
+            .is_some_and(|(_, n)| digits(n) || l_digits(n));
     let id = token.len() == 26
         && token.bytes().all(|b| b.is_ascii_alphanumeric())
         && !token.bytes().any(|b| b.eq_ignore_ascii_case(&b'u'));
-    token.contains("::") || line || id
+    token.contains("::") || token.contains('/') || line || id
+}
+
+/// A traceback line, `File "<path>", line <n>` and anything after it, as the reference `<path>:<n>`.
+fn traceback(text: &str) -> Option<String> {
+    let rest = text.trim().strip_prefix("File \"")?;
+    let (path, rest) = rest.split_once('"')?;
+    let rest = rest.strip_prefix(", line ")?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    (!path.trim().is_empty() && digits > 0).then(|| format!("{path}:{}", &rest[..digits]))
 }
 
 /// Reads what the user typed (01). Pure, and never fails.
 pub fn parse(text: &str) -> Query {
+    if let Some(token) = traceback(text) {
+        return Query {
+            words: vec![lower(&token)],
+            reference: Some(token),
+            ..Query::default()
+        };
+    }
     let tokens = split(text);
     let mut query = Query::default();
     for token in &tokens {

@@ -61,7 +61,13 @@ fn the_parse_table() {
             "Chor  OrderService.par",
             words(&["chor", "orderservice.par"]),
         ),
-        ("billing/", words(&["billing/"])),
+        (
+            "billing/",
+            Query {
+                reference: Some("billing/".to_string()),
+                ..words(&["billing/"])
+            },
+        ),
         // kind:
         ("kind:fn", kinds(&[Function])),
         ("kind:function", kinds(&[Function])),
@@ -152,7 +158,14 @@ fn the_parse_table() {
         ("-in:", words(&["-in:"])),
         ("has:", words(&["has:"])),
         ("NO:", words(&["no:"])),
-        ("http://x", words(&["http://x"])),
+        // a `/` makes it reference-shaped; it names nothing, so the word finds what it finds
+        (
+            "http://x",
+            Query {
+                reference: Some("http://x".to_string()),
+                ..words(&["http://x"])
+            },
+        ),
         ("self:", words(&["self:"])),
         ("tag:plan", words(&["tag:plan"])),
         ("author:me", words(&["author:me"])),
@@ -214,6 +227,14 @@ fn references_have_a_shape() {
         "a.py:12:5",
         "C:\\repo\\a.py:12",
         "src/orders.py::OrderService.parse_order",
+        "src/orders.py", // a `/` is enough
+        "billing/",
+        "core/metering.py:L110",
+        "core/metering.py:l110",
+        "core/metering.py#L110",
+        "core/metering.py#l110",
+        "core/metering.py#L110-L120",
+        "metering.py#L110",
         id,
         "0Q8V5W4T2F7KX9M3B6D1RZ4H7K", // the same, in capitals
         "0IL8V5W4T2F7KX9M3B6D1RZ4HO", // `I` `L` `O` are read as digits, so they are allowed
@@ -231,16 +252,51 @@ fn references_have_a_shape() {
         "0q8v5w4t2f7kx9m3b6d1rz4h7",   // 25
         "0q8v5w4t2f7kx9m3b6d1rz4h7kk", // 27
         "0q8v5w4t2f7kx9m3b6d1rz4h7-",  // not letters and digits
-        "src/orders.py",
+        "orders.py",
         "orders.py:",
         "orders.py:12a",
+        "orders.py:Lx",
+        "orders.py#Lx",
+        "orders.py#L1-",
+        "orders.py#L1-12",
         "OrderService.parse_order",
-        "billing/",
     ];
     for token in not_references {
         let q = parse(token);
         assert_eq!(q.reference, None, "{token}");
         assert_eq!(q.words, v(&[&token.to_lowercase()]), "{token}: a word");
+    }
+}
+
+#[test]
+fn a_traceback_line_is_the_reference_it_points_at() {
+    for (text, token) in [
+        (
+            "File \"core/metering.py\", line 110",
+            "core/metering.py:110",
+        ),
+        (
+            "File \"core/metering.py\", line 110, in add",
+            "core/metering.py:110",
+        ),
+        (
+            "  File \"/x/My Dir/a b.py\", line 7, in <module>  ",
+            "/x/My Dir/a b.py:7",
+        ),
+    ] {
+        let q = parse(text);
+        assert_eq!(q.reference.as_deref(), Some(token), "{text}");
+        assert_eq!(q.words, v(&[&token.to_lowercase()]), "{text}: its one word");
+        assert!(q.phrases.is_empty() && !q.keeps_nothing, "{text}");
+    }
+    // not a traceback line: the words as they come
+    for text in [
+        "File \"a.py\", line x",
+        "File \"a.py\" line 3",
+        "File \"\", line 3",
+        "file \"a.py\", line 3",
+    ] {
+        assert_eq!(parse(text).reference, None, "{text}");
     }
 }
 

@@ -149,7 +149,7 @@ SearchResult {
 | Form | Example | Resolved by |
 |---|---|---|
 | location | `src/orders.py::OrderService.parse_order` (`#2` for a second def of the same name) | `Index::def_at` |
-| file + line | `src/orders.py:142` (`:142:7` is taken, the column ignored) | the innermost def whose range holds the line, else the file |
+| file + line | `src/orders.py:142` (`:142:7` is taken, the column ignored), `:L142`, `#L142`, `#L142-L150` (line 142) | the innermost def whose range holds the line, else the file |
 | ID | `0Q8V5W4T2F7KX9M3B6D1RZ4H7K` | `NodeId::parse`, then where the index found it (or Missing) |
 | file / folder | `src/orders.py` · `src/billing/` | `Index::is_file`, `Index::is_folder` |
 
@@ -160,10 +160,14 @@ pub enum Found { Node(String /* the tree's id */), Missing(NodeId), Nothing }
 impl Index { pub fn resolve_ref(&self, project: &Project, r: &NodeRef) -> Found }
 ```
 
-- A path in a reference is relative to the **opened folder** (what the user sees and pastes), or absolute; `resolve_ref` turns it into a repo
-  path with `Project::repo_path` / `repo_path_of`.
-- In the box only a query that is **one token** is tried as a reference, and a bare path (`src/orders.py`) is not: it is already found by the
-  path tiers, in order. The CLI tries all four forms.
+- A path in a reference is tried in this order, and the first the index has is used: (a) relative to the **opened folder** (what the user sees
+  and pastes); (b) as a **repo path**, relative to the git root (the tree's own ids, e.g. `svc/pkg/nested.py` with `repo/svc` open); (c) with
+  the opened folder's own name dropped from the front (`backend-api/core/metering.py:110`). An absolute path is only itself. If none names
+  anything and the path has no `/`, **a file name alone** names the one file of the index with that file name (a file that failed to outline
+  counts); two or more, and nothing is exact. `#L0` is line 0, like `:0` (the file); `#Lx` is not a line, so the text is a path.
+- In the box only a query that is **one token** is tried as a reference. A bare path with a `/` (`src/orders.py`, `src/billing/`) is one, so a
+  file or folder the index has is `exact` and first; a path that names nothing leaves the words as they are. A name with no `/` and no line
+  (`orders.py`) is no reference in the box: the path tiers find it. The CLI tries all the forms.
 - An ID that resolves to a Missing node gives no node row; its docs are found if the query's words find them. (The CLI says where it was.)
 - *(Settled for S5, 2026-11-17.)* A pasted line is **1-based**, as an editor and a stack trace show it; a def's `range` is 0-based. "Innermost" is
   the holding def that starts last (ties: the one that ends first). A line in no def, or past the end, gives the file.
