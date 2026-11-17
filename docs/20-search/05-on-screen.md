@@ -30,6 +30,11 @@ held back; nothing can be typed in a hidden box, so this is for the window suite
 later. A query nobody finished costs the core one `run`, about 2 ms on 10,000 nodes (04 §2): cheaper than the wait. The page asks on each change of the box; with no pause, answers to fast keys do cross, and the request numbering (Q8) is what drops the
 old ones, so it is a pure function with a unit test (S3b). The palette does the same.
 
+**Measured again without the debounce** (S3b, 2026-11-17; the same suite, Apple M1, three runs: 16 answers with the `sidebar` suite before it, and 13 and 13 alone): `ms` (box to drawn)
+median **7.2**, **5.6** and **6.5 ms**, worst **30.0**, **32.2** and **21.1 ms**; `trip` median **6.0**, **4.7** and **5.3 ms**, worst **28.1**, **22.2** and **17.8 ms**. Key to drawn is now
+about the round trip (the 50 ms was most of it before: 57 – 61 ms median), under a frame, and the worst ones are still the first answer after a pause. Each key asks the core, and the numbering
+(`shared/search.ts`, `newest`) drops the answers that are not the newest; the window suite types the keys apart by 120 ms and in one go, and only the newest query's answer is drawn.
+
 **For the tests** (S3): the view command `setSearch { text }` puts text in the box as typing would, and the page posts a note
 `searchDrawn { query, ids, total, ms }` each time it draws an answer (`ms`: from the change of the box to the draw), as the canvas posts `codeShown`.
 
