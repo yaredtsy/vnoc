@@ -83,6 +83,13 @@ crates/vnoc/src/search.rs
   `refresh` instead, off the request. S2 measures `corpus_of` and `Corpus::new` together on 10,000 nodes and applies the rule. If it is over, the first fix is in
   the crate, not a move: `Prepared::new` folds each node's path on its own, so the 100 paths of the test are folded 10,000 times; folding each
   distinct path once and sharing it is cheaper than building off the request.
+- **Measured** (S2, 2026-11-17; `cargo test -p vnoc --release --lib -- --ignored --nocapture search`; Apple M1, macOS 14.7.6): 10,000 defs in 100 files
+  across 10 folders (10,110 nodes with the files and folders). Four runs: `tree::build` **4.2 – 5.4 ms**, `corpus_of`'s walk **1.0 – 1.5 ms**,
+  `Corpus::new` **11.8 – 23.2 ms**; the total **17.0, 21.1, 29.9 and 23.1 ms**. The first search after a change therefore costs about the 20 ms line
+  and above it in three runs of four, and the build is mostly `Corpus::new`, as in S1. **Not applied:** the rule says that over 20 ms the design does
+  not change here and nothing is optimised; the choice between the crate's path folding (above) and building at the end of `refresh` is the planner's.
+  Under the watchdog's 50 ms (`watchdog.rs` `LIMIT`) in every run: the build runs inside one poll of the handler (a debug build is slower, and
+  was not measured).
 - A node's `id` and `path` are the tree's: the id is what the pages already use (the repo path, or the location key); the path is relative to the
   opened folder. `in:` therefore means what the user sees.
 
