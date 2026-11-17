@@ -7,6 +7,7 @@
 //! Files and folders are nodes too: a location with an empty qualname, found again by their `# FileID:` comment or `.vnoc-id` file.
 
 mod build;
+mod structure;
 pub(crate) mod tree;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -16,6 +17,7 @@ use vnoc_domain::{LocationKey, NodeId, RepoPath, occurrences};
 use vnoc_driver_protocol::Def;
 
 pub use build::{BuildError, Touched, refresh};
+pub use structure::structure;
 pub use tree::{Kind, Node};
 
 use crate::identity::{FoundBy, Markers, Resolved, resolve};

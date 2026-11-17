@@ -3,9 +3,15 @@
 //! driver and every way of asking.
 
 use std::collections::HashMap;
+use std::sync::RwLock;
 
-use vnoc_domain::NodeId;
-use vnoc_driver_protocol::{CallMark, CallNode, CallTarget, Range};
+use vnoc_domain::{LocationKey, NodeId};
+use vnoc_driver_protocol::{CallEntry, CallMark, CallNode, CallTarget, Range};
+
+use crate::driver_host::{DriverHost, HostError};
+use crate::index::Index;
+use crate::project::Project;
+use crate::protocol::{CallSite, CallTreeNode, CallTreeResult};
 
 /// One place a node is called: a file and a range in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +146,140 @@ fn merge_group(group: &[Call<'_>]) -> Merged {
         call_sites,
         marks,
         children: merge_siblings(&children),
+    }
+}
+
+/// Why a call tree could not be made. The server maps each case to its response code; a command will map them to its exit codes.
+#[derive(Debug, thiserror::Error)]
+pub enum CallsError {
+    /// the key is not a function or a class, does not parse, is not in the index, or the driver refused the request as invalid
+    #[error("{0}")]
+    Invalid(String),
+    /// the driver does not have `callTree`
+    #[error("{0}")]
+    MissingCapability(String),
+    /// anything else
+    #[error("{0}")]
+    Internal(String),
+}
+
+/// Asks the driver for the tree of the def `key` names, `depth` levels deep. The index is built; the errors are `vnoc/callTree`'s.
+///
+/// The index is read only to see that the def is there, and the read ends before the driver is asked (a `std` guard must not live across an
+/// `.await`).
+pub async fn ask(
+    project: &Project,
+    index: &RwLock<Index>,
+    host: &DriverHost,
+    key: &str,
+    depth: Option<u32>,
+) -> Result<vnoc_driver_protocol::CallTreeResult, CallsError> {
+    let invalid = |message: String| CallsError::Invalid(message);
+    if !key.contains("::") {
+        return Err(invalid(format!(
+            "`{key}` is not a function or a class: a call tree starts at one"
+        )));
+    }
+    let location: LocationKey = key.parse().map_err(|e| invalid(format!("{e}")))?;
+    let in_index = {
+        let index = index.read().unwrap();
+        index.def_at(&location).is_some()
+    };
+    if !in_index {
+        return Err(invalid(format!(
+            "`{key}` is not in the index (is the file saved, and is it Python?)"
+        )));
+    }
+
+    // The driver is given the opened folder: it is the project the user sees, and what its imports resolve against. Its paths are then
+    // relative to that folder, like the editor's; a repo path (what the index's keys are made of) is the folder's prefix and the path.
+    let inside = location
+        .path()
+        .as_str()
+        .strip_prefix(project.prefix())
+        .map(|p| p.trim_start_matches('/'));
+    let file = inside
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| CallsError::Internal(format!("`{key}` is not under the opened folder")))?;
+    let asked = vnoc_driver_protocol::CallTreeParams {
+        root: project.open_dir().to_string_lossy().into_owned(),
+        file: file.to_string(),
+        entry: CallEntry {
+            qualname: location.qualname().to_string(),
+            occurrence: location.occurrence(),
+        },
+        depth,
+    };
+    host.call_tree(&asked).await.map_err(|e| match e {
+        HostError::MissingCapability(_) => CallsError::MissingCapability(format!(
+            "{e}: call trees need a driver that has `callTree`"
+        )),
+        HostError::Remote {
+            code: -32602,
+            message,
+        } => invalid(message),
+        other => CallsError::Internal(other.to_string()),
+    })
+}
+
+/// `vnoc/callTree`'s answer: the driver's tree for `key`, merged, with each target given the key the index knows it by.
+/// Every full tree is asked for with a depth cap (`DEPTH_CAP`): a node at it is `cut`, and opening it asks for its own tree.
+pub async fn tree_for(
+    project: &Project,
+    index: &RwLock<Index>,
+    host: &DriverHost,
+    key: &str,
+    depth: Option<u32>,
+) -> Result<CallTreeResult, CallsError> {
+    let answer = ask(project, index, host, key, depth).await?;
+    let merged = merge(&answer.root);
+    // one read of the index for the whole mapping: the revision says which index the keys are from
+    let index = index.read().unwrap();
+    let known = |target: &CallTarget| {
+        let location = LocationKey::new(
+            project.repo_path(target.file.as_deref()?).ok()?,
+            target.qualname.clone(),
+            target.occurrence,
+        )
+        .ok()?;
+        index.def_at(&location).map(|_| location.to_string())
+    };
+    let root = tree_node(&merged, &known);
+    Ok(CallTreeResult {
+        revision: index.revision(),
+        root,
+    })
+}
+
+/// A merged node as the editor gets it. `known`: the key of a target the index has.
+fn tree_node(node: &Merged, known: &dyn Fn(&CallTarget) -> Option<String>) -> CallTreeNode {
+    let target = &node.target;
+    CallTreeNode {
+        key: known(target),
+        name: target
+            .qualname
+            .rsplit('.')
+            .next()
+            .unwrap_or(&target.qualname)
+            .to_string(),
+        qualname: target.qualname.clone(),
+        path: target.file.clone(), // already relative to the opened folder, `null` outside it
+        kind: target.kind,
+        call_count: node.call_count,
+        call_sites: node
+            .call_sites
+            .iter()
+            .map(|site| CallSite {
+                path: site.file.clone(),
+                range: site.range,
+            })
+            .collect(),
+        marks: node.marks.clone(),
+        children: node
+            .children
+            .iter()
+            .map(|child| tree_node(child, known))
+            .collect(),
     }
 }
 
@@ -515,5 +655,36 @@ mod tests {
             .chain(sites("src/b.py", [at(5, 4)]))
             .collect();
         assert_eq!(helper.call_sites, expected);
+    }
+
+    /// The two refusals that need no driver: `host` has no path, so reaching it would be an error of another kind.
+    async fn refused(key: &str) -> CallsError {
+        let dir = std::env::temp_dir().join(format!("vnoc-calls-ask-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = Project::open(&dir).unwrap();
+        let (index, host) = (RwLock::new(Index::default()), DriverHost::default());
+        ask(&project, &index, &host, key, None).await.unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn a_key_without_a_def_is_refused_as_invalid() {
+        match refused("src/orders.py").await {
+            CallsError::Invalid(text) => assert_eq!(
+                text,
+                "`src/orders.py` is not a function or a class: a call tree starts at one"
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_def_the_index_does_not_have_is_refused_as_invalid() {
+        match refused("src/orders.py::parse_order").await {
+            CallsError::Invalid(text) => assert_eq!(
+                text,
+                "`src/orders.py::parse_order` is not in the index (is the file saved, and is it Python?)"
+            ),
+            other => panic!("{other:?}"),
+        }
     }
 }

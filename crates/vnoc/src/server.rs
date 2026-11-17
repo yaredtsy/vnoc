@@ -24,26 +24,25 @@ use async_lsp::lsp_types::{
 use async_lsp::router::Router;
 use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 
-use crate::calls::{self, Merged};
-use crate::driver_host::{DriverHost, HostError};
+use crate::calls::{self, CallsError};
+use crate::driver_host::DriverHost;
 use crate::identity::{self, Env};
-use crate::index::{Index, Touched, refresh};
+use crate::index::{self, Index, Touched, refresh};
 use crate::project::Project;
 use crate::protocol::{
-    Attach, AttachParams, AttachResult, CallSite, CallTree, CallTreeNode, CallTreeParams,
-    CallTreeResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, HasCalls,
-    HasCallsParams, HasCallsResult, IndexChanged, IndexChangedParams, MovePlan, Ping, PingResult,
-    ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan,
-    RestorePlanParams, Search, SearchCards, SearchCardsParams, SearchCardsResult, SearchParams,
-    SearchResult, Stats, Structure, StructureResult, Trash, TrashInfo, TrashInfoResult, TrashItem,
-    TrashList, TrashParams, WriteId, WriteIdParams, WriteIdResult,
+    Attach, AttachParams, AttachResult, CallTree, CallTreeParams, CallTreeResult, DocInfo, Docs,
+    DocsParams, FilesChanged, FilesChangedParams, HasCalls, HasCallsParams, HasCallsResult,
+    IndexChanged, IndexChangedParams, MovePlan, Ping, PingResult, ProjectInfo, ProjectInfoResult,
+    Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Search,
+    SearchCards, SearchCardsParams, SearchCardsResult, SearchParams, SearchResult, Structure,
+    StructureResult, Trash, TrashInfo, TrashInfoResult, TrashItem, TrashList, TrashParams, WriteId,
+    WriteIdParams, WriteIdResult,
 };
 use crate::protocol::{Locate, LocateParams, Located};
 use crate::search::{Prepared, answer, prepare};
 use crate::userdata::{TrashError, UserData};
 use crate::watchdog::timed;
-use vnoc_domain::{LocationKey, NodeId};
-use vnoc_driver_protocol::CallEntry;
+use vnoc_domain::NodeId;
 use vnoc_search::{Corpus, DocIndex, Limits, matches, run};
 
 /// Where the first build is.
@@ -314,24 +313,7 @@ fn structure(
             .ok_or_else(|| internal("no folder is open"))?;
         let capabilities = host.capabilities().await;
         let index = state.index.read().unwrap();
-        let root = index.tree(&project.name(), project.prefix());
-        let [folders, files, classes, functions] = root.counts();
-        Ok(StructureResult {
-            revision: index.revision(),
-            git_root: project.git_root().to_string_lossy().into_owned(),
-            capabilities,
-            root,
-            stats: Stats {
-                folders: folders.saturating_sub(1),
-                files,
-                classes,
-                functions,
-            }, // the opened folder is not a folder under itself
-            truncated: index.truncated(),
-            failed: index.failed(),
-            missing: index.missing(),
-            problems: index.problems(project.git_root()),
-        })
+        Ok(index::structure(&index, project, capabilities))
     })
 }
 
@@ -680,29 +662,16 @@ fn call_tree(
 ) -> impl std::future::Future<Output = Result<CallTreeResult, ResponseError>> + Send + use<> {
     let core = core.clone();
     timed("callTree", async move {
-        let answer = driver_tree(&core, &params.key, Some(calls::DEPTH_CAP)).await?;
-        let merged = calls::merge(&answer.root);
-        let state = &core.state;
-        let project = state
-            .project
-            .get()
-            .ok_or_else(|| internal("no folder is open"))?;
-        // one read of the index for the whole mapping: the revision says which index the keys are from
-        let index = state.index.read().unwrap();
-        let known = |target: &vnoc_driver_protocol::CallTarget| {
-            let location = LocationKey::new(
-                project.repo_path(target.file.as_deref()?).ok()?,
-                target.qualname.clone(),
-                target.occurrence,
-            )
-            .ok()?;
-            index.def_at(&location).map(|_| location.to_string())
-        };
-        let root = tree_node(&merged, &known);
-        Ok(CallTreeResult {
-            revision: index.revision(),
-            root,
-        })
+        let project = ready_project(&core.state).await?;
+        calls::tree_for(
+            project,
+            &core.state.index,
+            &core.host,
+            &params.key,
+            Some(calls::DEPTH_CAP),
+        )
+        .await
+        .map_err(calls_error)
     })
 }
 
@@ -714,7 +683,10 @@ fn has_calls(
 ) -> impl std::future::Future<Output = Result<HasCallsResult, ResponseError>> + Send + use<> {
     let core = core.clone();
     timed("hasCalls", async move {
-        let answer = driver_tree(&core, &params.key, Some(1)).await?;
+        let project = ready_project(&core.state).await?;
+        let answer = calls::ask(project, &core.state.index, &core.host, &params.key, Some(1))
+            .await
+            .map_err(calls_error)?;
         let revision = core.state.index.read().unwrap().revision();
         Ok(HasCallsResult {
             revision,
@@ -723,13 +695,8 @@ fn has_calls(
     })
 }
 
-/// Asks the driver for the tree of the def `key` names, `depth` levels deep. Waits for the first build; the errors are `vnoc/callTree`'s.
-async fn driver_tree(
-    core: &Core,
-    key: &str,
-    depth: Option<u32>,
-) -> Result<vnoc_driver_protocol::CallTreeResult, ResponseError> {
-    let state = &core.state;
+/// Waits for the first build and gives the project: what every call-tree request starts with.
+async fn ready_project(state: &State) -> Result<&Project, ResponseError> {
     let status = state
         .status
         .subscribe()
@@ -740,87 +707,19 @@ async fn driver_tree(
     if let Status::Failed(message) = status {
         return Err(internal(message));
     }
-    let project = state
+    state
         .project
         .get()
-        .ok_or_else(|| internal("no folder is open"))?;
-
-    let invalid = |message: String| ResponseError::new(ErrorCode::INVALID_PARAMS, message);
-    if !key.contains("::") {
-        return Err(invalid(format!(
-            "`{key}` is not a function or a class: a call tree starts at one"
-        )));
-    }
-    let location: LocationKey = key.parse().map_err(|e| invalid(format!("{e}")))?;
-    if state.index.read().unwrap().def_at(&location).is_none() {
-        return Err(invalid(format!(
-            "`{key}` is not in the index (is the file saved, and is it Python?)"
-        )));
-    }
-
-    // The driver is given the opened folder: it is the project the user sees, and what its imports resolve against. Its paths are then
-    // relative to that folder, like the editor's; a repo path (what the index's keys are made of) is the folder's prefix and the path.
-    let inside = location
-        .path()
-        .as_str()
-        .strip_prefix(project.prefix())
-        .map(|p| p.trim_start_matches('/'));
-    let file = inside
-        .filter(|p| !p.is_empty())
-        .ok_or_else(|| internal(format!("`{key}` is not under the opened folder")))?;
-    let asked = vnoc_driver_protocol::CallTreeParams {
-        root: project.open_dir().to_string_lossy().into_owned(),
-        file: file.to_string(),
-        entry: CallEntry {
-            qualname: location.qualname().to_string(),
-            occurrence: location.occurrence(),
-        },
-        depth,
-    };
-    core.host.call_tree(&asked).await.map_err(|e| match e {
-        HostError::MissingCapability(_) => ResponseError::new(
-            ErrorCode::REQUEST_FAILED,
-            format!("{e}: call trees need a driver that has `callTree`"),
-        ),
-        HostError::Remote {
-            code: -32602,
-            message,
-        } => invalid(message),
-        other => internal(other),
-    })
+        .ok_or_else(|| internal("no folder is open"))
 }
 
-/// A merged node as the editor gets it. `known`: the key of a target the index has.
-fn tree_node(
-    node: &Merged,
-    known: &dyn Fn(&vnoc_driver_protocol::CallTarget) -> Option<String>,
-) -> CallTreeNode {
-    let target = &node.target;
-    CallTreeNode {
-        key: known(target),
-        name: target
-            .qualname
-            .rsplit('.')
-            .next()
-            .unwrap_or(&target.qualname)
-            .to_string(),
-        qualname: target.qualname.clone(),
-        path: target.file.clone(), // already relative to the opened folder, `null` outside it
-        kind: target.kind,
-        call_count: node.call_count,
-        call_sites: node
-            .call_sites
-            .iter()
-            .map(|site| CallSite {
-                path: site.file.clone(),
-                range: site.range,
-            })
-            .collect(),
-        marks: node.marks.clone(),
-        children: node
-            .children
-            .iter()
-            .map(|child| tree_node(child, known))
-            .collect(),
+/// A call-tree failure as the response code it has always had.
+fn calls_error(e: CallsError) -> ResponseError {
+    match e {
+        CallsError::Invalid(message) => ResponseError::new(ErrorCode::INVALID_PARAMS, message),
+        CallsError::MissingCapability(message) => {
+            ResponseError::new(ErrorCode::REQUEST_FAILED, message)
+        }
+        CallsError::Internal(message) => internal(message),
     }
 }
