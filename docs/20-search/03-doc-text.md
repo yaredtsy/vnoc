@@ -132,3 +132,24 @@ The crate's side, so that S6a's tests have one answer each.
   same way. An empty body: an empty snippet. `snippet_ranges`: every hit inside the snippet; `title_ranges`: every hit in the title.
 - **The index** is built in `Corpus::new`, whole. **[measure]** in S6a: 1,000 generated docs of 2 KB, the build and one query, in the crate's
   timing test; S6b measures reading them from disk.
+- *(Settled from S6a's tests, 2026-11-17.)* Digits split words in docs as in names (`a001` is `a` `001`). When the last query word is only
+  punctuation, the last piece overall is the prefix (`order /`: `order`). A phrase never gives the prefix; its pieces are whole words. A
+  repeated piece is required once, and may also be the prefix (`ret ret`). A doc's node has at least that doc for `has:`/`no:` (`max(docs, 1)`),
+  in the tree too. A Missing node with no kind fails `kind:` and passes `-kind:`. Only the prefix words inside the cap are highlighted. `…`
+  only where text was cut; a word longer than 120 chars is cut where the snippet ends. Ties: docs of tree nodes, then Missing by `node_path`, then
+  `file`.
+
+## 9. The doc index is its own (decided 2026-11-17, after S6a)
+
+S6a measured `Corpus::new` at **74 – 88 ms** with 1,000 docs of 2 KB, against **4 ms** without: the doc index is 95% of the build, and over the
+watchdog's 50 ms. Two fixes, both in S6a2:
+
+- **Kept apart from the names.** The corpus is rebuilt on every code change (its key is the revision), and the doc text has not changed then.
+  So the doc index is a public `DocIndex`, built from the docs' titles and bodies alone, and the core keeps it under the **doc-text
+  generation**; `Corpus` takes it as an `Arc`. A code change rebuilds the names (≈ 6 ms) and joins the kept doc index to the new nodes
+  (which node each doc belongs to, a scan); a doc change rebuilds the doc index only.
+- **Cheaper to build.** It allocated an owned `String` per distinct word **per doc** and inserted each into a `BTreeMap`: about 200,000 of both
+  for 1,000 docs. Instead: each word is interned once (a `HashMap<Box<str>, u32>` looked up by `&str`, so no allocation for a word already seen),
+  the counts of one doc are kept by word number, postings are `Vec`s by word number, and the sorted word list for the prefix is made once at the
+  end. ASCII text is lower-cased in place, as names are (S2b). Target: the doc index's median build **20 ms or less** on the M1. If it is over,
+  S6b builds it in `refresh`'s `spawn_blocking`, off the request, only when the generation moved.

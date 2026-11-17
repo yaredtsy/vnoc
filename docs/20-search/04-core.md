@@ -72,7 +72,8 @@ crates/vnoc/src/search.rs
   kept(slot: &Mutex<Option<(u64, Arc<Corpus>)>>, key: u64, build: impl FnOnce() -> Corpus) -> Arc<Corpus>
                                                        the same key → the kept Arc; another → build, keep, return. The lock is held while
                                                        building, so two searches at once build once
-  State.corpus: Mutex<Option<(u64, Arc<Corpus>)>>      the key is the index revision; S6 makes it (revision, doc-text generation)
+  State.corpus: Mutex<Option<(u64, Arc<Corpus>)>>      the key is the index revision; S6b keeps the doc index apart, under the doc-text
+                                                       generation (03 §9), and the corpus's key becomes (revision, generation)
   the handler:  index read lock, then State.corpus (nothing else takes it, so the order cannot deadlock); run on the Arc
 ```
 

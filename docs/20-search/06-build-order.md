@@ -149,6 +149,8 @@ Commit: `search S5: a pasted file:line, location or ID finds its node`.
 S6a is the `vnoc-search` rows of the table below (`src/docs.rs`, `src/run.rs`, the crate's tests and timing), on `DocEntry` lists the tests
 build by hand: 03 §8 pins its details. S6b is the rest (`DocTexts`, `refresh`, the corpus's docs, the protocol rows, the core's tests).
 Commits: `search S6a: doc text ranked in the crate` and `search S6b: the core reads and keeps the doc text`.
+S6a2 (added after S6a's timing): the doc index apart from the corpus, and cheaper to build (03 §9). Commit: `search S6a2: the doc index is
+its own, and cheaper`.
 
 
 | Files | What |
