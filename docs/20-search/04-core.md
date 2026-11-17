@@ -90,6 +90,14 @@ crates/vnoc/src/search.rs
   not change here and nothing is optimised; the choice between the crate's path folding (above) and building at the end of `refresh` is the planner's.
   Under the watchdog's 50 ms (`watchdog.rs` `LIMIT`) in every run: the build runs inside one poll of the handler (a debug build is slower, and
   was not measured).
+- **Decided** (2026-11-17, after S2): over the line, so the fix is in the crate (step S2b), not a move. `Prepared::new` made about seven
+  allocations per node (the folded name, a 16-byte span per char, the words and a scratch list, the folded qualname and path), and the spread
+  of 12 – 23 ms is the allocator's, not the computing. Lower-casing ASCII never changes a length, so **ASCII text is compared in place**
+  (`eq_ignore_ascii_case`, byte offsets are char offsets): no folded copy and no spans. Only a name, qualname or path that is not ASCII is folded
+  as before. The words are kept in one `Vec<(u32, u32)>` and split without a scratch list. Target: the median total of S2's timing at **20 ms or
+  less** on the M1. If S2b does not reach it, the next step is "keep it warm": after an update, if a corpus is kept, rebuild it in the
+  background, so the first key after a save does not pay. Building at the end of every `refresh` stays out: a project nobody searches pays
+  nothing.
 - A node's `id` and `path` are the tree's: the id is what the pages already use (the repo path, or the location key); the path is relative to the
   opened folder. `in:` therefore means what the user sees.
 

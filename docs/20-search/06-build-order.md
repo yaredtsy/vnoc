@@ -76,6 +76,15 @@ the new revision. Nothing on screen changes yet.
 
 Commit: `search S2: vnoc/search over a kept corpus`.
 
+### S2b The corpus build, cheaper (added 2026-11-17)
+
+S2 measured the build at 17 – 30 ms on 10,000 nodes, over 04 §2's 20 ms. The fix is in `crates/vnoc-search/src/{names.rs, words.rs}`: ASCII
+text compared in place, only non-ASCII folded (04 §2, "Decided"). No change to the API, the tiers, the order or any expectation. Tests: every
+S1 test unchanged; a check that the in-place path and the folded path agree on generated ASCII names and words (tier, skipped, ranges); a row
+each with a non-ASCII name, qualname and path. Both timing tests report the first run and the median of five. **[measure]** into 04 §2.
+
+Commit: `search S2b: ASCII names are matched in place; the corpus build is cheaper`.
+
 ### S3 The sidebar and the palette ask the core
 
 | Files | What |
