@@ -45,6 +45,13 @@ pub struct Limits { pub nodes: usize, pub docs: usize }       // default 200 and
 pub fn parse(query: &str) -> Query
 pub fn run(corpus: &Corpus, query: &Query, exact: Option<usize>, limits: Limits) -> Results
 pub fn matches(corpus: &Corpus, query: &Query, ids: &[&str]) -> Vec<bool>     // §5
+
+pub struct Results { pub nodes: Vec<NodeHit>, pub nodes_total: usize, pub docs: Vec<DocHit>, pub docs_total: usize }
+pub struct NodeHit { pub index: usize,                // into the corpus's nodes
+                     pub tier: u8, pub skipped: u32,  // skipped: 02 §5, 0 unless the tier is 2
+                     pub exact: bool,
+                     pub ranges: Vec<(u32, u32)> }    // in the name, UTF-16 units (Q4), sorted and merged
+pub struct DocHit  { /* S6 (03); an empty struct until then */ }
 ```
 
 `exact` is the node a reference resolved to (§4): the crate puts it first; it does not find it.

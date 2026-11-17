@@ -76,7 +76,7 @@ words), and `billing/ pay` finds `pay…` under `billing/` at tier 4 (the path w
 
 1. the exact reference, if the query was one (01 §1);
 2. the tier;
-3. inside tier 2, fewer name words skipped;
+3. inside tier 2, fewer name words skipped (with several words, the sum over the words; a word not at tier 2 adds 0);
 4. the shorter name (closer to the whole name);
 5. reading order (the tree's order: folders first, then files, each sorted as the Explorer sorts; defs in source order).
 

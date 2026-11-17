@@ -71,6 +71,10 @@ DocTexts   (crates/vnoc/src/userdata/doc_text.rs)
   ([`04-core.md`](04-core.md) §2).
 - So a result list on screen can show an old snippet until the next key. That is accepted: the box is being typed in.
 - A doc written by `vnoc doc new` (21) or by a teammate's `git pull` arrives the same way: the watcher, `filesChanged`, `refresh`.
+- **Checked 2026-11-17 (S0):** `vnoc/indexChanged` makes the host re-fetch every stale call tree 800 ms later (`extension/src/extension.ts`
+  → `callTree.ts` → `shared/callScheduler.ts`), the canvas and the sidebar re-fetch the whole structure (`webview/src/state/data.ts`), and the
+  doc panel refreshes (`webview/src/docs/DocsApp.tsx`). So a doc save that sent it would cost a structure and a call-tree round trip per save,
+  for no change to either. Q2 holds: doc bodies never send it.
 
 ## 6. The snippet
 

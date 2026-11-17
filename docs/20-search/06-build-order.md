@@ -26,22 +26,20 @@ On a branch `search` from `main`, after edit-in-canvas is merged. Each step is o
 
 ### S0 Two checks (no product change)
 
-| Check | How | Write the answer into |
-|---|---|---|
-| a QuickPick with `alwaysShow` items keeps the given order while its box has text | a throwaway command: five items in an order no matcher would give, `alwaysShow: true`, set again on `onDidChangeValue`; F5; type | 05 §2 (and drop the fallback, or take it) |
-| what the pages and the host do on `indexChanged` | read `extension/src/extension.ts` (`indexChanged`), `callTree.ts`, the pages' `on("indexChanged")` | 03 §5: one line confirming a doc save must not send it |
-
-Proof: the two answers in the docs; the throwaway command removed. Commit: `docs: search S0, the QuickPick order and what indexChanged costs`.
+**Done 2026-11-17, as a reading, not a step.** What `indexChanged` costs is answered in 03 §5. The QuickPick's order needs a person and a
+window, and matters only in S3, so it moved there: S3 builds the QuickPick on `vnoc/search` with `alwaysShow` items, and its by-hand pass says
+whether the order holds; if not, the fallback of 05 §2 is S3's second commit.
 
 ### S1 The crate: names
 
 | Files | What |
 |---|---|
 | `crates/vnoc-search/Cargo.toml`, `src/lib.rs` | the crate (Q7); `Kind`, `NodeEntry`, `DocEntry`, `Corpus::new`, `Limits`, `Results` (04 §1) |
+| `.github/workflows/ci.yml` | `-p vnoc-search` in the `core` test step (clippy and fmt already cover the workspace) |
 | `src/words.rs` | `name_words(&str) -> Vec<(start, end)>` (02 §3) |
 | `src/names.rs` | the six tiers for one word; fuzzy by word with the retry; several words (02 §4); the order (02 §5) |
 | `src/utf16.rs` | byte range → UTF-16 range |
-| `src/run.rs` | `run` for nodes only: words, the order, the limit, `nodes_total`; `docs` empty |
+| `src/run.rs` | `run` for nodes only: words, the order, the limit, `nodes_total`; `exact` first, marked, not repeated (it is in `run`'s signature, so it is built here, not in S5); `docs` empty |
 
 `parse` in this step is only "split on spaces into words" (the real one is S4).
 
@@ -54,6 +52,7 @@ Tests (`cargo test -p vnoc-search`):
 - several words: 02 §4's two examples;
 - UTF-16: `café_order` with `or`, and a name with an emoji before the match;
 - the order: tier, fewer skipped, shorter, reading order (a table).
+- `exact`: the given node first, `exact: true`, not repeated below.
 - `#[ignore]` timing test, run by hand: `Corpus::new` and one `run` on 10,000 generated names **[measure]**, written into 04 §2.
 
 By hand once: `cargo check -p vnoc-search --target wasm32-unknown-unknown` **[check]**, written into the README §5.
@@ -84,7 +83,7 @@ Commit: `search S2: vnoc/search over a kept corpus`.
 | `webview/src/sidebar/useSearch.ts` | asks on change (debounce), numbers the requests, drops old answers and answers from an older revision (05 §1); asks again on `indexChanged` |
 | `webview/src/sidebar/search.ts` | `rankNodes`, `matchRange`, `indexNodes`, `Tier` deleted; `splitMatch` takes several ranges; `searchKey`, `pickIntent` stay |
 | `webview/src/sidebar/` (the result row) | bold from `match[]`; the header with the count and `of N` |
-| `extension/src/search.ts` | S0's answer: the QuickPick on `vnoc/search`, or deleted and the command focuses the box |
+| `extension/src/search.ts` | the QuickPick on `vnoc/search`: every item `alwaysShow: true`, `items` set again on each answer. By hand: type a query whose core order is not alphabetical; if VS Code re-sorts it, a second commit takes 05 §2's fallback (the command focuses the sidebar's box; this file is deleted) |
 | `webview/src/sidebar/search.test.ts` | the ranking rows deleted (they are in Rust); `splitMatch` with two ranges; `searchKey` rows stay |
 | `extension/src/test/suite/` | the `search` suite |
 
@@ -114,9 +113,8 @@ Commit: `search S4: filters in the query`.
 | `crates/vnoc/src/node_ref.rs` (new) | `NodeRef`, `parse`, `Found`, `Index::resolve_ref` (04 §4) |
 | `crates/vnoc/src/index/mod.rs` | what `resolve_ref` needs: the innermost def at a line, where an ID was found |
 | `crates/vnoc/src/server.rs` | a one-token query that parses as a location, file:line or ID is resolved; the node goes to `run` as `exact` |
-| `crates/vnoc-search/src/run.rs` | `exact` first, `exact: true` on its row, not repeated below |
 
-Tests: the `parse` table (every form, `#2`, `:12:5`, `C:\a.py:12`, a 26-character non-ID, an absolute path); `resolve_ref`: a line inside a
+Tests (the crate's side of `exact` is S1's): the `parse` table (every form, `#2`, `:12:5`, `C:\a.py:12`, a 26-character non-ID, an absolute path); `resolve_ref`: a line inside a
 method gives the method, a line between defs gives the file, an ID gives its node, an ID of a Missing node gives `Missing`; `lifecycle.rs`:
 `vnoc/search` with `nested.py:<line>` answers that def first.
 

@@ -87,8 +87,8 @@ Two searches that rank differently, both in TypeScript, neither reads a doc. Aft
 
 | # | Check | Step | Decides |
 |---|---|---|---|
-| 1 | Does a `QuickPick` whose items all have `alwaysShow: true` keep the order it was given while its box has text? | S0 | 05 §2: the QuickPick stays, or *V-NOC: Search…* focuses the sidebar's box |
-| 2 | What do the pages do on `indexChanged`? (Confirms Q2: a doc save must not look like a code change.) | S0 | nothing if Q2 holds; a note in 03 §5 |
+| 1 | Does a `QuickPick` whose items all have `alwaysShow: true` keep the order it was given while its box has text? | S3, by hand | 05 §2: the QuickPick stays, or *V-NOC: Search…* focuses the sidebar's box |
+| 2 | What do the pages do on `indexChanged`? (Confirms Q2: a doc save must not look like a code change.) | **done** (S0, 2026-11-17) | Q2 holds: 03 §5 |
 | 3 | `cargo check -p vnoc-search --target wasm32-unknown-unknown` passes | S1 | Q7's claim, by hand once |
 | 4 | **[measure]** corpus build and one `run` on 10,000 generated names | S1 | whether the corpus needs to be built off the request (04 §2) |
 | 5 | **[measure]** key to drawn results, in the window | S3 | the debounce (05 §1) |
