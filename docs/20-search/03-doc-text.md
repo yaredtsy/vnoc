@@ -110,8 +110,26 @@ with a few common ones and many rare), attached across the names. Each figure is
 | one `run`, a two-letter prefix (`ba`: 1,000 docs found, 50 shown, and 81 nodes) | 2.8 ms | 2.9 ms |
 
 So the index adds about 70 – 85 ms to a build (the names' own 2 – 4 ms is as in 04 §2), and a query that finds every doc, the worst case, costs about
-3 ms with the names and the snippets of the 50 shown. The build happens once per change of the corpus (04 §2), not per key. **Still to measure in S6b**
-(it reads from disk): the first read, the memory, and one update after a single doc changed.
+3 ms with the names and the snippets of the 50 shown. The build happens once per change of the corpus (04 §2), not per key. S6b measured the part that reads from disk (below).
+
+**Measured in S6b (2026-11-17), reading from disk.** `cargo test -p vnoc --release --lib -- --ignored --nocapture doc_text`
+(`userdata/doc_text.rs`, `timing_1000_docs`), Apple M1, 8 GB, rustc 1.94.1. 1,000 records with one doc each (a title of two words, a body to about
+2 KB: 1,000 docs, 2,009,000 bytes of titles and bodies, 1,961 KB), written into a temp `.vnoc/` a moment before, so **the files are in the system's
+cache**: a first read from a cold disk is not measured. Five invocations; the load average was 8 – 9 throughout (the machine is shared), so the
+spread is mostly that.
+
+| | range of 5 | note |
+|---|---|---|
+| the first `DocTexts::refresh`: 1,000 stats, 1,000 reads | **17 – 32 ms** (17.7, 32.3, 23.5, 17.0, 23.1) | the **first read is under the 200 ms line**: it stays in the first build |
+| the bytes held | **2,009,000** (1,961 KB) | titles plus bodies; paths, stamps and the map are a few hundred bytes a doc on top |
+| the doc index, `Corpus::new` over the 1,000 `DocEntry` | 14.6 – 16.8 ms | as in S6a2: built in the request, once per generation |
+| one `run`, `baba` (1,000 found, 50 shown) | 1.1 – 1.2 ms | |
+| one `run`, `ba` (1,000 found, 50 shown) | 1.2 – 1.3 ms | |
+| a refresh after **one doc changed**: 1,000 stats, **1 read** | **3.7 – 4.3 ms** | the generation moves by one |
+| a refresh with **nothing changed**: 1,000 stats, 0 reads | 2.8 – 4.2 ms | the generation does not move |
+
+So the stat of 1,000 docs is about 3 ms, which every update (every save in the repository) now pays, and reading them all is 15 – 30 ms once. A
+search after a doc edit pays the doc index's 15 ms (plus the names' 1 – 2 ms), once, in the request, under the watchdog's 50 ms.
 
 ## 8. Settled for S6a (2026-11-17)
 
