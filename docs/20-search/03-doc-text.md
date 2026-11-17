@@ -71,6 +71,13 @@ DocTexts   (crates/vnoc/src/userdata/doc_text.rs)
   ([`04-core.md`](04-core.md) §2).
 - So a result list on screen can show an old snippet until the next key. That is accepted: the box is being typed in.
 - A doc written by `vnoc doc new` (21) or by a teammate's `git pull` arrives the same way: the watcher, `filesChanged`, `refresh`.
+- *(Settled for S6b, 2026-11-17.)* A stamp is the file's size and its modified time as the file system gives it (to the nanosecond where it
+  can). The docs are kept, and handed to the crate, **sorted by (node ID, file name)**: the order is the same for a generation, so a kept
+  `DocIndex` (§9) lines up with the entries. Each doc is joined to its node once per corpus build through a `HashMap` from the tree's id to the
+  node's place (a scan per doc would be 1,000 × 10,000). A Missing node's doc: `node_path` is its stored path relative to the opened folder (the
+  repo path when it is outside it), `node_name` the last part of its qualname (the file name for a file, the folder's for a folder),
+  `node_kind` from its `node.toml`. `doc_path` is absolute, for `openDoc` (S7). A doc's body and title come from one function in
+  `userdata/read.rs` beside `title_of`, which `docs_of` keeps using.
 - **Checked 2026-11-17 (S0):** `vnoc/indexChanged` makes the host re-fetch every stale call tree 800 ms later (`extension/src/extension.ts`
   → `callTree.ts` → `shared/callScheduler.ts`), the canvas and the sidebar re-fetch the whole structure (`webview/src/state/data.ts`), and the
   doc panel refreshes (`webview/src/docs/DocsApp.tsx`). So a doc save that sent it would cost a structure and a call-tree round trip per save,
