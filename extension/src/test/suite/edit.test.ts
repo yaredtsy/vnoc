@@ -375,7 +375,9 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       const expected = original.replace(inEol("return 9\n", eol), inEol("return 99\n", eol));
       await waitFor("the file on disk to be the original with the one line changed", () => fs.readFileSync(file(), "utf8") === expected, 30_000);
       const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file());
-      assert.ok(document && !document.isDirty, "E4: the file was not dirty before, so it is saved");
+      assert.ok(document, "E4: the file was not dirty before, so it is saved");
+      // the file is written before the flag is cleared, and the extension host hears of it later still: waited for, not read once
+      await waitFor("E4: the file was not dirty before, so it is saved", () => !document.isDirty, 10_000);
 
       // the card kept the saved text until the index moved on, then dropped the draft and read its code again
       await waitFor("the card to be reading again", () => statesOf(id, since).at(-1) === "reading", 30_000);
@@ -620,7 +622,9 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
       assert.strictEqual(shown.length, 1, "nothing could not be saved: no second notification");
       assert.strictEqual(shown[0].message, "1 unsaved draft from the canvas");
       const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file());
-      assert.ok(document && !document.isDirty, "the file was saved (E4: it was not dirty before)");
+      assert.ok(document, "the file was saved (E4: it was not dirty before)");
+      // the file is written before the flag is cleared, and the extension host hears of it later still: waited for, not read once
+      await waitFor("the file was saved (E4: it was not dirty before)", () => !document.isDirty, 10_000);
     } finally {
       discardOnClose();
       await closeCanvas();
@@ -943,7 +947,9 @@ suite("a doc's Markdown saves through the same rows (docs/17-edit-in-canvas.md s
       const expected = DOC.replace("the same field twice. ID: not-an-ID-line", "the same field twice.");
       await waitFor("the .md on disk to be the edited text", () => fs.readFileSync(file, "utf8") === expected, 30_000);
       const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
-      assert.ok(document && !document.isDirty, "E4: it was not dirty before, so it is saved");
+      assert.ok(document, "E4: it was not dirty before, so it is saved");
+      // the file is written before the flag is cleared, and the extension host hears of it later still: waited for, not read once
+      await waitFor("E4: it was not dirty before, so it is saved", () => !document.isDirty, 10_000);
     } finally {
       await putBack();
     }
