@@ -976,6 +976,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vnoc-search"
+version = "0.2.0"
+
+[[package]]
 name = "waitpid-any"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
