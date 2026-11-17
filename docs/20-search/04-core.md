@@ -71,8 +71,10 @@ crates/vnoc/src/search.rs
 ```
 
 - Built on the first search after a change, not on every update: a project nobody searches pays nothing.
-- **[measure]** (S1, S2) the build on 10,000 generated names. Under 20 ms it stays in the request. Over that, it is built at the end of `refresh`
-  instead, off the request.
+- **Measured** (S1, 2026-11-17; `cargo test -p vnoc-search --release -- --ignored --nocapture`; Apple M1, macOS 14.7.6): 10,000 generated names in 100 files.
+  `Corpus::new` took **14 – 20 ms** (19.0, 15.3 and 14.2 ms in three runs; 20.5 ms in a fourth), and one `run` for `co` (2,796 found, 200 shown)
+  **1.6 – 2.4 ms**. The run is small; the build sits **on the 20 ms line**: under it, it stays in the request; over it, it is built at the end of
+  `refresh` instead, off the request. S2 measures it again with `corpus_of` and the real tree.
 - A node's `id` and `path` are the tree's: the id is what the pages already use (the repo path, or the location key); the path is relative to the
   opened folder. `in:` therefore means what the user sees.
 
