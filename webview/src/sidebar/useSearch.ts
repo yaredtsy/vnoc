@@ -20,7 +20,7 @@ interface Answer {
  * the rows; the active row is pointed at on the canvas (`highlight`: nothing is selected); `Enter` or a click picks it; `Esc` clears. `focusList` gives the
  * keyboard to the active panel's list when the search ends. Keeps no state a gesture could need elsewhere: the session has the rest.
  *
- * The core finds and ranks. The page asks on each change of the box (no debounce: a round trip is about 5 ms) and draws only the answer to the newest request (Q8, `newest`);
+ * The core finds and ranks, and says in `notes` what was wrong with a filter of the query (drawn under the box, with the rows or without). The page asks on each change of the box (no debounce: a round trip is about 5 ms) and draws only the answer to the newest request (Q8, `newest`);
  * it does not compare the answer's `revision` (Q5: a restarted core counts from the start again). While an answer is on its way the last rows stay; an empty box asks
  * nothing and clears them at once.
  */
@@ -105,7 +105,7 @@ export function useSearch(focusList: () => void) {
   useEffect(() => {
     if (!answer) return;
     const now = performance.now();
-    post({ type: "searchDrawn", query: answer.query, ids: answer.result.nodes.map((n) => n.id), total: answer.result.nodes_total, ms: now - answer.changedAt, trip: now - answer.sentAt });
+    post({ type: "searchDrawn", query: answer.query, ids: answer.result.nodes.map((n) => n.id), total: answer.result.nodes_total, notes: answer.result.notes, ms: now - answer.changedAt, trip: now - answer.sentAt });
   }, [answer]);
 
   // the active row's card is pointed at on the canvas; no query, nothing pointed at
@@ -164,5 +164,5 @@ export function useSearch(focusList: () => void) {
   };
   /** The answer for the box's text came and found nothing (not: no answer yet). */
   const noMatches = searching && answer?.query === query && rows.length === 0;
-  return { query, setQuery, rows, total: answer?.result.nodes_total ?? 0, noMatches, active, setActive, searching, input, onKeyDown, pick, clear, focusBox };
+  return { query, setQuery, rows, total: answer?.result.nodes_total ?? 0, notes: searching ? (answer?.result.notes ?? []) : [], noMatches, active, setActive, searching, input, onKeyDown, pick, clear, focusBox };
 }

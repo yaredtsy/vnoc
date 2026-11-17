@@ -15,6 +15,7 @@ interface Drawn {
   query: string;
   ids: string[];
   total: number;
+  notes: string[];
   ms: number;
   trip: number;
 }
@@ -62,19 +63,19 @@ async function showSidebar(): Promise<void> {
   await sleep(300);
 }
 
-suiteSetup(async () => {
-  api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
-  // the box is in the STRUCTURE view: its page must exist and have drawn the tree before it can be typed in
-  await showSidebar();
-  await until("the STRUCTURE page to exist", () => api.sidebarOpen(), 30_000);
-  await waitFor("the tree", async () => (await api.structure()).root.children.length > 0, 30_000);
-  await sleep(1000); // the page asked for the structure and drew it
-  drawnAtStart = api.searchDrawn().length;
-});
-
-suiteTeardown(() => api.setSearch("")); // the panels come back, and the highlight clears, for the suites that follow
-
 suite("search", () => {
+  suiteSetup(async () => {
+    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    // the box is in the STRUCTURE view: its page must exist and have drawn the tree before it can be typed in
+    await showSidebar();
+    await until("the STRUCTURE page to exist", () => api.sidebarOpen(), 30_000);
+    await waitFor("the tree", async () => (await api.structure()).root.children.length > 0, 30_000);
+    await sleep(1000); // the page asked for the structure and drew it
+    drawnAtStart = api.searchDrawn().length;
+  });
+
+  suiteTeardown(() => api.setSearch("")); // the panels come back, and the highlight clears, for the suites that follow
+
   test("the box shows the core's rows, which the old ranking could not give: `outer.meth` is in no name and no path", async () => {
     await showSidebar();
     const methods = (await nodesOf()).filter((n) => n.qualname === "Outer.method").map((n) => n.id);
@@ -164,6 +165,36 @@ suite("search", () => {
     }
     api.searchKey("Escape");
     await until("the pointer to clear", () => api.session().highlight === null);
+  });
+
+  test("`kind:method` draws exactly the fixture's four methods, in reading order, and no note", async () => {
+    await showSidebar();
+    // a method is a function whose parent is a class; the tree's depth-first order is the reading order
+    const methods: string[] = [];
+    const walk = (n: TreeNode, parent: TreeNode | null) => {
+      if (n.kind === "function" && parent?.kind === "class") methods.push(n.id);
+      n.children.forEach((c) => walk(c, n));
+    };
+    (await api.structure()).root.children.forEach((c) => walk(c, null));
+    assert.strictEqual(methods.length, 4, `the fixture defines four methods (${methods.join(", ")})`);
+    const from = api.searchDrawn().length;
+    api.setSearch("kind:method");
+    const got = await drawn("the answer for `kind:method`", from, (d) => d.query === "kind:method");
+    assert.deepStrictEqual(got.ids, methods);
+    assert.strictEqual(got.total, 4);
+    assert.deepStrictEqual(got.notes, []);
+    api.setSearch("");
+  });
+
+  test("`kind:fnn` draws no rows, and its note", async () => {
+    await showSidebar();
+    const from = api.searchDrawn().length;
+    api.setSearch("kind:fnn");
+    const got = await drawn("the answer for `kind:fnn`", from, (d) => d.query === "kind:fnn");
+    assert.deepStrictEqual(got.ids, []);
+    assert.strictEqual(got.total, 0);
+    assert.deepStrictEqual(got.notes, ["`kind:fnn` is not a kind (folder, file, class, function, method)"]);
+    api.setSearch("");
   });
 
   test("[measure] the box: from the change of the text to the drawn rows, and from the request", () => {

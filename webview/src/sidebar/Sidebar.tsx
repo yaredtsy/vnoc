@@ -61,7 +61,7 @@ export function Sidebar() {
         )}
         {body === "ready" && structure ? (
           search.searching ? (
-            <SearchResults rows={search.rows} total={search.total} noMatches={search.noMatches} active={search.active} onPick={search.pick} />
+            <SearchResults rows={search.rows} total={search.total} notes={search.notes} noMatches={search.noMatches} active={search.active} onPick={search.pick} />
           ) : (
             <Panels structure={structure} onList={(id, el) => (el ? lists.current.set(id, el) : lists.current.delete(id))} focusList={focusList} />
           )

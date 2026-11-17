@@ -6,7 +6,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use vnoc_search::{Corpus, NodeEntry, Results};
+use vnoc_search::{Corpus, NodeEntry, Query, Results};
 
 use crate::index::{self, Kind, Node};
 use crate::protocol::{SearchNode, SearchResult};
@@ -75,8 +75,8 @@ pub fn kept(
     }
 }
 
-/// The crate's results as the protocol's answer. No doc is searched yet, so `docs` is empty and so are `notes`.
-pub fn answer(revision: u64, corpus: &Corpus, results: Results) -> SearchResult {
+/// The crate's results as the protocol's answer, with the notes `query` gave about its filters. No doc is searched yet, so `docs` is empty.
+pub fn answer(revision: u64, corpus: &Corpus, query: &Query, results: Results) -> SearchResult {
     let nodes = results
         .nodes
         .into_iter()
@@ -102,7 +102,7 @@ pub fn answer(revision: u64, corpus: &Corpus, results: Results) -> SearchResult 
         nodes_total: results.nodes_total,
         docs: Vec::new(),
         docs_total: results.docs_total,
-        notes: Vec::new(),
+        notes: query.notes.clone(),
     }
 }
 

@@ -364,8 +364,9 @@ fn search(
             nodes: params.nodes.unwrap_or(defaults.nodes),
             docs: params.docs.unwrap_or(defaults.docs),
         };
-        let results = run(&corpus, &parse(&params.query), None, limits);
-        Ok(answer(revision, &corpus, results))
+        let query = parse(&params.query);
+        let results = run(&corpus, &query, None, limits);
+        Ok(answer(revision, &corpus, &query, results))
     })
 }
 

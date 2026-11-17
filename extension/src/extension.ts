@@ -36,7 +36,7 @@ const renderWaiters: ((r: Rendered) => void)[] = [];
 type SidebarRendered = { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number };
 const sidebarPosts: SidebarRendered[] = [];
 /** The answers the STRUCTURE view drew for its search box (for the test suite). */
-const searchDrawnPosts: { query: string; ids: string[]; total: number; ms: number; trip: number }[] = [];
+const searchDrawnPosts: { query: string; ids: string[]; total: number; notes: string[]; ms: number; trip: number }[] = [];
 /** What the STRUCTURE view said when it handled `focusSearch`: whether the cursor is in the box, and what the box holds (for the test suite). */
 const searchFocusedPosts: { focused: boolean; text: string }[] = [];
 /** What the cards drew of their code (for the test suite). */
@@ -327,7 +327,7 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });
       break;
     case "searchDrawn":
-      searchDrawnPosts.push({ query: note.query, ids: note.ids, total: note.total, ms: note.ms, trip: note.trip });
+      searchDrawnPosts.push({ query: note.query, ids: note.ids, total: note.total, notes: note.notes, ms: note.ms, trip: note.trip });
       break;
     case "searchFocused":
       searchFocusedPosts.push({ focused: note.focused, text: note.text });

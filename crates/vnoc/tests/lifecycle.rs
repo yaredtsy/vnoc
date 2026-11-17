@@ -466,6 +466,73 @@ fn search_answers_from_the_tree_before_and_after_a_change() {
 }
 
 #[test]
+fn search_filters_narrow_nodes_and_a_value_that_means_nothing_is_a_note() {
+    let root = fixtures("search-filters");
+    let mut core = Core::start(Some(driver_path()), &root);
+
+    // a value that means nothing keeps no node and says why; it is not an error
+    let found = core
+        .request("vnoc/search", json!({ "query": "kind:fnn" }))
+        .unwrap();
+    assert_eq!(found["nodes"], json!([]), "{found}");
+    assert_eq!(found["nodes_total"], 0);
+    assert_eq!(
+        found["notes"],
+        json!(["`kind:fnn` is not a kind (folder, file, class, function, method)"])
+    );
+
+    // only filters: every node that passes, in reading order, at tier 0
+    let found = core
+        .request("vnoc/search", json!({ "query": "kind:method" }))
+        .unwrap();
+    let rows = found["nodes"].as_array().unwrap();
+    assert_eq!(rows.len(), 4, "{found}");
+    for row in rows {
+        assert_eq!(row["in_class"], true, "{row}");
+        assert_eq!(row["tier"], 0, "{row}");
+        assert_eq!(row["match"], json!([]), "{row}");
+    }
+    assert_eq!(found["nodes_total"], 4);
+    assert_eq!(found["notes"], json!([]));
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    let mut methods = Vec::new();
+    fn walk<'a>(node: &'a Value, parent: &str, out: &mut Vec<&'a str>) {
+        for child in node["children"].as_array().unwrap() {
+            let kind = child["kind"].as_str().unwrap();
+            if kind == "function" && parent == "class" {
+                out.push(child["id"].as_str().unwrap());
+            }
+            walk(child, kind, out);
+        }
+    }
+    walk(&structure["root"], "", &mut methods);
+    assert_eq!(found_ids(&found), methods, "the tree's reading order");
+
+    // a filter and a word: the word's tiers, on the nodes that pass
+    let found = core
+        .request(
+            "vnoc/search",
+            json!({ "query": "kind:class in:nested.py nested" }),
+        )
+        .unwrap();
+    assert!(!found_ids(&found).is_empty(), "{found}");
+    for row in found["nodes"].as_array().unwrap() {
+        assert_eq!(row["kind"], "class", "{row}");
+        assert_eq!(row["path"], "nested.py", "{row}");
+    }
+    let found = core
+        .request("vnoc/search", json!({ "query": "kind:class in:other/" }))
+        .unwrap();
+    assert_eq!(found["nodes"], json!([]), "{found}");
+    assert_eq!(
+        found["notes"],
+        json!([]),
+        "a filter that keeps nothing is not a note"
+    );
+    core.finish();
+}
+
+#[test]
 fn a_missing_driver_is_a_clear_error_and_the_core_stays_up() {
     let mut core = Core::start(None, &fixtures("nodriver"));
     let e = core.request("vnoc/structure", Value::Null).unwrap_err();

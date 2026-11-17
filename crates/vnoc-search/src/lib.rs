@@ -4,17 +4,19 @@
 //! editor, the CLI or a web page that can produce the lists gets the same search, and it builds for `wasm32` where no native program runs.
 //!
 //! * [`Corpus`]: the nodes in reading order with their names split into words, built once and searched many times.
-//! * [`parse`] and [`Query`]: the words the user typed, lower-cased.
-//! * [`run`]: the nodes the words find, best first, as [`Results`].
+//! * [`parse`] and [`Query`]: what the user typed, as words, phrases and filters (`query.rs`).
+//! * [`run`]: the nodes the query finds, best first, as [`Results`].
 //!
 //! A node's name, qualified name and path are matched in six tiers (`names.rs`), and a hit carries the ranges of its name to draw bold, in
 //! UTF-16 code units as LSP's are (`utf16.rs`). Doc text arrives in a later step: [`DocEntry`] and [`DocHit`] are declared and unused.
 
 mod names;
+mod query;
 mod run;
 mod utf16;
 mod words;
 
+pub use query::{KindFilter, Query, parse};
 pub use run::run;
 
 /// What a node is. A method is a [`Kind::Function`] with `in_class` set.
@@ -100,20 +102,6 @@ impl Default for Limits {
             nodes: 200,
             docs: 50,
         }
-    }
-}
-
-/// What the user typed, as words.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Query {
-    /// Lower-case, none empty.
-    pub words: Vec<String>,
-}
-
-/// Splits `query` at white space and lower-cases it.
-pub fn parse(query: &str) -> Query {
-    Query {
-        words: query.split_whitespace().map(str::to_lowercase).collect(),
     }
 }
 

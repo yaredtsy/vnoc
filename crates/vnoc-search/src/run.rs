@@ -1,13 +1,83 @@
 //! Running a query over a corpus.
 //!
-//! Each node is matched against every word (`names.rs`), the nodes that match are put in order (02 §5), and the best are cut to the limit, with
-//! the count before the cut kept so a header can say "200 of 1,340". A pasted reference arrives as `exact`: the node it named goes first.
+//! A node must pass the query's filters, then each is matched against every word (`names.rs`); the nodes that match are put in order (02 §5), and
+//! the best are cut to the limit, with the count before the cut kept so a header can say "200 of 1,340". A query of filters only keeps every node
+//! that passes, in reading order. A pasted reference arrives as `exact`: the node it named goes first.
 
-use crate::names::{Found, fold, match_node, order};
+use crate::names::{Found, NodeMatch, fold, match_node, order};
 use crate::utf16;
-use crate::{Corpus, Limits, NodeHit, Query, Results};
+use crate::{Corpus, Kind, KindFilter, Limits, NodeEntry, NodeHit, Query, Results};
 
-/// The nodes `query` finds, best first. An empty query finds nothing. `exact`, an index into the corpus's nodes, is put first and marked, and
+/// An `in:` path, ready to compare with many node paths.
+struct Inside {
+    text: String,
+    ascii: bool,
+    folded: Vec<char>,
+}
+
+impl Inside {
+    fn new(text: &str) -> Inside {
+        Inside {
+            text: text.to_string(),
+            ascii: text.is_ascii(),
+            folded: fold(text),
+        }
+    }
+
+    /// `path` is this path, or starts with it and a `/`, ignoring case. An empty path is the opened folder: everything is in it.
+    fn holds(&self, path: &str) -> bool {
+        if self.text.is_empty() {
+            return true;
+        }
+        if self.ascii && path.is_ascii() {
+            let (inner, path) = (self.text.as_bytes(), path.as_bytes());
+            return path.len() >= inner.len()
+                && path[..inner.len()].eq_ignore_ascii_case(inner)
+                && path.get(inner.len()).is_none_or(|&b| b == b'/');
+        }
+        let path = fold(path);
+        path.starts_with(&self.folded) && path.get(self.folded.len()).is_none_or(|&c| c == '/')
+    }
+}
+
+/// The query's filters, read once per run.
+struct Filters<'a> {
+    kinds: Option<&'a [KindFilter]>,
+    not_kinds: &'a [KindFilter],
+    docs: Option<bool>,
+    inside: Vec<Inside>,
+    not_inside: Vec<Inside>,
+}
+
+impl<'a> Filters<'a> {
+    fn new(query: &'a Query) -> Filters<'a> {
+        Filters {
+            kinds: query.kinds.as_deref(),
+            not_kinds: &query.not_kinds,
+            docs: query.docs,
+            inside: query.inside.iter().map(|p| Inside::new(p)).collect(),
+            not_inside: query.not_inside.iter().map(|p| Inside::new(p)).collect(),
+        }
+    }
+
+    fn passes(&self, node: &NodeEntry) -> bool {
+        let is = |kind: &KindFilter| match kind {
+            KindFilter::Folder => node.kind == Kind::Folder,
+            KindFilter::File => node.kind == Kind::File,
+            KindFilter::Class => node.kind == Kind::Class,
+            KindFilter::Function => node.kind == Kind::Function,
+            KindFilter::Method => node.kind == Kind::Function && node.in_class,
+        };
+        self.kinds.is_none_or(|kinds| kinds.iter().any(is))
+            && !self.not_kinds.iter().any(is)
+            && self.docs.is_none_or(|want| (node.docs > 0) == want)
+            && self.inside.iter().all(|p| p.holds(&node.path))
+            && !self.not_inside.iter().any(|p| p.holds(&node.path))
+    }
+}
+
+/// The nodes `query` finds, best first. A query with nothing to search, or that keeps nothing, finds nothing, and so does one of phrases (a phrase is
+/// for text, 01 §3) without words. With no words, every node that passes the filters is found, in reading order. `exact`, an index into the corpus's nodes, is put first and marked, and
 /// not repeated lower down; it counts once in `nodes_total`.
 pub fn run(corpus: &Corpus, query: &Query, exact: Option<usize>, limits: Limits) -> Results {
     let words: Vec<Vec<char>> = query
@@ -16,17 +86,30 @@ pub fn run(corpus: &Corpus, query: &Query, exact: Option<usize>, limits: Limits)
         .map(|w| fold(w))
         .filter(|w| !w.is_empty())
         .collect();
-    if words.is_empty() {
+    let nothing_to_search = words.is_empty() && (!query.phrases.is_empty() || !query.has_filters());
+    if query.keeps_nothing || nothing_to_search {
         return Results::default();
     }
+    let filters = Filters::new(query);
     let exact = exact.filter(|&at| at < corpus.nodes.len());
 
     let mut found: Vec<Found> = Vec::new();
     for (index, (prepared, entry)) in corpus.prepared.iter().zip(&corpus.nodes).enumerate() {
-        if Some(index) == exact {
+        if Some(index) == exact || !filters.passes(entry) {
             continue;
         }
-        if let Some(matched) = match_node(&prepared.view(entry), &words) {
+        if words.is_empty() {
+            // filters only: every node that passes is as good as another, so the order falls to reading order
+            found.push(Found {
+                index,
+                matched: NodeMatch {
+                    tier: 0,
+                    skipped: 0,
+                    ranges: Vec::new(),
+                },
+                name_len: 0,
+            });
+        } else if let Some(matched) = match_node(&prepared.view(entry), &words) {
             found.push(Found {
                 index,
                 matched,

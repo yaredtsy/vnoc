@@ -61,6 +61,26 @@ pub fn method(path: &str, qualname: &str) -> NodeEntry {
     }
 }
 
+//   billing/ ├ invoice.py ├ total   ├ bill_all      ├ Invoice (class) ├ pay
+//            └ rebilling.py └ rebill
+//   shop/cart.py ├ add_item  └ billing_note
+pub fn tree() -> Corpus {
+    corpus(vec![
+        folder("billing"),
+        file("billing/invoice.py"),
+        func("billing/invoice.py", "total"),
+        func("billing/invoice.py", "bill_all"),
+        def(Kind::Class, "billing/invoice.py", "Invoice"),
+        method("billing/invoice.py", "Invoice.pay"),
+        file("billing/rebilling.py"),
+        func("billing/rebilling.py", "rebill"),
+        folder("shop"),
+        file("shop/cart.py"),
+        func("shop/cart.py", "add_item"),
+        func("shop/cart.py", "billing_note"),
+    ])
+}
+
 pub fn corpus(nodes: Vec<NodeEntry>) -> Corpus {
     Corpus::new(nodes, Vec::new())
 }

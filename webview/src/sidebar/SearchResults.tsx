@@ -13,15 +13,30 @@ export const resultId = (i: number): string => `result-${i}`;
 /**
  * The flat list that takes the panels' place while there is a query (06 §5): a header with the count, then the core's rows: the kind's icon, the name with the
  * letters the core found bold, where the node is dim. The active row has the list's selection colour and is kept in view. A click picks. Draws; `useSearch` decides.
- * `noMatches`: the answer for the box's text came and has no rows.
+ * `notes`: what the core said was wrong with a filter, one line each in the dim colour above the rows. `noMatches`: the answer for the box's text came and has no rows.
  */
-export function SearchResults({ rows, total, noMatches, active, onPick }: { rows: SearchNode[]; total: number; noMatches: boolean; active: number; onPick: (row: SearchNode) => void }) {
+export function SearchResults({ rows, total, notes, noMatches, active, onPick }: { rows: SearchNode[]; total: number; notes: string[]; noMatches: boolean; active: number; onPick: (row: SearchNode) => void }) {
   useEffect(() => {
     document.getElementById(resultId(active))?.scrollIntoView({ block: "nearest" });
   }, [active, rows]);
-  if (rows.length === 0) return noMatches ? <p className="flex-1 p-3 text-muted-foreground">No matches.</p> : <div className="flex-1" />;
+  const noteLines =
+    notes.length > 0 ? (
+      <div id="search-notes" className="flex-none px-2 py-0.5 text-[0.85em] text-muted-foreground select-none">
+        {notes.map((note) => (
+          <div key={note}>{note}</div>
+        ))}
+      </div>
+    ) : null;
+  if (rows.length === 0)
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {noteLines}
+        {noMatches && <p className="p-3 text-muted-foreground">No matches.</p>}
+      </div>
+    );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {noteLines}
       <div className="flex-none px-2 py-0.5 text-[0.85em] text-muted-foreground select-none">{nodesHeader(rows.length, total)}</div>
       <div id="search-results" role="listbox" aria-label="Search results" className="min-h-0 flex-1 overflow-y-auto">
         {rows.map((r, i) => (
