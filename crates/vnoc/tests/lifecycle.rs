@@ -379,6 +379,92 @@ fn a_changed_file_is_read_again_and_a_new_file_appears() {
     core.finish();
 }
 
+/// The ids of a `vnoc/search` answer's node rows.
+fn found_ids(answer: &Value) -> Vec<&str> {
+    answer["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn search_answers_from_the_tree_before_and_after_a_change() {
+    let root = fixtures("search");
+    let mut core = Core::start(Some(driver_path()), &root);
+
+    // asked at once, without waiting for the first build: it answers when the build is done
+    let found = core
+        .request("vnoc/search", json!({ "query": "method" }))
+        .unwrap();
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(found["revision"], structure["revision"]);
+    let rows = found["nodes"].as_array().unwrap();
+    // `Local.method` (a class inside `top`), `Outer.method` twice, `Outer.Nested.method`
+    assert_eq!(rows.len(), 4, "{found}");
+    for row in rows {
+        assert_eq!(row["in_class"], true, "{row}");
+        assert_eq!(row["tier"], 0, "{row}");
+        assert_eq!(row["match"], json!([[0, 6]]), "{row}");
+        assert_eq!(row["kind"], "function", "{row}");
+        assert_eq!(row["path"], "nested.py", "{row}");
+        assert!(row["line"].is_u64(), "{row}");
+    }
+    assert_eq!(found["nodes_total"], rows.len());
+    assert_eq!(found["docs"], json!([]));
+    assert_eq!(found["docs_total"], 0);
+    assert_eq!(found["notes"], json!([]));
+
+    // tier 3: the qualified name holds it, the name does not
+    let found = core
+        .request("vnoc/search", json!({ "query": "outer.meth" }))
+        .unwrap();
+    assert_eq!(
+        found_ids(&found),
+        ["nested.py::Outer.method", "nested.py::Outer.method#2"]
+    );
+    for row in found["nodes"].as_array().unwrap() {
+        assert_eq!(row["tier"], 3, "{row}");
+        assert_eq!(row["match"], json!([]), "{row}");
+    }
+
+    // the limit cuts the rows, not the count
+    let found = core
+        .request("vnoc/search", json!({ "query": "method", "nodes": 1 }))
+        .unwrap();
+    assert_eq!(found["nodes"].as_array().unwrap().len(), 1);
+    assert!(found["nodes_total"].as_u64().unwrap() > 1, "{found}");
+
+    // nothing typed finds nothing
+    let found = core
+        .request("vnoc/search", json!({ "query": "  " }))
+        .unwrap();
+    assert_eq!(
+        (found["nodes"].clone(), found["nodes_total"].clone()),
+        (json!([]), json!(0))
+    );
+
+    // a changed file: the next search is on the new index
+    core.wait_for("vnoc/indexChanged");
+    let edited = root.join("nested.py");
+    let mut text = std::fs::read_to_string(&edited).unwrap();
+    text.push_str("\n\ndef added_later(): pass\n");
+    std::fs::write(&edited, text).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [edited] }));
+    core.wait_for("vnoc/indexChanged");
+    let found = core
+        .request("vnoc/search", json!({ "query": "added_later" }))
+        .unwrap();
+    assert_eq!(found_ids(&found), ["nested.py::added_later"]);
+    assert_eq!(found["nodes"][0]["tier"], 0);
+    assert_eq!(
+        found["revision"].as_u64().unwrap(),
+        structure["revision"].as_u64().unwrap() + 1
+    );
+    core.finish();
+}
+
 #[test]
 fn a_missing_driver_is_a_clear_error_and_the_core_stays_up() {
     let mut core = Core::start(None, &fixtures("nodriver"));

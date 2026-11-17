@@ -954,6 +954,7 @@ dependencies = [
  "tracing-subscriber",
  "vnoc-domain",
  "vnoc-driver-protocol",
+ "vnoc-search",
 ]
 
 [[package]]

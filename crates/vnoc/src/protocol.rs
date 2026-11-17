@@ -5,7 +5,7 @@ use async_lsp::lsp_types::request::Request;
 use serde::{Deserialize, Serialize};
 use vnoc_driver_protocol::{CallMark, DefKind, Range};
 
-use crate::index::Node;
+use crate::index::{Kind, Node};
 
 /// `vnoc/ping`: is the core alive, which one is it.
 ///
@@ -91,6 +91,81 @@ impl Request for Structure {
     type Params = serde_json::Value;
     type Result = StructureResult;
     const METHOD: &'static str = "vnoc/structure";
+}
+
+/// `vnoc/search`: which nodes a few typed words find, best first (`docs/20-search/04-core.md` §3). Waits for the first build. The words are
+/// matched by `vnoc-search`; this file only says what goes over the wire.
+pub enum Search {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchParams {
+    pub query: String,
+    /// how many node rows at most; 200 when absent
+    #[serde(default)]
+    pub nodes: Option<usize>,
+    /// how many doc rows at most; 50 when absent
+    #[serde(default)]
+    pub docs: Option<usize>,
+}
+
+/// A node the query found. `id` is the tree's.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchNode {
+    pub id: String,
+    pub kind: Kind,
+    pub name: String,
+    /// relative to the opened folder
+    pub path: String,
+    /// 0-based; `null` for a file or a folder
+    pub line: Option<u32>,
+    /// a function inside a class: a method
+    pub in_class: bool,
+    /// how many docs are attached
+    pub docs: usize,
+    /// 0 to 5, smaller is better (`docs/20-search/02-names.md`)
+    pub tier: u8,
+    /// the node a pasted reference named
+    pub exact: bool,
+    /// the parts of `name` to draw bold: `[start, end]` in UTF-16 units, sorted and merged
+    #[serde(rename = "match")]
+    pub ranges: Vec<(u32, u32)>,
+}
+
+/// A doc the query found (`docs/20-search/04-core.md` §3). Declared so the wire shape is fixed; no doc is searched yet, so none is sent.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchDoc {
+    /// the tree's node id; `null` for a Missing node
+    pub node: Option<String>,
+    pub node_id: String,
+    pub node_name: String,
+    pub node_kind: Option<Kind>,
+    pub node_path: String,
+    pub missing: bool,
+    pub file: String,
+    pub doc_path: String,
+    pub title: String,
+    pub title_match: Vec<(u32, u32)>,
+    pub snippet: String,
+    pub snippet_match: Vec<(u32, u32)>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchResult {
+    /// the index's revision this answer was made from
+    pub revision: u64,
+    pub nodes: Vec<SearchNode>,
+    /// how many nodes matched before the limit
+    pub nodes_total: usize,
+    pub docs: Vec<SearchDoc>,
+    pub docs_total: usize,
+    /// what was wrong with a filter in the query
+    pub notes: Vec<String>,
+}
+
+impl Request for Search {
+    type Params = SearchParams;
+    type Result = SearchResult;
+    const METHOD: &'static str = "vnoc/search";
 }
 
 /// `vnoc/filesChanged` (editor → core): these files were created, changed or deleted. Absolute paths. The core finds out what

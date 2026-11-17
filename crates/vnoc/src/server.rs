@@ -15,7 +15,7 @@ use std::fmt::Display;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use async_lsp::lsp_types::{
     InitializeParams, InitializeResult, InitializedParams, ServerCapabilities, ServerInfo,
@@ -34,14 +34,17 @@ use crate::protocol::{
     CallTreeResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, HasCalls,
     HasCallsParams, HasCallsResult, IndexChanged, IndexChangedParams, MovePlan, Ping, PingResult,
     ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan,
-    RestorePlanParams, Stats, Structure, StructureResult, Trash, TrashInfo, TrashInfoResult,
-    TrashItem, TrashList, TrashParams, WriteId, WriteIdParams, WriteIdResult,
+    RestorePlanParams, Search, SearchParams, SearchResult, Stats, Structure, StructureResult,
+    Trash, TrashInfo, TrashInfoResult, TrashItem, TrashList, TrashParams, WriteId, WriteIdParams,
+    WriteIdResult,
 };
 use crate::protocol::{Locate, LocateParams, Located};
+use crate::search::{answer, corpus_of, kept};
 use crate::userdata::{TrashError, UserData};
 use crate::watchdog::timed;
 use vnoc_domain::{LocationKey, NodeId};
 use vnoc_driver_protocol::CallEntry;
+use vnoc_search::{Corpus, Limits, parse, run};
 
 /// Where the first build is.
 #[derive(Clone)]
@@ -69,6 +72,9 @@ struct State {
     attaching: tokio::sync::Mutex<()>,
     /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
     everything_pending: AtomicBool,
+    /// The corpus `vnoc/search` reads, kept with the index revision it was made for (`search::kept`). Taken after the index lock, never before it, and by
+    /// nothing else.
+    corpus: Mutex<Option<(u64, Arc<Corpus>)>>,
 }
 
 #[derive(Clone)]
@@ -87,6 +93,7 @@ impl Core {
             one_at_a_time: tokio::sync::Mutex::new(()),
             attaching: tokio::sync::Mutex::new(()),
             everything_pending: AtomicBool::new(false),
+            corpus: Mutex::new(None),
         };
         Core {
             client,
@@ -181,6 +188,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
             })
         })
         .request::<Structure, _>(structure)
+        .request::<Search, _>(search)
         .request::<ProjectInfo, _>(project_info)
         .request::<Attach, _>(attach)
         .request::<Relink, _>(relink)
@@ -317,6 +325,47 @@ fn structure(
             missing: index.missing(),
             problems: index.problems(project.git_root()),
         })
+    })
+}
+
+/// `vnoc/search`: the nodes a query finds. Waits for the first build, like `vnoc/structure`. The corpus is built from the tree on the first search after
+/// a change and kept (`search::kept`); the search itself runs on it with no lock held.
+fn search(
+    core: &mut Core,
+    params: SearchParams,
+) -> impl std::future::Future<Output = Result<SearchResult, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("search", async move {
+        let status = state
+            .status
+            .subscribe()
+            .wait_for(|s| !matches!(s, Status::Building))
+            .await
+            .map_err(internal)?
+            .clone();
+        if let Status::Failed(message) = status {
+            return Err(internal(message));
+        }
+        let project = state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))?;
+        // no `.await` while either lock is held: the index first, then the corpus
+        let (revision, corpus) = {
+            let index = state.index.read().unwrap();
+            let revision = index.revision();
+            let corpus = kept(&state.corpus, revision, || {
+                corpus_of(&index.tree(&project.name(), project.prefix()))
+            });
+            (revision, corpus)
+        };
+        let defaults = Limits::default();
+        let limits = Limits {
+            nodes: params.nodes.unwrap_or(defaults.nodes),
+            docs: params.docs.unwrap_or(defaults.docs),
+        };
+        let results = run(&corpus, &parse(&params.query), None, limits);
+        Ok(answer(revision, &corpus, results))
     })
 }
 

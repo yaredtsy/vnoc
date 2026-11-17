@@ -7,7 +7,7 @@
 //! Files and folders are nodes too: a location with an empty qualname, found again by their `# FileID:` comment or `.vnoc-id` file.
 
 mod build;
-mod tree;
+pub(crate) mod tree;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 

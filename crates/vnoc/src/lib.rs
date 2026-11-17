@@ -7,6 +7,7 @@ pub mod index;
 pub mod project;
 pub mod protocol;
 pub mod scan;
+pub mod search;
 pub mod server;
 pub mod userdata;
 pub mod watchdog;

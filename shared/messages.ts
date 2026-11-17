@@ -72,6 +72,57 @@ export interface StructureResult {
   problems: Problem[];
 }
 
+/** `vnoc/search`: one node the query found. Declared in `Requests` with its handler (docs/20-search/06-build-order.md, S3). */
+export interface SearchNode {
+  /** the tree's id */
+  id: string;
+  kind: Kind;
+  name: string;
+  /** relative to the opened folder */
+  path: string;
+  /** 0-based; null for a file or a folder */
+  line: number | null;
+  /** a function inside a class: a method */
+  in_class: boolean;
+  /** how many docs are attached */
+  docs: number;
+  /** 0 to 5, smaller is better */
+  tier: number;
+  /** the node a pasted reference named */
+  exact: boolean;
+  /** the parts of `name` to draw bold: [start, end] in UTF-16 units, sorted and merged */
+  match: [number, number][];
+}
+
+/** `vnoc/search`: one doc the query found. The core sends none until the doc text is searched (S6). */
+export interface SearchDoc {
+  /** the tree's node id; null for a Missing node */
+  node: string | null;
+  node_id: string;
+  node_name: string;
+  node_kind: Kind | null;
+  node_path: string;
+  missing: boolean;
+  file: string;
+  doc_path: string;
+  title: string;
+  title_match: [number, number][];
+  snippet: string;
+  snippet_match: [number, number][];
+}
+
+export interface SearchResult {
+  /** the index revision this answer is from (the same one as `StructureResult.revision`) */
+  revision: number;
+  nodes: SearchNode[];
+  /** how many nodes matched before the limit */
+  nodes_total: number;
+  docs: SearchDoc[];
+  docs_total: number;
+  /** what was wrong with a filter in the query */
+  notes: string[];
+}
+
 /** `vnoc/trash` and `vnoc/restorePlan`: where a node folder moves from and to (absolute paths). The extension does the move. */
 export interface MovePlan {
   from: string;
