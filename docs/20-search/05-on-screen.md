@@ -18,6 +18,15 @@ not the newest is dropped** (Q8). The `revision` is not compared (Q5: a restarte
 shows the panels. When the tree changes while the box has text (`indexChanged`), the page asks again. While an answer is on its way the rows of the
 last one stay (no flicker); "No matches." only when the answer for the box's text has no rows.
 
+**Measured** (S3, 2026-11-17; the window suite `search`, release core, Apple M1, macOS 14.7.6, in VS Code's extension host; `ms` is from the change of the box to the
+draw, `trip` from sending the request to the draw, both read in the page with `performance.now()`). The run that was committed (the whole suite, 11 answers): `ms`
+median **60.7 ms**, worst **155 ms**; `trip` median **10.0 ms**, worst **92 ms**. The suite alone (12 and 9 answers in two runs): `ms` median **57.0** and **56.4 ms**,
+worst **82** and **87 ms**; `trip` median **5.0** and **5.1 ms**, worst **30** and **31 ms**. So `ms` is the 50 ms debounce plus `trip`: the round trip (page, host, core, and
+back) is about **5 ms** when the view is on screen, and the worst ones (30 – 90 ms) are the first answer after a pause. **The debounce is not changed**; the planner decides from
+`trip`: without it, key to drawn would be about 5 – 10 ms, and a key typed in the middle of a word would ask the core for a query nobody finished. **A page VS Code calls hidden is
+slow**: with the STRUCTURE view hidden (a suite that ran before had left it so) the same answers took 1 – 7 s (`trip` median 965 ms), because the page's timers and drawing are
+held back; nothing can be typed in a hidden box, so this is for the window suite (it shows the view first), not for a user.
+
 **For the tests** (S3): the view command `setSearch { text }` puts text in the box as typing would, and the page posts a note
 `searchDrawn { query, ids, total, ms }` each time it draws an answer (`ms`: from the change of the box to the draw), as the canvas posts `codeShown`.
 

@@ -91,7 +91,7 @@ Two searches that rank differently, both in TypeScript, neither reads a doc. Aft
 | 2 | What do the pages do on `indexChanged`? (Confirms Q2: a doc save must not look like a code change.) | **done** (S0, 2026-11-17) | Q2 holds: 03 §5 |
 | 3 | `cargo check -p vnoc-search --target wasm32-unknown-unknown` passes | **done** (S1, 2026-11-17): **it passes**, Rust 1.94.1 | Q7 holds: the crate builds for the browser |
 | 4 | **[measure]** corpus build and one `run` on 10,000 generated names | **done** (S1, 2026-11-17): build 14 – 20 ms, one `run` 1.6 – 2.4 ms, Apple M1 | **done again** (S2b, 2026-11-17): the core's whole build (`tree::build`, the walk, `Corpus::new`) takes a median **5.6 – 7.3 ms**, under the line: 04 §2 |
-| 5 | **[measure]** key to drawn results, in the window | S3 | the debounce (05 §1) |
+| 5 | **[measure]** key to drawn results, in the window | **done** (S3, 2026-11-17): `ms` (key to drawn) median 57 – 61 ms, worst 82 – 155 ms; `trip` (request to drawn) median 5 – 10 ms, worst 30 – 92 ms, Apple M1; 05 §1 | the debounce (05 §1): left at 50 ms, the planner decides |
 | 6 | **[measure]** 1,000 docs of 2 KB: first read, memory, one query | S6 | Q3 |
 
 ## 6. What later work stands on
