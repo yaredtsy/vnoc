@@ -18,7 +18,7 @@ main.rs   parse arguments (clap, derive)  ─┬─ none, or `serve`  → today'
 cli/      args.rs (the clap types) · out.rs (text, --format, --json) · one file per command group
           each handler: open the project, build what it needs, call the library, print
 library   Project · DriverHost · index::refresh · Index · UserData · identity::{attach, relink, write_id}
-          vnoc_search · search::corpus_of · node_ref (doc 20) · index::structure, calls::tree_for (A1)
+          vnoc_search · search::{prepare, answer} · node_ref (doc 20, built) · index::structure, calls::tree_for (A1)
 ```
 
 - `cli/` lives in the library crate (`crates/vnoc/src/cli/`), so the integration tests can call `cli::run` as well as run the binary.
@@ -57,6 +57,12 @@ node. Exactness is the product; speed is measured.
 | httpx (the project the pictures use) | 300 ms |
 | 1,000 generated files | 1 s |
 | `calls` on httpx, depth 2 | 5 s |
+
+Since doc 20, `refresh` also reads **the text of every doc** (`DocTexts`: 17 – 32 ms for 1,000 docs of 2 KB, files in the system's cache;
+20, 03 §7), and a one-shot has no earlier stamps to skip by, so it reads them all on every run, for `show` and `tree` as much as for `find`.
+A0 measures with docs in the project (the generated one gets 1,000). If that part alone is over a tenth of the budget, `refresh` takes a
+flag and the commands that read no doc text (`show`, `code`, `tree` without `--where`, `calls`, `missing`, `check`, `status`) skip it; not
+before the number says so.
 
 **[measure]**, written here. Inside the budget: nothing more is built. Outside it: step **A16**, designed now so it is not a new plan then:
 

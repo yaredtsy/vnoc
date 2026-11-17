@@ -3,7 +3,7 @@
 ```
 build order
 ├── 1. rules for every step
-├── 2. the steps (S0 – S8)
+├── 2. the steps (S0 – S8; S9 proposed after the review)
 ├── 3. what each step leaves working
 └── 4. tests, by kind
 ```
@@ -200,6 +200,46 @@ theme.
 
 Commit: `search S8: the canvas dims what the query does not find`.
 
+### S9 After the review (proposed 2026-11-17, not built)
+
+The whole branch was read at `e531e01`: the crate and the core's side line by line, the pages by a second reader. All tests pass
+(`vnoc-search` 85, `vnoc` 106 and 42, shared 357, webview 749; the window suites were not run again). A scratch program ran the crate on
+edge queries, and the probe drove the real core on a folder opened below its git root. **Nothing wrong was found in the ranking, the tiers,
+the filters, the parse, BM25, the UTF-16 ranges, the wire types, the request numbering or the locks.** What was found:
+
+| # | What | Seen | Fix | Tests |
+|---|---|---|---|---|
+| 1 | **A long pasted token stalls the core.** `fuzzy` (names.rs) allocates a table of (letters + 1) × (words + 1) for every node that has a word starting with the token's first letter, before anything can fail | on 10,000 names, release: a token of 2,000 chars 34 ms, of 20,000 chars **1.6 s**, per key, inside the handler | a word longer than the name (in folded chars) cannot be cut into its words' prefixes: `fuzzy` returns `None` first | unit: such a word is no match; the `#[ignore]` timing gets a 20,000-char word, under 5 ms |
+| 2 | **The snippet can miss its own hit.** Its start is moved back to the start of a "word", meaning to the last white space; after a long URL or path that is hundreds of chars back, and the 120 chars end before the hit | a body with a 240-char URL and then `tail`: the query `tail` shows 120 chars of the URL, nothing bold; the same for a hit inside the URL | the start moves back to white space only if it is within `SNIPPET_BEFORE` more chars, else it is cut where it is (with `…`); the end is never before the end of the first hit | a hit right after a 300-char run, and one inside it: in the snippet, and bold |
+| 3 | **A reference by repo path finds nothing when a folder below the git root is open** (S5b's second form, and more: it is the text of the tree's own ids, of a doc's `hint:`, and of what `vnoc` will print) | `repo/svc` open: `pkg/nested.py:25` and the absolute path resolve; `svc/pkg/nested.py:25` and `svc/pkg/nested.py::Outer.method` do not | `resolve_ref` tries the path, in order: relative to the opened folder; as a repo path; with the opened folder's own name dropped from its front (`backend-api/core/metering.py:110`, no git). The first the index has | `lifecycle.rs`, a temp folder with `.git` and the fixtures one level down: the three forms, each for `:line` and `::name` |
+| 4 | **A traceback line is not a reference** (S5b's first form; proposed before, your call) | `File "core/metering.py", line 110, in add` → six words, nothing found | `parse` (query.rs): a whole query of the shape `File "<path>", line <n>` (anything after it ignored) is the reference `<path>:<n>`, and that token is its one word | the parse table: with and without `, in <name>`, a path with a space |
+| 5 | **The dim outlives the box.** The page clears `session.search` in a React unmount, which does not run when VS Code disposes or reloads the page; the new page's box is empty and says nothing | text in the box, then *Developer: Reload Webviews* (or the view moved to another container): the canvas stays dimmed for a query nobody can see, until something is typed and cleared | the host clears it: `adoptSidebar`'s `onDidDispose` dispatches `search: null` and `highlight: null` | session unit: the intent; by hand: the reload |
+| 6 | A request the core refuses leaves the last query's rows under the new text, and the last dim | core stopped, `foo` → `bar`: `foo`'s rows stay, `Enter` picks one | on a refusal that is still the newest: no rows, no dim | unit, on the two hooks' reject path if it can be reached without a window; else by hand |
+| 7 | `sidebarDrew` is reset only when a page is adopted, not when one is disposed | read, not seen: a `focusSearch` sent between a dispose and the next adopt would be lost | reset in `onDidDispose` | — |
+| 8 | Comments that describe an earlier step | `search.rs` `answer` ("sent as `missing`"), `protocol.rs` `SearchDoc` ("no doc is searched yet"), `lib.rs` `DocEntry` ("nothing reads it"), `shared/search.ts` and `shared/messages.ts` ("the palette"), `search.test.ts` ("over the debounce") | say what is | — |
+| 9 | Two window tests check less than their names say | "only the newest query's answer is drawn" passes without the numbering (one core answers in order); the third pick (a doc of a node that is neither in the tree nor Missing → `openDoc`) has no test | the first: rename it to what it checks (the crossing is `newest`'s unit test); the second: add it | window `search` |
+| 10 | **A file's own path does not put the file first.** A bare path is not tried as a reference (04 §4: "already found by the path tiers"), but the file is tier 4 with its own defs | on `backend-api`: `core/metering.py` → the file is row 29 of 52, under 28 of its defs; `core/retry.py` row 4 | a one-token query with a `/` is reference-shaped (`is_reference`), and the core no longer drops `NodeRef::Path`: a file or folder the index has is `exact`; a path that names nothing leaves the words as today | the crate's parse table; `lifecycle.rs`: `pkg/nested.py` answers the file first, `pkg/` the folder |
+| 11 | **A line written as GitHub and editors write it** finds nothing | `core/metering.py:L110`, `core/metering.py#L110`, `…#L110-L120` → nothing | `parse` (node_ref.rs) and `is_reference`: `:L<n>`, `#L<n>` and `#L<n>-L<m>` are line `n` | the parse table: each form, `L` either case, `#L0`, `#Lx` (not a line) |
+| 12 | **A file name without its folder** finds nothing (VS Code's Quick Open takes it) | `metering.py:110` → nothing | after the four tries of #3: if exactly one file in the index has that file name, that file; two or more, nothing exact (the words still find) | `lifecycle.rs`: a unique name resolves; a name two folders share does not |
+| 13 | A name pasted from code with its call parens finds nothing | `parse_order(` and `parse_order()` → nothing (moved here from the by-hand list) | the parse: a word loses a trailing `()` or `(` | the parse table |
+
+Three commits, in this order:
+
+- **S9a** `search S9a: references as people paste them`: #3, #4, #10, #11, #12 (node_ref.rs, query.rs, search.rs, index).
+- **S9b** `search S9b: a long token, a snippet's hit, call parens`: #1, #2, #13, and #8's Rust comments.
+- **S9c** `search S9c: the dim ends with the box's page`: #5, #6, #7, #9, and #8's TypeScript comments.
+
+04 §4 and 01 §5 change with S9a (a bare path with a `/` is tried; the new line forms; the four tries and the file name). A `docs:` commit after: 05 §3 says "until the first answer for a query arrives, nothing is dimmed", and as built the last
+query's dim stays until the new answer (about 5 ms; no flash between keys): the built behaviour is kept and the sentence corrected; 05 §4
+still lists "the debounce".
+
+**For the by-hand pass, not fixes:** a doc pick of a node in the tree also runs the click rule, so in `code` click mode it opens the source
+file beside the docs tab (05 §1 says reveal and docs tab); the dim stays while the STRUCTURE view is hidden with text in its box (the page is
+kept).
+
+**Not in S9:** *Add Doc* setting a tag or an author waits for doc 21's A8 (`tags:` and `author:` exist only from there); a step after A8 if
+wanted.
+
 ## 3. What each step leaves working
 
 | After | A user can | A caller can |
@@ -214,7 +254,9 @@ Commit: `search S8: the canvas dims what the query does not find`.
 S1 – S5 are enough for doc 21 to start: the CLI needs the crate, the corpus and `node_ref`, not the screens.
 
 **All steps done, 2026-11-17:** S0 – S8 with S2b, S3b, S6a, S6a2 and S6b, on branch `search`. Left before the PR: the by-hand pass
-(the dim level in a light and a dark theme; *V-NOC: Search…* puts the keyboard in the box; a doc pick opens that doc).
+(the dim level in a light and a dark theme; *V-NOC: Search…* puts the keyboard in the box; a doc pick opens that doc), and S9 if you
+take it (reviewed 2026-11-17: nine findings, none in what the search finds or how it orders it; four more from the hands-on pass on
+`backend-api`, #10 – #13).
 
 ## 4. Tests, by kind
 

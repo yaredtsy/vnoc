@@ -4,11 +4,13 @@ Written 2026-11-16 from the code at `0597d12`, as a review and a rewrite of the 
 folder), and from the design in [`../futureplan/02-agent-access/`](../futureplan/02-agent-access/README.md), which this folder schedules: its
 layers **0, 1a, 1b, 1c and 2c**. MCP (2b), VS Code's own tools (2a) and plugins (3) stay there ([`08-mcp-and-plugins.md`](08-mcp-and-plugins.md)
 says why and what would change that). **Nothing here was run.** Every `[check]` is a claim to verify; every `[measure]` is a number to write here.
-Starts after search (20) has reached its step S5: the commands stand on `vnoc-search` and `node_ref`.
+The commands stand on `vnoc-search` and `node_ref`. **Search (20) is built** (S1 – S8, 2026-11-17, branch `search`): this starts from `main`
+once that is merged. The plan was read against the built code on 2026-11-17; §6 says what search gives the commands as it is, and what each
+command still has to add.
 
 ```
 the vnoc command
-├── README (this file)        what ships · decisions · what the review changed · asks · what later work stands on
+├── README (this file)        what ships · decisions · what the review changed · what later work stands on · what search gives, as built
 ├── 01-what-agents-get.md     the freedoms, the guard rails, and why each
 ├── 02-naming-a-node.md       location · file:line · ID · path; where paths start; errors that teach
 ├── 03-read-commands.md       status · show · code · doc · tree · find · grep · calls · missing · check · changed; the output rules
@@ -91,7 +93,8 @@ The three asks of the first version of this table were answered on 2026-11-16: C
 - `crates/vnoc/src/main.rs` starts the LSP main loop on stdio, nothing else.
 - The pieces a read command needs are plain library code already: `Project::open`, `DriverHost` with `set_path`,
   `index::refresh(project, host, &RwLock<Index>, Touched::All)`, `Index::{tree, missing, problems, def_at}`, `UserData::{docs_of, load_all}`,
-  `calls::merge`. After doc 20: `vnoc_search`, `search::corpus_of`, `node_ref`.
+  `calls::merge`. From doc 20, built: `vnoc_search::{parse, run, matches}`, `search::{prepare, answer}`, `node_ref::parse`,
+  `Index::{resolve_ref, innermost_def, found_at, doc_texts}` (§6).
 - **Not yet library code:** `structure` builds its answer inline in `server.rs`; `driver_tree` and `call_tree` ask the driver and map keys inside
   the server. A1 moves those bodies out, unchanged.
 - **Not yet free of the editor:** `identity::attach::Env` holds `client: ClientSocket`, and `apply_edits` calls `workspace/applyEdit`. A7 puts
@@ -111,3 +114,24 @@ The three asks of the first version of this table were answered on 2026-11-16: C
 
 The last row is the largest lever on how useful this is to agents, and it is not in this folder: an agent works in whatever language the project
 is in, and V-NOC reads Python. Worth weighing against 0.6 when 0.5 ships.
+
+## 6. What search gives the commands, as built
+
+Read from the code at `e531e01` on 2026-11-17, with the crate's and the core's tests run (85, 106, 42: all pass). **The commands can start:**
+nothing they need from search is missing or wrong. What follows is where the built functions are not yet the shape a command wants; each gap
+is small, is library code (C2), and has its step.
+
+| A command needs | Search has | The gap, and the step that closes it |
+|---|---|---|
+| every `<node>` argument (02) | `node_ref::parse(text) -> Option<NodeRef>`; `Index::resolve_ref(project, &NodeRef) -> Found::{Node(tree id), Missing(NodeId), Nothing}` | **a.** `resolve_ref` reads a path as relative to the opened folder, or absolute. The current-folder rule (02 §2) is the CLI's, so `NodeRef` must give and take its path: today `Location` keeps the whole text. **b.** `Nothing` has no reason, and 02 §4 has six. **c.** A tree id is not a node: the header of `show` needs the kind, both lines and the ID. All three in **A3** |
+| `find` (03 §5) | `search::prepare(project, &RwLock<Index>, &corpus_slot, &doc_slot, text) -> Prepared { revision, corpus, query, exact }`, then `run`, then `search::answer`: exactly what `vnoc/search` does. The two slots are plain `Mutex<Option<…>>`; a one-shot passes two empty ones | **d.** A node row has its first line only (`line`), and no ID; `find` prints `lines 40-71` and C5 wants the ID: the rows are joined to the tree by id. **e.** `prepare` keeps only a reference that named a node of the tree: an ID of a Missing node is dropped, and `find <ID>` must say `MISSING was …`. Both in **A5** |
+| `tree --where` (03 §4) | `matches(corpus, query, exact, ids) -> Vec<bool>`: by name, or because a doc of the node is a hit, as the canvas dims | none. `tree_view` asks it about every id of the tree (**A4**) |
+| "did you mean" (02 §4) | `run` | **f.** Search has no typo tolerance (20 README §1, Out): `parse_ordr` finds nothing, so the sentence the first version of 02 §4 showed could not be printed. **A3** adds the nearest names |
+| `doc list`, `doc read --where`, `tag:`, `author:` (03 §3, C16) | filters narrow a doc by its node; **a query of filters alone finds no doc** (20, 01 §3) | **g.** `tag:` and `author:` are the first filters about the doc itself, and `doc list --where 'tag:plan'` is a query of filters alone: the crate's rule changes in **A8** (04 §4) |
+| `grep --docs`, `doc read` | `Index::doc_texts()`: every doc's path, title and body (the body without its title line) | **h.** "the file without its frontmatter" is `userdata/read.rs` `after_frontmatter`, private today: **A4** opens it |
+| `--json` | the protocol's types (`SearchResult`, `Node`, …), which are **snake_case** on the wire | 03 §11 said camelCase "as the protocol's": corrected |
+| the one-shot budget (05 §3) | `refresh` now also reads the doc texts: 17 – 32 ms for 1,000 docs of 2 KB on the first read (20, 03 §7) | every command pays it, also the ones that never search: **A0** measures with docs in the project |
+
+Checked and fine as they are: `run` with `Limits { nodes: usize::MAX, … }` (no overflow); `prepare` on a project opened below its git root
+(a pasted `pkg/nested.py:25` resolves to the tree's repo-path id); `Corpus::position`; the order of `find` and `vnoc/search` cannot differ,
+because both are `prepare` and `run`.

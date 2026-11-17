@@ -74,6 +74,9 @@ code
   plan in the project; `vnoc doc read src/billing/ --where 'tag:plan author:claude-code'` prints that folder's plans by that author. Only the
   filters that are about a doc apply (`tag:`, `author:`, and words in its text); on a node given by name, `in:` and `kind:` are already
   answered.
+  *(Settled 2026-11-17, from the built code.)* It is `vnoc_search::run` with no node rows and no doc limit; of its doc rows, the ones of the
+  nodes named are kept (all of them when no node is named), in `run`'s order. As built, a query of filters alone finds **no** doc
+  (20, 01 §3), so `--where 'tag:plan'` needs the rule A8 adds with the two filters ([`04`](04-write-commands.md) §4).
 - `doc list`, `doc read` and `doc path` by **ID** read the node folder and do not start the driver.
 
 ## 4. `tree`
@@ -110,6 +113,9 @@ src/billing/                        4 files · 3 classes · 31 functions · 6 do
 - No box-drawing characters: two spaces per level. They cost tokens and say nothing an indent does not.
 - `--where` is the query language of [`../20-search/01-query.md`](../20-search/01-query.md), unchanged (Q9): the filter an agent learned for
   `find` works here.
+- *(Settled 2026-11-17, from the built code.)* A node is kept when `vnoc_search::matches` says so: the query finds it **by name, or finds
+  one of its docs**, which is what the canvas dims by (20, 04 §5). So `--where retry` keeps `retry_charge` and also the function whose note
+  talks about retries. `tree_view` asks about every id of the tree in one call; nothing is ranked.
 
 ## 5. `find`
 
@@ -128,6 +134,15 @@ docs (1)
 
 `--nodes` or `--docs` keeps one group. `--limit N` is for both. A query that is one reference (`vnoc find 0Q8V…`) answers where that node is
 now. Finding nothing prints `no matches`, the `notes` if a filter was wrong, and exits `0`.
+
+*(Settled 2026-11-17, from the built code.)*
+
+- `find` is `search::prepare`, `vnoc_search::run`, and its own printing: the same two calls as `vnoc/search`, so the order cannot differ.
+- A node row of the search has the def's first line only, and no ID. `find` prints both lines and (C5) the ID, so each row is **joined to the
+  tree by its id** (`Node::find`, 02 §2); the search's types do not grow for it.
+- An ID of a **Missing** node: `prepare` keeps only a reference that named a node of the tree. It gains `reference: Option<Found>` (what the
+  reference resolved to, kept), and `find` prints the `MISSING  was …` line of 02 §4 above the rows. The box ignores the new field.
+- A path as the query (`vnoc find src/orders.py`) is not a reference here, as in the box: the path tiers find it, with what is in it.
 
 ## 6. `grep`
 
@@ -207,7 +222,7 @@ you changed code" step becomes one command. Needs `git` on the PATH; without it 
 | **text** | for reading; may change between releases. Two-space indents, no colour unless standard output is a terminal and `NO_COLOR` is unset |
 | **`--format id`** | one location per line and nothing else (an ID for a Missing node). For pipes into `vnoc … -` |
 | **`--format path`** | one file path per line (the source file of a node; the `.md` for a doc) |
-| **`--json`** | one JSON value: `{ "schema": 1, "command": "show", … }`. Field names in `camelCase`, as the protocol's. Fields are only ever added. The shapes are golden files in `crates/vnoc/tests/golden/` (A2 on): a changed shape is a failing test, on purpose |
+| **`--json`** | one JSON value: `{ "schema": 1, "command": "show", … }`. Field names in **`snake_case`, as the protocol's** (`node_id`, `nodes_total`, `git_root`: corrected 2026-11-17, the first version said camelCase, which the protocol is not). A command prints the library's own types where it can, so the CLI and the extension cannot name one thing two ways. Fields are only ever added. The shapes are golden files in `crates/vnoc/tests/golden/` (A2 on): a changed shape is a failing test, on purpose |
 | **`--quiet`** | no "next step" lines, no totals: only the rows. For hooks |
 | **standard error** | errors and the hints of 02 §4. Logs only with `VNOC_LOG` |
 | **nothing found** | a line saying so, exit `0` |

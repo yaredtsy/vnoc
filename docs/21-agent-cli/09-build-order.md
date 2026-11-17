@@ -11,8 +11,9 @@ build order
 └── 7. tests, by kind
 ```
 
-On a branch `agent-cli` from `main`, after search (20) has reached S5 (the crate, the corpus, `node_ref`). S6 – S8 can come before or after; `find`
-gets docs when S6 is in. Each step is one commit and leaves the branch green.
+On a branch `agent-cli` from `main`, after search (20) is merged: all of it is built (S1 – S8), so `find` has names, filters, references and
+docs from its first commit. Each step is one commit and leaves the branch green. The steps below were read against the built search on
+2026-11-17; what that changed is marked *(from the built code)* and listed in the README §6.
 
 ## 1. Rules for every step
 
@@ -33,7 +34,8 @@ gets docs when S6 is in. Each step is one commit and leaves the branch green.
 
 | What | How | Write the answer into |
 |---|---|---|
-| the one-shot build | `crates/vnoc/examples/oneshot.rs`: `Project::open`, `DriverHost`, `refresh(All)`, print the times of the walk, the outlines, `.vnoc/`, in all. Release build, on httpx and on 1,000 generated files | 05 §3: inside the budget, or A16 is scheduled after A6 |
+| the one-shot build | `crates/vnoc/examples/oneshot.rs`: `Project::open`, `DriverHost`, `refresh(All)`, print the times of the walk, the outlines, `.vnoc/`, **the doc texts** (`refresh` logs how many it looked at and read), in all. Release build, on httpx and on 1,000 generated files **with 1,000 generated docs** *(from the built code)* | 05 §3: inside the budget, or A16 is scheduled after A6; and whether the doc texts get a flag |
+| one search in a one-shot | the same example: `search::prepare` with two empty slots, then `run`, for one word | 05 §3 (expected: the corpus about 6 ms on 10,000 names and the doc index about 16 ms on 1,000 docs, as 20 measured) |
 | one call tree | the same example, `call_tree` depth 2 on one httpx function | 05 §3 |
 | `File::lock` on this toolchain, and what a second locker sees | a ten-line test | 04 §7 |
 | is `regex` already built? | `cargo tree -i regex-automata` | 05 §6 |
@@ -74,14 +76,21 @@ Commit: `cli A2: vnoc is a command too; status`.
 
 | Files | What |
 |---|---|
-| `crates/vnoc/src/cli/nodes.rs` | arguments → references: relative to the current folder, then to the root (02 §2); `-` for standard input; `node_ref::parse` and `Index::resolve_ref` from doc 20 |
-| `crates/vnoc/src/cli/suggest.rs` | "did you mean": `vnoc_search::run` on the name, the file's own nodes first (02 §4) |
+| `crates/vnoc/src/node_ref.rs` *(from the built code)* | `NodeRef::Location { path, rest }` in place of the whole text (the split moves from `resolve_ref` into `parse`; the box's tests pass unchanged); `NodeRef::{path, with_path}`; `Why` and `Index::why_not` (02 §2, §4) |
+| `crates/vnoc/src/index/tree.rs` *(from the built code)* | `Node::find(&self, id) -> Option<&Node>`: a tree id to its node |
+| `crates/vnoc/src/cli/nodes.rs` | arguments → references: relative to the current folder, then to the root (02 §2), through `with_path`; `-` for standard input; `node_ref::parse` and `Index::resolve_ref` from doc 20 |
+| `crates/vnoc-search/src/` *(from the built code)* | `nearest(corpus, name, limit)`: names within 2 edits (02 §4). The crate gets no dependency for it |
+| `crates/vnoc/src/suggest.rs` (library) | "did you mean": `run` on the last part of the name, the file's own nodes first, then `nearest` (02 §4). The `Query` is built as a value, never formatted |
 | `crates/vnoc/src/cli/show.rs` | `show` (header, docs, code with the 120-line cut, `--full`, `--no-code`; a file or folder shows one level of tree), `code` (`--context`) |
 | library | reading a def's lines from the file by its range, as one function (the extension does this in VS Code today) |
 
 Tests: `show` by each of the four forms gives the same node; a line inside a method gives the method; three nodes in one call, one of them
-wrong → two answers, one error in place, exit `2`; every row of 02 §4's table; `code --context 2`; a 200-line function is cut with the count;
-a Missing node by ID: `show` answers, `code` is `2`; from a subfolder, a path relative to it and one relative to the root both work.
+wrong → two answers, one error in place, exit `2`; every row of 02 §4's table, each from its `Why`; `code --context 2`; a 200-line function is
+cut with the count; a Missing node by ID: `show` answers, `code` is `2`; from a subfolder, a path relative to it and one relative to the root
+both work, **for each form that has a path** (`a.py`, `a.py:12`, `a.py::f`). `nearest` (a table: one letter dropped, added, changed, two
+swapped; a name of 3 letters is not a suggestion for another of 3; the file's own first). `suggest`: a name without its class finds the
+method; `parse_ordr` finds `parse_order`; a path with a space in it. `node_ref`'s parse table, with the location's two parts. `lifecycle.rs`
+passes with no edits (the box resolves references through the same functions).
 
 Commit: `cli A3: show and code, by any name for a node`.
 
@@ -93,8 +102,14 @@ Commit: `cli A3: show and code, by any name for a node`.
 | `crates/vnoc/src/cli/tree.rs` | printing only: indent, counts, `--flat` |
 | `crates/vnoc/src/index/view.rs` (new, library) | `tree_view(&Node, &TreeOptions) -> Vec<Row>`: depth, kinds with ancestors kept, the `--where` set, the limit and what was cut, the counts of a cut folder. Pure, over the tree `Index::tree` gives |
 
-`--where` is `vnoc_search::parse` and `run` with no limit; the rows kept are its node ids and their ancestors. `--sig` reads `Def.params`
-**[check]** that the tree's `Node` carries them or add the field.
+`--where` is `vnoc_search::parse` and **`matches`** over every id of the tree *(from the built code: `matches` is what S8 built for "which of
+these does the query find", by name or by a doc of the node, and it ranks nothing)*; the rows kept are the ids it says yes to, and their
+ancestors. The corpus comes from `search::prepare`, as for `find`. `--sig` reads `Def.params`: the tree's `Node` does **not** carry them
+(checked 2026-11-17: `index/tree.rs` has `range`, `qualname`, `node_id`, `docs`, `link`), so `tree_view` reads them with `Index::def_at`
+for the rows it prints; the `Node` on the wire does not grow.
+
+`doc read` prints the file without its frontmatter: `userdata/read.rs` `after_frontmatter` (private today, CRLF handled since S7) becomes
+`pub(crate)` and is the one function that cuts it.
 
 Tests (`tree_view`, a table): each option alone and two together (`--kind class --depth all`, `--where 'no:doc kind:fn' --flat`); the limit says
 how many it cut; a cut folder shows counts. Integration: `doc` list, read, path on the sample; by ID with `--driver /nonexistent` still works;
@@ -106,13 +121,15 @@ Commit: `cli A4: doc and tree`.
 
 | Files | What |
 |---|---|
-| `crates/vnoc/src/cli/find.rs` | `find`: `search::corpus_of`, `parse`, a reference resolved, `run`, printed (03 §5) |
-| `crates/vnoc/src/grep.rs` (new, library) | `grep(project, &Index, &Regex, paths, options) -> Vec<NodeHits>`: the index's files, line by line, each hit to its innermost def or the file; `--docs` over the doc texts |
+| `crates/vnoc/src/cli/find.rs` | `find`: `search::prepare` (two empty slots), `run`, each node row joined to the tree by its id for both lines and the ID, printed (03 §5) *(from the built code)* |
+| `crates/vnoc/src/search.rs` *(from the built code)* | `Prepared` gains `reference: Option<Found>`: what the reference resolved to, so `find <ID>` can say a node is Missing. The server ignores it |
+| `crates/vnoc/src/grep.rs` (new, library) | `grep(project, &Index, &Regex, paths, options) -> Vec<NodeHits>`: the index's files, line by line, each hit to its innermost def (`Index::innermost_def`, built in S5) or the file; `--docs` over `Index::doc_texts()` |
 | `crates/vnoc/src/cli/grep.rs` | printing |
 | `crates/vnoc/Cargo.toml` | `regex` |
 
 Tests: `find` gives the order `vnoc/search` gives for the same query (one test asks both); `--nodes`, `--docs`; nothing found is `0`; a wrong
-filter prints its note. `grep`: a hit in a nested def goes to the inner one; a hit outside any def goes to the file; `--names`; `-i`; a pattern
+filter prints its note; `find <file:line>` puts that node first; `find <the Missing node's ID>` prints its `MISSING` line and exits `0`;
+a node row has both lines and, when it has one, its ID. `grep`: a hit in a nested def goes to the inner one; a hit outside any def goes to the file; `--names`; `-i`; a pattern
 that does not compile is `2` with the regex's message; `--docs`.
 
 Commit: `cli A5: find and grep`.
@@ -158,8 +175,11 @@ Commit: `cli A7: who applies an ID edit is a parameter; one write lock`.
 | `crates/vnoc/src/identity/attach.rs` | the refusals that are rules, not printing: a title the node has (unless `again`), the body's size, a body with its own frontmatter; `body` written after the heading |
 | `crates/vnoc/src/userdata/mod.rs` | `create_doc` takes the body, the author and the tags |
 | `crates/vnoc/src/userdata/{read.rs, doc_text.rs}` | `frontmatter(text) -> { title, author, tags }` beside `title_of`; the doc texts keep the two values |
-| `crates/vnoc-search/src/{query.rs, run.rs}`, `lib.rs` | `tag:` `author:` (docs that carry it; nodes that have such a doc); `DocEntry` gains the two fields |
+| `crates/vnoc-search/src/{query.rs, run.rs}`, `lib.rs` | `tag:` `author:` (docs that carry it; nodes that have such a doc); `DocEntry` gains the two fields; **a query of only filters lists docs when one of them is `tag:` or `author:`** (04 §4) *(from the built code: today filters alone find no doc)* |
+| `crates/vnoc/src/search.rs` | `corpus_of` hands the two values from the doc texts to each `DocEntry`; `answer` puts them in the doc rows |
 | `crates/vnoc/src/protocol.rs`, `shared/messages.ts` | `DocInfo` gains `tags`, `author` (`vnoc/docs`); the doc rows of `vnoc/search` too |
+| `webview/src/sidebar/SearchResults.tsx` | a doc row shows its tags after the title |
+| `docs/20-search/01-query.md` §2, §3 | the two filters as built, and the row for a query of filters alone, in the `docs:` commit |
 | `crates/vnoc/src/cli/doc.rs` | `doc list` with no node (the whole project); `--where` on `doc list` and `doc read` (03 §3); tags shown on the rows |
 | `docs/04-storage/01-vnoc-folder.md` §"Docs" | the two keys, in a `docs:` commit |
 
@@ -168,6 +188,9 @@ and the doc exist, the three output lines; `--no-marker`; `[ids] default = "none
 `--again` → `-2.md`; on a file (`# FileID:`), on a folder (`.vnoc-id`); a function with a syntax error → attached by name with the notice, `0`;
 `--author x --tag plan --tag billing` → the two frontmatter lines; a doc with no such keys reads as none; `find 'tag:plan'`, `find 'kind:fn tag:plan'`,
 `doc list --where 'tag:plan'` (no node), `doc read <node> --where 'author:x'`; `vnoc/docs` answers with the tags (`lifecycle.rs`);
+in the crate (tables): `tag:plan` alone lists the docs that carry it and the nodes that have one, `kind:fn` alone still lists no doc,
+`tag:a tag:b` needs one doc with both, `-tag:draft`, `matches` agrees with `run` on each; a doc whose tags were edited by hand is found by
+the new tag on the next search with no `indexChanged` (`lifecycle.rs`);
 **the race**: 20 rounds of two `doc new` on one function at once → one node folder, one `ID:` line, two docs; then `vnoc check` is clean.
 A lifecycle test: a doc made by the command shows in a running core's `vnoc/structure` after `filesChanged`.
 

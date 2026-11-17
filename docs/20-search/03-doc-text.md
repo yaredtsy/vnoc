@@ -29,7 +29,10 @@ Lower case; split at anything that is not a letter or a digit (Unicode's own cla
 splits by the first rule already.
 
 No stemming: `retries` does not find `retry` **[decide after use]**. No stop words: the collection is small, and `not` matters in a note.
-Text with no spaces between words (Chinese, Japanese) is one long word per run: found by a phrase (§4), not by a word. Noted, not solved.
+Text with no spaces between words (Chinese, Japanese) is one long word per run. *(Corrected 2026-11-17, from the built code.)* Such a run is
+found only by how it **starts** (the last query word is a prefix, §3): `日本語` finds a doc with `日本語のメモ`, and not one where the run
+starts earlier. A phrase does not help, as this line first said: a phrase's words are whole words (§8), so `"日本語"` finds nothing there.
+Noted, not solved.
 
 ## 3. Ranking
 
