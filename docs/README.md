@@ -132,6 +132,13 @@ V-NOC
 │   ├── root docs                      .vnoc/root/, no ID (planned, not urgent)
 │   └── build order                    steps A0 – A17 in four phases
 │
+├── PLAYGROUNDS (not tied to a release) ───────────── 22-playground/
+│   ├── what it is · on disk           a script kept on a node, like a doc · play/<slug>/ = play.toml + the script
+│   ├── running · languages            copy into the chosen folder, run, delete · a language is a preset: Python, TS/JS, Rust, custom
+│   ├── safety · the core              not a sandbox; Workspace Trust · the play module, plan separate from run
+│   ├── on screen · agents             the panel's second tab, Run, the output · vnoc play list / show / path / new / run
+│   └── build order · later            steps PG0 – PG12 · what is not built and why the format has room
+│
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
 │
 └── LATER (ideas, not scheduled) ────────────────── futureplan/
