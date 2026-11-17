@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { newest, placeOf } from "./search.ts";
+import { newest, outcomeOf, placeOf } from "./search.ts";
 
 test("where a result is: the path, with the 1-based line of a definition", () => {
   assert.equal(placeOf({ path: "billing/invoice.py", line: null }), "billing/invoice.py");
@@ -53,4 +53,15 @@ test("a number nobody sent is not newest", () => {
   const numbering = newest();
   assert.equal(numbering.isNewest(1), false);
   assert.equal(numbering.isNewest(0), false);
+});
+
+test("a refused request clears what was drawn only when it is the newest; an older one's answer or refusal changes nothing", () => {
+  const numbering = newest();
+  const [one, two] = [numbering.next(), numbering.next()];
+  assert.equal(outcomeOf(numbering, one, false), "ignore", "an older refusal");
+  assert.equal(outcomeOf(numbering, one, true), "ignore", "an older answer");
+  assert.equal(outcomeOf(numbering, two, true), "draw");
+  assert.equal(outcomeOf(numbering, two, false), "clear", "the newest was refused: no rows, no dim");
+  numbering.drop();
+  assert.equal(outcomeOf(numbering, two, false), "ignore", "the box was emptied since");
 });

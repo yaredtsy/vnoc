@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import type { SearchDoc, SearchNode, SearchResult } from "@vnoc/shared/messages.ts";
-import { newest } from "@vnoc/shared/search.ts";
+import { newest, outcomeOf } from "@vnoc/shared/search.ts";
 import { on, post, request } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
 import { pickIntent, pointedAt, rowAt, searchKey } from "./search.ts";
@@ -22,7 +22,7 @@ interface Answer {
  *
  * The core finds and ranks, and says in `notes` what was wrong with a filter of the query (drawn under the box, with the rows or without). The page asks on each change of the box (no debounce: a round trip is about 5 ms) and draws only the answer to the newest request (Q8, `newest`);
  * it does not compare the answer's `revision` (Q5: a restarted core counts from the start again). While an answer is on its way the last rows stay; an empty box asks
- * nothing and clears them at once.
+ * nothing and clears them at once, and so does a refusal of the newest request.
  */
 export function useSearch(focusList: () => void) {
   const [query, setQueryState] = useState("");
@@ -49,11 +49,14 @@ export function useSearch(focusList: () => void) {
     const started = changedAt.current;
     request("search", { query: text }).then(
       (result) => {
-        if (!numbering.isNewest(number)) return;
+        if (outcomeOf(numbering, number, true) !== "draw") return;
         setAnswer({ query: text, result, changedAt: started, sentAt });
         setActive((a) => Math.min(a, Math.max(result.nodes.length + result.docs.length - 1, 0)));
       },
-      () => {}, // the core said no (it is not running): the last rows stay, and the next change asks again
+      () => {
+        // the core said no (it is not running): if this was the newest request there are no rows, not the last query's; the next change asks again
+        if (outcomeOf(numbering, number, false) === "clear") setAnswer(null);
+      },
     );
   };
   const askLatest = useRef(ask);

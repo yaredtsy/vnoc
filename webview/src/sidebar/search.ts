@@ -28,7 +28,7 @@ export function searchKey(key: string, count: number, active: number): SearchKey
 
 /**
  * What a pick does: the node is revealed in the active context (03 §3): the focus shortens until it holds the node, the ancestors between open, the node is
- * selected. The click rule of 07 §4 follows (`rowClick`), as the palette's search does.
+ * selected. The click rule of 07 §4 follows (`rowClick`).
  */
 export const pickIntent = (id: string): Intent => ({ type: "reveal", id, canvas: false });
 

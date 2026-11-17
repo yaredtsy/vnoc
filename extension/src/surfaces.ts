@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import type { Events, Notes, Page, RequestMessage } from "@vnoc/shared/messages";
 
 import { type Handlers, event, serve } from "./relay";
+import { SidebarSlot } from "./sidebarSlot";
 
 // The three webview surfaces: the canvas and the docs tab beside a code editor (one bundle; the mode tells the page which one it is), and the STRUCTURE
 // view in the side bar (its own, smaller bundle: 06 §10). Same relay for all three.
@@ -16,10 +17,7 @@ export const DOCS = "vnoc.docs";
 export class Surfaces {
   private canvasPanel: vscode.WebviewPanel | undefined;
   private docsPanel: vscode.WebviewPanel | undefined;
-  private sidebarView: vscode.WebviewView | undefined;
-  /** The STRUCTURE page has drawn at least once, so it is listening for the events a command sends it. */
-  private sidebarDrew = false;
-  private sidebarDrawnWaiters: (() => void)[] = [];
+  private readonly sidebarSlot: SidebarSlot<vscode.WebviewView>;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -28,7 +26,11 @@ export class Surfaces {
     private readonly onNote: (note: Notes) => void,
     /** the canvas tab or the docs tab was closed (not hidden): a webview panel cannot veto its own close, so the host asks after it (docs/17-edit-in-canvas.md §7, 9.5c, §8) */
     private readonly onPageClosed: (page: Page) => void = () => {},
-  ) {}
+    /** the STRUCTURE view was disposed while it was the current one: its page's own cleanup did not run, so the host ends what the page had told the session (the box's text and the pointer) */
+    onSidebarClosed: () => void = () => {},
+  ) {
+    this.sidebarSlot = new SidebarSlot(onSidebarClosed);
+  }
 
   get canvas(): vscode.WebviewPanel | undefined {
     return this.canvasPanel;
@@ -39,14 +41,14 @@ export class Surfaces {
   }
 
   get sidebar(): vscode.WebviewView | undefined {
-    return this.sidebarView;
+    return this.sidebarSlot.view;
   }
 
   /** Sends an event to every open V-NOC page: the tabs and the side bar. */
   emit<E extends keyof Events>(name: E, data: Events[E]): void {
     this.canvasPanel?.webview.postMessage(event(name, data));
     this.docsPanel?.webview.postMessage(event(name, data));
-    this.sidebarView?.webview.postMessage(event(name, data));
+    this.sidebarSlot.view?.webview.postMessage(event(name, data));
   }
 
   /**
@@ -54,31 +56,17 @@ export class Surfaces {
    * An event posted before the page is listening is lost, so a command that needs the page waits for this first.
    */
   whenSidebarDrew(ms: number): Promise<void> {
-    if (this.sidebarDrew) return Promise.resolve();
-    return new Promise((resolve) => {
-      const done = () => (clearTimeout(timer), resolve());
-      const timer = setTimeout(() => {
-        this.sidebarDrawnWaiters = this.sidebarDrawnWaiters.filter((w) => w !== done);
-        resolve();
-      }, ms);
-      this.sidebarDrawnWaiters.push(done);
-    });
+    return this.sidebarSlot.whenDrew(ms);
   }
 
   /** The STRUCTURE view was resolved (it is shown for the first time, or VS Code made it again): give it its page. */
   adoptSidebar(view: vscode.WebviewView): void {
-    this.sidebarView = view;
-    this.sidebarDrew = false; // a new page: it has not drawn, and nothing it is sent is heard until it has
+    this.sidebarSlot.adopt(view); // a new page: it has not drawn, and nothing it is sent is heard until it has
     view.webview.options = this.options();
-    view.onDidDispose(() => {
-      if (this.sidebarView === view) this.sidebarView = undefined;
-    });
+    view.onDidDispose(() => this.sidebarSlot.disposed(view));
     view.webview.html = this.html(view.webview, { script: "assets/sidebar.js", css: "assets/sidebar.css", attributes: `data-mode="sidebar" data-folder="${(vscode.workspace.workspaceFolders?.length ?? 0) > 0}" data-hover-delay="${vscode.workspace.getConfiguration("workbench.hover").get<number>("delay", 500)}"` });
     view.webview.onDidReceiveMessage((m: RequestMessage | Notes) => {
-      if (m.type === "sidebarRendered" && this.sidebarView === view) {
-        this.sidebarDrew = true;
-        this.sidebarDrawnWaiters.splice(0).forEach((w) => w());
-      }
+      if (m.type === "sidebarRendered") this.sidebarSlot.rendered(view);
       void this.receive(view.webview, m, () => {});
     });
   }

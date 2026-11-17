@@ -96,7 +96,7 @@ suite("search", () => {
     api.setSearch("");
   });
 
-  test("typing fast: only the newest query's answer is drawn, and no other comes after it", async () => {
+  test("typing fast, and at a person's pace: every key is asked for, and the last answer drawn is the last text's", async () => {
     await showSidebar();
     const from = api.searchDrawn().length;
     for (const text of ["o", "ou", "out", "oute", "outer"]) api.setSearch(text); // one after another, no waiting
@@ -104,7 +104,7 @@ suite("search", () => {
     await sleep(1000);
     const after = api.searchDrawn().slice(from);
     assert.strictEqual(after.at(-1)!.query, "outer", `the last answer drawn is for the last text (drawn: ${after.map((d) => d.query).join(", ")})`);
-    // a pause well over the debounce between keys, as a person types: every key is asked for and drawn, and the last answer is the newest's
+    // a pause of 120 ms between keys, as a person types: each key is asked for at once, and the last answer drawn is the newest's (that an older answer is dropped is `newest`'s unit test)
     const slow = api.searchDrawn().length;
     for (const text of ["m", "me", "met", "meth", "metho", "method"]) {
       api.setSearch(text);
@@ -352,6 +352,36 @@ suite("search", () => {
       await sleep(500);
       assert.deepStrictEqual(api.webviewErrors(), []);
       await closeDocsTab();
+    });
+
+    test("a doc whose node is neither in the tree nor Missing: its pick opens the .md in an editor tab, with no docs tab", async () => {
+      await closeDocsTab();
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      // a record for a file that exists but that no driver reads (a .txt): its code is not read, and it is not gone, so the node is in neither list
+      const unreadId = "0000000000000000000000000V";
+      const unreadDir = path.join(vnoc, "nodes", unreadId.slice(24), unreadId);
+      const unreadFile = path.join(folder(), "quokka_unread.txt");
+      const unreadDoc = path.join(unreadDir, "unread.md");
+      try {
+        fs.writeFileSync(unreadFile, "not code\n");
+        fs.mkdirSync(unreadDir, { recursive: true });
+        fs.writeFileSync(path.join(unreadDir, "node.toml"), 'path = "quokka_unread.txt"\nqualname = ""\nid_in_code = "no"\nkind = "file"\n');
+        write(unreadDoc, unreadId, "Unread notes", "The word quokkaunread.");
+        await docFound("quokkaunread", unreadDoc);
+        const row = (await asked("quokkaunread")).docs[0];
+        assert.deepStrictEqual([row.missing, row.node, row.node_id], [false, null, unreadId], "neither in the tree nor Missing");
+        const got = await searched("quokkaunread");
+        assert.deepStrictEqual(got.docs, [unreadDoc]);
+        api.searchKey("Enter");
+        await until("the .md to open in an editor", () => vscode.window.activeTextEditor?.document.uri.fsPath === unreadDoc, 20_000);
+        assert.strictEqual(docsTabs().length, 0, "no docs tab: there is no node to pin it to");
+        await sleep(500);
+        assert.deepStrictEqual(api.webviewErrors(), []);
+      } finally {
+        await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+        fs.rmSync(unreadDir, { recursive: true, force: true });
+        fs.rmSync(unreadFile, { force: true });
+      }
     });
 
     test("↓ walks from the last node row to the first doc row", async () => {

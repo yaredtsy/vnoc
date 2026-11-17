@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { newest } from "@vnoc/shared/search.ts";
+import { newest, outcomeOf } from "@vnoc/shared/search.ts";
 import { on, post, request } from "../host.ts";
 import { useSession } from "../state/session.ts";
 import { useView } from "../state/view.ts";
@@ -12,8 +12,9 @@ export const CARDS_SETTLE_MS = 50;
 
 /**
  * While the sidebar's box has text (`session.search`), asks the core which of this canvas's cards the query finds (`searchCards`: every laid-out card, on screen or
- * not), and says which to dim in the view store, where each card reads it. Only the answer to the newest request is applied (`newest`); until one arrives nothing is
- * dimmed, and when the search ends everything is bright at once. Dims nothing itself: what matches is the core's. Posts `searchDim` for the test suite.
+ * not), and says which to dim in the view store, where each card reads it. Only the answer to the newest request is applied (`newest`); nothing is dimmed until the
+ * first answer, then the last query's dim stays until the next one arrives (no flash between keys). When the search ends, or the core refuses the newest request,
+ * everything is bright at once. Dims nothing itself: what matches is the core's. Posts `searchDim` for the test suite.
  */
 export function useSearchDim(cards: readonly Placed[]): void {
   const search = useSession((s) => s.search);
@@ -37,8 +38,8 @@ export function useSearchDim(cards: readonly Placed[]): void {
       lastQuery.current = search;
       const number = numbering.next();
       request("searchCards", { query: search, ids: keys }).then(
-        (answer) => numbering.isNewest(number) && setDim({ query: search, dim: { asked: new Set(keys), hits: new Set(answer.hits) } }),
-        () => {}, // the core said no (it is not running): the dim stays as it was, and the next change asks again
+        (answer) => outcomeOf(numbering, number, true) === "draw" && setDim({ query: search, dim: { asked: new Set(keys), hits: new Set(answer.hits) } }),
+        () => outcomeOf(numbering, number, false) === "clear" && setDim(null), // the core said no (it is not running): nothing is dimmed, and the next change asks again
       );
     };
     if (lastQuery.current !== search) return ask();

@@ -274,7 +274,7 @@ export interface EditDiffParams {
 /** webview → extension, with an answer. One line per request: its parameters and its result. */
 export interface Requests {
   structure: { params: void; result: StructureResult };
-  /** the box and the palette (docs/20-search): the core finds and ranks, the page draws. `nodes`: at most this many rows (the core says 200 when absent) */
+  /** the sidebar's box (docs/20-search): the core finds and ranks, the page draws. `nodes`: at most this many rows (the core says 200 when absent) */
   search: { params: { query: string; nodes?: number }; result: SearchResult };
   /** `vnoc/searchCards`: of these node ids (a structure card's id, a call card's target key), which the query finds, by name or by a doc of the node; `hits` is a subset, in the order given. The canvas dims the rest */
   searchCards: { params: { query: string; ids: string[] }; result: { revision: number; hits: string[] } };

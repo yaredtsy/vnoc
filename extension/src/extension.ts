@@ -151,6 +151,11 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (page === "canvas") draftsChip = { count: 0, label: "" }; // the chip it drew is gone with the page, which posts nothing on its way out
       void draftCopy.onPageClosed(page);
     },
+    () => {
+      // the box's page is gone and cannot say its box is empty: the canvas undims and nothing is pointed at
+      store.dispatch({ type: "search", query: null });
+      store.dispatch({ type: "highlight", id: null });
+    },
   );
   commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs, docs);
 
