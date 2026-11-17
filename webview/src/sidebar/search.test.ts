@@ -3,11 +3,12 @@ import { test } from "node:test";
 
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 import { MAIN, emptySession, reduce } from "@vnoc/shared/session.ts";
-import { RESULT_LIMIT, indexNodes, matchRange, pickIntent, rankNodes, searchKey, splitMatch } from "./search.ts";
+import { nodesHeader, pickIntent, placeOf, searchKey, splitMatch } from "./search.ts";
 
 const n = (id: string, kind: Kind, path: string, name: string, children: TreeNode[] = []): TreeNode => ({ id, kind, name, path, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
 const file = (path: string, ...fns: string[]) => n(path, "file", path, path.split("/").pop()!, fns.map((f) => n(`${path}::${f}`, "function", path, f)));
 
+// the tree the reveal test uses:
 // /  ├ billing/ ├ invoice.py ├ total   ├ bill_all      ├ Invoice (class) ├ pay
 //    │          └ rebilling.py ├ rebill
 //    └ shop/cart.py ├ add_item  └ billing_note
@@ -22,66 +23,32 @@ const tree = n("/", "folder", "", "shop", [
   ]),
   n("shop", "folder", "shop", "shop", [file("shop/cart.py", "add_item", "billing_note")]),
 ]);
-const index = indexNodes(tree);
-const names = (q: string, limit?: number) => rankNodes(index, q, limit).map((r) => r.node.name);
-
-test("every node is searched in reading order, but the opened folder itself", () => {
-  assert.deepEqual(index.map((e) => e.node.name), ["billing", "invoice.py", "total", "bill_all", "Invoice", "pay", "rebilling.py", "rebill", "shop", "cart.py", "add_item", "billing_note"]);
-  assert.deepEqual(index.filter((e) => e.inClass).map((e) => e.node.name), ["pay"], "a function inside a class is a method");
-});
-
-// the ranking of 06 §5: name before path, prefix before substring; within a tier the shorter name first, then reading order
-const ranking: { name: string; query: string; expect: [name: string, tier: number][] }[] = [
-  {
-    name: "`bill`: name prefixes, then name substrings, then what holds it only in its path (billing/…)",
-    query: "bill",
-    expect: [["billing", 0], ["bill_all", 0], ["billing_note", 0], ["rebill", 1], ["rebilling.py", 1], ["pay", 2], ["total", 2], ["Invoice", 2], ["invoice.py", 2]],
-  },
-  { name: "case does not matter, and the whole name is the shortest prefix match", query: "INVOICE", expect: [["Invoice", 0], ["invoice.py", 0], ["pay", 3], ["total", 3], ["bill_all", 3]] },
-  { name: "`billing/` finds by path: everything under that folder (not the folder itself), the shorter names first", query: "billing/", expect: [["pay", 2], ["total", 2], ["rebill", 2], ["Invoice", 2], ["bill_all", 2], ["invoice.py", 2], ["rebilling.py", 2]] },
-  { name: "a path substring in the middle of the path", query: "illing/inv", expect: [["pay", 3], ["total", 3], ["Invoice", 3], ["bill_all", 3], ["invoice.py", 3]] },
-  { name: "an empty or blank query finds nothing", query: "  ", expect: [] },
-  { name: "nothing matches", query: "zzz", expect: [] },
+// a name cut around the ranges the core found (UTF-16 offsets, as `slice` takes them)
+const pieces = (name: string, ranges: [number, number][]) => splitMatch(name, ranges).map((p) => (p.bold ? `[${p.text}]` : p.text));
+const splits: { name: string; text: string; ranges: [number, number][]; expect: string[] }[] = [
+  { name: "no range: the whole name, plain", text: "checkout_order", ranges: [], expect: ["checkout_order"] },
+  { name: "one range in the middle", text: "rebilling.py", ranges: [[2, 6]], expect: ["re", "[bill]", "ing.py"] },
+  { name: "two ranges (tier 2: `chor`)", text: "checkout_order", ranges: [[0, 2], [9, 11]], expect: ["[ch]", "eckout_", "[or]", "der"] },
+  { name: "a range at the start", text: "bill_all", ranges: [[0, 4]], expect: ["[bill]", "_all"] },
+  { name: "a range at the end", text: "bill_all", ranges: [[5, 8]], expect: ["bill_", "[all]"] },
+  { name: "the whole name", text: "total", ranges: [[0, 5]], expect: ["[total]"] },
+  { name: "two ranges that touch: two bold pieces side by side, no empty piece between", text: "abcd", ranges: [[0, 2], [2, 4]], expect: ["[ab]", "[cd]"] },
+  { name: "`é` before a range: UTF-16 offsets, one unit for `é` (the core's `café_order` with `or`)", text: "café_order", ranges: [[5, 7]], expect: ["café_", "[or]", "der"] },
+  { name: "an emoji is two units: the range after it is counted in units", text: "😀_order", ranges: [[3, 5]], expect: ["😀_", "[or]", "der"] },
+  { name: "an empty name has no pieces", text: "", ranges: [], expect: [] },
 ];
-for (const r of ranking) test(`ranking: ${r.name}`, () => assert.deepEqual(rankNodes(index, r.query).map((x) => [x.node.name, x.tier]), r.expect));
+for (const t of splits) test(`splitMatch: ${t.name}`, () => assert.deepEqual(pieces(t.text, t.ranges), t.expect));
 
-test("ranking: the four tiers, in order: name prefix, name substring, path prefix, path substring", () => {
-  const four = n("/", "folder", "", "p", [
-    n("lib/shopping.py::a", "function", "lib/shopping.py", "x1"), // path holds `shop`, not at its start
-    n("shop/b.py::b", "function", "shop/b.py", "x2"), // path starts with it
-    n("c.py::myshop", "function", "c.py", "myshop"), // name holds it
-    n("d.py::shopper", "function", "d.py", "shopper"), // name starts with it
-  ]);
-  assert.deepEqual(rankNodes(indexNodes(four), "shop").map((r) => [r.node.name, r.tier]), [["shopper", 0], ["myshop", 1], ["x2", 2], ["x1", 3]]);
+test("where a result is: the path, with the 1-based line of a definition", () => {
+  assert.equal(placeOf({ path: "billing/invoice.py", line: null }), "billing/invoice.py");
+  assert.equal(placeOf({ path: "billing/invoice.py", line: 0 }), "billing/invoice.py:1");
+  assert.equal(placeOf({ path: "billing/invoice.py", line: 41 }), "billing/invoice.py:42");
 });
 
-test("ranking: a name prefix beats a path match, whatever the length", () => {
-  const rows = rankNodes(index, "shop");
-  assert.deepEqual([rows[0].node.name, rows[0].tier], ["shop", 0]);
-  assert.ok(rows.slice(1).every((r) => r.tier === 2), "what is under shop/ matches by path");
-});
-
-test("the 200 cap: more matches than that show the best 200", () => {
-  const many = n("/", "folder", "", "p", [
-    n("x/z.py", "file", "x/z.py", "z.py", Array.from({ length: 300 }, (_, i) => n(`x/z.py::f${i}`, "function", "x/z.py", `f${i}`))),
-    n("exact", "function", "x/z.py", "f"), // a whole-name match: first
-  ]);
-  const all = indexNodes(many);
-  const rows = rankNodes(all, "f");
-  assert.equal(RESULT_LIMIT, 200);
-  assert.equal(rows.length, 200);
-  assert.equal(rows[0].node.name, "f", "the best first, whatever the order in the tree");
-  assert.deepEqual(rankNodes(all, "f", 5).map((r) => r.node.name), ["f", "f0", "f1", "f2", "f3"], "the shorter names first, then reading order");
-});
-
-test("the letters to draw bold: the match in the name, none when only the path matched", () => {
-  assert.deepEqual(matchRange("bill_all", "BILL"), [0, 4]);
-  assert.deepEqual(matchRange("rebilling.py", "bill"), [2, 6]);
-  assert.equal(matchRange("total", "bill"), null);
-  assert.deepEqual(rankNodes(index, "bill").map((r) => r.match?.join("-") ?? null), ["0-4", "0-4", "0-4", "2-6", "2-6", null, null, null, null], "bold for a name match, nothing for a path match");
-  assert.equal(rankNodes(index, "billing/")[0].match, null, "a path match has nothing bold in the name");
-  assert.deepEqual(splitMatch("rebilling.py", [2, 6]), ["re", "bill", "ing.py"]);
-  assert.deepEqual(splitMatch("total", null), ["total", "", ""]);
+test("the header says how many rows, and of how many when the limit cut them", () => {
+  assert.equal(nodesHeader(12, 12), "Nodes 12");
+  assert.equal(nodesHeader(200, 1340), "Nodes 200 of 1,340");
+  assert.equal(nodesHeader(1, 2), "Nodes 1 of 2");
 });
 
 // the box's keys

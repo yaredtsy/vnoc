@@ -119,11 +119,12 @@ export class Commands {
         await vscode.env.clipboard.writeText(node.range ? `${node.path}:${node.range.start.line + 1}` : node.path);
       }),
       on("vnoc.clearSelection", () => this.store.dispatch({ type: "select", id: null })),
-      on("vnoc.search", async () => searchNodes(this.core.tree ?? (await this.core.loadStructure()).root, this.store, (node) => {
+      // a string argument is the value to start with (the window suite uses it); a node or anything else is not
+      on("vnoc.search", async (arg) => searchNodes(this.core, this.store, (id) => {
         // the same Enter as the sidebar's box (06 §5): reveal (the focus shortens if it hides the node, 03 §3), then the click rule
-        this.store.dispatch({ type: "reveal", id: node.id, canvas: false });
-        return this.rowClick(this.store.get().active, node.id);
-      })),
+        this.store.dispatch({ type: "reveal", id, canvas: false });
+        return this.rowClick(this.store.get().active, id);
+      }, typeof arg === "string" ? arg : undefined)),
       on("vnoc.focus", async (arg, selected) => this.focusInSidebar((await this.nodeFor(arg, selected)).id)),
       on("vnoc.focusBack", () => this.store.dispatch({ type: "focusBack" })),
       on("vnoc.focusClear", () => this.store.dispatch({ type: "focusJump", depth: 0 })),

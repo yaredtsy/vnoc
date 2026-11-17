@@ -35,6 +35,8 @@ const renderWaiters: ((r: Rendered) => void)[] = [];
 /** What the STRUCTURE view last said it drew (for the test suite). */
 type SidebarRendered = { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number };
 const sidebarPosts: SidebarRendered[] = [];
+/** The answers the STRUCTURE view drew for its search box (for the test suite). */
+const searchDrawnPosts: { query: string; ids: string[]; total: number; ms: number; trip: number }[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
@@ -229,6 +231,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     readingStarts: () => readingStarts(),
     /** whether the STRUCTURE view has been shown (its page exists) */
     sidebarOpen: () => panels.sidebar !== undefined,
+    /** whether VS Code says the STRUCTURE view is on screen now (a page that is not is throttled: its timers and drawing wait) */
+    sidebarVisible: () => panels.sidebar?.visible === true,
     /** the context chips the bar draws now: empty with one context */
     chips: () => chips,
     /** the bar's "N unsaved drafts" chip as the canvas page last drew it: `count` 0 and `label` "" when there is none, and while no canvas page is open */
@@ -260,6 +264,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     codeOf: (path: string, range: Range, saveFirst = false) => commands.codeOf(path, range, saveFirst),
     /** the host's answer to Save on a draft; `locate` stands in for the core's `vnoc/locate`, so a test can edit the document before it answers, and `ask` for the modal about a draft that takes the ID away */
     editSave: (params: EditSaveParams, locate?: Locate, ask?: AskToDropId) => commands.editSaveOf(params, locate, ask),
+    /** every answer the STRUCTURE view drew for its search box, in order: the text it answers, the rows' ids, how many matched, and the time from the change of the box (`ms`) and from the request (`trip`) to the draw */
+    searchDrawn: () => searchDrawnPosts,
+    /** puts text in the STRUCTURE view's search box as typing would (the view command reaches the sidebar through `panels.emit`, like every other page) */
+    setSearch: (text: string) => panels.emit("viewCommand", { name: "setSearch", text }),
     /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
     codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
@@ -311,6 +319,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "codeShown":
       codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });
+      break;
+    case "searchDrawn":
+      searchDrawnPosts.push({ query: note.query, ids: note.ids, total: note.total, ms: note.ms, trip: note.trip });
       break;
     case "sidebarRendered":
       sidebarPosts.push({ context: note.context, rows: note.rows, selected: note.selected, inView: note.inView, drawn: note.drawn, height: note.height });

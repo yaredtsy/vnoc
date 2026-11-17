@@ -308,7 +308,7 @@ suite("the sidebar", () => {
     const selected = api.session().contexts.main.selected;
     const timeline = recordTimeline(() => api.session().highlight);
     try {
-      await vscode.commands.executeCommand("vnoc.search");
+      await vscode.commands.executeCommand("vnoc.search", "method"); // an empty list shows nothing now: the start is a query (four `method` nodes: enough for two moves)
       await until("the list's first item to be pointed at", () => api.session().highlight !== null);
       for (const step of ["next", "next again"]) {
         const was = api.session().highlight;
@@ -332,7 +332,8 @@ suite("the sidebar", () => {
     const everything: TreeNode[] = [];
     const walk = (n: TreeNode) => (everything.push(n), n.children.forEach(walk));
     root.children.forEach(walk);
-    const last = everything.at(-1)!; // the last item of the list: `quickOpenSelectPrevious` from the top wraps to it
+    const last = everything.at(-1)!; // searched for by its name: the first item of the list
+    assert.strictEqual(everything.filter((n) => n.name === last.name).length, 1, "its name is the name of no other node, so it is the first the core finds");
     const otherFile = root.children.find((n) => n.name === "other.py")!;
     api.dispatch({ type: "focus", id: otherFile.id });
     assert.deepStrictEqual([...api.session().contexts.main.focus].at(-1), otherFile.id);
@@ -340,10 +341,8 @@ suite("the sidebar", () => {
     await structureSettled();
     const timeline = recordTimeline(() => api.session().highlight);
     try {
-      await vscode.commands.executeCommand("vnoc.search");
-      await until("the list's first item to be pointed at", () => api.session().highlight !== null);
-      await vscode.commands.executeCommand("workbench.action.quickOpenSelectPrevious");
-      await until("the last item to be pointed at", () => api.session().highlight === last.id);
+      await vscode.commands.executeCommand("vnoc.search", last.name);
+      await until("the list's first item to be pointed at", () => api.session().highlight === last.id);
       await vscode.commands.executeCommand("workbench.action.acceptSelectedQuickOpenItem");
       await until("the focus to shorten and the node to be selected", () => api.session().contexts.main.focus.length === 0 && api.session().contexts.main.selected === last.id);
     } catch (e) {
