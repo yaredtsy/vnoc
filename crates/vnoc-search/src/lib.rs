@@ -183,3 +183,57 @@ pub struct DocHit {
     /// The hits inside the snippet, in UTF-16 units of the snippet as it is here (a leading `…` is one unit).
     pub snippet_ranges: Vec<(u32, u32)>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(id: &str) -> NodeEntry {
+        NodeEntry {
+            id: id.to_string(),
+            kind: Kind::File,
+            name: id.to_string(),
+            qualname: None,
+            path: id.to_string(),
+            line: None,
+            in_class: false,
+            docs: 0,
+        }
+    }
+
+    fn doc(body: &str) -> DocEntry {
+        DocEntry {
+            node: None,
+            node_id: String::new(),
+            node_name: String::new(),
+            node_kind: None,
+            node_path: String::new(),
+            file: String::new(),
+            doc_path: String::new(),
+            title: String::new(),
+            body: body.to_string(),
+        }
+    }
+
+    #[test]
+    fn position_is_the_index_of_the_node_with_that_id() {
+        let corpus = Corpus::new(vec![node("a"), node("b"), node("c")], Vec::new());
+        assert_eq!(corpus.position("a"), Some(0));
+        assert_eq!(corpus.position("c"), Some(2));
+        assert_eq!(corpus.position("A"), None, "ids are compared as written");
+        assert_eq!(corpus.position("d"), None);
+        assert_eq!(Corpus::new(Vec::new(), Vec::new()).position("a"), None);
+    }
+
+    #[test]
+    fn an_index_for_another_number_of_docs_is_replaced_not_used() {
+        let docs = vec![doc("one"), doc("two")];
+        let kept = Arc::new(DocIndex::new(&docs));
+        assert!(Arc::ptr_eq(&reconciled(&docs, kept.clone()), &kept));
+        for other in [&docs[..1], &[doc("a"), doc("b"), doc("c")][..], &[][..]] {
+            let got = reconciled(other, kept.clone());
+            assert!(!Arc::ptr_eq(&got, &kept));
+            assert_eq!(got.len(), other.len());
+        }
+    }
+}
