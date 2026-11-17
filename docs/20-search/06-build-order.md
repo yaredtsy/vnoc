@@ -213,6 +213,9 @@ Commit: `search S8: the canvas dims what the query does not find`.
 
 S1 – S5 are enough for doc 21 to start: the CLI needs the crate, the corpus and `node_ref`, not the screens.
 
+**All steps done, 2026-11-17:** S0 – S8 with S2b, S3b, S6a, S6a2 and S6b, on branch `search`. Left before the PR: the by-hand pass
+(the dim level in a light and a dark theme; *V-NOC: Search…* puts the keyboard in the box; a doc pick opens that doc).
+
 ## 4. Tests, by kind
 
 a. **Crate** (`cargo test -p vnoc-search`): names, the parse, filters, docs, `matches`. No disk, no async: tables.

@@ -83,6 +83,10 @@ The first draft's shape was right (one request, tiers, BM25, P1). These are the 
 
 Two searches that rank differently, both in TypeScript, neither reads a doc. After this folder there is one, in Rust.
 
+**Built, 2026-11-17** (S1 – S8 on branch `search`): one search, in `crates/vnoc-search`, behind `vnoc/search` and `vnoc/searchCards`. The
+sidebar's box draws Nodes and Docs and dims the canvas; *V-NOC: Search…* opens the box (the QuickPick is gone: 05 §2). Measured on an M1:
+the corpus build about 6 ms on 10,000 names, the doc index about 16 ms on 1,000 docs, key to drawn about 5 ms.
+
 ## 5. Open checks
 
 | # | Check | Step | Decides |
