@@ -87,6 +87,11 @@ impl Corpus {
     pub fn docs(&self) -> &[DocEntry] {
         &self.docs
     }
+
+    /// The index into [`Corpus::nodes`] of the node with this id, by a scan: one lookup per query.
+    pub fn position(&self, id: &str) -> Option<usize> {
+        self.nodes.iter().position(|n| n.id == id)
+    }
 }
 
 /// How many of each kind of result to give back.
@@ -133,3 +138,31 @@ pub struct NodeHit {
 /// A doc the query found. Empty until the doc text is searched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocHit {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(id: &str) -> NodeEntry {
+        NodeEntry {
+            id: id.to_string(),
+            kind: Kind::File,
+            name: id.to_string(),
+            qualname: None,
+            path: id.to_string(),
+            line: None,
+            in_class: false,
+            docs: 0,
+        }
+    }
+
+    #[test]
+    fn position_is_the_index_of_the_node_with_that_id() {
+        let corpus = Corpus::new(vec![node("a"), node("b"), node("c")], Vec::new());
+        assert_eq!(corpus.position("a"), Some(0));
+        assert_eq!(corpus.position("c"), Some(2));
+        assert_eq!(corpus.position("A"), None, "ids are compared as written");
+        assert_eq!(corpus.position("d"), None);
+        assert_eq!(Corpus::new(Vec::new(), Vec::new()).position("a"), None);
+    }
+}

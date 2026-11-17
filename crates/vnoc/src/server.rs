@@ -28,6 +28,7 @@ use crate::calls::{self, Merged};
 use crate::driver_host::{DriverHost, HostError};
 use crate::identity::{self, Env};
 use crate::index::{Index, Touched, refresh};
+use crate::node_ref::{self, Found, NodeRef};
 use crate::project::Project;
 use crate::protocol::{
     Attach, AttachParams, AttachResult, CallSite, CallTree, CallTreeNode, CallTreeParams,
@@ -350,22 +351,34 @@ fn search(
             .project
             .get()
             .ok_or_else(|| internal("no folder is open"))?;
+        let query = parse(&params.query);
+        // a bare path is found by the path tiers, so only the forms they cannot find are tried (04 §4)
+        let reference = query
+            .reference
+            .as_deref()
+            .and_then(node_ref::parse)
+            .filter(|r| !matches!(r, NodeRef::Path(_)));
         // no `.await` while either lock is held: the index first, then the corpus
-        let (revision, corpus) = {
+        let (revision, corpus, found) = {
             let index = state.index.read().unwrap();
             let revision = index.revision();
             let corpus = kept(&state.corpus, revision, || {
                 corpus_of(&index.tree(&project.name(), project.prefix()))
             });
-            (revision, corpus)
+            let found = reference.map(|r| index.resolve_ref(project, &r));
+            (revision, corpus, found)
+        };
+        // a node the tree has first; a Missing ID or a reference that names nothing leaves the words to find what they find
+        let exact = match found {
+            Some(Found::Node(id)) => corpus.position(&id),
+            _ => None,
         };
         let defaults = Limits::default();
         let limits = Limits {
             nodes: params.nodes.unwrap_or(defaults.nodes),
             docs: params.docs.unwrap_or(defaults.docs),
         };
-        let query = parse(&params.query);
-        let results = run(&corpus, &query, None, limits);
+        let results = run(&corpus, &query, exact, limits);
         Ok(answer(revision, &corpus, &query, results))
     })
 }

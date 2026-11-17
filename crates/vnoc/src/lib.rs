@@ -4,6 +4,7 @@ pub mod calls;
 pub mod driver_host;
 pub mod identity;
 pub mod index;
+pub mod node_ref;
 pub mod project;
 pub mod protocol;
 pub mod scan;

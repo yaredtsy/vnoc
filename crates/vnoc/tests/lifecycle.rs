@@ -532,6 +532,210 @@ fn search_filters_narrow_nodes_and_a_value_that_means_nothing_is_a_note() {
     core.finish();
 }
 
+/// The first row of a `vnoc/search` answer and how many rows have its id, as `(id, exact, copies)`.
+fn first_row(answer: &Value) -> Option<(String, bool, usize)> {
+    let rows = answer["nodes"].as_array().unwrap();
+    let first = rows.first()?;
+    let id = first["id"].as_str().unwrap();
+    let copies = rows.iter().filter(|r| r["id"] == id).count();
+    Some((id.to_string(), first["exact"].as_bool().unwrap(), copies))
+}
+
+/// The ids of the rows that are marked `exact`.
+fn exact_ids(answer: &Value) -> Vec<&str> {
+    answer["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["exact"] == true)
+        .map(|r| r["id"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_pasted_reference_finds_its_node_first() {
+    let root = fixtures("search-reference");
+    let (outer, gone) = ("0000000000000000000000000D", "0000000000000000000000000E");
+    let mut core = Core::start(Some(driver_path()), &root);
+    let ask = |core: &mut Core, query: &str| {
+        core.request("vnoc/search", json!({ "query": query }))
+            .unwrap()
+    };
+
+    // a file and a line: the innermost def that holds it, else the file (lines are 1-based, as an editor shows them)
+    let at = |core: &mut Core, query: &str| {
+        let found = core
+            .request("vnoc/search", json!({ "query": query }))
+            .unwrap();
+        (first_row(&found), exact_ids(&found).len())
+    };
+    let rows: &[(&str, &str)] = &[
+        (
+            "nested.py:8",
+            "nested.py::top.<locals>.inner.<locals>.deepest",
+        ),
+        ("nested.py:25", "nested.py::Outer.Nested.method"),
+        ("nested.py:28", "nested.py::Outer.method#2"),
+        ("nested.py:25:9", "nested.py::Outer.Nested.method"),
+        ("nested.py:3", "nested.py"),
+        ("nested.py:999", "nested.py"),
+        ("nested.py:0", "nested.py"),
+        ("nested.py::Outer.method#2", "nested.py::Outer.method#2"),
+        ("nested.py::Outer.method", "nested.py::Outer.method"),
+        ("nested.py::", "nested.py"),
+    ];
+    for (query, id) in rows {
+        let (first, exact_rows) = at(&mut core, query);
+        assert_eq!(first, Some((id.to_string(), true, 1)), "{query}");
+        assert_eq!(exact_rows, 1, "{query}: only the first row is exact");
+    }
+
+    // an absolute path is the same as the path relative to the opened folder
+    let absolute = format!("{}:25", root.join("nested.py").display());
+    assert_eq!(
+        first_row(&ask(&mut core, &absolute)),
+        Some(("nested.py::Outer.Nested.method".to_string(), true, 1)),
+        "{absolute}"
+    );
+    let absolute = format!("{}::Outer", root.join("nested.py").display());
+    assert_eq!(
+        first_row(&ask(&mut core, &absolute)),
+        Some(("nested.py::Outer".to_string(), true, 1)),
+        "{absolute}"
+    );
+
+    // a reference to nothing marks no row, and the words still find what they find
+    for query in [
+        "nested.py::Nope",
+        "other.py:3",
+        "../nested.py:3",
+        "/not/under/the/folder.py:3",
+        "nested.py::Outer.method#9",
+    ] {
+        let found = ask(&mut core, query);
+        assert_eq!(exact_ids(&found), Vec::<&str>::new(), "{query}");
+    }
+    // as words nothing holds it either: no rows, and no crash
+    assert_eq!(ask(&mut core, "nested.py::Nope")["nodes"], json!([]));
+
+    // a bare path is not tried as a reference: the path tiers find it, none is exact
+    let found = ask(&mut core, "nested.py");
+    assert!(!found_ids(&found).is_empty());
+    assert_eq!(exact_ids(&found), Vec::<&str>::new());
+
+    // an ID: a record anchored at `nested.py::Outer`
+    write_record(&root, outer, "nested.py", "Outer");
+    write_record(&root, gone, "nested.py", "Gone");
+    tell_core_about_vnoc(&mut core, &root);
+    structure_when(&mut core, |s| {
+        fn has(node: &Value, id: &str) -> bool {
+            node["node_id"] == id
+                || node["children"]
+                    .as_array()
+                    .is_some_and(|c| c.iter().any(|n| has(n, id)))
+        }
+        has(&s["root"], outer)
+            && s["missing"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["id"] == gone)
+    });
+    for text in [outer.to_string(), outer.to_lowercase()] {
+        let found = ask(&mut core, &text);
+        assert_eq!(
+            first_row(&found),
+            Some(("nested.py::Outer".to_string(), true, 1)),
+            "{text}"
+        );
+    }
+    // a Missing ID marks no row, and does not crash; the core still answers
+    for text in [gone.to_string(), gone.to_lowercase()] {
+        let found = ask(&mut core, &text);
+        assert_eq!(exact_ids(&found), Vec::<&str>::new(), "{text}");
+    }
+    // an ID nobody knows
+    let found = ask(&mut core, "0000000000000000000000000Z");
+    assert_eq!(exact_ids(&found), Vec::<&str>::new());
+
+    // a reference with a filter: the node is first though the filter would drop it (04 §4, 01 §3)
+    let found = ask(&mut core, "nested.py:25 kind:fn");
+    assert_eq!(
+        exact_ids(&found),
+        Vec::<&str>::new(),
+        "two tokens are not a reference"
+    );
+    core.finish();
+}
+
+/// Lines of `nested.py` that are not a statement of a body, and what the driver's ranges make of them. The rule is the plan's (the innermost def
+/// whose range holds the line, else the file), not bent: a def's range starts at its decorator and ends at its last line, so a blank line
+/// inside a def belongs to it, and one between two defs, or an `else:`, to the file.
+#[test]
+fn a_line_that_is_not_in_a_body_gives_what_the_ranges_hold() {
+    let root = fixtures("search-reference-lines");
+    let mut core = Core::start(Some(driver_path()), &root);
+    let rows: &[(u32, &str, &str)] = &[
+        (1, "nested.py", "the docstring, before any def"),
+        (4, "nested.py", "a blank line before the first def"),
+        (5, "nested.py::top", "a `def` line is its def's"),
+        (
+            9,
+            "nested.py::top.<locals>.inner",
+            "a blank line inside `inner`, after `deepest` ended",
+        ),
+        (
+            11,
+            "nested.py::top",
+            "a blank line inside `top`, after `inner` ended",
+        ),
+        (
+            17,
+            "nested.py",
+            "a blank line after `top` ended, before `Outer`",
+        ),
+        (
+            27,
+            "nested.py::Outer.method#2",
+            "the line with a comment after the def",
+        ),
+        (29, "nested.py", "a blank line after `Outer` ended"),
+        (31, "nested.py::top#2", "the second `top`"),
+        (35, "nested.py", "an `if` line holds no def"),
+        (36, "nested.py::cond", "the first twin"),
+        (38, "nested.py", "an `else:` line holds no def"),
+        (39, "nested.py::cond#2", "the second twin"),
+        (42, "nested.py", "a blank line before a decorated def"),
+        (
+            43,
+            "nested.py::decorated",
+            "the decorator's line: the range starts there",
+        ),
+        (
+            44,
+            "nested.py::decorated",
+            "the `def` line under the decorator",
+        ),
+        (46, "nested.py", "a blank line after `decorated`"),
+        (48, "nested.py::coro", "an `async def`"),
+        (49, "nested.py::coro", "the last line of the file"),
+    ];
+    for (line, id, why) in rows {
+        let found = core
+            .request(
+                "vnoc/search",
+                json!({ "query": format!("nested.py:{line}") }),
+            )
+            .unwrap();
+        assert_eq!(
+            first_row(&found),
+            Some((id.to_string(), true, 1)),
+            "nested.py:{line}: {why}"
+        );
+    }
+    core.finish();
+}
+
 #[test]
 fn a_missing_driver_is_a_clear_error_and_the_core_stays_up() {
     let mut core = Core::start(None, &fixtures("nodriver"));
