@@ -103,6 +103,16 @@ rows, written into 05 §1.
 
 Commit: `search S3: the sidebar and the palette ask the core; rankNodes is gone`.
 
+### S3b The palette's order, proven; no debounce (added 2026-11-17)
+
+| Files | What |
+|---|---|
+| `webview/src/sidebar/{useSearch.ts, search.ts, search.test.ts}` | no debounce (05 §1, "Decided"); the request numbering as a pure function, unit-tested with answers that arrive out of order |
+| `extension/src/search.ts` | no debounce; the same numbering; `placeOf` from `shared/` (one copy) |
+| `extension/src/test/suite/search.test.ts` | the order check walks every row of `e` and first asserts that the core's order is not the labels' sorted order (else it could not tell) |
+
+If VS Code re-sorts, a second commit takes 05 §2's fallback. Commit: `search S3b: no debounce; the palette's order is checked on a query that can tell`.
+
 ### S4 The query: filters and phrases parsed
 
 | Files | What |

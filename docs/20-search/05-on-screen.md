@@ -12,7 +12,7 @@ on screen
 
 ## 1. The sidebar
 
-**Asking.** On each change of the box, after a short debounce (50 ms **[measure]** in S3: drop it if key-to-drawn is under a frame without it),
+**Asking.** On each change of the box (no debounce: decided after S3, below),
 the page sends `search { query }` to the host, which calls `vnoc/search`. Each request gets the page's next number; **an answer whose number is
 not the newest is dropped** (Q8). The `revision` is not compared (Q5: a restarted core counts from the start again). An empty box asks nothing and
 shows the panels. When the tree changes while the box has text (`indexChanged`), the page asks again. While an answer is on its way the rows of the
@@ -26,6 +26,9 @@ back) is about **5 ms** when the view is on screen, and the worst ones (30 – 9
 `trip`: without it, key to drawn would be about 5 – 10 ms, and a key typed in the middle of a word would ask the core for a query nobody finished. **A page VS Code calls hidden is
 slow**: with the STRUCTURE view hidden (a suite that ran before had left it so) the same answers took 1 – 7 s (`trip` median 965 ms), because the page's timers and drawing are
 held back; nothing can be typed in a hidden box, so this is for the window suite (it shows the view first), not for a user.
+**Decided** (2026-11-17, after S3): **no debounce.** `trip` is about 5 ms, under a frame, so waiting 50 ms only made every answer 50 ms
+later. A query nobody finished costs the core one `run`, about 2 ms on 10,000 nodes (04 §2): cheaper than the wait. The page asks on each change of the box; with no pause, answers to fast keys do cross, and the request numbering (Q8) is what drops the
+old ones, so it is a pure function with a unit test (S3b). The palette does the same.
 
 **For the tests** (S3): the view command `setSearch { text }` puts text in the box as typing would, and the page posts a note
 `searchDrawn { query, ids, total, ms }` each time it draws an answer (`ms`: from the change of the box to the draw), as the canvas posts `codeShown`.
