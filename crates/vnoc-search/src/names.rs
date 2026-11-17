@@ -232,7 +232,8 @@ pub(crate) fn match_word(node: &View, word: &[char]) -> Option<WordMatch> {
 fn fuzzy(node: &View, word: &[char]) -> Option<(u32, Vec<(usize, usize)>)> {
     let m = word.len();
     let k = node.words.len();
-    if (0..k).all(|w| node.name.at(node.word(w).0) != word[0]) {
+    // the prefixes are of the name's own letters, so a longer word is no cut, and no table is built for it
+    if m > node.name.len() || (0..k).all(|w| node.name.at(node.word(w).0) != word[0]) {
         return None;
     }
     let mut search = Fuzzy {
@@ -509,5 +510,45 @@ mod tests {
         for word in ["é", "café", "éa", "ordér"] {
             assert!(outcome(&node, &entry, &[fold(word)]).is_none(), "{word}");
         }
+    }
+
+    #[test]
+    fn a_word_longer_than_the_name_is_no_tier_2_match() {
+        for name in ["co_op", "É_a"] {
+            let entry = NodeEntry {
+                id: String::new(),
+                kind: Kind::Function,
+                name: name.into(),
+                qualname: None,
+                path: "p.py".into(),
+                line: None,
+                in_class: false,
+                docs: 0,
+            };
+            let node = Prepared::new(&entry);
+            let view = node.view(&entry);
+            let first = fold(name).remove(0);
+            // as long as the name's letters it can be cut; one letter more it cannot
+            let long: Vec<char> = std::iter::once(first)
+                .chain(std::iter::repeat_n('o', fold(name).len()))
+                .collect();
+            assert!(fuzzy(&view, &long).is_none(), "{name}");
+            let huge: Vec<char> = std::iter::once(first)
+                .chain(std::iter::repeat_n('o', 20_000))
+                .collect();
+            assert!(match_word(&view, &huge).is_none(), "{name}");
+        }
+        let entry = NodeEntry {
+            id: String::new(),
+            kind: Kind::Function,
+            name: "co_op".into(),
+            qualname: None,
+            path: "p.py".into(),
+            line: None,
+            in_class: false,
+            docs: 0,
+        };
+        let node = Prepared::new(&entry);
+        assert!(fuzzy(&node.view(&entry), &fold("coop")).is_some());
     }
 }

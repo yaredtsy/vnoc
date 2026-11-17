@@ -269,6 +269,33 @@ fn references_have_a_shape() {
 }
 
 #[test]
+fn a_call_loses_its_parens() {
+    for (text, expect) in [
+        ("parse_order(", words(&["parse_order"])),
+        ("parse_order()", words(&["parse_order"])),
+        ("Parse_Order() retry(", words(&["parse_order", "retry"])),
+        ("()", Query::default()),
+        ("(", Query::default()),
+        ("() retry", words(&["retry"])),
+        ("f(x)", words(&["f(x)"])),
+        (
+            "\"f()\"",
+            Query {
+                phrases: v(&["f()"]),
+                ..Query::default()
+            },
+        ),
+    ] {
+        assert_eq!(parse(text), expect, "{text:?}");
+    }
+    // a reference is stripped before its shape is read
+    let q = parse("pkg/a.py::f()");
+    assert_eq!(q.reference.as_deref(), Some("pkg/a.py::f"));
+    assert_eq!(q.words, v(&["pkg/a.py::f"]));
+    assert_eq!(parse("a.py:12(").reference.as_deref(), Some("a.py:12"));
+}
+
+#[test]
 fn a_traceback_line_is_the_reference_it_points_at() {
     for (text, token) in [
         (

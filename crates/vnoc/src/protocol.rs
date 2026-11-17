@@ -131,7 +131,7 @@ pub struct SearchNode {
     pub ranges: Vec<(u32, u32)>,
 }
 
-/// A doc the query found (`docs/20-search/04-core.md` §3). Declared so the wire shape is fixed; no doc is searched yet, so none is sent.
+/// A doc the query found (`docs/20-search/04-core.md` §3). A doc whose code is not in the tree has `node: null`; `missing` says whether its node is in the Missing list.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchDoc {
     /// the tree's node id; `null` for a Missing node

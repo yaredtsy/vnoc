@@ -30,7 +30,7 @@ pub struct Query {
     /// Paths a node must be inside, each: lower case, `/`, no leading `./`, no trailing `/`.
     pub inside: Vec<String>,
     pub not_inside: Vec<String>,
-    /// The raw token, when the whole query is one token shaped like a reference. It is a word too; the core resolves it.
+    /// The token (less a call's `()` or `(`), when the whole query is one token shaped like a reference. It is a word too; the core resolves it.
     pub reference: Option<String>,
     /// What was wrong with a filter, each line once.
     pub notes: Vec<String>,
@@ -225,6 +225,13 @@ fn is_reference(token: &str) -> bool {
     token.contains("::") || token.contains('/') || line || id
 }
 
+/// A word as pasted from code: without the `()` or `(` of a call, which is no part of a name.
+fn without_call(word: &str) -> &str {
+    word.strip_suffix("()")
+        .or_else(|| word.strip_suffix('('))
+        .unwrap_or(word)
+}
+
 /// A traceback line, `File "<path>", line <n>` and anything after it, as the reference `<path>:<n>`.
 fn traceback(text: &str) -> Option<String> {
     let rest = text.trim().strip_prefix("File \"")?;
@@ -250,16 +257,21 @@ pub fn parse(text: &str) -> Query {
             Token::Phrase(phrase) => query.phrases.push(phrase.clone()),
             Token::Plain(text) => {
                 if !query.filter(text) {
-                    query.words.extend(text.split_whitespace().map(lower));
+                    query.words.extend(
+                        text.split_whitespace()
+                            .map(without_call)
+                            .filter(|w| !w.is_empty())
+                            .map(lower),
+                    );
                 }
             }
         }
     }
     if let [Token::Plain(token)] = &tokens[..]
         && query.words.len() == 1
-        && is_reference(token)
+        && is_reference(without_call(token))
     {
-        query.reference = Some(token.clone());
+        query.reference = Some(without_call(token).to_string());
     }
     query
 }

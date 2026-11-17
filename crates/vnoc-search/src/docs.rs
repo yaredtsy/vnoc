@@ -435,8 +435,9 @@ pub(crate) fn show(doc: &DocEntry, hit_words: &HashSet<String>, phrases: &[Vec<c
 }
 
 /// About [`SNIPPET_LEN`] chars of `body` around the first of `hits` (byte ranges, sorted), or from the start when there is none: it begins at most
-/// [`SNIPPET_BEFORE`] chars before the hit, moved back to the start of a word, and ends at most [`SNIPPET_LEN`] chars after its start, moved back
-/// to the end of a word. White space runs are one space, a cut end has `…`. The ranges are the hits wholly inside, in UTF-16 units of the snippet
+/// [`SNIPPET_BEFORE`] chars before the hit, moved back to the start of a word only if that is within [`SNIPPET_BEFORE`] more chars (after a long
+/// URL it is cut where it is), and ends at most [`SNIPPET_LEN`] chars after its start, moved back to the end of a word but never before the end of
+/// the first hit (a hit longer than the window is cut with it, and is not bold). White space runs are one space, a cut end has `…`. The ranges are the hits wholly inside, in UTF-16 units of the snippet
 /// as returned.
 fn snippet(body: &str, hits: &[(usize, usize)]) -> (String, Vec<(u32, u32)>) {
     let chars: Vec<char> = body.chars().collect();
@@ -452,8 +453,13 @@ fn snippet(body: &str, hits: &[(usize, usize)]) -> (String, Vec<(u32, u32)>) {
     let mut start = hits
         .first()
         .map_or(0, |h| char_of(h.0).saturating_sub(SNIPPET_BEFORE));
-    while start > 0 && !space(start - 1) {
-        start -= 1;
+    let mut back = start;
+    while back > 0 && !space(back - 1) && start - back < SNIPPET_BEFORE {
+        back -= 1;
+    }
+    // at a word's start, or at the body's; else the word is too long to show from its start
+    if back == 0 || space(back - 1) {
+        start = back;
     }
     start = start.max(lead);
     while start < n && space(start) {
@@ -469,6 +475,9 @@ fn snippet(body: &str, hits: &[(usize, usize)]) -> (String, Vec<(u32, u32)>) {
         if back > start {
             end = back;
         }
+    }
+    if let Some(h) = hits.first() {
+        end = end.max(char_of(h.1).min(start + SNIPPET_LEN).min(n));
     }
     while end > start && space(end - 1) {
         end -= 1;
@@ -612,5 +621,45 @@ mod tests {
     fn the_snippet_of_a_blank_body_is_empty() {
         assert_eq!(snippet("", &[]), (String::new(), vec![]));
         assert_eq!(snippet(" \n\t ", &[]), (String::new(), vec![]));
+    }
+
+    /// What `snippet` makes bold: each range read back out of the snippet's UTF-16 units.
+    fn bold(out: &str, ranges: &[(u32, u32)]) -> Vec<String> {
+        let units: Vec<u16> = out.encode_utf16().collect();
+        ranges
+            .iter()
+            .map(|&(s, e)| String::from_utf16(&units[s as usize..e as usize]).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_hit_after_or_inside_a_long_run_is_in_the_snippet_and_bold() {
+        // a 300-char run with no white space, of ASCII and of chars of two, three and four bytes (one and two UTF-16 units)
+        for unit in ["x", "é", "字", "😀a"] {
+            let run = unit.repeat(300 / unit.chars().count());
+            let hit = "tail";
+
+            let body = format!("head {run} {hit}");
+            let at = body.find(hit).unwrap();
+            let (out, ranges) = snippet(&body, &[(at, at + hit.len())]);
+            assert!(out.starts_with('…') && out.ends_with(hit), "{unit}: {out}");
+            assert_eq!(bold(&out, &ranges), [hit], "{unit}");
+            assert!(out.chars().count() <= SNIPPET_LEN + 2, "{unit}");
+
+            // a hit inside the run, and text after it
+            let body = format!("head {run}{hit}{run} more");
+            let at = body.find(hit).unwrap();
+            let (out, ranges) = snippet(&body, &[(at, at + hit.len())]);
+            assert!(out.contains(hit) && out.starts_with('…'), "{unit}: {out}");
+            assert_eq!(bold(&out, &ranges), [hit], "{unit}");
+            assert!(out.chars().count() <= SNIPPET_LEN + 2, "{unit}");
+
+            // the white space a word's start is moved back to is near enough: it is still used
+            let body = format!("head {} {hit} after", unit.repeat(10));
+            let at = body.find(hit).unwrap();
+            let (out, ranges) = snippet(&body, &[(at, at + hit.len())]);
+            assert_eq!(out, body, "{unit}");
+            assert_eq!(bold(&out, &ranges), [hit], "{unit}");
+        }
     }
 }

@@ -98,6 +98,35 @@ fn ten_thousand_names_in_a_hundred_files() {
     );
 }
 
+/// A pasted token of 20,000 chars (a minified line, a base64 blob) starts with a letter many names' words start with, and is longer than any
+/// name: it can be no tier 2 match, and must not cost a table per node to find that out (S9 row 1: 1.6 s before, per key).
+#[test]
+#[ignore = "a timing, run by hand"]
+fn a_twenty_thousand_char_word_on_ten_thousand_names() {
+    let names = names(9_900);
+    let mut nodes: Vec<NodeEntry> = Vec::new();
+    for (f, chunk) in names.chunks(99).enumerate() {
+        let path = format!("pkg{}/module_{f}.py", f % 10);
+        nodes.push(file(&path));
+        nodes.extend(chunk.iter().map(|n| def(Kind::Function, &path, n)));
+    }
+    let corpus = Corpus::new(nodes, Vec::new());
+    let word = format!("c{}", "o".repeat(19_999));
+    let query = parse(&word);
+    assert_eq!(query.words.len(), 1);
+    let runs: Vec<_> = (0..5)
+        .map(|_| {
+            let start = Instant::now();
+            let found = run(&corpus, &query, None, Limits::default());
+            assert_eq!(found.nodes_total, 0);
+            start.elapsed()
+        })
+        .collect();
+    let took = median(runs);
+    println!("one run for a 20,000-char word on 10,000 names: {took:?} median of 5");
+    assert!(took < Duration::from_millis(5), "{took:?}");
+}
+
 /// A word-like vocabulary, a few common words and many rare ones: the `i`th is a few syllables, and a pick leans toward the small `i`.
 struct Text {
     state: u64,

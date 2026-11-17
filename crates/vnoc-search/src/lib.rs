@@ -50,7 +50,7 @@ pub struct NodeEntry {
     pub docs: usize,
 }
 
-/// A doc of a node. Declared now; nothing reads it until the doc text is searched.
+/// A doc of a node: its title and body are searched (`DocIndex`), and a hit is shown with a snippet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocEntry {
     /// Index into the nodes; none for a node that is not in the tree (see `missing`).

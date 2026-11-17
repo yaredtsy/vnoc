@@ -227,6 +227,11 @@ the filters, the parse, BM25, the UTF-16 ranges, the wire types, the request num
 box a bare `orders.py` is still no reference. A file that failed to outline counts for a file name. `#L25-L30` is line 25 (the end is checked
 for its shape, not used). `:L25:9` is line 25. A URL is reference-shaped (it has a `/`) and names nothing.
 
+*(Built in S9b.)* #1: the guard is in `fuzzy` only; `find`, `starts_with` and the other tiers already return at once for a needle longer than the text,
+so nothing else did work per node that grew with the token (a 20,000-char word on 10,000 names: 300 ms before, 0.4 ms after, release). #2: a hit
+longer than 80 chars may not fit the 120-char window, so the end is never moved back past the end of the first hit, up to the window's end; a longer
+hit is cut with the window and is not bold. #13: `f(x)` is left as it is (only a trailing `(` or `()` goes), and `()` alone gives no word.
+
 Three commits, in this order:
 
 - **S9a** `search S9a: references as people paste them`: #3, #4, #10, #11, #12 (node_ref.rs, query.rs, search.rs, index).

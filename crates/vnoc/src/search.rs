@@ -235,8 +235,8 @@ pub fn prepare(
     }
 }
 
-/// The crate's results as the protocol's answer, with the notes `query` gave about its filters. A doc with no node in the tree (`node: null`) is
-/// sent as `missing`.
+/// The crate's results as the protocol's answer, with the notes `query` gave about its filters. A doc whose node is not in the tree is sent with
+/// `node: null`, and `missing` as the core's Missing list says it.
 pub fn answer(revision: u64, corpus: &Corpus, query: &Query, results: Results) -> SearchResult {
     let nodes = results
         .nodes
