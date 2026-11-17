@@ -90,7 +90,7 @@ Two searches that rank differently, both in TypeScript, neither reads a doc. Aft
 | 1 | Does a `QuickPick` whose items all have `alwaysShow: true` keep the order it was given while its box has text? | S3, by hand | 05 §2: the QuickPick stays, or *V-NOC: Search…* focuses the sidebar's box |
 | 2 | What do the pages do on `indexChanged`? (Confirms Q2: a doc save must not look like a code change.) | **done** (S0, 2026-11-17) | Q2 holds: 03 §5 |
 | 3 | `cargo check -p vnoc-search --target wasm32-unknown-unknown` passes | **done** (S1, 2026-11-17): **it passes**, Rust 1.94.1 | Q7 holds: the crate builds for the browser |
-| 4 | **[measure]** corpus build and one `run` on 10,000 generated names | **done** (S1, 2026-11-17): build 14 – 20 ms, one `run` 1.6 – 2.4 ms, Apple M1 | the build is on the 20 ms line: 04 §2 says where it goes; S2 measures it again |
+| 4 | **[measure]** corpus build and one `run` on 10,000 generated names | **done** (S1, 2026-11-17): build 14 – 20 ms, one `run` 1.6 – 2.4 ms, Apple M1 | **done again** (S2b, 2026-11-17): the core's whole build (`tree::build`, the walk, `Corpus::new`) takes a median **5.6 – 7.3 ms**, under the line: 04 §2 |
 | 5 | **[measure]** key to drawn results, in the window | S3 | the debounce (05 §1) |
 | 6 | **[measure]** 1,000 docs of 2 KB: first read, memory, one query | S6 | Q3 |
 

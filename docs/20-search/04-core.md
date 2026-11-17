@@ -98,6 +98,22 @@ crates/vnoc/src/search.rs
   less** on the M1. If S2b does not reach it, the next step is "keep it warm": after an update, if a corpus is kept, rebuild it in the
   background, so the first key after a save does not pay. Building at the end of every `refresh` stays out: a project nobody searches pays
   nothing.
+- **Measured** (S2b, 2026-11-17; the two `--ignored` timing tests in release, six builds in one process each: the first, and the median of the other
+  five; Apple M1, macOS 14.7.6; three invocations each). Before, in the same order: S1's `Corpus::new` on 10,000 names **14 – 20 ms**; S2's core
+  total **17.0 – 29.9 ms** (`Corpus::new` 11.8 – 23.2 ms, the walk 1.0 – 1.5 ms, `tree::build` 4.2 – 5.4 ms).
+
+  | | before | first run | median of 5 more |
+  |---|---|---|---|
+  | `Corpus::new`, the crate's test (10,000 names) | 14 – 20 ms | **1.3 – 1.7 ms** | **3.2 – 4.2 ms** |
+  | `Corpus::new`, the core's test (10,110 nodes) | 11.8 – 23.2 ms | **1.0 – 1.3 ms** | **0.86 – 1.0 ms** |
+  | `corpus_of`'s walk | 1.0 – 1.5 ms | 1.0 – 1.5 ms | 1.1 – 1.3 ms |
+  | `tree::build` | 4.2 – 5.4 ms | 3.9 – 5.7 ms | 3.7 – 4.9 ms |
+  | **the core's total** | **17.0 – 29.9 ms** | **5.9 – 8.5 ms** | **5.6 – 7.3 ms** |
+
+  The median total is under 20 ms in every invocation, and under the watchdog's 50 ms by a wide margin: **the corpus stays in the request**; no
+  "keep it warm". `Corpus::new` is now the smallest part of the build; what is left is `tree::build` (the tree `vnoc/structure` also builds). One
+  `run` for `co` went from 1.6 – 2.4 ms to 1.3 – 1.6 ms. (In the crate's test the median is above the first run: each build there is given a clone of
+  the 10,000 entries, and the allocator's state after the first few is what it shows; the core's test, which builds from a fresh tree, does not.)
 - A node's `id` and `path` are the tree's: the id is what the pages already use (the repo path, or the location key); the path is relative to the
   opened folder. `in:` therefore means what the user sees.
 
