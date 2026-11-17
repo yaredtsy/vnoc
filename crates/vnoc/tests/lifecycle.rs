@@ -1037,7 +1037,10 @@ fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
             && toml.contains("kind = \"function\""),
         "{toml}"
     );
-    assert_eq!(r["doc"], json!(node.join("why-we-parse-twice.md")));
+    assert_eq!(
+        std::path::Path::new(r["doc"].as_str().unwrap()),
+        node.join("why-we-parse-twice.md")
+    );
     assert!(
         std::fs::read_to_string(node.join("why-we-parse-twice.md"))
             .unwrap()
@@ -2822,7 +2825,11 @@ fn search_finds_doc_text_and_an_edited_body_neither_moves_the_revision_nor_annou
         ),
         "{row}"
     );
-    assert_eq!(row["doc_path"], json!(notes), "{row}");
+    assert_eq!(
+        std::path::Path::new(row["doc_path"].as_str().unwrap()),
+        notes,
+        "{row}"
+    );
 
     // a doc of a node whose code is not read (ignored): no node, and not Missing
     let unread = "0000000000000000000000000B";
