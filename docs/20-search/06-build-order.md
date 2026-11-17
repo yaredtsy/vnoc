@@ -87,6 +87,8 @@ Commit: `search S2b: ASCII names are matched in place; the corpus build is cheap
 
 ### S3 The sidebar and the palette ask the core
 
+*(The palette half was undone in S3b: VS Code re-sorts a QuickPick, so *V-NOC: Search…* now opens the box. 05 §2.)*
+
 | Files | What |
 |---|---|
 | `shared/messages.ts`, `extension/src/relay.ts` | the `search` request in `Requests`, and its handler: `d.core("vnoc/search", params)` |
@@ -103,7 +105,7 @@ rows, written into 05 §1.
 
 Commit: `search S3: the sidebar and the palette ask the core; rankNodes is gone`.
 
-### S3b The palette's order, proven; no debounce (added 2026-11-17)
+### S3b The palette's order, proven; no debounce (added 2026-11-17; done: VS Code re-sorts, so the fallback was taken, `6f8b188`)
 
 | Files | What |
 |---|---|
@@ -120,6 +122,8 @@ If VS Code re-sorts, a second commit takes 05 §2's fallback. Commit: `search S3
 | `crates/vnoc-search/src/query.rs` | `parse` (01), the `Query` type, `notes` |
 | `src/run.rs` | filters applied to nodes: kinds, docs, inside, the `not_` forms; only-filters gives reading order |
 | `protocol.rs`, `shared/messages.ts`, the sidebar | `notes` carried and drawn under the box |
+| `crates/vnoc/src/search.rs` | `answer()` copies the query's `notes` into `SearchResult.notes` |
+| `extension/src/test/suite/search.test.ts` | a filter query in the box; the timing hooks inside the suite (they were root hooks, S3b) |
 
 Tests: the parse table (every row of 01 §2 and §4); `kind:fn no:doc in:billing/` on a fixture corpus; `-in:tests/`; `kind:method`; an unknown
 value gives no nodes and a note; only filters, in reading order; phrases are parsed (and ignored by nodes).
@@ -165,7 +169,6 @@ Commit: `search S6: the words of every doc, ranked, with a snippet`.
 |---|---|
 | the sidebar's result list | the two groups, the doc row, one list for the keys (05 §1) |
 | `useSearch.ts` | a doc pick: reveal the node and open the doc (`openDoc`); a Missing node's doc opens in a tab |
-| `extension/src/search.ts` (if kept) | docs after a separator |
 
 Window tests: a word only a doc holds finds it; the pick reveals the node and the doc panel shows that doc; a Missing node's doc opens in a tab;
 `↓` walks from the last node row to the first doc row.

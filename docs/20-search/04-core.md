@@ -180,6 +180,5 @@ not. `vnoc_search::matches` does it without ranking or snippets.
 | Caller | Request | Step |
 |---|---|---|
 | the sidebar's box | `vnoc/search` on each change | S3, S7 |
-| the palette's QuickPick | `vnoc/search` on each change | S3, S7 |
 | the canvas | `vnoc/searchCards` when the query or its cards change | S8 |
 | `vnoc find`, `vnoc tree --where`, "did you mean" (21) | `vnoc_search::run` directly, on a corpus built by the same `corpus_of` | 21 |

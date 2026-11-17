@@ -3,7 +3,7 @@
 ```
 on screen
 ├── 1. the sidebar      two groups, the doc row, what a pick does, the newest answer wins
-├── 2. the QuickPick    the core's order, not VS Code's
+├── 2. V-NOC: Search…   puts the cursor in the box (no QuickPick)
 ├── 3. the canvas       dims what is not a hit
 └── 4. what stays TypeScript
 ```
@@ -28,7 +28,7 @@ slow**: with the STRUCTURE view hidden (a suite that ran before had left it so) 
 held back; nothing can be typed in a hidden box, so this is for the window suite (it shows the view first), not for a user.
 **Decided** (2026-11-17, after S3): **no debounce.** `trip` is about 5 ms, under a frame, so waiting 50 ms only made every answer 50 ms
 later. A query nobody finished costs the core one `run`, about 2 ms on 10,000 nodes (04 §2): cheaper than the wait. The page asks on each change of the box; with no pause, answers to fast keys do cross, and the request numbering (Q8) is what drops the
-old ones, so it is a pure function with a unit test (S3b). The palette does the same.
+old ones, so it is a pure function with a unit test (S3b).
 
 **Measured again without the debounce** (S3b, 2026-11-17; the same suite, Apple M1, three runs: 16 answers with the `sidebar` suite before it, and 13 and 13 alone): `ms` (box to drawn)
 median **7.2**, **5.6** and **6.5 ms**, worst **30.0**, **32.2** and **21.1 ms**; `trip` median **6.0**, **4.7** and **5.3 ms**, worst **28.1**, **22.2** and **17.8 ms**. Key to drawn is now
@@ -55,20 +55,16 @@ method)`.
 | a doc of a node in the tree | reveal the node, and open that doc in the doc panel |
 | a doc of a Missing node | open the `.md` in a tab (the node has no card) |
 
-## 2. The QuickPick
+## 2. *V-NOC: Search…* is the box
 
-*V-NOC: Search…* (`vnoc.search`, the id stays): calls `vnoc/search` on each change of its value, shows nodes, then a separator, then docs (the
-snippet as the item's `detail`).
+*V-NOC: Search…* (`vnoc.search`, the id stays) shows the STRUCTURE view and puts the cursor in its search box (view command `focusSearch`). A
+string argument is the text to start with (`executeCommand("vnoc.search", "outer.meth")`); the window tests use it, and any later caller can.
+The command waits until the page has drawn once (an event sent before it listens is lost), at most 5 s.
 
-An empty value lists nothing (the core finds nothing for no words); the placeholder says what to type. The command takes an optional string,
-the value to start with (`executeCommand("vnoc.search", "outer.meth")`): the window tests use it, and any later caller can.
-
-VS Code filters and re-sorts a QuickPick's items by its own fuzzy matcher. The items must be shown **in the core's order, unfiltered**. Giving
-every item `alwaysShow: true` and setting `items` again on each `onDidChangeValue` is the known way **[check]** in S0: that the order given is
-the order shown while the box has text.
-
-**If the check fails:** *V-NOC: Search…* shows the sidebar and puts the cursor in its box (`focusBox` exists), and `extension/src/search.ts` is
-deleted. One search surface is also less to build in the next editor, so this is a fine ending, not a loss.
+**Why not a QuickPick** (settled 2026-11-17, S3b): VS Code re-sorts a QuickPick's items by its own matcher even when every item has
+`alwaysShow: true`. Walked on `e` (18 rows), the core's order began `inner Outer other method…` and VS Code showed `decorated deepest inner…`.
+There is no stable API to turn the sort off (`sortByLabel` is not in `@types/vscode`). So the palette's list is gone (`extension/src/search.ts`
+deleted in `6f8b188`) and there is one search surface: also one less to build in the next editor.
 
 ## 3. The canvas dims
 

@@ -12,7 +12,7 @@ search
 ├── 02-names.md             name words, the six tiers, fuzzy by word, the ranges to draw bold
 ├── 03-doc-text.md          which text is kept, the word index, BM25, phrases, the snippet, keeping it fresh
 ├── 04-core.md              the vnoc-search crate, the corpus, vnoc/search, vnoc/searchCards, revisions
-├── 05-on-screen.md         the sidebar's two groups · the QuickPick · the canvas dims
+├── 05-on-screen.md         the sidebar's two groups · V-NOC: Search… is the box · the canvas dims
 └── 06-build-order.md       steps S0 – S8, each with files, tests, and its commit message
 ```
 
@@ -22,7 +22,7 @@ The search box finds a node by a **few letters of its name** (`chor` → `checko
 **pasted reference** (`src/orders.py:142`, an ID), narrows by **filters** (`kind:fn no:doc in:billing/`), and finds **docs by the words in
 them** (`retry`, `"retry policy"`), with a snippet. While the box has text, the canvas **dims every card that is not a hit**.
 
-All of it is one pure Rust crate. The sidebar, the palette, `vnoc find` and `vnoc tree --where` (doc 21) and any other editor call it and draw the
+All of it is one pure Rust crate. The sidebar's box (which *V-NOC: Search…* opens), `vnoc find` and `vnoc tree --where` (doc 21) and any other editor call it and draw the
 answer. None of them ranks, filters or parses anything.
 
 | In | Out (later) |
@@ -40,7 +40,7 @@ Q7 was the one ask; you said yes on 2026-11-16. The others follow from P1 or fro
 | # | Decision | Why |
 |---|---|---|
 | **P1** | **Logic in the Rust core; UI code only draws and calls the core.** (`08` §1c.) | V-NOC will be ported to other editors. |
-| **Q1** | Search runs in the core, behind `vnoc/search`. The TypeScript `rankNodes` is deleted; its table tests move to Rust. | P1. The round trip is a local pipe **[measure]** (S3). |
+| **Q1** | Search runs in the core, behind `vnoc/search`. The TypeScript `rankNodes` is deleted; its table tests move to Rust. | P1. The round trip is a local pipe: about **5 ms**, key to drawn, measured in S3b (05 §1). |
 | **Q2** | The doc text lives **in memory**, read when the core loads `.vnoc/`, re-read only for files whose size or time changed. Nothing on disk. It has **its own counter and never moves the index revision**. | A thousand docs of a few KB is a few MB. The index revision means "the code or the records changed": call trees are marked stale by it (`shared/calls.ts` `isStale`), and a doc's body is neither. |
 | **Q3** | **No search library**: the word index and BM25 are about 300 lines of our own. `tantivy` or SQLite FTS5 only if a measured project needs them. | Size, and nothing here needs them. |
 | **Q4** | Ranges in the answer are in **UTF-16 code units**, as LSP's are. | Rust indexes by byte, JavaScript by UTF-16: a name with `é` would draw the wrong letters bold. |
@@ -48,7 +48,7 @@ Q7 was the one ask; you said yes on 2026-11-16. The others follow from P1 or fro
 | **Q6** | No meaning search in the extension. | A 30–100 MB model download, or code sent to an API. |
 | **Q7** *(new; yes, 2026-11-16)* | Search is its **own crate, `crates/vnoc-search`**: no disk, no async, no LSP types, one dependency (`serde`). It takes plain lists (names, doc texts) and gives plain results. | "Portable" then means something the compiler checks: the crate cannot reach the editor or the disk, so it also builds for a browser (`wasm32`) where no native program runs. The cost is one `Cargo.toml`. As a module of `crates/vnoc` it would work the same today and nothing would stop it from growing a dependency on the server. |
 | **Q8** *(new)* | **No cancelling.** A page numbers its requests and draws only the answer to the newest. | The first draft's cancel cannot work as written: `relay.ts` has no cancel message, and `ConcurrencyLayer` drops a request only at an `await`, which a search (a few ms of plain computing under a read lock) does not have. |
-| **Q9** *(new)* | **One query language** for the box, the palette, `vnoc find` and `vnoc tree --where`. A CLI flag is never a second way to say a filter. | One parser, one table test, one thing to teach (a person or an agent). |
+| **Q9** *(new)* | **One query language** for the box, `vnoc find` and `vnoc tree --where`. A CLI flag is never a second way to say a filter. | One parser, one table test, one thing to teach (a person or an agent). |
 | **Q10** *(new)* | A query that **names one node** (`file:line`, `file::Name`, an ID) is answered exactly, first, by `node_ref`, the same function doc 21's commands use. | Pasting a stack-trace line into the box is the same act as `vnoc show src/orders.py:142`. Built once, here. |
 | **Q11** *(new)* | **Quoted phrases are in.** | The first draft left them to a search library. With the text in memory a phrase is a substring check on the docs the words already found. |
 | **Q12** *(new)* | The canvas **asks the core which of its cards match** (`vnoc/searchCards`); the session carries only the query text. | The first draft sent the hit list (at most 200) through the session: a card that matched but was hit 201 would be dimmed. The canvas shows tens of cards; asking about those is exact and small. |
