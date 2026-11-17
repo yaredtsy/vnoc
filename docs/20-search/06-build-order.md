@@ -172,6 +172,8 @@ Commit: `search S6: the words of every doc, ranked, with a snippet`.
 
 ### S7 Docs on screen
 
+Its first commit is two core fixes from S6b's review (03, the last item): `DocEntry.missing`, and CRLF frontmatter.
+
 | Files | What |
 |---|---|
 | the sidebar's result list | the two groups, the doc row, one list for the keys (05 §1) |

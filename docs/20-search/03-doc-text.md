@@ -204,3 +204,7 @@ about 2. S6b therefore keeps it under the doc-text generation in `State` and bui
 325,000 words; the scan of the characters alone is under 3 ms of that), and looking each word up for its number is the rest. A byte-level scan of the
 ASCII text was tried and was no faster, so it is not in the code. The next cut, if one is ever needed, is to skip the per-token copy for words that
 need no lower-casing, not to change the index.
+- *(Settled after S6b, 2026-11-17.)* `DocEntry` gains `missing: bool`, set by the core from `is_missing`: a doc whose node is neither in the tree
+  nor Missing (its code was not read) has `node: None` and `missing: false`, not `missing: true`. A skipped doc (not UTF-8, over 1 MB) keeps its
+  stamp, so it is warned about once, not on every update. Frontmatter is recognised with CRLF line ends too (`---\r\n`): a doc checked out on
+  Windows had its frontmatter searched and its title missed, and `title_of` had the same fault.

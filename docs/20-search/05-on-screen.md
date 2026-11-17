@@ -52,8 +52,12 @@ method)`.
 | Pick | Does |
 |---|---|
 | a node | as today (`pickIntent`: reveal in the active context, then the click rule) |
-| a doc of a node in the tree | reveal the node, and open that doc in the doc panel |
-| a doc of a Missing node | open the `.md` in a tab (the node has no card) |
+| a doc of a node in the tree | reveal the node, and show the docs tab pinned to it **with that doc chosen** (`showNode` gains the doc's path) |
+| a doc of a Missing node | the docs tab pinned to the Missing node (`MISSING_PIN` + its ID, as *Needs attention* does), that doc chosen |
+| a doc of a node that is neither (its code is not read: ignored, outside the opened folder, past the cap) | open the `.md` in an editor tab (`openDoc`): there is nothing to pin |
+
+The active row points at its node on the canvas, as a node row does (a doc row: its node, when it is in the tree). *(Settled for S7,
+2026-11-17.)*
 
 ## 2. *V-NOC: Search…* is the box
 
