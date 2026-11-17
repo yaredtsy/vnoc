@@ -91,6 +91,21 @@ Kept in memory: each body once, each title once, the word map. **[measure]** in 
 one query, and one update after a single doc changed. Written here. If the first read is over 200 ms it moves off the first build's path (search
 answers names until it is done); not before the number says so.
 
+**Measured in S6a (2026-11-17), the crate only.** `cargo test -p vnoc-search --release -- --ignored --nocapture` (`tests/timing.rs`), Apple M1, 8 GB,
+rustc 1.94.1. 10,000 names and 1,000 generated docs (a 30-byte title and a 2,000-byte body each, 1,987 KB of text, words from a vocabulary of 4,000
+with a few common ones and many rare), attached across the names. Each figure is the first run in the process, then the median of five more:
+
+| | first | median of 5 |
+|---|---|---|
+| `Corpus::new`, 10,000 names, no docs | 2.0 ms | 4.1 ms |
+| `Corpus::new`, 10,000 names and 1,000 docs | 88 ms | 74 ms |
+| one `run`, a word in every doc (`baba`: 1,000 docs found, 50 shown) | 2.5 ms | 2.4 ms |
+| one `run`, a two-letter prefix (`ba`: 1,000 docs found, 50 shown, and 81 nodes) | 2.8 ms | 2.9 ms |
+
+So the index adds about 70 – 85 ms to a build (the names' own 2 – 4 ms is as in 04 §2), and a query that finds every doc, the worst case, costs about
+3 ms with the names and the snippets of the 50 shown. The build happens once per change of the corpus (04 §2), not per key. **Still to measure in S6b**
+(it reads from disk): the first read, the memory, and one update after a single doc changed.
+
 ## 8. Settled for S6a (2026-11-17)
 
 The crate's side, so that S6a's tests have one answer each.
