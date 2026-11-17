@@ -13,7 +13,7 @@ search
 ├── 03-doc-text.md          which text is kept, the word index, BM25, phrases, the snippet, keeping it fresh
 ├── 04-core.md              the vnoc-search crate, the corpus, vnoc/search, vnoc/searchCards, revisions
 ├── 05-on-screen.md         the sidebar's two groups · V-NOC: Search… is the box · the canvas dims
-└── 06-build-order.md       steps S0 – S8, each with files, tests, and its commit message
+└── 06-build-order.md       steps S0 – S9, each with files, tests, and its commit message
 ```
 
 ## 1. What it ships

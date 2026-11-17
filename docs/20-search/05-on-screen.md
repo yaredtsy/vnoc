@@ -80,7 +80,9 @@ The active result keeps today's dotted highlight. Nothing moves, nothing opens, 
 - The canvas, when `search` is not `null`, asks `searchCards { query, ids }` with the ids of the cards it shows: a structure card's node id, a
   call card's target key (a call to something outside the index has no key: it is dimmed). It asks again when the query, its cards or the
   revision change (see "Settled for S8" below for the timing), and keeps the newest answer only.
-- Until the first answer for a query arrives, nothing is dimmed (no flash of everything going dark).
+- Nothing is dimmed until the first answer of a search. After that, the last query's dim stays until the new answer arrives (about 5 ms: no flash
+  between keys). When the box empties, or the core refuses the newest request, everything is bright at once. When the STRUCTURE view's page is
+  disposed (a reload of webviews, the view moved), the host clears `search` and `highlight` itself: the page's own cleanup does not run then.
 - A query of one letter dims too: the answer is exact (Q12), so there is no reason to wait for a second letter.
 - For the tests the canvas posts a note `searchDim { query, dimmed: string[] }` (the ids of the cards it dimmed) each time it applies an
   answer, as it posts `codeShown`.
@@ -93,5 +95,5 @@ The active result keeps today's dotted highlight. Nothing moves, nothing opens, 
 ## 4. What stays TypeScript
 
 Drawing and keys, by P1's own line: `searchKey` (what `↑` `↓` `Enter` `Esc` mean), `splitMatch` (a name cut around ranges, now several),
-`pickIntent`, the debounce, the request numbering. `rankNodes`, `matchRange`, `indexNodes` and the `Tier` type go; so do their tests, whose rows
+`pickIntent`, the request numbering. `rankNodes`, `matchRange`, `indexNodes` and the `Tier` type go; so do their tests, whose rows
 are in Rust from S1.

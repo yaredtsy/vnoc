@@ -3,7 +3,7 @@
 ```
 build order
 ├── 1. rules for every step
-├── 2. the steps (S0 – S8; S9 proposed after the review)
+├── 2. the steps (S0 – S9)
 ├── 3. what each step leaves working
 └── 4. tests, by kind
 ```
@@ -200,7 +200,7 @@ theme.
 
 Commit: `search S8: the canvas dims what the query does not find`.
 
-### S9 After the review (proposed 2026-11-17, not built)
+### S9 After the review (built 2026-11-17)
 
 The whole branch was read at `e531e01`: the crate and the core's side line by line, the pages by a second reader. All tests pass
 (`vnoc-search` 85, `vnoc` 106 and 42, shared 357, webview 749; the window suites were not run again). A scratch program ran the crate on
@@ -234,13 +234,20 @@ hit is cut with the window and is not bold. #13: `f(x)` is left as it is (only a
 
 Three commits, in this order:
 
-- **S9a** `search S9a: references as people paste them`: #3, #4, #10, #11, #12 (node_ref.rs, query.rs, search.rs, index).
-- **S9b** `search S9b: a long token, a snippet's hit, call parens`: #1, #2, #13, and #8's Rust comments.
-- **S9c** `search S9c: the dim ends with the box's page`: #5, #6, #7, #9, and #8's TypeScript comments.
+- **S9a** `2c8d886`, `search S9a: references as people paste them`: #3, #4, #10, #11, #12 (node_ref.rs, query.rs, search.rs, index).
+- **S9b** `da4187e`, `search S9b: a long token, a snippet's hit, call parens`: #1, #2, #13, and #8's Rust comments.
+- **S9c** `de0cf1f`, `search S9c: the dim ends with the box's page`: #5, #6, #7, #9, and #8's TypeScript comments.
 
-04 §4 and 01 §5 change with S9a (a bare path with a `/` is tried; the new line forms; the four tries and the file name). A `docs:` commit after: 05 §3 says "until the first answer for a query arrives, nothing is dimmed", and as built the last
-query's dim stays until the new answer (about 5 ms; no flash between keys): the built behaviour is kept and the sentence corrected; 05 §4
-still lists "the debounce".
+04 §4 and 01 §5 changed with S9a. The `docs:` commit after S9c corrected 05 §3 (the last query's dim stays until the new answer arrives; no flash
+between keys: the built behaviour is kept) and removed "the debounce" from 05 §4.
+
+*(Built in S9c.)* #5, #7: the host's `Surfaces` keeps the STRUCTURE view in a `SidebarSlot` (`extension/src/sidebarSlot.ts`, no `vscode` in it, so its
+rules are unit tests); disposing the current view runs a callback that dispatches `search: null` and `highlight: null` through the session store, and
+sets "has drawn" false. Disposing a view that was already replaced changes nothing. VS Code cannot be made to dispose the view in the window suite, so
+that path is by hand (*Developer: Reload Webviews* with text in the box: the canvas undims). #6: `outcomeOf` (shared/search.ts) says draw, clear or
+ignore for a request's answer or refusal; the box and the dim both call it, so a refused newest request leaves no rows and no dim, and an older one's
+refusal changes nothing. #9: the window test for the doc of a node in neither list writes a record for `quokka_unread.txt` (a file on disk no driver reads) and
+a doc of it by hand, so it needs no new fixture file; the pick opens the `.md` in an editor tab. #8: "the palette" and "the debounce" comments are gone.
 
 **For the by-hand pass, not fixes:** a doc pick of a node in the tree also runs the click rule, so in `code` click mode it opens the source
 file beside the docs tab (05 §1 says reveal and docs tab); the dim stays while the STRUCTURE view is hidden with text in its box (the page is
@@ -262,10 +269,9 @@ wanted.
 
 S1 – S5 are enough for doc 21 to start: the CLI needs the crate, the corpus and `node_ref`, not the screens.
 
-**All steps done, 2026-11-17:** S0 – S8 with S2b, S3b, S6a, S6a2 and S6b, on branch `search`. Left before the PR: the by-hand pass
-(the dim level in a light and a dark theme; *V-NOC: Search…* puts the keyboard in the box; a doc pick opens that doc), and S9 if you
-take it (reviewed 2026-11-17: nine findings, none in what the search finds or how it orders it; four more from the hands-on pass on
-`backend-api`, #10 – #13).
+**All steps done, 2026-11-17:** S0 – S8 with S2b, S3b, S6a, S6a2 and S6b, on branch `search`. S9 built after the review (`2c8d886`, `da4187e`,
+`de0cf1f`). Left before the PR: the by-hand pass (the dim level in a light and a dark theme; *V-NOC: Search…* puts the keyboard in the box; a doc
+pick opens that doc; *Developer: Reload Webviews* with text in the box undoes the dim), then push and the PR.
 
 ## 4. Tests, by kind
 
