@@ -10,58 +10,164 @@
 use std::cmp::Ordering;
 
 use crate::NodeEntry;
-use crate::words::name_words;
+use crate::words::words_into;
 
 /// The chars of `text`, each lower-cased on its own.
 pub(crate) fn fold(text: &str) -> Vec<char> {
     text.chars().flat_map(char::to_lowercase).collect()
 }
 
-/// A node with its text folded and its name split into words, so no query has to do either again.
-pub(crate) struct Prepared {
-    name: Vec<char>,
-    /// For each folded char of the name, the byte range of the char of the name it came from.
+/// The folded form of a name that is not ASCII: its chars, and for each the byte range of the char of the name it came from.
+struct Spanned {
+    chars: Vec<char>,
     spans: Vec<(usize, usize)>,
-    /// The words of the name, as ranges of folded chars.
-    words: Vec<(usize, usize)>,
+}
+
+/// What matching keeps of a node, so no query has to split or fold again.
+///
+/// A name, qualified name or path that is ASCII keeps nothing: it is compared in place, in the [`NodeEntry`] the corpus holds beside it, with
+/// ASCII case folding (lower-casing ASCII never changes a length, so a byte offset is a char offset and a range is the byte range itself). One
+/// that is not ASCII keeps its folded chars, and the name its spans too.
+pub(crate) struct Prepared {
+    /// The folded name; none when it is ASCII.
+    name: Option<Spanned>,
+    /// The words of the name: byte ranges when the name is ASCII, ranges of folded chars when it is not.
+    words: Vec<(u32, u32)>,
+    /// The folded qualified name; none when it is ASCII or when the node has none.
     qualname: Option<Vec<char>>,
-    path: Vec<char>,
+    /// The folded path; none when it is ASCII.
+    path: Option<Vec<char>>,
     /// The name's length in chars, for the order.
     pub(crate) name_len: usize,
 }
 
 impl Prepared {
     pub(crate) fn new(entry: &NodeEntry) -> Prepared {
-        let mut name = Vec::new();
-        let mut spans = Vec::new();
-        for (at, c) in entry.name.char_indices() {
-            for lower in c.to_lowercase() {
-                name.push(lower);
-                spans.push((at, at + c.len_utf8()));
+        Prepared::build(entry, false)
+    }
+
+    /// The same, with every text folded even when it is ASCII: the tests compare the two paths.
+    #[cfg(test)]
+    pub(crate) fn folded(entry: &NodeEntry) -> Prepared {
+        Prepared::build(entry, true)
+    }
+
+    fn build(entry: &NodeEntry, fold_all: bool) -> Prepared {
+        let mut words = Vec::new();
+        words_into(&entry.name, &mut words);
+        let name = if entry.name.is_ascii() && !fold_all {
+            None
+        } else {
+            let mut chars = Vec::new();
+            let mut spans = Vec::new();
+            for (at, c) in entry.name.char_indices() {
+                for lower in c.to_lowercase() {
+                    chars.push(lower);
+                    spans.push((at, at + c.len_utf8()));
+                }
             }
-        }
-        let words = name_words(&entry.name)
-            .into_iter()
-            .map(|(start, end)| {
-                (
-                    spans.partition_point(|s| s.0 < start),
-                    spans.partition_point(|s| s.0 < end),
-                )
-            })
-            .collect();
+            // the words are byte ranges so far; they become ranges of folded chars
+            for word in &mut words {
+                *word = (
+                    spans.partition_point(|s| s.0 < word.0 as usize) as u32,
+                    spans.partition_point(|s| s.0 < word.1 as usize) as u32,
+                );
+            }
+            Some(Spanned { chars, spans })
+        };
+        let fold_if_needed = |text: &str| (fold_all || !text.is_ascii()).then(|| fold(text));
         Prepared {
             name,
-            spans,
             words,
-            qualname: entry.qualname.as_deref().map(fold),
-            path: fold(&entry.path),
+            qualname: entry.qualname.as_deref().and_then(fold_if_needed),
+            path: fold_if_needed(&entry.path),
             name_len: entry.name.chars().count(),
         }
     }
 
+    /// The node's texts as matching reads them; `entry` is the one this was prepared from.
+    pub(crate) fn view<'a>(&'a self, entry: &'a NodeEntry) -> View<'a> {
+        let text = |text: &'a str, folded: &'a Option<Vec<char>>| match folded {
+            Some(chars) => Text::Chars(chars),
+            None => Text::Ascii(text.as_bytes()),
+        };
+        let (name, spans) = match &self.name {
+            Some(n) => (Text::Chars(&n.chars), Some(&n.spans[..])),
+            None => (Text::Ascii(entry.name.as_bytes()), None),
+        };
+        View {
+            name,
+            spans,
+            words: &self.words,
+            // a node with no qualified name has no folded one either: `Some` only when there is a text to read
+            qualname: entry.qualname.as_deref().map(|q| text(q, &self.qualname)),
+            path: text(&entry.path, &self.path),
+        }
+    }
+}
+
+/// A text as it is compared: ASCII as written (each byte lower-cased as it is read), or already folded.
+#[derive(Clone, Copy)]
+enum Text<'a> {
+    Ascii(&'a [u8]),
+    Chars(&'a [char]),
+}
+
+impl Text<'_> {
+    fn len(self) -> usize {
+        match self {
+            Text::Ascii(bytes) => bytes.len(),
+            Text::Chars(chars) => chars.len(),
+        }
+    }
+
+    /// The folded char at `i`. An ASCII text gives ASCII chars only, so a word that has any other never equals it.
+    fn at(self, i: usize) -> char {
+        match self {
+            Text::Ascii(bytes) => char::from(bytes[i].to_ascii_lowercase()),
+            Text::Chars(chars) => chars[i],
+        }
+    }
+
+    fn starts_with(self, needle: &[char]) -> bool {
+        needle.len() <= self.len() && needle.iter().enumerate().all(|(j, &c)| self.at(j) == c)
+    }
+
+    /// The first place `needle` is in the text.
+    fn find(self, needle: &[char]) -> Option<usize> {
+        let last = self.len().checked_sub(needle.len())?;
+        (0..=last).find(|&at| {
+            needle
+                .iter()
+                .enumerate()
+                .all(|(j, &c)| self.at(at + j) == c)
+        })
+    }
+}
+
+/// One node's texts, ready to be compared with a word.
+pub(crate) struct View<'a> {
+    name: Text<'a>,
+    /// For a name that is not ASCII, the byte range each folded char came from.
+    spans: Option<&'a [(usize, usize)]>,
+    words: &'a [(u32, u32)],
+    qualname: Option<Text<'a>>,
+    path: Text<'a>,
+}
+
+impl View<'_> {
     /// The byte range of the name that folded chars `from..to` came from.
     fn bytes(&self, from: usize, to: usize) -> (usize, usize) {
-        (self.spans[from].0, self.spans[to - 1].1)
+        match self.spans {
+            Some(spans) => (spans[from].0, spans[to - 1].1),
+            None => (from, to),
+        }
+    }
+
+    /// The `w`th word of the name, as a range of its folded chars.
+    fn word(&self, w: usize) -> (usize, usize) {
+        let (start, end) = self.words[w];
+        (start as usize, end as usize)
     }
 }
 
@@ -84,14 +190,9 @@ pub(crate) struct NodeMatch {
     pub ranges: Vec<(usize, usize)>,
 }
 
-/// The first place `needle` is in `hay`.
-fn find(hay: &[char], needle: &[char]) -> Option<usize> {
-    hay.windows(needle.len()).position(|w| w == needle)
-}
-
 /// The best tier `word` (folded, not empty) reaches in `node`, or none.
-pub(crate) fn match_word(node: &Prepared, word: &[char]) -> Option<WordMatch> {
-    if let Some(at) = find(&node.name, word) {
+pub(crate) fn match_word(node: &View, word: &[char]) -> Option<WordMatch> {
+    if let Some(at) = node.name.find(word) {
         let tier = if at == 0 { 0 } else { 1 };
         return Some(WordMatch {
             tier,
@@ -106,15 +207,11 @@ pub(crate) fn match_word(node: &Prepared, word: &[char]) -> Option<WordMatch> {
             ranges,
         });
     }
-    let tier = if node
-        .qualname
-        .as_deref()
-        .is_some_and(|q| find(q, word).is_some())
-    {
+    let tier = if node.qualname.is_some_and(|q| q.find(word).is_some()) {
         3
     } else if node.path.starts_with(word) {
         4
-    } else if find(&node.path, word).is_some() {
+    } else if node.path.find(word).is_some() {
         5
     } else {
         return None;
@@ -132,14 +229,10 @@ pub(crate) fn match_word(node: &Prepared, word: &[char]) -> Option<WordMatch> {
 ///
 /// The first cut that works is not always the right one (`abcd` in `ab_abc_d` takes `ab` first and is stuck), so every cut is tried, with the
 /// result for (letters used, word reached) kept: the work is at most letters x words x the longest word.
-fn fuzzy(node: &Prepared, word: &[char]) -> Option<(u32, Vec<(usize, usize)>)> {
+fn fuzzy(node: &View, word: &[char]) -> Option<(u32, Vec<(usize, usize)>)> {
     let m = word.len();
     let k = node.words.len();
-    if node
-        .words
-        .iter()
-        .all(|&(start, _)| node.name[start] != word[0])
-    {
+    if (0..k).all(|w| node.name.at(node.word(w).0) != word[0]) {
         return None;
     }
     let mut search = Fuzzy {
@@ -153,7 +246,7 @@ fn fuzzy(node: &Prepared, word: &[char]) -> Option<(u32, Vec<(usize, usize)>)> {
     let (mut i, mut j) = (0, 0);
     while i < m {
         let (w, len) = search.choice[i * (k + 1) + j];
-        let start = node.words[w].0;
+        let start = node.word(w).0;
         ranges.push(node.bytes(start, start + len));
         (i, j) = (i + len, w + 1);
     }
@@ -164,7 +257,7 @@ const UNKNOWN: u32 = u32::MAX;
 const FAILS: u32 = u32::MAX - 1;
 
 struct Fuzzy<'a> {
-    node: &'a Prepared,
+    node: &'a View<'a>,
     word: &'a [char],
     /// By (letters used, word reached): the fewest words passed over from there on, `FAILS`, or `UNKNOWN`.
     cost: Vec<u32>,
@@ -188,11 +281,11 @@ impl Fuzzy<'_> {
         }
         let mut best: Option<(u32, usize, usize)> = None;
         for w in j..k {
-            let (start, end) = self.node.words[w];
+            let (start, end) = self.node.word(w);
             let shared = self.word[i..]
                 .iter()
-                .zip(&self.node.name[start..end])
-                .take_while(|(a, b)| a == b)
+                .zip(start..end)
+                .take_while(|&(&a, at)| a == self.node.name.at(at))
                 .count();
             for len in (1..=shared).rev() {
                 let Some(rest) = self.best(i + len, w + 1) else {
@@ -219,7 +312,7 @@ impl Fuzzy<'_> {
 }
 
 /// The node against every word (folded, none empty): a hit only if each word matches something.
-pub(crate) fn match_node(node: &Prepared, words: &[Vec<char>]) -> Option<NodeMatch> {
+pub(crate) fn match_node(node: &View, words: &[Vec<char>]) -> Option<NodeMatch> {
     let mut tier = 0;
     let mut skipped = 0;
     let mut ranges = Vec::new();
@@ -267,4 +360,154 @@ pub(crate) fn order(a: &Found, b: &Found) -> Ordering {
         b.name_len,
         b.index,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Kind;
+
+    /// A small deterministic generator (xorshift): the same names on every run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+
+        fn text(&mut self, alphabet: &[char], min: usize, max: usize) -> String {
+            let len = min + self.below(max - min + 1);
+            (0..len)
+                .map(|_| alphabet[self.below(alphabet.len())])
+                .collect()
+        }
+    }
+
+    const ALPHABET: &[char] = &[
+        'a', 'b', 'c', 'd', 'A', 'B', 'C', 'D', 'H', 'T', 'P', '_', '_', '.', '-', '0', '1', '9',
+        'x', 'X',
+    ];
+
+    /// A part of `text` or its word starts, so the words match often enough to reach every tier.
+    fn word_from(rng: &mut Rng, text: &str) -> String {
+        let chars: Vec<char> = text.chars().collect();
+        if chars.is_empty() {
+            return rng.text(ALPHABET, 1, 3);
+        }
+        match rng.below(3) {
+            0 => {
+                let from = rng.below(chars.len());
+                let to = from + 1 + rng.below(chars.len() - from);
+                chars[from..to].iter().collect()
+            }
+            1 => {
+                // the first letters of some words: what tier 2 is for
+                let mut word = String::new();
+                for (start, _) in crate::words::name_words(text) {
+                    if rng.below(3) > 0 {
+                        word.push(text[start..].chars().next().unwrap());
+                        if rng.below(2) == 0 {
+                            word.extend(text[start..].chars().skip(1).take(1));
+                        }
+                    }
+                }
+                word
+            }
+            _ => rng.text(ALPHABET, 1, 4),
+        }
+    }
+
+    type Outcome = Option<(u8, u32, Vec<(usize, usize)>)>;
+
+    fn outcome(node: &Prepared, entry: &NodeEntry, words: &[Vec<char>]) -> Outcome {
+        match_node(&node.view(entry), words).map(|m| (m.tier, m.skipped, m.ranges))
+    }
+
+    #[test]
+    fn the_in_place_path_and_the_folded_path_agree_on_ascii() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let mut tiers = [0usize; 6];
+        let mut tier_2_with_skips = 0;
+        for _ in 0..4000 {
+            let name = rng.text(ALPHABET, 0, 14);
+            let entry = NodeEntry {
+                id: String::new(),
+                kind: Kind::Function,
+                qualname: (rng.below(4) > 0)
+                    .then(|| format!("{}.{name}", rng.text(ALPHABET, 1, 6))),
+                path: format!(
+                    "{}/{}.py",
+                    rng.text(ALPHABET, 1, 6),
+                    rng.text(ALPHABET, 1, 6)
+                ),
+                name,
+                line: None,
+                in_class: false,
+                docs: 0,
+            };
+            assert!(entry.name.is_ascii());
+            let in_place = Prepared::new(&entry);
+            let folded = Prepared::folded(&entry);
+            assert!(
+                in_place.name.is_none() && in_place.path.is_none(),
+                "ASCII is kept in place"
+            );
+            assert!(
+                folded.name.is_some() && folded.path.is_some(),
+                "the other path folds it"
+            );
+
+            for _ in 0..3 {
+                let from = [
+                    &entry.name,
+                    entry.qualname.as_ref().unwrap_or(&entry.path),
+                    &entry.path,
+                ][rng.below(3)];
+                let mut query = vec![fold(&word_from(&mut rng, from))];
+                if rng.below(4) == 0 {
+                    query.push(fold(&rng.text(ALPHABET, 1, 3)));
+                }
+                query.retain(|w| !w.is_empty());
+                if query.is_empty() {
+                    continue;
+                }
+                let (a, b) = (
+                    outcome(&in_place, &entry, &query),
+                    outcome(&folded, &entry, &query),
+                );
+                assert_eq!(a, b, "{entry:?} against {query:?}");
+                if let Some((tier, skipped, _)) = a {
+                    tiers[tier as usize] += 1;
+                    tier_2_with_skips += usize::from(tier == 2 && skipped > 0);
+                }
+            }
+        }
+        // the check is only worth something if every tier was reached
+        assert!(tiers.iter().all(|&n| n >= 50), "tiers reached: {tiers:?}");
+        assert!(
+            tier_2_with_skips >= 20,
+            "{tier_2_with_skips} fuzzy matches that skip words"
+        );
+    }
+
+    #[test]
+    fn an_ascii_text_never_matches_a_word_that_is_not_ascii() {
+        let entry = NodeEntry {
+            id: String::new(),
+            kind: Kind::Function,
+            name: "cafe_order".into(),
+            qualname: Some("Shop.cafe_order".into()),
+            path: "shop/cafe.py".into(),
+            line: None,
+            in_class: false,
+            docs: 0,
+        };
+        let node = Prepared::new(&entry);
+        for word in ["é", "café", "éa", "ordér"] {
+            assert!(outcome(&node, &entry, &[fold(word)]).is_none(), "{word}");
+        }
+    }
 }

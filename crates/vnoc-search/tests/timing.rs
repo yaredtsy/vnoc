@@ -2,7 +2,7 @@
 
 mod common;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use common::*;
 use vnoc_search::{Corpus, Kind, Limits, NodeEntry, parse, run};
@@ -56,9 +56,16 @@ fn ten_thousand_names_in_a_hundred_files() {
     }
     assert_eq!(nodes.len(), 10_000);
 
-    let start = Instant::now();
-    let corpus = Corpus::new(nodes, Vec::new());
-    let build = start.elapsed();
+    // six builds in one process: the first, and the median of the other five (the clone is not timed)
+    let mut builds = Vec::new();
+    let mut corpus = None;
+    for _ in 0..6 {
+        let nodes = nodes.clone();
+        let start = Instant::now();
+        corpus = Some(Corpus::new(nodes, Vec::new()));
+        builds.push(start.elapsed());
+    }
+    let corpus = corpus.unwrap();
 
     let query = parse("co");
     let start = Instant::now();
@@ -74,7 +81,13 @@ fn ten_thousand_names_in_a_hundred_files() {
         .collect();
     runs.sort();
 
-    println!("Corpus::new, 10,000 names in 100 files: {build:?}");
+    let mut rest = builds[1..].to_vec();
+    rest.sort();
+    let median: Duration = rest[2];
+    println!(
+        "Corpus::new, 10,000 names in 100 files: {:?} first, {median:?} median of 5 more (all: {builds:?})",
+        builds[0]
+    );
     println!(
         "one run for `co`: {first:?} first, {:?} median of 20 more ({} found, {} shown)",
         runs[10],

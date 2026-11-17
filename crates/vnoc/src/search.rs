@@ -111,7 +111,7 @@ mod tests {
     use super::*;
     use std::collections::{BTreeMap, HashMap};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
     use vnoc_domain::RepoPath;
     use vnoc_driver_protocol::{Def, DefKind, Position, Range};
 
@@ -225,22 +225,45 @@ mod tests {
             .map(|(p, d)| (RepoPath::new(p).unwrap(), d))
             .collect();
 
-        let started = Instant::now();
-        let tree = index::tree::build("repo", "", &files, &HashMap::new());
-        let built = started.elapsed();
+        // six builds in one process: the first, and the median of the other five
+        let mut runs: Vec<[Duration; 3]> = Vec::new();
+        let mut nodes = 0;
+        for _ in 0..6 {
+            let started = Instant::now();
+            let tree = index::tree::build("repo", "", &files, &HashMap::new());
+            let built = started.elapsed();
 
-        let started = Instant::now();
-        let entries = entries_of(&tree);
-        let walked = started.elapsed();
+            let started = Instant::now();
+            let entries = entries_of(&tree);
+            let walked = started.elapsed();
 
-        let started = Instant::now();
-        let corpus = Corpus::new(entries, Vec::new());
-        let new = started.elapsed();
+            let started = Instant::now();
+            let corpus = Corpus::new(entries, Vec::new());
+            let new = started.elapsed();
 
-        println!(
-            "{} nodes: tree::build {built:?}, corpus_of's walk {walked:?}, Corpus::new {new:?}; total {:?}",
-            corpus.nodes().len(),
-            built + walked + new
-        );
+            nodes = corpus.nodes().len();
+            runs.push([built, walked, new]);
+        }
+        let total = |run: &[Duration; 3]| run.iter().sum::<Duration>();
+        let median = |part: &dyn Fn(&[Duration; 3]) -> Duration| {
+            let mut rest: Vec<Duration> = runs[1..].iter().map(part).collect();
+            rest.sort();
+            rest[2]
+        };
+        for (what, part) in [
+            (
+                "tree::build",
+                &(|r: &[Duration; 3]| r[0]) as &dyn Fn(&[Duration; 3]) -> Duration,
+            ),
+            ("corpus_of's walk", &|r| r[1]),
+            ("Corpus::new", &|r| r[2]),
+            ("total", &total),
+        ] {
+            println!(
+                "{nodes} nodes, {what}: {:?} first, {:?} median of 5 more",
+                part(&runs[0]),
+                median(part)
+            );
+        }
     }
 }

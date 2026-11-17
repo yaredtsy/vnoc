@@ -358,3 +358,66 @@ fn the_corpus_keeps_the_order_given_and_the_docs_stay_empty() {
     let found = search(&c, "a");
     assert_eq!((found.docs.len(), found.docs_total), (0, 0));
 }
+
+/// What `query` finds in a corpus of the one node: its tier and ranges.
+fn only(node: vnoc_search::NodeEntry, query: &str) -> Option<(u8, Vec<(u32, u32)>)> {
+    let c = corpus(vec![node]);
+    search(&c, query)
+        .nodes
+        .first()
+        .map(|h| (h.tier, h.ranges.clone()))
+}
+
+#[test]
+fn a_name_that_is_not_ascii_is_matched_folded_and_its_ranges_are_utf16() {
+    let name = |n: &str| func("m.py", n);
+    // `É` folds to `é` on its own, and `é` is two bytes and one unit
+    assert_eq!(only(name("École_Order"), "éc"), Some((0, vec![(0, 2)])));
+    assert_eq!(only(name("résumé_order"), "umé"), Some((1, vec![(3, 6)])));
+    assert_eq!(
+        only(name("résumé_order"), "ro"),
+        Some((2, vec![(0, 1), (7, 8)]))
+    );
+    assert_eq!(
+        only(name("résumé_order"), "RÉS"),
+        Some((0, vec![(0, 3)])),
+        "the query's case is ignored too"
+    );
+}
+
+#[test]
+fn a_qualified_name_or_a_path_that_is_not_ascii_is_matched_folded() {
+    let qualified = node(
+        Kind::Function,
+        "shop/a.py",
+        "order",
+        Some("Café.order"),
+        true,
+    );
+    assert_eq!(only(qualified.clone(), "café.o"), Some((3, vec![])));
+    assert_eq!(only(qualified, "CAFÉ.O"), Some((3, vec![])));
+
+    let in_path = func("café/m.py", "zzz");
+    assert_eq!(only(in_path.clone(), "café/m"), Some((4, vec![])));
+    assert_eq!(only(in_path.clone(), "fé/m"), Some((5, vec![])));
+    assert_eq!(only(in_path, "CAFÉ"), Some((4, vec![])));
+}
+
+#[test]
+fn an_ascii_text_and_a_word_that_is_not_ascii_do_not_match_and_do_not_panic() {
+    // the name, the qualified name and the path are all ASCII here; the query is not
+    let plain = node(
+        Kind::Function,
+        "shop/cafe.py",
+        "cafe",
+        Some("Shop.cafe"),
+        false,
+    );
+    for query in ["é", "café", "éa", "shop é"] {
+        assert_eq!(only(plain.clone(), query), None, "{query}");
+    }
+    // one corpus with both kinds: the ASCII node is found by an ASCII word, the other by both
+    let c = corpus(vec![plain, func("shop/m.py", "café")]);
+    assert_eq!(ask(&c, "caf"), want(&[("cafe", 0), ("café", 0)]));
+    assert_eq!(ask(&c, "café"), want(&[("café", 0)]));
+}

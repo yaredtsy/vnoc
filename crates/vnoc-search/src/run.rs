@@ -22,15 +22,15 @@ pub fn run(corpus: &Corpus, query: &Query, exact: Option<usize>, limits: Limits)
     let exact = exact.filter(|&at| at < corpus.nodes.len());
 
     let mut found: Vec<Found> = Vec::new();
-    for (index, node) in corpus.prepared.iter().enumerate() {
+    for (index, (prepared, entry)) in corpus.prepared.iter().zip(&corpus.nodes).enumerate() {
         if Some(index) == exact {
             continue;
         }
-        if let Some(matched) = match_node(node, &words) {
+        if let Some(matched) = match_node(&prepared.view(entry), &words) {
             found.push(Found {
                 index,
                 matched,
-                name_len: node.name_len,
+                name_len: prepared.name_len,
             });
         }
     }

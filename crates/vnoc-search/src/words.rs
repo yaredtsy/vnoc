@@ -31,23 +31,31 @@ fn class(c: char) -> Class {
 /// The words of `name` as `(start, end)` byte ranges, in order. Cut at `_` `.` `-` and white space (dropped), between a lower-case letter and an
 /// upper-case one, before the last capital of a run of capitals that a lower-case letter follows (`HTTPClient` is `HTTP` `Client`), and between
 /// a digit and a letter. Empty words are dropped.
+#[cfg(test)]
 pub(crate) fn name_words(name: &str) -> Vec<(usize, usize)> {
-    let chars: Vec<(usize, char, Class)> = name
-        .char_indices()
-        .map(|(at, c)| (at, c, class(c)))
-        .collect();
     let mut words = Vec::new();
+    words_into(name, &mut words);
+    words
+        .into_iter()
+        .map(|(start, end)| (start as usize, end as usize))
+        .collect()
+}
+
+/// [`name_words`], appended to `out`. The name is walked once, a char ahead of the one being looked at, with no list of its chars.
+pub(crate) fn words_into(name: &str, out: &mut Vec<(u32, u32)>) {
+    let mut chars = name.char_indices().map(|(at, c)| (at, class(c))).peekable();
     let mut start: Option<usize> = None;
-    for (i, &(at, _, now)) in chars.iter().enumerate() {
+    // the class of the char before the one being looked at: only read while a word is open, when that char was not a separator
+    let mut before = Class::Separator;
+    while let Some((at, now)) = chars.next() {
         if now == Class::Separator {
             if let Some(s) = start.take() {
-                words.push((s, at));
+                out.push((s as u32, at as u32));
             }
             continue;
         }
         if let Some(s) = start {
-            let before = chars[i - 1].2;
-            let next = chars.get(i + 1).map(|c| c.2);
+            let next = chars.peek().map(|c| c.1);
             let cut = match (before, now) {
                 (Class::Lower, Class::Upper) => true,
                 (Class::Upper, Class::Upper) => next == Some(Class::Lower),
@@ -56,17 +64,17 @@ pub(crate) fn name_words(name: &str) -> Vec<(usize, usize)> {
                 _ => false,
             };
             if cut {
-                words.push((s, at));
+                out.push((s as u32, at as u32));
                 start = Some(at);
             }
         } else {
             start = Some(at);
         }
+        before = now;
     }
     if let Some(s) = start {
-        words.push((s, name.len()));
+        out.push((s as u32, name.len() as u32));
     }
-    words
 }
 
 #[cfg(test)]
