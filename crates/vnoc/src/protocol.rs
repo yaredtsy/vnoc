@@ -168,6 +168,31 @@ impl Request for Search {
     const METHOD: &'static str = "vnoc/search";
 }
 
+/// `vnoc/searchCards`: of these node ids, which the query finds (`docs/20-search/04-core.md` §5): by name, or because a doc of the node is a doc hit, as the
+/// unlimited `vnoc/search` would say. The canvas asks it for the cards it shows, to dim the rest. Waits for the first build.
+pub enum SearchCards {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchCardsParams {
+    pub query: String,
+    /// the tree's node ids (a structure card's id, a call card's target key)
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchCardsResult {
+    /// the index's revision this answer was made from (the same one `vnoc/search` says)
+    pub revision: u64,
+    /// the ids the query finds: a subset of the asked ones, in the order given
+    pub hits: Vec<String>,
+}
+
+impl Request for SearchCards {
+    type Params = SearchCardsParams;
+    type Result = SearchCardsResult;
+    const METHOD: &'static str = "vnoc/searchCards";
+}
+
 /// `vnoc/filesChanged` (editor → core): these files were created, changed or deleted. Absolute paths. The core finds out what
 /// is new or gone by itself; the list says which existing files changed content.
 pub enum FilesChanged {}

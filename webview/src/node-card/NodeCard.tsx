@@ -20,10 +20,10 @@ import "./node-card.css";
 
 // memo: React Flow passes the same props to a card that did not change, and then the card is not drawn at all.
 export const NodeCard = memo(function NodeCard({ data }: NodeProps<Node<Placed>>) {
-  const { contextId, selected, focusRoot, cursor, revealed, highlighted } = useCardState(data.id, data.depth);
+  const { contextId, selected, focusRoot, cursor, revealed, highlighted, searchedOut } = useCardState(data.id, data.depth);
   return (
     <div
-      className={cn("node-card", data.role === "call" && "call", data.call?.look.unknown && "opacity-60", data.syntaxError && "broken", selected && "selected", highlighted && "highlighted", cursor && "cursor", revealed && "revealed")}
+      className={cn("node-card", data.role === "call" && "call", data.call?.look.unknown && "opacity-60", data.syntaxError && "broken", selected && "selected", highlighted && "highlighted", cursor && "cursor", revealed && "revealed", searchedOut && "searched-out")}
       // the stripe says what the node IS, never a state
       style={{ width: CARD_W, height: cardHeight(data), borderLeftColor: KINDS[data.kind].color }}
       aria-selected={selected}

@@ -741,3 +741,19 @@ test("keepEqual keeps each set that did not change, and the whole record when no
   assert.equal(partly.contexts.main.open[""], old.contexts.main.open[""], "the set that did not change is the same array");
   assert.notEqual(partly.contexts.main.open, old.contexts.main.open);
 });
+
+test("the search intent sets the box's text, and an empty box or null clears it; nothing else clears it, and it is not saved", () => {
+  const s = run(emptySession(), { type: "select", id: "m" }, { type: "search", query: "outer.meth" });
+  assert.equal(s.search, "outer.meth");
+  assert.equal(emptySession().search, null);
+  // the box has text until the box says otherwise: a select, a focus and a tree change on the canvas do not end the search
+  assert.equal(run(s, { type: "select", id: "C" }).search, "outer.meth");
+  assert.equal(run(s, { type: "focus", id: "pkg" }).search, "outer.meth");
+  assert.equal(run(s, { type: "treeChanged" }).search, "outer.meth");
+  assert.equal(run(s, { type: "search", query: "outer.meth" }), s, "the same text changes nothing");
+  assert.equal(run(s, { type: "search", query: null }).search, null);
+  assert.equal(run(s, { type: "search", query: "" }).search, null);
+  // never saved: a session read back from what was saved has no search
+  assert.equal(restoreSession(JSON.parse(JSON.stringify(toSaved(s)))).search, null);
+  assert.equal("search" in toSaved(s), false);
+});

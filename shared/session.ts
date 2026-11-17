@@ -49,6 +49,8 @@ export interface Session {
   cursor: string | null;
   /** "look here" without selecting; never saved */
   highlight: string | null;
+  /** the text in the sidebar's search box, null when it is empty; never saved. The canvas dims the cards it does not find (docs/20-search/05-on-screen.md §3). It follows the box alone: a select or a focus clears the highlight, not this */
+  search: string | null;
   /** a request for the canvas: "bring this into view"; never saved. `n` is unique, so a canvas can tell which one it did. */
   reveal: { context: ContextId; id: string; n: number } | null;
   /** grows on every change; a webview drops a session older than the one it shows */
@@ -67,6 +69,8 @@ export type Intent =
   | { type: "revealed"; n: number }
   | { type: "cursor"; id: string | null }
   | { type: "highlight"; id: string | null }
+  /** the sidebar's box now holds this text; null: it is empty or the search ended */
+  | { type: "search"; query: string | null }
   | { type: "treeChanged" }
   /** a new call tree arrived for the function `owner`: what no longer resolves in it is dropped (05 §5) */
   | { type: "callsChanged"; owner: string }
@@ -81,7 +85,7 @@ export const exploreId = (call: CallId): ContextId => `explore:${call}`;
 
 export function emptySession(): Session {
   const main: ContextState = { id: MAIN, title: "Main", kind: "main", parent: null, call: null, preview: false, focus: [], selected: null, open: {}, recent: [] };
-  return { contexts: { [MAIN]: main }, order: [MAIN], active: MAIN, cursor: null, highlight: null, reveal: null, seq: 0 };
+  return { contexts: { [MAIN]: main }, order: [MAIN], active: MAIN, cursor: null, highlight: null, search: null, reveal: null, seq: 0 };
 }
 
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -211,6 +215,9 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
 
     case "highlight":
       return change(s, context, {}, { highlight: intent.id });
+
+    case "search":
+      return change(s, context, {}, { search: intent.query === "" ? null : intent.query });
 
     case "activate":
       return s.contexts[intent.id] ? activateContext(s, intent.id) : s;
@@ -365,7 +372,7 @@ function treeChanged(s: Session, tree: TreeNode): Session {
 }
 
 /** Applies a change to one context and to the top-level fields; the same object when no field is different (arrays are compared by identity). */
-function change(s: Session, context: ContextId, patch: Partial<ContextState>, top: Partial<Pick<Session, "cursor" | "highlight" | "reveal">> = {}): Session {
+function change(s: Session, context: ContextId, patch: Partial<ContextState>, top: Partial<Pick<Session, "cursor" | "highlight" | "search" | "reveal">> = {}): Session {
   const c = s.contexts[context];
   const contextMoved = (Object.keys(patch) as (keyof ContextState)[]).some((k) => patch[k] !== c[k]);
   const topMoved = (Object.keys(top) as (keyof typeof top)[]).some((k) => top[k] !== s[k]);
@@ -397,7 +404,7 @@ export function keepEqual(old: Session, next: Session): Session {
 
 // ── saving ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** The part of a session that survives closing the window. Not the cursor, the highlight or a reveal: a cursor move must not write to disk. */
+/** The part of a session that survives closing the window. Not the cursor, the highlight, the search or a reveal: a cursor move must not write to disk. */
 export interface SavedSession {
   contexts: Record<ContextId, ContextState>;
   order: ContextId[];

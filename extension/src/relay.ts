@@ -57,6 +57,7 @@ export function createHandlers(d: Deps): Handlers {
   return {
     structure: () => d.structure(),
     search: (params) => d.core("vnoc/search", params),
+    searchCards: (params) => d.core("vnoc/searchCards", params),
     docs: ({ nodeId }) => d.core("vnoc/docs", { id: nodeId }), // the core calls the permanent ID `id`; every other id in the UI is the location key
     docText: ({ path }) => d.docs.text(path),
     code: ({ path, range, saveFirst }) => d.code(path, range, saveFirst === true),

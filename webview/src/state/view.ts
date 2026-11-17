@@ -37,6 +37,8 @@ interface View {
   hover: string | null;
   /** a card the canvas just brought into view: it pulses for about a second */
   revealed: string | null;
+  /** the cards the canvas dims because the sidebar's search does not find them (`canvas/useSearchDim.ts`); null: none */
+  dimmed: ReadonlySet<string> | null;
   /** the drawn cards that hold the selection / the cursor inside a closed card: they show a dot */
   hidesSelected: string | null;
   hidesCursor: string | null;
@@ -56,6 +58,7 @@ export const useView = create<View>(() => ({
   pinned: document.getElementById("root")?.dataset.node ?? saved.pinned ?? null,
   hover: null,
   revealed: null,
+  dimmed: null,
   hidesSelected: null,
   hidesCursor: null,
   focusCode: null,

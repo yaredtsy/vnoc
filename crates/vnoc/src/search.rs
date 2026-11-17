@@ -5,12 +5,14 @@
 //! [`kept`] holds the last corpus under the revision it was made for, and [`answer`] turns the crate's hits into the protocol's rows.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use vnoc_domain::{NodeId, NodeKind, NodeToml};
-use vnoc_search::{Corpus, DocEntry, DocIndex, NodeEntry, Query, Results};
+use vnoc_search::{Corpus, DocEntry, DocIndex, NodeEntry, Query, Results, parse};
 
-use crate::index::{self, Kind, Node};
+use crate::index::{self, Index, Kind, Node};
+use crate::node_ref::{self, Found, NodeRef};
+use crate::project::Project;
 use crate::protocol::{SearchDoc, SearchNode, SearchResult};
 use crate::userdata::DocTexts;
 
@@ -180,6 +182,61 @@ pub fn kept<K: PartialEq, T>(
             *slot = Some((key, made.clone()));
             made
         }
+    }
+}
+
+/// The kept corpus with what it was made for: the index revision and the doc-text generation.
+pub type CorpusSlot = Mutex<Option<((u64, u64), Arc<Corpus>)>>;
+
+/// What both `vnoc/search` and `vnoc/searchCards` start from: the query read, the corpus for the index as it is, and the node a pasted reference names.
+pub struct Prepared {
+    pub revision: u64,
+    pub corpus: Arc<Corpus>,
+    pub query: Query,
+    /// the place in the corpus's nodes of the node the reference named, when it named one the tree has
+    pub exact: Option<usize>,
+}
+
+/// Parses `text`, resolves a reference in it, and gets the corpus (kept under `(revision, generation)`, built on the first call after a change).
+/// The one place the two requests share, so they cannot disagree about what a query means. Synchronous: it holds locks (the index first, then the
+/// corpus slot, then the doc slot inside it), so nothing here awaits. The caller has waited for the first build.
+pub fn prepare(
+    project: &Project,
+    index: &RwLock<Index>,
+    corpus_slot: &CorpusSlot,
+    doc_slot: &Mutex<Option<(u64, Arc<DocIndex>)>>,
+    text: &str,
+) -> Prepared {
+    let query = parse(text);
+    // a bare path is found by the path tiers, so only the forms they cannot find are tried (04 §4)
+    let reference = query
+        .reference
+        .as_deref()
+        .and_then(node_ref::parse)
+        .filter(|r| !matches!(r, NodeRef::Path(_)));
+    let index = index.read().unwrap();
+    let revision = index.revision();
+    let texts = index.doc_texts();
+    let corpus = kept(corpus_slot, (revision, texts.generation()), || {
+        corpus_of(
+            &index.tree(&project.name(), project.prefix()),
+            &texts,
+            doc_slot,
+            project.prefix(),
+            |id| index.record_toml(id).and_then(anchor_of),
+            |id| index.is_missing(id),
+        )
+    });
+    // a node the tree has first; a Missing ID or a reference that names nothing leaves the words to find what they find
+    let exact = match reference.map(|r| index.resolve_ref(project, &r)) {
+        Some(Found::Node(id)) => corpus.position(&id),
+        _ => None,
+    };
+    Prepared {
+        revision,
+        corpus,
+        query,
+        exact,
     }
 }
 

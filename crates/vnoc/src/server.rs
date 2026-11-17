@@ -28,24 +28,23 @@ use crate::calls::{self, Merged};
 use crate::driver_host::{DriverHost, HostError};
 use crate::identity::{self, Env};
 use crate::index::{Index, Touched, refresh};
-use crate::node_ref::{self, Found, NodeRef};
 use crate::project::Project;
 use crate::protocol::{
     Attach, AttachParams, AttachResult, CallSite, CallTree, CallTreeNode, CallTreeParams,
     CallTreeResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, HasCalls,
     HasCallsParams, HasCallsResult, IndexChanged, IndexChangedParams, MovePlan, Ping, PingResult,
     ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan,
-    RestorePlanParams, Search, SearchParams, SearchResult, Stats, Structure, StructureResult,
-    Trash, TrashInfo, TrashInfoResult, TrashItem, TrashList, TrashParams, WriteId, WriteIdParams,
-    WriteIdResult,
+    RestorePlanParams, Search, SearchCards, SearchCardsParams, SearchCardsResult, SearchParams,
+    SearchResult, Stats, Structure, StructureResult, Trash, TrashInfo, TrashInfoResult, TrashItem,
+    TrashList, TrashParams, WriteId, WriteIdParams, WriteIdResult,
 };
 use crate::protocol::{Locate, LocateParams, Located};
-use crate::search::{anchor_of, answer, corpus_of, kept};
+use crate::search::{Prepared, answer, prepare};
 use crate::userdata::{TrashError, UserData};
 use crate::watchdog::timed;
 use vnoc_domain::{LocationKey, NodeId};
 use vnoc_driver_protocol::CallEntry;
-use vnoc_search::{Corpus, DocIndex, Limits, parse, run};
+use vnoc_search::{Corpus, DocIndex, Limits, matches, run};
 
 /// Where the first build is.
 #[derive(Clone)]
@@ -196,6 +195,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         })
         .request::<Structure, _>(structure)
         .request::<Search, _>(search)
+        .request::<SearchCards, _>(search_cards)
         .request::<ProjectInfo, _>(project_info)
         .request::<Attach, _>(attach)
         .request::<Relink, _>(relink)
@@ -335,65 +335,71 @@ fn structure(
     })
 }
 
-/// `vnoc/search`: the nodes a query finds. Waits for the first build, like `vnoc/structure`. The corpus is built from the tree on the first search after
-/// a change and kept (`search::kept`); the search itself runs on it with no lock held.
+/// Waits for the first build, then the query read and its corpus (`search::prepare`): what `vnoc/search` and `vnoc/searchCards` both start from.
+/// No `.await` while a lock is held: the waiting is done before `prepare` takes any.
+async fn prepared(state: &State, text: &str) -> Result<Prepared, ResponseError> {
+    let status = state
+        .status
+        .subscribe()
+        .wait_for(|s| !matches!(s, Status::Building))
+        .await
+        .map_err(internal)?
+        .clone();
+    if let Status::Failed(message) = status {
+        return Err(internal(message));
+    }
+    let project = state
+        .project
+        .get()
+        .ok_or_else(|| internal("no folder is open"))?;
+    Ok(prepare(
+        project,
+        &state.index,
+        &state.corpus,
+        &state.doc_index,
+        text,
+    ))
+}
+
+/// `vnoc/search`: the nodes a query finds. The corpus is built from the tree on the first search after a change and kept (`search::kept`); the search
+/// itself runs on it with no lock held.
 fn search(
     core: &mut Core,
     params: SearchParams,
 ) -> impl std::future::Future<Output = Result<SearchResult, ResponseError>> + Send + use<> {
     let state = core.state.clone();
     timed("search", async move {
-        let status = state
-            .status
-            .subscribe()
-            .wait_for(|s| !matches!(s, Status::Building))
-            .await
-            .map_err(internal)?
-            .clone();
-        if let Status::Failed(message) = status {
-            return Err(internal(message));
-        }
-        let project = state
-            .project
-            .get()
-            .ok_or_else(|| internal("no folder is open"))?;
-        let query = parse(&params.query);
-        // a bare path is found by the path tiers, so only the forms they cannot find are tried (04 §4)
-        let reference = query
-            .reference
-            .as_deref()
-            .and_then(node_ref::parse)
-            .filter(|r| !matches!(r, NodeRef::Path(_)));
-        // no `.await` while either lock is held: the index first, then the corpus
-        let (revision, corpus, found) = {
-            let index = state.index.read().unwrap();
-            let revision = index.revision();
-            let texts = index.doc_texts();
-            let corpus = kept(&state.corpus, (revision, texts.generation()), || {
-                corpus_of(
-                    &index.tree(&project.name(), project.prefix()),
-                    &texts,
-                    &state.doc_index,
-                    project.prefix(),
-                    |id| index.record_toml(id).and_then(anchor_of),
-                    |id| index.is_missing(id),
-                )
-            });
-            let found = reference.map(|r| index.resolve_ref(project, &r));
-            (revision, corpus, found)
-        };
-        // a node the tree has first; a Missing ID or a reference that names nothing leaves the words to find what they find
-        let exact = match found {
-            Some(Found::Node(id)) => corpus.position(&id),
-            _ => None,
-        };
+        let found = prepared(&state, &params.query).await?;
         let defaults = Limits::default();
         let limits = Limits {
             nodes: params.nodes.unwrap_or(defaults.nodes),
             docs: params.docs.unwrap_or(defaults.docs),
         };
-        let results = run(&corpus, &query, exact, limits);
-        Ok(answer(revision, &corpus, &query, results))
+        let results = run(&found.corpus, &found.query, found.exact, limits);
+        Ok(answer(found.revision, &found.corpus, &found.query, results))
+    })
+}
+
+/// `vnoc/searchCards`: which of the asked node ids the query finds (`vnoc_search::matches`).
+fn search_cards(
+    core: &mut Core,
+    params: SearchCardsParams,
+) -> impl std::future::Future<Output = Result<SearchCardsResult, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("searchCards", async move {
+        let found = prepared(&state, &params.query).await?;
+        let asked: Vec<&str> = params.ids.iter().map(String::as_str).collect();
+        let hit = matches(&found.corpus, &found.query, found.exact, &asked);
+        Ok(SearchCardsResult {
+            revision: found.revision,
+            hits: params
+                .ids
+                .iter()
+                .zip(hit)
+                .filter(|&(_, hit)| hit)
+                .map(|(id, _)| id.clone())
+                .collect(),
+        })
     })
 }
 

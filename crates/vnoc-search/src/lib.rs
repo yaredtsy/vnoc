@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 pub use docs::DocIndex;
 pub use query::{KindFilter, Query, parse};
-pub use run::run;
+pub use run::{matches, run};
 
 /// What a node is. A method is a [`Kind::Function`] with `in_class` set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

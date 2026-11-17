@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import type { SearchResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
 import { MISSING_PIN } from "@vnoc/shared/tree";
-import { sleep, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
 
 // Search in a real window (docs/20-search/06-build-order.md S3): the STRUCTURE view's box asks the core and draws what it answers, and *V-NOC: Search…* puts the cursor in that box (a QuickPick re-sorted the core's order: S3b).
 // The suite cannot type in a webview, so `setSearch` puts text in the box as typing would, and the page says what it drew (`searchDrawn`). What a query finds, and in what
@@ -29,6 +29,9 @@ interface Api {
   setSearch(text: string): void;
   searchFocused(): { focused: boolean; text: string }[];
   searchKey(key: string): void;
+  searchDim(): { query: string; dimmed: string[] }[];
+  renderedPosts(): { context: string; visible: number }[];
+  dispatch(intent: { type: "expand"; ids: string[] } | { type: "select"; id: string | null }): void;
   docsShown(): { pinned: string | null; node: string | null; doc: string | null }[];
   sidebarOpen(): boolean;
   sidebarVisible(): boolean;
@@ -368,6 +371,53 @@ suite("search", () => {
       await until("the first doc row to be active", () => api.session().highlight === core.docs[0].node, 5_000);
       api.searchKey("Escape");
       await until("the pointer to clear", () => api.session().highlight === null);
+    });
+    test("the canvas dims the cards the query does not find, never the selected one, and not a card whose doc is the hit; an empty box undims at once", async () => {
+      await showSidebar();
+      api.setSearch("");
+      await vscode.commands.executeCommand("vnoc.openCanvas");
+      await until("the canvas tab", () => canvasTabs().length === 1);
+      const drawnBefore = api.renderedPosts().length;
+      api.dispatch({ type: "expand", ids: ["nested.py", "nested.py::Outer"] });
+      await until("the canvas to draw the open file and class", () => api.renderedPosts().length > drawnBefore && (api.renderedPosts().at(-1)?.visible ?? 0) >= 8, 30_000);
+      const methods = (await nodesOf()).filter((n) => n.qualname === "Outer.method").map((n) => n.id);
+      const OUTER = "nested.py::Outer";
+      const lastFor = (query: string) => api.searchDim().filter((d) => d.query === query).at(-1);
+      try {
+        // a query whose hits are two cards: they are bright, the others dim, and the class that holds them is not a hit
+        api.setSearch("outer.meth");
+        await until("the dim for `outer.meth`", () => lastFor("outer.meth") !== undefined, 20_000);
+        const core = await api.request<{ hits: string[] }>("vnoc/searchCards", { query: "outer.meth", ids: (await nodesOf()).map((n) => n.id) });
+        assert.deepStrictEqual(core.hits, methods, "the core's own answer");
+        let dimmed = lastFor("outer.meth")!.dimmed;
+        assert.ok(dimmed.length >= 4, `the cards that are not hits are dimmed (${dimmed.join(", ")})`);
+        assert.ok(dimmed.includes(OUTER), "the class is not a hit");
+        assert.deepStrictEqual(dimmed.filter((id) => core.hits.includes(id)), [], "no hit card is dimmed");
+
+        // the selected card is never dimmed, hit or not
+        api.dispatch({ type: "select", id: OUTER });
+        await until("the selected class to leave the dimmed list", () => !lastFor("outer.meth")!.dimmed.includes(OUTER), 20_000);
+        dimmed = lastFor("outer.meth")!.dimmed;
+        assert.ok(dimmed.length >= 3 && !dimmed.includes(OUTER), "the others stay dimmed");
+
+        // a card whose doc is the hit: `decorated` holds the word only in a doc
+        api.setSearch("quokkazebra");
+        await until("the dim for the doc's word", () => lastFor("quokkazebra") !== undefined, 20_000);
+        dimmed = lastFor("quokkazebra")!.dimmed;
+        assert.ok(!dimmed.includes(NODE), "the card of the doc that holds the word is bright");
+        assert.ok(dimmed.includes("nested.py"), `the file card is dimmed (${dimmed.join(", ")})`);
+
+        // an empty box: everything is bright at once, said once
+        const before = api.searchDim().length;
+        api.setSearch("");
+        await until("the dim to end", () => api.searchDim().length > before, 20_000);
+        assert.deepStrictEqual(api.searchDim().at(-1), { query: "", dimmed: [] });
+        assert.deepStrictEqual(api.webviewErrors(), []);
+      } finally {
+        api.setSearch("");
+        api.dispatch({ type: "select", id: null });
+        await closeCanvas();
+      }
     });
   });
 });

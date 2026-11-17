@@ -111,6 +111,21 @@ export function useSearch(focusList: () => void) {
     post({ type: "searchDrawn", query: answer.query, ids: answer.result.nodes.map((n) => n.id), docs: answer.result.docs.map((d) => d.doc_path), total: answer.result.nodes_total, notes: answer.result.notes, ms: now - answer.changedAt, trip: now - answer.sentAt });
   }, [answer]);
 
+  // the canvas dims what the box's text does not find: the text crosses in the session, `null` when the box is empty (05 §3). No debounce, as the rows
+  const toldSearch = useRef<string | null>(null);
+  useEffect(() => {
+    const text = searching ? query : null;
+    if (text === toldSearch.current) return;
+    toldSearch.current = text;
+    dispatch({ type: "search", query: text });
+  }, [searching, query]);
+  useEffect(
+    () => () => {
+      if (toldSearch.current !== null) dispatch({ type: "search", query: null });
+    },
+    [],
+  );
+
   // the active row's card is pointed at on the canvas (a doc row: its node, when it is in the tree); no query, nothing pointed at
   const told = useRef<string | null>(null);
   useEffect(() => {

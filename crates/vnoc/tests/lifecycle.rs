@@ -465,6 +465,64 @@ fn search_answers_from_the_tree_before_and_after_a_change() {
     core.finish();
 }
 
+/// The ids `vnoc/searchCards` says the query finds, with its revision.
+fn search_cards(core: &mut Core, query: &str, ids: &[&str]) -> (Value, Vec<String>) {
+    let answer = core
+        .request("vnoc/searchCards", json!({ "query": query, "ids": ids }))
+        .unwrap();
+    let hits = answer["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h.as_str().unwrap().to_string())
+        .collect();
+    (answer["revision"].clone(), hits)
+}
+
+#[test]
+fn search_cards_says_which_of_the_asked_ids_the_query_finds() {
+    let root = fixtures("search-cards");
+    let mut core = Core::start(Some(driver_path()), &root);
+    // asked at once, before the first build is done: it answers when it is
+    let ids = [
+        "nested.py::Outer.method#2",
+        "nested.py::Outer",
+        "nested.py::Outer.method",
+        "nested.py::not.a.node",
+    ];
+    let (revision, hits) = search_cards(&mut core, "outer.meth", &ids);
+    assert_eq!(
+        hits,
+        ["nested.py::Outer.method#2", "nested.py::Outer.method"],
+        "the two methods, in the order asked; not the class, not an id that is made up"
+    );
+    let found = core
+        .request("vnoc/search", json!({ "query": "outer.meth" }))
+        .unwrap();
+    assert_eq!(revision, found["revision"]);
+
+    // a pasted reference keeps its card bright, as it is `exact` in `vnoc/search`
+    let (_, hits) = search_cards(&mut core, "nested.py:25", &ids);
+    assert!(
+        hits.is_empty(),
+        "{hits:?}: that line is in `Outer.Nested.method`"
+    );
+    let (_, hits) = search_cards(
+        &mut core,
+        "nested.py:25",
+        &["nested.py::Outer.Nested.method"],
+    );
+    assert_eq!(hits, ["nested.py::Outer.Nested.method"]);
+
+    // nothing typed, and a value that means nothing: nothing is found
+    assert!(search_cards(&mut core, "", &ids).1.is_empty());
+    assert!(search_cards(&mut core, "kind:fnn outer", &ids).1.is_empty());
+    // filters only
+    let (_, hits) = search_cards(&mut core, "kind:class", &ids);
+    assert_eq!(hits, ["nested.py::Outer"]);
+    core.finish();
+}
+
 #[test]
 fn search_filters_narrow_nodes_and_a_value_that_means_nothing_is_a_note() {
     let root = fixtures("search-filters");
@@ -2542,6 +2600,13 @@ fn search_finds_doc_text_and_an_edited_body_neither_moves_the_revision_nor_annou
     let row = &rows[0];
     assert_eq!(row["node"], "nested.py::Outer", "{row}");
     assert_eq!(row["missing"], false, "{row}");
+    // a word only a doc of `Outer` holds: `Outer` is a hit for the canvas, its methods are not
+    let (_, hits) = search_cards(
+        &mut core,
+        "zanzibar",
+        &["nested.py::Outer.method", "nested.py::Outer"],
+    );
+    assert_eq!(hits, ["nested.py::Outer"]);
     assert_eq!(
         (
             row["node_id"].as_str(),

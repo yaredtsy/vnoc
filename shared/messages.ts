@@ -276,6 +276,8 @@ export interface Requests {
   structure: { params: void; result: StructureResult };
   /** the box and the palette (docs/20-search): the core finds and ranks, the page draws. `nodes`: at most this many rows (the core says 200 when absent) */
   search: { params: { query: string; nodes?: number }; result: SearchResult };
+  /** `vnoc/searchCards`: of these node ids (a structure card's id, a call card's target key), which the query finds, by name or by a doc of the node; `hits` is a subset, in the order given. The canvas dims the rest */
+  searchCards: { params: { query: string; ids: string[] }; result: { revision: number; hits: string[] } };
   /** the permanent ID (`TreeNode.node_id`), not the location key; the relay renames it for the core */
   docs: { params: { nodeId: string }; result: DocInfo[] };
   docText: { params: { path: string }; result: string };
@@ -382,6 +384,7 @@ export type Notes =
   | { type: "keysChecked"; found: boolean; target: string; taken: string[]; hosts: number } // the answer to the viewCommand `checkKeys`: the page dispatched keys at the editor of a code card (`found`: there was one, `target`: its tag, `hosts`: how many code areas the page had, editor made or not), and these were taken by something other than the editor (React Flow's Space, say): the extension's test suite uses it
   | { type: "searchDrawn"; query: string; ids: string[]; docs: string[]; total: number; notes: string[]; ms: number; trip: number } // the STRUCTURE view drew the rows of an answer (`query`: the box's text it answers, `ids`: the node rows in order, `docs`: the doc rows' `doc_path`s in order, `total`: how many matched before the limit, `notes`: the lines drawn under the box about its filters, `ms`: from the change of the box to the draw, `trip`: from sending the request to the draw): the extension's test suite uses it
   | { type: "docsShown"; pinned: string | null; node: string | null; doc: string | null } // the docs tab shows this: `pinned`: the node it is held on (a Missing node's carries `MISSING_PIN`), `node`: the node it draws, `doc`: the doc's path (null: none yet): the extension's test suite uses it
+  | { type: "searchDim"; query: string; dimmed: string[] } // the canvas applied an answer of `searchCards` (`query`: the text it answers, `dimmed`: the ids of the cards it dimmed, the selected one never among them; a call card with no key is dimmed), and once with `dimmed: []` when the search ended: the extension's test suite uses it
   | { type: "searchFocused"; focused: boolean; text: string } // the STRUCTURE view handled the view command `focusSearch` (*V-NOC: Search…*): `focused`: the cursor is in the box now, `text`: what the box holds: the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it

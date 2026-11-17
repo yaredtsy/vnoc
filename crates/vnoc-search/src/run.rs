@@ -4,6 +4,8 @@
 //! the best are cut to the limit, with the count before the cut kept so a header can say "200 of 1,340". A query of filters only keeps every node
 //! that passes, in reading order. A pasted reference arrives as `exact`: the node it named goes first.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::docs::{self, Terms};
 use crate::names::{Found, NodeMatch, fold, match_node, order};
 use crate::utf16;
@@ -106,18 +108,8 @@ pub fn run(corpus: &Corpus, query: &Query, exact: Option<usize>, limits: Limits)
         return Results::default();
     }
     let filters = Filters::new(query);
-    let words: Vec<Vec<char>> = query
-        .words
-        .iter()
-        .map(|w| fold(w))
-        .filter(|w| !w.is_empty())
-        .collect();
-    let nodes_wanted = if words.is_empty() {
-        query.phrases.is_empty() && query.has_filters()
-    } else {
-        true
-    };
-    let (nodes, nodes_total) = if nodes_wanted {
+    let words = folded_words(query);
+    let (nodes, nodes_total) = if nodes_wanted(query, &words) {
         run_nodes(corpus, &filters, &words, exact, limits)
     } else {
         (Vec::new(), 0)
@@ -131,6 +123,47 @@ pub fn run(corpus: &Corpus, query: &Query, exact: Option<usize>, limits: Limits)
     }
 }
 
+/// The query's words, folded; an empty one is dropped.
+fn folded_words(query: &Query) -> Vec<Vec<char>> {
+    query
+        .words
+        .iter()
+        .map(|w| fold(w))
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Whether the query can find nodes: it has words, or no words and no phrases but a filter.
+fn nodes_wanted(query: &Query, words: &[Vec<char>]) -> bool {
+    if words.is_empty() {
+        query.phrases.is_empty() && query.has_filters()
+    } else {
+        true
+    }
+}
+
+/// How the node at `index` matches: `None` when it fails the filters or a word; a match with no tier and no ranges when there are no words.
+fn match_at(
+    corpus: &Corpus,
+    filters: &Filters,
+    words: &[Vec<char>],
+    index: usize,
+) -> Option<NodeMatch> {
+    let entry = &corpus.nodes[index];
+    if !filters.passes(entry) {
+        return None;
+    }
+    if words.is_empty() {
+        // filters only: every node that passes is as good as another
+        return Some(NodeMatch {
+            tier: 0,
+            skipped: 0,
+            ranges: Vec::new(),
+        });
+    }
+    match_node(&corpus.prepared[index].view(entry), words)
+}
+
 /// The node rows and how many nodes matched before the limit. `words` are folded; none means filters only.
 fn run_nodes(
     corpus: &Corpus,
@@ -142,26 +175,20 @@ fn run_nodes(
     let exact = exact.filter(|&at| at < corpus.nodes.len());
 
     let mut found: Vec<Found> = Vec::new();
-    for (index, (prepared, entry)) in corpus.prepared.iter().zip(&corpus.nodes).enumerate() {
-        if Some(index) == exact || !filters.passes(entry) {
+    for (index, prepared) in corpus.prepared.iter().enumerate() {
+        if Some(index) == exact {
             continue;
         }
-        if words.is_empty() {
-            // filters only: every node that passes is as good as another, so the order falls to reading order
-            found.push(Found {
-                index,
-                matched: NodeMatch {
-                    tier: 0,
-                    skipped: 0,
-                    ranges: Vec::new(),
-                },
-                name_len: 0,
-            });
-        } else if let Some(matched) = match_node(&prepared.view(entry), words) {
+        if let Some(matched) = match_at(corpus, filters, words, index) {
             found.push(Found {
                 index,
                 matched,
-                name_len: prepared.name_len,
+                // filters only: the order falls to reading order
+                name_len: if words.is_empty() {
+                    0
+                } else {
+                    prepared.name_len
+                },
             });
         }
     }
@@ -205,6 +232,62 @@ fn run_nodes(
     (nodes, nodes_total)
 }
 
+/// The docs that hold every term and phrase and whose node passes the filters, in doc order, each with its score; and the words the prefix opened into.
+/// What [`run`] ranks and [`matches`] only asks.
+fn matching_docs(
+    corpus: &Corpus,
+    terms: &Terms,
+    filters: &Filters,
+) -> (Vec<(usize, f64)>, HashSet<String>) {
+    let (scored, hit_words) = corpus.doc_index.find(terms);
+    let found = scored
+        .into_iter()
+        .map(|(doc, score)| (doc as usize, score))
+        .filter(|&(doc, _)| {
+            let entry = &corpus.docs[doc];
+            filters.passes_doc(corpus, entry) && docs::holds_phrases(entry, &terms.phrases)
+        })
+        .collect();
+    (found, hit_words)
+}
+
+/// Of these node ids, which `query` finds: a node is a hit when [`run`], with no limits, would give it as a node row or as the node of a doc row;
+/// `exact` is a hit when `run` would give it (a query that wants no node rows gives none). One answer for each id, in the order given; an id the corpus does not have is not a hit. No order, no snippets: the matching of
+/// [`run`], asked once for each id.
+pub fn matches(corpus: &Corpus, query: &Query, exact: Option<usize>, ids: &[&str]) -> Vec<bool> {
+    let mut hits = vec![false; ids.len()];
+    if query.keeps_nothing || ids.is_empty() {
+        return hits;
+    }
+    let filters = Filters::new(query);
+    let words = folded_words(query);
+    let at: HashMap<&str, usize> = corpus
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.id.as_str(), i))
+        .collect();
+    let exact = exact.filter(|&i| i < corpus.nodes.len());
+    let by_name = nodes_wanted(query, &words);
+    let terms = Terms::of(query);
+    let of_docs: HashSet<usize> = if terms.is_empty() {
+        HashSet::new()
+    } else {
+        matching_docs(corpus, &terms, &filters)
+            .0
+            .into_iter()
+            .filter_map(|(doc, _)| corpus.docs[doc].node)
+            .collect()
+    };
+    for (hit, id) in hits.iter_mut().zip(ids) {
+        let Some(&index) = at.get(id) else { continue };
+        *hit = of_docs.contains(&index)
+            || (by_name
+                && (Some(index) == exact || match_at(corpus, &filters, &words, index).is_some()));
+    }
+    hits
+}
+
 /// The doc rows and how many docs matched before the limit: the docs that hold every word and phrase of the query and whose node passes the
 /// filters, best score first; equal scores go to the doc whose node comes first in reading order, then to Missing nodes' docs by path, then by file.
 fn run_docs(
@@ -217,15 +300,7 @@ fn run_docs(
     if terms.is_empty() {
         return (Vec::new(), 0);
     }
-    let (scored, hit_words) = corpus.doc_index.find(&terms);
-    let mut found: Vec<(usize, f64)> = scored
-        .into_iter()
-        .map(|(doc, score)| (doc as usize, score))
-        .filter(|&(doc, _)| {
-            let entry = &corpus.docs[doc];
-            filters.passes_doc(corpus, entry) && docs::holds_phrases(entry, &terms.phrases)
-        })
-        .collect();
+    let (mut found, hit_words) = matching_docs(corpus, &terms, filters);
     let docs_total = found.len();
     /// Docs of nodes in the tree first, by the node's place in reading order; then Missing nodes' docs, by path.
     fn place<'a>(corpus: &Corpus, doc: &'a DocEntry) -> (bool, usize, &'a str) {

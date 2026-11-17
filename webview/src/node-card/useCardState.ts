@@ -14,5 +14,6 @@ export function useCardState(id: string, depth: number) {
   const hovered = useView((v) => v.hover === id);
   const cursor = useSession((s) => s.cursor === id);
   const revealed = useView((v) => v.revealed === id); // brought into view a moment ago
-  return { contextId, selected, focusRoot, cursor, revealed, highlighted: pointedAt || hovered };
+  const searchedOut = useView((v) => v.dimmed?.has(id) === true && !selected); // the sidebar's search does not find it (the selected card never is dimmed)
+  return { contextId, selected, focusRoot, cursor, revealed, highlighted: pointedAt || hovered, searchedOut };
 }
