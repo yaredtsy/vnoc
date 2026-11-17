@@ -20,7 +20,6 @@ import { type ContextId, type ContextState, MAIN } from "@vnoc/shared/session.ts
 import type { SessionStore } from "./session";
 import { attachMissingHere, relinkMissing } from "./relink";
 import { writeId } from "./writeId";
-import { searchNodes } from "./search";
 import { emptyTrash, removeAllMissing, removeMissing, restoreRemoved } from "./trash";
 import { absolute, selectionOf } from "./files";
 
@@ -119,11 +118,13 @@ export class Commands {
         await vscode.env.clipboard.writeText(node.range ? `${node.path}:${node.range.start.line + 1}` : node.path);
       }),
       on("vnoc.clearSelection", () => this.store.dispatch({ type: "select", id: null })),
-      on("vnoc.search", async () => searchNodes(this.core.tree ?? (await this.core.loadStructure()).root, this.store, (node) => {
-        // the same Enter as the sidebar's box (06 §5): reveal (the focus shortens if it hides the node, 03 §3), then the click rule
-        this.store.dispatch({ type: "reveal", id: node.id, canvas: false });
-        return this.rowClick(this.store.get().active, node.id);
-      })),
+      // *V-NOC: Search…* is the sidebar's box (05 §2's fallback: VS Code re-sorts a QuickPick's items by its own matcher, so the core's order could not be shown there): the
+      // STRUCTURE view comes up and the cursor goes into its box. A string argument is the text to start with (the window suite uses it); a node or anything else is not.
+      on("vnoc.search", async (arg) => {
+        await this.showSidebar();
+        await this.panels.whenSidebarDrew(5000); // an event sent to a page that has not started is lost
+        this.panels.emit("viewCommand", { name: "focusSearch", text: typeof arg === "string" ? arg : undefined });
+      }),
       on("vnoc.focus", async (arg, selected) => this.focusInSidebar((await this.nodeFor(arg, selected)).id)),
       on("vnoc.focusBack", () => this.store.dispatch({ type: "focusBack" })),
       on("vnoc.focusClear", () => this.store.dispatch({ type: "focusJump", depth: 0 })),
@@ -377,6 +378,16 @@ export class Commands {
     if (!file.startsWith(folder.uri.fsPath + path.sep)) throw new Error(`${relative} is outside the opened folder`);
     const selection = new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
     await vscode.window.showTextDocument(vscode.Uri.file(file), { selection, preserveFocus: opts.preserveFocus, ...(this.panels.canvas?.active ? { viewColumn: vscode.ViewColumn.Beside } : {}) });
+  }
+
+  /**
+   * A doc row of the search was picked (`Requests.showDoc`). The page revealed the node and sent the click already. A node in the tree: the docs tab pinned to it with the doc chosen.
+   * A Missing node: the tab pinned to it the way *Needs attention* does. Neither: its code was not read, there is nothing to pin, and the `.md` opens in an editor tab.
+   */
+  async showDoc({ node, nodeId, missing, path }: { node: string | null; nodeId: string; missing: boolean; path: string }): Promise<void> {
+    if (node !== null) this.panels.showDocs(node, path);
+    else if (missing) this.panels.showDocs(MISSING_PIN + nodeId, path);
+    else await this.docs.open(path);
   }
 
   /** Opens (or reuses) the docs tab beside the editor. From a card or a row it shows that node; from the editor's menu it follows the cursor. */

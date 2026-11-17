@@ -33,7 +33,7 @@ Stage 5  ADVANCED   0.7+   body_hash in frontmatter, playgrounds, assets, doc li
 | 2 | `local/cache/index.sqlite` | call-tree expansions; the file stamps | `plan_vs/02-technology/04` §8 |
 | 3 | `[ids] style = …`, `[[path]]` rules in `vnoc.toml`; `# vnoc:` comments in code | body fingerprints, "last known" state | `plan_vs/02-technology/05` §3–4 |
 | 4 | `local/nodes/<shard>/<id>/*.md` · `local.toml` | a `side` on each doc | `plan_vs/02-technology/04` §3 |
-| 5 | `body_hash:` in doc frontmatter · `play-*.py` · `assets/` | `doc_links` (search is in memory from 0.4: [`../20-search/`](../20-search/README.md)) | `plan_vs/02-technology/04` §4 |
+| 5 | `body_hash:` in doc frontmatter · `play/<slug>/{play.toml, script}` ([`../22-playground/`](../22-playground/02-on-disk.md)) · `assets/` | `doc_links` (search is in memory from 0.4: [`../20-search/`](../20-search/README.md)) | `plan_vs/02-technology/04` §4 |
 
 ## 2. Why each step is only an addition
 
@@ -47,7 +47,7 @@ The layout chosen for stage 1 already has a place for each later thing:
 | No-marker mode | Already valid in stage 1: `id_in_code = "no"`. |
 | Archive | The fields are already in `node.toml`. Only the UI is missing. |
 | Doc freshness | One more frontmatter line. Old docs without it simply show no freshness hint. |
-| Playgrounds, assets | More files in the node folder. 0.1's doc list only looks at `*.md`, so it does not see them. |
+| Playgrounds, assets | More files in the node folder (a playground is a folder, `play/<slug>/`: [`../22-playground/`](../22-playground/README.md)). 0.1's doc list only looks at `*.md` files, so it does not see them. |
 | More languages | `qualname` is "the language's own name" and opaque to the core. `kind` accepts unknown values. |
 
 ## 3. The compatibility matrix

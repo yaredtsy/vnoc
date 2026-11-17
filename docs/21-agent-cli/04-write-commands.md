@@ -129,6 +129,23 @@ digits, `-`); V-NOC gives none of them a meaning.
 One reader does all of it: `userdata/read.rs` gets `frontmatter(text) -> { title, author, tags }` beside `title_of`, and the doc texts of doc
 20 (03 §5) keep the two values with each doc. A doc written before these keys, or by hand without them, has neither: it is never an error.
 
+**What changes in search for it** (settled 2026-11-17, from the built code; all in step A8):
+
+- `DocText` (the core) and `DocEntry` (the crate) gain `tags: Vec<String>` and `author: Option<String>`. A doc is read again when its stamp
+  moves, as now. The `DocIndex` reads titles and bodies only, so it and its key (the doc-text generation) do not change.
+- `Query` gains `tags`, `not_tags`, `authors`, `not_authors` (lower case; `-tag:draft` excludes). Two `tag:` are both required, as two `in:`
+  are; a value is never wrong, so these give no note.
+- **On a doc:** it passes when it carries every `tag:` and the `author:`. **On a node:** it passes when at least one of its docs passes
+  (one doc carrying all of them). `run` makes the set of such nodes once per query from the docs: no per-node scan.
+- **A query of filters alone.** Today it lists nodes and no docs (20, 01 §3: every doc of every function under `kind:fn` would be noise).
+  New rule: when the filters include `tag:` or `author:`, a query with no words and no phrases lists **the docs that pass**, in the reading
+  order of their nodes and then by file name, with the start of the body as the snippet and no ranges; and the nodes that have one. Without
+  one of the two, filters alone still find no doc. The row goes into 20's 01 §3 in the same commit.
+- `matches` follows `run`, as built: the table that holds them together (`tests/matches.rs`) gets rows with tags.
+- `SearchDoc` (the wire) gains `tags` and `author`; the sidebar's doc row shows the tags after the title, dim.
+- **[decide]** *Add Doc* in the extension has no place to give a tag or an author. Until it has one, only the command and a hand edit of
+  the frontmatter set them. A small step after A8 (an optional second input in the title prompt), or left for later: your call.
+
 ## 5. Editing a doc
 
 No command. A doc is a Markdown file; `vnoc doc path` (or the path `doc new` printed) is all an agent needs, and its own edit tool does the rest.

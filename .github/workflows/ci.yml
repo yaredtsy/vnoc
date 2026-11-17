@@ -85,7 +85,7 @@ jobs:
       - name: extension unit tests (the shared ones again from the extension, and menus.test.ts)
         run: pnpm --filter vnoc unit
       - name: core
-        run: cargo test -p vnoc-domain -p vnoc-driver-protocol
+        run: cargo test -p vnoc-domain -p vnoc-driver-protocol -p vnoc-search
       - name: python driver (own workspace, own toolchain)
         working-directory: drivers/python
         run: cargo build && cargo test

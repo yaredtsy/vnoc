@@ -47,6 +47,8 @@ export interface Deps {
   retryCalls(key: string): Promise<void>;
   /** a click on a sidebar row: the click rule (07 §4) */
   rowClick(context: ContextId, id: string): Promise<void>;
+  /** a doc row of the search was picked: see `Requests.showDoc` */
+  showDoc(params: Requests["showDoc"]["params"]): Promise<void>;
   /** a button of the sidebar's states */
   command(name: "openFolder" | "refreshStructure"): Promise<void>;
 }
@@ -54,6 +56,8 @@ export interface Deps {
 export function createHandlers(d: Deps): Handlers {
   return {
     structure: () => d.structure(),
+    search: (params) => d.core("vnoc/search", params),
+    searchCards: (params) => d.core("vnoc/searchCards", params),
     docs: ({ nodeId }) => d.core("vnoc/docs", { id: nodeId }), // the core calls the permanent ID `id`; every other id in the UI is the location key
     docText: ({ path }) => d.docs.text(path),
     code: ({ path, range, saveFirst }) => d.code(path, range, saveFirst === true),
@@ -63,6 +67,7 @@ export function createHandlers(d: Deps): Handlers {
     copyText: ({ text }) => d.copyText(text),
     addDoc: async ({ key }) => ({ added: await d.addDoc(key) }),
     openDoc: ({ path }) => d.docs.open(path),
+    showDoc: (params) => d.showDoc(params),
     openLink: ({ href, from }) => d.docs.openLink(href, from),
     goToCode: ({ key }) => d.goToCode(key),
     dirtyFiles: async () => ({ paths: d.dirtyFiles() }),

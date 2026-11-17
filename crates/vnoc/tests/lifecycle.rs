@@ -379,6 +379,538 @@ fn a_changed_file_is_read_again_and_a_new_file_appears() {
     core.finish();
 }
 
+/// The ids of a `vnoc/search` answer's node rows.
+fn found_ids(answer: &Value) -> Vec<&str> {
+    answer["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn search_answers_from_the_tree_before_and_after_a_change() {
+    let root = fixtures("search");
+    let mut core = Core::start(Some(driver_path()), &root);
+
+    // asked at once, without waiting for the first build: it answers when the build is done
+    let found = core
+        .request("vnoc/search", json!({ "query": "method" }))
+        .unwrap();
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(found["revision"], structure["revision"]);
+    let rows = found["nodes"].as_array().unwrap();
+    // `Local.method` (a class inside `top`), `Outer.method` twice, `Outer.Nested.method`
+    assert_eq!(rows.len(), 4, "{found}");
+    for row in rows {
+        assert_eq!(row["in_class"], true, "{row}");
+        assert_eq!(row["tier"], 0, "{row}");
+        assert_eq!(row["match"], json!([[0, 6]]), "{row}");
+        assert_eq!(row["kind"], "function", "{row}");
+        assert_eq!(row["path"], "nested.py", "{row}");
+        assert!(row["line"].is_u64(), "{row}");
+    }
+    assert_eq!(found["nodes_total"], rows.len());
+    assert_eq!(found["docs"], json!([]));
+    assert_eq!(found["docs_total"], 0);
+    assert_eq!(found["notes"], json!([]));
+
+    // tier 3: the qualified name holds it, the name does not
+    let found = core
+        .request("vnoc/search", json!({ "query": "outer.meth" }))
+        .unwrap();
+    assert_eq!(
+        found_ids(&found),
+        ["nested.py::Outer.method", "nested.py::Outer.method#2"]
+    );
+    for row in found["nodes"].as_array().unwrap() {
+        assert_eq!(row["tier"], 3, "{row}");
+        assert_eq!(row["match"], json!([]), "{row}");
+    }
+
+    // the limit cuts the rows, not the count
+    let found = core
+        .request("vnoc/search", json!({ "query": "method", "nodes": 1 }))
+        .unwrap();
+    assert_eq!(found["nodes"].as_array().unwrap().len(), 1);
+    assert!(found["nodes_total"].as_u64().unwrap() > 1, "{found}");
+
+    // nothing typed finds nothing
+    let found = core
+        .request("vnoc/search", json!({ "query": "  " }))
+        .unwrap();
+    assert_eq!(
+        (found["nodes"].clone(), found["nodes_total"].clone()),
+        (json!([]), json!(0))
+    );
+
+    // a changed file: the next search is on the new index
+    core.wait_for("vnoc/indexChanged");
+    let edited = root.join("nested.py");
+    let mut text = std::fs::read_to_string(&edited).unwrap();
+    text.push_str("\n\ndef added_later(): pass\n");
+    std::fs::write(&edited, text).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [edited] }));
+    core.wait_for("vnoc/indexChanged");
+    let found = core
+        .request("vnoc/search", json!({ "query": "added_later" }))
+        .unwrap();
+    assert_eq!(found_ids(&found), ["nested.py::added_later"]);
+    assert_eq!(found["nodes"][0]["tier"], 0);
+    assert_eq!(
+        found["revision"].as_u64().unwrap(),
+        structure["revision"].as_u64().unwrap() + 1
+    );
+    core.finish();
+}
+
+/// The ids `vnoc/searchCards` says the query finds, with its revision.
+fn search_cards(core: &mut Core, query: &str, ids: &[&str]) -> (Value, Vec<String>) {
+    let answer = core
+        .request("vnoc/searchCards", json!({ "query": query, "ids": ids }))
+        .unwrap();
+    let hits = answer["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h.as_str().unwrap().to_string())
+        .collect();
+    (answer["revision"].clone(), hits)
+}
+
+#[test]
+fn search_cards_says_which_of_the_asked_ids_the_query_finds() {
+    let root = fixtures("search-cards");
+    let mut core = Core::start(Some(driver_path()), &root);
+    // asked at once, before the first build is done: it answers when it is
+    let ids = [
+        "nested.py::Outer.method#2",
+        "nested.py::Outer",
+        "nested.py::Outer.method",
+        "nested.py::not.a.node",
+    ];
+    let (revision, hits) = search_cards(&mut core, "outer.meth", &ids);
+    assert_eq!(
+        hits,
+        ["nested.py::Outer.method#2", "nested.py::Outer.method"],
+        "the two methods, in the order asked; not the class, not an id that is made up"
+    );
+    let found = core
+        .request("vnoc/search", json!({ "query": "outer.meth" }))
+        .unwrap();
+    assert_eq!(revision, found["revision"]);
+
+    // a pasted reference keeps its card bright, as it is `exact` in `vnoc/search`
+    let (_, hits) = search_cards(&mut core, "nested.py:25", &ids);
+    assert!(
+        hits.is_empty(),
+        "{hits:?}: that line is in `Outer.Nested.method`"
+    );
+    let (_, hits) = search_cards(
+        &mut core,
+        "nested.py:25",
+        &["nested.py::Outer.Nested.method"],
+    );
+    assert_eq!(hits, ["nested.py::Outer.Nested.method"]);
+
+    // nothing typed, and a value that means nothing: nothing is found
+    assert!(search_cards(&mut core, "", &ids).1.is_empty());
+    assert!(search_cards(&mut core, "kind:fnn outer", &ids).1.is_empty());
+    // filters only
+    let (_, hits) = search_cards(&mut core, "kind:class", &ids);
+    assert_eq!(hits, ["nested.py::Outer"]);
+    core.finish();
+}
+
+#[test]
+fn search_filters_narrow_nodes_and_a_value_that_means_nothing_is_a_note() {
+    let root = fixtures("search-filters");
+    let mut core = Core::start(Some(driver_path()), &root);
+
+    // a value that means nothing keeps no node and says why; it is not an error
+    let found = core
+        .request("vnoc/search", json!({ "query": "kind:fnn" }))
+        .unwrap();
+    assert_eq!(found["nodes"], json!([]), "{found}");
+    assert_eq!(found["nodes_total"], 0);
+    assert_eq!(
+        found["notes"],
+        json!(["`kind:fnn` is not a kind (folder, file, class, function, method)"])
+    );
+
+    // only filters: every node that passes, in reading order, at tier 0
+    let found = core
+        .request("vnoc/search", json!({ "query": "kind:method" }))
+        .unwrap();
+    let rows = found["nodes"].as_array().unwrap();
+    assert_eq!(rows.len(), 4, "{found}");
+    for row in rows {
+        assert_eq!(row["in_class"], true, "{row}");
+        assert_eq!(row["tier"], 0, "{row}");
+        assert_eq!(row["match"], json!([]), "{row}");
+    }
+    assert_eq!(found["nodes_total"], 4);
+    assert_eq!(found["notes"], json!([]));
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    let mut methods = Vec::new();
+    fn walk<'a>(node: &'a Value, parent: &str, out: &mut Vec<&'a str>) {
+        for child in node["children"].as_array().unwrap() {
+            let kind = child["kind"].as_str().unwrap();
+            if kind == "function" && parent == "class" {
+                out.push(child["id"].as_str().unwrap());
+            }
+            walk(child, kind, out);
+        }
+    }
+    walk(&structure["root"], "", &mut methods);
+    assert_eq!(found_ids(&found), methods, "the tree's reading order");
+
+    // a filter and a word: the word's tiers, on the nodes that pass
+    let found = core
+        .request(
+            "vnoc/search",
+            json!({ "query": "kind:class in:nested.py nested" }),
+        )
+        .unwrap();
+    assert!(!found_ids(&found).is_empty(), "{found}");
+    for row in found["nodes"].as_array().unwrap() {
+        assert_eq!(row["kind"], "class", "{row}");
+        assert_eq!(row["path"], "nested.py", "{row}");
+    }
+    let found = core
+        .request("vnoc/search", json!({ "query": "kind:class in:other/" }))
+        .unwrap();
+    assert_eq!(found["nodes"], json!([]), "{found}");
+    assert_eq!(
+        found["notes"],
+        json!([]),
+        "a filter that keeps nothing is not a note"
+    );
+    core.finish();
+}
+
+/// The first row of a `vnoc/search` answer and how many rows have its id, as `(id, exact, copies)`.
+fn first_row(answer: &Value) -> Option<(String, bool, usize)> {
+    let rows = answer["nodes"].as_array().unwrap();
+    let first = rows.first()?;
+    let id = first["id"].as_str().unwrap();
+    let copies = rows.iter().filter(|r| r["id"] == id).count();
+    Some((id.to_string(), first["exact"].as_bool().unwrap(), copies))
+}
+
+/// The ids of the rows that are marked `exact`.
+fn exact_ids(answer: &Value) -> Vec<&str> {
+    answer["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["exact"] == true)
+        .map(|r| r["id"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_pasted_reference_finds_its_node_first() {
+    let root = fixtures("search-reference");
+    let (outer, gone) = ("0000000000000000000000000D", "0000000000000000000000000E");
+    let mut core = Core::start(Some(driver_path()), &root);
+    let ask = |core: &mut Core, query: &str| {
+        core.request("vnoc/search", json!({ "query": query }))
+            .unwrap()
+    };
+
+    // a file and a line: the innermost def that holds it, else the file (lines are 1-based, as an editor shows them)
+    let at = |core: &mut Core, query: &str| {
+        let found = core
+            .request("vnoc/search", json!({ "query": query }))
+            .unwrap();
+        (first_row(&found), exact_ids(&found).len())
+    };
+    let rows: &[(&str, &str)] = &[
+        (
+            "nested.py:8",
+            "nested.py::top.<locals>.inner.<locals>.deepest",
+        ),
+        ("nested.py:25", "nested.py::Outer.Nested.method"),
+        ("nested.py:28", "nested.py::Outer.method#2"),
+        ("nested.py:25:9", "nested.py::Outer.Nested.method"),
+        ("nested.py:3", "nested.py"),
+        ("nested.py:999", "nested.py"),
+        ("nested.py:0", "nested.py"),
+        ("nested.py::Outer.method#2", "nested.py::Outer.method#2"),
+        ("nested.py::Outer.method", "nested.py::Outer.method"),
+        ("nested.py::", "nested.py"),
+    ];
+    for (query, id) in rows {
+        let (first, exact_rows) = at(&mut core, query);
+        assert_eq!(first, Some((id.to_string(), true, 1)), "{query}");
+        assert_eq!(exact_rows, 1, "{query}: only the first row is exact");
+    }
+
+    // an absolute path is the same as the path relative to the opened folder
+    let absolute = format!("{}:25", root.join("nested.py").display());
+    assert_eq!(
+        first_row(&ask(&mut core, &absolute)),
+        Some(("nested.py::Outer.Nested.method".to_string(), true, 1)),
+        "{absolute}"
+    );
+    let absolute = format!("{}::Outer", root.join("nested.py").display());
+    assert_eq!(
+        first_row(&ask(&mut core, &absolute)),
+        Some(("nested.py::Outer".to_string(), true, 1)),
+        "{absolute}"
+    );
+
+    // a reference to nothing marks no row, and the words still find what they find
+    for query in [
+        "nested.py::Nope",
+        "other.py:3",
+        "../nested.py:3",
+        "/not/under/the/folder.py:3",
+        "nested.py::Outer.method#9",
+    ] {
+        let found = ask(&mut core, query);
+        assert_eq!(exact_ids(&found), Vec::<&str>::new(), "{query}");
+    }
+    // as words nothing holds it either: no rows, and no crash
+    assert_eq!(ask(&mut core, "nested.py::Nope")["nodes"], json!([]));
+
+    // a bare path is not tried as a reference: the path tiers find it, none is exact
+    let found = ask(&mut core, "nested.py");
+    assert!(!found_ids(&found).is_empty());
+    assert_eq!(exact_ids(&found), Vec::<&str>::new());
+
+    // an ID: a record anchored at `nested.py::Outer`
+    write_record(&root, outer, "nested.py", "Outer");
+    write_record(&root, gone, "nested.py", "Gone");
+    tell_core_about_vnoc(&mut core, &root);
+    structure_when(&mut core, |s| {
+        fn has(node: &Value, id: &str) -> bool {
+            node["node_id"] == id
+                || node["children"]
+                    .as_array()
+                    .is_some_and(|c| c.iter().any(|n| has(n, id)))
+        }
+        has(&s["root"], outer)
+            && s["missing"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["id"] == gone)
+    });
+    for text in [outer.to_string(), outer.to_lowercase()] {
+        let found = ask(&mut core, &text);
+        assert_eq!(
+            first_row(&found),
+            Some(("nested.py::Outer".to_string(), true, 1)),
+            "{text}"
+        );
+    }
+    // a Missing ID marks no row, and does not crash; the core still answers
+    for text in [gone.to_string(), gone.to_lowercase()] {
+        let found = ask(&mut core, &text);
+        assert_eq!(exact_ids(&found), Vec::<&str>::new(), "{text}");
+    }
+    // an ID nobody knows
+    let found = ask(&mut core, "0000000000000000000000000Z");
+    assert_eq!(exact_ids(&found), Vec::<&str>::new());
+
+    // a reference with a filter: the node is first though the filter would drop it (04 §4, 01 §3)
+    let found = ask(&mut core, "nested.py:25 kind:fn");
+    assert_eq!(
+        exact_ids(&found),
+        Vec::<&str>::new(),
+        "two tokens are not a reference"
+    );
+    core.finish();
+}
+
+/// `pkg/nested.py` is a file, `pkg/` a folder: a path with a `/` is a reference, so the file or the folder is first, and exact.
+#[test]
+fn a_pasted_path_puts_its_file_or_folder_first() {
+    let root = fixtures("search-bare-path");
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::rename(root.join("nested.py"), root.join("pkg/nested.py")).unwrap();
+    let mut core = Core::start(Some(driver_path()), &root);
+    let mut ask = |query: &str| {
+        let found = core
+            .request("vnoc/search", json!({ "query": query }))
+            .unwrap();
+        (first_row(&found), exact_ids(&found).len())
+    };
+    for (query, id) in [
+        ("pkg/nested.py", "pkg/nested.py"),
+        ("./pkg/nested.py", "pkg/nested.py"),
+        ("pkg/", "pkg"),
+        ("pkg/nested.py#L25", "pkg/nested.py::Outer.Nested.method"),
+        ("pkg/nested.py:L25", "pkg/nested.py::Outer.Nested.method"),
+        (
+            "pkg/nested.py#L25-L28",
+            "pkg/nested.py::Outer.Nested.method",
+        ),
+        (
+            "File \"pkg/nested.py\", line 25, in method",
+            "pkg/nested.py::Outer.Nested.method",
+        ),
+    ] {
+        let (first, exact_rows) = ask(query);
+        assert_eq!(first, Some((id.to_string(), true, 1)), "{query}");
+        assert_eq!(exact_rows, 1, "{query}");
+    }
+    // a path that names nothing marks no row
+    for query in ["pkg/none.py", "nope/", "pkg/nested.py#Lx"] {
+        assert_eq!(ask(query).1, 0, "{query}");
+    }
+    core.finish();
+}
+
+/// A folder below the git root is open: the pasted path is tried relative to it, as a repo path, and with its name dropped; a file name alone
+/// needs exactly one file of that name.
+#[test]
+fn a_pasted_path_is_tried_against_each_base_then_a_file_name() {
+    let repo = fixtures("search-bases");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let svc = repo.join("svc");
+    std::fs::create_dir_all(svc.join("pkg")).unwrap();
+    std::fs::create_dir_all(svc.join("other")).unwrap();
+    std::fs::rename(repo.join("nested.py"), svc.join("pkg/nested.py")).unwrap();
+    std::fs::copy(svc.join("pkg/nested.py"), svc.join("other/nested.py")).unwrap();
+    std::fs::write(svc.join("pkg/only_here.py"), "def solo():\n    pass\n").unwrap();
+    let mut core = Core::start(Some(driver_path()), &svc);
+    let mut ask = |query: &str| {
+        let found = core
+            .request("vnoc/search", json!({ "query": query }))
+            .unwrap();
+        (first_row(&found), exact_ids(&found).len())
+    };
+    let method = "svc/pkg/nested.py::Outer.Nested.method";
+    let rows = [
+        // relative to the opened folder
+        ("pkg/nested.py:25", method),
+        // as a repo path, the tree's own ids
+        ("svc/pkg/nested.py:25", method),
+        ("svc/pkg/nested.py#L25", method),
+        ("svc/pkg/nested.py::Outer.Nested.method", method),
+        ("svc/pkg/nested.py::Outer", "svc/pkg/nested.py::Outer"),
+        ("svc/pkg/nested.py", "svc/pkg/nested.py"),
+        ("svc/pkg/", "svc/pkg"),
+        // a file name alone, when only one file has it (a bare name is no reference in the box: the path tiers find it)
+        ("only_here.py:2", "svc/pkg/only_here.py::solo"),
+        ("only_here.py::solo", "svc/pkg/only_here.py::solo"),
+    ];
+    for (query, id) in rows {
+        let (first, exact_rows) = ask(query);
+        assert_eq!(first, Some((id.to_string(), true, 1)), "{query}");
+        assert_eq!(exact_rows, 1, "{query}");
+    }
+    // two files have the name: nothing is exact, the words still find
+    for query in ["nested.py:25", "nested.py::Outer"] {
+        assert_eq!(ask(query).1, 0, "{query}");
+    }
+    core.finish();
+}
+
+/// A reference pasted with the opened folder's own name in front (no git folder, so the root is the opened folder and only that try can find it).
+#[test]
+fn a_pasted_path_may_start_with_the_opened_folders_name() {
+    let root = fixtures("search-folder-name");
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::rename(root.join("nested.py"), root.join("pkg/nested.py")).unwrap();
+    let name = root.file_name().unwrap().to_str().unwrap().to_string();
+    let mut core = Core::start(Some(driver_path()), &root);
+    for (query, id) in [
+        (
+            format!("{name}/pkg/nested.py:25"),
+            "pkg/nested.py::Outer.Nested.method",
+        ),
+        (
+            format!("{name}/pkg/nested.py::Outer"),
+            "pkg/nested.py::Outer",
+        ),
+        (format!("{name}/pkg/nested.py"), "pkg/nested.py"),
+        (format!("{name}/pkg/"), "pkg"),
+    ] {
+        let found = core
+            .request("vnoc/search", json!({ "query": query }))
+            .unwrap();
+        assert_eq!(
+            first_row(&found),
+            Some((id.to_string(), true, 1)),
+            "{query}"
+        );
+    }
+    core.finish();
+}
+
+/// Lines of `nested.py` that are not a statement of a body, and what the driver's ranges make of them. The rule is the plan's (the innermost def
+/// whose range holds the line, else the file), not bent: a def's range starts at its decorator and ends at its last line, so a blank line
+/// inside a def belongs to it, and one between two defs, or an `else:`, to the file.
+#[test]
+fn a_line_that_is_not_in_a_body_gives_what_the_ranges_hold() {
+    let root = fixtures("search-reference-lines");
+    let mut core = Core::start(Some(driver_path()), &root);
+    let rows: &[(u32, &str, &str)] = &[
+        (1, "nested.py", "the docstring, before any def"),
+        (4, "nested.py", "a blank line before the first def"),
+        (5, "nested.py::top", "a `def` line is its def's"),
+        (
+            9,
+            "nested.py::top.<locals>.inner",
+            "a blank line inside `inner`, after `deepest` ended",
+        ),
+        (
+            11,
+            "nested.py::top",
+            "a blank line inside `top`, after `inner` ended",
+        ),
+        (
+            17,
+            "nested.py",
+            "a blank line after `top` ended, before `Outer`",
+        ),
+        (
+            27,
+            "nested.py::Outer.method#2",
+            "the line with a comment after the def",
+        ),
+        (29, "nested.py", "a blank line after `Outer` ended"),
+        (31, "nested.py::top#2", "the second `top`"),
+        (35, "nested.py", "an `if` line holds no def"),
+        (36, "nested.py::cond", "the first twin"),
+        (38, "nested.py", "an `else:` line holds no def"),
+        (39, "nested.py::cond#2", "the second twin"),
+        (42, "nested.py", "a blank line before a decorated def"),
+        (
+            43,
+            "nested.py::decorated",
+            "the decorator's line: the range starts there",
+        ),
+        (
+            44,
+            "nested.py::decorated",
+            "the `def` line under the decorator",
+        ),
+        (46, "nested.py", "a blank line after `decorated`"),
+        (48, "nested.py::coro", "an `async def`"),
+        (49, "nested.py::coro", "the last line of the file"),
+    ];
+    for (line, id, why) in rows {
+        let found = core
+            .request(
+                "vnoc/search",
+                json!({ "query": format!("nested.py:{line}") }),
+            )
+            .unwrap();
+        assert_eq!(
+            first_row(&found),
+            Some((id.to_string(), true, 1)),
+            "nested.py:{line}: {why}"
+        );
+    }
+    core.finish();
+}
+
 #[test]
 fn a_missing_driver_is_a_clear_error_and_the_core_stays_up() {
     let mut core = Core::start(None, &fixtures("nodriver"));
@@ -505,7 +1037,10 @@ fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
             && toml.contains("kind = \"function\""),
         "{toml}"
     );
-    assert_eq!(r["doc"], json!(node.join("why-we-parse-twice.md")));
+    assert_eq!(
+        std::path::Path::new(r["doc"].as_str().unwrap()),
+        node.join("why-we-parse-twice.md")
+    );
     assert!(
         std::fs::read_to_string(node.join("why-we-parse-twice.md"))
             .unwrap()
@@ -2129,5 +2664,201 @@ fn a_deep_chain_comes_back_cut_at_the_cap_and_parses_and_opening_the_cut_node_gi
             .unwrap()["count"],
         1
     );
+    core.finish();
+}
+
+/// The doc rows of a `vnoc/search` answer for `query`.
+fn doc_rows(core: &mut Core, query: &str) -> Vec<Value> {
+    let found = core
+        .request("vnoc/search", json!({ "query": query }))
+        .unwrap();
+    found["docs"].as_array().unwrap().clone()
+}
+
+/// Asks `vnoc/search` for `query` until it gives a doc row (at most 10 s); the rows when it does, and none when it never does.
+fn wait_for_doc_rows(core: &mut Core, query: &str) -> Vec<Value> {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let rows = doc_rows(core, query);
+        if !rows.is_empty() || std::time::Instant::now() > until {
+            return rows;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn search_finds_doc_text_and_an_edited_body_neither_moves_the_revision_nor_announces() {
+    let root = fixtures("search-docs");
+    std::fs::write(root.join("orders.py"), ORDERS).unwrap(); // `attach_params` reads this file; the document is replaced below
+    // code the scan does not read, with a doc: its node is neither in the tree nor Missing
+    std::fs::create_dir_all(root.join("ignored")).unwrap();
+    std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
+    std::fs::write(root.join("ignored/x.py"), "def f():\n    pass\n").unwrap();
+    let mut core = Core::start(Some(driver_path()), &root);
+    core.request("vnoc/structure", Value::Null).unwrap();
+
+    // a doc on `Outer`, with a distinctive word in its body
+    let mut params = attach_params(&root, "nested.py::Outer", "Zoo notes", Some(false));
+    let nested = root.join("nested.py");
+    params["document"] = json!({ "uri": file_uri(&nested), "version": 1, "text": std::fs::read_to_string(&nested).unwrap() });
+    let attached = core.request("vnoc/attach", params).expect("attach answers");
+    let id = attached["id"].as_str().unwrap().to_string();
+    let doc = PathBuf::from(attached["doc"].as_str().unwrap());
+    let write_body = |word: &str| {
+        std::fs::write(
+            &doc,
+            format!("---\nnode: {id}\nhint: nested.py::Outer\n---\n# Zoo notes\n\nThe animals of {word} are many.\n"),
+        )
+        .unwrap();
+    };
+    core.wait_for("vnoc/indexChanged"); // the node and its doc are in `.vnoc/` now
+    write_body("zanzibar");
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+    let rows = wait_for_doc_rows(&mut core, "zanzibar");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row["node"], "nested.py::Outer", "{row}");
+    assert_eq!(row["missing"], false, "{row}");
+    // a word only a doc of `Outer` holds: `Outer` is a hit for the canvas, its methods are not
+    let (_, hits) = search_cards(
+        &mut core,
+        "zanzibar",
+        &["nested.py::Outer.method", "nested.py::Outer"],
+    );
+    assert_eq!(hits, ["nested.py::Outer"]);
+    assert_eq!(
+        (
+            row["node_id"].as_str(),
+            row["node_name"].as_str(),
+            row["node_kind"].as_str()
+        ),
+        (Some(id.as_str()), Some("Outer"), Some("class")),
+        "{row}"
+    );
+    assert_eq!(row["node_path"], "nested.py", "{row}");
+    assert_eq!(row["title"], "Zoo notes", "{row}");
+    assert_eq!(row["doc_path"], json!(doc), "{row}");
+    let snippet = row["snippet"].as_str().unwrap();
+    assert!(
+        snippet.contains("zanzibar") && !snippet.contains("Zoo notes"),
+        "{row}"
+    );
+    let [start, end] = {
+        let m = row["snippet_match"].as_array().unwrap();
+        assert_eq!(m.len(), 1, "{row}");
+        [
+            m[0][0].as_u64().unwrap() as usize,
+            m[0][1].as_u64().unwrap() as usize,
+        ]
+    };
+    assert_eq!(&snippet[start..end], "zanzibar", "{row}");
+    let found = core
+        .request("vnoc/search", json!({ "query": "zanzibar" }))
+        .unwrap();
+    assert_eq!(found["docs_total"], 1);
+    let revision = found["revision"].clone();
+
+    // the body changes on disk: found by its new word, not by the old, under the same revision, and nothing is announced
+    core.request("vnoc/ping", Value::Null).unwrap();
+    core.notifications.clear();
+    write_body("kilimanjaro");
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+    let rows = wait_for_doc_rows(&mut core, "kilimanjaro");
+    assert_eq!(rows.len(), 1, "the new word finds the doc");
+    assert!(
+        doc_rows(&mut core, "zanzibar").is_empty(),
+        "the old word does not"
+    );
+    let found = core
+        .request("vnoc/search", json!({ "query": "kilimanjaro" }))
+        .unwrap();
+    assert_eq!(
+        found["revision"], revision,
+        "a body is not a change to the index"
+    );
+    // an update that announced would have done so right after it stored the text; give it the time, then flush the frames in flight
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    core.request("vnoc/ping", Value::Null).unwrap();
+    let announced: Vec<_> = core
+        .notifications
+        .iter()
+        .filter(|(method, _)| method == "vnoc/indexChanged")
+        .collect();
+    assert!(announced.is_empty(), "a body edit announced {announced:?}");
+    assert_eq!(
+        core.request("vnoc/structure", Value::Null).unwrap()["revision"],
+        revision
+    );
+
+    // a doc of a Missing node: its code is not there, and the doc is found all the same
+    let gone = "0000000000000000000000000A";
+    write_record(&root, gone, "nested.py", "Gone");
+    let notes = root
+        .join(".vnoc/nodes")
+        .join(&gone[24..])
+        .join(gone)
+        .join("notes.md");
+    std::fs::write(&notes, "# Notes\nthe plains of serengeti\n").unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [&notes] }));
+    core.wait_for("vnoc/indexChanged");
+    let rows = wait_for_doc_rows(&mut core, "serengeti");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(
+        (row["missing"].clone(), row["node"].clone()),
+        (json!(true), Value::Null),
+        "{row}"
+    );
+    assert_eq!(
+        (
+            row["node_id"].as_str(),
+            row["node_name"].as_str(),
+            row["node_kind"].as_str(),
+            row["node_path"].as_str()
+        ),
+        (
+            Some(gone),
+            Some("Gone"),
+            Some("function"),
+            Some("nested.py")
+        ),
+        "{row}"
+    );
+    assert_eq!(
+        std::path::Path::new(row["doc_path"].as_str().unwrap()),
+        notes,
+        "{row}"
+    );
+
+    // a doc of a node whose code is not read (ignored): no node, and not Missing
+    let unread = "0000000000000000000000000B";
+    write_record(&root, unread, "ignored/x.py", "f");
+    let hush = root
+        .join(".vnoc/nodes")
+        .join(&unread[24..])
+        .join(unread)
+        .join("notes.md");
+    std::fs::write(&hush, "# Hush\nthe savannah of tanganyika\n").unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [&hush] }));
+    let rows = wait_for_doc_rows(&mut core, "tanganyika");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (rows[0]["missing"].clone(), rows[0]["node"].clone()),
+        (json!(false), Value::Null),
+        "{}",
+        rows[0]
+    );
+    assert_eq!(rows[0]["node_id"], unread, "{}", rows[0]);
+    assert_eq!(rows[0]["node_path"], "ignored/x.py", "{}", rows[0]);
+
+    // `kind:` and `in:` narrow the docs by their node
+    write_body("zanzibar");
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+    assert_eq!(wait_for_doc_rows(&mut core, "zanzibar").len(), 1);
+    assert_eq!(doc_rows(&mut core, "kind:class zanzibar").len(), 1);
+    assert!(doc_rows(&mut core, "kind:fn zanzibar").is_empty());
+    assert_eq!(doc_rows(&mut core, "in:nested.py zanzibar").len(), 1);
+    assert!(doc_rows(&mut core, "in:other/ zanzibar").is_empty());
     core.finish();
 }

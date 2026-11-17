@@ -7,9 +7,10 @@
 //! Files and folders are nodes too: a location with an empty qualname, found again by their `# FileID:` comment or `.vnoc-id` file.
 
 mod build;
-mod tree;
+pub(crate) mod tree;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use vnoc_domain::{LocationKey, NodeId, RepoPath, occurrences};
 use vnoc_driver_protocol::Def;
@@ -20,7 +21,7 @@ pub use tree::{Kind, Node};
 use crate::identity::{FoundBy, Markers, Resolved, resolve};
 use crate::protocol::{FailedFile, MissingNode, Problem};
 use crate::scan::Folder;
-use crate::userdata::{LoadProblem, LoadReport, NodeRecord};
+use crate::userdata::{DocTexts, LoadProblem, LoadReport, NodeRecord};
 
 /// A documented node that was found: what the tree shows on it.
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +75,8 @@ pub struct Index {
     missing: Vec<MissingNode>,
     /// an ID written in more than one place: one entry per copy that is **not** the node. Computed with `attached`.
     duplicates: Vec<Duplicate>,
+    /// the text of every doc, for search. Its own `generation`, never the revision: an edited body is not a change to the code or the records (Q2).
+    doc_texts: Arc<DocTexts>,
 }
 
 /// A copy of an ID that is not where the node was found. Nothing is changed for it: the user is told.
@@ -86,6 +89,24 @@ struct Duplicate {
 impl Index {
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// The doc texts as of the last update. The `Arc` is cheap to take: the disk work on it (`refresh`) is done off the index lock.
+    pub fn doc_texts(&self) -> Arc<DocTexts> {
+        self.doc_texts.clone()
+    }
+
+    /// The generation of [`Index::doc_texts`]: +1 when a doc was added, dropped or read again. Not the revision.
+    pub fn doc_generation(&self) -> u64 {
+        self.doc_texts.generation()
+    }
+
+    /// Stores the doc texts of an update. Returns whether the generation moved; **that is not part of `changed`** (an update that only changed doc
+    /// bodies announces nothing, Q2).
+    fn set_doc_texts(&mut self, texts: Arc<DocTexts>) -> bool {
+        let moved = texts.generation() != self.doc_texts.generation();
+        self.doc_texts = texts;
+        moved
     }
 
     pub fn truncated(&self) -> bool {
@@ -105,6 +126,11 @@ impl Index {
     /// Documented nodes the code does not match, sorted by path (then name).
     pub fn missing(&self) -> Vec<MissingNode> {
         self.missing.clone()
+    }
+
+    /// The `node.toml` of the record with this ID, as the last update read it.
+    pub fn record_toml(&self, id: &NodeId) -> Option<&vnoc_domain::NodeToml> {
+        self.records.get(id).map(|r| &r.toml)
     }
 
     /// The documented node found at this location, if any (by its ID in the code or by its stored place).
@@ -167,6 +193,33 @@ impl Index {
             .map(|(d, _)| d.clone())
     }
 
+    /// The innermost def of `path` that holds the 0-based line `line0`: of the defs whose range holds it, the one that starts last, and on a
+    /// tie the one that ends first. Its occurrence is counted as `def_at` counts it, so a redefinition is `#2`. `None` when no def holds the line.
+    pub fn innermost_def(&self, path: &RepoPath, line0: u32) -> Option<LocationKey> {
+        let defs = self.files.get(path)?;
+        let which = occurrences(defs.iter().map(|d| d.qualname.as_str()));
+        let (def, occurrence) = defs
+            .iter()
+            .zip(which)
+            .filter(|(d, _)| d.range.start.line <= line0 && line0 <= d.range.end.line)
+            .max_by(|(a, _), (b, _)| {
+                let (a, b) = (a.range, b.range);
+                (a.start.line, a.start.character)
+                    .cmp(&(b.start.line, b.start.character))
+                    .then((b.end.line, b.end.character).cmp(&(a.end.line, a.end.character)))
+            })?;
+        LocationKey::new(path.clone(), def.qualname.clone(), occurrence).ok()
+    }
+
+    /// Where the index found the node with this permanent ID: a def's location, or a file's or folder's (an empty qualname). `None` when it was
+    /// found nowhere (it may be Missing). `attached` is keyed by place, so this scans it: one lookup per query.
+    pub fn found_at(&self, id: &NodeId) -> Option<LocationKey> {
+        self.attached
+            .iter()
+            .find(|(_, a)| a.id == *id)
+            .and_then(|(key, _)| key.parse().ok())
+    }
+
     /// The paths of the files the driver outlined.
     fn outlined_paths(&self) -> impl Iterator<Item = &RepoPath> {
         self.files.keys()
@@ -175,6 +228,16 @@ impl Index {
     /// Whether this path is a file in scope (outlined or not).
     pub fn is_file(&self, path: &RepoPath) -> bool {
         self.knows(path)
+    }
+
+    /// The files in scope whose last path part is `name`, outlined or not.
+    pub fn files_named(&self, name: &str) -> Vec<RepoPath> {
+        self.files
+            .keys()
+            .chain(self.failed.keys())
+            .filter(|p| p.as_str().rsplit('/').next() == Some(name))
+            .cloned()
+            .collect()
     }
 
     /// Whether this path is a folder in scope (the opened folder itself is not one).
@@ -452,6 +515,130 @@ mod tests {
         };
         index.resolve_all();
         index
+    }
+
+    /// A def over lines `start..=end` (0-based), with its qualname.
+    fn span(qualname: &str, start: u32, end: u32) -> Def {
+        let at = |line| Position { line, character: 0 };
+        Def {
+            range: Range {
+                start: at(start),
+                end: at(end),
+            },
+            ..def(qualname, 0, None)
+        }
+    }
+
+    #[test]
+    fn the_innermost_def_holds_the_line_and_starts_last() {
+        // outer 0..=9, inner 2..=5, deepest 3..=4, then a second `outer` 12..=13 (a redefinition), and `same` twice on one range
+        let index = index(
+            &[(
+                "a.py",
+                vec![
+                    span("outer", 0, 9),
+                    span("outer.inner", 2, 5),
+                    span("outer.inner.deepest", 3, 4),
+                    span("outer", 12, 13),
+                    span("long", 20, 30),
+                    span("long.short", 20, 22),
+                ],
+            )],
+            vec![],
+        );
+        let at = |line| {
+            index
+                .innermost_def(&path("a.py"), line)
+                .map(|l| l.to_string())
+        };
+        assert_eq!(at(0).as_deref(), Some("a.py::outer"));
+        assert_eq!(at(2).as_deref(), Some("a.py::outer.inner"));
+        assert_eq!(
+            at(4).as_deref(),
+            Some("a.py::outer.inner.deepest"),
+            "the inner def wins"
+        );
+        assert_eq!(at(5).as_deref(), Some("a.py::outer.inner"));
+        assert_eq!(at(9).as_deref(), Some("a.py::outer"));
+        assert_eq!(at(10), None, "a line between defs");
+        assert_eq!(at(11), None);
+        assert_eq!(
+            at(12).as_deref(),
+            Some("a.py::outer#2"),
+            "a redefinition is #2"
+        );
+        assert_eq!(at(13).as_deref(), Some("a.py::outer#2"));
+        assert_eq!(at(14), None);
+        assert_eq!(at(999), None, "past the end");
+        // two defs start on the same line: the one that starts later in it, else the one that ends first
+        assert_eq!(
+            at(20).as_deref(),
+            Some("a.py::long.short"),
+            "same start: the one that ends first"
+        );
+        assert_eq!(at(25).as_deref(), Some("a.py::long"));
+        assert_eq!(
+            index.innermost_def(&path("other.py"), 0),
+            None,
+            "a file the index does not have"
+        );
+    }
+
+    #[test]
+    fn the_innermost_def_of_two_that_start_on_one_line_is_the_one_that_starts_later_in_it() {
+        let at = |line, character| Position { line, character };
+        let mut a = span("a", 0, 0);
+        a.range = Range {
+            start: at(0, 0),
+            end: at(0, 30),
+        };
+        let mut b = span("b", 0, 0);
+        b.range = Range {
+            start: at(0, 10),
+            end: at(0, 20),
+        };
+        let index = index(&[("a.py", vec![a, b])], vec![]);
+        assert_eq!(
+            index.innermost_def(&path("a.py"), 0).unwrap().qualname(),
+            "b"
+        );
+    }
+
+    #[test]
+    fn found_at_gives_where_an_id_was_found_and_nothing_for_an_id_not_found() {
+        let index = index(
+            &[("a.py", vec![def("f", 0, None), def("g", 5, None)])],
+            vec![
+                (id(1), record(&at("a.py", "g"), None, 1)),
+                (id(2), record(&at("gone.py", "h"), None, 1)),
+            ],
+        );
+        assert_eq!(index.found_at(&id(1)), Some(at("a.py", "g")));
+        assert_eq!(
+            index.found_at(&id(2)),
+            None,
+            "a Missing node was found nowhere"
+        );
+        assert!(index.is_missing(&id(2)));
+        assert_eq!(
+            index.found_at(&id(3)),
+            None,
+            "an ID the index does not know"
+        );
+    }
+
+    #[test]
+    fn found_at_gives_a_second_occurrence_and_a_file() {
+        let second = LocationKey::new(path("a.py"), "f", 2).unwrap();
+        let index = index(
+            &[("a.py", vec![def("f", 0, None), def("f", 5, None)])],
+            vec![
+                (id(1), record(&second, None, 1)),
+                (id(2), record(&at("a.py", ""), Some(NodeKind::File), 1)),
+            ],
+        );
+        assert_eq!(index.found_at(&id(1)), Some(second));
+        assert_eq!(index.found_at(&id(2)), Some(at("a.py", "")));
     }
 
     #[test]

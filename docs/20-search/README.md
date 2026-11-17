@@ -12,8 +12,8 @@ search
 ├── 02-names.md             name words, the six tiers, fuzzy by word, the ranges to draw bold
 ├── 03-doc-text.md          which text is kept, the word index, BM25, phrases, the snippet, keeping it fresh
 ├── 04-core.md              the vnoc-search crate, the corpus, vnoc/search, vnoc/searchCards, revisions
-├── 05-on-screen.md         the sidebar's two groups · the QuickPick · the canvas dims
-└── 06-build-order.md       steps S0 – S8, each with files, tests, and its commit message
+├── 05-on-screen.md         the sidebar's two groups · V-NOC: Search… is the box · the canvas dims
+└── 06-build-order.md       steps S0 – S9, each with files, tests, and its commit message
 ```
 
 ## 1. What it ships
@@ -22,7 +22,7 @@ The search box finds a node by a **few letters of its name** (`chor` → `checko
 **pasted reference** (`src/orders.py:142`, an ID), narrows by **filters** (`kind:fn no:doc in:billing/`), and finds **docs by the words in
 them** (`retry`, `"retry policy"`), with a snippet. While the box has text, the canvas **dims every card that is not a hit**.
 
-All of it is one pure Rust crate. The sidebar, the palette, `vnoc find` and `vnoc tree --where` (doc 21) and any other editor call it and draw the
+All of it is one pure Rust crate. The sidebar's box (which *V-NOC: Search…* opens), `vnoc find` and `vnoc tree --where` (doc 21) and any other editor call it and draw the
 answer. None of them ranks, filters or parses anything.
 
 | In | Out (later) |
@@ -40,15 +40,15 @@ Q7 was the one ask; you said yes on 2026-11-16. The others follow from P1 or fro
 | # | Decision | Why |
 |---|---|---|
 | **P1** | **Logic in the Rust core; UI code only draws and calls the core.** (`08` §1c.) | V-NOC will be ported to other editors. |
-| **Q1** | Search runs in the core, behind `vnoc/search`. The TypeScript `rankNodes` is deleted; its table tests move to Rust. | P1. The round trip is a local pipe **[measure]** (S3). |
+| **Q1** | Search runs in the core, behind `vnoc/search`. The TypeScript `rankNodes` is deleted; its table tests move to Rust. | P1. The round trip is a local pipe: about **5 ms**, key to drawn, measured in S3b (05 §1). |
 | **Q2** | The doc text lives **in memory**, read when the core loads `.vnoc/`, re-read only for files whose size or time changed. Nothing on disk. It has **its own counter and never moves the index revision**. | A thousand docs of a few KB is a few MB. The index revision means "the code or the records changed": call trees are marked stale by it (`shared/calls.ts` `isStale`), and a doc's body is neither. |
 | **Q3** | **No search library**: the word index and BM25 are about 300 lines of our own. `tantivy` or SQLite FTS5 only if a measured project needs them. | Size, and nothing here needs them. |
 | **Q4** | Ranges in the answer are in **UTF-16 code units**, as LSP's are. | Rust indexes by byte, JavaScript by UTF-16: a name with `é` would draw the wrong letters bold. |
-| **Q5** | The answer carries the index's **revision**; a page drops an answer older than the tree it shows. | The tree can change between the key and the answer. |
+| **Q5** | The answer carries the index's **revision**, for the CLI and the tests. **A page does not compare it** (changed 2026-11-17, S3): a restarted core counts revisions from the start again (`webview/src/state/data.ts`), so a page that dropped "older" answers would drop every answer after a restart. The page draws the answer to its newest request and asks again on `indexChanged`; that answer is from the new tree or a newer one. | The tree can change between the key and the answer. |
 | **Q6** | No meaning search in the extension. | A 30–100 MB model download, or code sent to an API. |
 | **Q7** *(new; yes, 2026-11-16)* | Search is its **own crate, `crates/vnoc-search`**: no disk, no async, no LSP types, one dependency (`serde`). It takes plain lists (names, doc texts) and gives plain results. | "Portable" then means something the compiler checks: the crate cannot reach the editor or the disk, so it also builds for a browser (`wasm32`) where no native program runs. The cost is one `Cargo.toml`. As a module of `crates/vnoc` it would work the same today and nothing would stop it from growing a dependency on the server. |
 | **Q8** *(new)* | **No cancelling.** A page numbers its requests and draws only the answer to the newest. | The first draft's cancel cannot work as written: `relay.ts` has no cancel message, and `ConcurrencyLayer` drops a request only at an `await`, which a search (a few ms of plain computing under a read lock) does not have. |
-| **Q9** *(new)* | **One query language** for the box, the palette, `vnoc find` and `vnoc tree --where`. A CLI flag is never a second way to say a filter. | One parser, one table test, one thing to teach (a person or an agent). |
+| **Q9** *(new)* | **One query language** for the box, `vnoc find` and `vnoc tree --where`. A CLI flag is never a second way to say a filter. | One parser, one table test, one thing to teach (a person or an agent). |
 | **Q10** *(new)* | A query that **names one node** (`file:line`, `file::Name`, an ID) is answered exactly, first, by `node_ref`, the same function doc 21's commands use. | Pasting a stack-trace line into the box is the same act as `vnoc show src/orders.py:142`. Built once, here. |
 | **Q11** *(new)* | **Quoted phrases are in.** | The first draft left them to a search library. With the text in memory a phrase is a substring check on the docs the words already found. |
 | **Q12** *(new)* | The canvas **asks the core which of its cards match** (`vnoc/searchCards`); the session carries only the query text. | The first draft sent the hit list (at most 200) through the session: a card that matched but was hit 201 would be dimmed. The canvas shows tens of cards; asking about those is exact and small. |
@@ -68,8 +68,8 @@ The first draft's shape was right (one request, tiers, BM25, P1). These are the 
 | 6 | "all words together are matched … every word must match" (§5, twice, differently) | — | 02 §4: each word alone, the node's tier is its worst word's |
 | 7 | names and paths only | a method's `name` is `parse_order`; `OrderService.parse` finds nothing | a tier for the qualified name (02 §2) |
 | 8 | `searchHits: string[]` in the session, at most the limit | the limit is 200 | Q12 |
-| 9 | limits with no totals | — | `nodesTotal`, `docsTotal`: the header can say "200 of 1,340" |
-| 10 | one `match` on a doc result | the title and the snippet are two strings | `titleMatch` and `snippetMatch` |
+| 9 | limits with no totals | — | `nodes_total`, `docs_total`: the header can say "200 of 1,340" |
+| 10 | one `match` on a doc result | the title and the snippet are two strings | `title_match` and `snippet_match` |
 | 11 | QuickPick `matchOnLabel: false` | VS Code has no such property (`matchOnDescription`, `matchOnDetail` only) | 05 §2: `alwaysShow` on each item **[check]** in S0, with a fallback that needs no check |
 | 12 | phrases need a search crate | the text is in memory | Q11 |
 | 13 | a wrong filter value finds nothing, silently | — | `notes` in the answer: "`kind:fnn` is not a kind (folder, file, class, function, method)" |
@@ -83,15 +83,19 @@ The first draft's shape was right (one request, tiers, BM25, P1). These are the 
 
 Two searches that rank differently, both in TypeScript, neither reads a doc. After this folder there is one, in Rust.
 
+**Built, 2026-11-17** (S1 – S8 on branch `search`): one search, in `crates/vnoc-search`, behind `vnoc/search` and `vnoc/searchCards`. The
+sidebar's box draws Nodes and Docs and dims the canvas; *V-NOC: Search…* opens the box (the QuickPick is gone: 05 §2). Measured on an M1:
+the corpus build about 6 ms on 10,000 names, the doc index about 16 ms on 1,000 docs, key to drawn about 5 ms.
+
 ## 5. Open checks
 
 | # | Check | Step | Decides |
 |---|---|---|---|
-| 1 | Does a `QuickPick` whose items all have `alwaysShow: true` keep the order it was given while its box has text? | S0 | 05 §2: the QuickPick stays, or *V-NOC: Search…* focuses the sidebar's box |
-| 2 | What do the pages do on `indexChanged`? (Confirms Q2: a doc save must not look like a code change.) | S0 | nothing if Q2 holds; a note in 03 §5 |
-| 3 | `cargo check -p vnoc-search --target wasm32-unknown-unknown` passes | S1 | Q7's claim, by hand once |
-| 4 | **[measure]** corpus build and one `run` on 10,000 generated names | S1 | whether the corpus needs to be built off the request (04 §2) |
-| 5 | **[measure]** key to drawn results, in the window | S3 | the debounce (05 §1) |
+| 1 | Does a `QuickPick` whose items all have `alwaysShow: true` keep the order it was given while its box has text? | **done** (S3b, 2026-11-17): **no, VS Code re-sorts**, so the fallback is taken. Walked on `e` (18 rows; the core's order is not the labels' sorted order, which the test asserts first): the core says `inner Outer method method Nested method method deepest nested.py decorated top top cond cond coro Local`, and VS Code highlights `decorated deepest inner method method method method Nested nested.py Outer top top cond cond coro Local` (S3's check walked `outer`, where one label matched, and could not tell) | 05 §2: **the fallback**: *V-NOC: Search…* shows the STRUCTURE view and puts the cursor in its box, with the starting query in it; `extension/src/search.ts` is deleted |
+| 2 | What do the pages do on `indexChanged`? (Confirms Q2: a doc save must not look like a code change.) | **done** (S0, 2026-11-17) | Q2 holds: 03 §5 |
+| 3 | `cargo check -p vnoc-search --target wasm32-unknown-unknown` passes | **done** (S1, 2026-11-17): **it passes**, Rust 1.94.1 | Q7 holds: the crate builds for the browser |
+| 4 | **[measure]** corpus build and one `run` on 10,000 generated names | **done** (S1, 2026-11-17): build 14 – 20 ms, one `run` 1.6 – 2.4 ms, Apple M1 | **done again** (S2b, 2026-11-17): the core's whole build (`tree::build`, the walk, `Corpus::new`) takes a median **5.6 – 7.3 ms**, under the line: 04 §2 |
+| 5 | **[measure]** key to drawn results, in the window | **done** (S3, 2026-11-17): `ms` (key to drawn) median 57 – 61 ms, worst 82 – 155 ms; `trip` (request to drawn) median 5 – 10 ms, worst 30 – 92 ms, Apple M1; 05 §1 | the debounce (05 §1): left at 50 ms, the planner decides |
 | 6 | **[measure]** 1,000 docs of 2 KB: first read, memory, one query | S6 | Q3 |
 
 ## 6. What later work stands on

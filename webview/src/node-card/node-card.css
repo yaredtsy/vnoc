@@ -24,6 +24,9 @@
 @keyframes vnoc-pulse { 50% { outline: 2px solid var(--card-selected); outline-offset: 5px; } }
 @media (prefers-reduced-motion: reduce) { .node-card.revealed { animation: none; } }
 /* the edges down to the selection are thicker (Canvas.tsx marks them) */
+/* the sidebar's search does not find this card (or the card an edge goes into): dimmed, nothing moves */
+.node-card.searched-out { opacity: 0.35; }
+.react-flow__edge.searched-out { opacity: 0.35; }
 .react-flow__edge.on-path .react-flow__edge-path { stroke: var(--card-selected); stroke-width: 2px; }
 
 /* a call edge is dashed (docs/16-ui-redesign/03-canvas.md §6); on the way to the selection it is as thick as any other edge there */

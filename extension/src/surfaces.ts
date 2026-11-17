@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import type { Events, Notes, Page, RequestMessage } from "@vnoc/shared/messages";
 
 import { type Handlers, event, serve } from "./relay";
+import { SidebarSlot } from "./sidebarSlot";
 
 // The three webview surfaces: the canvas and the docs tab beside a code editor (one bundle; the mode tells the page which one it is), and the STRUCTURE
 // view in the side bar (its own, smaller bundle: 06 §10). Same relay for all three.
@@ -16,7 +17,7 @@ export const DOCS = "vnoc.docs";
 export class Surfaces {
   private canvasPanel: vscode.WebviewPanel | undefined;
   private docsPanel: vscode.WebviewPanel | undefined;
-  private sidebarView: vscode.WebviewView | undefined;
+  private readonly sidebarSlot: SidebarSlot<vscode.WebviewView>;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -25,7 +26,11 @@ export class Surfaces {
     private readonly onNote: (note: Notes) => void,
     /** the canvas tab or the docs tab was closed (not hidden): a webview panel cannot veto its own close, so the host asks after it (docs/17-edit-in-canvas.md §7, 9.5c, §8) */
     private readonly onPageClosed: (page: Page) => void = () => {},
-  ) {}
+    /** the STRUCTURE view was disposed while it was the current one: its page's own cleanup did not run, so the host ends what the page had told the session (the box's text and the pointer) */
+    onSidebarClosed: () => void = () => {},
+  ) {
+    this.sidebarSlot = new SidebarSlot(onSidebarClosed);
+  }
 
   get canvas(): vscode.WebviewPanel | undefined {
     return this.canvasPanel;
@@ -36,25 +41,34 @@ export class Surfaces {
   }
 
   get sidebar(): vscode.WebviewView | undefined {
-    return this.sidebarView;
+    return this.sidebarSlot.view;
   }
 
   /** Sends an event to every open V-NOC page: the tabs and the side bar. */
   emit<E extends keyof Events>(name: E, data: Events[E]): void {
     this.canvasPanel?.webview.postMessage(event(name, data));
     this.docsPanel?.webview.postMessage(event(name, data));
-    this.sidebarView?.webview.postMessage(event(name, data));
+    this.sidebarSlot.view?.webview.postMessage(event(name, data));
+  }
+
+  /**
+   * Resolves when the STRUCTURE page has drawn (at once if it has), or after `ms`: a page with no folder open never draws a list, and the command that waits must not hang.
+   * An event posted before the page is listening is lost, so a command that needs the page waits for this first.
+   */
+  whenSidebarDrew(ms: number): Promise<void> {
+    return this.sidebarSlot.whenDrew(ms);
   }
 
   /** The STRUCTURE view was resolved (it is shown for the first time, or VS Code made it again): give it its page. */
   adoptSidebar(view: vscode.WebviewView): void {
-    this.sidebarView = view;
+    this.sidebarSlot.adopt(view); // a new page: it has not drawn, and nothing it is sent is heard until it has
     view.webview.options = this.options();
-    view.onDidDispose(() => {
-      if (this.sidebarView === view) this.sidebarView = undefined;
-    });
+    view.onDidDispose(() => this.sidebarSlot.disposed(view));
     view.webview.html = this.html(view.webview, { script: "assets/sidebar.js", css: "assets/sidebar.css", attributes: `data-mode="sidebar" data-folder="${(vscode.workspace.workspaceFolders?.length ?? 0) > 0}" data-hover-delay="${vscode.workspace.getConfiguration("workbench.hover").get<number>("delay", 500)}"` });
-    view.webview.onDidReceiveMessage((m: RequestMessage | Notes) => void this.receive(view.webview, m, () => {}));
+    view.webview.onDidReceiveMessage((m: RequestMessage | Notes) => {
+      if (m.type === "sidebarRendered") this.sidebarSlot.rendered(view);
+      void this.receive(view.webview, m, () => {});
+    });
   }
 
   /**
@@ -72,15 +86,16 @@ export class Surfaces {
 
   /**
    * The one docs tab, in the column beside the editor, with the cursor left in the code. It follows the cursor, unless `pinTo` names a node
-   * (Show Docs on a row or a card): then it shows that one until the pin is released. A new tab learns it from its page (no message can be lost).
+   * (Show Docs on a row or a card): then it shows that one until the pin is released; `doc` (a doc's path, with `pinTo`) is the doc of it to show. A new tab learns both from its
+   * page (no message can be lost).
    */
-  showDocs(pinTo?: string): vscode.WebviewPanel {
+  showDocs(pinTo?: string, doc?: string): vscode.WebviewPanel {
     if (this.docsPanel) {
       this.docsPanel.reveal(undefined, true);
-      if (pinTo) this.docsPanel.webview.postMessage(event("showNode", { id: pinTo }));
+      if (pinTo) this.docsPanel.webview.postMessage(event("showNode", doc ? { id: pinTo, path: doc } : { id: pinTo }));
       return this.docsPanel;
     }
-    return this.adopt("docs", vscode.window.createWebviewPanel(DOCS, "V-NOC docs", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, this.options()), pinTo);
+    return this.adopt("docs", vscode.window.createWebviewPanel(DOCS, "V-NOC docs", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, this.options()), pinTo, doc);
   }
 
   /** A tab VS Code restored after a restart. */
@@ -97,7 +112,7 @@ export class Surfaces {
     return vscode.Uri.joinPath(this.ctx.extensionUri, "media", "webview");
   }
 
-  private adopt(mode: Mode, panel: vscode.WebviewPanel, pinTo?: string): vscode.WebviewPanel {
+  private adopt(mode: Mode, panel: vscode.WebviewPanel, pinTo?: string, doc?: string): vscode.WebviewPanel {
     if (mode === "canvas") this.canvasPanel = panel;
     else this.docsPanel = panel;
     // the tab's icon: an SVG file does not take the theme's colour, so there is one for each theme kind
@@ -114,7 +129,7 @@ export class Surfaces {
         this.onPageClosed("docs");
       }
     });
-    panel.webview.html = this.html(panel.webview, { script: "assets/index.js", css: "assets/index.css", attributes: `data-mode="${mode}"${pinTo ? ` data-node="${escapeAttribute(pinTo)}"` : ""}` });
+    panel.webview.html = this.html(panel.webview, { script: "assets/index.js", css: "assets/index.css", attributes: `data-mode="${mode}"${pinTo ? ` data-node="${escapeAttribute(pinTo)}"` : ""}${pinTo && doc ? ` data-doc="${escapeAttribute(doc)}"` : ""}` });
     panel.webview.onDidReceiveMessage((m: RequestMessage | Notes) => void this.receive(panel.webview, m, () => panel.dispose()));
     return panel;
   }

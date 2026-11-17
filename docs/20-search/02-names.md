@@ -49,7 +49,8 @@ none.
 |---|---|---|---|
 | `chor` | `checkout_order` | yes | `ch` + `or` |
 | `co` | `checkout_order` | yes | `c` + `o` |
-| `cko` | `checkout_order` | no | no word starts with `k` |
+| `cko` | `checkout_order` | yes (tier 1: the name holds it) | `checkout` holds `cko`; the better tier wins |
+| `kor` | `checkout_order` | no | no word starts with `k`, and the name does not hold it |
 | `hc` | `HTTPClient` | yes | `H` + `C` |
 | `httpcl` | `HTTPClient` | yes (tier 0: the name starts with it) | the better tier wins |
 | `abcd` | `ab_abc_d` | yes | nothing from `ab`, `abc` from `abc`, `d` from `d`. Taking `ab` from the first word leaves `cd` with no word to start: **the match must try again when the greedy cut fails** |
@@ -76,7 +77,8 @@ words), and `billing/ pay` finds `pay…` under `billing/` at tier 4 (the path w
 
 1. the exact reference, if the query was one (01 §1);
 2. the tier;
-3. inside tier 2, fewer name words skipped;
+3. inside tier 2, fewer name words skipped (with several words, the sum over the words; a word not at tier 2 adds 0). A node whose tier is not
+   2 has 0 skipped: a tier-4 node is not ordered by the skips of its tier-2 word;
 4. the shorter name (closer to the whole name);
 5. reading order (the tree's order: folders first, then files, each sorted as the Explorer sorts; defs in source order).
 

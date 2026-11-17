@@ -2,12 +2,12 @@ import * as path from "path";
 import Mocha from "mocha";
 
 // The window suites, in the order they run. `bar` stops the core on purpose and restarts it: the suites after it prove it came back.
-const SUITES = ["skeleton", "bar", "session", "sidebar", "attention", "refactor", "calls", "edit"];
+const SUITES = ["skeleton", "bar", "session", "sidebar", "attention", "refactor", "calls", "edit", "search"];
 
 /**
  * Suites that do not pass alone, and what they need first (found by running each suite alone). `attention` and `calls` wait for the host to read the structure,
  * and the host reads it only while a page is open to ask: `session` shows the STRUCTURE side bar, whose page stays. `skeleton` does that too, with the canvas,
- * but its page does not stay for `attention`. The others (skeleton, bar, session, sidebar, refactor, edit) pass alone.
+ * but its page does not stay for `attention`. The others (skeleton, bar, session, sidebar, refactor, edit, search) pass alone.
  */
 const NEEDS: Record<string, string[]> = { attention: ["session"], calls: ["session"] };
 

@@ -38,6 +38,13 @@ export function DocsApp() {
     if (drafting !== null && pinned !== drafting) pin(drafting);
   }, [drafting, pinned]);
 
+  // The doc a search pick chose: a tab opened by the pick finds it in the page's `data-doc` (set with `data-node`, so no message can be lost), an open tab hears `showNode`. `n` makes a second
+  // pick of the same doc a new one: the panel chooses it again even after another was chosen by hand.
+  const [choose, setChoose] = useState<{ path: string; n: number } | null>(() => {
+    const path = document.getElementById("root")?.dataset.doc;
+    return path ? { path, n: 0 } : null;
+  });
+
   // Only the newest ask speaks: two asks can cross, and the older answer must not replace the newer one. Not by index revision: a core that was
   // restarted counts revisions from the start again, and its answers would be dropped for ever.
   const latest = useRef(0);
@@ -47,7 +54,11 @@ export function DocsApp() {
   }, []);
   useEffect(() => {
     refresh();
-    const stops = [on("indexChanged", refresh), on("showNode", ({ id }) => pin(id))];
+    const stops = [on("indexChanged", refresh), on("showNode", ({ id, path }) => {
+        pin(id);
+        if (path) setChoose((c) => ({ path, n: (c?.n ?? 0) + 1 }));
+      }),
+    ];
     return () => stops.forEach((stop) => stop());
   }, [refresh]);
 
@@ -61,6 +72,10 @@ export function DocsApp() {
   // a Missing node is not in the tree: its pin carries the permanent ID, and the structure lists it
   const pinnedNode = !structure || !pinned ? null : pinned.startsWith(MISSING_PIN) ? ((m) => (m ? missingAsNode(m) : null))(structure.missing.find((m) => MISSING_PIN + m.id === pinned)) : findNode(structure.root, pinned);
   const node = pinnedNode ?? followed;
+  // what the tab shows, for the extension's test suite
+  const [shownDoc, setShownDoc] = useState<string | null>(null);
+  const nodeShown = node?.id ?? null;
+  useEffect(() => post({ type: "docsShown", pinned, node: nodeShown, doc: shownDoc }), [pinned, nodeShown, shownDoc]);
   const addDoc = (key: string) => void request("addDoc", { key }).catch(() => {});
 
   return (
@@ -70,6 +85,8 @@ export function DocsApp() {
           fill
           emptyText="Put the cursor in a function or class, or click a node on the canvas, to see its docs here."
           node={node}
+          choose={choose}
+          onShown={setShownDoc}
           revision={structure?.revision ?? 0}
           onAddDoc={addDoc}
           onClose={() => post({ type: "close" })}

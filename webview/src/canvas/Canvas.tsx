@@ -16,6 +16,7 @@ import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
 import { holderOf, pathEdges } from "./marks.ts";
+import { useSearchDim } from "./useSearchDim.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
 
 const nodeTypes = { card: NodeCard };
@@ -118,11 +119,13 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
 
   // The edges from the root of what is drawn down to the selection are thicker: you see where it sits in the tree at a glance.
   const drawnRoot = laid.nodes[0]?.id;
+  useSearchDim(laid.nodes);
+  const dimmed = useView((v) => v.dimmed);
   const edges = useMemo(() => {
     const onPath = root && drawnRoot ? pathEdges(root, drawnRoot, selected) : new Set<string>();
     // a call edge is dashed (03 §6); the way down to the selection is thicker, whichever kind the edge is
-    return laid.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, className: [e.kind === "call" && "call", onPath.has(e.id) && "on-path"].filter(Boolean).join(" ") || undefined }));
-  }, [laid, root, drawnRoot, selected]);
+    return laid.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, className: [e.kind === "call" && "call", onPath.has(e.id) && "on-path", dimmed?.has(e.target) && "searched-out"].filter(Boolean).join(" ") || undefined }));
+  }, [laid, root, drawnRoot, selected, dimmed]);
 
   // A closed card that holds the selection or the cursor shows a dot (the cards read these two ids from the view store).
   const drawnIds = useMemo(() => new Set(laid.nodes.map((p) => p.id)), [laid]);

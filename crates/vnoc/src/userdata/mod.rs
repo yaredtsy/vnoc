@@ -4,6 +4,7 @@
 //! This module does not know the index, the driver or the editor, so it is tested with nothing but a temp folder.
 
 pub(crate) mod atomic;
+mod doc_text;
 mod layout;
 mod read;
 mod trash;
@@ -14,6 +15,7 @@ use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, value};
 use vnoc_domain::{LocationKey, NodeId, NodeToml};
 
+pub use doc_text::{DocStats, DocText, DocTexts};
 pub use read::{DocInfo, LoadProblem, LoadReport, NodeRecord};
 pub use trash::{MovePlan, TrashEntry, TrashError};
 
@@ -181,6 +183,15 @@ impl UserData {
     /// Every node folder, read. Broken ones are reported, not fatal.
     pub fn load_all(&self) -> LoadReport {
         read::load_all(&self.root)
+    }
+
+    /// The doc texts of `records` (what `load_all` gave), reading only the files whose stamp moved since `held`. Disk work only.
+    pub fn refresh_doc_texts(
+        &self,
+        held: &DocTexts,
+        records: &[(NodeId, NodeRecord)],
+    ) -> (DocTexts, DocStats) {
+        held.refresh(&self.root, records)
     }
 }
 

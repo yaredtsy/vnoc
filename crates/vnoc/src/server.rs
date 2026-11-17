@@ -15,7 +15,7 @@ use std::fmt::Display;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use async_lsp::lsp_types::{
     InitializeParams, InitializeResult, InitializedParams, ServerCapabilities, ServerInfo,
@@ -34,14 +34,17 @@ use crate::protocol::{
     CallTreeResult, DocInfo, Docs, DocsParams, FilesChanged, FilesChangedParams, HasCalls,
     HasCallsParams, HasCallsResult, IndexChanged, IndexChangedParams, MovePlan, Ping, PingResult,
     ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan,
-    RestorePlanParams, Stats, Structure, StructureResult, Trash, TrashInfo, TrashInfoResult,
-    TrashItem, TrashList, TrashParams, WriteId, WriteIdParams, WriteIdResult,
+    RestorePlanParams, Search, SearchCards, SearchCardsParams, SearchCardsResult, SearchParams,
+    SearchResult, Stats, Structure, StructureResult, Trash, TrashInfo, TrashInfoResult, TrashItem,
+    TrashList, TrashParams, WriteId, WriteIdParams, WriteIdResult,
 };
 use crate::protocol::{Locate, LocateParams, Located};
+use crate::search::{Prepared, answer, prepare};
 use crate::userdata::{TrashError, UserData};
 use crate::watchdog::timed;
 use vnoc_domain::{LocationKey, NodeId};
 use vnoc_driver_protocol::CallEntry;
+use vnoc_search::{Corpus, DocIndex, Limits, matches, run};
 
 /// Where the first build is.
 #[derive(Clone)]
@@ -58,6 +61,9 @@ enum Work {
     Files(Vec<PathBuf>),
 }
 
+/// What a corpus is made for: the index revision and the doc-text generation.
+type CorpusKey = (u64, u64);
+
 /// Shared between the handlers and the background tasks they start.
 struct State {
     project: OnceLock<Project>,
@@ -69,6 +75,11 @@ struct State {
     attaching: tokio::sync::Mutex<()>,
     /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
     everything_pending: AtomicBool,
+    /// The corpus `vnoc/search` reads, kept with the index revision and the doc-text generation it was made for (`search::kept`). Taken after the index
+    /// lock, never before it, and by nothing else.
+    corpus: Mutex<Option<(CorpusKey, Arc<Corpus>)>>,
+    /// The doc index, kept under the doc-text generation (03 §9). Taken inside `corpus`'s lock (while a corpus is built), never the other way round.
+    doc_index: Mutex<Option<(u64, Arc<DocIndex>)>>,
 }
 
 #[derive(Clone)]
@@ -87,6 +98,8 @@ impl Core {
             one_at_a_time: tokio::sync::Mutex::new(()),
             attaching: tokio::sync::Mutex::new(()),
             everything_pending: AtomicBool::new(false),
+            corpus: Mutex::new(None),
+            doc_index: Mutex::new(None),
         };
         Core {
             client,
@@ -181,6 +194,8 @@ pub fn router(client: ClientSocket) -> Router<Core> {
             })
         })
         .request::<Structure, _>(structure)
+        .request::<Search, _>(search)
+        .request::<SearchCards, _>(search_cards)
         .request::<ProjectInfo, _>(project_info)
         .request::<Attach, _>(attach)
         .request::<Relink, _>(relink)
@@ -316,6 +331,74 @@ fn structure(
             failed: index.failed(),
             missing: index.missing(),
             problems: index.problems(project.git_root()),
+        })
+    })
+}
+
+/// Waits for the first build, then the query read and its corpus (`search::prepare`): what `vnoc/search` and `vnoc/searchCards` both start from.
+/// No `.await` while a lock is held: the waiting is done before `prepare` takes any.
+async fn prepared(state: &State, text: &str) -> Result<Prepared, ResponseError> {
+    let status = state
+        .status
+        .subscribe()
+        .wait_for(|s| !matches!(s, Status::Building))
+        .await
+        .map_err(internal)?
+        .clone();
+    if let Status::Failed(message) = status {
+        return Err(internal(message));
+    }
+    let project = state
+        .project
+        .get()
+        .ok_or_else(|| internal("no folder is open"))?;
+    Ok(prepare(
+        project,
+        &state.index,
+        &state.corpus,
+        &state.doc_index,
+        text,
+    ))
+}
+
+/// `vnoc/search`: the nodes a query finds. The corpus is built from the tree on the first search after a change and kept (`search::kept`); the search
+/// itself runs on it with no lock held.
+fn search(
+    core: &mut Core,
+    params: SearchParams,
+) -> impl std::future::Future<Output = Result<SearchResult, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("search", async move {
+        let found = prepared(&state, &params.query).await?;
+        let defaults = Limits::default();
+        let limits = Limits {
+            nodes: params.nodes.unwrap_or(defaults.nodes),
+            docs: params.docs.unwrap_or(defaults.docs),
+        };
+        let results = run(&found.corpus, &found.query, found.exact, limits);
+        Ok(answer(found.revision, &found.corpus, &found.query, results))
+    })
+}
+
+/// `vnoc/searchCards`: which of the asked node ids the query finds (`vnoc_search::matches`).
+fn search_cards(
+    core: &mut Core,
+    params: SearchCardsParams,
+) -> impl std::future::Future<Output = Result<SearchCardsResult, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("searchCards", async move {
+        let found = prepared(&state, &params.query).await?;
+        let asked: Vec<&str> = params.ids.iter().map(String::as_str).collect();
+        let hit = matches(&found.corpus, &found.query, found.exact, &asked);
+        Ok(SearchCardsResult {
+            revision: found.revision,
+            hits: params
+                .ids
+                .iter()
+                .zip(hit)
+                .filter(|&(_, hit)| hit)
+                .map(|(id, _)| id.clone())
+                .collect(),
         })
     })
 }

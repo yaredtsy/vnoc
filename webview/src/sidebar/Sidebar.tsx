@@ -32,7 +32,7 @@ export function Sidebar() {
   // each panel's list, by context: where `Tab` goes, and where the keyboard goes when a search ends
   const lists = useRef(new Map<ContextId, HTMLDivElement>());
   const focusList = (id: ContextId) => lists.current.get(id)?.focus({ preventScroll: true });
-  const search = useSearch(structure?.root ?? null, () => focusList(useSession.getState().active));
+  const search = useSearch(() => focusList(useSession.getState().active));
   const showBox = body === "ready" || body === "loading";
   return (
     <TooltipProvider delay={hoverDelay}>
@@ -55,13 +55,13 @@ export function Sidebar() {
             inputRef={search.input}
             disabled={body === "loading"}
             expanded={search.searching}
-            activeId={search.searching && search.results.length > 0 ? resultId(search.active) : undefined}
+            activeId={search.searching && search.count > 0 ? resultId(search.active) : undefined}
             onClear={search.clear}
           />
         )}
         {body === "ready" && structure ? (
           search.searching ? (
-            <SearchResults results={search.results} active={search.active} onPick={search.pick} />
+            <SearchResults rows={search.rows} docs={search.docs} total={search.total} docsTotal={search.docsTotal} notes={search.notes} noMatches={search.noMatches} active={search.active} onPick={search.pickAt} />
           ) : (
             <Panels structure={structure} onList={(id, el) => (el ? lists.current.set(id, el) : lists.current.delete(id))} focusList={focusList} />
           )

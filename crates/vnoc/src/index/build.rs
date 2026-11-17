@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use vnoc_domain::RepoPath;
@@ -90,6 +90,14 @@ pub async fn refresh(
     // `.vnoc/` is small and read from disk every time: a doc added by a teammate's `git pull` is as good as one added here
     let data = UserData::new(project.git_root());
     let report = tokio::task::spawn_blocking(move || data.load_all()).await?;
+    // the doc texts: the old ones under the read lock, the disk work with no lock held, the result stored with the rest below
+    let held = index.read().unwrap().doc_texts();
+    let data = UserData::new(project.git_root());
+    let (report, (doc_texts, doc_stats)) = tokio::task::spawn_blocking(move || {
+        let texts = data.refresh_doc_texts(&held, &report.records);
+        (report, texts)
+    })
+    .await?;
     for problem in &report.problems {
         tracing::warn!("{}", problem.text);
     }
@@ -127,6 +135,8 @@ pub async fn refresh(
         let mut index = index.write().unwrap();
         let mut changed = index.retain_only(&in_scope);
         changed |= index.set_records(report);
+        // not part of `changed`: a doc body is not a change to the tree (Q2)
+        index.set_doc_texts(Arc::new(doc_texts));
         changed |= index.set_on_disk(on_disk);
         changed |= index.set_folders(scan.folders);
         changed |= index.set_truncated(scan.truncated);
@@ -140,9 +150,11 @@ pub async fn refresh(
         changed
     };
     tracing::info!(
-        "index: walked {} files in {} ms, read {read} with the driver, {} ms in all{}",
+        "index: walked {} files in {} ms, read {read} with the driver, {} doc files looked at and {} read, {} ms in all{}",
         in_scope.len(),
         walked.as_millis(),
+        doc_stats.stat_count,
+        doc_stats.read_count,
         started.elapsed().as_millis(),
         if changed { "" } else { " (nothing changed)" }
     );

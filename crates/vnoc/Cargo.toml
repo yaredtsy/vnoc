@@ -8,6 +8,7 @@ description = "The V-NOC core: speaks LSP-framed JSON-RPC to the editor extensio
 [dependencies]
 vnoc-domain = { path = "../vnoc-domain" }
 vnoc-driver-protocol = { path = "../vnoc-driver-protocol" }
+vnoc-search = { path = "../vnoc-search" }
 
 # The core's transport is async-lsp on tokio (VS-D67). Use async_lsp::lsp_types: a second lsp-types crate gives a second, incompatible Request trait.
 async-lsp = { version = "0.2", features = ["tokio"] }

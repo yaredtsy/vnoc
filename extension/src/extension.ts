@@ -35,6 +35,14 @@ const renderWaiters: ((r: Rendered) => void)[] = [];
 /** What the STRUCTURE view last said it drew (for the test suite). */
 type SidebarRendered = { context: string; rows: number; selected: string | null; inView: boolean; drawn: boolean; height: number };
 const sidebarPosts: SidebarRendered[] = [];
+/** The answers the STRUCTURE view drew for its search box (for the test suite). */
+const searchDrawnPosts: { query: string; ids: string[]; docs: string[]; total: number; notes: string[]; ms: number; trip: number }[] = [];
+/** What the canvas said it dimmed for the sidebar's search (for the test suite). */
+const searchDimPosts: { query: string; dimmed: string[] }[] = [];
+/** What the docs tab said it shows (for the test suite). */
+const docsShownPosts: { pinned: string | null; node: string | null; doc: string | null }[] = [];
+/** What the STRUCTURE view said when it handled `focusSearch`: whether the cursor is in the box, and what the box holds (for the test suite). */
+const searchFocusedPosts: { focused: boolean; text: string }[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
@@ -128,6 +136,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     reportIssue: async () => void (await vscode.commands.executeCommand("vnoc.reportIssue")),
     retryCalls: async (key) => callTrees.retry(key),
     rowClick: (context, id) => commands.rowClick(context, id),
+    showDoc: (params) => commands.showDoc(params),
     command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
   });
   panels = new Surfaces(
@@ -141,6 +150,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     (page) => {
       if (page === "canvas") draftsChip = { count: 0, label: "" }; // the chip it drew is gone with the page, which posts nothing on its way out
       void draftCopy.onPageClosed(page);
+    },
+    () => {
+      // the box's page is gone and cannot say its box is empty: the canvas undims and nothing is pointed at
+      store.dispatch({ type: "search", query: null });
+      store.dispatch({ type: "highlight", id: null });
     },
   );
   commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs, docs);
@@ -229,6 +243,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     readingStarts: () => readingStarts(),
     /** whether the STRUCTURE view has been shown (its page exists) */
     sidebarOpen: () => panels.sidebar !== undefined,
+    /** whether VS Code says the STRUCTURE view is on screen now (a page that is not is throttled: its timers and drawing wait) */
+    sidebarVisible: () => panels.sidebar?.visible === true,
     /** the context chips the bar draws now: empty with one context */
     chips: () => chips,
     /** the bar's "N unsaved drafts" chip as the canvas page last drew it: `count` 0 and `label` "" when there is none, and while no canvas page is open */
@@ -260,6 +276,18 @@ export function activate(ctx: vscode.ExtensionContext) {
     codeOf: (path: string, range: Range, saveFirst = false) => commands.codeOf(path, range, saveFirst),
     /** the host's answer to Save on a draft; `locate` stands in for the core's `vnoc/locate`, so a test can edit the document before it answers, and `ask` for the modal about a draft that takes the ID away */
     editSave: (params: EditSaveParams, locate?: Locate, ask?: AskToDropId) => commands.editSaveOf(params, locate, ask),
+    /** every answer the STRUCTURE view drew for its search box, in order: the text it answers, the rows' ids, how many matched, and the time from the change of the box (`ms`) and from the request (`trip`) to the draw */
+    searchDrawn: () => searchDrawnPosts,
+    /** puts text in the STRUCTURE view's search box as typing would (the view command reaches the sidebar through `panels.emit`, like every other page) */
+    setSearch: (text: string) => panels.emit("viewCommand", { name: "setSearch", text }),
+    /** every answer the canvas applied for the sidebar's search, in order: the text, and the ids of the cards it dimmed; `dimmed: []` (and no text) when the search ended */
+    searchDim: () => searchDimPosts,
+    /** what the docs tab showed each time it changed, in order: the node it is pinned to, the node it draws, and the doc's path */
+    docsShown: () => docsShownPosts,
+    /** every `focusSearch` the STRUCTURE view handled (*V-NOC: Search…*), in order: was the cursor in the box, and what did it hold */
+    searchFocused: () => searchFocusedPosts,
+    /** a key pressed in the STRUCTURE view's search box (`ArrowDown`, `Enter`, `Escape`), as the page handles it: the suite cannot press keys in a webview */
+    searchKey: (key: string) => panels.emit("viewCommand", { name: "searchKey", key }),
     /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
     codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
@@ -311,6 +339,18 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "codeShown":
       codeShownPosts.push({ key: note.key, dirty: note.dirty, text: note.text });
+      break;
+    case "searchDrawn":
+      searchDrawnPosts.push({ query: note.query, ids: note.ids, docs: note.docs, total: note.total, notes: note.notes, ms: note.ms, trip: note.trip });
+      break;
+    case "searchDim":
+      searchDimPosts.push({ query: note.query, dimmed: note.dimmed });
+      break;
+    case "docsShown":
+      docsShownPosts.push({ pinned: note.pinned, node: note.node, doc: note.doc });
+      break;
+    case "searchFocused":
+      searchFocusedPosts.push({ focused: note.focused, text: note.text });
       break;
     case "sidebarRendered":
       sidebarPosts.push({ context: note.context, rows: note.rows, selected: note.selected, inView: note.inView, drawn: note.drawn, height: note.height });

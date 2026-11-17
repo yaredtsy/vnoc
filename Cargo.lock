@@ -954,6 +954,7 @@ dependencies = [
  "tracing-subscriber",
  "vnoc-domain",
  "vnoc-driver-protocol",
+ "vnoc-search",
 ]
 
 [[package]]
@@ -974,6 +975,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "vnoc-search"
+version = "0.2.0"
 
 [[package]]
 name = "waitpid-any"
