@@ -77,6 +77,15 @@ A query with words **and** a phrase: nodes are matched by the words only; docs m
 | `a.py:12:5` (line and column) | a reference to line 12 |
 | `C:\repo\a.py:12` | a reference: the drive's colon is not the line's (`node_ref::parse`, S5) |
 | two tokens, one a reference | no reference: both are words (a reference is the whole query) |
+| `kind:fn "a b"` (filters and a phrase, no word) | no nodes: the phrase is for docs, and listing every function under it would be noise |
+| `kind:class,fnn` | `class` is kept, `fnn` gets its note, and the query keeps nothing; a trailing comma (`kind:class,`) is ignored; `kind:,` gets a note naming `kind:,` |
+| `has:Code` | the note shows name and value in lower case: `has:code` |
+| `in:./`, `in:/` | the empty path, which is the opened folder: `in:./` keeps everything, `-in:./` keeps nothing; no note |
+| `a.py:12 ""` | still a reference (`""` is not a token); the shape alone decides, so `12:30` and `:12` are references too, and the core (S5) finds nothing for them |
+| `in:"my folder/"` · `foo"bar baz"` · `"a b"c` | a quoted value; words (a quote closing inside a token joins, it does not make a phrase); a word |
+| a reference with a filter that keeps nothing | no nodes, even with `exact` (as an empty query) |
+
+*(The seven rows above were settled in S4, 2026-11-17, as its tests have them.)*
 
 ## 5. The parse, as a type
 

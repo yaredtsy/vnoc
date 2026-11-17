@@ -164,6 +164,13 @@ impl Index { pub fn resolve_ref(&self, project: &Project, r: &NodeRef) -> Found 
 - In the box only a query that is **one token** is tried as a reference, and a bare path (`src/orders.py`) is not: it is already found by the
   path tiers, in order. The CLI tries all four forms.
 - An ID that resolves to a Missing node gives no node row; its docs are found if the query's words find them. (The CLI says where it was.)
+- *(Settled for S5, 2026-11-17.)* A pasted line is **1-based**, as an editor and a stack trace show it; a def's `range` is 0-based. "Innermost" is
+  the holding def that starts last (ties: the one that ends first). A line in no def, or past the end, gives the file.
+- `Found::Node` carries the **tree's** id, the one the corpus has: the location key's text for a def, the repo path for a file or a folder (a
+  file's or folder's location key has an empty qualname). The server finds its place with `Corpus::position(id)`, a scan: one lookup per query.
+- `resolve_ref` uses only public `Index` methods; what it needs and the index does not have yet is added in `index/mod.rs`: the innermost def at
+  a line, and where an ID was found (from `attached`). Those two get unit tests there; `resolve_ref` itself is tested through `vnoc/search` in
+  `lifecycle.rs`, on the real driver and real records.
 
 ## 5. `vnoc/searchCards` (Q12)
 
