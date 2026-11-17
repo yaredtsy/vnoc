@@ -144,7 +144,12 @@ method gives the method, a line between defs gives the file, an ID gives its nod
 
 Commit: `search S5: a pasted file:line, location or ID finds its node`.
 
-### S6 Doc text
+### S6 Doc text (two steps: S6a the crate, S6b the core; split 2026-11-17)
+
+S6a is the `vnoc-search` rows of the table below (`src/docs.rs`, `src/run.rs`, the crate's tests and timing), on `DocEntry` lists the tests
+build by hand: 03 §8 pins its details. S6b is the rest (`DocTexts`, `refresh`, the corpus's docs, the protocol rows, the core's tests).
+Commits: `search S6a: doc text ranked in the crate` and `search S6b: the core reads and keeps the doc text`.
+
 
 | Files | What |
 |---|---|

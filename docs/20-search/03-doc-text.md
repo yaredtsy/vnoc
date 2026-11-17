@@ -14,8 +14,8 @@ doc text
 ## 1. What is kept
 
 For every `.md` in every node folder `load_all` reads (`userdata/read.rs`): its **title** (the first `# heading` after the frontmatter, else the
-file name without `.md`: `title_of`, Q13) and its **body** (the text after the frontmatter, the title line included). The frontmatter itself is
-not searched.
+file name without `.md`: `title_of`, Q13) and its **body** (the text after the frontmatter, **without** the title's own `# ` line: that line is the title, counted as §3 says, not
+counted twice). The frontmatter itself is not searched.
 
 Docs of **Missing** nodes are kept too, and say so in the answer (`missing: true`): a doc someone cannot find any other way is the one search
 should find.
@@ -90,3 +90,30 @@ units (Q4).
 Kept in memory: each body once, each title once, the word map. **[measure]** in S6 on 1,000 generated docs of 2 KB: the first read, the memory,
 one query, and one update after a single doc changed. Written here. If the first read is over 200 ms it moves off the first build's path (search
 answers names until it is done); not before the number says so.
+
+## 8. Settled for S6a (2026-11-17)
+
+The crate's side, so that S6a's tests have one answer each.
+
+- **What the crate returns:** `DocHit { index, score: f64, title_ranges, snippet: String, snippet_ranges }`. `index` points into the corpus's
+  docs; the ranges are UTF-16 (Q4), the snippet's measured in the snippet string as returned (a leading `…` is one unit).
+- **Query words for docs:** each query word is split by §2's rule (at anything not a letter or a digit), so `billing/` is `billing` and
+  `OrderService.par` is `orderservice` and `par`. Every piece is required. The **last piece of the last word** is the prefix; a word that is
+  only punctuation adds nothing.
+- **Postings:** a camelCase token gives its whole form and its parts, each a posting at its own byte range; every posting counts toward the
+  doc's length. A title posting counts three times, in the term count and in the length.
+- **BM25:** idf = ln(1 + (N − df + 0.5) / (df + 0.5)); k1 = 1.2, b = 0.75, the average length over the corpus's docs. The prefix is **one term**:
+  its df is the number of docs holding any of its words (at most the 200 with the highest df, ties by the word), its tf the sum of theirs.
+- **Phrases:** their words are required words (no prefix); then the title or the body must hold the phrase, case ignored char by char, any run
+  of white space as one space.
+- **Filters on docs** read the doc's node: in the tree, the corpus's node; for a Missing node, `node_kind` and `node_path`, no `in_class`
+  (so `kind:method` never keeps a Missing node's doc), and `docs` at least 1. Only filters, no words and no phrases: no docs. `keeps_nothing`:
+  no docs.
+- **Ties** (equal score): docs of nodes in the tree by the node's place in reading order, then Missing nodes' docs by `node_path`; then the
+  file name.
+- **The snippet:** chars, not bytes. The first hit in the body (a posting of a query word or prefix word, or the phrase) is placed about 40 chars
+  in: start up to 40 chars before it, moved back to the start of a word; end at most 120 chars after the start, moved back to the end of a word;
+  line ends and runs of white space become one space; `…` where text was cut. Hits only in the title: the first 120 chars of the body, cut the
+  same way. An empty body: an empty snippet. `snippet_ranges`: every hit inside the snippet; `title_ranges`: every hit in the title.
+- **The index** is built in `Corpus::new`, whole. **[measure]** in S6a: 1,000 generated docs of 2 KB, the build and one query, in the crate's
+  timing test; S6b measures reading them from disk.
