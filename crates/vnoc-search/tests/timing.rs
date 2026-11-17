@@ -5,7 +5,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::*;
-use vnoc_search::{Corpus, Kind, Limits, NodeEntry, parse, run};
+use vnoc_search::{Corpus, DocEntry, Kind, Limits, NodeEntry, parse, run};
 
 const WORDS: &[&str] = &[
     "checkout", "order", "parse", "billing", "invoice", "total", "item", "cart", "shop", "user",
@@ -94,4 +94,151 @@ fn ten_thousand_names_in_a_hundred_files() {
         found.nodes_total,
         found.nodes.len()
     );
+}
+
+/// A word-like vocabulary, a few common words and many rare ones: the `i`th is a few syllables, and a pick leans toward the small `i`.
+struct Text {
+    state: u64,
+    vocabulary: Vec<String>,
+}
+
+impl Text {
+    fn new() -> Text {
+        const SYLLABLES: &[&str] = &[
+            "ba", "re", "ti", "so", "lu", "ma", "ne", "ki", "po", "ra", "de", "vi", "mo", "ta",
+            "se", "lo", "gu", "fe", "no", "chi",
+        ];
+        let vocabulary = (0..4_000)
+            .map(|i: usize| {
+                let (a, b, c) = (i % 20, (i / 20) % 20, i / 400);
+                let mut w = format!("{}{}", SYLLABLES[a], SYLLABLES[b]);
+                if c > 0 {
+                    w.push_str(SYLLABLES[c % 20]);
+                }
+                w
+            })
+            .collect();
+        Text {
+            state: 0x9E37_79B9_7F4A_7C15,
+            vocabulary,
+        }
+    }
+
+    fn next(&mut self) -> f64 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 7;
+        self.state ^= self.state << 17;
+        (self.state >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// About `bytes` bytes of words, in lines of about ten, with the odd capital.
+    fn text(&mut self, bytes: usize) -> String {
+        let mut out = String::new();
+        let mut on_line = 0;
+        while out.len() < bytes {
+            let r = self.next();
+            let word = self.vocabulary[(self.vocabulary.len() as f64 * r * r * r) as usize].clone();
+            if self.next() < 0.1 {
+                out.push_str(&word[..1].to_uppercase());
+                out.push_str(&word[1..]);
+            } else {
+                out.push_str(&word);
+            }
+            on_line += 1;
+            out.push(if on_line == 10 { '\n' } else { ' ' });
+            if on_line == 10 {
+                on_line = 0;
+            }
+        }
+        out
+    }
+}
+
+fn median(mut times: Vec<Duration>) -> Duration {
+    times.sort();
+    times[times.len() / 2]
+}
+
+#[test]
+#[ignore = "a timing, run by hand"]
+fn a_thousand_docs_of_two_kb_on_ten_thousand_names() {
+    let names = names(9_900);
+    let mut nodes: Vec<NodeEntry> = Vec::new();
+    for (f, chunk) in names.chunks(99).enumerate() {
+        let path = format!("pkg{}/module_{f}.py", f % 10);
+        nodes.push(file(&path));
+        nodes.extend(chunk.iter().map(|n| def(Kind::Function, &path, n)));
+    }
+    let mut text = Text::new();
+    let docs: Vec<DocEntry> = (0..1_000)
+        .map(|d| {
+            let at = (d * 9) % nodes.len();
+            let node = &nodes[at];
+            DocEntry {
+                node: Some(at),
+                node_id: node.id.clone(),
+                node_name: node.name.clone(),
+                node_kind: Some(node.kind),
+                node_path: node.path.clone(),
+                file: format!("{d}.md"),
+                doc_path: format!(".vnoc/nodes/{d}/{d}.md"),
+                title: text.text(30),
+                body: text.text(2_000),
+            }
+        })
+        .collect();
+    let bytes: usize = docs.iter().map(|d| d.title.len() + d.body.len()).sum();
+
+    // each build is timed on its own clone, which is not part of it
+    let build = |with_docs: bool| -> (Duration, Vec<Duration>, Corpus) {
+        let mut times = Vec::new();
+        let mut corpus = None;
+        for _ in 0..6 {
+            let (nodes, docs) = (
+                nodes.clone(),
+                if with_docs { docs.clone() } else { Vec::new() },
+            );
+            let start = Instant::now();
+            corpus = Some(Corpus::new(nodes, docs));
+            times.push(start.elapsed());
+        }
+        (times[0], times[1..].to_vec(), corpus.unwrap())
+    };
+    let (first_without, rest_without, _) = build(false);
+    let (first_with, rest_with, corpus) = build(true);
+    println!(
+        "Corpus::new, 10,000 names, no docs: {first_without:?} first, {:?} median of 5 more",
+        median(rest_without)
+    );
+    println!(
+        "Corpus::new, 10,000 names and 1,000 docs ({} KB of text): {first_with:?} first, {:?} median of 5 more",
+        bytes / 1024,
+        median(rest_with)
+    );
+
+    // the commonest word of the vocabulary, and a two-letter prefix that opens many words
+    for (label, query) in [
+        ("a common word", text.vocabulary[0].clone()),
+        ("a two-letter prefix", "ba".to_string()),
+    ] {
+        let query = parse(&query);
+        let start = Instant::now();
+        let found = run(&corpus, &query, None, Limits::default());
+        let first = start.elapsed();
+        let rest: Vec<_> = (0..5)
+            .map(|_| {
+                let start = Instant::now();
+                run(&corpus, &query, None, Limits::default());
+                start.elapsed()
+            })
+            .collect();
+        println!(
+            "one run for {label} `{}`: {first:?} first, {:?} median of 5 more ({} docs found, {} shown; {} nodes found)",
+            query.words[0],
+            median(rest),
+            found.docs_total,
+            found.docs.len(),
+            found.nodes_total
+        );
+    }
 }

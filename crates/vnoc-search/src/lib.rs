@@ -8,8 +8,9 @@
 //! * [`run`]: the nodes the query finds, best first, as [`Results`].
 //!
 //! A node's name, qualified name and path are matched in six tiers (`names.rs`), and a hit carries the ranges of its name to draw bold, in
-//! UTF-16 code units as LSP's are (`utf16.rs`). Doc text arrives in a later step: [`DocEntry`] and [`DocHit`] are declared and unused.
+//! UTF-16 code units as LSP's are (`utf16.rs`). The words of every doc are indexed with the corpus and ranked with BM25 (`docs.rs`).
 
+mod docs;
 mod names;
 mod query;
 mod run;
@@ -66,16 +67,19 @@ pub struct Corpus {
     nodes: Vec<NodeEntry>,
     prepared: Vec<names::Prepared>,
     docs: Vec<DocEntry>,
+    doc_index: docs::DocIndex,
 }
 
 impl Corpus {
     /// The nodes stay in the order given; that is the order of reading, and the caller's to get right.
     pub fn new(nodes: Vec<NodeEntry>, docs: Vec<DocEntry>) -> Corpus {
         let prepared = nodes.iter().map(names::Prepared::new).collect();
+        let doc_index = docs::DocIndex::new(&docs);
         Corpus {
             nodes,
             prepared,
             docs,
+            doc_index,
         }
     }
 
@@ -111,7 +115,7 @@ impl Default for Limits {
 }
 
 /// The answer: the best of the nodes and docs found, and how many there were before the limits.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Results {
     pub nodes: Vec<NodeHit>,
     pub nodes_total: usize,
@@ -135,34 +139,18 @@ pub struct NodeHit {
     pub ranges: Vec<(u32, u32)>,
 }
 
-/// A doc the query found. Empty until the doc text is searched.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DocHit {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn node(id: &str) -> NodeEntry {
-        NodeEntry {
-            id: id.to_string(),
-            kind: Kind::File,
-            name: id.to_string(),
-            qualname: None,
-            path: id.to_string(),
-            line: None,
-            in_class: false,
-            docs: 0,
-        }
-    }
-
-    #[test]
-    fn position_is_the_index_of_the_node_with_that_id() {
-        let corpus = Corpus::new(vec![node("a"), node("b"), node("c")], Vec::new());
-        assert_eq!(corpus.position("a"), Some(0));
-        assert_eq!(corpus.position("c"), Some(2));
-        assert_eq!(corpus.position("A"), None, "ids are compared as written");
-        assert_eq!(corpus.position("d"), None);
-        assert_eq!(Corpus::new(Vec::new(), Vec::new()).position("a"), None);
-    }
+/// A doc the query found (03).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocHit {
+    /// Into [`Corpus::docs`].
+    pub index: usize,
+    /// BM25 over the words of the title (counted three times) and the body; bigger is better.
+    pub score: f64,
+    /// The hits in the title, to draw bold: sorted, merged where they touch, in UTF-16 units.
+    pub title_ranges: Vec<(u32, u32)>,
+    /// About 120 chars of the body around the first hit, in one line, with `…` where it was cut; the start of the body when the title holds every
+    /// hit; empty when the body is.
+    pub snippet: String,
+    /// The hits inside the snippet, in UTF-16 units of the snippet as it is here (a leading `…` is one unit).
+    pub snippet_ranges: Vec<(u32, u32)>,
 }

@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use vnoc_search::{Corpus, Kind, Limits, NodeEntry, Results, parse, run};
+use vnoc_search::{Corpus, DocEntry, Kind, Limits, NodeEntry, Results, parse, run};
 
 /// A node with only what the tests care about; the id is the path and the name.
 pub fn node(
@@ -65,7 +65,12 @@ pub fn method(path: &str, qualname: &str) -> NodeEntry {
 //            └ rebilling.py └ rebill
 //   shop/cart.py ├ add_item  └ billing_note
 pub fn tree() -> Corpus {
-    corpus(vec![
+    corpus(tree_nodes())
+}
+
+/// The nodes of [`tree`], for a corpus that has docs too.
+pub fn tree_nodes() -> Vec<NodeEntry> {
+    vec![
         folder("billing"),
         file("billing/invoice.py"),
         func("billing/invoice.py", "total"),
@@ -78,7 +83,7 @@ pub fn tree() -> Corpus {
         file("shop/cart.py"),
         func("shop/cart.py", "add_item"),
         func("shop/cart.py", "billing_note"),
-    ])
+    ]
 }
 
 pub fn corpus(nodes: Vec<NodeEntry>) -> Corpus {
@@ -105,4 +110,80 @@ pub fn ask(corpus: &Corpus, query: &str) -> Vec<(String, u8)> {
 /// `("name", tier)` pairs written out.
 pub fn want(rows: &[(&str, u8)]) -> Vec<(String, u8)> {
     rows.iter().map(|&(n, t)| (n.to_string(), t)).collect()
+}
+
+/// The place in [`tree_nodes`] of the node called `name`.
+pub fn at(name: &str) -> usize {
+    tree_nodes().iter().position(|n| n.name == name).unwrap()
+}
+
+/// A doc of the tree's node called `name`.
+pub fn doc_on(name: &str, file: &str, title: &str, body: &str) -> DocEntry {
+    let nodes = tree_nodes();
+    let at = nodes.iter().position(|n| n.name == name).unwrap();
+    let node = &nodes[at];
+    DocEntry {
+        node: Some(at),
+        node_id: node.id.clone(),
+        node_name: node.name.clone(),
+        node_kind: Some(node.kind),
+        node_path: node.path.clone(),
+        file: file.to_string(),
+        doc_path: format!(".vnoc/nodes/{file}"),
+        title: title.to_string(),
+        body: body.to_string(),
+    }
+}
+
+/// A doc of a node nothing in the code matches any more: `path` and `kind` are what its `node.toml` says.
+pub fn doc_missing(
+    path: &str,
+    kind: Option<Kind>,
+    file: &str,
+    title: &str,
+    body: &str,
+) -> DocEntry {
+    DocEntry {
+        node: None,
+        node_id: format!("missing:{path}"),
+        node_name: path.rsplit('/').next().unwrap().to_string(),
+        node_kind: kind,
+        node_path: path.to_string(),
+        file: file.to_string(),
+        doc_path: format!(".vnoc/nodes/{file}"),
+        title: title.to_string(),
+        body: body.to_string(),
+    }
+}
+
+/// The tree with these docs.
+pub fn with_docs(docs: Vec<DocEntry>) -> Corpus {
+    Corpus::new(tree_nodes(), docs)
+}
+
+/// The files of the docs a query found, in order.
+pub fn found(corpus: &Corpus, query: &str) -> Vec<String> {
+    let results = search(corpus, query);
+    results
+        .docs
+        .iter()
+        .map(|h| corpus.docs()[h.index].file.clone())
+        .collect()
+}
+
+/// `["a", "b"]` as owned strings.
+pub fn strings(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| s.to_string()).collect()
+}
+
+/// The `i`th of a sorted run of words made of letters only: `aaaa`, `aaab`, … A digit would be a word of its own, as in names.
+pub fn letters(first: char, i: usize) -> String {
+    let at = |n: usize| char::from(b'a' + (n % 26) as u8);
+    format!("{first}{}{}{}", at(i / 676), at(i / 26), at(i))
+}
+
+/// The text of `range`, a pair of UTF-16 offsets, in `text`.
+pub fn slice16(text: &str, range: (u32, u32)) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    String::from_utf16(&units[range.0 as usize..range.1 as usize]).unwrap()
 }
