@@ -5,7 +5,9 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::*;
-use vnoc_search::{Corpus, DocEntry, Kind, Limits, NodeEntry, parse, run};
+use std::sync::Arc;
+
+use vnoc_search::{Corpus, DocEntry, DocIndex, Kind, Limits, NodeEntry, parse, run};
 
 const WORDS: &[&str] = &[
     "checkout", "order", "parse", "billing", "invoice", "total", "item", "cart", "shop", "user",
@@ -189,32 +191,44 @@ fn a_thousand_docs_of_two_kb_on_ten_thousand_names() {
         .collect();
     let bytes: usize = docs.iter().map(|d| d.title.len() + d.body.len()).sum();
 
-    // each build is timed on its own clone, which is not part of it
-    let build = |with_docs: bool| -> (Duration, Vec<Duration>, Corpus) {
-        let mut times = Vec::new();
-        let mut corpus = None;
-        for _ in 0..6 {
-            let (nodes, docs) = (
-                nodes.clone(),
-                if with_docs { docs.clone() } else { Vec::new() },
-            );
-            let start = Instant::now();
-            corpus = Some(Corpus::new(nodes, docs));
-            times.push(start.elapsed());
-        }
-        (times[0], times[1..].to_vec(), corpus.unwrap())
+    // each build is timed on its own clone, which is not part of it: the first of six, and the median of the other five
+    let six = |mut build: Box<dyn FnMut() -> Duration + '_>| -> (Duration, Duration) {
+        let times: Vec<Duration> = (0..6).map(|_| build()).collect();
+        (times[0], median(times[1..].to_vec()))
     };
-    let (first_without, rest_without, _) = build(false);
-    let (first_with, rest_with, corpus) = build(true);
+    let (first, rest) = six(Box::new(|| {
+        let nodes = nodes.clone();
+        let start = Instant::now();
+        let corpus = Corpus::new(nodes, Vec::new());
+        let took = start.elapsed();
+        drop(corpus);
+        took
+    }));
+    println!("Corpus::new, 10,000 names, no docs: {first:?} first, {rest:?} median of 5 more");
+    let (first, rest) = six(Box::new(|| {
+        let start = Instant::now();
+        let index = DocIndex::new(&docs);
+        let took = start.elapsed();
+        assert_eq!(index.len(), 1_000);
+        took
+    }));
     println!(
-        "Corpus::new, 10,000 names, no docs: {first_without:?} first, {:?} median of 5 more",
-        median(rest_without)
+        "DocIndex::new, 1,000 docs ({} KB of text): {first:?} first, {rest:?} median of 5 more   (S6a: Corpus::new with the docs took 88 ms first, 74 ms median)",
+        bytes / 1024
     );
+    let kept = Arc::new(DocIndex::new(&docs));
+    let (first, rest) = six(Box::new(|| {
+        let (nodes, docs) = (nodes.clone(), docs.clone());
+        let start = Instant::now();
+        let corpus = Corpus::with_doc_index(nodes, docs, kept.clone());
+        let took = start.elapsed();
+        drop(corpus);
+        took
+    }));
     println!(
-        "Corpus::new, 10,000 names and 1,000 docs ({} KB of text): {first_with:?} first, {:?} median of 5 more",
-        bytes / 1024,
-        median(rest_with)
+        "Corpus::with_doc_index, 10,000 names, a kept index: {first:?} first, {rest:?} median of 5 more"
     );
+    let corpus = Corpus::with_doc_index(nodes.clone(), docs.clone(), kept.clone());
 
     // the commonest word of the vocabulary, and a two-letter prefix that opens many words
     for (label, query) in [

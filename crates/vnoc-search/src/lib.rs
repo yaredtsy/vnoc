@@ -17,6 +17,9 @@ mod run;
 mod utf16;
 mod words;
 
+use std::sync::Arc;
+
+pub use docs::DocIndex;
 pub use query::{KindFilter, Query, parse};
 pub use run::run;
 
@@ -67,14 +70,32 @@ pub struct Corpus {
     nodes: Vec<NodeEntry>,
     prepared: Vec<names::Prepared>,
     docs: Vec<DocEntry>,
-    doc_index: docs::DocIndex,
+    doc_index: Arc<DocIndex>,
 }
 
 impl Corpus {
-    /// The nodes stay in the order given; that is the order of reading, and the caller's to get right.
+    /// The nodes stay in the order given; that is the order of reading, and the caller's to get right. Builds the doc index of `docs`; a caller that
+    /// keeps one across changes of the nodes uses [`Corpus::with_doc_index`].
     pub fn new(nodes: Vec<NodeEntry>, docs: Vec<DocEntry>) -> Corpus {
+        let index = Arc::new(DocIndex::new(&docs));
+        Corpus::with_doc_index(nodes, docs, index)
+    }
+
+    /// As [`Corpus::new`], with a doc index built earlier by [`DocIndex::new`]. `docs` must be the docs it was built from: the same text in the same
+    /// order, though their node fields may differ (a doc is joined to whichever node it belongs to now). A different number of docs is a bug of the
+    /// caller's: a debug build panics, and a release build builds a fresh index rather than read past the end of the old one.
+    pub fn with_doc_index(
+        nodes: Vec<NodeEntry>,
+        docs: Vec<DocEntry>,
+        index: Arc<DocIndex>,
+    ) -> Corpus {
+        debug_assert_eq!(
+            docs.len(),
+            index.len(),
+            "the doc index was built from another list of docs"
+        );
+        let doc_index = reconciled(&docs, index);
         let prepared = nodes.iter().map(names::Prepared::new).collect();
-        let doc_index = docs::DocIndex::new(&docs);
         Corpus {
             nodes,
             prepared,
@@ -82,7 +103,6 @@ impl Corpus {
             doc_index,
         }
     }
-
     /// The nodes in the order given; a [`NodeHit`]'s `index` points into them.
     pub fn nodes(&self) -> &[NodeEntry] {
         &self.nodes
@@ -95,6 +115,15 @@ impl Corpus {
     /// The index into [`Corpus::nodes`] of the node with this id, by a scan: one lookup per query.
     pub fn position(&self, id: &str) -> Option<usize> {
         self.nodes.iter().position(|n| n.id == id)
+    }
+}
+
+/// `index` when it covers as many docs as there are, else a fresh one built from them.
+fn reconciled(docs: &[DocEntry], index: Arc<DocIndex>) -> Arc<DocIndex> {
+    if docs.len() == index.len() {
+        index
+    } else {
+        Arc::new(DocIndex::new(docs))
     }
 }
 

@@ -3,8 +3,10 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use common::*;
-use vnoc_search::{Corpus, DocEntry, Kind, Limits, parse, run};
+use vnoc_search::{Corpus, DocEntry, DocIndex, Kind, Limits, parse, run};
 
 fn body(file: &str, text: &str) -> DocEntry {
     doc_on("total", file, "", text)
@@ -756,4 +758,266 @@ fn a_query_that_keeps_nothing_finds_no_docs() {
     assert!(search(&c, "   ").docs.is_empty());
     assert!(search(&c, "\"\"").docs.is_empty());
     assert!(search(&c, "/").docs.is_empty(), "no word in it");
+}
+
+// ── the doc index kept apart ───────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/// The same corpus built the long way and around a doc index built beforehand.
+fn both(nodes: Vec<vnoc_search::NodeEntry>, docs: Vec<DocEntry>) -> (Corpus, Corpus) {
+    let index = Arc::new(DocIndex::new(&docs));
+    (
+        Corpus::new(nodes.clone(), docs.clone()),
+        Corpus::with_doc_index(nodes, docs, index),
+    )
+}
+
+/// A doc hit as the comparison reads it: the file, the score, the snippet and its ranges.
+type Row = (String, f64, String, Vec<(u32, u32)>);
+
+/// 200 generated docs on the tree's nodes: a few words picked by a small deterministic generator, in titles and bodies, with line ends.
+fn generated() -> Vec<DocEntry> {
+    const WORDS: &[&str] = &[
+        "retry",
+        "policy",
+        "alpha",
+        "beta",
+        "gamma",
+        "billing",
+        "retryPolicy",
+        "café",
+        "snake_case",
+        "x2y",
+        "Order",
+        "service",
+        "timeout",
+        "backoff",
+        "needle",
+        "total",
+    ];
+    let names = [
+        "billing",
+        "invoice.py",
+        "total",
+        "bill_all",
+        "Invoice",
+        "pay",
+        "rebilling.py",
+        "rebill",
+        "shop",
+        "cart.py",
+        "add_item",
+        "billing_note",
+    ];
+    let mut state = 0x2545_F491_4F6C_DD1D_u64;
+    let mut next = move |n: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state % n as u64) as usize
+    };
+    (0..200)
+        .map(|d| {
+            let title: Vec<&str> = (0..1 + next(3)).map(|_| WORDS[next(WORDS.len())]).collect();
+            let body: String = (0..20 + next(40))
+                .map(|i| {
+                    format!(
+                        "{}{}",
+                        WORDS[next(WORDS.len())],
+                        if i % 7 == 6 { "\n" } else { " " }
+                    )
+                })
+                .collect();
+            doc_on(
+                names[d % names.len()],
+                &format!("d{d:03}.md"),
+                &title.join(" "),
+                &body,
+            )
+        })
+        .collect()
+}
+
+const QUERIES: &[&str] = &[
+    "retry",
+    "ret",
+    "retry policy",
+    "retry pol",
+    "\"retry policy\"",
+    "\"alpha beta\" gamma",
+    "in:billing retry",
+    "kind:fn ret",
+    "kind:class needle",
+    "-in:shop alpha",
+    "has:doc beta",
+    "bill",
+    "café",
+    "x 2 y",
+    "zzz",
+    "retry zzz",
+    "kind:fnn retry",
+    "kind:fn",
+    "",
+];
+
+#[test]
+fn a_corpus_around_a_prebuilt_index_gives_the_same_results() {
+    let mut corpora = vec![
+        (tree_nodes(), filtered_docs()),
+        (tree_nodes(), generated()),
+        (tree_nodes(), Vec::new()),
+    ];
+    corpora.push((
+        tree_nodes(),
+        vec![
+            doc_on("total", "a", "Retry", "The retryPolicy.\nretry policy"),
+            doc_on("pay", "b", "", "unrelated"),
+        ],
+    ));
+    for (nodes, docs) in corpora {
+        let (fresh, kept) = both(nodes, docs);
+        for query in QUERIES {
+            assert_eq!(search(&fresh, query), search(&kept, query), "{query:?}");
+        }
+        let all = Limits {
+            nodes: 1000,
+            docs: 1000,
+        };
+        for query in QUERIES {
+            assert_eq!(
+                run(&fresh, &parse(query), None, all),
+                run(&kept, &parse(query), None, all),
+                "{query:?}"
+            );
+        }
+    }
+    // the generated corpus finds docs, so the comparison above is not of two empty answers
+    let (fresh, _) = both(tree_nodes(), generated());
+    assert!(search(&fresh, "retry").docs_total > 20);
+    assert!(!search(&fresh, "\"retry policy\"").docs.is_empty());
+}
+
+fn filtered_docs() -> Vec<DocEntry> {
+    vec![
+        doc_on("total", "on-total", "", "retry in total"),
+        doc_on("Invoice", "on-invoice", "", "retry in invoice"),
+        doc_on("add_item", "on-add-item", "", "retry in add item"),
+        doc_on("pay", "on-pay", "", "retry in pay"),
+        doc_missing(
+            "billing/old.py",
+            Some(Kind::Function),
+            "missing-fn",
+            "",
+            "retry in missing",
+        ),
+        doc_missing(
+            "shop/gone.py",
+            None,
+            "missing-unknown",
+            "",
+            "retry in unknown",
+        ),
+    ]
+}
+
+#[test]
+fn a_kept_index_serves_a_corpus_whose_nodes_are_different() {
+    let docs = vec![
+        doc_on("total", "a", "Retry", "retry policy of the billing"),
+        doc_on("add_item", "b", "", "retry retry in the shop"),
+        doc_missing(
+            "billing/old.py",
+            Some(Kind::Function),
+            "c",
+            "",
+            "a retry that is missing",
+        ),
+    ];
+    let kept = Arc::new(DocIndex::new(&docs));
+    let first = Corpus::with_doc_index(tree_nodes(), docs.clone(), kept.clone());
+
+    // the code changed: another tree, with the nodes in another order and fewer of them, and the same docs joined to where they are now
+    let mut nodes = tree_nodes();
+    nodes.reverse();
+    nodes.retain(|n| n.name != "billing_note" && n.name != "rebill");
+    let join = |doc: &DocEntry| {
+        let mut doc = doc.clone();
+        if let Some(at) = nodes.iter().position(|n| n.id == doc.node_id) {
+            doc.node = Some(at);
+        } else if doc.node.is_some() {
+            doc.node = None;
+        }
+        doc
+    };
+    let moved: Vec<DocEntry> = docs.iter().map(join).collect();
+    let second = Corpus::with_doc_index(nodes, moved, kept.clone());
+
+    for query in ["retry", "ret", "\"retry policy\"", "billing"] {
+        let (a, b) = (search(&first, query), search(&second, query));
+        let key = |c: &Corpus, r: &vnoc_search::Results| -> Vec<Row> {
+            let mut rows: Vec<_> = r
+                .docs
+                .iter()
+                .map(|h| {
+                    (
+                        c.docs()[h.index].file.clone(),
+                        h.score,
+                        h.snippet.clone(),
+                        h.snippet_ranges.clone(),
+                    )
+                })
+                .collect();
+            rows.sort_by(|x, y| x.0.cmp(&y.0));
+            rows
+        };
+        assert_eq!(
+            key(&first, &a),
+            key(&second, &b),
+            "{query}: the same docs, the same scores and snippets"
+        );
+        assert_eq!(a.docs_total, b.docs_total, "{query}");
+    }
+    // only their node fields differ: the doc of `total` is at another place in the nodes now
+    let place = |c: &Corpus| c.docs()[0].node;
+    assert_ne!(place(&first), place(&second));
+    assert_eq!(second.docs()[0].body, first.docs()[0].body);
+    // and the filters read the new nodes
+    assert_eq!(
+        found(&second, "in:billing retry").len(),
+        2,
+        "the doc of `total` and the Missing one"
+    );
+    assert_eq!(found(&second, "in:shop retry"), ["b"]);
+    // the index itself was kept, not rebuilt: both corpora share it
+    assert_eq!(Arc::strong_count(&kept), 3);
+}
+
+/// A debug build refuses a list of docs the index was not built from.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "the doc index was built from another list of docs")]
+fn another_number_of_docs_is_a_bug_a_debug_build_says_so() {
+    let docs = vec![doc_on("total", "a", "", "retry")];
+    let index = Arc::new(DocIndex::new(&docs));
+    Corpus::with_doc_index(tree_nodes(), Vec::new(), index);
+}
+
+/// A release build builds a fresh index and gives what `Corpus::new` gives, and never reads past the end of the old one. (The fallback itself is
+/// also tested in every build, through the function `with_doc_index` calls: `an_index_for_another_number_of_docs_is_replaced_not_used`, in `lib.rs`.)
+#[cfg(not(debug_assertions))]
+#[test]
+fn another_number_of_docs_gives_a_fresh_index_in_a_release_build() {
+    let few = vec![doc_on("total", "a", "", "retry")];
+    let many = generated();
+    for (built_from, given) in [
+        (few.clone(), many.clone()),
+        (many.clone(), few.clone()),
+        (many.clone(), Vec::new()),
+    ] {
+        let stale = Arc::new(DocIndex::new(&built_from));
+        let got = Corpus::with_doc_index(tree_nodes(), given.clone(), stale);
+        let want = Corpus::new(tree_nodes(), given);
+        for query in QUERIES {
+            assert_eq!(search(&got, query), search(&want, query), "{query:?}");
+        }
+    }
 }

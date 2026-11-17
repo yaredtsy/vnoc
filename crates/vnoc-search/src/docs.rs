@@ -9,8 +9,8 @@
 //! docs that are shown are cut: at most `limits.docs` of them.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ops::Bound;
+use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::utf16;
 use crate::words::words_into;
@@ -34,6 +34,9 @@ fn lower_into(text: &str, out: &mut String) {
 
 /// Every word of `text` with its byte range: each run of letters and digits, lower-cased, and where a run is a `camelCase` token or has a digit next
 /// to a letter, its parts as well, each at its own range. `word` is only valid for the call.
+///
+/// An ASCII token is lower-cased in place in one buffer that is reused, and its parts are slices of that (lower-casing ASCII never changes a length).
+/// A token with any other char is lower-cased char by char, the whole and each part on its own.
 pub(crate) fn postings(text: &str, mut word: impl FnMut(&str, usize, usize)) {
     let mut buffer = String::new();
     let mut parts: Vec<(u32, u32)> = Vec::new();
@@ -43,22 +46,49 @@ pub(crate) fn postings(text: &str, mut word: impl FnMut(&str, usize, usize)) {
             continue;
         }
         let mut to = from + c.len_utf8();
+        // a token that has no capital and no digit has no parts to cut
+        let cuttable = |c: char| c.is_uppercase() || c.is_numeric();
+        let (mut ascii, mut cut) = (c.is_ascii(), cuttable(c));
         while let Some(&(i, c)) = chars.peek() {
             if !c.is_alphanumeric() {
                 break;
             }
             to = i + c.len_utf8();
+            ascii &= c.is_ascii();
+            cut |= cuttable(c);
             chars.next();
         }
         let token = &text[from..to];
-        lower_into(token, &mut buffer);
-        word(&buffer, from, to);
-        parts.clear();
-        words_into(token, &mut parts);
-        if parts.len() > 1 {
-            for &(s, e) in &parts {
-                lower_into(&token[s as usize..e as usize], &mut buffer);
-                word(&buffer, from + s as usize, from + e as usize);
+        if ascii {
+            buffer.clear();
+            buffer.push_str(token);
+            buffer.make_ascii_lowercase();
+            word(&buffer, from, to);
+            if cut {
+                parts.clear();
+                words_into(token, &mut parts);
+                if parts.len() > 1 {
+                    for &(s, e) in &parts {
+                        word(
+                            &buffer[s as usize..e as usize],
+                            from + s as usize,
+                            from + e as usize,
+                        );
+                    }
+                }
+            }
+        } else {
+            lower_into(token, &mut buffer);
+            word(&buffer, from, to);
+            if cut {
+                parts.clear();
+                words_into(token, &mut parts);
+                if parts.len() > 1 {
+                    for &(s, e) in &parts {
+                        lower_into(&token[s as usize..e as usize], &mut buffer);
+                        word(&buffer, from + s as usize, from + e as usize);
+                    }
+                }
             }
         }
     }
@@ -116,61 +146,144 @@ impl Terms {
     }
 }
 
-/// The words of every doc: where each is, and how long each doc is.
+/// A small hasher for the words: they are short, and SipHash costs more than the rest of the lookup.
 #[derive(Default)]
-pub(crate) struct DocIndex {
-    /// Word → `(doc, count)`, docs in order. A BTreeMap so the words are in sorted order.
-    postings: BTreeMap<String, Vec<(u32, u32)>>,
+struct WordHasher(u64);
+
+impl Hasher for WordHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        // FNV-1a
+        let mut h = if self.0 == 0 {
+            0xcbf2_9ce4_8422_2325
+        } else {
+            self.0
+        };
+        for &b in bytes {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+        self.0 = h;
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type WordIds = HashMap<Box<str>, u32, BuildHasherDefault<WordHasher>>;
+
+/// The words of every doc: which docs hold each, how many times, and how long each doc is. It reads only the docs' titles and bodies, so it depends
+/// on their text alone: a caller that keeps it can build a new [`Corpus`](crate::Corpus) around it when the nodes change.
+///
+/// A word has a number, given once in the order the words are met; the postings are by that number, and `sorted` lists the numbers in the order of
+/// the words' text, for the prefix.
+#[derive(Default)]
+pub struct DocIndex {
+    /// The text of each word, by number.
+    words: Vec<Box<str>>,
+    /// The docs that hold each word, by number, as `(doc, count)` in doc order.
+    postings: Vec<Vec<(u32, u32)>>,
+    /// The word numbers, ordered by the words' text.
+    sorted: Vec<u32>,
     /// Each doc's length: its words, the title's counted three times.
     lengths: Vec<u32>,
     average: f64,
 }
 
 impl DocIndex {
-    pub(crate) fn new(docs: &[DocEntry]) -> DocIndex {
-        let mut index = DocIndex::default();
-        let mut counts: HashMap<String, u32> = HashMap::new();
+    /// The index of `docs`, in their order. Only each doc's `title` and `body` are read.
+    pub fn new(docs: &[DocEntry]) -> DocIndex {
+        let mut ids = WordIds::default();
+        let mut lists: Vec<Vec<(u32, u32)>> = Vec::new();
+        // one doc's counts by word number, and the numbers that have one: reused across docs
+        let mut counts: Vec<u32> = Vec::new();
+        let mut touched: Vec<u32> = Vec::new();
+        let mut lengths = Vec::with_capacity(docs.len());
         for (doc, entry) in docs.iter().enumerate() {
-            counts.clear();
             let mut length = 0;
             for (text, weight) in [(&entry.title, TITLE_WEIGHT), (&entry.body, 1)] {
                 postings(text, |word, _, _| {
                     length += weight;
-                    match counts.get_mut(word) {
-                        Some(n) => *n += weight,
+                    let id = match ids.get(word) {
+                        Some(&id) => id,
                         None => {
-                            counts.insert(word.to_string(), weight);
+                            let id = ids.len() as u32;
+                            ids.insert(word.into(), id);
+                            counts.push(0);
+                            lists.push(Vec::new());
+                            id
                         }
+                    };
+                    if counts[id as usize] == 0 {
+                        touched.push(id);
                     }
+                    counts[id as usize] += weight;
                 });
             }
-            index.lengths.push(length);
-            for (word, count) in counts.drain() {
-                index
-                    .postings
-                    .entry(word)
-                    .or_default()
-                    .push((doc as u32, count));
+            lengths.push(length);
+            for id in touched.drain(..) {
+                lists[id as usize].push((doc as u32, std::mem::take(&mut counts[id as usize])));
             }
         }
-        let total: u64 = index.lengths.iter().map(|&l| u64::from(l)).sum();
-        index.average = total as f64 / docs.len().max(1) as f64;
-        index
+        let mut words: Vec<Box<str>> = vec![Box::from(""); ids.len()];
+        for (word, id) in ids {
+            words[id as usize] = word;
+        }
+        let mut sorted: Vec<u32> = (0..words.len() as u32).collect();
+        sorted.sort_unstable_by(|&a, &b| words[a as usize].cmp(&words[b as usize]));
+        let total: u64 = lengths.iter().map(|&l| u64::from(l)).sum();
+        DocIndex {
+            words,
+            postings: lists,
+            sorted,
+            average: total as f64 / docs.len().max(1) as f64,
+            lengths,
+        }
     }
 
-    /// The words that start with `prefix` (itself too): all of them, or when more than [`PREFIX_CAP`] the ones in the most docs, ties by the word.
-    pub(crate) fn expand(&self, prefix: &str) -> Vec<&str> {
-        let mut words: Vec<(&str, usize)> = self
-            .postings
-            .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
-            .take_while(|(word, _)| word.starts_with(prefix))
-            .map(|(word, docs)| (word.as_str(), docs.len()))
+    /// How many docs it was built from.
+    pub fn len(&self) -> usize {
+        self.lengths.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lengths.is_empty()
+    }
+
+    /// The number of the word `word`, by a binary search over the sorted words.
+    fn id_of(&self, word: &str) -> Option<u32> {
+        let at = self
+            .sorted
+            .binary_search_by(|&id| (*self.words[id as usize]).cmp(word))
+            .ok()?;
+        Some(self.sorted[at])
+    }
+
+    /// The numbers of the words that start with `prefix` (itself too): all of them, or when more than [`PREFIX_CAP`] the ones in the most docs, ties
+    /// by the word.
+    fn expand_ids(&self, prefix: &str) -> Vec<u32> {
+        let from = self
+            .sorted
+            .partition_point(|&id| *self.words[id as usize] < *prefix);
+        let mut ids: Vec<u32> = self.sorted[from..]
+            .iter()
+            .copied()
+            .take_while(|&id| self.words[id as usize].starts_with(prefix))
             .collect();
-        if words.len() > PREFIX_CAP {
-            words.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-            words.truncate(PREFIX_CAP);
+        if ids.len() > PREFIX_CAP {
+            // `ids` is in the words' order, so a stable sort by df leaves ties by the word
+            ids.sort_by_key(|&id| std::cmp::Reverse(self.postings[id as usize].len()));
+            ids.truncate(PREFIX_CAP);
         }
-        words.into_iter().map(|(word, _)| word).collect()
+        ids
+    }
+
+    /// [`DocIndex::expand_ids`] as the words.
+    #[cfg(test)]
+    pub(crate) fn expand(&self, prefix: &str) -> Vec<&str> {
+        self.expand_ids(prefix)
+            .into_iter()
+            .map(|id| &*self.words[id as usize])
+            .collect()
     }
 
     /// The docs that hold every term, each with its BM25 score, in doc order; and the words the prefix opened into.
@@ -178,19 +291,19 @@ impl DocIndex {
         let mut hit_words: HashSet<String> = terms.exact.iter().cloned().collect();
         let mut lists: Vec<Cow<[(u32, u32)]>> = Vec::new();
         for term in &terms.exact {
-            match self.postings.get(term) {
-                Some(list) => lists.push(Cow::Borrowed(list)),
+            match self.id_of(term) {
+                Some(id) => lists.push(Cow::Borrowed(&self.postings[id as usize])),
                 None => return (Vec::new(), hit_words),
             }
         }
         if let Some(prefix) = &terms.prefix {
-            let words = self.expand(prefix);
+            let ids = self.expand_ids(prefix);
             let mut merged: HashMap<u32, u32> = HashMap::new();
-            for word in &words {
-                for &(doc, count) in &self.postings[*word] {
+            for &id in &ids {
+                for &(doc, count) in &self.postings[id as usize] {
                     *merged.entry(doc).or_default() += count;
                 }
-                hit_words.insert((*word).to_string());
+                hit_words.insert(self.words[id as usize].to_string());
             }
             if merged.is_empty() {
                 return (Vec::new(), hit_words);
