@@ -10,6 +10,7 @@ mod build;
 pub(crate) mod tree;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use vnoc_domain::{LocationKey, NodeId, RepoPath, occurrences};
 use vnoc_driver_protocol::Def;
@@ -20,7 +21,7 @@ pub use tree::{Kind, Node};
 use crate::identity::{FoundBy, Markers, Resolved, resolve};
 use crate::protocol::{FailedFile, MissingNode, Problem};
 use crate::scan::Folder;
-use crate::userdata::{LoadProblem, LoadReport, NodeRecord};
+use crate::userdata::{DocTexts, LoadProblem, LoadReport, NodeRecord};
 
 /// A documented node that was found: what the tree shows on it.
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +75,8 @@ pub struct Index {
     missing: Vec<MissingNode>,
     /// an ID written in more than one place: one entry per copy that is **not** the node. Computed with `attached`.
     duplicates: Vec<Duplicate>,
+    /// the text of every doc, for search. Its own `generation`, never the revision: an edited body is not a change to the code or the records (Q2).
+    doc_texts: Arc<DocTexts>,
 }
 
 /// A copy of an ID that is not where the node was found. Nothing is changed for it: the user is told.
@@ -86,6 +89,24 @@ struct Duplicate {
 impl Index {
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// The doc texts as of the last update. The `Arc` is cheap to take: the disk work on it (`refresh`) is done off the index lock.
+    pub fn doc_texts(&self) -> Arc<DocTexts> {
+        self.doc_texts.clone()
+    }
+
+    /// The generation of [`Index::doc_texts`]: +1 when a doc was added, dropped or read again. Not the revision.
+    pub fn doc_generation(&self) -> u64 {
+        self.doc_texts.generation()
+    }
+
+    /// Stores the doc texts of an update. Returns whether the generation moved; **that is not part of `changed`** (an update that only changed doc
+    /// bodies announces nothing, Q2).
+    fn set_doc_texts(&mut self, texts: Arc<DocTexts>) -> bool {
+        let moved = texts.generation() != self.doc_texts.generation();
+        self.doc_texts = texts;
+        moved
     }
 
     pub fn truncated(&self) -> bool {
@@ -105,6 +126,11 @@ impl Index {
     /// Documented nodes the code does not match, sorted by path (then name).
     pub fn missing(&self) -> Vec<MissingNode> {
         self.missing.clone()
+    }
+
+    /// The `node.toml` of the record with this ID, as the last update read it.
+    pub fn record_toml(&self, id: &NodeId) -> Option<&vnoc_domain::NodeToml> {
+        self.records.get(id).map(|r| &r.toml)
     }
 
     /// The documented node found at this location, if any (by its ID in the code or by its stored place).

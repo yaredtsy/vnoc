@@ -2488,3 +2488,163 @@ fn a_deep_chain_comes_back_cut_at_the_cap_and_parses_and_opening_the_cut_node_gi
     );
     core.finish();
 }
+
+/// The doc rows of a `vnoc/search` answer for `query`.
+fn doc_rows(core: &mut Core, query: &str) -> Vec<Value> {
+    let found = core
+        .request("vnoc/search", json!({ "query": query }))
+        .unwrap();
+    found["docs"].as_array().unwrap().clone()
+}
+
+/// Asks `vnoc/search` for `query` until it gives a doc row (at most 10 s); the rows when it does, and none when it never does.
+fn wait_for_doc_rows(core: &mut Core, query: &str) -> Vec<Value> {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let rows = doc_rows(core, query);
+        if !rows.is_empty() || std::time::Instant::now() > until {
+            return rows;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn search_finds_doc_text_and_an_edited_body_neither_moves_the_revision_nor_announces() {
+    let root = fixtures("search-docs");
+    std::fs::write(root.join("orders.py"), ORDERS).unwrap(); // `attach_params` reads this file; the document is replaced below
+    let mut core = Core::start(Some(driver_path()), &root);
+    core.request("vnoc/structure", Value::Null).unwrap();
+
+    // a doc on `Outer`, with a distinctive word in its body
+    let mut params = attach_params(&root, "nested.py::Outer", "Zoo notes", Some(false));
+    let nested = root.join("nested.py");
+    params["document"] = json!({ "uri": file_uri(&nested), "version": 1, "text": std::fs::read_to_string(&nested).unwrap() });
+    let attached = core.request("vnoc/attach", params).expect("attach answers");
+    let id = attached["id"].as_str().unwrap().to_string();
+    let doc = PathBuf::from(attached["doc"].as_str().unwrap());
+    let write_body = |word: &str| {
+        std::fs::write(
+            &doc,
+            format!("---\nnode: {id}\nhint: nested.py::Outer\n---\n# Zoo notes\n\nThe animals of {word} are many.\n"),
+        )
+        .unwrap();
+    };
+    core.wait_for("vnoc/indexChanged"); // the node and its doc are in `.vnoc/` now
+    write_body("zanzibar");
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+    let rows = wait_for_doc_rows(&mut core, "zanzibar");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row["node"], "nested.py::Outer", "{row}");
+    assert_eq!(row["missing"], false, "{row}");
+    assert_eq!(
+        (
+            row["node_id"].as_str(),
+            row["node_name"].as_str(),
+            row["node_kind"].as_str()
+        ),
+        (Some(id.as_str()), Some("Outer"), Some("class")),
+        "{row}"
+    );
+    assert_eq!(row["node_path"], "nested.py", "{row}");
+    assert_eq!(row["title"], "Zoo notes", "{row}");
+    assert_eq!(row["doc_path"], json!(doc), "{row}");
+    let snippet = row["snippet"].as_str().unwrap();
+    assert!(
+        snippet.contains("zanzibar") && !snippet.contains("Zoo notes"),
+        "{row}"
+    );
+    let [start, end] = {
+        let m = row["snippet_match"].as_array().unwrap();
+        assert_eq!(m.len(), 1, "{row}");
+        [
+            m[0][0].as_u64().unwrap() as usize,
+            m[0][1].as_u64().unwrap() as usize,
+        ]
+    };
+    assert_eq!(&snippet[start..end], "zanzibar", "{row}");
+    let found = core
+        .request("vnoc/search", json!({ "query": "zanzibar" }))
+        .unwrap();
+    assert_eq!(found["docs_total"], 1);
+    let revision = found["revision"].clone();
+
+    // the body changes on disk: found by its new word, not by the old, under the same revision, and nothing is announced
+    core.request("vnoc/ping", Value::Null).unwrap();
+    core.notifications.clear();
+    write_body("kilimanjaro");
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+    let rows = wait_for_doc_rows(&mut core, "kilimanjaro");
+    assert_eq!(rows.len(), 1, "the new word finds the doc");
+    assert!(
+        doc_rows(&mut core, "zanzibar").is_empty(),
+        "the old word does not"
+    );
+    let found = core
+        .request("vnoc/search", json!({ "query": "kilimanjaro" }))
+        .unwrap();
+    assert_eq!(
+        found["revision"], revision,
+        "a body is not a change to the index"
+    );
+    // an update that announced would have done so right after it stored the text; give it the time, then flush the frames in flight
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    core.request("vnoc/ping", Value::Null).unwrap();
+    let announced: Vec<_> = core
+        .notifications
+        .iter()
+        .filter(|(method, _)| method == "vnoc/indexChanged")
+        .collect();
+    assert!(announced.is_empty(), "a body edit announced {announced:?}");
+    assert_eq!(
+        core.request("vnoc/structure", Value::Null).unwrap()["revision"],
+        revision
+    );
+
+    // a doc of a Missing node: its code is not there, and the doc is found all the same
+    let gone = "0000000000000000000000000A";
+    write_record(&root, gone, "nested.py", "Gone");
+    let notes = root
+        .join(".vnoc/nodes")
+        .join(&gone[24..])
+        .join(gone)
+        .join("notes.md");
+    std::fs::write(&notes, "# Notes\nthe plains of serengeti\n").unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [&notes] }));
+    core.wait_for("vnoc/indexChanged");
+    let rows = wait_for_doc_rows(&mut core, "serengeti");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(
+        (row["missing"].clone(), row["node"].clone()),
+        (json!(true), Value::Null),
+        "{row}"
+    );
+    assert_eq!(
+        (
+            row["node_id"].as_str(),
+            row["node_name"].as_str(),
+            row["node_kind"].as_str(),
+            row["node_path"].as_str()
+        ),
+        (
+            Some(gone),
+            Some("Gone"),
+            Some("function"),
+            Some("nested.py")
+        ),
+        "{row}"
+    );
+    assert_eq!(row["doc_path"], json!(notes), "{row}");
+
+    // `kind:` and `in:` narrow the docs by their node
+    write_body("zanzibar");
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+    assert_eq!(wait_for_doc_rows(&mut core, "zanzibar").len(), 1);
+    assert_eq!(doc_rows(&mut core, "kind:class zanzibar").len(), 1);
+    assert!(doc_rows(&mut core, "kind:fn zanzibar").is_empty());
+    assert_eq!(doc_rows(&mut core, "in:nested.py zanzibar").len(), 1);
+    assert!(doc_rows(&mut core, "in:other/ zanzibar").is_empty());
+    core.finish();
+}

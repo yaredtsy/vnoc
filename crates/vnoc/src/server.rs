@@ -40,12 +40,12 @@ use crate::protocol::{
     WriteIdResult,
 };
 use crate::protocol::{Locate, LocateParams, Located};
-use crate::search::{answer, corpus_of, kept};
+use crate::search::{anchor_of, answer, corpus_of, kept};
 use crate::userdata::{TrashError, UserData};
 use crate::watchdog::timed;
 use vnoc_domain::{LocationKey, NodeId};
 use vnoc_driver_protocol::CallEntry;
-use vnoc_search::{Corpus, Limits, parse, run};
+use vnoc_search::{Corpus, DocIndex, Limits, parse, run};
 
 /// Where the first build is.
 #[derive(Clone)]
@@ -62,6 +62,9 @@ enum Work {
     Files(Vec<PathBuf>),
 }
 
+/// What a corpus is made for: the index revision and the doc-text generation.
+type CorpusKey = (u64, u64);
+
 /// Shared between the handlers and the background tasks they start.
 struct State {
     project: OnceLock<Project>,
@@ -73,9 +76,11 @@ struct State {
     attaching: tokio::sync::Mutex<()>,
     /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
     everything_pending: AtomicBool,
-    /// The corpus `vnoc/search` reads, kept with the index revision it was made for (`search::kept`). Taken after the index lock, never before it, and by
-    /// nothing else.
-    corpus: Mutex<Option<(u64, Arc<Corpus>)>>,
+    /// The corpus `vnoc/search` reads, kept with the index revision and the doc-text generation it was made for (`search::kept`). Taken after the index
+    /// lock, never before it, and by nothing else.
+    corpus: Mutex<Option<(CorpusKey, Arc<Corpus>)>>,
+    /// The doc index, kept under the doc-text generation (03 §9). Taken inside `corpus`'s lock (while a corpus is built), never the other way round.
+    doc_index: Mutex<Option<(u64, Arc<DocIndex>)>>,
 }
 
 #[derive(Clone)]
@@ -95,6 +100,7 @@ impl Core {
             attaching: tokio::sync::Mutex::new(()),
             everything_pending: AtomicBool::new(false),
             corpus: Mutex::new(None),
+            doc_index: Mutex::new(None),
         };
         Core {
             client,
@@ -362,8 +368,15 @@ fn search(
         let (revision, corpus, found) = {
             let index = state.index.read().unwrap();
             let revision = index.revision();
-            let corpus = kept(&state.corpus, revision, || {
-                corpus_of(&index.tree(&project.name(), project.prefix()))
+            let texts = index.doc_texts();
+            let corpus = kept(&state.corpus, (revision, texts.generation()), || {
+                corpus_of(
+                    &index.tree(&project.name(), project.prefix()),
+                    &texts,
+                    &state.doc_index,
+                    project.prefix(),
+                    |id| index.record_toml(id).and_then(anchor_of),
+                )
             });
             let found = reference.map(|r| index.resolve_ref(project, &r));
             (revision, corpus, found)
