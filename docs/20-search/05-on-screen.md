@@ -79,10 +79,16 @@ The active result keeps today's dotted highlight. Nothing moves, nothing opens, 
   only thing that crosses from one page to the other.
 - The canvas, when `search` is not `null`, asks `searchCards { query, ids }` with the ids of the cards it shows: a structure card's node id, a
   call card's target key (a call to something outside the index has no key: it is dimmed). It asks again when the query, its cards or the
-  revision change (debounced 100 ms), and keeps the newest answer only.
+  revision change (see "Settled for S8" below for the timing), and keeps the newest answer only.
 - Until the first answer for a query arrives, nothing is dimmed (no flash of everything going dark).
 - A query of one letter dims too: the answer is exact (Q12), so there is no reason to wait for a second letter.
-- For the tests the canvas posts a note `searchDim { key, dimmed }`, as it posts `codeShown`.
+- For the tests the canvas posts a note `searchDim { query, dimmed: string[] }` (the ids of the cards it dimmed) each time it applies an
+  answer, as it posts `codeShown`.
+- *(Settled for S8, 2026-11-17.)* **The selected card is never dimmed**: it is what the user is looking at, hit or not. The canvas asks at once
+  when the query changes (no debounce, as the box: 05 §1), and **50 ms** after its cards last changed (panning and opening move them many times a
+  second); the request numbering is `newest()` from `shared/search.ts`. It asks about **every laid-out card** of its context, not only those on
+  screen: tens to a few hundred ids, and panning then needs no new answer. A doc edit does not move the revision, so the dim follows it at the
+  next change of the query or the cards: accepted, as the box's rows are.
 
 ## 4. What stays TypeScript
 

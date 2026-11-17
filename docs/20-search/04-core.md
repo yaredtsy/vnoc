@@ -44,7 +44,7 @@ impl Corpus { pub fn new(nodes: Vec<NodeEntry>, docs: Vec<DocEntry>) -> Corpus }
 pub struct Limits { pub nodes: usize, pub docs: usize }       // default 200 and 50
 pub fn parse(query: &str) -> Query
 pub fn run(corpus: &Corpus, query: &Query, exact: Option<usize>, limits: Limits) -> Results
-pub fn matches(corpus: &Corpus, query: &Query, ids: &[&str]) -> Vec<bool>     // §5
+pub fn matches(corpus: &Corpus, query: &Query, exact: Option<usize>, ids: &[&str]) -> Vec<bool>     // §5
 
 pub struct Results { pub nodes: Vec<NodeHit>, pub nodes_total: usize, pub docs: Vec<DocHit>, pub docs_total: usize }
 pub struct NodeHit { pub index: usize,                // into the corpus's nodes
@@ -182,6 +182,10 @@ vnoc/searchCards  { query: string, ids: string[] }      → { revision: number, 
 "Of these nodes, which does the query find?" `hits` is the subset of `ids` that would be in the **unlimited** answer: by name, or because a doc
 of the node is a doc hit. The canvas sends the ids of the cards it shows (tens), so the answer is exact where the first draft's 200-id list was
 not. `vnoc_search::matches` does it without ranking or snippets.
+
+*(Settled for S8.)* The handler parses and resolves a reference exactly as `vnoc/search` does (one shared function in `search.rs`), and
+`matches` takes the `exact` place too: a pasted `nested.py:25` keeps that card bright. `matches(corpus, query, exact, ids)` agrees with
+`run` given no limits: an id is a hit when its node is a node row, or the node of a doc row. An id the corpus does not have is not a hit.
 
 ## 6. Who calls what
 
