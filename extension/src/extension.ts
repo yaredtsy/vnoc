@@ -37,6 +37,8 @@ type SidebarRendered = { context: string; rows: number; selected: string | null;
 const sidebarPosts: SidebarRendered[] = [];
 /** The answers the STRUCTURE view drew for its search box (for the test suite). */
 const searchDrawnPosts: { query: string; ids: string[]; total: number; ms: number; trip: number }[] = [];
+/** What the STRUCTURE view said when it handled `focusSearch`: whether the cursor is in the box, and what the box holds (for the test suite). */
+const searchFocusedPosts: { focused: boolean; text: string }[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
@@ -268,6 +270,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     searchDrawn: () => searchDrawnPosts,
     /** puts text in the STRUCTURE view's search box as typing would (the view command reaches the sidebar through `panels.emit`, like every other page) */
     setSearch: (text: string) => panels.emit("viewCommand", { name: "setSearch", text }),
+    /** every `focusSearch` the STRUCTURE view handled (*V-NOC: Search…*), in order: was the cursor in the box, and what did it hold */
+    searchFocused: () => searchFocusedPosts,
+    /** a key pressed in the STRUCTURE view's search box (`ArrowDown`, `Enter`, `Escape`), as the page handles it: the suite cannot press keys in a webview */
+    searchKey: (key: string) => panels.emit("viewCommand", { name: "searchKey", key }),
     /** every time a card drew the code it read, in order: which card, whether it showed the unsaved mark, and the text */
     codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
@@ -322,6 +328,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "searchDrawn":
       searchDrawnPosts.push({ query: note.query, ids: note.ids, total: note.total, ms: note.ms, trip: note.trip });
+      break;
+    case "searchFocused":
+      searchFocusedPosts.push({ focused: note.focused, text: note.text });
       break;
     case "sidebarRendered":
       sidebarPosts.push({ context: note.context, rows: note.rows, selected: note.selected, inView: note.inView, drawn: note.drawn, height: note.height });

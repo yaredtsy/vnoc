@@ -20,7 +20,6 @@ import { type ContextId, type ContextState, MAIN } from "@vnoc/shared/session.ts
 import type { SessionStore } from "./session";
 import { attachMissingHere, relinkMissing } from "./relink";
 import { writeId } from "./writeId";
-import { searchNodes } from "./search";
 import { emptyTrash, removeAllMissing, removeMissing, restoreRemoved } from "./trash";
 import { absolute, selectionOf } from "./files";
 
@@ -119,12 +118,13 @@ export class Commands {
         await vscode.env.clipboard.writeText(node.range ? `${node.path}:${node.range.start.line + 1}` : node.path);
       }),
       on("vnoc.clearSelection", () => this.store.dispatch({ type: "select", id: null })),
-      // a string argument is the value to start with (the window suite uses it); a node or anything else is not
-      on("vnoc.search", async (arg) => searchNodes(this.core, this.store, (id) => {
-        // the same Enter as the sidebar's box (06 §5): reveal (the focus shortens if it hides the node, 03 §3), then the click rule
-        this.store.dispatch({ type: "reveal", id, canvas: false });
-        return this.rowClick(this.store.get().active, id);
-      }, typeof arg === "string" ? arg : undefined)),
+      // *V-NOC: Search…* is the sidebar's box (05 §2's fallback: VS Code re-sorts a QuickPick's items by its own matcher, so the core's order could not be shown there): the
+      // STRUCTURE view comes up and the cursor goes into its box. A string argument is the text to start with (the window suite uses it); a node or anything else is not.
+      on("vnoc.search", async (arg) => {
+        await this.showSidebar();
+        await this.panels.whenSidebarDrew(5000); // an event sent to a page that has not started is lost
+        this.panels.emit("viewCommand", { name: "focusSearch", text: typeof arg === "string" ? arg : undefined });
+      }),
       on("vnoc.focus", async (arg, selected) => this.focusInSidebar((await this.nodeFor(arg, selected)).id)),
       on("vnoc.focusBack", () => this.store.dispatch({ type: "focusBack" })),
       on("vnoc.focusClear", () => this.store.dispatch({ type: "focusJump", depth: 0 })),

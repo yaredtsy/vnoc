@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import type { SearchNode, SearchResult } from "@vnoc/shared/messages.ts";
 import { newest } from "@vnoc/shared/search.ts";
@@ -82,8 +83,23 @@ export function useSearch(focusList: () => void) {
     [],
   );
 
-  // the test suite cannot type in a webview: `setSearch` is the text a person's typing would leave in the box
-  useEffect(() => on("viewCommand", ({ name, text }) => name === "setSearch" && setQuery(text ?? "")), []);
+  // `focusSearch` is *V-NOC: Search…*: the cursor goes into the box, with the text it was given in it. `setSearch` and `searchKey` are for the test suite, which cannot type or
+  // press keys in a webview: the text a person's typing would leave in the box, and a key pressed in it. They reach the latest `handleKey` through a ref, not the one of the render that subscribed.
+  const keyLatest = useRef<(name: string) => boolean>(() => false);
+  useEffect(
+    () =>
+      on("viewCommand", ({ name, text, key }) => {
+        if (name === "setSearch") setQuery(text ?? "");
+        else if (name === "searchKey" && key) keyLatest.current(key);
+        else if (name === "focusSearch") {
+          if (text !== undefined && text !== "") flushSync(() => setQuery(text)); // drawn now, so the box holds the text when it is asked what it holds
+          input.current?.focus();
+          if (text === undefined || text === "") input.current?.select();
+          post({ type: "searchFocused", focused: input.current !== null && document.activeElement === input.current, text: input.current?.value ?? "" });
+        }
+      }),
+    [],
+  );
 
   // an answer was drawn (this runs after the commit that drew it): the test suite's note
   useEffect(() => {
@@ -127,13 +143,19 @@ export function useSearch(focusList: () => void) {
     void request("rowClick", { context, id: row.id }).catch(() => {});
     clear();
   };
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    const key = searchKey(e.key, rows.length, active);
-    if (!key || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    e.preventDefault();
+  /** What a key does in the box (`searchKey`): true when it was one of the box's keys, so the caller keeps it from the box's own typing. */
+  const handleKey = (name: string): boolean => {
+    const key = searchKey(name, rows.length, active);
+    if (!key) return false;
     if (key.type === "move") setActive(key.to);
     else if (key.type === "pick") pick(rows[active]);
     else clear();
+    return true;
+  };
+  keyLatest.current = handleKey;
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (handleKey(e.key)) e.preventDefault();
   };
   /** `/` and `Ctrl/Cmd+F` from anywhere in the view: the cursor goes into the box. */
   const focusBox = () => {

@@ -21,6 +21,7 @@ interface Api {
   sidebarOpen(): boolean;
   readingStarts(): number;
   emitIndexChanged(): void;
+  searchKey(key: string): void;
   renderedPosts(): { context: string; visible: number }[];
   webviewErrors(): string[];
 }
@@ -294,11 +295,11 @@ suite("the sidebar", () => {
     }
   });
 
-  test("moving through the search list points at nodes without selecting; closing it clears the pointer", async () => {
+  test("moving through the search rows points at nodes without selecting; clearing the box clears the pointer", async () => {
     // With the canvas open, cards are drawn, so a highlight really reaches them (it once crashed the page: a hook was skipped on the highlighted card).
-    // The list is a QuickPick, and it closes the moment anything else takes the keyboard, which clears the pointer. So before it is opened, wait for what
-    // could take the keyboard or change what it lists: the canvas page (VS Code runs the new tab's focus request when its page is ready, and the page says
-    // it drew only after that), and the index (a node that goes while it is pointed at drops the pointer, correctly).
+    // The rows are the sidebar box's now (*V-NOC: Search…* puts its cursor there), so nothing closes them when the keyboard goes elsewhere; the keys are sent to the page as the box handles
+    // them. Before it is opened, wait for what could change what it lists: the canvas page (it says it drew only after VS Code ran the new tab's focus request), and the index (a node that goes
+    // while it is pointed at drops the pointer, correctly).
     const drawn = api.renderedPosts().length;
     await vscode.commands.executeCommand("vnoc.openCanvas");
     await until("the canvas tab", () => canvasTabs().length === 1);
@@ -308,15 +309,15 @@ suite("the sidebar", () => {
     const selected = api.session().contexts.main.selected;
     const timeline = recordTimeline(() => api.session().highlight);
     try {
-      await vscode.commands.executeCommand("vnoc.search", "method"); // an empty list shows nothing now: the start is a query (four `method` nodes: enough for two moves)
-      await until("the list's first item to be pointed at", () => api.session().highlight !== null);
+      await vscode.commands.executeCommand("vnoc.search", "method"); // an empty box shows nothing: the start is a query (four `method` nodes: enough for two moves)
+      await until("the list's first row to be pointed at", () => api.session().highlight !== null);
       for (const step of ["next", "next again"]) {
         const was = api.session().highlight;
-        await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
-        await until(`the pointer to move to ${step} item`, () => api.session().highlight !== null && api.session().highlight !== was);
+        api.searchKey("ArrowDown");
+        await until(`the pointer to move to ${step} row`, () => api.session().highlight !== null && api.session().highlight !== was);
       }
       assert.strictEqual(api.session().contexts.main.selected, selected, "a highlight never changes the selection");
-      await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+      api.searchKey("Escape"); // clears the box, which clears the pointer
       await until("the pointer to clear", () => api.session().highlight === null);
     } catch (e) {
       throw new Error(`${(e as Error).message}; what happened, in ms from the start: ${timeline.log.join(" | ")}`);
@@ -325,7 +326,7 @@ suite("the sidebar", () => {
     }
   });
 
-  test("picking a result the focus hides (the palette's search: the same Enter as the sidebar's box) shortens the focus and selects the node (03 §3)", async () => {
+  test("picking a result the focus hides (*V-NOC: Search…*, then Enter in the box) shortens the focus and selects the node (03 §3)", async () => {
     await closeCanvas();
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
     const root = (await api.structure()).root;
@@ -342,8 +343,8 @@ suite("the sidebar", () => {
     const timeline = recordTimeline(() => api.session().highlight);
     try {
       await vscode.commands.executeCommand("vnoc.search", last.name);
-      await until("the list's first item to be pointed at", () => api.session().highlight === last.id);
-      await vscode.commands.executeCommand("workbench.action.acceptSelectedQuickOpenItem");
+      await until("the list's first row to be pointed at", () => api.session().highlight === last.id);
+      api.searchKey("Enter");
       await until("the focus to shorten and the node to be selected", () => api.session().contexts.main.focus.length === 0 && api.session().contexts.main.selected === last.id);
     } catch (e) {
       throw new Error(`${(e as Error).message}; what happened, in ms from the start: ${timeline.log.join(" | ")}`);

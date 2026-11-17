@@ -7,7 +7,7 @@ import type { SearchResult, StructureResult, TreeNode } from "@vnoc/shared/messa
 import type { Session } from "@vnoc/shared/session.ts";
 import { sleep, until, waitFor } from "./util";
 
-// Search in a real window (docs/20-search/06-build-order.md S3): the STRUCTURE view's box and the palette's *V-NOC: Search…* both ask the core, and draw what it answers.
+// Search in a real window (docs/20-search/06-build-order.md S3): the STRUCTURE view's box asks the core and draws what it answers, and *V-NOC: Search…* puts the cursor in that box (a QuickPick re-sorted the core's order: S3b).
 // The suite cannot type in a webview, so `setSearch` puts text in the box as typing would, and the page says what it drew (`searchDrawn`). What a query finds, and in what
 // order, is the core's own test (`crates/vnoc/tests/lifecycle.rs`); here it is that the answer reaches the screen, and that only the newest one does.
 
@@ -24,6 +24,8 @@ interface Api {
   session(): Session;
   searchDrawn(): Drawn[];
   setSearch(text: string): void;
+  searchFocused(): { focused: boolean; text: string }[];
+  searchKey(key: string): void;
   sidebarOpen(): boolean;
   sidebarVisible(): boolean;
   webviewErrors(): string[];
@@ -127,46 +129,40 @@ suite("search", () => {
     api.setSearch("");
   });
 
-  test("the palette: *V-NOC: Search…* with a starting query points at the core's first item, in the core's order, and closing it clears the pointer", async () => {
+  test("*V-NOC: Search…* with a starting query: the cursor is in the sidebar's box with that text, its rows are the core's in the core's order, the first is pointed at, and Esc clears both", async () => {
     await showSidebar();
-    api.setSearch(""); // the box has no text: it must not point at a row itself
+    api.setSearch(""); // the box starts empty: it must not point at a row
     await until("the box to point at nothing", () => api.session().highlight === null);
     const methods = (await nodesOf()).filter((n) => n.qualname === "Outer.method").map((n) => n.id);
+    const focusedBefore = api.searchFocused().length;
+    const from = api.searchDrawn().length;
     await vscode.commands.executeCommand("vnoc.search", "outer.meth");
-    await until("the first item to be pointed at", () => api.session().highlight !== null);
-    assert.ok(methods.includes(api.session().highlight!), `the first item is an Outer.method (${api.session().highlight})`);
-    await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+    await until("the page to say it handled the command", () => api.searchFocused().length > focusedBefore, 30_000);
+    assert.deepStrictEqual(api.searchFocused().at(-1), { focused: true, text: "outer.meth" }, "the cursor is in the box, and the box holds the starting query");
+    const got = await drawn("the answer for the starting query", from, (d) => d.query === "outer.meth");
+    assert.deepStrictEqual(got.ids, methods);
+    await until("the first row to be pointed at", () => api.session().highlight === methods[0]);
+    api.searchKey("Escape");
     await until("the pointer to clear", () => api.session().highlight === null);
 
-    // [check] 05 §2: VS Code keeps the order it was given. The query is `e`: every row's label holds it, so VS Code has a match to score on every item and a re-sort would show.
-    // (`outer` could not tell: one label matched, the rest were found by their qualified name.) First, that this query *can* tell: the core's order is not the labels sorted.
+    // 05 §2's fallback was taken because a QuickPick re-sorts what it is given (the check that failed: `e`, every row walked: VS Code showed `decorated deepest inner method …` where the core
+    // says `inner Outer method …`). The box draws what the core ranked, so the same walk holds here: first that `e` can tell (the core's order is not the labels sorted), then every row in order.
     const rows = (await api.request<SearchResult>("vnoc/search", { query: "e" })).nodes;
     const labels = rows.map((n) => n.name);
     const sorted = [...labels].sort((a, b) => a.localeCompare(b));
-    console.log(`[search] order check on \`e\`, ${rows.length} rows\n  core:   ${labels.join(" ")}\n  sorted: ${sorted.join(" ")}`);
+    console.log(`[search] order on \`e\`, ${rows.length} rows\n  core:   ${labels.join(" ")}\n  sorted: ${sorted.join(" ")}`);
     assert.ok(rows.length >= 10, `enough rows to tell an order (${rows.length})`);
-    assert.notDeepStrictEqual(labels, sorted, "the core's order is the labels' sorted order: this query cannot tell a re-sort from the core's order, pick another");
+    assert.notDeepStrictEqual(labels, sorted, "the core's order is the labels' sorted order: this query cannot tell, pick another");
+    const fromE = api.searchDrawn().length;
     await vscode.commands.executeCommand("vnoc.search", "e");
-    const nameOf = new Map(rows.map((n) => [n.id, n.name]));
-    try {
-      await until(`the first item to be ${rows[0].id} (${rows[0].name})`, () => api.session().highlight === rows[0].id, 5_000);
-      for (let i = 1; i < rows.length; i++) {
-        await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
-        await until(`item ${i} to be ${rows[i].id} (${rows[i].name})`, () => api.session().highlight === rows[i].id, 5_000);
-      }
-    } catch (e) {
-      // the walk failed: say what VS Code shows (not part of the check, which has failed): the highlight now, then the next items as it walks them
-      const shown: string[] = [];
-      for (let i = 0; i < rows.length; i++) {
-        await sleep(200);
-        const id = api.session().highlight;
-        shown.push(id === null ? "(none)" : (nameOf.get(id) ?? id));
-        await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
-      }
-      throw new Error(`${(e as Error).message}. The core's order: ${labels.join(" ")}. What VS Code highlights, walking from the top: ${shown.join(" ")}`);
-    } finally {
-      await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+    const drawnE = await drawn("the answer for `e`", fromE, (d) => d.query === "e");
+    assert.deepStrictEqual(drawnE.ids, rows.map((n) => n.id), "the rows are drawn in the core's order");
+    await until(`the first row to be ${rows[0].name}`, () => api.session().highlight === rows[0].id);
+    for (let i = 1; i < rows.length; i++) {
+      api.searchKey("ArrowDown");
+      await until(`row ${i} to be ${rows[i].id} (${rows[i].name})`, () => api.session().highlight === rows[i].id, 5_000);
     }
+    api.searchKey("Escape");
     await until("the pointer to clear", () => api.session().highlight === null);
   });
 

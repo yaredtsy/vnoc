@@ -17,6 +17,9 @@ export class Surfaces {
   private canvasPanel: vscode.WebviewPanel | undefined;
   private docsPanel: vscode.WebviewPanel | undefined;
   private sidebarView: vscode.WebviewView | undefined;
+  /** The STRUCTURE page has drawn at least once, so it is listening for the events a command sends it. */
+  private sidebarDrew = false;
+  private sidebarDrawnWaiters: (() => void)[] = [];
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -46,15 +49,38 @@ export class Surfaces {
     this.sidebarView?.webview.postMessage(event(name, data));
   }
 
+  /**
+   * Resolves when the STRUCTURE page has drawn (at once if it has), or after `ms`: a page with no folder open never draws a list, and the command that waits must not hang.
+   * An event posted before the page is listening is lost, so a command that needs the page waits for this first.
+   */
+  whenSidebarDrew(ms: number): Promise<void> {
+    if (this.sidebarDrew) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => (clearTimeout(timer), resolve());
+      const timer = setTimeout(() => {
+        this.sidebarDrawnWaiters = this.sidebarDrawnWaiters.filter((w) => w !== done);
+        resolve();
+      }, ms);
+      this.sidebarDrawnWaiters.push(done);
+    });
+  }
+
   /** The STRUCTURE view was resolved (it is shown for the first time, or VS Code made it again): give it its page. */
   adoptSidebar(view: vscode.WebviewView): void {
     this.sidebarView = view;
+    this.sidebarDrew = false; // a new page: it has not drawn, and nothing it is sent is heard until it has
     view.webview.options = this.options();
     view.onDidDispose(() => {
       if (this.sidebarView === view) this.sidebarView = undefined;
     });
     view.webview.html = this.html(view.webview, { script: "assets/sidebar.js", css: "assets/sidebar.css", attributes: `data-mode="sidebar" data-folder="${(vscode.workspace.workspaceFolders?.length ?? 0) > 0}" data-hover-delay="${vscode.workspace.getConfiguration("workbench.hover").get<number>("delay", 500)}"` });
-    view.webview.onDidReceiveMessage((m: RequestMessage | Notes) => void this.receive(view.webview, m, () => {}));
+    view.webview.onDidReceiveMessage((m: RequestMessage | Notes) => {
+      if (m.type === "sidebarRendered" && this.sidebarView === view) {
+        this.sidebarDrew = true;
+        this.sidebarDrawnWaiters.splice(0).forEach((w) => w());
+      }
+      void this.receive(view.webview, m, () => {});
+    });
   }
 
   /**

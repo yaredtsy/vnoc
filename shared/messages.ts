@@ -342,7 +342,7 @@ export interface Events {
   /** the whole session, every time it changes: whole snapshots cannot get out of step, and `seq` drops one that arrives late */
   session: Session;
   /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view, start an edit of a card (it shows its code first). `checkKeys`, `setDraft` and `save` are for the extension's test suite: it cannot press keys in a webview. `saveFile` is the Save button of "Save `<file>` to edit here" on a card; `showDocPanel` opens the canvas's doc panel; `docEdit`, `docSetDraft` and `docSave` (`key`: the doc's path) are Edit, typing and Save in a doc panel, on whichever page shows that doc */
-  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave" | "saveFile" | "setSearch"; key?: string; text?: string };
+  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave" | "saveFile" | "setSearch" | "focusSearch" | "searchKey"; key?: string; text?: string };
   /** a call tree arrived: the entry's card shows it in its "Calls" section */
   callTree: { key: string; result: CallTreeResult };
   /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
@@ -375,6 +375,7 @@ export type Notes =
   | { type: "editState"; key: string; state: "closed" | "reading" | "editing" | "saving" | "conflict" | "gone"; elsewhere: boolean; mark: string | null } // a card's code is in this state (`key`: the card's id; posted when it shows its code and whenever the state or `elsewhere` changes; `elsewhere`: the card says "Being edited in another card", or the doc panel "Already being edited in the canvas"; `mark`: which line is above the code, `saveFirst`, `saving`, `elsewhere`, `state`, `notice`, `refusal`, `busy`, or null): the extension's test suite uses it
   | { type: "keysChecked"; found: boolean; target: string; taken: string[]; hosts: number } // the answer to the viewCommand `checkKeys`: the page dispatched keys at the editor of a code card (`found`: there was one, `target`: its tag, `hosts`: how many code areas the page had, editor made or not), and these were taken by something other than the editor (React Flow's Space, say): the extension's test suite uses it
   | { type: "searchDrawn"; query: string; ids: string[]; total: number; ms: number; trip: number } // the STRUCTURE view drew the rows of an answer (`query`: the box's text it answers, `ids`: the rows in order, `total`: how many matched before the limit, `ms`: from the change of the box to the draw, `trip`: from sending the request to the draw): the extension's test suite uses it
+  | { type: "searchFocused"; focused: boolean; text: string } // the STRUCTURE view handled the view command `focusSearch` (*V-NOC: Search…*): `focused`: the cursor is in the box now, `text`: what the box holds: the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 
