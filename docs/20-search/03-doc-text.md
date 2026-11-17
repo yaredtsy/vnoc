@@ -153,3 +153,29 @@ watchdog's 50 ms. Two fixes, both in S6a2:
   the counts of one doc are kept by word number, postings are `Vec`s by word number, and the sorted word list for the prefix is made once at the
   end. ASCII text is lower-cased in place, as names are (S2b). Target: the doc index's median build **20 ms or less** on the M1. If it is over,
   S6b builds it in `refresh`'s `spawn_blocking`, off the request, only when the generation moved.
+
+**Measured in S6a2 (2026-11-17).** The same timing test (`cargo test -p vnoc-search --release -- --ignored --nocapture`, `tests/timing.rs`), Apple M1,
+8 GB, rustc 1.94.1; 10,000 names and 1,000 docs of 2 KB (1,987 KB of text). Each figure is the first run in the process, then the median of five
+more; the range is over five invocations on a quiet moment. The machine is shared (a language server and an editor run beside it): in invocations
+made while its load average was 9 – 10 the same medians read 19 – 29 ms, so a build is **16 ms on a quiet M1 and up to about 29 ms under load**.
+
+| | before (S6a) | after, first | after, median of 5 more |
+|---|---|---|---|
+| the doc index: `Corpus::new` with 1,000 docs, then `DocIndex::new` alone | 88 ms · 74 ms | **16 – 21 ms** (29 under load) | **15.3 – 16.9 ms** (19.1 under load) |
+| `Corpus::new`, 10,000 names, no docs | 2.0 ms · 4.1 ms | 1.6 – 2.8 ms | 1.3 – 1.6 ms |
+| `Corpus::with_doc_index`, 10,000 names, a kept index | (not possible) | 1.3 – 2.8 ms | 1.3 – 1.9 ms |
+| one `run`, a word in every doc (`baba`) | 2.5 ms · 2.4 ms | 2.0 – 2.5 ms | 2.0 – 2.5 ms |
+| one `run`, a two-letter prefix (`ba`) | 2.8 ms · 2.9 ms | 2.5 – 4.7 ms | 2.4 – 3.9 ms |
+
+The build is **4.5 times cheaper** (74 ms to 16 ms) and a code change now costs only the names, 1.3 – 1.9 ms with the kept index joined, which is
+less than building the corpus without docs was in S6a. The queries are unchanged (the ranking did not move: every S6a test passes as it was).
+
+**Decision: the doc index is built in the request**, the first time a search needs it after a doc change (or the first search of the session). Its
+median is **under the 20 ms line** on a quiet M1, and the watchdog's 50 ms (`watchdog.rs` `LIMIT`) is met in every run, load included, by a factor of
+about 2. S6b therefore keeps it under the doc-text generation in `State` and builds it where `kept` builds the corpus; it does **not** build it in
+`refresh`'s `spawn_blocking`. If S6b's measurement on the real disk path (reading 1,000 files first) puts a search over the line, that is where it moves.
+
+**What is left in `DocIndex::new`** (a scratch profile, not kept): cutting the text into words is about two thirds of it (about 11 of 16 ms for
+325,000 words; the scan of the characters alone is under 3 ms of that), and looking each word up for its number is the rest. A byte-level scan of the
+ASCII text was tried and was no faster, so it is not in the code. The next cut, if one is ever needed, is to skip the per-token copy for words that
+need no lower-casing, not to change the index.
