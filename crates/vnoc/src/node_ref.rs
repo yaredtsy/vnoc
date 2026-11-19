@@ -138,7 +138,7 @@ fn number(text: &str) -> Option<u32> {
 }
 
 /// Whether a pasted path is absolute: `/…`, or a Windows drive and a separator (`C:\…`, `C:/…`).
-fn is_absolute(path: &str) -> bool {
+pub(crate) fn is_absolute(path: &str) -> bool {
     let b = path.as_bytes();
     path.starts_with('/')
         || (b.len() >= 3

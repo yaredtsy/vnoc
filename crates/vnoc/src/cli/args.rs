@@ -60,4 +60,42 @@ pub enum Command {
     /// classes, functions and docs there are, and what is Missing or broken. Run it first when anything seems off, or to see whether a
     /// project has docs at all.
     Status,
+    /// Prints what V-NOC knows of each node you name: where it is, the notes (docs) attached to it, and its code. For a file or a folder, the
+    /// notes and what it holds. Run it before you change a function: the notes say why it is the way it is. A node whose code is gone prints
+    /// MISSING with its notes. One that cannot be found does not stop the others: its error is printed in place and the exit code is 2.
+    Show(ShowArgs),
+    /// Prints only the code of each function or class you name, with line numbers. Use it to read exactly one def instead of the whole file.
+    /// A file, a folder, or a node whose code is gone has no code: that is an error (exit 2), and `vnoc show` prints its notes.
+    Code(CodeArgs),
+}
+
+/// The nodes a command takes: any number, named in any of the four ways.
+#[derive(Debug, Args)]
+pub struct Nodes {
+    /// A function, class, file or folder, as `src/orders.py::OrderService.parse_order` (`#2` for a second def of the same name),
+    /// `src/orders.py:142` (the innermost def holding that line), the node's ID, or a path. A relative path starts at the current folder, else
+    /// at the root. `-` reads one name per line from standard input.
+    #[arg(required = true, value_name = "NODE")]
+    pub nodes: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ShowArgs {
+    #[command(flatten)]
+    pub nodes: Nodes,
+    /// Stop after the notes: no code (and for a file or a folder, no list of what it holds).
+    #[arg(long)]
+    pub no_code: bool,
+    /// Print all the code. By default a def over 120 lines is cut, with the count of what was left out.
+    #[arg(long)]
+    pub full: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CodeArgs {
+    #[command(flatten)]
+    pub nodes: Nodes,
+    /// Lines of the file to add above and below the def (its decorators are already in it).
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    pub context: u32,
 }

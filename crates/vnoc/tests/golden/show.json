@@ -1,0 +1,139 @@
+{
+  "command": "show",
+  "results": [
+    {
+      "arg": "orders/service.py::OrderService.parse_order",
+      "code": {
+        "first": 10,
+        "lines": [
+          "    def parse_order(self, raw):",
+          "        \"\"\"ID: 31ZBQ9NKY1E881TZWC2CJCN35H\"\"\"",
+          "        lines = [Line(item[\"sku\"], item[\"qty\"], item[\"price\"]) for item in raw[\"items\"]]",
+          "        return Order(raw[\"number\"], lines)"
+        ],
+        "more": 0
+      },
+      "docs": [
+        {
+          "path": ".vnoc/nodes/5H/31ZBQ9NKY1E881TZWC2CJCN35H/why-we-parse-twice.md",
+          "title": "Why we parse twice"
+        }
+      ],
+      "kind": "function",
+      "lines": [
+        10,
+        13
+      ],
+      "location": "orders/service.py::OrderService.parse_order",
+      "node_id": "31ZBQ9NKY1E881TZWC2CJCN35H",
+      "path": "orders/service.py",
+      "qualname": "OrderService.parse_order"
+    },
+    {
+      "arg": "orders",
+      "children": [
+        {
+          "docs": 0,
+          "kind": "file",
+          "lines": null,
+          "location": "orders/models.py",
+          "name": "models.py"
+        },
+        {
+          "docs": 0,
+          "kind": "file",
+          "lines": null,
+          "location": "orders/parse.py",
+          "name": "parse.py"
+        },
+        {
+          "docs": 0,
+          "kind": "file",
+          "lines": null,
+          "location": "orders/report.py",
+          "name": "report.py"
+        },
+        {
+          "docs": 0,
+          "kind": "file",
+          "lines": null,
+          "location": "orders/service.py",
+          "name": "service.py"
+        },
+        {
+          "docs": 0,
+          "kind": "file",
+          "lines": null,
+          "location": "orders/status.py",
+          "name": "status.py"
+        }
+      ],
+      "code": null,
+      "docs": [
+        {
+          "path": ".vnoc/nodes/20/0DJ3H8AWWXRWKJ55SNZ3509320/how-orders-are-laid-out.md",
+          "title": "How orders are laid out"
+        }
+      ],
+      "kind": "folder",
+      "lines": null,
+      "location": "orders",
+      "node_id": "0DJ3H8AWWXRWKJ55SNZ3509320",
+      "path": "orders",
+      "qualname": null
+    },
+    {
+      "arg": "7N1HNCPA163HHSN91HX48T9QGE",
+      "docs": [
+        {
+          "path": ".vnoc/nodes/GE/7N1HNCPA163HHSN91HX48T9QGE/the-old-csv-export.md",
+          "title": "The old CSV export"
+        }
+      ],
+      "missing": true,
+      "node_id": "7N1HNCPA163HHSN91HX48T9QGE",
+      "was": "api/routes.py::legacy_export"
+    },
+    {
+      "arg": "billing/tax.py",
+      "children": [
+        {
+          "docs": 1,
+          "kind": "function",
+          "lines": [
+            6,
+            7
+          ],
+          "location": "billing/tax.py::rate_for",
+          "name": "rate_for"
+        },
+        {
+          "docs": 0,
+          "kind": "function",
+          "lines": [
+            10,
+            11
+          ],
+          "location": "billing/tax.py::apply_tax",
+          "name": "apply_tax"
+        }
+      ],
+      "code": null,
+      "docs": [],
+      "kind": "file",
+      "lines": null,
+      "location": "billing/tax.py",
+      "node_id": null,
+      "path": "billing/tax.py",
+      "qualname": null
+    },
+    {
+      "arg": "orders/service.py::parse_ordr",
+      "error": {
+        "message": "no node at orders/service.py::parse_ordr · did you mean: orders/service.py::OrderService.parse_order",
+        "why": "no_def"
+      }
+    }
+  ],
+  "schema": 1
+}

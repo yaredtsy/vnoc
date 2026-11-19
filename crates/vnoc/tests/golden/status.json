@@ -24,9 +24,9 @@
   "schema": 1,
   "stats": {
     "classes": 5,
-    "files": 10,
+    "files": 12,
     "folders": 3,
-    "functions": 25
+    "functions": 27
   },
   "truncated": false,
   "version": "<version>"

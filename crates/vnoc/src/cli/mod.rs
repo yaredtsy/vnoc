@@ -4,8 +4,11 @@
 //! one function, [`exit_code`], says what each failure exits with (C6).
 
 mod args;
+mod code;
+mod nodes;
 mod out;
 pub mod project;
+mod show;
 mod status;
 
 use std::ffi::OsString;
@@ -29,6 +32,10 @@ pub enum Failure {
     /// no driver, a driver that failed, a `vnoc.toml` that is too new, a lock that could not be taken
     #[error("{0}")]
     Environment(String),
+    /// the request could not be met for some of what it named, and each was **already** printed in its place (`show a.py b.py`: `b.py` is not
+    /// there): nothing more to say, exit `2`
+    #[error("some nodes were not found")]
+    Reported,
     /// the reader of standard output went away (`vnoc tree | head`): the command ends quietly, successfully
     #[error("standard output was closed")]
     Closed,
@@ -39,7 +46,7 @@ pub fn exit_code(failure: &Failure) -> i32 {
     match failure {
         Failure::Closed => 0,
         Failure::CheckFailed => 1,
-        Failure::Usage(_) | Failure::NoSuchNode(_) => 2,
+        Failure::Usage(_) | Failure::NoSuchNode(_) | Failure::Reported => 2,
         Failure::Environment(_) => 3,
     }
 }
@@ -54,7 +61,7 @@ pub async fn run(args: Vec<OsString>) -> i32 {
     match execute(&cli).await {
         Ok(()) => 0,
         Err(failure) => {
-            if failure != Failure::Closed {
+            if !matches!(failure, Failure::Closed | Failure::Reported) {
                 out::error(&failure.to_string());
             }
             exit_code(&failure)
@@ -63,8 +70,10 @@ pub async fn run(args: Vec<OsString>) -> i32 {
 }
 
 async fn execute(cli: &Cli) -> Result<(), Failure> {
-    match cli.command {
+    match &cli.command {
         Command::Status => status::run(&cli.global).await,
+        Command::Show(args) => show::run(&cli.global, args).await,
+        Command::Code(args) => code::run(&cli.global, args).await,
     }
 }
 
@@ -79,6 +88,7 @@ mod tests {
             (Failure::CheckFailed, 1),
             (Failure::Usage("x".into()), 2),
             (Failure::NoSuchNode("x".into()), 2),
+            (Failure::Reported, 2),
             (Failure::Environment("x".into()), 3),
         ];
         for (failure, code) in table {

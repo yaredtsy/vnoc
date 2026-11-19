@@ -438,7 +438,7 @@ fn status_in_text_has_its_three_lines() {
             "V-NOC {version}   root <root>   driver python {driver_version}\n\
              {}\n\
              missing 1 · problems 0      → vnoc check\n",
-            "3 folders · 10 files · 5 classes · 25 functions · 7 docs on 6 nodes"
+            "3 folders · 12 files · 5 classes · 27 functions · 7 docs on 6 nodes"
         )
     );
     // quiet drops the hint, and nothing else
@@ -646,7 +646,7 @@ fn the_server_starts_with_stdio_with_serve_and_with_both() {
         let pong = core.request("vnoc/ping", Value::Null).unwrap();
         assert_eq!(pong["pong"], true, "{args:?}");
         let structure = core.request("vnoc/structure", Value::Null).unwrap();
-        assert_eq!(structure["stats"]["files"], 10, "{args:?}");
+        assert_eq!(structure["stats"]["files"], 12, "{args:?}");
         core.finish();
     }
 }
@@ -656,4 +656,470 @@ fn serve_with_anything_else_is_a_usage_error_not_a_server() {
     let root = sample_copy("serve-extra");
     let out = run(vnoc(&root, &["serve", "extra"]));
     assert_eq!(code(&out), 2);
+}
+
+// ------------------------------------------------------------------------------------------------------ `show` and `code`
+
+const METHOD: &str = "orders/service.py::OrderService.parse_order";
+const METHOD_ID: &str = "31ZBQ9NKY1E881TZWC2CJCN35H";
+const MISSING_ID: &str = "7N1HNCPA163HHSN91HX48T9QGE";
+
+/// `vnoc <args>` in `cwd`, with standard error folded into standard output by the shell, as an agent's harness has it: what comes back is the
+/// two streams in the order they were written. (Unix only.)
+#[cfg(unix)]
+fn merged(cwd: &Path, args: &[&str]) -> (String, i32) {
+    let out = Command::new("sh")
+        .args(["-c", "exec \"$0\" \"$@\" 2>&1"])
+        .arg(env!("CARGO_BIN_EXE_vnoc"))
+        .arg("--driver")
+        .arg(driver_path())
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_LOG")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    (text(&out.stdout), code(&out))
+}
+
+/// What `vnoc <args>` prints on standard output, when it exits `0`.
+fn stdout_of(cwd: &Path, args: &[&str]) -> String {
+    let out = run(vnoc(cwd, args));
+    assert_eq!(code(&out), 0, "{args:?}: {}", text(&out.stderr));
+    assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
+    text(&out.stdout)
+}
+
+/// The first line of what `vnoc <args>` says on standard error, when it exits `2`.
+fn error_of(cwd: &Path, args: &[&str]) -> String {
+    let out = run(vnoc(cwd, args));
+    assert_eq!(code(&out), 2, "{args:?}: {}", text(&out.stdout));
+    let line = text(&out.stderr);
+    line.strip_prefix("error: ")
+        .unwrap_or_else(|| panic!("{line:?}"))
+        .trim_end()
+        .to_string()
+}
+
+fn golden(name: &str, actual: &Value) {
+    let path = tests_dir().join("golden").join(name);
+    if blessing() {
+        std::fs::write(&path, serde_json::to_string_pretty(actual).unwrap() + "\n").unwrap();
+    }
+    let expected: Value = serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("tests/golden/{name} (VNOC_BLESS=1 writes it)")),
+    )
+    .unwrap();
+    assert_eq!(
+        actual, &expected,
+        "the shape of `{name}` changed: bless it on purpose (VNOC_BLESS=1) and say so in the commit"
+    );
+}
+
+#[test]
+fn the_four_forms_give_the_same_node() {
+    let root = sample_copy("forms");
+    // location, file and line (inside the method), ID, and from the file's own name; `--format id` is the resolver
+    for form in [
+        METHOD,
+        "orders/service.py:12",
+        "orders/service.py:L12",
+        METHOD_ID,
+        "service.py:12",
+    ] {
+        assert_eq!(
+            stdout_of(&root, &["show", form, "--format", "id"]),
+            format!("{METHOD}\n"),
+            "{form}"
+        );
+    }
+    // a file, and a folder
+    assert_eq!(
+        stdout_of(&root, &["show", "orders/service.py", "--format", "id"]),
+        "orders/service.py\n"
+    );
+    assert_eq!(
+        stdout_of(&root, &["show", "orders", "--format", "id"]),
+        "orders\n"
+    );
+    assert_eq!(
+        stdout_of(&root, &["show", "orders/service.py:12", "--format", "path"]),
+        "orders/service.py\n"
+    );
+    // a line outside every def is the file
+    assert_eq!(
+        stdout_of(&root, &["show", "orders/service.py:1", "--format", "id"]),
+        "orders/service.py\n"
+    );
+}
+
+#[test]
+fn show_prints_the_header_the_docs_and_the_code() {
+    let root = sample_copy("show-text");
+    let shown = stdout_of(&root, &["show", "orders/service.py:12"]);
+    let lines: Vec<&str> = shown.lines().collect();
+    assert_eq!(
+        lines[0],
+        format!("function  {METHOD}   lines 10-13   ID {METHOD_ID}")
+    );
+    assert_eq!(lines[1], "docs (1)");
+    assert_eq!(
+        lines[2],
+        format!("  Why we parse twice  .vnoc/nodes/5H/{METHOD_ID}/why-we-parse-twice.md")
+    );
+    assert_eq!(lines[3], format!("  → vnoc doc read {METHOD}"));
+    assert_eq!(lines[4], "code");
+    let source = std::fs::read_to_string(root.join("orders/service.py")).unwrap();
+    let source: Vec<&str> = source.lines().collect();
+    for (n, shown) in lines[5..].iter().enumerate() {
+        assert_eq!(
+            *shown,
+            format!("  {}  {}", 10 + n, source[9 + n]),
+            "line {}",
+            10 + n
+        );
+    }
+    assert_eq!(
+        lines.len(),
+        5 + 4,
+        "four lines of code and nothing after them"
+    );
+    // quiet drops the hint, no-code stops after the docs
+    let quiet = stdout_of(&root, &["show", METHOD, "--quiet", "--no-code"]);
+    assert!(
+        !quiet.contains("vnoc doc read") && !quiet.contains("code\n"),
+        "{quiet}"
+    );
+}
+
+#[test]
+fn show_of_a_folder_and_a_file_lists_what_they_hold_and_of_a_missing_node_says_so() {
+    let root = sample_copy("show-containers");
+    let folder = stdout_of(&root, &["show", "orders"]);
+    assert!(
+        folder.starts_with("folder  orders   ID 0DJ3H8AWWXRWKJ55SNZ3509320\ndocs (1)\n"),
+        "{folder}"
+    );
+    assert!(
+        folder.contains("contains (5)\n  file  models.py  docs 0\n"),
+        "{folder}"
+    );
+    let file = stdout_of(&root, &["show", "billing/tax.py"]);
+    assert!(file.contains("contains (2)\n  function  rate_for  lines 6-7  docs 1\n  function  apply_tax  lines 10-11  docs 0\n"), "{file}");
+    // a Missing node, by its ID: an answer, not an error
+    let missing = stdout_of(&root, &["show", MISSING_ID]);
+    assert!(
+        missing.starts_with(&format!(
+            "MISSING  was api/routes.py::legacy_export  ID {MISSING_ID}  docs 1\ndocs (1)\n"
+        )),
+        "{missing}"
+    );
+    assert!(missing.contains("The old CSV export"), "{missing}");
+}
+
+#[test]
+fn a_def_over_120_lines_is_cut_with_the_count_and_full_shows_it_all() {
+    let root = sample_copy("long");
+    let shown = stdout_of(&root, &["show", "orders/report.py::long_report"]);
+    let code_lines = shown.lines().skip_while(|l| *l != "code").skip(1).count();
+    // the def is lines 4-132: 129 lines; 120 are shown and one line says how many were left
+    assert_eq!(code_lines, 121, "{shown}");
+    assert!(
+        shown.ends_with("  … 9 more lines (vnoc code orders/report.py::long_report, or --full)\n"),
+        "{}",
+        shown.lines().last().unwrap()
+    );
+    let full = stdout_of(&root, &["show", "orders/report.py::long_report", "--full"]);
+    assert_eq!(
+        full.lines().skip_while(|l| *l != "code").skip(1).count(),
+        129
+    );
+    assert!(!full.contains("more lines"));
+    // `code` prints all of it
+    assert_eq!(
+        stdout_of(&root, &["code", "orders/report.py::long_report"])
+            .lines()
+            .count(),
+        129
+    );
+}
+
+#[test]
+fn code_prints_only_the_lines_and_context_adds_some_on_each_side() {
+    let root = sample_copy("code");
+    let source = std::fs::read_to_string(root.join("orders/service.py")).unwrap();
+    let source: Vec<&str> = source.lines().collect();
+    let plain = stdout_of(&root, &["code", METHOD]);
+    assert_eq!(plain.lines().count(), 4);
+    assert_eq!(plain.lines().next().unwrap(), format!("10  {}", source[9]));
+    // two lines more above and below: 8 to 15
+    let wider = stdout_of(&root, &["code", METHOD, "--context", "2"]);
+    let expected: String = (8..=15)
+        .map(|n| format!("{n:>2}  {}\n", source[n - 1]))
+        .collect();
+    assert_eq!(wider, expected);
+    // the context stops at the file's ends
+    let first = stdout_of(
+        &root,
+        &["code", "orders/models.py::Line", "--context", "50"],
+    );
+    assert!(
+        first.starts_with(" 1  \"\"\"The shapes an order takes.\"\"\"\n"),
+        "{first}"
+    );
+    // several nodes: each starts with where it is, and a blank line is between them
+    let two = stdout_of(&root, &["code", METHOD, "billing/tax.py::apply_tax"]);
+    assert!(
+        two.starts_with(&format!("── {METHOD}  lines 10-13\n")),
+        "{two}"
+    );
+    assert!(
+        two.contains("\n\n── billing/tax.py::apply_tax  lines 10-11\n"),
+        "{two}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn one_wrong_node_among_three_prints_its_error_in_place_and_exits_2() {
+    let root = sample_copy("in-place");
+    let (merged, exit) = merged(
+        &root,
+        &[
+            "show",
+            "--format",
+            "id",
+            METHOD,
+            "orders/service.py::OrderService.parse_ordr",
+            "billing/invoice.py::Invoice",
+        ],
+    );
+    assert_eq!(
+        merged,
+        format!(
+            "{METHOD}\nerror: no node at orders/service.py::OrderService.parse_ordr · did you mean: {METHOD}\nbilling/invoice.py::Invoice\n"
+        )
+    );
+    assert_eq!(exit, 2);
+}
+
+#[test]
+fn every_row_of_the_table_of_what_goes_wrong_has_its_sentence() {
+    let root = sample_copy("errors");
+    std::fs::write(root.join("app.ts"), "export {}\n").unwrap();
+    std::fs::write(root.join("bad.py"), b"def f():\n    return \"\xff\xfe\"\n").unwrap();
+    let tax_lines = std::fs::read_to_string(root.join("billing/tax.py"))
+        .unwrap()
+        .lines()
+        .count();
+    let rows: Vec<(&str, String)> = vec![
+        (
+            "orders/service.py::parse_ordr",
+            format!("no node at orders/service.py::parse_ordr · did you mean: {METHOD}"),
+        ),
+        (
+            // a name given without its class
+            "orders/service.py::parse_order",
+            format!("no node at orders/service.py::parse_order · did you mean: {METHOD}"),
+        ),
+        (
+            "OrderService.parse_order",
+            format!("\"OrderService.parse_order\" names no file · found: {METHOD}"),
+        ),
+        ("src/ordrs.py", "no file src/ordrs.py".into()),
+        (
+            "app.ts",
+            "app.ts is not read by V-NOC (it reads Python files that git does not ignore)".into(),
+        ),
+        (
+            "bad.py",
+            "bad.py could not be read: cannot read bad.py: stream did not contain valid UTF-8"
+                .into(),
+        ),
+        (
+            "status.py",
+            "status.py names 2 files: billing/status.py · orders/status.py".into(),
+        ),
+        (
+            "billing/tax.py:99",
+            format!("billing/tax.py has {tax_lines} lines"),
+        ),
+        (
+            "0Q8V5W4T2F7KX9M3B6D1RZ4H7K",
+            "no node has the ID 0Q8V5W4T2F7KX9M3B6D1RZ4H7K".into(),
+        ),
+        (
+            "/etc/hosts",
+            format!(
+                "/etc/hosts is outside this project (root: {})",
+                root.display()
+            ),
+        ),
+        (
+            "../x.py",
+            format!("../x.py is outside this project (root: {})", root.display()),
+        ),
+    ];
+    for (arg, sentence) in rows {
+        assert_eq!(error_of(&root, &["show", arg]), sentence, "{arg}");
+    }
+}
+
+#[test]
+fn code_of_a_missing_node_a_file_or_a_folder_is_an_error_and_show_of_a_missing_node_is_not() {
+    let root = sample_copy("no-code");
+    assert_eq!(code(&run(vnoc(&root, &["show", MISSING_ID]))), 0);
+    assert_eq!(
+        error_of(&root, &["code", MISSING_ID]),
+        format!(
+            "api/routes.py::legacy_export is Missing: there is no code (vnoc show {MISSING_ID} reads its docs)"
+        )
+    );
+    assert_eq!(
+        error_of(&root, &["code", "billing/charge.py"]),
+        "billing/charge.py is a file: use vnoc show for a file or a folder"
+    );
+    assert_eq!(
+        error_of(&root, &["code", "orders"]),
+        "orders is a folder: use vnoc show for a file or a folder"
+    );
+}
+
+#[test]
+fn a_path_relative_to_the_current_folder_and_one_relative_to_the_root_both_work() {
+    let root = sample_copy("cwd");
+    let billing = root.join("billing");
+    // each form that has a path: `a.py`, `a.py:12`, `a.py::f`, from `billing/`, written both ways
+    let file = stdout_of(
+        &billing,
+        &["show", "--format", "id", "charge.py", "billing/charge.py"],
+    );
+    assert_eq!(file, "billing/charge.py\nbilling/charge.py\n");
+    let line = stdout_of(
+        &billing,
+        &[
+            "show",
+            "--format",
+            "id",
+            "charge.py:12",
+            "billing/charge.py:12",
+        ],
+    );
+    assert_eq!(
+        line,
+        "billing/charge.py::retry_charge\nbilling/charge.py::retry_charge\n"
+    );
+    let named = stdout_of(
+        &billing,
+        &[
+            "show",
+            "--format",
+            "id",
+            "charge.py::retry_charge",
+            "billing/charge.py::retry_charge",
+        ],
+    );
+    assert_eq!(
+        named,
+        "billing/charge.py::retry_charge\nbilling/charge.py::retry_charge\n"
+    );
+    // `..` goes up, and the folder tried first is the current one: `status.py` is two files, and `billing/` has one of them
+    assert_eq!(
+        stdout_of(
+            &billing,
+            &["show", "--format", "id", "../orders/service.py"]
+        ),
+        "orders/service.py\n"
+    );
+    assert_eq!(
+        stdout_of(&billing, &["show", "--format", "id", "status.py"]),
+        "billing/status.py\n"
+    );
+    assert_eq!(
+        stdout_of(
+            &root.join("orders"),
+            &["show", "--format", "id", "status.py"]
+        ),
+        "orders/status.py\n"
+    );
+    // from the root the same name is ambiguous, and the error says which files
+    assert_eq!(
+        error_of(&root, &["show", "status.py"]),
+        "status.py names 2 files: billing/status.py · orders/status.py"
+    );
+    // a file name alone with a line finds the one file of that name
+    assert_eq!(
+        stdout_of(&root, &["show", "--format", "id", "charge.py:12"]),
+        "billing/charge.py::retry_charge\n"
+    );
+    // the root is printed the same from anywhere: nothing printed starts with the current folder's own path
+    let from_billing = stdout_of(&billing, &["show", "charge.py::retry_charge"]);
+    assert!(
+        from_billing.starts_with("function  billing/charge.py::retry_charge   lines "),
+        "{from_billing}"
+    );
+}
+
+#[test]
+fn a_dash_reads_the_nodes_from_standard_input() {
+    let root = sample_copy("stdin");
+    let mut child = vnoc(&root, &["show", "-", "--format", "id"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format!("{METHOD}\n\n  billing/invoice.py:6  \n").as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        format!("{METHOD}\nbilling/invoice.py::Invoice\n")
+    );
+}
+
+#[test]
+fn show_and_code_in_json_are_golden_files() {
+    let root = sample_copy("json");
+    let one_call = |args: &[&str]| {
+        let out = run(vnoc(&root, args));
+        assert_eq!(code(&out), 2, "{}", text(&out.stdout));
+        assert!(
+            out.stderr.is_empty(),
+            "the errors are in the value: {}",
+            text(&out.stderr)
+        );
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()
+    };
+    // a method, a folder, a Missing node, a def with docs elsewhere, and one that is not there
+    let shown = one_call(&[
+        "show",
+        "--json",
+        METHOD,
+        "orders",
+        MISSING_ID,
+        "billing/tax.py",
+        "orders/service.py::parse_ordr",
+    ]);
+    golden("show.json", &shown);
+    let results = shown["results"].as_array().unwrap();
+    assert_eq!(results.len(), 5);
+    assert_eq!(results[4]["error"]["why"], "no_def");
+    assert_eq!(results[2]["missing"], true);
+    let coded = one_call(&[
+        "code",
+        "--json",
+        METHOD,
+        "billing/invoice.py::Invoice",
+        "orders/service.py::parse_ordr",
+    ]);
+    golden("code.json", &coded);
+    assert_eq!(coded["results"][2]["error"]["why"], "no_def");
 }
