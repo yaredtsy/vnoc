@@ -46,7 +46,8 @@ And one that is not a command: **it works before any setup.** With no `.vnoc/` a
 | **Writes are small and say what they touched** | every write prints each file it changed, and says "read it again before you edit it" for a source file | the agent's own picture of that file is now old; its edit tool will refuse or, worse, overwrite the new `ID:` line |
 
 Per-command permission (allow reads without asking, ask for writes) is the agent host's to give. The command names are chosen so a prefix rule
-can tell them apart: every write is one of `vnoc init`, `vnoc doc new`, `vnoc relink`, `vnoc repair`, `vnoc agent`; everything else only reads
+can tell them apart: every write is one of `vnoc init`, `vnoc doc new`, `vnoc doc tag`, `vnoc relink`, `vnoc repair`, `vnoc agent`; everything else only reads
+(no read command starts with one of these: that is why the tag list is `vnoc tags`, not `vnoc doc tags`)
 ([`07`](07-install.md) §4).
 
 ## 4. How a session goes

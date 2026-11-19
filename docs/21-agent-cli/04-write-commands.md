@@ -242,13 +242,14 @@ One reader does all of it: `userdata/read.rs` gets `frontmatter(text) -> { title
 time. The doc texts the core reads on every run (doc 20; 17 ms for 1,000 docs, A0) already carry each doc's `tags` and `author` since A8a,
 so listing them is a count over memory, not a second read.
 
-**`vnoc doc tags [--authors]`**: every tag with how many docs carry it, and its description from `.vnoc/tags.toml` when it has one;
+**`vnoc tags [--authors]`** *(renamed 2026-11-20 from `vnoc doc tags`, built so in A9b: `vnoc doc tag` was a prefix of it, so a permission rule
+that asks before the write would also catch the read; 01 §3)*: every tag with how many docs carry it, and its description from `.vnoc/tags.toml` when it has one;
 described tags no doc carries yet are listed with `0 docs`. `--authors` lists authors the same way. Needs **no driver** (tags are not about
 code): `.vnoc/` and the doc texts only, about 60 ms on 1,000 docs by A0's numbers. Sorted by count, then by name. JSON:
-`{schema, command: "doc tags", tags: [{tag, docs, description}], authors?: [{author, docs}]}`.
+`{schema, command: "tags", tags: [{tag, docs, description}], authors?: [{author, docs}]}`.
 
 ```
-$ vnoc doc tags
+$ vnoc tags
 plan        4 docs   A change we intend to make. Retag as done when it ships.
 billing     2 docs
 decision    1 doc    Why we chose this way over the others.
@@ -288,7 +289,7 @@ tags: [plan, billing]           tags: [billing, done]
 the team's decision, made in a pull request); a whitelist (a refused tag would stop an agent mid-task for a word). If a team asks for strict
 tags, an optional `strict = true` in `tags.toml` is where it would go.
 
-**In the skill (A10):** before tagging, run `vnoc doc tags` and reuse a tag that fits, preferring described ones; never invent a synonym of
+**In the skill (A10):** before tagging, run `vnoc tags` and reuse a tag that fits, preferring described ones; never invent a synonym of
 one that exists; move a plan's tag when its state changes (`vnoc doc tag … --add done --remove plan`); read `tags.toml`, do not edit it.
 
 **Later, not in 0.5:** the extension shows descriptions on hover of a tag in the sidebar's doc rows, and gets a `vnoc/tags` request (a thin
@@ -299,7 +300,7 @@ wrapper over the same library function, C2) when it has a screen that lists or e
 - **`tags.toml`** is read by `userdata::tags::read_descriptions(root)` into `Descriptions` (tag → text, trimmed, sorted by tag). Not there: nothing and no problem. A key that is not a tag
   (`Bad_Key`), a value that is not a string (a number, a table), each: **one problem**, skipped, the rest read; a file that is not TOML: one problem and nothing read. The problems are appended to
   `load_all`'s report, so `check` lists them as `broken` with the file, and `status` counts them. `UserData::tag_descriptions()` is the descriptions alone. V-NOC never writes the file.
-- **`doc tags [--authors]`** reads `.vnoc/` and the doc texts only (`--driver /nonexistent` works; a project nobody started says `no tags`). `tag_counts`: a tag counts once for a doc; described tags no doc
+- **`tags [--authors]`** reads `.vnoc/` and the doc texts only (`--driver /nonexistent` works; a project nobody started says `no tags`). `tag_counts`: a tag counts once for a doc; described tags no doc
   has are listed with `0`; **most docs first, then by name**. `author_counts`: authors that differ only in case are one, shown as first met. Text (columns: name, count, description; the count is padded only when a
   description follows):
   ```
@@ -308,7 +309,7 @@ wrapper over the same library function, C2) when it has a screen that lists or e
   decision  1 doc   Why we chose this way over the others.
   done      0 docs  A plan that shipped.
   ```
-  `--authors` prints the authors instead (`no authors` when none); `--json`: `{schema, command: "doc tags", tags: [{tag, docs, description}], authors?: [{author, docs}]}` (`authors` only with `--authors`,
+  `--authors` prints the authors instead (`no authors` when none); `--json`: `{schema, command: "tags", tags: [{tag, docs, description}], authors?: [{author, docs}]}` (`authors` only with `--authors`,
   and then `tags` is there too).
 - **`rewrite_tags(text, add, remove) -> Result<(String, Change), TagError>`** is pure and is 04 §4's list, with these settled: the doc's tags are read as `frontmatter` reads them (**so an upper-case or quoted hand-written
   tag comes out lower case and unquoted** when the line is rewritten); removals are taken first, then additions are appended, so `--add x --remove x` on a doc that has `x` moves it to the end; a tag to add must be
@@ -454,7 +455,7 @@ With `--json`: `{ "schema": 1, "command": "doc new", "node": {…}, "doc": "…"
 **A8a's tests** (`tests/cli.rs`, `tests/lifecycle.rs`): the race is 20 rounds of two `doc new` processes started together on one function with different titles, each round on a fresh started
 copy, → one node folder, one `ID:` line, two docs, and `vnoc check` clean; a second test holds `.vnoc/local/write.lock` from the test and shows `doc new` exits `3` with the message after 5 seconds and writes nothing.
 
-**As built in A9 and A9b.** `relink`, `repair`, `doc tag` and `doc tags` print as above (§6, §4), in the same style: labels 13 wide (`relinked`, `to`, `repaired`, `left`, `tags`, `changed`, `created`, `notice`),
+**As built in A9 and A9b.** `relink`, `repair`, `doc tag` and `tags` print as above (§6, §4), in the same style: labels 13 wide (`relinked`, `to`, `repaired`, `left`, `tags`, `changed`, `created`, `notice`),
 dim in a terminal; `already has "x"` / `already without "x"` and the `note:` lines are whole lines with no label. Every file a write changed is a `changed` line, and the warning in it
 (*read the file again before you edit it*) stays under `--quiet`; the new-tag `note:` stays too (it is about the data). A command that was refused prints `error: …` on standard error and nothing on standard
 output, **except** `repair`, whose `left` line for a node the user named is on standard output in its place, with the exit `2`.

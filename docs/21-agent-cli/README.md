@@ -39,7 +39,7 @@ commands: `vnoc check` fails a pull request that left a doc Missing.
 
 | In | Out (later) |
 |---|---|
-| `status` `show` `code` `doc list/read/path/tags` `tree` `find` `grep` `calls` `missing` `check` | `vnoc mcp`, VS Code language-model tools, plugins and hooks ([`08`](08-mcp-and-plugins.md)) |
+| `status` `show` `code` `doc list/read/path` `tags` `tree` `find` `grep` `calls` `missing` `check` | `vnoc mcp`, VS Code language-model tools, plugins and hooks ([`08`](08-mcp-and-plugins.md)) |
 | `init` `doc new` `doc tag` `relink` `repair` | remove, trash, empty trash: **never** for agents |
 | `guide` `skill` `agent install/status/remove` | `diff`, `history` (graph diff, function history: futureplan 01, 03) |
 | plain text by default, `--json` on every command | Homebrew, `cargo install`, an npm wrapper |

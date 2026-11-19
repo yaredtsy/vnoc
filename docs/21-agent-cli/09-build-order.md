@@ -229,16 +229,16 @@ path`.
 | Files | What |
 |---|---|
 | `crates/vnoc/src/userdata/tags.rs` (new, library) | read `.vnoc/tags.toml` (bad keys/values → Problems, the rest read); `tag_counts(&DocTexts, &Descriptions)`; `rewrite_tags(text, add, remove) -> Result<(String, Change), …>` (pure: only the `tags:` line, block form folded, rules of 04 §4) |
-| `crates/vnoc/src/cli/doc.rs` | `doc tags [--authors]` (no driver); `doc tag <node> [file] --add … --remove …` (the write lock, atomic, re-read before write) |
+| `crates/vnoc/src/cli/doc.rs` | `tags [--authors]` (no driver); `doc tag <node> [file] --add … --remove …` (the write lock, atomic, re-read before write) |
 | `crates/vnoc/src/cli/write.rs` | the new-tag notice in `doc new` (and `doc tag`) |
 
 Tests: `rewrite_tags` as a table (add, remove, both, the last removed, no line and an add, the block form, already has / already without,
-a bad tag, every other line byte-identical); `tags.toml` with a bad key and a good one; `doc tags` on a sample copy with three tagged docs
+a bad tag, every other line byte-identical); `tags.toml` with a bad key and a good one; `tags` on a sample copy with three tagged docs
 and a described unused tag, with `--driver /nonexistent`; `doc tag` on a node with two docs and no file → `2` with the names; the file
 changed between read and write → refused, untouched; the new-tag notice with a near tag (`planning` → `plan`) and with none; twice the
 same `doc tag` command → the second says `already…`, exit `0`.
 
-Commit: `cli A9b: doc tags lists them, doc tag edits one doc's, tags.toml describes them`. **Stop point:** agents can write. Full test run.
+Commit: `cli A9b: tags lists them, doc tag edits one doc's, tags.toml describes them`. **Stop point:** agents can write. Full test run.
 
 ## 4. Phase 3: skill, install
 
@@ -247,13 +247,19 @@ Commit: `cli A9b: doc tags lists them, doc tag edits one doc's, tags.toml descri
 | Files | What |
 |---|---|
 | `skills/vnoc/SKILL.md` | the text (06 §5), the description on one line |
+| `skills/vnoc/rules.md` | the rules block (06 §4), compiled in for A11 |
 | `crates/vnoc/guide/{read,tree,find,write,check}.md` | the topics (06 §6), examples run on the sample |
 | `crates/vnoc/src/cli/guide.rs` | `guide`, `guide <topic>`, `skill`; all `include_str!` |
 | `crates/vnoc/tests/guide.rs` | every line in a guide or the skill that starts with `vnoc ` is run on the sample: none may exit `2` for an unknown flag or command |
 
 Also: the `about` text of every command, read once as an agent would, cold. **[check]** `skills-ref validate skills/vnoc`.
 
-Commit: `cli A10: the skill and vnoc guide`.
+*(Added 2026-11-20.)* First commit of the step: `vnoc doc tags` → **`vnoc tags`** (04 §4: the read must not start with the write's name);
+the old name is not kept as an alias (nothing has shipped). The guide test's rules are 06 §6's (placeholders parsed only; `# exit 2` marks
+a refusal shown on purpose; pasted outputs compared with a run). The rules block of 06 §4 goes into `skills/vnoc/rules.md` now (compiled
+in, not written anywhere yet: A11 writes it), so the guide test checks its one `vnoc` line too.
+
+Commits: `cli A10a: the tag list is vnoc tags`, then `cli A10: the skill and vnoc guide`.
 
 ### A11 `vnoc agent`
 
