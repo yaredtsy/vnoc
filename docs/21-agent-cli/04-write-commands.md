@@ -61,6 +61,24 @@ An enum, not a trait: there are two cases, both known, and `async fn` in a trait
 - **[check]** in A7: the core has no function today that applies the driver's `TextEdit`s to a string (the extension does it in VS Code). It
   needs one, using the same position rule as the driver (`drivers/python/src/positions.rs`: which unit a `character` counts). A table test with a
   non-ASCII line before the edit.
+- **[check] answered (A7, 2026-11-19): `identity::edits::apply_text_edits(text, edits)`**, the driver's position rule exactly: 0-based `line`, lines split
+  on `\n` (a `\r` is part of its line), `character` in UTF-16 units from the line's start. The edits are sorted by position (stable) and applied last to first.
+  An edit outside the text (a line past the end, a `character` past the line's end or inside a two-unit character), one that ends before it starts, or two that
+  overlap are `Err` with nothing applied; ranges that only touch are fine, and inserts at one place keep their order. The table test has a line with `é` and an emoji
+  before the edit, CRLF, a BOM, two edits out of order, one past the end, and an overlap.
+- **As built in A7:**
+  - `Document::from_disk(path)`: URI of the file, version `0`, the text decoded verbatim (a BOM stays as U+FEFF, line ends as they are); a file that is not UTF-8 is
+    `InvalidData`. `document_for` returns a `MarkerDoc` (`Folder`, `Open(Cow<Document>)`, `Unreadable(reason)`): with `Disk` and no document it reads the file, and
+    an unreadable one is `Unreadable`, which `write_marker` turns into the `Err` the flows already handle (by name, with the notice "…(the file is not UTF-8 text)…"). It is not an
+    `AttachError`: Relink and Write ID give their own notice for it, as they do when the editor refuses.
+  - **A BOM and the start of the file.** The driver plans a file's comment at line 0, character 0, because it has no notion of a BOM: right for an editor (VS Code's
+    buffer has no mark), wrong for text read from disk, where U+FEFF is character 0 and the comment would land before it, leaving the mark at the start of line 2
+    (a Python syntax error). So `Disk` moves a position at (0, 0) to (0, 1) when the text starts with U+FEFF (`past_the_bom`, in `edits.rs` only; `apply_text_edits`
+    stays the plain rule). The driver is unchanged; planning after the mark there would make this unnecessary.
+  - `write_atomic` now gives the new file the permissions of the one it replaces (a script keeps its executable bit): the files it writes into were never its own before. A symlink
+    at the target is replaced by a plain file (rename), as for any atomic write.
+  - The extension is unchanged: `Env.edits` is `EditSink::Editor(client)` there, with `apply_edits` moved word for word. `tests/write.rs` is the proof for `Disk`.
+
 - **The file open and unsaved in an editor:** the editor will report a conflict when it saves. That is true of every edit an agent makes to a file;
   the guide says "work on saved files". Nothing more is done.
 - `document_for` in `attach.rs` today refuses a def or a file with no open document (`MissingDocument`). With `Disk`, the caller builds the
@@ -188,6 +206,15 @@ What is added (A7), because "one attach at a time" is today a mutex **inside** o
   for ever. So "within 5 seconds" is a loop: `try_lock`; on `WouldBlock` sleep about 50 ms and try again until 5 s have passed, then stop with
   the message above; on `Error(e)` stop at once (a failure to lock is not a busy lock; also exit `3`). The lock is held by the handle, so
   the guard in A7 is a value that owns the `File` and releases on `Drop`.
+- **As built in A7:** `userdata/lock.rs`: `WriteLock::take(vnoc_root, wait)` (creates `local/`, `try_lock` every 50 ms until `wait`; `LockError::Busy` with the text above, `LockError::Io` at
+  once), `WriteLock::take_if_initialized` (`Ok(None)` when there is no `.vnoc/`, and nothing is created), `UserData::write_lock()` (5 s, `DEFAULT_WAIT`). The guard owns the `File`.
+  The path is in `layout.rs` (`write_lock_file`). **Blocking:** `take` sleeps, so the server calls it through `spawn_blocking`.
+  - **The server** takes it in `vnoc/attach`, `vnoc/relink` and `vnoc/writeId`, **after** the in-process `attaching` mutex and held to the end of the handler. Order: mutex, then file lock; whoever
+    holds the file lock is never waiting for the mutex, so the two cannot deadlock. A request waits on the mutex first for as long as another request in the same core takes, then up to 5 s on the file.
+  - **Busy** answers `REQUEST_FAILED` (the request was fine; the project was not free) with `another V-NOC is writing in this project`; **Io** answers `INTERNAL_ERROR`
+    with `could not lock .vnoc/local/write.lock: …`. The extension's catch shows it as an error message (`addDoc.ts`).
+  - The editor sink waits for the editor's answer with the lock held: a command in another process that wants the project waits up to 5 s for it.
+
 - It is taken **only in a project that is initialized**: the first attach in the extension creates `.vnoc/` itself and must not leave a
   `.vnoc/local/` behind if it fails early. Before `init` a command cannot write anyway (§3).
 - **The order inside a flow is checked against the other writer acting between two steps** (futureplan 02.02 §2's `[check]`):
