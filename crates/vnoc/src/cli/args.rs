@@ -91,11 +91,14 @@ pub enum Command {
     /// node whose code is gone has no calls: exit 2.
     Calls(CallsArgs),
     /// Lists the documented nodes whose code is not found: each with its ID, where it was last known, how many notes it has, and what can be done
-    /// (`vnoc relink`, or remove it in VS Code if the code is gone). Prints `nothing is Missing` when none is.
+    /// (`vnoc relink <ID> <node>` if the code moved: that command is not built yet, so ask the user to relink it in VS Code; or remove it in VS Code if the
+    /// code is gone). Prints `nothing is Missing` when none is.
     Missing,
     /// Checks the project's documentation and exits 1 if something is wrong, for CI and for after you edit: a documented node whose code is not found,
-    /// a node whose `ID:` line was lost, an ID written in two places, a broken file in `.vnoc/`. Each is one line with its file and the fix. A file
-    /// that does not parse is a warning and does not fail the check. With --changed only the files that git says differ from HEAD are looked at.
+    /// a node whose `ID:` line was lost, an ID written in two places, a broken file in `.vnoc/`. Each is one line with its file and the fix. A file the
+    /// driver cannot read at all (not UTF-8) is a warning and does not fail the check; a syntax error is no finding. The fixes name `vnoc relink` and
+    /// `vnoc repair`, which are not built yet: until they are, ask the user to relink, remove or Write ID in VS Code. With --changed only the files that
+    /// git says differ from HEAD are looked at.
     Check(CheckArgs),
 }
 
