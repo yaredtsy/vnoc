@@ -1,0 +1,33 @@
+{
+  "command": "status",
+  "docs": {
+    "docs": 7,
+    "nodes": 6
+  },
+  "driver": {
+    "name": "python",
+    "version": "<version>"
+  },
+  "failed": [],
+  "initialized": true,
+  "missing": [
+    {
+      "docs": 1,
+      "id": "7N1HNCPA163HHSN91HX48T9QGE",
+      "kind": "function",
+      "path": "api/routes.py",
+      "qualname": "legacy_export"
+    }
+  ],
+  "problems": [],
+  "root": "<root>",
+  "schema": 1,
+  "stats": {
+    "classes": 5,
+    "files": 10,
+    "folders": 3,
+    "functions": 25
+  },
+  "truncated": false,
+  "version": "<version>"
+}

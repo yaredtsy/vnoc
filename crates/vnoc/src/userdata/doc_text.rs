@@ -359,6 +359,7 @@ mod tests {
     /// By hand: `cargo test -p vnoc --release --lib -- --ignored --nocapture doc_text`. 03 §7's measurement: 1,000 docs of about 2 KB in 1,000 records.
     #[test]
     #[ignore = "a timing, run by hand"]
+    #[allow(clippy::print_stdout)]
     fn timing_1000_docs() {
         use std::time::Instant;
         use vnoc_search::{Corpus, DocEntry, Limits, parse, run};

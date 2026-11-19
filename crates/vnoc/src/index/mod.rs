@@ -98,6 +98,14 @@ impl Index {
         self.doc_texts.clone()
     }
 
+    /// How many docs there are, and on how many distinct nodes. Every doc the records list counts, **also those of a Missing node**: a doc whose
+    /// code is gone is still a doc of the project (`missing` says how many nodes are in that state).
+    pub fn doc_counts(&self) -> (usize, usize) {
+        let texts = self.doc_texts();
+        let nodes: BTreeSet<&NodeId> = texts.iter().map(|(id, _, _)| id).collect();
+        (texts.len(), nodes.len())
+    }
+
     /// The generation of [`Index::doc_texts`]: +1 when a doc was added, dropped or read again. Not the revision.
     pub fn doc_generation(&self) -> u64 {
         self.doc_texts.generation()

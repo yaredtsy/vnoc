@@ -579,6 +579,7 @@ mod tests {
     /// By hand: `cargo test -p vnoc --release --lib -- --ignored --nocapture search`. 04 §2's measurement.
     #[test]
     #[ignore = "a timing, run by hand"]
+    #[allow(clippy::print_stdout)]
     fn timing_10000_defs() {
         let list: Vec<(String, Vec<Def>)> = (0..100)
             .map(|f| {
