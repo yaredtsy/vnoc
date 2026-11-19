@@ -373,20 +373,27 @@ pub struct InitArgs {
 
 #[derive(Debug, Args)]
 pub struct RelinkArgs {
-    /// The permanent ID of the Missing node, as `vnoc missing` prints it.
-    #[arg(value_name = "ID")]
+    #[arg(
+        value_name = "ID",
+        help = "the Missing node's ID, as `vnoc missing` prints it",
+        long_help = "The permanent ID of the Missing node, as `vnoc missing` prints it."
+    )]
     pub id: String,
-    /// Where its code is now: a function, class, file or folder (see `vnoc show --help` for how to name one). It must have no notes of its own and be
-    /// of the same kind as the node was.
-    #[arg(value_name = "NODE")]
+    #[arg(
+        value_name = "NODE",
+        help = "where its code is now: a function, class, file or folder with no notes of its own",
+        long_help = "Where its code is now: a function, class, file or folder (see `vnoc show --help` for how to name one). It must have no notes of its own and be of the same kind as the node was."
+    )]
     pub node: String,
 }
 
 #[derive(Debug, Args)]
 pub struct RepairArgs {
-    /// Nodes to repair (see `vnoc show --help` for how to name one). With none: every node `vnoc check` reports as a lost marker. `-` reads names from
-    /// standard input.
-    #[arg(value_name = "NODE")]
+    #[arg(
+        value_name = "NODE",
+        help = "nodes to repair (default: every lost marker; - reads names from stdin)",
+        long_help = "Nodes to repair (see `vnoc show --help` for how to name one). With none: every node `vnoc check` reports as a lost marker. `-` reads names from standard input."
+    )]
     pub nodes: Vec<String>,
     /// Also the nodes attached by name on purpose (their record says no ID is in the code), which is what the extension's Write ID does. Not with nodes.
     #[arg(long, conflicts_with = "nodes")]
@@ -395,8 +402,11 @@ pub struct RepairArgs {
 
 #[derive(Debug, Args)]
 pub struct CallsArgs {
-    /// The function or class to start from, named as `vnoc show` takes it (a location, a file and a line, an ID).
-    #[arg(value_name = "NODE")]
+    #[arg(
+        value_name = "NODE",
+        help = "the function or class to start from: path::Name, path:line, or an ID",
+        long_help = "The function or class to start from, named as `vnoc show` takes it (a location, a file and a line, an ID)."
+    )]
     pub node: String,
     /// How many levels of calls to follow, 1 to 32.
     #[arg(long, value_name = "N", default_value_t = 2, value_parser = clap::value_parser!(u32).range(1..=32))]
@@ -412,8 +422,12 @@ pub struct CheckArgs {
 
 #[derive(Debug, Args)]
 pub struct FindArgs {
-    /// The query: words, filters, or one reference. Several words need no quotes; a filter with a space in it does.
-    #[arg(required = true, value_name = "QUERY")]
+    #[arg(
+        required = true,
+        value_name = "QUERY",
+        help = "words and filters, or one reference (several words need no quotes)",
+        long_help = "The query: words, filters, or one reference. Several words need no quotes; a filter with a space in it does."
+    )]
     pub query: Vec<String>,
     /// At most this many nodes and this many docs. Default 20 nodes and 10 docs; the totals are always said.
     #[arg(long, value_name = "N")]
@@ -431,8 +445,11 @@ pub struct GrepArgs {
     /// A regular expression (the `regex` crate's syntax), matched line by line.
     #[arg(value_name = "REGEX")]
     pub pattern: String,
-    /// Folders or files to search (see `vnoc show --help` for how to name one). Default: the whole project.
-    #[arg(value_name = "PATH")]
+    #[arg(
+        value_name = "PATH",
+        help = "folders or files to search (default: the whole project)",
+        long_help = "Folders or files to search (see `vnoc show --help` for how to name one). Default: the whole project."
+    )]
     pub paths: Vec<String>,
     /// Ignore case.
     #[arg(short = 'i', long)]
@@ -483,9 +500,11 @@ pub enum DocCommand {
 
 #[derive(Debug, Args)]
 pub struct DocNewArgs {
-    /// The one node to attach to (see `vnoc show --help` for how to name one): a function, class, file or folder. A node whose code is gone is
-    /// Missing and has to be relinked, not attached to.
-    #[arg(value_name = "NODE")]
+    #[arg(
+        value_name = "NODE",
+        help = "the node to attach to: a function, class, file or folder (not a Missing one)",
+        long_help = "The one node to attach to (see `vnoc show --help` for how to name one): a function, class, file or folder. A node whose code is gone is Missing and has to be relinked, not attached to."
+    )]
     pub node: String,
     /// The note's title: one line. It becomes the `# heading` and the file name.
     #[arg(long, value_name = "TEXT")]
@@ -545,11 +564,17 @@ pub struct TagDescribeArgs {
 
 #[derive(Debug, Args)]
 pub struct DocTagArgs {
-    /// The node whose doc to change (see `vnoc show --help` for how to name one). A node named by its ID needs no driver.
-    #[arg(value_name = "NODE")]
+    #[arg(
+        value_name = "NODE",
+        help = "the node whose doc to change: path::Name, path:line, an ID, or a path",
+        long_help = "The node whose doc to change (see `vnoc show --help` for how to name one). A node named by its ID needs no driver."
+    )]
     pub node: String,
-    /// The file name of the doc, as `doc list` shows it (`split-rates.md`). Needed when the node has several docs.
-    #[arg(value_name = "FILE")]
+    #[arg(
+        value_name = "FILE",
+        help = "the doc's file name (needed when the node has several docs)",
+        long_help = "The file name of the doc, as `doc list` shows it (`split-rates.md`). Needed when the node has several docs."
+    )]
     pub file: Option<String>,
     /// A tag to add, repeatable: lower-case letters, digits and `-`. Appended after the doc's tags, in the order given.
     #[arg(long = "add", value_name = "TAG")]
@@ -561,8 +586,11 @@ pub struct DocTagArgs {
 
 #[derive(Debug, Args)]
 pub struct DocListArgs {
-    /// Nodes to list the docs of (see `vnoc show --help` for how to name one). With none: the whole project. `-` reads names from standard input.
-    #[arg(value_name = "NODE")]
+    #[arg(
+        value_name = "NODE",
+        help = "nodes to list the docs of (default: the whole project; - reads names from stdin)",
+        long_help = "Nodes to list the docs of (see `vnoc show --help` for how to name one). With none: the whole project. `-` reads names from standard input."
+    )]
     pub nodes: Vec<String>,
     /// Only the docs a `find` query finds, by what is about a doc: `tag:plan`, `author:claude-code` (`-tag:draft` turns one round), and words in
     /// its text. `vnoc doc list --where 'tag:plan'` is every plan in the project. `in:` and `kind:` narrow by the doc's node; `has:doc` and `no:doc`
@@ -582,11 +610,17 @@ pub struct DocReadArgs {
 
 #[derive(Debug, Args)]
 pub struct DocFileArgs {
-    /// The node (see `vnoc show --help` for how to name one). `-` reads names from standard input.
-    #[arg(value_name = "NODE")]
+    #[arg(
+        value_name = "NODE",
+        help = "the node: path::Name, path:line, an ID, or a path (- reads names from stdin)",
+        long_help = "The node (see `vnoc show --help` for how to name one). `-` reads names from standard input."
+    )]
     pub node: String,
-    /// The file name of one doc of that node, as `doc list` shows it (`why-we-parse-twice.md`).
-    #[arg(value_name = "FILE")]
+    #[arg(
+        value_name = "FILE",
+        help = "the doc's file name, as `doc list` shows it",
+        long_help = "The file name of one doc of that node, as `doc list` shows it (`why-we-parse-twice.md`)."
+    )]
     pub file: Option<String>,
 }
 
@@ -619,9 +653,11 @@ pub enum KindArg {
 
 #[derive(Debug, Args)]
 pub struct TreeArgs {
-    /// Where to start: folders, files, classes, functions (see `vnoc show --help` for how to name one). Several are printed one after another.
-    /// Default: the root. `-` reads names from standard input.
-    #[arg(value_name = "NODE")]
+    #[arg(
+        value_name = "NODE",
+        help = "where to start: a folder, file, class or function (default: the root; - reads names from stdin)",
+        long_help = "Where to start: folders, files, classes, functions (see `vnoc show --help` for how to name one). Several are printed one after another. Default: the root. `-` reads names from standard input."
+    )]
     pub nodes: Vec<String>,
     /// How many levels below each start (`0` is the start alone, `all` is every level). Default 2; with --where or --kind, all.
     #[arg(long, value_name = "N|all", value_parser = parse_depth)]
@@ -653,10 +689,12 @@ pub struct TreeArgs {
 /// The nodes a command takes: any number, named in any of the four ways.
 #[derive(Debug, Args)]
 pub struct Nodes {
-    /// A function, class, file or folder, as `src/orders.py::OrderService.parse_order` (`#2` for a second def of the same name),
-    /// `src/orders.py:142` (the innermost def holding that line), the node's ID, or a path. A relative path starts at the current folder, else
-    /// at the root. `-` reads one name per line from standard input.
-    #[arg(required = true, value_name = "NODE")]
+    #[arg(
+        required = true,
+        value_name = "NODE",
+        help = "a function, class, file or folder: path::Name, path:line, an ID, or a path (- reads names from stdin)",
+        long_help = "A function, class, file or folder, as `src/orders.py::OrderService.parse_order` (`#2` for a second def of the same name), `src/orders.py:142` (the innermost def holding that line), the node's ID, or a path. A relative path starts at the current folder, else at the root. `-` reads one name per line from standard input."
+    )]
     pub nodes: Vec<String>,
 }
 
@@ -820,5 +858,20 @@ mod tests {
         }
         assert!(checked > 100, "only {checked} line ends checked");
         assert!(!helps.contains("elsethe"));
+    }
+
+    /// A positional argument is one short line in `-h` (its paragraph is `long_help`, for `--help`).
+    #[test]
+    fn every_positional_argument_is_one_line_in_short_help() {
+        for (path, command) in all() {
+            for arg in command.get_positionals() {
+                let help = arg.get_help().map(|h| h.to_string()).unwrap_or_default();
+                assert!(
+                    !help.is_empty() && help.len() <= 105 && !help.contains('\n'),
+                    "{path} <{}>: {help}",
+                    arg.get_id()
+                );
+            }
+        }
     }
 }
