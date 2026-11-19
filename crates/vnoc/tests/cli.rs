@@ -378,8 +378,8 @@ fn blessing() -> bool {
 /// The versions are the crates' own and move with a release: the golden file holds a stand-in.
 fn with_stand_in_versions(mut status: Value) -> Value {
     status["version"] = json!("<version>");
-    if status["driver"].is_object() {
-        status["driver"]["version"] = json!("<version>");
+    for driver in status["drivers"].as_array_mut().into_iter().flatten() {
+        driver["version"] = json!("<version>");
     }
     status
 }
@@ -427,7 +427,7 @@ fn status_in_json_is_the_golden_file() {
 fn status_in_text_has_its_three_lines() {
     let root = sample_copy("status-text");
     let json = status_json(&root, &root, &[]);
-    let driver_version = json["driver"]["version"].as_str().unwrap().to_string();
+    let driver_version = json["drivers"][0]["version"].as_str().unwrap().to_string();
     let out = run(vnoc(&root, &["status"]));
     assert_eq!(code(&out), 0);
     assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
@@ -435,7 +435,7 @@ fn status_in_text_has_its_three_lines() {
     assert_eq!(
         without_root(&text(&out.stdout), &root),
         format!(
-            "V-NOC {version}   root <root>   driver python {driver_version}\n\
+            "V-NOC {version}   root <root>   drivers python {driver_version} (12 files)\n\
              {}\n\
              missing 1 · problems 0      → vnoc check\n",
             "3 folders · 12 files · 5 classes · 27 functions · 7 docs on 6 nodes"
@@ -487,7 +487,7 @@ fn a_folder_without_a_vnoc_folder_answers_and_says_so() {
     let lines: Vec<&str> = shown.lines().collect();
     assert_eq!(lines.len(), 3, "{shown}");
     assert!(
-        lines[0].starts_with("V-NOC ") && lines[0].contains("root <root>   driver python "),
+        lines[0].starts_with("V-NOC ") && lines[0].contains("root <root>   drivers python "),
         "{shown}"
     );
     assert_eq!(
@@ -572,7 +572,7 @@ fn the_driver_is_found_beside_the_real_path_of_a_linked_binary() {
     });
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     let status: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(status["driver"]["name"], "python");
+    assert_eq!(status["drivers"][0]["name"], "python");
 }
 
 // ------------------------------------------------------------------------------------------------- arguments and exits
@@ -1122,4 +1122,54 @@ fn show_and_code_in_json_are_golden_files() {
     ]);
     golden("code.json", &coded);
     assert_eq!(coded["results"][2]["error"]["why"], "no_def");
+}
+
+#[test]
+fn doc_paths_are_absolute_when_the_root_is_below_the_git_root() {
+    // top/.git and a copy of the sample at top: `.vnoc/` is at the git root. With the root at top/orders, `.vnoc/` is outside the root, and a
+    // path relative to the git root would be relative to nothing the agent has: the path is absolute
+    let top = scratch("doc-paths");
+    std::fs::create_dir(top.join(".git")).unwrap();
+    copy_dir(&tests_dir().join("sample"), &top, &|_| false);
+    let orders = top.join("orders");
+    let shown = stdout_of(
+        &top,
+        &[
+            "--root",
+            orders.to_str().unwrap(),
+            "show",
+            "service.py::OrderService.parse_order",
+        ],
+    );
+    let doc = top.join(format!(".vnoc/nodes/5H/{METHOD_ID}/why-we-parse-twice.md"));
+    assert!(
+        shown.contains(&format!("  Why we parse twice  {}\n", doc.display())),
+        "{shown}"
+    );
+    // and when `.vnoc/` is under the root it is relative to it, as ever
+    let shown = stdout_of(&top, &["show", METHOD]);
+    assert!(
+        shown.contains(&format!(
+            "  Why we parse twice  .vnoc/nodes/5H/{METHOD_ID}/"
+        )),
+        "{shown}"
+    );
+}
+
+#[test]
+fn a_folder_with_no_python_starts_no_driver_and_says_so() {
+    let dir = scratch("no-python");
+    std::fs::write(dir.join("README.txt"), "nothing here\n").unwrap();
+    let shown = without_root(&stdout_of(&dir, &["status"]), &dir);
+    assert!(
+        shown.starts_with("V-NOC ")
+            && shown
+                .lines()
+                .next()
+                .unwrap()
+                .ends_with("root <root>   driver not started (no Python files to read)"),
+        "{shown}"
+    );
+    let json = status_json(&dir, &dir, &[]);
+    assert_eq!(json["drivers"], json!([]));
 }

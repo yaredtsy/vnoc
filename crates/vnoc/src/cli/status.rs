@@ -16,8 +16,8 @@ struct Status {
     version: &'static str,
     root: String,
     initialized: bool,
-    /// `null` when no driver was started: it starts with the first file to read, and a folder with no Python files has none
-    driver: Option<Driver>,
+    /// the drivers that ran: one today, and none when no file had to be read (a folder with no Python files starts no driver)
+    drivers: Vec<Driver>,
     stats: Stats,
     docs: Docs,
     missing: Vec<MissingNode>,
@@ -30,6 +30,8 @@ struct Status {
 struct Driver {
     name: String,
     version: String,
+    /// the files this driver outlined
+    files: usize,
 }
 
 #[derive(Serialize)]
@@ -45,11 +47,12 @@ pub async fn run(global: &Global) -> Result<(), Failure> {
         ));
     }
     let opened = open_from(global).await?;
-    let status = status_of(&opened).await;
-    if global.json {
-        out::json(&status)
-    } else {
-        out::text(&text(&status, global.quiet))
+    out::render(&status_of(&opened).await, global)
+}
+
+impl out::Render for Status {
+    fn text(&self, quiet: bool) -> String {
+        text(self, quiet)
     }
 }
 
@@ -59,13 +62,19 @@ async fn status_of(opened: &Opened) -> Status {
         host,
         index,
     } = opened;
-    let driver = host
-        .info()
-        .await
-        .map(|(name, version)| Driver { name, version });
+    let info = host.info().await;
     let index = index.read().unwrap();
     let docs = index.doc_counts();
     let answer = index::structure(&index, project, BTreeMap::new());
+    // there is one driver, and it outlined every file the tree has
+    let drivers = info
+        .map(|(name, version)| Driver {
+            name,
+            version,
+            files: answer.stats.files,
+        })
+        .into_iter()
+        .collect();
     Status {
         schema: 1,
         command: "status",
@@ -73,7 +82,7 @@ async fn status_of(opened: &Opened) -> Status {
         // the one absolute path a command prints: it is the root itself
         root: project.open_dir().to_string_lossy().into_owned(),
         initialized: project.git_root().join(".vnoc").is_dir(),
-        driver,
+        drivers,
         stats: answer.stats,
         docs: Docs {
             docs: docs.0,
@@ -92,9 +101,22 @@ fn count(n: usize, one: &str, many: &str) -> String {
 }
 
 fn text(s: &Status, quiet: bool) -> String {
-    let driver = match &s.driver {
-        Some(d) => format!("driver {} {}", d.name, d.version),
-        None => "driver not started (no Python files to read)".to_string(),
+    let driver = if s.drivers.is_empty() {
+        "driver not started (no Python files to read)".to_string()
+    } else {
+        let each: Vec<String> = s
+            .drivers
+            .iter()
+            .map(|d| {
+                format!(
+                    "{} {} ({})",
+                    d.name,
+                    d.version,
+                    count(d.files, "file", "files")
+                )
+            })
+            .collect();
+        format!("drivers {}", each.join(", "))
     };
     let docs = if s.initialized && s.docs.docs > 0 {
         format!(
@@ -151,10 +173,11 @@ mod tests {
             version: "0.2.0",
             root: "/r".into(),
             initialized,
-            driver: Some(Driver {
+            drivers: vec![Driver {
                 name: "python".into(),
                 version: "0.2.0".into(),
-            }),
+                files: 10,
+            }],
             stats: Stats {
                 folders: 3,
                 files: 10,
@@ -173,7 +196,7 @@ mod tests {
     fn the_lines_of_a_project_with_docs() {
         assert_eq!(
             text(&status(true), false),
-            "V-NOC 0.2.0   root /r   driver python 0.2.0\n\
+            "V-NOC 0.2.0   root /r   drivers python 0.2.0 (10 files)\n\
              3 folders · 10 files · 1 class · 21 functions · 7 docs on 7 nodes\n\
              missing 0 · problems 0\n"
         );
@@ -183,7 +206,7 @@ mod tests {
     fn a_project_without_a_vnoc_folder_says_so_and_has_no_third_line() {
         assert_eq!(
             text(&status(false), false),
-            "V-NOC 0.2.0   root /r   driver python 0.2.0\n\
+            "V-NOC 0.2.0   root /r   drivers python 0.2.0 (10 files)\n\
              3 folders · 10 files · 1 class · 21 functions · no docs\n\
              no .vnoc/ here yet: nothing is documented (vnoc init starts it; ask the user first)\n"
         );

@@ -5,17 +5,20 @@
 
 use std::cell::OnceCell;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use serde_json::{Value, json};
 use vnoc_domain::NodeId;
 use vnoc_search::{Corpus, DocIndex};
 
+use super::out::Render;
 use super::project::Opened;
 use super::{Failure, Format, Global, out};
 use crate::index::{Index, Node};
 use crate::node_ref::{self, Found, NodeRef, Why, is_absolute};
+use crate::project::Project;
 use crate::search::{self, CorpusSlot};
 use crate::suggest::suggest;
 use crate::userdata::UserData;
@@ -27,7 +30,8 @@ pub struct NodeError {
     pub message: String,
 }
 
-/// A doc of a node: its title, and its file relative to the git root (`.vnoc/nodes/…`).
+/// A doc of a node: its title and its file, as [`doc_path`] prints it.
+#[derive(Serialize)]
 pub struct Doc {
     pub title: String,
     pub path: String,
@@ -48,14 +52,21 @@ pub enum Target<'t> {
     Missing(Missing),
 }
 
-/// What one command makes of one node, in each of the shapes it can be printed in.
-pub struct Rendered {
-    pub text: String,
-    pub json: Value,
-    /// for `--format id`: the location, or the ID of a Missing node
-    pub id: String,
-    /// for `--format path`: the source file
-    pub path: String,
+/// What a command that takes nodes answers for one of them: a value that renders as text and as JSON (`Render`), and says what `--format id` and
+/// `--format path` print for it.
+pub trait Answer: Render {
+    /// the location, or the ID of a Missing node
+    fn id(&self) -> String;
+    /// the source file
+    fn path(&self) -> String;
+}
+
+/// A doc file as every command prints it: relative to the root when `.vnoc/` is under the root (the ordinary case: the root is the git root), and
+/// **absolute** when it is not. With `--root` below the git root, `.vnoc/` is outside the root, and a path relative to the git root would be
+/// relative to nothing the agent has.
+pub fn doc_path(project: &Project, doc: &Path) -> String {
+    let path = doc.strip_prefix(project.open_dir()).unwrap_or(doc);
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// The project as a list of nodes to look things up in: the tree, built once, and the corpus for "did you mean", built only on a miss.
@@ -117,7 +128,7 @@ impl<'a> Lookup<'a> {
                             return done;
                         }
                         // not in the tree: a file the driver failed on
-                        let why = index.why_not(project, r);
+                        let why = index.why_not(project, r).unwrap_or_else(|| unexplained(r));
                         drop(index);
                         return Err(self.explain(&why, r));
                     }
@@ -135,7 +146,7 @@ impl<'a> Lookup<'a> {
         let node = self.tree.find(id)?;
         if matches!(r, NodeRef::FileLine { .. })
             && node.kind == crate::index::Kind::File
-            && let past @ Why::PastEnd { .. } = index.why_not(&self.opened.project, r)
+            && let Some(past @ Why::PastEnd { .. }) = index.why_not(&self.opened.project, r)
         {
             return Some(Err(self.explain(&past, r)));
         }
@@ -165,16 +176,19 @@ impl<'a> Lookup<'a> {
     fn why(&self, joined: Option<NodeRef>, written: NodeRef) -> (Why, NodeRef) {
         let index = self.opened.index.read().unwrap();
         let project = &self.opened.project;
-        if let Some(joined) = joined {
-            let why = index.why_not(project, &joined);
-            if matches!(
+        if let Some(joined) = joined
+            && let Some(why) = index.why_not(project, &joined)
+            && matches!(
                 why,
                 Why::NoDef { .. } | Why::Failed { .. } | Why::PastEnd { .. }
-            ) {
-                return (why, joined);
-            }
+            )
+        {
+            return (why, joined);
         }
-        (index.why_not(project, &written), written)
+        let why = index
+            .why_not(project, &written)
+            .unwrap_or_else(|| unexplained(&written));
+        (why, written)
     }
 
     fn missing(&self, index: &Index, id: NodeId) -> Missing {
@@ -207,18 +221,13 @@ impl<'a> Lookup<'a> {
     /// The docs of the node with this permanent ID.
     pub fn docs_of(&self, id: Option<NodeId>) -> Vec<Doc> {
         let Some(id) = id else { return Vec::new() };
-        let git_root = self.opened.project.git_root();
-        UserData::new(git_root)
+        let project = &self.opened.project;
+        UserData::new(project.git_root())
             .docs_of(&id)
             .into_iter()
             .map(|doc| Doc {
                 title: doc.title,
-                path: doc
-                    .path
-                    .strip_prefix(git_root)
-                    .unwrap_or(&doc.path)
-                    .to_string_lossy()
-                    .replace('\\', "/"),
+                path: doc_path(project, &doc.path),
             })
             .collect()
     }
@@ -321,6 +330,12 @@ impl<'a> Lookup<'a> {
     }
 }
 
+/// What to say when a reference found nothing and the library has no reason: it cannot happen (a miss always has one), and a sentence is better
+/// than a panic.
+fn unexplained(r: &NodeRef) -> Why {
+    Why::NoFile(r.path().unwrap_or_default().to_string())
+}
+
 fn with_hints(said: String, lead: &str, hints: &[String]) -> String {
     if hints.is_empty() {
         said
@@ -393,12 +408,12 @@ pub fn file_of(lookup: &Lookup, node: &Node) -> PathBuf {
 /// does not stop the others: its sentence goes to standard error **after** standard output was flushed, so a harness that merges the two streams
 /// sees them in the order of the arguments; `--json` has one value with an entry for each argument and nothing on standard error. The exit is
 /// `2` if any argument failed.
-pub fn each(
+pub fn each<A: Answer>(
     command: &'static str,
     global: &Global,
     nodes: &[String],
     opened: &Opened,
-    one: &dyn Fn(&Lookup, Target) -> Result<Rendered, NodeError>,
+    one: &dyn Fn(&Lookup, Target) -> Result<A, NodeError>,
 ) -> Result<(), Failure> {
     let args = expand(nodes)?;
     let lookup = Lookup::new(opened, args.len());
@@ -407,17 +422,17 @@ pub fn each(
     for arg in &args {
         match lookup.resolve(arg).and_then(|target| one(&lookup, target)) {
             Ok(done) if global.json => {
-                let mut value = done.json;
+                let mut value = serde_json::to_value(&done).expect("an answer is JSON");
                 value["arg"] = json!(arg);
                 results.push(value);
             }
             Ok(done) => {
                 let text = match global.format {
-                    Some(Format::Id) => format!("{}\n", done.id),
-                    Some(Format::Path) => format!("{}\n", done.path),
+                    Some(Format::Id) => format!("{}\n", done.id()),
+                    Some(Format::Path) => format!("{}\n", done.path()),
                     // a blank line between answers
-                    None if printed => format!("\n{}", done.text),
-                    None => done.text,
+                    None if printed => format!("\n{}", done.text(global.quiet)),
+                    None => done.text(global.quiet),
                 };
                 out::text(&text)?;
                 printed = true;

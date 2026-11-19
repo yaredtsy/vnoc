@@ -9,7 +9,23 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
-use super::Failure;
+use super::{Failure, Global};
+
+/// What a command answers, as a value that can be written as JSON (`Serialize`: the shape is the promise, C5) and as text. A command builds this
+/// and hands it to [`render`]; it formats nothing as it computes, so a new format is a new method here and a new branch in `render`, and no command
+/// has to change (03 §11). `quiet` is the one flag a text rendering reads: the hints and totals it leaves out.
+pub trait Render: Serialize {
+    fn text(&self, quiet: bool) -> String;
+}
+
+/// Writes `value` as the flags ask: one JSON value with `--json`, else its text.
+pub fn render<T: Render>(value: &T, global: &Global) -> Result<(), Failure> {
+    if global.json {
+        json(value)
+    } else {
+        text(&value.text(global.quiet))
+    }
+}
 
 /// Writes `text` to standard output, locked, and flushes.
 pub fn text(text: &str) -> Result<(), Failure> {

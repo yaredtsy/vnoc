@@ -269,16 +269,15 @@ impl Index {
     /// the file's line count for `PastEnd`, and whether a path exists for `NotRead` and `NoFile`.
     ///
     /// It also answers for the two things `resolve_ref` calls a node and the tree does not have: a file the driver failed on (`Failed`), and a line
-    /// past the end of a file (`PastEnd`: `resolve_ref` gives the file). For a reference that names something fine it has no answer to give, and
-    /// returns `NoDef` with an empty name.
-    pub fn why_not(&self, project: &Project, r: &NodeRef) -> Why {
+    /// past the end of a file (`PastEnd`: `resolve_ref` gives the file). `None` for a reference that names something fine: there is no reason to give.
+    pub fn why_not(&self, project: &Project, r: &NodeRef) -> Option<Why> {
         let NodeRef::Id(id) = r else {
             return self.why_not_path(project, r);
         };
-        Why::NoId(*id)
+        (self.found_at(id).is_none() && !self.is_missing(id)).then_some(Why::NoId(*id))
     }
 
-    fn why_not_path(&self, project: &Project, r: &NodeRef) -> Why {
+    fn why_not_path(&self, project: &Project, r: &NodeRef) -> Option<Why> {
         let given = r.path().unwrap_or_default();
         // the file or folder the path names, by the rules `resolve_ref` uses
         let found = self.first_path(project, given, |p| {
@@ -287,26 +286,33 @@ impl Index {
         if let Some(path) = found {
             let shown = shown(project, &path);
             if let Some(message) = self.failure_of(&path) {
-                return Why::Failed {
+                return Some(Why::Failed {
                     path: shown,
                     message: message.clone(),
-                };
+                });
             }
             if let NodeRef::FileLine { line, .. } = r
                 && let Some(lines) = line_count(project, &path)
                 && *line as usize > lines
             {
-                return Why::PastEnd { path: shown, lines };
+                return Some(Why::PastEnd { path: shown, lines });
             }
-            let name = match r {
-                NodeRef::Location { rest, .. } => rest.clone(),
-                _ => String::new(),
+            return match r {
+                // a name after the `::`: there is a reason unless the def is there
+                NodeRef::Location { rest, .. }
+                    if !rest.is_empty() && self.resolve_ref(project, r) == Found::Nothing =>
+                {
+                    Some(Why::NoDef {
+                        path: shown,
+                        name: rest.clone(),
+                    })
+                }
+                _ => None,
             };
-            return Why::NoDef { path: shown, name };
         }
         let text = given.replace('\\', "/");
         if given.is_empty() {
-            return Why::NoFile(String::new());
+            return Some(Why::NoFile(String::new()));
         }
         let outside = if is_absolute(given) {
             project.repo_path_of(Path::new(given)).is_none()
@@ -314,14 +320,14 @@ impl Index {
             project.repo_path(&text).is_err()
         };
         if outside {
-            return Why::Outside(given.to_string());
+            return Some(Why::Outside(given.to_string()));
         }
         if !text.contains('/') {
             let files = self.files_named(&text);
             if files.len() > 1 {
                 let mut files: Vec<String> = files.iter().map(|f| shown(project, f)).collect();
                 files.sort();
-                return Why::Ambiguous { name: text, files };
+                return Some(Why::Ambiguous { name: text, files });
             }
         }
         let on_disk = if is_absolute(given) {
@@ -329,11 +335,11 @@ impl Index {
         } else {
             project.open_dir().join(&text).exists() || project.git_root().join(&text).exists()
         };
-        if on_disk {
+        Some(if on_disk {
             Why::NotRead(given.to_string())
         } else {
             Why::NoFile(given.to_string())
-        }
+        })
     }
 }
 
@@ -510,7 +516,7 @@ mod tests {
         (Project::open(&root).unwrap(), index)
     }
 
-    fn why(index: &Index, project: &Project, text: &str) -> Why {
+    fn why(index: &Index, project: &Project, text: &str) -> Option<Why> {
         index.why_not(project, &parse(text).unwrap())
     }
 
@@ -595,21 +601,24 @@ mod tests {
             ("src/../../x.py::f", Why::Outside(s("src/../../x.py"))),
         ];
         for (text, expect) in rows {
-            assert_eq!(why(&index, &project, text), expect, "{text:?}");
+            assert_eq!(why(&index, &project, text), Some(expect), "{text:?}");
         }
     }
 
     #[test]
-    fn a_line_inside_the_file_is_not_past_the_end() {
-        let (project, index) = fixture("lines");
-        // not a miss at all: the answer is the "no reason" one, an empty name
-        assert_eq!(
-            why(&index, &project, "src/a.py:5"),
-            Why::NoDef {
-                path: "src/a.py".into(),
-                name: String::new()
-            }
-        );
+    fn a_reference_that_names_something_fine_has_no_reason() {
+        let (project, index) = fixture("fine");
+        for text in [
+            "src/a.py:5",                 // the last line of the file
+            "src/a.py:0",                 // line 0 is no line: the file
+            "src/orders.py",              // a file
+            "src/orders.py::parse_order", // a def that is there
+            "src/orders.py::",            // the file, written with a `::`
+            "src",                        // a folder
+            "src/orders.py:1",
+        ] {
+            assert_eq!(why(&index, &project, text), None, "{text:?}");
+        }
     }
 
     #[test]
@@ -627,17 +636,17 @@ mod tests {
         );
         assert_eq!(
             why(&index, &project, "a.py::missing"),
-            Why::NoDef {
+            Some(Why::NoDef {
                 path: "a.py".into(),
                 name: "missing".into()
-            }
+            })
         );
         assert_eq!(
             why(&index, &project, "a.py:9"),
-            Why::PastEnd {
+            Some(Why::PastEnd {
                 path: "a.py".into(),
                 lines: 2
-            }
+            })
         );
     }
 
