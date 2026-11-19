@@ -42,7 +42,7 @@ As built in A2 (2026-11-19), on the sample project (`crates/vnoc/tests/sample/`,
 
 ```
 $ vnoc status
-V-NOC 0.2.0   root /work/sample   driver python 0.2.0
+V-NOC 0.2.0   root /work/sample   drivers python 0.2.0 (12 files)
 3 folders · 12 files · 5 classes · 27 functions · 7 docs on 6 nodes
 missing 1 · problems 0      → vnoc check
 ```
@@ -66,20 +66,20 @@ scan stopped. The one command to run when anything seems off; the walkthrough's 
 
 ```json
 { "schema": 1, "command": "status", "version": "0.2.0", "root": "/work/sample", "initialized": true,
-  "driver": { "name": "python", "version": "0.2.0" },
+  "drivers": [ { "name": "python", "version": "0.2.0", "files": 12 } ],
   "stats": { "folders": 3, "files": 12, "classes": 5, "functions": 27 },
   "docs": { "docs": 7, "nodes": 6 },
   "missing": [ { "id": "7N1HNCPA163HHSN91HX48T9QGE", "kind": "function", "path": "api/routes.py", "qualname": "legacy_export", "docs": 1 } ],
   "problems": [], "failed": [], "truncated": false }
 ```
 
-*(Changed 2026-11-19, before A4: in A4's first commit.)* **`drivers` is a list**, `"drivers": [ { "name": "python", "version": "0.2.0", "files": 12 } ]`,
+*(Changed 2026-11-19, built in A4a: the golden file changed with it.)* **`drivers` is a list**, `"drivers": [ { "name": "python", "version": "0.2.0", "files": 12 } ]`,
 and line 1 says `drivers python 0.2.0 (12 files)`. Today there is one driver, so the list has one entry, and an empty list when none was
 started (`driver not started …` stays the text). The reason is C5: JSON only grows, so a single `driver` object shipped now would have to stay
 next to a later list for ever. More languages (a driver saying which files it reads, the scan asking each driver) is not planned here: README §5.
 When it comes, a driver that fails is a row of the list with its error, not the whole command's exit `3`.
 
-~~`driver` is `null` when none was started.~~ `initialized` is whether `.vnoc/` is a folder at the git root. `missing`, `problems` and `failed` are the
+`files` is how many files that driver outlined (the tree's files). `initialized` is whether `.vnoc/` is a folder at the git root. `missing`, `problems` and `failed` are the
 protocol's own types (`MissingNode`, `Problem`, `FailedFile`: snake_case), as `vnoc/structure` sends them.
 
 ## 3. `show`, `code`, `doc`
@@ -163,11 +163,47 @@ ends where its last method does. So the decorators are already in `show` and `co
 `code` has the same entries with `code: { first, lines }` (no `more`) and no `docs`. The `why` words are: `no_def`, `no_file`, `not_read`, `failed`,
 `ambiguous`, `past_end`, `no_id`, `outside`, `empty`, `unreadable`, `missing` and `no_code` (the last two only from `code`).
 
-**Not built yet:** `doc read` and `doc path` (A4: the hint `→ vnoc doc read …` names a command that does not exist until then).
 
-- `doc read` prints the body as it is in the file, frontmatter left out, each doc under a line `── <title>  <path>`. The text of a note is
-  printed as content, never rewritten into advice (01 §3).
-- `doc path` prints only paths, one per line: it is for `$(…)` and for the agent's own tools.
+**As built in A4 (2026-11-19)**, on the sample:
+
+```
+$ vnoc doc list billing/charge.py
+file  billing/charge.py   ID 4Q57CGHF0HJ23TTYWXTZXQ8DPS
+  Handover notes  .vnoc/nodes/PS/4Q57CGHF0HJ23TTYWXTZXQ8DPS/handover-notes.md
+  Why charges are retried  .vnoc/nodes/PS/4Q57CGHF0HJ23TTYWXTZXQ8DPS/why-charges-are-retried.md
+
+$ vnoc doc read orders
+── How orders are laid out  .vnoc/nodes/20/0DJ3H8AWWXRWKJ55SNZ3509320/how-orders-are-laid-out.md
+# How orders are laid out
+
+One module per concern: models hold the data, service holds the rules, parse reads the upstream format.
+
+$ vnoc doc path billing/charge.py why-charges-are-retried.md
+.vnoc/nodes/PS/4Q57CGHF0HJ23TTYWXTZXQ8DPS/why-charges-are-retried.md
+```
+
+- **`doc list [<node>…]`:** per node a header, `<kind>  <location>   ID <id>`, then one row per doc, `  <title>  <path>` (`  no docs` when there is
+  none; several nodes, a blank line between). A Missing node is `MISSING  was <anchor>  ID <id>  docs N`. **With no node: every doc of the
+  project**, grouped by node: the nodes of the tree in its order, then the Missing ones, then any node whose code was not read (outside the
+  folder, ignored), shown with the place its record gives. `no docs` when the project has none. `--format id` is a location per node, `--format
+  path` is the doc files only.
+- **`doc read <node> [file]`:** each doc under `── <title>  <path>`, then the text **as it is in the file with its frontmatter left out**
+  (the `# title` line is kept), a blank line between docs. A node with no doc: `no docs on <location>`. `file` is a doc's file name in that node's
+  folder, with or without `.md`; an unknown one is exit `2`: `no doc named nope.md on <location>: it has a.md · b.md`. The text is never
+  rewritten into advice and never cut (01 §3): the sample's scenario-5 note prints its sentence as it is.
+- **`doc path <node> [file]`:** paths only, one per line, for `$(…)` and for the agent's own tools.
+- **By ID none of the three starts the driver.** When every argument is an ID, the node's folder in `.vnoc/` is read directly (`open_without_driver`:
+  the root and `UserData`, no index, no driver, so `--driver /nonexistent` is no error). The header then says what `node.toml` records (kind,
+  where it was) and **cannot say whether the code is still there**: a Missing node prints as an ordinary one. An ID with no folder is
+  exit `2`: `no node has the ID …`. Every other form, and `doc list` with no node, goes through the index as `show` does, and a missing driver is
+  exit `3`.
+- **Doc paths** are relative to the root when `.vnoc/` is under it (the ordinary case), and **absolute** when the root is below the git root
+  (`--root`), because a path relative to the git root would be relative to nothing the agent has. One function, `nodes::doc_path`, for `show` and
+  every doc command.
+- **`--json`:** the entries of `show` for a node (`kind`, `location`, `node_id`, `docs: [{title, path}]`; a Missing one `missing`, `was`,
+  `node_id`, `docs`), under `results`, with `arg` when a node was named. `doc read --json` adds `bodies: [{title, path, body}]`. Golden file
+  `tests/golden/doc.json`.
+
 - **`--where`** narrows which docs are fetched, with doc 20's filters (Q9: no second language): `vnoc doc list --where 'tag:plan'` is every
   plan in the project; `vnoc doc read src/billing/ --where 'tag:plan author:claude-code'` prints that folder's plans by that author. Only the
   filters that are about a doc apply (`tag:`, `author:`, and words in its text); on a node given by name, `in:` and `kind:` are already
@@ -214,6 +250,53 @@ src/billing/                        4 files · 3 classes · 31 functions · 6 do
 - *(Settled 2026-11-17, from the built code.)* A node is kept when `vnoc_search::matches` says so: the query finds it **by name, or finds
   one of its docs**, which is what the canvas dims by (20, 04 §5). So `--where retry` keeps `retry_charge` and also the function whose note
   talks about retries. `tree_view` asks about every id of the tree in one call; nothing is ranked.
+
+**As built in A4 (2026-11-19)**, on the sample (`billing --sig --docs` is the golden text `tests/golden/tree-billing.txt`):
+
+```
+$ vnoc tree billing --sig --docs
+billing/  4 files · 2 classes · 10 functions · 4 docs
+  charge.py  · 2 docs
+    doc: Handover notes
+    doc: Why charges are retried
+    class ChargeError
+    retry_charge(gateway, order, attempts)  1 function
+    refund(gateway, order)
+  invoice.py
+    class Invoice  3 functions  · 1 doc
+      doc: Rounding rule
+    render_invoice(invoice)
+  …
+
+$ vnoc tree --where 'no:doc kind:fn' --flat
+function  api/app.py::create_app
+function  api/health.py::ping
+…                                      (25 rows: every function with no note)
+```
+
+- **Rows.** A folder is `name/`, a file its name, a class `class Name`, a function its name (with `(params)` under `--sig`); then, separated by two
+  spaces, what there is: the counts below it, `138-171` under `--lines`, `· 2 docs`. `--docs` adds a line `doc: <title>` under the node. Two spaces
+  a level; no box drawing.
+- **Counts** (`4 files · 3 classes · 31 functions · 6 docs`, parts that are 0 left out) are on a row whose children the depth cut, and on the
+  start when it is a folder or a file, as the sketch above has it. The docs in them are those **below** the node; its own are the `· N docs` after.
+- **The default depth is 2, and `all` when `--where` or `--kind` is given** (a filter asks which nodes, not how deep: `--where 'no:doc kind:fn'`
+  at depth 2 would find nothing in a project). An explicit `--depth` wins. If nothing is kept, even the start is not a row: `no nodes match`.
+- **`--kind`** takes `folder`, `file`, `class`, `function` (every function, methods included) and `method` (a function in a class). The ancestors
+  of a kept row are kept, so it still reads as a tree.
+- **`--where`** is `vnoc_search::parse` and `matches` over the id of every node of the tree (the corpus is the one `find` uses, built only when
+  `--where` is given). A filter that means nothing is a line `note: …` on standard error, and the command still answers (`no nodes match`).
+- **`--flat`** is one row per node, `<kind>  <location>`, then lines, signature, counts, `· N docs`, and no indent. **It lists only the nodes the
+  kinds and the query want, not their ancestors**: an ancestor kept only so a tree reads as one is noise in a list to `grep` or `sort`, and it
+  would eat the limit. With nothing narrowing the tree every node is wanted, so the rows are the same.
+- **`--limit N`** (default 200) counts the rows given; `… 318 more rows (narrow with a path, --depth or --where)` follows, without the
+  parenthesis under `--quiet`. With several starts the limit is shared in the order they are printed.
+- **Starts** are resolved by `cli/nodes.rs` as in `show` (every form, the current folder first, the same errors), and each start's tree is printed
+  as soon as it is found, a blank line between, so an error lands in place. A Missing start is exit `2`: `<anchor> is Missing: there is no tree`.
+- **`--format id`** is a location per row, **`path`** the file of each row.
+- **`--json`:** `{ "schema": 1, "command": "tree", "rows": [ … ], "cut": N }`, flat with `depth`, in order, over all the starts, and `errors:
+  [{ arg, error: { why, message } }]` only when an argument named nothing. A row: `depth`, `kind`, `name`, `location`, `lines` (`[a, b]` or
+  `null`), `docs`, and only when there is something to say `method: true`, `context: true` (the row is there only because something below it is
+  wanted), `titles` (`--docs`), `params` (`--sig`), `counts: { folders, files, classes, functions, docs }`. Golden file `tests/golden/tree.json`.
 
 ## 5. `find`
 
@@ -334,7 +417,14 @@ command. **`--xml` is a trial, not a promise:** A14 adds an experimental rendere
 and with XML. XML is kept where it wins on tasks done right, scenario 5 resisted, tokens and calls; if it wins only around note bodies,
 `doc read` and the docs of `show` use tags by default and the rest stays text. The reason to try it is that XML tags help a model tell content
 from instructions (a note is text someone else wrote, 01 §3); the reason not to use it everywhere is that indentation already shows a tree, at
-about half the tokens. **User templates** are out: `--json` with `jq` or a script gives any shape; what would bring them back is a user who
+about half the tokens. *As built in A4a:* the seam is `out::Render`, a trait with `fn text(&self, quiet: bool) -> String` on a value that is also `Serialize`, and
+`out::render(&value, global)`, which writes the JSON or the text. `status`, `show`, `code`, `doc` and `tree` build such values (`StatusAnswer`-like
+structs: the JSON shape is the struct), and format nothing while computing. Chosen over a renderer that walks a generic value because it is one
+trait, no generics in the commands, and each command's text stays next to its shape; the cost is that a new format adds a method (with a default
+body where the format has nothing to say, as the `--xml` trial would have for everything but note bodies), not a new file per command.
+`--format id|path` is a third, tiny renderer in `nodes::emit`.
+
+**User templates** are out: `--json` with `jq` or a script gives any shape; what would bring them back is a user who
 needs a shape `--json` cannot give easily.
 
 The whole command line is **experimental until 1.0** and says so in `--help`: names can still move, with a release note.
