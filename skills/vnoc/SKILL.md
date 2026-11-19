@@ -6,7 +6,8 @@ metadata:
 ---
 # V-NOC
 
-This project attaches notes to code. A note says WHY: a constraint, a decision, some history, a trap, a plan. Not what the code does.
+This project attaches notes to code (the commands and their output call them docs). A note says WHY: a constraint, a decision, some
+history, a trap, a plan. Not what the code does.
 `vnoc` reads the code by structure and keeps each note attached to its function even when the function moves.
 
 Start with `vnoc status`. It prints the project's root: if that is not the project you are working on, add `--root <folder>` to every
@@ -39,7 +40,8 @@ If one is wrong, the error says what was meant: use its suggestion.
 only if you know where the code went (`vnoc relink <ID> <node>`).
 
 ## Writing a note
-Write one when the user asks, or when you learned something a future reader could not see in the code. One note, one subject.
+Write one when the user asks. When you learned something a future reader could not see in the code, offer to write it down; do not
+write it unasked. One note, one subject.
 `vnoc doc new <node> --title "…" --author <your name>` prints the new file's path; write the note into that file, or pass the body
 with `--body-file -`. It adds an `ID:` line to the function: read the source file again before you edit it.
 Tags: run `vnoc tags` first and reuse one that fits (`.vnoc/tags.toml` says what each means; do not edit it). A plan is
