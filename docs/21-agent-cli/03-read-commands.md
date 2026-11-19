@@ -43,7 +43,7 @@ As built in A2 (2026-11-19), on the sample project (`crates/vnoc/tests/sample/`,
 ```
 $ vnoc status
 V-NOC 0.2.0   root /work/sample   driver python 0.2.0
-3 folders · 10 files · 5 classes · 25 functions · 7 docs on 6 nodes
+3 folders · 12 files · 5 classes · 27 functions · 7 docs on 6 nodes
 missing 1 · problems 0      → vnoc check
 ```
 
@@ -67,7 +67,7 @@ scan stopped. The one command to run when anything seems off; the walkthrough's 
 ```json
 { "schema": 1, "command": "status", "version": "0.2.0", "root": "/work/sample", "initialized": true,
   "driver": { "name": "python", "version": "0.2.0" },
-  "stats": { "folders": 3, "files": 10, "classes": 5, "functions": 25 },
+  "stats": { "folders": 3, "files": 12, "classes": 5, "functions": 27 },
   "docs": { "docs": 7, "nodes": 6 },
   "missing": [ { "id": "7N1HNCPA163HHSN91HX48T9QGE", "kind": "function", "path": "api/routes.py", "qualname": "legacy_export", "docs": 1 } ],
   "problems": [], "failed": [], "truncated": false }
@@ -78,22 +78,87 @@ protocol's own types (`MissingNode`, `Problem`, `FailedFile`: snake_case), as `v
 
 ## 3. `show`, `code`, `doc`
 
+**As built in A3 (2026-11-19)**, on the sample (`orders/service.py` is the sample's, `billing/tax.py` too):
+
 ```
-$ vnoc show src/orders.py:142
-function  src/orders.py::OrderService.parse_order   lines 138-171   ID 0Q8V5W4T2F7KX9M3B6D1RZ4H7K
-docs (2)
-  Why we parse twice     .vnoc/nodes/7K/0Q8V5W4T2F7KX9M3B6D1RZ4H7K/why-we-parse-twice.md
-  Rounding rule          .vnoc/nodes/7K/0Q8V5W4T2F7KX9M3B6D1RZ4H7K/rounding-rule.md
-  → vnoc doc read src/orders.py::OrderService.parse_order
+$ vnoc show orders/service.py:12
+function  orders/service.py::OrderService.parse_order   lines 10-13   ID 31ZBQ9NKY1E881TZWC2CJCN35H
+docs (1)
+  Why we parse twice  .vnoc/nodes/5H/31ZBQ9NKY1E881TZWC2CJCN35H/why-we-parse-twice.md
+  → vnoc doc read orders/service.py::OrderService.parse_order
 code
-  138  def parse_order(self, raw):
-  139      """Turn the upstream payload into an Order.
-  …
+  10      def parse_order(self, raw):
+  11          """ID: 31ZBQ9NKY1E881TZWC2CJCN35H"""
+  12          lines = [Line(item["sku"], item["qty"], item["price"]) for item in raw["items"]]
+  13          return Order(raw["number"], lines)
+
+$ vnoc show billing/tax.py            # a file; a folder is the same with `folder`
+file  billing/tax.py
+docs (0)
+contains (2)
+  function  rate_for  lines 6-7  docs 1
+  function  apply_tax  lines 10-11  docs 0
+
+$ vnoc show 7N1HNCPA163HHSN91HX48T9QGE   # a Missing node: an answer, exit 0
+MISSING  was api/routes.py::legacy_export  ID 7N1HNCPA163HHSN91HX48T9QGE  docs 1
+docs (1)
+  The old CSV export  .vnoc/nodes/GE/7N1HNCPA163HHSN91HX48T9QGE/the-old-csv-export.md
+  → vnoc doc read 7N1HNCPA163HHSN91HX48T9QGE
+
+$ vnoc code orders/service.py::OrderService.parse_order --context 2
+ 8          self.store = store
+ 9  
+10      def parse_order(self, raw):
+…                                       (lines 8 to 15)
 ```
 
-- `show` prints at most **120 lines** of code, then `… 84 more lines (vnoc code <node>, or --full)`. `--no-code` stops after the docs.
-- `show` on a file or a folder: the header, its docs, and one level of `tree` under it instead of code.
-- `code` prints all of it, nothing else. `--context N` adds N lines before and after (the decorators above, the next def below).
+- **Header:** `<kind>  <location>   lines A-B   ID <id>`, with the lines 1-based and both ends included, and no `lines` for a file or a folder and no
+  `ID` for a node with none. The kind is the tree's (`folder`, `file`, `class`, `function`; a method is a `function`). The location is relative to
+  the root, `#2` for a second def of one name.
+- **Docs:** `docs (N)` (also `docs (0)`), one row per doc with its title and its file **relative to the git root** (the `.vnoc/` folder is there:
+  with `--root` below the git root it is not under the root), then the hint to read them. `--quiet` drops the hint.
+- **Code:** the lines as `  <number>  <text>`, the numbers right-aligned to the widest. At most **120 lines**, then
+  `  … 9 more lines (vnoc code <location>, or --full)` (`--quiet`: `  … 9 more lines`). `--no-code` stops after the docs, and for a file or a
+  folder also drops what follows. `--full` prints all.
+- **A file or a folder** shows `contains (N)` and one row for each child, one level only: `  <kind>  <name>  lines A-B  docs N`. (`tree` is A4.)
+- **A Missing node**, by ID, prints `MISSING  was <anchor>  ID <id>  docs N` and its docs, and the hint reads it by ID. It is exit `0` for `show`.
+- **`code`** prints only the lines, as `<number>  <text>` with no indent. With several nodes, each starts with `── <location>  lines A-B`, the
+  def's own lines, whatever `--context` adds, and a blank line separates them. `--context N` adds N lines on each side and stops at the file's first
+  and last. A **file, a folder or a Missing node is exit `2`**: `billing/charge.py is a file: use vnoc show for a file or a folder`;
+  `<anchor> is Missing: there is no code (vnoc show <ID> reads its docs)`.
+- **`--format id`** prints one location per argument, an ID for a Missing node, and nothing else: `vnoc show a.py:12 --format id` is the resolver.
+  `--format path` prints the file (the anchor's, for a Missing node). On `show` and on `code`.
+- **Several nodes, and `-`:** answers are separated by a blank line; `-` reads one reference per line from standard input. An argument that finds
+  nothing prints `error: <the sentence of 02 §4>` on standard error **after standard output was flushed**, so a merged stream shows the answers and
+  the errors in the order of the arguments; the exit code is `2` at the end. With `--json` standard error stays empty.
+- **A relative path** is tried from the current folder first (`..` allowed, never above the root), then as written: from `billing/`, `charge.py`,
+  `charge.py:12`, `charge.py::retry_charge` and `billing/charge.py…` name the same node, and `status.py` (two files of that name in the sample)
+  is `billing/status.py` from `billing/` and an `Ambiguous` error from the root.
+
+**What a def's range is** (measured on the Python driver in A3; written in `source.rs`): `start.line` is the line of the **first decorator** when
+the def has any (`@property` above `def total`), else the `def` or `class` line; `end.line` is the **last line of the def itself**, inclusive and
+0-based, and `end.character` is the end of that line, **not column 0 of the next one**. The blank lines after a def are not in it, and a class
+ends where its last method does. So the decorators are already in `show` and `code`, and `--context` adds only what lies outside the def.
+
+`--json`, `{ "schema": 1, "command": "show", "results": [ … ] }`, one entry per argument in order (golden files `tests/golden/show.json` and
+`code.json`; the arguments of that call include a wrong one):
+
+```json
+{ "arg": "orders/service.py::OrderService.parse_order", "kind": "function", "location": "orders/service.py::OrderService.parse_order",
+  "path": "orders/service.py", "qualname": "OrderService.parse_order", "lines": [10, 13], "node_id": "31ZBQ9NKY1E881TZWC2CJCN35H",
+  "docs": [ { "title": "Why we parse twice", "path": ".vnoc/nodes/5H/31ZBQ9NKY1E881TZWC2CJCN35H/why-we-parse-twice.md" } ],
+  "code": { "first": 10, "lines": [ "    def parse_order(self, raw):", … ], "more": 0 } }
+{ "arg": "orders", "kind": "folder", …, "lines": null, "code": null,
+  "children": [ { "kind": "file", "name": "models.py", "location": "orders/models.py", "lines": null, "docs": 0 }, … ] }
+{ "arg": "7N1HNCPA163HHSN91HX48T9QGE", "missing": true, "was": "api/routes.py::legacy_export", "node_id": "7N1H…", "docs": [ … ] }
+{ "arg": "orders/service.py::parse_ordr", "error": { "why": "no_def", "message": "no node at orders/service.py::parse_ordr · did you mean: …" } }
+```
+
+`code` has the same entries with `code: { first, lines }` (no `more`) and no `docs`. The `why` words are: `no_def`, `no_file`, `not_read`, `failed`,
+`ambiguous`, `past_end`, `no_id`, `outside`, `empty`, `unreadable`, `missing` and `no_code` (the last two only from `code`).
+
+**Not built yet:** `doc read` and `doc path` (A4: the hint `→ vnoc doc read …` names a command that does not exist until then).
+
 - `doc read` prints the body as it is in the file, frontmatter left out, each doc under a line `── <title>  <path>`. The text of a note is
   printed as content, never rewritten into advice (01 §3).
 - `doc path` prints only paths, one per line: it is for `$(…)` and for the agent's own tools.
