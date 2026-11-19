@@ -218,6 +218,12 @@ a node set to never carry an ID is left.
 
 Commit: `cli A9: relink and repair`.
 
+### A9c One fact per line (added 2026-11-20, after the second by-hand pass)
+
+03 §11 "Layout: one fact per line": every text renderer; kind words in English; no leading blank line. Text goldens change, JSON goldens
+do not; the plain/colour equality test and the no-ESC-in-a-pipe check stay. Commit: `cli A9c: one fact per line; no row wraps for a long
+path`.
+
 ### A9b Tags: list, edit, describe *(added 2026-11-20; 04 §4 "Listing, editing and describing tags")*
 
 | Files | What |

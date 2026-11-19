@@ -640,6 +640,23 @@ terminal's theme applies:
   `tests/golden/status-color.txt` is `status --color always` on the sample, with the root and versions replaced, so the palette is pinned.
 - The global `--format` help now says *a location per line* (an ID only for a Missing node), which is what it prints.
 
+**Layout: one fact per line** *(settled 2026-11-20, step A9c, after the user's second by-hand pass: "style issues, inlined")*. A row holds a
+short subject (a kind and a location, a title and its tags, a label and a value); **a long path, a sentence or a fix goes on its own line**,
+indented two more spaces under it. So no row wraps in an ordinary terminal for the common case, and an agent reads the same structure.
+
+| Output | Row | Lines under it |
+|---|---|---|
+| a doc (`show`, `doc list`, `find`) | `<title>  [tags]` | its `.vnoc/…` path; for `find` the snippet first, then the path |
+| a finding (`check`, `missing`) | `<kind in words>  <location>` (the node's location, else its file) | the sentence (with the ID); `→ <fix>` |
+| a write (`doc new`, `doc tag`, `relink`, `repair`) | `<label>  <short value>`: labels 13 wide | a path that would make the row long is its own labelled row (`in  <path>`) |
+
+- **Kind words in text are English:** `lost marker`, `missing`, `duplicate ID`, `broken`, `unread`. JSON keeps its snake_case values
+  (`lost_marker`, …).
+- **No blank line before an answer.** A blank line only separates groups (a summary from its rows, two answers, status's header from its
+  lines).
+- A summary (`1 problem`, `2 nodes · 2 hits`) is preceded by one blank line.
+- The golden text files change with this; the JSON goldens do not.
+
 **Renderers** *(settled 2026-11-19, before A4)*. A command builds its answer as a value (the rows, the node, the results list) and hands it to
 one of two renderers in `cli/out.rs`, text or JSON; no command formats as it computes. A new format is then one renderer, and touches no
 command. **`--xml` is a trial, not a promise:** A14 adds an experimental renderer that puts each note's body inside
