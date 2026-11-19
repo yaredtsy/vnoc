@@ -132,6 +132,22 @@ has, the order is now:
 
 A qualified name with **no** file (`OrderService.parse_order`, the NoFile case) keeps the project-wide word pass: it is a search.
 
+**As built in A6e (2026-11-19).**
+
+- **One order differs from the list above:** the small file's own defs come **last**, after the other files, not at the end of step 1. The wrong-file
+  case (`billing/tax.py::parse_order`, where `tax.py` has two defs) needs the other files asked first; with the list first it would always have won. So: in the file
+  (words, then `nearest_in` with no floor) → other files (strong matches) → the file's defs if it has 10 or fewer → nothing. The 10 is `suggest::FEW`.
+- `suggest` returns a `Suggestion`: `Near` (did you mean), `Found` (a name with no file), `Has` (the file's defs), `Nothing`. The word pass in the file still needs 3
+  letters or more; `nearest_in` has no floor (1 edit for a name of 1 to 4 letters, 2 from 5; an empty name gets nothing).
+- `vnoc-search` has `nearest_in(corpus, name, Scope::File(f) | Scope::Elsewhere(f), floor, limit)` beside `nearest`, which is unchanged: a second function was simpler than a flag
+  on the first, which also orders by file. The same name in another file (case ignored) is matched whatever its length: `core/perf.py::main` finds `api/main.py::main` and `web/app.py::Main`.
+- **Text:** the sentence on the `error:` line, then the list under it, one per line: leads `did you mean` (3 shown), `found` (5), `name one of` (an ambiguous file name's files, 5) and
+  `<file name> has:` (all of them, at most 10, so never cut); a list that was cut ends `and N more`. The lead is dim and the items are locations (cyan) in a terminal. `show`,
+  `code`, `doc`, `tree`, `grep` and `calls` print the same way (`NodeError::print`).
+- **JSON:** `message` is the one line it always was (the sentence, then ` · did you mean: a · b`), and an error with a list adds `hints: ["a", "b"]`; one without has no such field.
+  `show.json`, `doc.json` and `code.json` each gained that field in the one error they hold.
+
+
 **Every hint list is one per line**, indented under the error, in every error of this table that has one (`did you mean`, `found`, the files
 of an ambiguous name, a file's defs):
 
