@@ -293,6 +293,42 @@ one that exists; move a plan's tag when its state changes (`vnoc doc tag … --a
 **Later, not in 0.5:** the extension shows descriptions on hover of a tag in the sidebar's doc rows, and gets a `vnoc/tags` request (a thin
 wrapper over the same library function, C2) when it has a screen that lists or edits tags.
 
+**As built in A9b** (2026-11-20; `userdata/tags.rs`, `cli/tags.rs`).
+
+- **`tags.toml`** is read by `userdata::tags::read_descriptions(root)` into `Descriptions` (tag → text, trimmed, sorted by tag). Not there: nothing and no problem. A key that is not a tag
+  (`Bad_Key`), a value that is not a string (a number, a table), each: **one problem**, skipped, the rest read; a file that is not TOML: one problem and nothing read. The problems are appended to
+  `load_all`'s report, so `check` lists them as `broken` with the file, and `status` counts them. `UserData::tag_descriptions()` is the descriptions alone. V-NOC never writes the file.
+- **`doc tags [--authors]`** reads `.vnoc/` and the doc texts only (`--driver /nonexistent` works; a project nobody started says `no tags`). `tag_counts`: a tag counts once for a doc; described tags no doc
+  has are listed with `0`; **most docs first, then by name**. `author_counts`: authors that differ only in case are one, shown as first met. Text (columns: name, count, description; the count is padded only when a
+  description follows):
+  ```
+  billing   2 docs
+  plan      2 docs  A change we intend to make. Retag as done when it ships.
+  decision  1 doc   Why we chose this way over the others.
+  done      0 docs  A plan that shipped.
+  ```
+  `--authors` prints the authors instead (`no authors` when none); `--json`: `{schema, command: "doc tags", tags: [{tag, docs, description}], authors?: [{author, docs}]}` (`authors` only with `--authors`,
+  and then `tags` is there too).
+- **`rewrite_tags(text, add, remove) -> Result<(String, Change), TagError>`** is pure and is 04 §4's list, with these settled: the doc's tags are read as `frontmatter` reads them (**so an upper-case or quoted hand-written
+  tag comes out lower case and unquoted** when the line is rewritten); removals are taken first, then additions are appended, so `--add x --remove x` on a doc that has `x` moves it to the end; a tag to add must be
+  a tag, **a tag to remove must be one unless the doc has it** (so a hand-written `café` can still be taken off); a doc with no frontmatter (no `---` line at its top, or none closing it with a line break) is
+  `TagError::NoFrontmatter`, exit 2: no frontmatter is made for it. The new line takes the line end of the line it replaces or follows (CRLF stays CRLF). When nothing changes the text comes back
+  untouched (a hand-written block list stays a block list until a tag is really added or removed). Only the **first** `tags:` line is read and rewritten, as the reader has it.
+- **`doc tag <node> [file] --add … --remove …`:** at least one of them (else exit 2); a tag to add is checked first (`` `Plan` is not a tag: lower-case letters, digits and `-` ``, 2, nothing written). The doc is chosen
+  as `doc read` chooses it, by `doc::choose_doc` (the node's only doc, or `file` with or without `.md`; **several docs and no file is `2`** with `<node> has 2 docs: name one of a.md · b.md (the file name goes after the
+  node)`; none: `no docs on <node>`). A node named by its ID needs no driver. The write lock is taken, then `UserData::edit_doc_tags` reads the file, rewrites, **reads it again and compares** (`write_if_unchanged`:
+  refused with `the file changed while the tags were being written` if it moved, the file as the other writer left it) and writes atomically; nothing is written when nothing changes. A file that changed under the
+  command is exit **3** (like a busy lock: try again); the other refusals are 2. Output: `tags         <doc path>  [billing, done]`, then `already has "done"` / `already without "plan"` lines, then
+  the new-tag notes. `--json`: `{schema, command: "doc tag", doc, tags, added, removed, unchanged: [{tag, state: "has"|"without"}], notice}` (`notice` is the notes joined by a line break, or `null`).
+- **The new-tag note** (`cli/tags.rs` `new_tag_notices`): for each tag a command added that **no other doc** carries (the doc itself is left out of the counts) and `tags.toml` does not describe:
+  `note: "planning" is a new tag in this project (described: decision, done, plan); did you mean "plan"?`. The parenthesis lists every described tag, **sorted by name** (not in the file's order), and is left out when
+  `tags.toml` describes none; the question is left out when nothing is near. It is on standard output, exit `0`, kept under `--quiet`. In `doc new` the same lines are the `tag_notices` field of `--json`
+  (left out when empty), and `tests/golden/doc-new.json` was blessed for it (its `--tag plan` was the first in that project).
+- **"Near"** is `vnoc_search::nearest_word(known, tag)`, **not quite the node names' rule**: the edit rule without the length floor (1 edit up to 4 letters, 2 from 5) **or** a word that starts the other (3 letters or
+  more in the shorter), counted as that many edits as the lengths differ. The example of this section, `planning` for `plan`, is 4 edits away, so the edit rule alone would never suggest it. `known` is the described tags first,
+  then the used ones, most used first; the closest wins and a tie goes to the first (so to a described tag). A tag that equals a known one is never "near" itself.
+- Not built, as written above: renaming a tag across the project, a command that writes `tags.toml`, a whitelist.
+
 ## 5. Editing a doc
 
 No command. A doc is a Markdown file; `vnoc doc path` (or the path `doc new` printed) is all an agent needs, and its own edit tool does the rest.
@@ -311,6 +347,33 @@ git shows it.
 ([`03`](03-read-commands.md) §9) gets its `ID:` line back; with nodes, those; `--all` also writes IDs for docs attached by name on purpose
 (`id_in_code = "no"`), which is the extension's *Write ID*. A node set to never carry an ID is left alone (the library's rule). Each line of
 output is one node and what happened.
+
+**As built in A9** (2026-11-20; `cli/relink.rs`, `identity/{relink,write_id}.rs`).
+
+- `identity::relink` and `identity::write_id` return `Done<T>` (`result`, and `marker: Option<MarkerWritten>`, as `attach` does); the server keeps using `.result`.
+- **`relink <ID> <node>`:** the ID is parsed first (`` `x` is not a node ID ``, exit 2), an ID no `node.toml` has is `no node has the ID …` (2), then the index is built, the target resolved
+  (a Missing target is `relink to code that is there: … is Missing too`, 2), the **write lock** taken, and `identity::relink` run with `EditSink::Disk`. Each refusal of the library is exit `2` with its
+  words: *that node is not Missing: its docs are shown where its code is*, *that node already has its own docs* (for a place with an `ID:` in the code and for one the index knows a node at by name),
+  *this is a class, and the docs belong to a function* (the library's *no readable node.toml* is not reachable here: the command's own check says `no node has the ID …` first). Output (labels 13 wide, as 04 §8):
+  ```
+  relinked     7N1HNCPA163HHSN91HX48T9QGE  was api/routes.py::legacy_export
+  to           function  api/routes.py::get_order
+  changed      api/routes.py   (an ID: line was added at line 5; read the file again before you edit it)
+  ```
+  A project that writes no IDs, or a marker that could not be written: no `changed` line, and the notice (`notice       The ID could not be written (…); the docs are attached by name.`); a
+  folder: `created      <folder>/.vnoc-id`; a place that already carries this ID: nothing changed, and the line is left out. `--json`: `{schema, command: "relink", id, was, node: {kind, location, node_id},
+  created, changed, id_in_code, notice}` (`id_in_code` is whether the ID is in the code at the new place).
+- **`repair [<node>…] [--all]`:** the work is `identity::write_id`. With no argument, `Index::lost_markers()` (a `node.toml` that says `id_in_code = "yes"` and a node found by its name only). `--all` adds
+  `Index::attached_by_name()` (the records that say `"no"`: attached by name on purpose, or whose marker could not be written; the extension's Write ID). `--all` with nodes is a usage error. With nodes, those
+  (`-` reads names from standard input); an argument that names nothing, or a Missing node, is an error in its own place (`doc`-style hints) and exit `2`.
+- **One write lock for the whole run; the nodes are written one at a time, each flow reading its file again just before it plans** (`Document::from_disk` per call; the Disk sink re-reads and compares). The
+  text from before the first edit is never reused. **A file's nodes are written from the top** (sorted by file, then the line the def starts at; a file or a folder is line 0): an `ID:` line put in
+  above the others shifts them down, so doing the upper one first makes every line reported the line it stays at. The rows are printed in that order.
+- **Output:** `repaired     <location>  (ID: line written at line N)` (a file: `# FileID: comment written at line N`; a folder: `.vnoc-id written`), or `left         <location>  <reason>` with the library's
+  words (*this node was set to never have an ID in the code*, *this project does not write IDs …*, *the ID of that node is already in the code*, *that node has no docs, so there is no ID to write*, or the notice
+  when the marker could not be written). Nothing to do: `nothing to repair`, exit 0 (also in a project nobody started). **Exit:** `2` when a node the user NAMED was left (the `left` line is on standard
+  output, in its place); a sweep that leaves some is `0`. `--json`: `{schema, command: "repair", repaired: [{location, node_id, line}], left: [{location, node_id, reason}], errors?: […]}`.
+- The three "not built yet" texts (`missing --help`, `check --help`, `doc new` on a Missing node) now name the commands.
 
 ## 7. Two writers
 
@@ -385,3 +448,8 @@ With `--json`: `{ "schema": 1, "command": "doc new", "node": {…}, "doc": "…"
 
 **A8a's tests** (`tests/cli.rs`, `tests/lifecycle.rs`): the race is 20 rounds of two `doc new` processes started together on one function with different titles, each round on a fresh started
 copy, → one node folder, one `ID:` line, two docs, and `vnoc check` clean; a second test holds `.vnoc/local/write.lock` from the test and shows `doc new` exits `3` with the message after 5 seconds and writes nothing.
+
+**As built in A9 and A9b.** `relink`, `repair`, `doc tag` and `doc tags` print as above (§6, §4), in the same style: labels 13 wide (`relinked`, `to`, `repaired`, `left`, `tags`, `changed`, `created`, `notice`),
+dim in a terminal; `already has "x"` / `already without "x"` and the `note:` lines are whole lines with no label. Every file a write changed is a `changed` line, and the warning in it
+(*read the file again before you edit it*) stays under `--quiet`; the new-tag `note:` stays too (it is about the data). A command that was refused prints `error: …` on standard error and nothing on standard
+output, **except** `repair`, whose `left` line for a node the user named is on standard output in its place, with the exit `2`.

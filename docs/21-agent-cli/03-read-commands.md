@@ -490,8 +490,8 @@ MISSING  was api/routes.py::legacy_export  ID 7N1HNCPA163HHSN91HX48T9QGE  docs 1
 ```
 
 **As built in A6.** One row per Missing node (the `MISSING  was …` line is `show`'s for a Missing node, with the same `was` and the same count of docs),
-in the order of `Index::missing` (by path); `--quiet` drops the two hint lines. `vnoc relink` is **planned, not built** (A9): the hint names it, as the plan
-says, and `--help` of `missing` and of `check` say it is not built yet. None: `nothing is Missing`, exit `0`. `--format id` is the IDs, `--format path` the files they were last in
+in the order of `Index::missing` (by path); `--quiet` drops the two hint lines. `vnoc relink` is built (A9, [`04`](04-write-commands.md) §6): the hint names it, and
+`--help` of `missing` and of `check` no longer say otherwise. None: `nothing is Missing`, exit `0`. `--format id` is the IDs, `--format path` the files they were last in
 (once each). `--json`: `{ schema, command: "missing", missing: [ { was, node_id, docs: [ { title, path } ] } ] }` (golden `missing.json`).
 
 ## 9. `check`
@@ -546,7 +546,8 @@ $ echo $?
 - **The fixes.** Missing: `vnoc relink <ID> <node> if the code moved; remove it in VS Code if the code is gone`. Lost marker: `vnoc repair <location>`.
   **Neither `relink` nor `repair` exists yet** (A9): the lines name the planned commands, as the plan's table does, and an agent that runs one today gets
   clap's `unrecognized subcommand`. ID twice: `open <file>:<line> and delete the `ID:` line of the copy (the node keeps its ID where it was found)`.
-  Broken: `open <file>: fix the file, or remove it if it is not a node`. Unread: `fix the file; V-NOC reads it again when it parses (a warning: it does not fail the check)`.
+  Broken: `open <file>: fix the file, or remove it if it is not a node`; for `.vnoc/tags.toml` (a bad key or a value that is not a string, one finding each, A9b):
+  `open .vnoc/tags.toml and fix the line named (V-NOC reads this file and never writes it)`. Unread: `fix the file; V-NOC reads it again when it parses (a warning: it does not fail the check)`.
 - **What "could not read" is.** The plan said a syntax error mid-edit is a warning. It is not even that: the Python driver parses past a syntax error and
   outlines what it can (`Def.syntax_error` marks a def; the core does not look at it), so the file is read and `check` has nothing to say. What fails a
   file is what the driver cannot read **at all**: bytes that are not UTF-8 (`cannot read binary.py: stream did not contain valid UTF-8`). That is the
