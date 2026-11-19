@@ -66,6 +66,14 @@ impl Node {
         }
     }
 
+    /// The node with this tree id, at or under this one: a depth-first walk, one lookup per command.
+    pub fn find(&self, id: &str) -> Option<&Node> {
+        if self.id == id {
+            return Some(self);
+        }
+        self.children.iter().find_map(|child| child.find(id))
+    }
+
     /// How many nodes of each kind are under **and including** this one: [folders, files, classes, functions].
     /// (For a whole tree that counts the root folder too; the server reports folders *under* the root.)
     pub fn counts(&self) -> [usize; 4] {
@@ -509,5 +517,44 @@ mod tests {
             (Some("00000000000000000000000001"), 2, Some(Link::Name))
         );
         assert_eq!((g.node_id.as_deref(), g.docs, g.link), (None, 0, None));
+    }
+
+    #[test]
+    fn find_gives_the_node_with_that_id_at_any_depth() {
+        let tree = build(
+            "repo",
+            "",
+            &files(&[
+                (
+                    "pkg/a.py",
+                    vec![
+                        def("Outer", "", DefKind::Class),
+                        def("Outer.method", "Outer", DefKind::Function),
+                        def(
+                            "Outer.method.<locals>.inner",
+                            "Outer.method",
+                            DefKind::Function,
+                        ),
+                    ],
+                ),
+                ("b.py", vec![def("top", "", DefKind::Function)]),
+            ]),
+        );
+        let id = |id: &str| tree.find(id).map(|n| (n.kind, n.name.clone()));
+        assert_eq!(id("/"), Some((Kind::Folder, "repo".into())));
+        assert_eq!(id("pkg"), Some((Kind::Folder, "pkg".into())));
+        assert_eq!(id("pkg/a.py"), Some((Kind::File, "a.py".into())));
+        assert_eq!(id("pkg/a.py::Outer"), Some((Kind::Class, "Outer".into())));
+        assert_eq!(
+            id("pkg/a.py::Outer.method.<locals>.inner"),
+            Some((Kind::Function, "inner".into()))
+        );
+        assert_eq!(id("b.py::top"), Some((Kind::Function, "top".into())));
+        assert_eq!(id("b.py::nope"), None);
+        assert_eq!(id(""), None);
+        // below a node, not only at the root
+        let pkg = tree.find("pkg").unwrap();
+        assert!(pkg.find("pkg/a.py::Outer").is_some());
+        assert!(pkg.find("b.py").is_none());
     }
 }

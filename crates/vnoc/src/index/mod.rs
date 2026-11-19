@@ -133,6 +133,11 @@ impl Index {
             .collect()
     }
 
+    /// What the driver said about a file it could not outline.
+    pub(crate) fn failure_of(&self, path: &RepoPath) -> Option<&String> {
+        self.failed.get(path)
+    }
+
     /// Documented nodes the code does not match, sorted by path (then name).
     pub fn missing(&self) -> Vec<MissingNode> {
         self.missing.clone()
@@ -265,6 +270,24 @@ impl Index {
     /// The ID in the folder's `.vnoc-id`, if there is a readable one.
     pub fn folder_id(&self, path: &RepoPath) -> Option<NodeId> {
         self.folders.get(path).copied().flatten()
+    }
+
+    /// An index of these files, files the driver failed on (with its message) and folders, for tests that need one without a driver.
+    #[cfg(test)]
+    pub(crate) fn for_tests(
+        files: Vec<(RepoPath, Vec<Def>)>,
+        failed: Vec<(RepoPath, &str)>,
+        folders: Vec<RepoPath>,
+    ) -> Index {
+        Index {
+            files: files.into_iter().collect(),
+            failed: failed
+                .into_iter()
+                .map(|(p, m)| (p, m.to_string()))
+                .collect(),
+            folders: folders.into_iter().map(|f| (f, None)).collect(),
+            ..Default::default()
+        }
     }
 
     /// Whether a location names something that is there now: a def, a file (empty qualname) or a folder.

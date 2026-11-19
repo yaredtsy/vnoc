@@ -14,5 +14,7 @@ pub mod protocol;
 pub mod scan;
 pub mod search;
 pub mod server;
+pub mod source;
+pub mod suggest;
 pub mod userdata;
 pub mod watchdog;

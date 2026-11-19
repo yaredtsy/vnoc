@@ -12,6 +12,7 @@
 
 mod docs;
 mod names;
+mod nearest;
 mod query;
 mod run;
 mod utf16;
@@ -20,6 +21,7 @@ mod words;
 use std::sync::Arc;
 
 pub use docs::DocIndex;
+pub use nearest::nearest;
 pub use query::{KindFilter, Query, parse};
 pub use run::{matches, run};
 
