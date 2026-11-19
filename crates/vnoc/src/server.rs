@@ -440,7 +440,10 @@ fn attach(
             host: &core.host,
             edits: EditSink::Editor(core.client.clone()),
         };
-        let result = identity::attach(env, params).await.map_err(internal)?;
+        let result = identity::attach(env, params, identity::AttachOptions::editor())
+            .await
+            .map_err(internal)?
+            .result;
         core.spawn_update(Work::Files(vec![])); // the new node and doc are in `.vnoc/` now: the tree shows them
         Ok(result)
     })

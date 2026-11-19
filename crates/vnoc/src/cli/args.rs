@@ -95,6 +95,11 @@ pub enum Command {
     /// as the whole project is analysed: ask once with the depth you want (--depth, default 2, at most 32), not level by level. A file, a folder or a
     /// node whose code is gone has no calls: exit 2.
     Calls(CallsArgs),
+    /// Starts V-NOC in this project: creates `.vnoc/` (its `vnoc.toml` and a `.gitignore` for `local/`). Say nothing and ask nobody: the OWNER of
+    /// the project decides this, because from then on attaching a note writes an `ID:` line into the code. Run it only when the user has said to
+    /// (or asked you to start V-NOC); `--markers off` starts it with no `ID:` lines at all, so notes are attached by name. A project that already has
+    /// `.vnoc/` is left as it is, and the command says so (exit 0). It needs no driver.
+    Init(InitArgs),
     /// Lists the documented nodes whose code is not found: each with its ID, where it was last known, how many notes it has, and what can be done
     /// (`vnoc relink <ID> <node>` if the code moved: that command is not built yet, so ask the user to relink it in VS Code; or remove it in VS Code if the
     /// code is gone). Prints `nothing is Missing` when none is.
@@ -105,6 +110,20 @@ pub enum Command {
     /// `vnoc repair`, which are not built yet: until they are, ask the user to relink, remove or Write ID in VS Code. With --changed only the files that
     /// git says differ from HEAD are looked at.
     Check(CheckArgs),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Switch {
+    On,
+    Off,
+}
+
+#[derive(Debug, Args)]
+pub struct InitArgs {
+    /// `on` (the default): attaching a note writes an `ID:` line into the code, so the note follows the function through renames and moves. `off`:
+    /// no `ID:` lines are ever written, and notes are found by name (`[ids] default = "none"` in `.vnoc/vnoc.toml`). Only the first start decides.
+    #[arg(long, value_enum, value_name = "on|off", default_value_t = Switch::On)]
+    pub markers: Switch,
 }
 
 #[derive(Debug, Args)]
@@ -171,6 +190,40 @@ pub enum DocCommand {
     Read(DocFileArgs),
     /// Prints the file paths of a node's docs, one per line: for your own read and edit tools. A node named by its ID needs no driver.
     Path(DocFileArgs),
+    /// Attaches a new note (doc) to ONE function, class, file or folder, and prints where it is. Use it to leave a note or a plan for what you
+    /// are about to change or have just learned: the note says why, not what. The project must have been started (`vnoc init`, which is the
+    /// user's decision). Unless the project or --no-marker says otherwise, an `ID:` line is added to the code (a docstring line; a comment for a
+    /// file; a `.vnoc-id` file for a folder) so the note follows the node through renames: the command says which file it changed, and the
+    /// line, and you must read that file again before you edit it. Without --body-file the note holds its title only: write into the file printed.
+    /// A title the node already has is refused (edit that file, or --again). A body is Markdown without its own `---` frontmatter, at most 256 KB.
+    New(DocNewArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DocNewArgs {
+    /// The one node to attach to (see `vnoc show --help` for how to name one): a function, class, file or folder. A node whose code is gone is
+    /// Missing and has to be relinked, not attached to.
+    #[arg(value_name = "NODE")]
+    pub node: String,
+    /// The note's title: one line. It becomes the `# heading` and the file name.
+    #[arg(long, value_name = "TEXT")]
+    pub title: String,
+    /// The Markdown after the heading, read from this file, or from standard input with `-`. Leave the frontmatter out: V-NOC writes it.
+    #[arg(long, value_name = "FILE|-")]
+    pub body_file: Option<String>,
+    /// Attach by name: write no `ID:` line into the code, whatever the project says. The note then finds its node by where it is, and a rename
+    /// or a move of the code makes it Missing.
+    #[arg(long)]
+    pub no_marker: bool,
+    /// Allow a second note with a title this node already has (it is saved as `<name>-2.md`).
+    #[arg(long)]
+    pub again: bool,
+    /// Who wrote the note: the frontmatter's `author:`. Pass your own name.
+    #[arg(long, value_name = "NAME")]
+    pub author: Option<String>,
+    /// A tag for the note, repeatable: lower-case letters, digits and `-`. V-NOC gives no tag a meaning; it only shows and (later) finds them.
+    #[arg(long = "tag", value_name = "TAG")]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Args)]

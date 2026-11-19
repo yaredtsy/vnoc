@@ -2886,3 +2886,71 @@ fn structure_carries_the_lost_marker_of_the_sample_and_only_it() {
     assert_eq!(s["missing"].as_array().unwrap().len(), 1);
     core.finish();
 }
+
+#[test]
+fn a_doc_made_by_the_command_shows_in_a_running_core_and_the_editors_attach_still_makes_a_second_file_for_one_title()
+ {
+    // a started project (`vnoc init` would have written this), and a core running on it
+    let (mut core, root) = orders_project("by-command", Some("format = 1\n"));
+    let key = "orders.py::OrderService.parse_order";
+
+    // the command attaches a doc, in another process, while the core runs
+    let out = Command::new(env!("CARGO_BIN_EXE_vnoc"))
+        .current_dir(&root)
+        .env_remove("VNOC_DRIVER")
+        .stdin(Stdio::null())
+        .arg("--driver")
+        .arg(driver_path())
+        .args(["doc", "new", key, "--title", "Made by a command"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // the watcher says what changed (`.vnoc/**` and `*.py`): the file the command wrote the ID line into, and the doc it made
+    let said = String::from_utf8_lossy(&out.stdout).into_owned();
+    let doc = said
+        .lines()
+        .find_map(|l| l.strip_prefix("created      "))
+        .unwrap();
+    let doc = root.join(doc.split("   ").next().unwrap());
+    assert!(doc.is_file(), "{said}");
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py"), doc] }),
+    );
+    // the core's tree has the node, found by the ID line the command wrote, with one doc
+    let shown = structure_when(&mut core, |s| {
+        find_node(&s["root"], &|n| n["id"] == key).is_some_and(|n| n["docs"] == 1)
+    });
+    let node = find_node(&shown["root"], &|n| n["id"] == key).unwrap();
+    assert_eq!(node["link"], "marker");
+    let id = node["node_id"].as_str().unwrap().to_string();
+    let docs = core.request("vnoc/docs", json!({ "id": id })).unwrap();
+    assert_eq!(docs[0]["file"], "made-by-a-command.md");
+    assert_eq!(docs[0]["title"], "Made by a command");
+
+    // the extension's attach (the editor sink, `again`) with the same title makes a second file, as it always did, with no new edit
+    let second = core
+        .request(
+            "vnoc/attach",
+            attach_params(&root, key, "Made by a command", None),
+        )
+        .expect("attach answers");
+    assert_eq!(second["id"], json!(id));
+    assert!(
+        second["doc"]
+            .as_str()
+            .unwrap()
+            .ends_with("made-by-a-command-2.md"),
+        "{second}"
+    );
+    assert!(
+        core.edit_requests.is_empty(),
+        "the ID was in the code already"
+    );
+    core.finish();
+}

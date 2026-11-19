@@ -1,0 +1,18 @@
+{
+  "changed": [
+    "billing/tax.py"
+  ],
+  "command": "doc new",
+  "created": [
+    ".vnoc/nodes/D7/4KF02248CHCTYAG49B0KKZ5SD7/why-we-round.md"
+  ],
+  "doc": ".vnoc/nodes/D7/4KF02248CHCTYAG49B0KKZ5SD7/why-we-round.md",
+  "id_in_code": true,
+  "node": {
+    "kind": "function",
+    "location": "billing/tax.py::rate_for",
+    "node_id": "4KF02248CHCTYAG49B0KKZ5SD7"
+  },
+  "notice": null,
+  "schema": 1
+}

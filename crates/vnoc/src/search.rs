@@ -418,7 +418,9 @@ mod tests {
             ))
             .unwrap();
             data.create_node(id, &toml).unwrap();
-            let doc = data.create_doc(id, "A doc", "hint").unwrap();
+            let doc = data
+                .create_doc(id, &crate::userdata::NewDoc::titled("A doc", "hint"))
+                .unwrap();
             std::fs::write(doc, text).unwrap();
         }
         let records = data.load_all().records;

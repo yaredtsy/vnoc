@@ -157,11 +157,7 @@ pub fn docs_block(docs: &[Doc], read: &str, quiet: bool) -> String {
         style::num(docs.len())
     );
     for doc in docs {
-        text.push_str(&format!(
-            "  {}  {}\n",
-            style::paint(style::title(), &doc.title),
-            style::paint(style::dim(), &doc.path)
-        ));
+        text.push_str(&doc.row());
     }
     if !docs.is_empty() && !quiet {
         text.push_str(&format!(

@@ -25,6 +25,7 @@ pub async fn run(global: &Global, command: &DocCommand) -> Result<(), Failure> {
         DocCommand::List(args) => list(global, args).await,
         DocCommand::Read(args) => file_command(global, args, "doc read", View::Read).await,
         DocCommand::Path(args) => file_command(global, args, "doc path", View::Path).await,
+        DocCommand::New(args) => super::write::doc_new(global, args).await,
     }
 }
 
@@ -185,11 +186,7 @@ impl Render for DocsAnswer {
                     text.push_str("  no docs\n");
                 }
                 for doc in &self.docs {
-                    text.push_str(&format!(
-                        "  {}  {}\n",
-                        style::paint(style::title(), &doc.title),
-                        style::paint(style::dim(), &doc.path)
-                    ));
+                    text.push_str(&doc.row());
                 }
                 text
             }
@@ -350,6 +347,8 @@ fn whole_project(opened: &Opened) -> Vec<DocsAnswer> {
     for (id, file, text) in texts.iter() {
         by_node.entry(*id).or_default().push(Doc {
             title: text.title.clone(),
+            tags: text.tags.clone(),
+            author: text.author.clone(),
             path: super::nodes::doc_path(project, &text.path),
             file: file.to_string(),
             abs: text.path.clone(),

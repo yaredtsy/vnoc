@@ -17,6 +17,7 @@ mod show;
 mod status;
 pub mod style;
 mod tree;
+mod write;
 
 use std::ffi::OsString;
 
@@ -92,6 +93,7 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Find(args) => find::run(&cli.global, args).await,
         Command::Grep(args) => grep::run(&cli.global, args).await,
         Command::Calls(args) => calls::run(&cli.global, args).await,
+        Command::Init(args) => write::init(&cli.global, args).await,
         Command::Missing => check::missing(&cli.global).await,
         Command::Check(args) => check::run(&cli.global, args).await,
     }

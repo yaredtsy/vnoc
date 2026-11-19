@@ -58,7 +58,10 @@ pub async fn write_id(
         params.document.as_ref(),
     )?;
 
-    if let Err(reason) = write_marker(&mut env, &target, &location, &id, &document).await {
+    if let Err(reason) = write_marker(&mut env, &target, &location, &id, &document)
+        .await
+        .map(|_| ())
+    {
         return Ok(WriteIdResult {
             written: false,
             notice: Some(format!(

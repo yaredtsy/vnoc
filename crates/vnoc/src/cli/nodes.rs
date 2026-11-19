@@ -15,7 +15,7 @@ use vnoc_search::{Corpus, DocIndex};
 
 use super::out::Render;
 use super::project::Opened;
-use super::{Failure, Format, Global, out};
+use super::{Failure, Format, Global, out, style};
 use crate::index::{Index, Node};
 use crate::node_ref::{self, Found, NodeRef, Why, is_absolute};
 use crate::project::Project;
@@ -95,12 +95,37 @@ impl NodeError {
 pub struct Doc {
     pub title: String,
     pub path: String,
+    /// the frontmatter's `tags:`, in the order written; left out of `--json` when there are none
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// the frontmatter's `author:`; left out of `--json` when there is none
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     /// the file's name in the node's folder (`why-we-parse-twice.md`): what `doc read <node> <file>` takes. Not part of the JSON shape.
     #[serde(skip)]
     pub file: String,
     /// where the file is, for reading it
     #[serde(skip)]
     pub abs: PathBuf,
+}
+
+impl Doc {
+    /// The doc as `show` and `doc list` print it under a node: `  <title>  [tags]  <path>`, the tags dim and only when it has some.
+    pub fn row(&self) -> String {
+        let tags = if self.tags.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "  {}",
+                style::paint(style::dim(), format!("[{}]", self.tags.join(", ")))
+            )
+        };
+        format!(
+            "  {}{tags}  {}\n",
+            style::paint(style::title(), &self.title),
+            style::paint(style::dim(), &self.path)
+        )
+    }
 }
 
 /// A node whose code is gone: what its record says, and its docs.
@@ -485,6 +510,8 @@ pub fn docs_by_id(project: &Project, id: &NodeId) -> Vec<Doc> {
         .into_iter()
         .map(|doc| Doc {
             title: doc.title,
+            tags: doc.tags,
+            author: doc.author,
             path: doc_path(project, &doc.path),
             file: doc.file,
             abs: doc.path,

@@ -6,6 +6,9 @@
 //!
 //! The marker is a docstring line for a function or class (the driver plans it), a header comment for a file (the driver plans it),
 //! and a `.vnoc-id` file for a folder (the core writes it: no language is involved).
+//!
+//! The refusals that are **rules** about a note live here, before anything is written, so every caller has them: a title the node already has
+//! (unless `again`), a body that is too big or brings its own frontmatter, a tag or an author V-NOC cannot write (`AttachOptions`).
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -23,7 +26,10 @@ use crate::driver_host::DriverHost;
 use crate::index::Index;
 use crate::project::Project;
 use crate::protocol::{AttachParams, AttachResult, Document};
-use crate::userdata::{UserData, UserDataError};
+use crate::userdata::{NewDoc, UserData, UserDataError, after_frontmatter};
+
+/// The longest body a doc is made with: a note is a note.
+pub const MAX_BODY_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AttachError {
@@ -39,6 +45,63 @@ pub enum AttachError {
     NoFreeId(#[from] NoFreeId),
     #[error(transparent)]
     UserData(#[from] UserDataError),
+    #[error("a doc needs a title: one line of text")]
+    BadTitle,
+    #[error("the body is over 256 KB: a note is at most that")]
+    BodyTooLarge,
+    #[error(
+        "the body starts with its own --- frontmatter block: leave the frontmatter out, V-NOC writes it (node, hint, author, tags)"
+    )]
+    BodyHasFrontmatter,
+    #[error("`{0}` is not a tag: lower-case letters, digits and `-`")]
+    BadTag(String),
+    #[error("the author is not one line of text")]
+    BadAuthor,
+    /// The node has a doc with this title already: `path` is that doc's file.
+    #[error("this node already has \"{title}\" → {} (edit that file, or --again)", .path.display())]
+    TitleTaken { title: String, path: PathBuf },
+}
+
+/// What an attach is asked for beyond what the editor's request says (`AttachParams`).
+#[derive(Debug, Default)]
+pub struct AttachOptions {
+    /// the Markdown after the heading; empty for a doc of the heading alone
+    pub body: String,
+    /// the frontmatter's `author:`
+    pub author: Option<String>,
+    /// the frontmatter's `tags:`: lower-case letters, digits and `-`
+    pub tags: Vec<String>,
+    /// allow a second doc with a title the node already has (it becomes `<name>-2.md`)
+    pub again: bool,
+    /// write no ID into the code for this attach, whatever `vnoc.toml` says: the doc is attached by name
+    pub no_marker: bool,
+}
+
+impl AttachOptions {
+    /// What the extension's attach has always done: a second attach with the same title is a second doc, and the project decides on the ID.
+    pub fn editor() -> AttachOptions {
+        AttachOptions {
+            again: true,
+            ..AttachOptions::default()
+        }
+    }
+}
+
+/// What a marker wrote, for the caller that says so to its user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerWritten {
+    /// an `ID:` line or a `# FileID:` comment, now at this line (1-based) of the file
+    Line(u32),
+    /// a `.vnoc-id` file in the folder
+    FolderFile,
+}
+
+/// What an attach did: the answer the editor gets, and what was written into the code.
+#[derive(Debug)]
+pub struct Attached {
+    pub result: AttachResult,
+    /// `None` when the code was not touched (the node had its ID, or none was allowed, or the marker could not be written)
+    pub marker: Option<MarkerWritten>,
 }
 
 /// What an attach works with.
@@ -134,7 +197,12 @@ pub(super) fn find_target(index: &Index, key: &str) -> Result<(LocationKey, Targ
     }
 }
 
-pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResult, AttachError> {
+pub async fn attach(
+    mut env: Env<'_>,
+    params: AttachParams,
+    options: AttachOptions,
+) -> Result<Attached, AttachError> {
+    check_note(&params.title, &options)?;
     let (location, target) = find_target(&env.index.read().unwrap(), &params.key)?;
     let document = document_for(
         &env,
@@ -146,12 +214,13 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
 
     let data = UserData::new(env.project.git_root());
     let settings = data.settings()?;
-    // the question is asked once per project: afterwards `vnoc.toml` answers it
-    let markers_on = if settings.initialized {
+    // the question is asked once per project: afterwards `vnoc.toml` answers it; `no_marker` is this attach's own "no"
+    let project_says = if settings.initialized {
         settings.markers
     } else {
         params.markers.unwrap_or(true)
     };
+    let markers_on = project_says && !options.no_marker;
 
     // 1. which ID: the one in the code, else the one this location already has, else a new one
     let in_code = target.in_code();
@@ -164,13 +233,29 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
         (Some(id), _) | (None, Some(id)) => (id, false),
         (None, None) => (first_free_id(&location, |id| data.is_taken(id))?, true),
     };
+    // a title the node has is refused before anything is written
+    if !options.again
+        && let Some(held) = data
+            .docs_of(&id)
+            .into_iter()
+            .find(|doc| doc.title.trim().to_lowercase() == params.title.trim().to_lowercase())
+    {
+        return Err(AttachError::TitleTaken {
+            title: held.title,
+            path: held.path,
+        });
+    }
 
     // 2. the marker, for a node that has none and is allowed one
     let mut notice = None;
+    let mut marker = None;
     let mut id_in_code = in_code.is_some();
     if is_new && markers_on {
         match write_marker(&mut env, &target, &location, &id, &document).await {
-            Ok(()) => id_in_code = true,
+            Ok(written) => {
+                id_in_code = true;
+                marker = Some(written);
+            }
             Err(reason) => {
                 notice = Some(format!(
                     "The ID could not be written ({reason}); this doc is attached by name."
@@ -194,14 +279,56 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
     } else {
         location.to_string()
     };
-    let doc: PathBuf = data.create_doc(&id, &params.title, &hint)?;
+    let doc: PathBuf = data.create_doc(
+        &id,
+        &NewDoc {
+            title: &params.title,
+            hint: &hint,
+            body: &options.body,
+            author: options.author.as_deref().map(str::trim),
+            tags: &options.tags,
+        },
+    )?;
 
-    Ok(AttachResult {
-        id: id.to_string(),
-        doc: doc.to_string_lossy().into_owned(),
-        id_in_code,
-        notice,
+    Ok(Attached {
+        result: AttachResult {
+            id: id.to_string(),
+            doc: doc.to_string_lossy().into_owned(),
+            id_in_code,
+            notice,
+        },
+        marker,
     })
+}
+
+/// The rules about the note itself, asked before anything is read or written.
+pub fn check_note(title: &str, options: &AttachOptions) -> Result<(), AttachError> {
+    let one_line = |text: &str| !text.trim().is_empty() && !text.chars().any(char::is_control);
+    if !one_line(title) {
+        return Err(AttachError::BadTitle);
+    }
+    if options.author.as_deref().is_some_and(|a| !one_line(a)) {
+        return Err(AttachError::BadAuthor);
+    }
+    if let Some(bad) = options.tags.iter().find(|tag| !is_tag(tag)) {
+        return Err(AttachError::BadTag(bad.clone()));
+    }
+    if options.body.len() > MAX_BODY_BYTES {
+        return Err(AttachError::BodyTooLarge);
+    }
+    // blank lines before it do not hide it; a lone `---` (a rule) with no closing line is Markdown, not a frontmatter block
+    if after_frontmatter(options.body.trim_start()).is_some() {
+        return Err(AttachError::BodyHasFrontmatter);
+    }
+    Ok(())
+}
+
+/// A tag is lower-case ASCII letters, digits and `-`, and not empty.
+fn is_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// A function, class or file marker is an edit of the node's own file: the open document (the editor), or the file itself (`Disk`, when no
@@ -238,7 +365,7 @@ pub(super) async fn write_marker(
     location: &LocationKey,
     id: &NodeId,
     document: &MarkerDoc<'_>,
-) -> Result<(), String> {
+) -> Result<MarkerWritten, String> {
     match (target, document) {
         (_, MarkerDoc::Unreadable(reason)) => Err(reason.clone()),
         (Target::Def { .. }, MarkerDoc::Open(document)) => {
@@ -247,7 +374,8 @@ pub(super) async fn write_marker(
         (Target::File { .. }, MarkerDoc::Open(document)) => {
             write_file_marker(env, id, document).await
         }
-        _ => write_folder_marker(env.project.git_root(), location.path(), id),
+        _ => write_folder_marker(env.project.git_root(), location.path(), id)
+            .map(|()| MarkerWritten::FolderFile),
     }
 }
 
@@ -257,7 +385,7 @@ async fn write_def_marker(
     location: &LocationKey,
     id: &NodeId,
     document: &Document,
-) -> Result<(), String> {
+) -> Result<MarkerWritten, String> {
     let ask = PlanIdsParams {
         text: document.text.clone(),
         version: i64::from(document.version),
@@ -275,7 +403,16 @@ async fn write_def_marker(
     if plan.edits.is_empty() {
         return Err("the function is not in the open document".into());
     }
-    apply_edits(env, document, "V-NOC: add an ID", &plan.edits).await
+    apply_edits(env, document, "V-NOC: add an ID", &plan.edits).await?;
+    let first = plan.written.first().map(|w| w.span.start);
+    Ok(MarkerWritten::Line(line_of(first, &plan.edits)))
+}
+
+/// The 1-based line of what was written: where the plan says it is (in the new text), else where the first edit begins.
+fn line_of(written: Option<vnoc_driver_protocol::Position>, edits: &[TextEdit]) -> u32 {
+    written
+        .or_else(|| edits.first().map(|e| e.range.start))
+        .map_or(1, |at| at.line + 1)
 }
 
 /// Plans the `# FileID:` comment with the driver and has the sink apply it.
@@ -283,7 +420,7 @@ async fn write_file_marker(
     env: &mut Env<'_>,
     id: &NodeId,
     document: &Document,
-) -> Result<(), String> {
+) -> Result<MarkerWritten, String> {
     let ask = PlanFileIdParams {
         text: document.text.clone(),
         version: i64::from(document.version),
@@ -297,7 +434,9 @@ async fn write_file_marker(
     if let Some(reason) = plan.skipped {
         return Err(reason);
     }
-    apply_edits(env, document, "V-NOC: add a file ID", &plan.edits).await
+    apply_edits(env, document, "V-NOC: add a file ID", &plan.edits).await?;
+    let first = plan.written.as_ref().map(|w| w.span.start);
+    Ok(MarkerWritten::Line(line_of(first, &plan.edits)))
 }
 
 /// Writes `.vnoc-id` in the folder. The core does it itself: nobody has it open, and no language is involved.
@@ -322,4 +461,72 @@ async fn apply_edits(
     edits: &[TextEdit],
 ) -> Result<(), String> {
     env.edits.apply(document, label, edits).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_body(body: &str) -> AttachOptions {
+        AttachOptions {
+            body: body.into(),
+            ..AttachOptions::default()
+        }
+    }
+
+    #[test]
+    fn the_rules_about_a_note_are_asked_before_anything_is_written() {
+        let ok = AttachOptions::default();
+        assert!(check_note("Why we parse twice", &ok).is_ok());
+        for bad in ["", "  ", "two\nlines", "tab\there"] {
+            assert!(
+                matches!(check_note(bad, &ok), Err(AttachError::BadTitle)),
+                "{bad:?}"
+            );
+        }
+        // the size: exactly 256 KB is a note, one byte more is not
+        assert!(check_note("T", &with_body(&"x".repeat(MAX_BODY_BYTES))).is_ok());
+        assert!(matches!(
+            check_note("T", &with_body(&"x".repeat(MAX_BODY_BYTES + 1))),
+            Err(AttachError::BodyTooLarge)
+        ));
+        // a body with its own frontmatter block; a lone `---` is a rule
+        for body in ["---\na: b\n---\n", "\n \n---\r\na: b\r\n---\r\ntext"] {
+            assert!(
+                matches!(
+                    check_note("T", &with_body(body)),
+                    Err(AttachError::BodyHasFrontmatter)
+                ),
+                "{body:?}"
+            );
+        }
+        for body in ["---\nno closing line\n", "text\n---\na: b\n---\n", ""] {
+            assert!(check_note("T", &with_body(body)).is_ok(), "{body:?}");
+        }
+        // tags
+        let tagged = |tags: &[&str]| AttachOptions {
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            ..AttachOptions::default()
+        };
+        assert!(check_note("T", &tagged(&["plan", "v2", "why-not", "2024"])).is_ok());
+        for bad in ["Plan", "two words", "", "under_score", "caf\u{e9}", "a/b"] {
+            assert!(
+                matches!(check_note("T", &tagged(&["plan", bad])), Err(AttachError::BadTag(t)) if t == bad),
+                "{bad:?}"
+            );
+        }
+        // the author
+        let by = |author: &str| AttachOptions {
+            author: Some(author.into()),
+            ..AttachOptions::default()
+        };
+        assert!(check_note("T", &by("claude-code")).is_ok());
+        assert!(check_note("T", &by("Ana Perez")).is_ok());
+        for bad in ["", " ", "a\nb"] {
+            assert!(
+                matches!(check_note("T", &by(bad)), Err(AttachError::BadAuthor)),
+                "{bad:?}"
+            );
+        }
+    }
 }

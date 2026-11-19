@@ -125,6 +125,10 @@ pub struct DocInfo {
     pub file: String,
     /// the first `# heading`, else the file name
     pub title: String,
+    /// the frontmatter's `author:`, when it has one
+    pub author: Option<String>,
+    /// the frontmatter's `tags:`, as written (lower-cased), in the order given
+    pub tags: Vec<String>,
     pub path: std::path::PathBuf,
 }
 
@@ -134,32 +138,113 @@ pub fn docs_of(root: &Path, id: &NodeId) -> Vec<DocInfo> {
         .into_iter()
         .map(|file| {
             let path = folder.join(&file);
-            let title = fs::read_to_string(&path)
-                .ok()
-                .and_then(|text| title_of(&text))
-                .unwrap_or_else(|| file.trim_end_matches(".md").to_string());
-            DocInfo { file, title, path }
+            let read = fs::read_to_string(&path)
+                .map(|text| frontmatter(&text))
+                .unwrap_or_default();
+            DocInfo {
+                title: read
+                    .title
+                    .unwrap_or_else(|| file.trim_end_matches(".md").to_string()),
+                author: read.author,
+                tags: read.tags,
+                file,
+                path,
+            }
         })
         .collect()
 }
 
 /// The first `# heading` after the frontmatter.
+#[cfg(test)]
 fn title_of(text: &str) -> Option<String> {
     split_doc(text).0
 }
 
-/// The text after the frontmatter: `---` opens the doc and a line of `---` closes it, each line ended by `\n` or `\r\n` (a doc checked out on
-/// Windows has the second). `None` when the doc has no frontmatter.
-pub(crate) fn after_frontmatter(text: &str) -> Option<&str> {
+/// What a doc says about itself: its title, and the two optional keys of its frontmatter (`docs/21-agent-cli/04-write-commands.md` §4).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Frontmatter {
+    /// the first `# heading` after the frontmatter; `None` when there is none
+    pub title: Option<String>,
+    /// `author: claude-code`
+    pub author: Option<String>,
+    /// `tags: [plan, billing]`, in the order written, lower-cased
+    pub tags: Vec<String>,
+}
+
+/// Reads a doc's title, author and tags. A doc without the keys, or with a value this does not understand, has none of them: never an error
+/// (a doc is a file anyone may edit by hand).
+///
+/// The values are read the way V-NOC writes them: `author: <text>` (a pair of quotes around it is taken off) and `tags: [a, b]` on one line (the
+/// brackets are optional; a list written over several lines is not read). The first line of a key wins.
+pub fn frontmatter(text: &str) -> Frontmatter {
+    let mut read = Frontmatter {
+        title: split_doc(text).0,
+        ..Frontmatter::default()
+    };
+    let Some((block, _)) = split_frontmatter(text) else {
+        return read;
+    };
+    let (mut saw_author, mut saw_tags) = (false, false);
+    for line in block.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key {
+            "author" if !saw_author => {
+                saw_author = true;
+                let value = unquoted(value);
+                read.author = (!value.is_empty()).then(|| value.to_string());
+            }
+            "tags" if !saw_tags => {
+                saw_tags = true;
+                let value = value.trim();
+                let value = value
+                    .strip_prefix('[')
+                    .map_or(value, |inner| inner.strip_suffix(']').unwrap_or(inner));
+                read.tags = value
+                    .split(',')
+                    .map(|tag| unquoted(tag).to_lowercase())
+                    .filter(|tag| !tag.is_empty())
+                    .collect();
+            }
+            _ => {}
+        }
+    }
+    read
+}
+
+/// `value` without the space around it and without one pair of matching quotes.
+fn unquoted(value: &str) -> &str {
+    let value = value.trim();
+    for quote in ['"', '\''] {
+        if let Some(inner) = value
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
+            return inner.trim();
+        }
+    }
+    value
+}
+
+/// The frontmatter's lines and the text after it: `---` opens the doc and a line of `---` closes it, each line ended by `\n` or `\r\n` (a doc checked
+/// out on Windows has the second). `None` when the doc has no frontmatter.
+fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
     let rest = text
         .strip_prefix("---\r\n")
         .or_else(|| text.strip_prefix("---\n"))?;
     rest.match_indices("\n---").find_map(|(at, closer)| {
         let after = &rest[at + closer.len()..];
-        after
+        let after = after
             .strip_prefix("\r\n")
-            .or_else(|| after.strip_prefix('\n'))
+            .or_else(|| after.strip_prefix('\n'))?;
+        Some((&rest[..at], after))
     })
+}
+
+/// The text after the frontmatter. `None` when the doc has no frontmatter.
+pub(crate) fn after_frontmatter(text: &str) -> Option<&str> {
+    split_frontmatter(text).map(|(_, after)| after)
 }
 
 /// A doc's text cut as search keeps it (`docs/20-search/03-doc-text.md` §1): its title, the first `# heading` after the frontmatter (`None` when
@@ -186,7 +271,66 @@ pub(super) fn split_doc(text: &str) -> (Option<String>, Cow<'_, str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{split_doc, title_of};
+    use super::{Frontmatter, frontmatter, split_doc, title_of};
+
+    fn tags(list: &[&str]) -> Vec<String> {
+        list.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn a_doc_reads_its_author_and_tags_and_a_doc_without_them_reads_as_none() {
+        let cases: [(&str, Option<&str>, Vec<String>); 10] = [
+            (
+                "---\nnode: X\nhint: a::b\nauthor: claude-code\ntags: [plan, billing]\n---\n# T\n",
+                Some("claude-code"),
+                tags(&["plan", "billing"]),
+            ),
+            ("---\nnode: X\nhint: a::b\n---\n# T\n", None, vec![]),
+            ("# T\nno frontmatter at all\n", None, vec![]),
+            ("", None, vec![]),
+            // CRLF
+            (
+                "---\r\nnode: X\r\nauthor: a b\r\ntags: [x]\r\n---\r\n# T\r\n",
+                Some("a b"),
+                tags(&["x"]),
+            ),
+            // by hand: quotes, no brackets, other case, spaces, empties
+            (
+                "---\nauthor: \"Claude Code\"\ntags: Plan, 'billing' ,,\n---\n",
+                Some("Claude Code"),
+                tags(&["plan", "billing"]),
+            ),
+            // empty values, and the first line of a key wins
+            (
+                "---\nauthor:\ntags: []\nauthor: late\ntags: [late]\n---\n",
+                None,
+                vec![],
+            ),
+            // a list over several lines is not read, and is not an error
+            ("---\ntags:\n  - plan\n---\n", None, vec![]),
+            // a key inside the body is not the frontmatter's
+            (
+                "---\nnode: X\n---\nauthor: not me\ntags: [no]\n",
+                None,
+                vec![],
+            ),
+            // an unclosed block is no frontmatter
+            ("---\nauthor: x\ntags: [y]\n", None, vec![]),
+        ];
+        for (text, author, expected) in cases {
+            let read = frontmatter(text);
+            assert_eq!(read.author.as_deref(), author, "{text:?}");
+            assert_eq!(read.tags, expected, "{text:?}");
+        }
+        assert_eq!(
+            frontmatter("---\nnode: X\nauthor: a\n---\n# Why\n"),
+            Frontmatter {
+                title: Some("Why".into()),
+                author: Some("a".into()),
+                tags: vec![]
+            }
+        );
+    }
 
     #[test]
     fn the_title_is_the_first_heading_after_the_frontmatter() {

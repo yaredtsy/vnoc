@@ -68,7 +68,10 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
     let mut written = Written::Id;
     if target.in_code() != Some(id) {
         if may_write && data.settings()?.markers {
-            if let Err(reason) = write_marker(&mut env, &target, &to, &id, &document).await {
+            if let Err(reason) = write_marker(&mut env, &target, &to, &id, &document)
+                .await
+                .map(|_| ())
+            {
                 notice = Some(format!(
                     "The ID could not be written ({reason}); the docs are attached by name."
                 ));

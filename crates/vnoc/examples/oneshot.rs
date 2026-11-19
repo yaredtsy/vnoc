@@ -221,7 +221,17 @@ fn attach(
     toml.set_id_in_code(IdInCode::No);
     toml.set_kind(&kind);
     data.create_node(&id, &toml)?;
-    let path = data.create_doc(&id, title, &location.to_string())?;
+    let hint = location.to_string();
+    let path = data.create_doc(
+        &id,
+        &vnoc::userdata::NewDoc {
+            title,
+            hint: &hint,
+            body: "",
+            author: None,
+            tags: &[],
+        },
+    )?;
     OpenOptions::new()
         .append(true)
         .open(path)?

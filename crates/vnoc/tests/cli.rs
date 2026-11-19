@@ -3032,3 +3032,933 @@ fn the_hint_lines_are_painted_in_a_terminal_and_say_the_same_words() {
         "error: no node at api/main.py::man\n  did you mean\n    api/main.py::main\n"
     );
 }
+
+// ------------------------------------------------------------------------------------------------------ `init` and `doc new` (A8a)
+
+/// The sample with no `.vnoc/`: a project nobody started. (Its `orders/.vnoc-id` stays: it belongs to the folder.)
+fn bare_copy(label: &str) -> PathBuf {
+    let root = scratch(label);
+    copy_dir(&tests_dir().join("sample"), &root, &|p| {
+        p.file_name().is_some_and(|n| n == ".vnoc")
+    });
+    root
+}
+
+/// A project that was started: `vnoc init` has run.
+fn started_copy(label: &str, init_args: &[&str]) -> PathBuf {
+    let root = bare_copy(label);
+    let mut args = vec!["init"];
+    args.extend_from_slice(init_args);
+    let out = run(vnoc(&root, &args));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    root
+}
+
+/// `vnoc <args>` with `input` on standard input.
+fn run_with_stdin(mut cmd: Command, input: &[u8]) -> Output {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// The node folders under `.vnoc/nodes/`, and the `.md` files in all of them.
+fn node_folders(root: &Path) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    let Ok(shards) = std::fs::read_dir(root.join(".vnoc/nodes")) else {
+        return folders;
+    };
+    for shard in shards.flatten() {
+        for node in std::fs::read_dir(shard.path()).unwrap().flatten() {
+            folders.push(node.path());
+        }
+    }
+    folders.sort();
+    folders
+}
+
+fn docs_in(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".md"))
+        .collect();
+    names.sort();
+    names
+}
+
+/// What `vnoc <args>` printed on standard output, whatever it exited with.
+fn stdout_any(cwd: &Path, args: &[&str]) -> (i32, String, String) {
+    let out = run(vnoc(cwd, args));
+    (code(&out), text(&out.stdout), text(&out.stderr))
+}
+
+const NO_VNOC: &str = "error: this project has no .vnoc/ yet. Starting it adds ID: lines to code when a note is attached. Ask the user, then: vnoc init\n";
+
+#[test]
+fn doc_new_in_a_project_nobody_started_is_exit_2_with_the_sentence_and_writes_nothing() {
+    let root = bare_copy("new-no-vnoc");
+    let before = std::fs::read(root.join("billing/tax.py")).unwrap();
+    let (exit, stdout, stderr) = stdout_any(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "Why rates",
+        ],
+    );
+    assert_eq!((exit, stdout.as_str(), stderr.as_str()), (2, "", NO_VNOC));
+    assert!(!root.join(".vnoc").exists());
+    assert_eq!(std::fs::read(root.join("billing/tax.py")).unwrap(), before);
+    // the standard input is not read before the project says it is started
+    let piped = run_with_stdin(
+        vnoc(
+            &root,
+            &[
+                "doc",
+                "new",
+                "billing/tax.py::rate_for",
+                "--title",
+                "T",
+                "--body-file",
+                "-",
+            ],
+        ),
+        b"body",
+    );
+    assert_eq!((code(&piped), text(&piped.stderr).as_str()), (2, NO_VNOC));
+}
+
+#[test]
+fn init_starts_a_project_once_and_needs_no_driver() {
+    let root = bare_copy("init");
+    let no_driver = |args: &[&str]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+        cmd.current_dir(&root)
+            .env_remove("VNOC_DRIVER")
+            .stdin(Stdio::null())
+            .args(["--driver", "/nonexistent"])
+            .args(args);
+        run(cmd)
+    };
+    let first = no_driver(&["init"]);
+    assert_eq!(code(&first), 0, "{}", text(&first.stderr));
+    assert_eq!(
+        text(&first.stdout),
+        "created      .vnoc/.gitignore\ncreated      .vnoc/vnoc.toml   (attaching a note writes an ID: line into the code)\n"
+    );
+    assert!(first.stderr.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(root.join(".vnoc/.gitignore")).unwrap(),
+        "local/\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".vnoc/vnoc.toml")).unwrap(),
+        "format = 1\n"
+    );
+
+    // again: it says so, changes nothing, and the first answer stays even when `--markers off` is given
+    let again = no_driver(&["init", "--markers", "off"]);
+    assert_eq!(code(&again), 0);
+    assert_eq!(
+        text(&again.stdout),
+        ".vnoc/ already set up: .vnoc/vnoc.toml (attaching a note writes an ID: line into the code)\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".vnoc/vnoc.toml")).unwrap(),
+        "format = 1\n"
+    );
+
+    // `--json`
+    let json_root = bare_copy("init-json");
+    let made: Value = serde_json::from_str(&stdout_of(
+        &json_root,
+        &["init", "--json", "--markers", "off"],
+    ))
+    .unwrap();
+    assert_eq!(
+        made,
+        json!({ "schema": 1, "command": "init", "created": [".vnoc/.gitignore", ".vnoc/vnoc.toml"], "already": false, "markers": false })
+    );
+    assert_eq!(
+        std::fs::read_to_string(json_root.join(".vnoc/vnoc.toml")).unwrap(),
+        "format = 1\nids = { default = \"none\" }\n"
+    );
+    let again: Value = serde_json::from_str(&stdout_of(&json_root, &["init", "--json"])).unwrap();
+    assert_eq!(
+        again,
+        json!({ "schema": 1, "command": "init", "created": [], "already": true, "markers": false })
+    );
+}
+
+/// The line of `file` (1-based) that the command said it added.
+fn line_n(file: &Path, n: usize) -> String {
+    std::fs::read_to_string(file)
+        .unwrap()
+        .lines()
+        .nth(n - 1)
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn doc_new_on_a_function_writes_the_id_line_the_node_and_the_doc() {
+    let root = started_copy("new-function", &[]);
+    let file = root.join("billing/tax.py");
+    let before = std::fs::read_to_string(&file).unwrap();
+    let out = run(vnoc(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "Why we round",
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty());
+    let stdout = text(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "{stdout}");
+    let id = lines[0].rsplit(' ').next().unwrap().to_string();
+    assert_eq!(
+        lines[0],
+        format!("attached to  function  billing/tax.py::rate_for   ID {id}")
+    );
+    let doc = format!(".vnoc/nodes/{}/{id}/why-we-round.md", &id[24..]);
+    assert_eq!(
+        lines[1],
+        format!("created      {doc}   ← write the note here")
+    );
+    // the third line says where the ID went; that line of the file is it
+    let at: usize = lines[2]
+        .split("at line ")
+        .nth(1)
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        lines[2],
+        format!(
+            "changed      billing/tax.py   (an ID: line was added at line {at}; read the file again before you edit it)"
+        )
+    );
+    assert_eq!(line_n(&file, at), format!("    \"\"\"ID: {id}\"\"\""));
+
+    // the one added line, and nothing else
+    let after = std::fs::read_to_string(&file).unwrap();
+    let mut expected: Vec<&str> = before.lines().collect();
+    let added = format!("    \"\"\"ID: {id}\"\"\"");
+    expected.insert(at - 1, &added);
+    assert_eq!(after, expected.join("\n") + "\n");
+
+    // the node folder and the doc
+    let folders = node_folders(&root);
+    assert_eq!(folders.len(), 1);
+    let toml = std::fs::read_to_string(folders[0].join("node.toml")).unwrap();
+    assert!(
+        toml.contains("id_in_code = \"yes\"") && toml.contains("kind = \"function\""),
+        "{toml}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(&doc)).unwrap(),
+        format!("---\nnode: {id}\nhint: billing/tax.py::rate_for\n---\n# Why we round\n\n")
+    );
+    assert!(!root.join("billing/.tax.py.tmp").exists());
+    // and it is a project `check` is happy with
+    let checked = run(vnoc(&root, &["check"]));
+    assert_eq!(code(&checked), 0, "{}", text(&checked.stdout));
+}
+
+#[test]
+fn doc_new_in_json_is_a_golden_file() {
+    let root = started_copy("new-json", &[]);
+    let out = run(vnoc(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "Why we round",
+            "--author",
+            "claude-code",
+            "--tag",
+            "plan",
+            "--json",
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty());
+    let made: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(made["id_in_code"], true);
+    assert!(made["notice"].is_null());
+    golden("doc-new.json", &made);
+}
+
+#[test]
+fn no_marker_attaches_by_name_and_ids_off_writes_none() {
+    // `--no-marker` in a project that writes IDs
+    let root = started_copy("new-no-marker", &[]);
+    let before = std::fs::read(root.join("billing/tax.py")).unwrap();
+    let stdout = stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "By name",
+            "--no-marker",
+        ],
+    );
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "no `changed` line: {stdout}");
+    assert!(lines[0].starts_with("attached to  function  billing/tax.py::rate_for"));
+    assert!(lines[1].starts_with("created      .vnoc/nodes/"));
+    assert_eq!(std::fs::read(root.join("billing/tax.py")).unwrap(), before);
+    let toml = std::fs::read_to_string(node_folders(&root)[0].join("node.toml")).unwrap();
+    assert!(toml.contains("id_in_code = \"no\""), "{toml}");
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "By name",
+            "--no-marker",
+            "--json",
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        (json["id_in_code"].clone(), json["changed"].clone()),
+        (json!(false), json!([]))
+    );
+
+    // `init --markers off`: the project says no, nothing is asked of the command
+    let off = started_copy("new-ids-off", &["--markers", "off"]);
+    let before = std::fs::read(off.join("billing/tax.py")).unwrap();
+    let stdout = stdout_of(
+        &off,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "By name",
+        ],
+    );
+    assert_eq!(stdout.lines().count(), 2, "{stdout}");
+    assert_eq!(std::fs::read(off.join("billing/tax.py")).unwrap(), before);
+    assert!(
+        std::fs::read_to_string(node_folders(&off)[0].join("node.toml"))
+            .unwrap()
+            .contains("id_in_code = \"no\"")
+    );
+}
+
+#[test]
+fn the_body_comes_from_a_file_or_standard_input_and_the_arrow_goes_with_it() {
+    let root = started_copy("new-body", &[]);
+    std::fs::write(root.join("plan.md"), "Step one.\n\n- a\n- b").unwrap();
+    let from_file = stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "From a file",
+            "--body-file",
+            "plan.md",
+        ],
+    );
+    assert!(
+        from_file
+            .lines()
+            .nth(1)
+            .unwrap()
+            .ends_with("from-a-file.md"),
+        "a note with a body is not asked to be written: {from_file}"
+    );
+    let piped = run_with_stdin(
+        vnoc(
+            &root,
+            &[
+                "doc",
+                "new",
+                "billing/tax.py::rate_for",
+                "--title",
+                "From input",
+                "--body-file",
+                "-",
+            ],
+        ),
+        "Because é, and 日本.\n".as_bytes(),
+    );
+    assert_eq!(code(&piped), 0, "{}", text(&piped.stderr));
+    assert!(!text(&piped.stdout).contains('←'));
+    let folder = &node_folders(&root)[0];
+    let id = folder.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(
+        std::fs::read_to_string(folder.join("from-a-file.md")).unwrap(),
+        format!(
+            "---\nnode: {id}\nhint: billing/tax.py::rate_for\n---\n# From a file\n\nStep one.\n\n- a\n- b\n"
+        ),
+        "a body without a last line break gets one"
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("from-input.md")).unwrap(),
+        format!(
+            "---\nnode: {id}\nhint: billing/tax.py::rate_for\n---\n# From input\n\nBecause é, and 日本.\n"
+        )
+    );
+    // with no body and `--quiet` the arrow (a hint) is left out; the facts stay
+    let quiet = stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "Empty",
+            "--quiet",
+        ],
+    );
+    assert!(
+        !quiet.contains('←') && quiet.contains("created      .vnoc/nodes/"),
+        "{quiet}"
+    );
+}
+
+#[test]
+fn a_title_the_node_has_is_refused_with_the_path_and_again_makes_a_second_file() {
+    let root = started_copy("new-twice", &[]);
+    let args = [
+        "doc",
+        "new",
+        "billing/tax.py::rate_for",
+        "--title",
+        "Why we round",
+    ];
+    stdout_of(&root, &args);
+    let id = node_folders(&root)[0]
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let first = format!(".vnoc/nodes/{}/{id}/why-we-round.md", &id[24..]);
+    let code_after_first = std::fs::read(root.join("billing/tax.py")).unwrap();
+
+    let (exit, stdout, stderr) = stdout_any(&root, &args);
+    assert_eq!(exit, 2);
+    assert_eq!(stdout, "");
+    assert_eq!(
+        stderr,
+        format!(
+            "error: this node already has \"Why we round\" → {first} (edit that file, or --again)\n"
+        )
+    );
+    // the case and the spaces of a title do not make it another
+    let (exit, _, stderr) = stdout_any(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "  why WE round ",
+        ],
+    );
+    assert_eq!(exit, 2, "{stderr}");
+    assert_eq!(docs_in(&node_folders(&root)[0]), ["why-we-round.md"]);
+    assert_eq!(
+        std::fs::read(root.join("billing/tax.py")).unwrap(),
+        code_after_first
+    );
+
+    // `--again`: a second file, the same ID, and the code is not touched a second time
+    let mut again = args.to_vec();
+    again.push("--again");
+    let stdout = stdout_of(&root, &again);
+    assert_eq!(
+        stdout.lines().count(),
+        2,
+        "the ID is in the code already: {stdout}"
+    );
+    assert!(stdout.contains("why-we-round-2.md"), "{stdout}");
+    assert_eq!(
+        docs_in(&node_folders(&root)[0]),
+        ["why-we-round-2.md", "why-we-round.md"]
+    );
+    assert_eq!(node_folders(&root).len(), 1);
+    assert_eq!(
+        std::fs::read(root.join("billing/tax.py")).unwrap(),
+        code_after_first
+    );
+}
+
+#[test]
+fn a_file_gets_a_file_id_comment_and_a_folder_gets_a_vnoc_id_file() {
+    let root = started_copy("new-file-folder", &[]);
+    let file = root.join("orders/status.py");
+    let stdout = stdout_of(
+        &root,
+        &["doc", "new", "orders/status.py", "--title", "States"],
+    );
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(
+        lines[0].starts_with("attached to  file  orders/status.py"),
+        "{stdout}"
+    );
+    let id = lines[0].rsplit(' ').next().unwrap();
+    assert!(
+        lines[2]
+            .starts_with("changed      orders/status.py   (a # FileID: comment was added at line "),
+        "{stdout}"
+    );
+    let at: usize = lines[2]
+        .split("at line ")
+        .nth(1)
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(line_n(&file, at), format!("# FileID: {id}"));
+
+    // billing has no `.vnoc-id`
+    assert!(!root.join("billing/.vnoc-id").exists());
+    let stdout = stdout_of(&root, &["doc", "new", "billing", "--title", "Billing"]);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "{stdout}");
+    assert!(
+        lines[0].starts_with("attached to  folder  billing"),
+        "{stdout}"
+    );
+    assert_eq!(lines[2], "created      billing/.vnoc-id");
+    let marker = std::fs::read_to_string(root.join("billing/.vnoc-id")).unwrap();
+    let billing_id = lines[0].rsplit(' ').next().unwrap();
+    assert!(
+        marker.contains(&format!("id = \"{billing_id}\"")),
+        "{marker}"
+    );
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &["doc", "new", "api", "--title", "Api", "--json"],
+    ))
+    .unwrap();
+    assert_eq!(json["created"].as_array().unwrap().len(), 2);
+    assert_eq!(json["created"][1], "api/.vnoc-id");
+    assert_eq!(json["changed"], json!([]));
+}
+
+#[test]
+fn a_syntax_error_stops_the_id_of_that_def_only_and_a_file_that_is_not_utf8_is_not_a_node() {
+    let root = started_copy("new-syntax", &[]);
+    let bad = "def good():\n    return 1\n\n\ndef broken(:\n    pass\n";
+    std::fs::write(root.join("bad.py"), bad).unwrap();
+    // a def that parses gets its ID line, as in any file the driver can read
+    let stdout = stdout_of(&root, &["doc", "new", "bad.py::good", "--title", "A note"]);
+    let id = stdout
+        .lines()
+        .next()
+        .unwrap()
+        .rsplit(' ')
+        .next()
+        .unwrap()
+        .to_string();
+    assert!(
+        stdout
+            .lines()
+            .nth(2)
+            .unwrap()
+            .starts_with("changed      bad.py"),
+        "{stdout}"
+    );
+    let after = std::fs::read_to_string(root.join("bad.py")).unwrap();
+    assert_eq!(
+        after,
+        format!(
+            "def good():\n    \"\"\"ID: {id}\"\"\"\n    return 1\n\n\ndef broken(:\n    pass\n"
+        )
+    );
+    // the def with the error is attached by name, with the notice, exit 0, and the file is as it was
+    let stdout = stdout_of(
+        &root,
+        &["doc", "new", "bad.py::broken", "--title", "A note"],
+    );
+    assert!(
+        stdout.contains(
+            "notice       The ID could not be written (syntax error inside this def); this doc is attached by name.\n"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("changed"), "{stdout}");
+    assert_eq!(std::fs::read_to_string(root.join("bad.py")).unwrap(), after);
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "bad.py::broken",
+            "--title",
+            "Another",
+            "--json",
+        ],
+    ))
+    .unwrap();
+    // a node that is attached by name already is reused, and no second try at its ID is made: that is Write ID's job (`repair`)
+    assert_eq!(json["id_in_code"], false);
+    assert!(json["notice"].is_null());
+    assert_eq!(node_folders(&root).len(), 2);
+
+    // a file that is not UTF-8 never reaches the index (as for `show`), so it is not a node: exit 2, nothing written
+    let latin1 = b"def f():\n    return \"caf\xe9\"\n";
+    std::fs::write(root.join("latin.py"), latin1).unwrap();
+    let (exit, stdout, stderr) = stdout_any(&root, &["doc", "new", "latin.py::f", "--title", "x"]);
+    assert_eq!((exit, stdout.as_str()), (2, ""));
+    assert!(
+        stderr.starts_with("error: latin.py could not be read: "),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read(root.join("latin.py")).unwrap(), latin1);
+    assert_eq!(node_folders(&root).len(), 2, "only the two of bad.py");
+}
+
+#[test]
+fn author_and_tags_are_frontmatter_lines_and_show_and_doc_list_print_the_tags() {
+    let root = started_copy("new-tags", &[]);
+    stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "Split it",
+            "--author",
+            "claude-code",
+            "--tag",
+            "plan",
+            "--tag",
+            "billing",
+        ],
+    );
+    let folder = &node_folders(&root)[0];
+    let id = folder.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(
+        std::fs::read_to_string(folder.join("split-it.md")).unwrap(),
+        format!(
+            "---\nnode: {id}\nhint: billing/tax.py::rate_for\nauthor: claude-code\ntags: [plan, billing]\n---\n# Split it\n\n"
+        )
+    );
+    // a second doc without them: no such lines
+    stdout_of(
+        &root,
+        &["doc", "new", "billing/tax.py::rate_for", "--title", "Plain"],
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("plain.md")).unwrap(),
+        format!("---\nnode: {id}\nhint: billing/tax.py::rate_for\n---\n# Plain\n\n")
+    );
+
+    // the tags are printed after the title, in the order given, and only for the doc that has some
+    let doc_row = |text: &str, title: &str| {
+        text.lines()
+            .find(|l| l.contains(title))
+            .unwrap()
+            .to_string()
+    };
+    let path = |name: &str| format!(".vnoc/nodes/{}/{id}/{name}", &id[24..]);
+    for args in [
+        vec!["show", "billing/tax.py::rate_for", "--no-code"],
+        vec!["doc", "list", "billing/tax.py::rate_for"],
+        vec!["doc", "list"],
+    ] {
+        let shown = stdout_of(&root, &args);
+        assert_eq!(
+            doc_row(&shown, "Split it"),
+            format!("  Split it  [plan, billing]  {}", path("split-it.md")),
+            "{args:?}\n{shown}"
+        );
+        assert_eq!(
+            doc_row(&shown, "Plain"),
+            format!("  Plain  {}", path("plain.md")),
+            "a doc with no tags has no brackets: {args:?}"
+        );
+    }
+    // `--json`: the two fields only where there is something to say
+    let listed: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &["doc", "list", "billing/tax.py::rate_for", "--json"],
+    ))
+    .unwrap();
+    let docs = &listed["results"][0]["docs"];
+    let split = docs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["title"] == "Split it")
+        .unwrap();
+    let plain = docs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["title"] == "Plain")
+        .unwrap();
+    assert_eq!(
+        (split["tags"].clone(), split["author"].clone()),
+        (json!(["plan", "billing"]), json!("claude-code"))
+    );
+    assert!(
+        plain.get("tags").is_none() && plain.get("author").is_none(),
+        "{plain}"
+    );
+
+    // the docs the sample already has read as having none, and print as they did
+    let sample = sample_copy("tags-sample");
+    let shown = stdout_of(&sample, &["show", "billing/charge.py", "--no-code"]);
+    assert!(!shown.contains('['), "{shown}");
+}
+
+#[test]
+fn the_rules_about_a_note_are_exit_2_and_write_nothing() {
+    let root = started_copy("new-rules", &[]);
+    let file = root.join("billing/tax.py");
+    let before = std::fs::read(&file).unwrap();
+    let base = ["doc", "new", "billing/tax.py::rate_for"];
+    let refused = |extra: &[&str], stdin: Option<&[u8]>| {
+        let mut args = base.to_vec();
+        args.extend_from_slice(extra);
+        let out = match stdin {
+            Some(input) => run_with_stdin(vnoc(&root, &args), input),
+            None => run(vnoc(&root, &args)),
+        };
+        assert_eq!(
+            code(&out),
+            2,
+            "{extra:?}: {}{}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        assert!(out.stdout.is_empty(), "{extra:?}");
+        text(&out.stderr)
+    };
+    // a body over 256 KB, from a file and from standard input
+    let big = vec![b'x'; 256 * 1024 + 1];
+    std::fs::write(root.join("big.md"), &big).unwrap();
+    let said = refused(&["--title", "T", "--body-file", "big.md"], None);
+    assert_eq!(
+        said,
+        "error: the body is over 256 KB: a note is at most that\n"
+    );
+    assert_eq!(
+        refused(&["--title", "T", "--body-file", "-"], Some(&big)),
+        said
+    );
+    // a body with its own frontmatter
+    for body in [
+        "---\nauthor: me\n---\ntext\n",
+        "\n\n---\ntags: [a]\n---\ntext",
+    ] {
+        let said = refused(&["--title", "T", "--body-file", "-"], Some(body.as_bytes()));
+        assert!(
+            said.starts_with("error: the body starts with its own --- frontmatter block: leave the frontmatter out"),
+            "{said}"
+        );
+    }
+    // a bad tag, a bad title, a bad author, a body that is not text, a file that is not there
+    assert_eq!(
+        refused(&["--title", "T", "--tag", "Plan"], None),
+        "error: `Plan` is not a tag: lower-case letters, digits and `-`\n"
+    );
+    refused(&["--title", "T", "--tag", "two words"], None);
+    refused(&["--title", "T", "--tag", ""], None);
+    assert_eq!(
+        refused(&["--title", "  "], None),
+        "error: a doc needs a title: one line of text\n"
+    );
+    refused(&["--title", "two\nlines"], None);
+    refused(&["--title", "T", "--author", "a\nb"], None);
+    assert!(
+        refused(&["--title", "T", "--body-file", "-"], Some(b"\xff\xfe"))
+            .contains("is not UTF-8 text")
+    );
+    assert!(
+        refused(&["--title", "T", "--body-file", "nope.md"], None)
+            .starts_with("error: could not read the body from nope.md")
+    );
+    // none of the refusals touched the code or made a node
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    assert_eq!(node_folders(&root).len(), 0);
+    // a lone `---` with no closing line is Markdown, not a frontmatter block
+    let ok = run_with_stdin(
+        vnoc(
+            &root,
+            &[
+                base[0],
+                base[1],
+                base[2],
+                "--title",
+                "Rule",
+                "--body-file",
+                "-",
+            ],
+        ),
+        b"---\nonly a rule above\n",
+    );
+    assert_eq!(code(&ok), 0, "{}", text(&ok.stderr));
+    assert_eq!(node_folders(&root).len(), 1);
+    assert_eq!(docs_in(&node_folders(&root)[0]), ["rule.md"]);
+}
+
+#[test]
+fn doc_new_names_one_node_that_the_code_has() {
+    let root = started_copy("new-nodes", &[]);
+    // two nodes: a usage error of the parser
+    let (exit, _, stderr) = stdout_any(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "T",
+        ],
+    );
+    assert_eq!(exit, 2);
+    assert!(stderr.contains("unexpected argument"), "{stderr}");
+    // the title is required
+    assert_eq!(
+        stdout_any(&root, &["doc", "new", "billing/tax.py::rate_for"]).0,
+        2
+    );
+    // a node that is not there: the sentence and the hints of every other command
+    let (exit, _, stderr) = stdout_any(
+        &root,
+        &["doc", "new", "billing/tax.py::rate_fr", "--title", "T"],
+    );
+    assert_eq!(exit, 2);
+    assert!(
+        stderr.starts_with("error: no node at billing/tax.py::rate_fr\n  did you mean\n"),
+        "{stderr}"
+    );
+    let (exit, stdout, _) = stdout_any(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_fr",
+            "--title",
+            "T",
+            "--json",
+        ],
+    );
+    assert_eq!(exit, 2);
+    let value: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["command"], "doc new");
+    assert_eq!(value["error"]["why"], "no_def");
+    // a Missing node, by its ID: the sample has one
+    let sample = sample_copy("new-missing");
+    let (exit, stdout, stderr) = stdout_any(&sample, &["doc", "new", MISSING_ID, "--title", "T"]);
+    assert_eq!((exit, stdout.as_str()), (2, ""));
+    assert!(
+        stderr.starts_with("error: a note is attached to code that is there: api/routes.py::legacy_export is Missing"),
+        "{stderr}"
+    );
+    // a `.vnoc/` that is too new is the environment's problem
+    std::fs::write(sample.join(".vnoc/vnoc.toml"), "format = 2\n").unwrap();
+    let (exit, _, stderr) = stdout_any(
+        &sample,
+        &["doc", "new", "billing/tax.py::apply_tax", "--title", "T"],
+    );
+    assert_eq!(exit, 3, "{stderr}");
+}
+
+#[test]
+fn another_writer_holding_the_lock_makes_doc_new_exit_3_after_five_seconds() {
+    let root = started_copy("new-busy", &[]);
+    std::fs::create_dir_all(root.join(".vnoc/local")).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(root.join(".vnoc/local/write.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let started = std::time::Instant::now();
+    let (exit, stdout, stderr) = stdout_any(
+        &root,
+        &["doc", "new", "billing/tax.py::rate_for", "--title", "T"],
+    );
+    assert_eq!((exit, stdout.as_str()), (3, ""));
+    assert_eq!(stderr, "error: another V-NOC is writing in this project\n");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(node_folders(&root).len(), 0);
+    drop(lock);
+}
+
+#[test]
+fn two_doc_news_at_once_on_one_function_make_one_node_one_id_line_and_two_docs() {
+    for round in 0..20 {
+        let root = started_copy(&format!("new-race-{round}"), &[]);
+        let file = root.join("billing/tax.py");
+        let spawn = |title: &str| {
+            let mut cmd = vnoc(
+                &root,
+                &["doc", "new", "billing/tax.py::rate_for", "--title", title],
+            );
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+            cmd.spawn().unwrap()
+        };
+        let (one, two) = (spawn("First writer"), spawn("Second writer"));
+        for child in [one, two] {
+            let out = child.wait_with_output().unwrap();
+            assert_eq!(
+                code(&out),
+                0,
+                "round {round}: {}{}",
+                text(&out.stdout),
+                text(&out.stderr)
+            );
+        }
+        let folders = node_folders(&root);
+        assert_eq!(folders.len(), 1, "round {round}: {folders:?}");
+        assert_eq!(
+            docs_in(&folders[0]),
+            ["first-writer.md", "second-writer.md"],
+            "round {round}"
+        );
+        let code_now = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(
+            code_now.matches("ID: ").count(),
+            1,
+            "round {round}: {code_now}"
+        );
+        let checked = run(vnoc(&root, &["check"]));
+        assert_eq!(
+            code(&checked),
+            0,
+            "round {round}: {}",
+            text(&checked.stdout)
+        );
+    }
+}

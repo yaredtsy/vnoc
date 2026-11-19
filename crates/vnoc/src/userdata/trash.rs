@@ -276,7 +276,8 @@ mod tests {
         let id = NodeId::parse(&format!("0000000000000000000000000{n}")).unwrap();
         let at = LocationKey::new(RepoPath::new("a.py").unwrap(), format!("f{n}"), 1).unwrap();
         data.create_node(&id, &NodeToml::new(&at)).unwrap();
-        data.create_doc(&id, "Notes", "a.py").unwrap();
+        data.create_doc(&id, &crate::userdata::NewDoc::titled("Notes", "a.py"))
+            .unwrap();
         id
     }
 

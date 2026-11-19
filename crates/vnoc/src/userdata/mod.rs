@@ -19,7 +19,7 @@ use vnoc_domain::{LocationKey, NodeId, NodeToml};
 pub use doc_text::{DocStats, DocText, DocTexts};
 pub use lock::{DEFAULT_WAIT, LockError, WriteLock};
 pub(crate) use read::after_frontmatter;
-pub use read::{DocInfo, LoadProblem, LoadReport, NodeRecord};
+pub use read::{DocInfo, Frontmatter, LoadProblem, LoadReport, NodeRecord, frontmatter};
 pub use trash::{MovePlan, TrashEntry, TrashError};
 
 #[derive(Debug, thiserror::Error)]
@@ -92,6 +92,14 @@ impl UserData {
         WriteLock::take_if_initialized(&self.root, DEFAULT_WAIT)
     }
 
+    /// The two files `initialize` writes: `.vnoc/.gitignore` and `.vnoc/vnoc.toml`.
+    pub fn init_files(&self) -> [PathBuf; 2] {
+        [
+            layout::gitignore_file(&self.root),
+            layout::project_file(&self.root),
+        ]
+    }
+
     /// Creates `.vnoc/` with its `vnoc.toml` and `.gitignore` the first time. Does nothing when the project already has them
     /// (so `markers` only matters for the very first attach).
     pub fn initialize(&self, markers: bool) -> Result<(), UserDataError> {
@@ -152,16 +160,11 @@ impl UserData {
         Ok(())
     }
 
-    /// Creates a new Markdown doc in the node's folder and returns its path. `hint` is for people reading a pull request.
-    pub fn create_doc(
-        &self,
-        id: &NodeId,
-        title: &str,
-        hint: &str,
-    ) -> Result<PathBuf, UserDataError> {
+    /// Creates a new Markdown doc in the node's folder and returns its path.
+    pub fn create_doc(&self, id: &NodeId, doc: &NewDoc) -> Result<PathBuf, UserDataError> {
         let folder = layout::node_dir(&self.root, id);
-        let content = format!("---\nnode: {id}\nhint: {hint}\n---\n# {}\n\n", title.trim());
-        let slug = slug(title);
+        let content = doc.render(id);
+        let slug = slug(doc.title);
         for n in 1.. {
             let name = if n == 1 {
                 format!("{slug}.md")
@@ -201,6 +204,47 @@ impl UserData {
         records: &[(NodeId, NodeRecord)],
     ) -> (DocTexts, DocStats) {
         held.refresh(&self.root, records)
+    }
+}
+
+/// What a new doc holds. The frontmatter is V-NOC's: `node:`, `hint:`, then `author:` and `tags:` only when there are some.
+pub struct NewDoc<'a> {
+    pub title: &'a str,
+    /// for people reading a pull request: where the node is
+    pub hint: &'a str,
+    /// the Markdown after the heading; empty for a doc of the heading alone
+    pub body: &'a str,
+    pub author: Option<&'a str>,
+    pub tags: &'a [String],
+}
+
+impl<'a> NewDoc<'a> {
+    /// A doc of its heading alone, for the tests of what sits around the writer.
+    #[cfg(test)]
+    pub(crate) fn titled(title: &'a str, hint: &'a str) -> NewDoc<'a> {
+        NewDoc {
+            title,
+            hint,
+            body: "",
+            author: None,
+            tags: &[],
+        }
+    }
+
+    fn render(&self, id: &NodeId) -> String {
+        let mut text = format!("---\nnode: {id}\nhint: {}\n", self.hint);
+        if let Some(author) = self.author {
+            text.push_str(&format!("author: {author}\n"));
+        }
+        if !self.tags.is_empty() {
+            text.push_str(&format!("tags: [{}]\n", self.tags.join(", ")));
+        }
+        text.push_str(&format!("---\n# {}\n\n", self.title.trim()));
+        text.push_str(self.body);
+        if !self.body.is_empty() && !self.body.ends_with('\n') {
+            text.push('\n');
+        }
+        text
     }
 }
 
@@ -328,20 +372,15 @@ mod tests {
             "a taken ID is stepped past"
         );
 
-        let first = data
-            .create_doc(
-                &id,
-                "Why we parse twice",
-                "src/orders.py::OrderService.parse_order",
-            )
-            .unwrap();
-        let second = data
-            .create_doc(
-                &id,
-                "Why we parse twice",
-                "src/orders.py::OrderService.parse_order",
-            )
-            .unwrap();
+        let new = NewDoc {
+            title: "Why we parse twice",
+            hint: "src/orders.py::OrderService.parse_order",
+            body: "",
+            author: None,
+            tags: &[],
+        };
+        let first = data.create_doc(&id, &new).unwrap();
+        let second = data.create_doc(&id, &new).unwrap();
         assert_eq!(
             (
                 first.file_name().unwrap().to_str(),
@@ -370,6 +409,44 @@ mod tests {
             ["why-we-parse-twice-2.md", "why-we-parse-twice.md"]
         );
         assert_eq!(record.toml.id_in_code(), Some(IdInCode::No));
+    }
+
+    #[test]
+    fn a_new_doc_has_author_and_tags_only_when_given_and_the_body_after_the_heading() {
+        let id = first_free_id(&location(), |_| false).unwrap();
+        let tags = ["plan".to_string(), "billing".to_string()];
+        let full = NewDoc {
+            title: " Split it ",
+            hint: "src/orders.py::OrderService.parse_order",
+            body: "First line\n\nSecond",
+            author: Some("claude-code"),
+            tags: &tags,
+        };
+        assert_eq!(
+            full.render(&id),
+            format!(
+                "---\nnode: {id}\nhint: src/orders.py::OrderService.parse_order\nauthor: claude-code\ntags: [plan, billing]\n---\n# Split it\n\nFirst line\n\nSecond\n"
+            ),
+            "a body without a last line break gets one"
+        );
+        let bare = NewDoc {
+            author: None,
+            tags: &[],
+            body: "",
+            ..full
+        };
+        assert_eq!(
+            bare.render(&id),
+            format!(
+                "---\nnode: {id}\nhint: src/orders.py::OrderService.parse_order\n---\n# Split it\n\n"
+            )
+        );
+        // and it reads back
+        let read = frontmatter(&NewDoc { body: "x", ..full }.render(&id));
+        assert_eq!(
+            (read.title.as_deref(), read.author.as_deref(), read.tags),
+            (Some("Split it"), Some("claude-code"), tags.to_vec())
+        );
     }
 
     #[test]

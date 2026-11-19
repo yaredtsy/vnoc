@@ -8,7 +8,9 @@ mod relink;
 mod resolve;
 mod write_id;
 
-pub use attach::{AttachError, Env, attach};
+pub use attach::{
+    AttachError, AttachOptions, Attached, Env, MAX_BODY_BYTES, MarkerWritten, attach, check_note,
+};
 pub use edits::EditSink;
 pub use locate::{LocateError, locate, locate_in};
 pub use relink::{RelinkError, relink};

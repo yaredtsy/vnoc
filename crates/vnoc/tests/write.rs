@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use vnoc::cli::project::{Opened, open};
-use vnoc::identity::{AttachError, EditSink, Env, attach};
+use vnoc::identity::{AttachError, AttachOptions, EditSink, Env, attach};
 use vnoc::protocol::{AttachParams, AttachResult, Document};
 use vnoc::userdata::UserData;
 use vnoc_domain::{IdInCode, NodeId};
@@ -77,8 +77,10 @@ async fn attach_on_disk(
             markers: None,
             document,
         },
+        AttachOptions::default(),
     )
     .await
+    .map(|attached| attached.result)
 }
 
 fn id_in_code(root: &Path, result: &AttachResult) -> Option<IdInCode> {
