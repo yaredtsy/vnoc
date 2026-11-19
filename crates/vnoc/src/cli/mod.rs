@@ -10,6 +10,7 @@ mod code;
 mod doc;
 mod find;
 mod grep;
+pub mod guide;
 mod nodes;
 mod out;
 pub mod project;
@@ -101,6 +102,8 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Missing => check::missing(&cli.global).await,
         Command::Check(args) => check::run(&cli.global, args).await,
         Command::Tags(args) => tags::tags(&cli.global, args).await,
+        Command::Guide(args) => guide::guide(&cli.global, args),
+        Command::Skill => guide::skill(&cli.global),
     }
 }
 
