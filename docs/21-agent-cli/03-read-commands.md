@@ -73,7 +73,13 @@ scan stopped. The one command to run when anything seems off; the walkthrough's 
   "problems": [], "failed": [], "truncated": false }
 ```
 
-`driver` is `null` when none was started. `initialized` is whether `.vnoc/` is a folder at the git root. `missing`, `problems` and `failed` are the
+*(Changed 2026-11-19, before A4: in A4's first commit.)* **`drivers` is a list**, `"drivers": [ { "name": "python", "version": "0.2.0", "files": 12 } ]`,
+and line 1 says `drivers python 0.2.0 (12 files)`. Today there is one driver, so the list has one entry, and an empty list when none was
+started (`driver not started …` stays the text). The reason is C5: JSON only grows, so a single `driver` object shipped now would have to stay
+next to a later list for ever. More languages (a driver saying which files it reads, the scan asking each driver) is not planned here: README §5.
+When it comes, a driver that fails is a row of the list with its error, not the whole command's exit `3`.
+
+~~`driver` is `null` when none was started.~~ `initialized` is whether `.vnoc/` is a folder at the git root. `missing`, `problems` and `failed` are the
 protocol's own types (`MissingNode`, `Problem`, `FailedFile`: snake_case), as `vnoc/structure` sends them.
 
 ## 3. `show`, `code`, `doc`
@@ -320,5 +326,15 @@ you changed code" step becomes one command. Needs `git` on the PATH; without it 
 | **`--quiet`** | no "next step" lines, no totals: only the rows. For hooks |
 | **standard error** | errors and the hints of 02 §4. Logs only with `VNOC_LOG` |
 | **nothing found** | a line saying so, exit `0` |
+
+**Renderers** *(settled 2026-11-19, before A4)*. A command builds its answer as a value (the rows, the node, the results list) and hands it to
+one of two renderers in `cli/out.rs`, text or JSON; no command formats as it computes. A new format is then one renderer, and touches no
+command. **`--xml` is a trial, not a promise:** A14 adds an experimental renderer that puts each note's body inside
+`<doc path="…" title="…">…</doc>` (a closing tag in a body is escaped, so a note cannot end its own tag) and runs the six scenarios with text
+and with XML. XML is kept where it wins on tasks done right, scenario 5 resisted, tokens and calls; if it wins only around note bodies,
+`doc read` and the docs of `show` use tags by default and the rest stays text. The reason to try it is that XML tags help a model tell content
+from instructions (a note is text someone else wrote, 01 §3); the reason not to use it everywhere is that indentation already shows a tree, at
+about half the tokens. **User templates** are out: `--json` with `jq` or a script gives any shape; what would bring them back is a user who
+needs a shape `--json` cannot give easily.
 
 The whole command line is **experimental until 1.0** and says so in `--help`: names can still move, with a release note.

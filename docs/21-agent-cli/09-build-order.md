@@ -99,7 +99,7 @@ Commit: `cli A3: show and code, by any name for a node`.
 
 | Files | What |
 |---|---|
-| `crates/vnoc/src/cli/doc.rs` | `doc list`, `doc read`, `doc path`; by ID without the driver |
+| `crates/vnoc/src/cli/doc.rs` | `doc list` (with no node: every doc of the project, grouped by node), `doc read`, `doc path`; by ID without the driver |
 | `crates/vnoc/src/cli/tree.rs` | printing only: indent, counts, `--flat` |
 | `crates/vnoc/src/index/view.rs` (new, library) | `tree_view(&Node, &TreeOptions) -> Vec<Row>`: depth, kinds with ancestors kept, the `--where` set, the limit and what was cut, the counts of a cut folder. Pure, over the tree `Index::tree` gives |
 
@@ -181,7 +181,7 @@ Commit: `cli A7: who applies an ID edit is a parameter; one write lock`.
 | `crates/vnoc/src/protocol.rs`, `shared/messages.ts` | `DocInfo` gains `tags`, `author` (`vnoc/docs`); the doc rows of `vnoc/search` too |
 | `webview/src/sidebar/SearchResults.tsx` | a doc row shows its tags after the title |
 | `docs/20-search/01-query.md` §2, §3 | the two filters as built, and the row for a query of filters alone, in the `docs:` commit |
-| `crates/vnoc/src/cli/doc.rs` | `doc list` with no node (the whole project); `--where` on `doc list` and `doc read` (03 §3); tags shown on the rows |
+| `crates/vnoc/src/cli/doc.rs` | `--where` on `doc list` and `doc read` (03 §3); tags shown on the rows (`doc list` with no node was built in A4) |
 | `docs/04-storage/01-vnoc-folder.md` §"Docs" | the two keys, in a `docs:` commit |
 
 Tests: `doc new` with no `.vnoc/` → `2` and the sentence; `init`, then `doc new` on a function: the `ID:` line is in the file, the node folder
@@ -274,7 +274,9 @@ Commit: `cli A13: vnoc in every release`.
 
 ### A14 Trying it with agents
 
-The six scenarios of 06 §8 in Claude Code, Codex, and pi or Cursor. The table of results goes into 06 §8; the skill, the rules block and the
+The six scenarios of 06 §8 in Claude Code, Codex, and pi or Cursor, **each with the text output and with an experimental `--xml`** (03 §11:
+a renderer, one file, built at the start of this step; note bodies inside `<doc>` tags). Recorded per run: done right or not, scenario 5
+resisted or not, tokens, calls. What wins decides the default (03 §11), and the losing renderer is deleted, not kept behind a flag. The table of results goes into 06 §8; the skill, the rules block and the
 guides are changed from it; the guide test of A10 keeps them honest. Commit: `cli A14: the skill, after six scenarios in three agents`.
 
 **Stop point: release 0.5.** Full test run; `02` §3's row.
