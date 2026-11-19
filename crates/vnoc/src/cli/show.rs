@@ -7,12 +7,13 @@ use serde::Serialize;
 
 use super::args::ShowArgs;
 use super::nodes::{
-    Answer, Doc, Lookup, Missing, NodeError, Target, each, file_of, id_of, lines_of, location_of,
+    Answer, Doc, Lookup, Missing, NodeError, Target, each, file_of, id_of, kind_word, lines_of,
+    location_of,
 };
 use super::out::Render;
 use super::project::open_from;
 use super::{Failure, Global};
-use crate::index::{Kind, Node};
+use crate::index::Node;
 use crate::source;
 
 /// Code longer than this is cut unless `--full`.
@@ -83,15 +84,6 @@ pub struct MissingView {
     docs: Vec<Doc>,
     #[serde(skip)]
     path: String,
-}
-
-fn kind_word(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Folder => "folder",
-        Kind::File => "file",
-        Kind::Class => "class",
-        Kind::Function => "function",
-    }
 }
 
 fn pair(lines: Option<(u32, u32)>) -> Option<[u32; 2]> {
@@ -251,10 +243,10 @@ impl Answer for ShowAnswer {
         }
     }
 
-    fn path(&self) -> String {
-        match self {
+    fn paths(&self) -> Vec<String> {
+        vec![match self {
             ShowAnswer::Node(view) => view.path.clone(),
             ShowAnswer::Missing(view) => view.path.clone(),
-        }
+        }]
     }
 }

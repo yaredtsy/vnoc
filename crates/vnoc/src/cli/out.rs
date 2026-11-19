@@ -50,6 +50,11 @@ pub fn error(message: &str) {
     let _ = writeln!(io::stderr().lock(), "error: {message}");
 }
 
+/// A remark about the request that did not stop it (a filter of a query that means nothing): one line on standard error, `note: …`.
+pub fn note(message: &str) {
+    let _ = writeln!(io::stderr().lock(), "note: {message}");
+}
+
 /// clap's own answer to `--help`, `--version` or a mistake: its text goes to standard output for the first two and to standard error for the
 /// last, as clap decides. Returns clap's exit code (0, or 2 for a usage error).
 pub fn clap_error(e: &clap::Error) -> i32 {

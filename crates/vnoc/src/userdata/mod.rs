@@ -16,6 +16,7 @@ use toml_edit::{DocumentMut, value};
 use vnoc_domain::{LocationKey, NodeId, NodeToml};
 
 pub use doc_text::{DocStats, DocText, DocTexts};
+pub(crate) use read::after_frontmatter;
 pub use read::{DocInfo, LoadProblem, LoadReport, NodeRecord};
 pub use trash::{MovePlan, TrashEntry, TrashError};
 

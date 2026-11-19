@@ -35,6 +35,12 @@ pub struct NodeError {
 pub struct Doc {
     pub title: String,
     pub path: String,
+    /// the file's name in the node's folder (`why-we-parse-twice.md`): what `doc read <node> <file>` takes. Not part of the JSON shape.
+    #[serde(skip)]
+    pub file: String,
+    /// where the file is, for reading it
+    #[serde(skip)]
+    pub abs: PathBuf,
 }
 
 /// A node whose code is gone: what its record says, and its docs.
@@ -57,8 +63,8 @@ pub enum Target<'t> {
 pub trait Answer: Render {
     /// the location, or the ID of a Missing node
     fn id(&self) -> String;
-    /// the source file
-    fn path(&self) -> String;
+    /// the files `--format path` lists: the source file of a node, the files of a node's docs
+    fn paths(&self) -> Vec<String>;
 }
 
 /// A doc file as every command prints it: relative to the root when `.vnoc/` is under the root (the ordinary case: the root is the git root), and
@@ -220,20 +226,12 @@ impl<'a> Lookup<'a> {
 
     /// The docs of the node with this permanent ID.
     pub fn docs_of(&self, id: Option<NodeId>) -> Vec<Doc> {
-        let Some(id) = id else { return Vec::new() };
-        let project = &self.opened.project;
-        UserData::new(project.git_root())
-            .docs_of(&id)
-            .into_iter()
-            .map(|doc| Doc {
-                title: doc.title,
-                path: doc_path(project, &doc.path),
-            })
-            .collect()
+        id.map(|id| docs_by_id(&self.opened.project, &id))
+            .unwrap_or_default()
     }
 
     /// The corpus for "did you mean", made on the first miss.
-    fn corpus(&self) -> &Corpus {
+    pub fn corpus(&self) -> &Corpus {
         self.corpus.get_or_init(|| {
             search::prepare(
                 &self.opened.project,
@@ -345,7 +343,7 @@ fn with_hints(said: String, lead: &str, hints: &[String]) -> String {
 }
 
 /// A repo path as shown below the opened folder.
-fn shown(prefix: &str, repo_path: &str) -> String {
+pub fn shown(prefix: &str, repo_path: &str) -> String {
     if prefix.is_empty() {
         return repo_path.to_string();
     }
@@ -356,12 +354,33 @@ fn shown(prefix: &str, repo_path: &str) -> String {
         .to_string()
 }
 
+/// The docs in the folder of the node with this ID, read from the disk: no index is needed.
+pub fn docs_by_id(project: &Project, id: &NodeId) -> Vec<Doc> {
+    UserData::new(project.git_root())
+        .docs_of(id)
+        .into_iter()
+        .map(|doc| Doc {
+            title: doc.title,
+            path: doc_path(project, &doc.path),
+            file: doc.file,
+            abs: doc.path,
+        })
+        .collect()
+}
+
+/// What a tree node is called in every answer.
+pub fn kind_word(kind: crate::index::Kind) -> &'static str {
+    match kind {
+        crate::index::Kind::Folder => "folder",
+        crate::index::Kind::File => "file",
+        crate::index::Kind::Class => "class",
+        crate::index::Kind::Function => "function",
+    }
+}
+
 /// The location a node is named by in every answer: `path::qualname#n` for a def, the path for a file or a folder; relative to the root.
 pub fn location_of(node: &Node) -> String {
-    match node.id.split_once("::") {
-        Some((_, rest)) => format!("{}::{rest}", node.path),
-        None => node.path.clone(),
-    }
+    node.location()
 }
 
 /// A def's lines as a person reads them: 1-based, both ends included.
@@ -417,19 +436,38 @@ pub fn each<A: Answer>(
 ) -> Result<(), Failure> {
     let args = expand(nodes)?;
     let lookup = Lookup::new(opened, args.len());
+    emit(
+        command,
+        global,
+        args.iter().map(|arg| {
+            let answer = lookup.resolve(arg).and_then(|target| one(&lookup, target));
+            (arg.as_str(), answer)
+        }),
+    )
+}
+
+/// Prints one answer per argument, as they come: see [`each`]. The answers are computed as the iterator is walked, so each is printed before the
+/// next one is looked for, and an error lands between the answers on either side of it.
+pub fn emit<'a, A: Answer>(
+    command: &'static str,
+    global: &Global,
+    answers: impl Iterator<Item = (&'a str, Result<A, NodeError>)>,
+) -> Result<(), Failure> {
     let (mut failed, mut printed) = (false, false);
     let mut results: Vec<Value> = Vec::new();
-    for arg in &args {
-        match lookup.resolve(arg).and_then(|target| one(&lookup, target)) {
+    for (arg, answer) in answers {
+        match answer {
             Ok(done) if global.json => {
                 let mut value = serde_json::to_value(&done).expect("an answer is JSON");
-                value["arg"] = json!(arg);
+                if !arg.is_empty() {
+                    value["arg"] = json!(arg);
+                }
                 results.push(value);
             }
             Ok(done) => {
                 let text = match global.format {
                     Some(Format::Id) => format!("{}\n", done.id()),
-                    Some(Format::Path) => format!("{}\n", done.path()),
+                    Some(Format::Path) => done.paths().iter().map(|p| format!("{p}\n")).collect(),
                     // a blank line between answers
                     None if printed => format!("\n{}", done.text(global.quiet)),
                     None => done.text(global.quiet),

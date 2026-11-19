@@ -109,7 +109,7 @@ impl Answer for CodeAnswer {
         self.location.clone()
     }
 
-    fn path(&self) -> String {
-        self.path.clone()
+    fn paths(&self) -> Vec<String> {
+        vec![self.path.clone()]
     }
 }

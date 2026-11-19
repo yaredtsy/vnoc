@@ -150,7 +150,7 @@ fn title_of(text: &str) -> Option<String> {
 
 /// The text after the frontmatter: `---` opens the doc and a line of `---` closes it, each line ended by `\n` or `\r\n` (a doc checked out on
 /// Windows has the second). `None` when the doc has no frontmatter.
-fn after_frontmatter(text: &str) -> Option<&str> {
+pub(crate) fn after_frontmatter(text: &str) -> Option<&str> {
     let rest = text
         .strip_prefix("---\r\n")
         .or_else(|| text.strip_prefix("---\n"))?;

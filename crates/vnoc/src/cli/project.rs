@@ -100,6 +100,15 @@ pub async fn open_from(global: &Global) -> Result<Opened, Failure> {
     open(&root, &driver).await
 }
 
+/// The root as this process sees it, and nothing built: for a command that needs no index and so no driver (`doc read <ID>`). The driver is not
+/// looked for, so a missing one is no error here.
+pub fn open_without_driver(global: &Global) -> Result<Project, Failure> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| Failure::Environment(format!("the current folder is not known: {e}")))?;
+    Project::open(&find_root(&cwd, global.root.as_deref()))
+        .map_err(|e| Failure::Usage(e.to_string()))
+}
+
 /// Opens `root`, points a driver host at `driver`, and builds the whole index (`refresh(…, Touched::All)`). The driver starts with the
 /// first file it has to read, and exits when `Opened` is dropped.
 pub async fn open(root: &Path, driver: &Path) -> Result<Opened, Failure> {

@@ -9,6 +9,7 @@
 mod build;
 mod structure;
 pub(crate) mod tree;
+mod view;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -19,6 +20,7 @@ use vnoc_driver_protocol::Def;
 pub use build::{BuildError, Touched, refresh};
 pub use structure::structure;
 pub use tree::{Kind, Node};
+pub use view::{Counts, KindSel, Lookups, Row, TreeOptions, View, tree_view};
 
 use crate::identity::{FoundBy, Markers, Resolved, resolve};
 use crate::protocol::{FailedFile, MissingNode, Problem};

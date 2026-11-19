@@ -1,0 +1,48 @@
+{
+  "command": "doc list",
+  "results": [
+    {
+      "arg": "billing/charge.py",
+      "docs": [
+        {
+          "path": ".vnoc/nodes/PS/4Q57CGHF0HJ23TTYWXTZXQ8DPS/handover-notes.md",
+          "title": "Handover notes"
+        },
+        {
+          "path": ".vnoc/nodes/PS/4Q57CGHF0HJ23TTYWXTZXQ8DPS/why-charges-are-retried.md",
+          "title": "Why charges are retried"
+        }
+      ],
+      "kind": "file",
+      "location": "billing/charge.py",
+      "node_id": "4Q57CGHF0HJ23TTYWXTZXQ8DPS"
+    },
+    {
+      "arg": "7N1HNCPA163HHSN91HX48T9QGE",
+      "docs": [
+        {
+          "path": ".vnoc/nodes/GE/7N1HNCPA163HHSN91HX48T9QGE/the-old-csv-export.md",
+          "title": "The old CSV export"
+        }
+      ],
+      "missing": true,
+      "node_id": "7N1HNCPA163HHSN91HX48T9QGE",
+      "was": "api/routes.py::legacy_export"
+    },
+    {
+      "arg": "billing/tax.py::apply_tax",
+      "docs": [],
+      "kind": "function",
+      "location": "billing/tax.py::apply_tax",
+      "node_id": null
+    },
+    {
+      "arg": "orders/service.py::parse_ordr",
+      "error": {
+        "message": "no node at orders/service.py::parse_ordr · did you mean: orders/service.py::OrderService.parse_order",
+        "why": "no_def"
+      }
+    }
+  ],
+  "schema": 1
+}

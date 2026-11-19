@@ -66,6 +66,30 @@ impl Node {
         }
     }
 
+    /// The location a person names this node by: `path::qualname#n` for a def, the path for a file or a folder, `.` for the opened folder itself.
+    /// The path is relative to the opened folder, as `Node::path` is.
+    pub fn location(&self) -> String {
+        match self.id.split_once("::") {
+            Some((_, rest)) => format!("{}::{rest}", self.path),
+            None if self.path.is_empty() => ".".to_string(),
+            None => self.path.clone(),
+        }
+    }
+
+    /// The kind of the parent of the node with this id, found by walking down from this one (`None` for this node and for an id that is not here).
+    pub fn parent_kind_of(&self, id: &str) -> Option<Kind> {
+        self.children
+            .iter()
+            .find_map(|child| {
+                if child.id == id {
+                    Some(Some(self.kind))
+                } else {
+                    child.find(id).map(|_| child.parent_kind_of(id))
+                }
+            })
+            .flatten()
+    }
+
     /// The node with this tree id, at or under this one: a depth-first walk, one lookup per command.
     pub fn find(&self, id: &str) -> Option<&Node> {
         if self.id == id {
