@@ -8,12 +8,12 @@ import type { Session } from "@vnoc/shared/session.ts";
 import { sleep, until, waitFor } from "./util";
 
 // NEEDS ATTENTION in a real window (docs/11-missing-relink-remove.md §6): a deleted function shows under Missing and leaves when it is back;
-// a problem on a folder is revealed, not opened. The suite reads the view's rows through the extension's test API: it cannot see the tree itself.
+// a problem on a folder is revealed, not opened; a node whose ID line was deleted shows under ID lost, and Write ID on its row puts the line back. The suite reads the view's rows through the extension's test API: it cannot see the tree itself.
 
 interface Api {
   structure(): Promise<StructureResult>;
   session(): Session;
-  attention(): { missing: string[]; problems: Problem[] };
+  attention(): { missing: string[]; problems: Problem[]; lostIds: string[]; hasAttention: boolean; groups: Record<string, string[]> };
   request<T>(method: string, params?: object): Promise<T>;
   webviewErrors(): string[];
   moveToTrash(id: string): Promise<void>;
@@ -232,5 +232,36 @@ suite("write id", () => {
     assert.ok(fs.readFileSync(file(), "utf8").includes(`ID: ${id}`), "the ID line is back in the file");
     const after = (await marked())!;
     assert.deepStrictEqual([after.node_id, after.docs], [id, 1]);
+  });
+
+  test("a deleted ID line shows under ID lost, a click goes to the node, and Write ID on the row puts the line back and the group goes", async () => {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
+    assert.ok(fs.readFileSync(file(), "utf8").includes(`ID: ${id}`), "the ID is in the code at the start");
+    assert.deepStrictEqual(api.attention().lostIds, [], `nothing is lost while the ID is in the code: ${JSON.stringify((await api.structure()).lost_markers)}`);
+    assert.strictEqual(Object.keys(api.attention().groups).some((g) => g.startsWith("ID lost")), false, "no group without rows");
+
+    const edit = new vscode.WorkspaceEdit();
+    const at = document.getText().split("\n").findIndex((l) => l.includes("ID:"));
+    edit.delete(document.uri, new vscode.Range(at, 0, at + 1, 0));
+    assert.ok(await vscode.workspace.applyEdit(edit));
+    assert.ok(await document.save());
+
+    const key = (await marked())!.id; // the tree's key; `id` is the permanent ID
+    await until("the node under ID lost", () => api.attention().lostIds.includes(key));
+    const seen = api.attention();
+    assert.deepStrictEqual(seen.groups["ID lost (1)"], ["marked"], "one group, one row, named by the def");
+    assert.ok(seen.hasAttention, "the view is shown for it alone");
+    assert.deepStrictEqual((await api.structure()).lost_markers?.map((m) => [m.id, m.key, m.kind]), [[id, key, "function"]]);
+
+    // a click goes where a click on the node in the sidebar goes: the code, in an editor
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    await vscode.commands.executeCommand("vnoc.open", { row: "lostId", item: { key } });
+    await until("the file open", () => vscode.window.activeTextEditor?.document.uri.fsPath === file());
+
+    await vscode.commands.executeCommand("vnoc.writeId", { row: "lostId", item: { key } });
+    await until("the group to go", () => api.attention().lostIds.length === 0);
+    assert.strictEqual(Object.keys(api.attention().groups).some((g) => g.startsWith("ID lost")), false, "the group went with its last row");
+    assert.ok(fs.readFileSync(file(), "utf8").includes(`ID: ${id}`), "the ID line is back in the file");
+    await waitFor("the node found by its marker", async () => (await marked())?.link === "marker");
   });
 });

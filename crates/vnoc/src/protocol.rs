@@ -101,6 +101,10 @@ pub struct StructureResult {
     pub missing: Vec<MissingNode>,
     /// broken `.vnoc/` files and `.vnoc-id` files, and an ID written in two places
     pub problems: Vec<Problem>,
+    /// nodes found only by their name although `node.toml` says the ID is in the code, sorted by path. An addition: a client that does not know
+    /// the field ignores it, and one reading an older core's answer gets `[]`.
+    #[serde(default)]
+    pub lost_markers: Vec<LostMarker>,
 }
 
 impl Request for Structure {

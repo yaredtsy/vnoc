@@ -31,5 +31,6 @@ pub fn structure(
         failed: index.failed(),
         missing: index.missing(),
         problems: index.problems(project.git_root()),
+        lost_markers: index.lost_markers(),
     }
 }

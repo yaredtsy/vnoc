@@ -2862,3 +2862,27 @@ fn search_finds_doc_text_and_an_edited_body_neither_moves_the_revision_nor_annou
     assert!(doc_rows(&mut core, "in:other/ zanzibar").is_empty());
     core.finish();
 }
+
+#[test]
+fn structure_carries_the_lost_marker_of_the_sample_and_only_it() {
+    // `tests/sample/` (a copy of it, outside this repository): `rate_for`'s record says its ID is in the code, and the code has none
+    let root = std::env::temp_dir().join(format!("vnoc-lifecycle-lost-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_tree(&repo_root().join("crates/vnoc/tests/sample"), &root);
+    let mut core = Core::start(Some(driver_path()), &root);
+    let s = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(
+        s["lost_markers"],
+        json!([{
+            "id": "4KF02248CHCTYAG49B0KKZ5SD7",
+            "key": "billing/tax.py::rate_for",
+            "kind": "function",
+            "path": "billing/tax.py",
+            "qualname": "rate_for"
+        }]),
+        "{s}"
+    );
+    // the Missing node is Missing, not lost, and the nodes found by their marker are not in it
+    assert_eq!(s["missing"].as_array().unwrap().len(), 1);
+    core.finish();
+}

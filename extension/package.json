@@ -322,6 +322,16 @@
           "command": "vnoc.removeMissing",
           "when": "view == vnoc.attention && viewItem == missing",
           "group": "2_fix@2"
+        },
+        {
+          "command": "vnoc.writeId",
+          "when": "view == vnoc.attention && viewItem == lostId",
+          "group": "inline@1"
+        },
+        {
+          "command": "vnoc.writeId",
+          "when": "view == vnoc.attention && viewItem == lostId",
+          "group": "2_fix@1"
         }
       ],
       "view/title": [

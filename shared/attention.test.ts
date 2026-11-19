@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { notReadRows, shortReason } from "./attention.ts";
+import { LOST_ID_TOOLTIP, lostIdRows, notReadRows, shortReason } from "./attention.ts";
 
 const fail = (path: string, error: string) => ({ path, error });
 
@@ -38,4 +38,22 @@ test("a reason is one short line", () => {
   assert.equal(shortReason(""), "could not be read");
   assert.equal(shortReason("x".repeat(100)).length, 60);
   assert.ok(shortReason("x".repeat(100)).endsWith("…"));
+});
+
+const lost = (key: string, kind: "function" | "class" | "file" | "folder", path: string, qualname: string) => ({ id: "4KF02248CHCTYAG49B0KKZ5SD7", key, kind, path, qualname });
+
+test("an older core sends no lost markers: no rows, so no group", () => {
+  assert.deepEqual(lostIdRows({}), []);
+  assert.deepEqual(lostIdRows({ lost_markers: [] }), []);
+});
+
+test("a lost marker on a def: its name, where it is, and the tooltip that says what Write ID does", () => {
+  const rows = lostIdRows({ lost_markers: [lost("billing/tax.py::rate_for", "function", "billing/tax.py", "rate_for")] });
+  assert.deepEqual(rows, [{ key: "billing/tax.py::rate_for", id: "4KF02248CHCTYAG49B0KKZ5SD7", kind: "function", label: "rate_for", description: "billing/tax.py", tooltip: LOST_ID_TOOLTIP }]);
+  assert.match(LOST_ID_TOOLTIP, /found this node by its name\. Write ID puts the line back\.$/);
+});
+
+test("a lost marker on a file or a folder is named by its path and says what it is; the core's order is kept", () => {
+  const rows = lostIdRows({ lost_markers: [lost("a.py", "file", "a.py", ""), lost("pkg", "folder", "pkg", ""), lost("b.py::K.m#2", "function", "b.py", "K.m")] });
+  assert.deepEqual(rows.map((r) => [r.label, r.description, r.key]), [["a.py", "file", "a.py"], ["pkg", "folder", "pkg"], ["K.m", "b.py", "b.py::K.m#2"]]);
 });
