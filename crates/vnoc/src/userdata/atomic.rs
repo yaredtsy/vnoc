@@ -22,6 +22,10 @@ pub fn write_atomic(target: &Path, bytes: &[u8]) -> io::Result<()> {
         file.write_all(bytes)?;
         file.sync_all()?; // the bytes are really on the disk before the rename
     } // closed here: Windows needs that before a rename
+    // a file that is replaced keeps its permissions (a script's executable bit): the code files V-NOC writes an ID into are not its own
+    if let Ok(existing) = fs::metadata(target) {
+        fs::set_permissions(&tmp, existing.permissions())?;
+    }
     fs::rename(&tmp, target)
 }
 
@@ -57,6 +61,21 @@ mod tests {
             fs::read_dir(file.parent().unwrap()).unwrap().count(),
             1,
             "only the file itself is left"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_replaced_file_keeps_its_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = fresh("mode");
+        let file = d.join("run.py");
+        write_atomic(&file, b"one").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+        write_atomic(&file, b"two").unwrap();
+        assert_eq!(
+            fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o755
         );
     }
 

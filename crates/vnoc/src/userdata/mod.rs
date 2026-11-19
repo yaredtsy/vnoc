@@ -6,6 +6,7 @@
 pub(crate) mod atomic;
 mod doc_text;
 mod layout;
+mod lock;
 mod read;
 mod trash;
 
@@ -16,6 +17,7 @@ use toml_edit::{DocumentMut, value};
 use vnoc_domain::{LocationKey, NodeId, NodeToml};
 
 pub use doc_text::{DocStats, DocText, DocTexts};
+pub use lock::{DEFAULT_WAIT, LockError, WriteLock};
 pub(crate) use read::after_frontmatter;
 pub use read::{DocInfo, LoadProblem, LoadReport, NodeRecord};
 pub use trash::{MovePlan, TrashEntry, TrashError};
@@ -82,6 +84,12 @@ impl UserData {
             initialized: true,
             markers,
         })
+    }
+
+    /// The lock for one attach, relink or write-ID (waiting up to `DEFAULT_WAIT` for another writer). `None` in a project with no `.vnoc/`
+    /// yet. Blocks the thread: from async code, run it with `spawn_blocking`.
+    pub fn write_lock(&self) -> Result<Option<WriteLock>, LockError> {
+        WriteLock::take_if_initialized(&self.root, DEFAULT_WAIT)
     }
 
     /// Creates `.vnoc/` with its `vnoc.toml` and `.gitignore` the first time. Does nothing when the project already has them

@@ -285,7 +285,7 @@ pub struct AttachParams {
     pub document: Option<Document>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub uri: async_lsp::lsp_types::Url,
     pub version: i32,

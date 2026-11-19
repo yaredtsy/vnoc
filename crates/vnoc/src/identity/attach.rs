@@ -7,20 +7,17 @@
 //! The marker is a docstring line for a function or class (the driver plans it), a header comment for a file (the driver plans it),
 //! and a `.vnoc-id` file for a folder (the core writes it: no language is involved).
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use async_lsp::lsp_types::{
-    ApplyWorkspaceEditParams, DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier,
-    TextDocumentEdit, WorkspaceEdit,
-};
-use async_lsp::{ClientSocket, LanguageClient};
 use vnoc_domain::{
     IdInCode, LocationKey, LocationKeyError, NoFreeId, NodeId, NodeKind, NodeToml, RepoPath,
     first_free_id,
 };
 use vnoc_driver_protocol::{DefKind, PlanFileIdParams, PlanId, PlanIdsParams, TextEdit};
 
+use super::edits::EditSink;
 use super::folder_marker;
 use crate::driver_host::DriverHost;
 use crate::index::Index;
@@ -49,8 +46,17 @@ pub struct Env<'a> {
     pub project: &'a Project,
     pub index: &'a RwLock<Index>,
     pub host: &'a DriverHost,
-    /// to ask the editor to apply an edit
-    pub client: ClientSocket,
+    /// who applies the edit that puts an ID into a file: the editor, or the disk
+    pub edits: EditSink,
+}
+
+/// The document an ID is written into, as `document_for` found it.
+pub(super) enum MarkerDoc<'a> {
+    /// a folder: its marker is a file the core writes, no document is involved
+    Folder,
+    Open(Cow<'a, Document>),
+    /// the file could not be read as text (`EditSink::Disk` only): the reason, for the notice. The attach goes on by name.
+    Unreadable(String),
 }
 
 /// What the doc is attached to, with what the index knows of its ID.
@@ -163,7 +169,7 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
     let mut notice = None;
     let mut id_in_code = in_code.is_some();
     if is_new && markers_on {
-        match write_marker(&mut env, &target, &location, &id, document).await {
+        match write_marker(&mut env, &target, &location, &id, &document).await {
             Ok(()) => id_in_code = true,
             Err(reason) => {
                 notice = Some(format!(
@@ -198,45 +204,54 @@ pub async fn attach(mut env: Env<'_>, params: AttachParams) -> Result<AttachResu
     })
 }
 
-/// A function, class or file marker is an edit of the open document: it must be the node's own file. A folder has no document.
+/// A function, class or file marker is an edit of the node's own file: the open document (the editor), or the file itself (`Disk`, when no
+/// document is given). A folder has no document.
 pub(super) fn document_for<'a>(
     env: &Env<'_>,
     target: &Target,
     location: &LocationKey,
     key: &str,
     document: Option<&'a Document>,
-) -> Result<Option<&'a Document>, AttachError> {
+) -> Result<MarkerDoc<'a>, AttachError> {
+    let path = env.project.git_root().join(location.path().as_str());
     match (target, document) {
-        (Target::Folder { .. }, _) => Ok(None),
+        (Target::Folder { .. }, _) => Ok(MarkerDoc::Folder),
         (_, Some(document)) => {
-            if document.uri.to_file_path().ok()
-                != Some(env.project.git_root().join(location.path().as_str()))
-            {
+            if document.uri.to_file_path().ok() != Some(path) {
                 return Err(AttachError::WrongDocument(key.to_string()));
             }
-            Ok(Some(document))
+            Ok(MarkerDoc::Open(Cow::Borrowed(document)))
         }
+        (_, None) if env.edits.is_disk() => Ok(match Document::from_disk(&path) {
+            Ok(document) => MarkerDoc::Open(Cow::Owned(document)),
+            Err(e) => MarkerDoc::Unreadable(e.to_string()),
+        }),
         (_, None) => Err(AttachError::MissingDocument(key.to_string())),
     }
 }
 
-/// Writes the ID where the node is: the driver plans a def's or a file's line and the editor applies it; the core writes a folder's `.vnoc-id`.
+/// Writes the ID where the node is: the driver plans a def's or a file's line and the sink applies it; the core writes a folder's `.vnoc-id`.
 /// `Err` says why not, in words for the user.
 pub(super) async fn write_marker(
     env: &mut Env<'_>,
     target: &Target,
     location: &LocationKey,
     id: &NodeId,
-    document: Option<&Document>,
+    document: &MarkerDoc<'_>,
 ) -> Result<(), String> {
     match (target, document) {
-        (Target::Def { .. }, Some(document)) => write_def_marker(env, location, id, document).await,
-        (Target::File { .. }, Some(document)) => write_file_marker(env, id, document).await,
+        (_, MarkerDoc::Unreadable(reason)) => Err(reason.clone()),
+        (Target::Def { .. }, MarkerDoc::Open(document)) => {
+            write_def_marker(env, location, id, document).await
+        }
+        (Target::File { .. }, MarkerDoc::Open(document)) => {
+            write_file_marker(env, id, document).await
+        }
         _ => write_folder_marker(env.project.git_root(), location.path(), id),
     }
 }
 
-/// Plans the `ID:` line with the driver and has the editor apply it. `Err` says why not, in words for the user.
+/// Plans the `ID:` line with the driver and has the sink apply it. `Err` says why not, in words for the user.
 async fn write_def_marker(
     env: &mut Env<'_>,
     location: &LocationKey,
@@ -263,7 +278,7 @@ async fn write_def_marker(
     apply_edits(env, document, "V-NOC: add an ID", &plan.edits).await
 }
 
-/// Plans the `# FileID:` comment with the driver and has the editor apply it.
+/// Plans the `# FileID:` comment with the driver and has the sink apply it.
 async fn write_file_marker(
     env: &mut Env<'_>,
     id: &NodeId,
@@ -306,44 +321,5 @@ async fn apply_edits(
     label: &str,
     edits: &[TextEdit],
 ) -> Result<(), String> {
-    let edit = TextDocumentEdit {
-        text_document: OptionalVersionedTextDocumentIdentifier {
-            uri: document.uri.clone(),
-            version: Some(document.version),
-        },
-        edits: edits.iter().map(|e| OneOf::Left(text_edit(e))).collect(),
-    };
-    let workspace_edit = WorkspaceEdit {
-        document_changes: Some(DocumentChanges::Edits(vec![edit])),
-        ..Default::default()
-    };
-    let answer = env
-        .client
-        .apply_edit(ApplyWorkspaceEditParams {
-            label: Some(label.into()),
-            edit: workspace_edit,
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-    if answer.applied {
-        Ok(())
-    } else {
-        Err(answer.failure_reason.unwrap_or_else(|| {
-            "the editor did not apply the edit; the document changed meanwhile?".into()
-        }))
-    }
-}
-
-fn text_edit(e: &vnoc_driver_protocol::TextEdit) -> async_lsp::lsp_types::TextEdit {
-    let position = |p: vnoc_driver_protocol::Position| async_lsp::lsp_types::Position {
-        line: p.line,
-        character: p.character,
-    };
-    async_lsp::lsp_types::TextEdit {
-        range: async_lsp::lsp_types::Range {
-            start: position(e.range.start),
-            end: position(e.range.end),
-        },
-        new_text: e.new_text.clone(),
-    }
+    env.edits.apply(document, label, edits).await
 }

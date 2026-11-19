@@ -26,7 +26,7 @@ use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 
 use crate::calls::{self, CallsError};
 use crate::driver_host::DriverHost;
-use crate::identity::{self, Env};
+use crate::identity::{self, EditSink, Env};
 use crate::index::{self, Index, Touched, refresh};
 use crate::project::Project;
 use crate::protocol::{
@@ -40,7 +40,7 @@ use crate::protocol::{
 };
 use crate::protocol::{Locate, LocateParams, Located};
 use crate::search::{Prepared, answer, prepare};
-use crate::userdata::{TrashError, UserData};
+use crate::userdata::{LockError, TrashError, UserData, WriteLock};
 use crate::watchdog::timed;
 use vnoc_domain::NodeId;
 use vnoc_search::{Corpus, DocIndex, Limits, matches, run};
@@ -170,6 +170,20 @@ impl Core {
             tracing::warn!("could not tell the editor about revision {revision}: {e}");
         }
     }
+}
+
+/// The project's write lock for the length of one attach, relink or write-ID: the mutex keeps two of them in this process apart, this keeps a
+/// command (another process) out. Taken after the mutex, so a holder of the lock never waits for the mutex. `None`: no `.vnoc/` yet.
+/// Busy is `REQUEST_FAILED`: the request was fine, the project was not free.
+async fn write_lock(project: &Project) -> Result<Option<WriteLock>, ResponseError> {
+    let data = UserData::new(project.git_root());
+    tokio::task::spawn_blocking(move || data.write_lock()) // it sleeps between tries: not on a runtime thread
+        .await
+        .map_err(internal)?
+        .map_err(|e| match e {
+            LockError::Busy => ResponseError::new(ErrorCode::REQUEST_FAILED, e),
+            LockError::Io(_) => internal(e),
+        })
 }
 
 fn internal(e: impl Display) -> ResponseError {
@@ -419,11 +433,12 @@ fn attach(
             .project
             .get()
             .ok_or_else(|| internal("no folder is open"))?;
+        let _one_writer = write_lock(project).await?;
         let env = Env {
             project,
             index: &core.state.index,
             host: &core.host,
-            client: core.client.clone(),
+            edits: EditSink::Editor(core.client.clone()),
         };
         let result = identity::attach(env, params).await.map_err(internal)?;
         core.spawn_update(Work::Files(vec![])); // the new node and doc are in `.vnoc/` now: the tree shows them
@@ -445,11 +460,12 @@ fn relink(
             .project
             .get()
             .ok_or_else(|| internal("no folder is open"))?;
+        let _one_writer = write_lock(project).await?;
         let env = Env {
             project,
             index: &core.state.index,
             host: &core.host,
-            client: core.client.clone(),
+            edits: EditSink::Editor(core.client.clone()),
         };
         let result = identity::relink(env, params).await.map_err(|e| match e {
             identity::RelinkError::UserData(_) => internal(e),
@@ -474,11 +490,12 @@ fn write_id(
             .project
             .get()
             .ok_or_else(|| internal("no folder is open"))?;
+        let _one_writer = write_lock(project).await?;
         let env = Env {
             project,
             index: &core.state.index,
             host: &core.host,
-            client: core.client.clone(),
+            edits: EditSink::Editor(core.client.clone()),
         };
         let result = identity::write_id(env, params).await.map_err(|e| match e {
             identity::WriteIdError::UserData(_) => internal(e),
