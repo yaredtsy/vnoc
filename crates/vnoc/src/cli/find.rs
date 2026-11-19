@@ -23,7 +23,8 @@ const DOCS: usize = 10;
 
 pub async fn run(global: &Global, args: &FindArgs) -> Result<(), Failure> {
     let opened = open_from(global).await?;
-    let text = args.query.join(" ");
+    let lookup = Lookup::new(&opened, 1);
+    let text = lookup.relative_to_cwd(&args.query.join(" "));
     let (corpus_slot, doc_slot): (CorpusSlot, Mutex<_>) = (Mutex::new(None), Mutex::new(None));
     let found = search::prepare(
         &opened.project,
@@ -45,7 +46,6 @@ pub async fn run(global: &Global, args: &FindArgs) -> Result<(), Failure> {
         out::note(note);
     }
 
-    let lookup = Lookup::new(&opened, 1);
     let reference = match found.reference {
         Some(Found::Missing(id)) => Some(missing_view(lookup.describe_missing(id))),
         _ => None,

@@ -147,6 +147,31 @@ impl<'a> Lookup<'a> {
         Err(self.explain(&why, &used))
     }
 
+    /// A `find` query that is one reference, made relative to the root through the current folder when that names something there: `charge.py:12`
+    /// from `billing/` is `billing/charge.py:12`. It is `resolve`'s own order (the current folder first, then as written) and its own `joined`;
+    /// a query of words, or one the current folder does not change, comes back as it was.
+    pub fn relative_to_cwd(&self, text: &str) -> String {
+        let project = &self.opened.project;
+        let joined = vnoc_search::parse(text)
+            .reference
+            .as_deref()
+            .and_then(node_ref::parse)
+            .and_then(|written| self.joined(&written));
+        let Some(joined) = joined else {
+            return text.to_string();
+        };
+        let index = self.opened.index.read().unwrap();
+        if matches!(index.resolve_ref(project, &joined), Found::Nothing) {
+            return text.to_string();
+        }
+        match joined {
+            NodeRef::Location { path, rest } => format!("{path}::{rest}"),
+            NodeRef::FileLine { path, line } => format!("{path}:{line}"),
+            NodeRef::Path(path) => path,
+            NodeRef::Id(id) => id.to_string(),
+        }
+    }
+
     /// A node of the tree, unless the reference is a line past the end of its file.
     fn found(&self, index: &Index, r: &NodeRef, id: &str) -> Option<Result<Target<'_>, NodeError>> {
         let node = self.tree.find(id)?;

@@ -2104,3 +2104,41 @@ fn grep_in_json_is_a_golden_file() {
     assert_eq!(found["cut"], 0);
     assert_eq!(found["nodes"][0]["outside_def"], true);
 }
+
+#[test]
+fn find_tries_a_reference_from_the_current_folder_first_as_show_does() {
+    let root = sample_copy("find-from-here");
+    let billing = root.join("billing");
+    let first = |cwd: &Path, query: &str| -> (String, bool) {
+        let found = json_of(cwd, &["find", "--json", query]);
+        (
+            found["nodes"][0]["location"].as_str().unwrap().to_string(),
+            found["nodes"][0]["exact"].as_bool().unwrap(),
+        )
+    };
+    let charge = "billing/charge.py::retry_charge".to_string();
+    // from billing/, a path relative to it names the node, as it does for `show`
+    assert_eq!(first(&billing, "charge.py:12"), (charge.clone(), true));
+    assert_eq!(
+        first(&billing, "./charge.py::retry_charge"),
+        (charge.clone(), true)
+    );
+    assert_eq!(first(&billing, "../orders/service.py:12").0, METHOD);
+    // from the root: the answers are what they were
+    assert_eq!(first(&root, "billing/charge.py:12"), (charge.clone(), true));
+    assert_eq!(
+        first(&root, "billing/charge.py::retry_charge"),
+        (charge, true)
+    );
+    assert_eq!(
+        first(&root, "orders/service.py:12"),
+        (METHOD.to_string(), true)
+    );
+    // a query of words is not a reference and the current folder does not touch it
+    assert_eq!(
+        stdout_of(&billing, &["find", "retry", "--nodes"]),
+        stdout_of(&root, &["find", "retry", "--nodes"])
+    );
+    // a reference the current folder does not change is as written
+    assert_eq!(first(&billing, "orders/service.py:12").0, METHOD);
+}
