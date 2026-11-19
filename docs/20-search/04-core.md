@@ -37,7 +37,9 @@ pub struct NodeEntry { pub id: String, pub kind: Kind, pub name: String, pub qua
                        pub path: String, pub line: Option<u32>, pub in_class: bool, pub docs: usize }
 pub struct DocEntry  { pub node: Option<usize>,          // index into the nodes; None for a Missing node
                        pub node_id: String, pub node_name: String, pub node_kind: Option<Kind>, pub node_path: String,
-                       pub file: String, pub doc_path: String, pub title: String, pub body: String }
+                       pub file: String, pub doc_path: String, pub title: String, pub body: String,
+                       pub tags: Vec<String>,            // the frontmatter's tags: (lower case)
+                       pub author: Option<String> }      // the frontmatter's author:
 pub struct Corpus    { /* private: the nodes in reading order with their words split, the doc index */ }
 impl Corpus { pub fn new(nodes: Vec<NodeEntry>, docs: Vec<DocEntry>) -> Corpus }
 
@@ -128,7 +130,8 @@ SearchResult {
   nodes_total: number,                      // how many matched before the limit
   docs:  [{ node: string | null,           // the tree's node id; null for a Missing node
             node_id, node_name, node_kind?, node_path, missing,
-            file, doc_path, title, title_match: [start, end][], snippet, snippet_match: [start, end][] }],
+            file, doc_path, title, title_match: [start, end][], snippet, snippet_match: [start, end][],
+            tags: string[], author: string | null }],        // A8b: the doc's frontmatter, [] and null when it has none
   docs_total: number,
   notes: string[],                         // 01 §2: what was wrong with a filter
 }

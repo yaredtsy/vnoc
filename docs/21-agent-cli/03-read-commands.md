@@ -230,6 +230,9 @@ $ vnoc doc path billing/charge.py why-charges-are-retried.md
   *(Settled 2026-11-17, from the built code.)* It is `vnoc_search::run` with no node rows and no doc limit; of its doc rows, the ones of the
   nodes named are kept (all of them when no node is named), in `run`'s order. As built, a query of filters alone finds **no** doc
   (20, 01 §3), so `--where 'tag:plan'` needs the rule A8 adds with the two filters ([`04`](04-write-commands.md) §4).
+  **As built in A8b** (2026-11-20): `doc list [<node>…] --where Q` and `doc read <node> [file] --where Q` do exactly that; the details (the notes, `has:doc`/`no:doc`
+  ignored, `no docs match`, and that a node named by its ID goes through the index when `--where` is used) are in [`04`](04-write-commands.md) §4 "As built in A8b".
+  `find` doc rows and `--json` carry `tags` and `author`.
 - `doc list`, `doc read` and `doc path` by **ID** read the node folder and do not start the driver.
 
 ## 4. `tree`

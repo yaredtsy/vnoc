@@ -59,7 +59,7 @@ change to it. So the text has its own store:
 
 ```
 DocTexts   (crates/vnoc/src/userdata/doc_text.rs)
-  per (node ID, file name):   size · modified time · title · body
+  per (node ID, file name):   size · modified time · title · body · author · tags      (the last two: 21 A8b, read from the frontmatter in the same read)
   refresh(records):           for each doc of each record: same size and time → keep; else read again. Docs that are gone are dropped.
                               returns whether anything changed; if so  generation += 1
 ```

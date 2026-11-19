@@ -207,12 +207,33 @@ One reader does all of it: `userdata/read.rs` gets `frontmatter(text) -> { title
   (as `show`), nothing written. The "by name, with the notice" path for an unreadable file is only reached when a file stops being UTF-8 *between* the index and the write; the library test
   `tests/write.rs` pins that.
 - **The doc:** `create_doc(id, &NewDoc { title, hint, body, author, tags })`. The frontmatter is `node:`, `hint:`, `author:` and `tags: [a, b]` only when given; then `# <title>`, a blank
-  line, and the body (a last line break is added if it has none). Tags are written in the order given; one given twice is written twice (not de-duplicated).
+  line, and the body (a last line break is added if it has none). Tags are written in the order given; **one given twice is written once** (A8a2, in `attach`: the first place is kept).
 - **Reading:** `userdata::frontmatter(text) -> Frontmatter { title, author, tags }`. `author: x` (one pair of quotes is taken off); `tags: [a, b]` on one line (brackets optional, **lower-cased on reading**,
-  empty entries dropped); the first line of a key wins; a list over several lines, a key in the body, or an unclosed block reads as none. `DocInfo` and `DocText` keep the two; `DocText`'s are for
-  A8b's search.
+  empty entries dropped) or, **since A8a2**, the block form a person writes by hand (`tags:` then `- plan` lines, indented or not, quotes allowed, blank lines between them do not end it; `tags: plan` is one
+  tag); the first line of a key wins; a key in the body, an unclosed block, or a block with nothing the reader knows reads as none. `DocInfo` and `DocText` keep the two; `DocText`'s feed the search (A8b).
 - **`show` and `doc list`** print `  <title>  [tags]  <path>`, the tags dim, in the order written, only for a doc that has some (`Doc::row`). `--json` docs gain `tags` and `author`, **only when there
   are any** (so every earlier golden is as it was).
+
+**As built in A8b** (2026-11-20; the spec above, with what the code settled).
+
+- **The crate** (`vnoc-search`): `DocEntry { …, tags, author }` and `Query { tags, not_tags, authors, not_authors }` as in the list above. `Query::has_doc_filters()` (public) is "the query has a `tag:` or an
+  `author:`" and `has_filters()` includes it. `run.rs` makes, once per run, the set of nodes that have a doc that passes (`Filters::with_such_doc`); a node passes when it is in the set **and** passes the node filters;
+  a doc passes when it has what is asked of the doc itself **and** its node passes the node filters (`passes_doc`). The doc index and its key are untouched; no dependency was added and the wasm build passes.
+  Both sides of `matches` use the same two functions, and `tests/matches.rs` has the rows (23 queries × 4 values of `exact`, with each node's `docs` count as the core builds it).
+- **A query of filters alone** lists docs when it has a `tag:` or `author:` (`docs_by_filters_alone`): `words` empty, no phrase, a doc filter. The rows are the docs that pass, in their nodes' reading order, then
+  by file; the snippet is the start of the body, no ranges, score `0`; `docs_total` counts them all, and `limits.docs` cuts. The old rule stands without one of the two (`kind:fn` alone lists no doc).
+- **The core:** `corpus_of` copies `tags` and `author` from `DocText`; `SearchDoc` and `DocInfo` gain `tags: Vec<String>` and `author: Option<String>` (`#[serde(default)]`; always written, `[]` and `null` for a doc
+  with neither). A hand edit of a doc's tags is a change of its stamp, so `DocTexts::refresh` reads it again and the next search sees it: **no `indexChanged`, the revision does not move** (a lifecycle test pins both).
+- **The sidebar:** a doc row in the search results shows `[plan, billing]` after the title, in the row's dim colour and a little smaller (`tagsLabel` in `webview/src/sidebar/search.ts`, drawn in
+  `SearchResults.tsx`); a doc with none has no element, so its row is as it was. `shared/messages.ts` has `tags?` and `author?` on `SearchDoc` and `DocInfo` as optional fields (a core older than A8b sends neither).
+- **`find`:** a doc row prints `  <title>  [tags]  on <node>` (dim tags) and `--json` doc rows gain `tags` and `author`, only when there are some (the earlier goldens are unchanged).
+  `find 'tag:plan'`, `find 'kind:fn tag:plan'` and `tree --where 'tag:plan'` needed no other change: they go through the crate.
+- **`doc list --where` and `doc read --where`** (`cli/doc.rs`, `Narrow`): the query is parsed by `vnoc_search::parse`, and `run` is asked with `Limits { nodes: 0, docs: ∞ }`; a doc is kept when it is among
+  the doc rows (matched by its file's path), and the docs of a node are put in `run`'s order. Notes on standard error, then the answer anyway: a value that means nothing gives the note `find` gives and nothing is
+  found (`kind:fnn`); `has:doc` and `no:doc` give ``note: `has:doc` and `no:doc` are about nodes, not docs: ignored here`` and are dropped from the query; a query with nothing about a doc (`kind:fn` alone) gives
+  `note: nothing in this query is about a doc: …` and finds none. `kind:` and `in:` narrow by the doc's node. A blank `--where` is exit `2`. An empty result says `no docs match` (`no docs on <node> match` for
+  `doc read`); a node that had docs and has none left prints `  no docs match`. **`--where` needs the index, so a node named by its ID starts the driver too.** With a file named (`doc read <node> <file>`), the file is
+  chosen first, then the query narrows what is left. `doc path` has no `--where`.
 
 ## 5. Editing a doc
 
