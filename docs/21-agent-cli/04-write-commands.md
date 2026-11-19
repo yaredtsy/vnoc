@@ -67,14 +67,11 @@ An enum, not a trait: there are two cases, both known, and `async fn` in a trait
   overlap are `Err` with nothing applied; ranges that only touch are fine, and inserts at one place keep their order. The table test has a line with `é` and an emoji
   before the edit, CRLF, a BOM, two edits out of order, one past the end, and an overlap.
 - **As built in A7:**
-  - `Document::from_disk(path)`: URI of the file, version `0`, the text decoded verbatim (a BOM stays as U+FEFF, line ends as they are); a file that is not UTF-8 is
+  - `Document::from_disk(path)`: URI of the file, version `0`, the text decoded verbatim (line ends as they are; a leading BOM is dropped, see below); a file that is not UTF-8 is
     `InvalidData`. `document_for` returns a `MarkerDoc` (`Folder`, `Open(Cow<Document>)`, `Unreadable(reason)`): with `Disk` and no document it reads the file, and
     an unreadable one is `Unreadable`, which `write_marker` turns into the `Err` the flows already handle (by name, with the notice "…(the file is not UTF-8 text)…"). It is not an
     `AttachError`: Relink and Write ID give their own notice for it, as they do when the editor refuses.
-  - **A BOM and the start of the file.** The driver plans a file's comment at line 0, character 0, because it has no notion of a BOM: right for an editor (VS Code's
-    buffer has no mark), wrong for text read from disk, where U+FEFF is character 0 and the comment would land before it, leaving the mark at the start of line 2
-    (a Python syntax error). So `Disk` moves a position at (0, 0) to (0, 1) when the text starts with U+FEFF (`past_the_bom`, in `edits.rs` only; `apply_text_edits`
-    stays the plain rule). The driver is unchanged; planning after the mark there would make this unnecessary.
+  - **A BOM** (A7 first shifted a driver edit at (0, 0) past it; **replaced in A7b**, 2026-11-20, by the rule below: nothing is shifted any more).
   - `write_atomic` now gives the new file the permissions of the one it replaces (a script keeps its executable bit): the files it writes into were never its own before. A symlink
     at the target is replaced by a plain file (rename), as for any atomic write.
   - The extension is unchanged: `Env.edits` is `EditSink::Editor(client)` there, with `apply_edits` moved word for word. `tests/write.rs` is the proof for `Disk`.
@@ -88,6 +85,9 @@ An enum, not a trait: there are two cases, both known, and `async fn` in a trait
 (0, 0) past it. Replaced by the editor's own rule: VS Code's buffer has no mark, so **`Document::from_disk` drops a leading U+FEFF**, the driver
 plans against the same text it gets from the editor, and the `Disk` sink re-reads the file, drops the mark for the comparison, applies the
 edits, and **writes the mark back** if the file had one. No position is shifted and the driver is not touched; one rule for both sinks.
+*As built (A7b):* `from_disk` and `apply_on_disk` share `split_bom`; a file that gained or lost its mark between the plan and the write is still the same text, and the
+write puts back the mark the file has now. `apply_text_edits` is the plain rule, as before. `tests/write.rs` keeps its BOM cases (a file with the mark keeps it, the
+`# FileID:` comment goes after it) and adds a def further down a file that has one.
 
 ## 3. `init`
 
@@ -98,6 +98,20 @@ It is its own command, not something `doc new` does on the way, **on purpose**: 
 that is the owner's decision (in the extension it is the first-attach question, `extension/src/addDoc.ts`). `doc new` in a project with no
 `.vnoc/` exits `2` with: `this project has no .vnoc/ yet. Starting it adds ID: lines to code when a note is attached. Ask the user, then:
 vnoc init`.
+
+**As built in A8a.** `cli/write.rs` `init`; no driver is looked for (`open_without_driver`). Text, on a new project:
+
+```
+created      .vnoc/.gitignore
+created      .vnoc/vnoc.toml   (attaching a note writes an ID: line into the code)
+```
+
+(with `--markers off` the parenthesis says `no ID: lines are written; notes are attached by name`; `--quiet` leaves it out). Already started: one line,
+`.vnoc/ already set up: .vnoc/vnoc.toml (…)`, exit 0, nothing written; **the first answer stays**, so `init --markers off` on a project that writes IDs
+changes nothing and the line says what the project does. `--json`: `{ "schema": 1, "command": "init", "created": […], "already": false, "markers": true }`
+(`created` is empty and `already` true for a project that was started). Paths are as every command prints a path: relative to the root, absolute when `.vnoc/`
+is above it. `UserData::init_files()` names the two files (the layout stays in `layout.rs`). Note: `initialize` writes `[ids] default = "none"` as the
+inline table `ids = { default = "none" }`, which is the same TOML; it was that way before A8a.
 
 ## 4. `doc new`
 
@@ -168,6 +182,37 @@ One reader does all of it: `userdata/read.rs` gets `frontmatter(text) -> { title
 - `SearchDoc` (the wire) gains `tags` and `author`; the sidebar's doc row shows the tags after the title, dim.
 - *Add Doc* in the extension has no place to give a tag or an author. **Decided 2026-11-20: left for later**, after release 0.5: only the
   command and a hand edit of the frontmatter set them. The sidebar still shows and finds them (A8b). Not on the CLI's path.
+
+**As built in A8a** (`cli/write.rs`, `identity/attach.rs`, `userdata/`).
+
+- **The flow in the command:** the project is opened without a driver and checked for `.vnoc/` first (so nothing is read from standard input in a project nobody
+  started), then the body is read (a file, or `-`; reading stops one byte past 256 KB), then `check_note` (the library's rules, so a refusal does not start a
+  driver), then the index is built, the node resolved (one argument; a second is clap's usage error), the **write lock taken**, and `attach` run with `EditSink::Disk`.
+  The index is a moment old by then when another writer got the lock first; `attach` asks the disk which ID a node has (04 §7), and the race test below proves it.
+- **The library's options:** `attach(env, params, options) -> Attached`. `AttachOptions { body, author, tags, again, no_marker }`; the server passes
+  `AttachOptions::editor()` (`again: true`, the rest empty), so the extension still makes `-2.md` for a second same-title attach (the new `lifecycle.rs` test pins it;
+  neither lifecycle nor the window suite did before). `Attached { result: AttachResult, marker: Option<MarkerWritten> }`, where `MarkerWritten` is `Line(n)` (1-based, from the plan's
+  `written` span) or `FolderFile`; `None` when the code was not touched. `AttachResult`, the wire, is unchanged.
+- **The refusals, all in `attach.rs`, asked before anything is read or written** (`check_note`, public; `TitleTaken` after the node's ID is known): `BadTitle` (empty, or any control
+  character, so one line), `BadAuthor` (the same), `BadTag` (not lower-case ASCII letters, digits and `-`; an upper-case tag is refused, not lower-cased), `BodyTooLarge`
+  (over `MAX_BODY_BYTES`, 256 × 1024; exactly that is fine), `BodyHasFrontmatter` (the body, leading white space aside, begins with a `---` line **and** has a closing
+  `---` line: a lone `---` is a Markdown rule and is allowed), `TitleTaken { title, path }` (a doc of the node has the same title **ignoring case and the space around it**; the path is that
+  doc's file; refused only without `again`). A command's exit: all of these `2`; `NotInIndex` `2`; a lock that cannot be had, a `vnoc.toml` too new, anything else `3`.
+- **The sentence for a title taken:** `this node already has "Why we parse twice" → .vnoc/nodes/…/why-we-parse-twice.md (edit that file, or --again)`: the path as every command prints a path.
+- **`--no-marker`** is `AttachOptions::no_marker`, which turns the project's answer off for that attach and nothing else (a node that has its ID in the code keeps it;
+  a node found by name is not retried: that is `repair`, A9). With `[ids] default = "none"` the same: no `ID:` line, no `changed` line, no notice (nothing failed).
+- **A function in a file with a syntax error:** a def that parses gets its `ID:` line as in any file; the def with the error is attached by name, exit 0, with the notice
+  `The ID could not be written (syntax error inside this def); this doc is attached by name.` and the file untouched.
+- **A file that is not UTF-8 is not a node** for any command: the driver cannot read it, so it is not in the index, and `doc new` is exit `2` with `latin.py could not be read: …`
+  (as `show`), nothing written. The "by name, with the notice" path for an unreadable file is only reached when a file stops being UTF-8 *between* the index and the write; the library test
+  `tests/write.rs` pins that.
+- **The doc:** `create_doc(id, &NewDoc { title, hint, body, author, tags })`. The frontmatter is `node:`, `hint:`, `author:` and `tags: [a, b]` only when given; then `# <title>`, a blank
+  line, and the body (a last line break is added if it has none). Tags are written in the order given; one given twice is written twice (not de-duplicated).
+- **Reading:** `userdata::frontmatter(text) -> Frontmatter { title, author, tags }`. `author: x` (one pair of quotes is taken off); `tags: [a, b]` on one line (brackets optional, **lower-cased on reading**,
+  empty entries dropped); the first line of a key wins; a list over several lines, a key in the body, or an unclosed block reads as none. `DocInfo` and `DocText` keep the two; `DocText`'s are for
+  A8b's search.
+- **`show` and `doc list`** print `  <title>  [tags]  <path>`, the tags dim, in the order written, only for a doc that has some (`Doc::row`). `--json` docs gain `tags` and `author`, **only when there
+  are any** (so every earlier golden is as it was).
 
 ## 5. Editing a doc
 
@@ -246,3 +291,18 @@ out of date, and an edit made from the old picture either fails or removes the l
 
 With `--json`: `{ "schema": 1, "command": "doc new", "node": {…}, "doc": "…", "created": […], "changed": […], "id_in_code": true, "notice": null }`
 (snake_case, as every other answer: 03 §11; the first version wrote `idInCode`).
+
+**As built in A8a.** The labels are one column, 13 wide (`attached to  `, `created      `, `changed      `, `notice       `), dim in a terminal.
+
+- `attached to  <kind>  <location>   ID <id>`: the head line every command uses.
+- `created      <doc path>` and, **only when no `--body-file` was given**, `   ← write the note here` (a hint: `--quiet` leaves it out). For a folder, a second `created      <folder>/.vnoc-id`.
+- `changed      <file>   (an ID: line was added at line N; read the file again before you edit it)`: the line is the plan's, 1-based; for a file the words are `a # FileID: comment was added at line N`.
+  `--quiet` keeps the parenthesis: it is a warning, not a hint.
+- `notice       <the notice>` when the ID could not be written (a def with a syntax error, a file that stopped being UTF-8): the doc is attached by name, exit 0, and there is no `changed` line.
+- A command that was refused prints `error: …` on standard error and nothing on standard output; with `--json` an error about the *node* is `{ "schema": 1, "command": "doc new", "error": { "why", "message", "hints"? } }` on
+  standard output (as `calls`), exit 2, and a refusal of a rule (title taken, body, tag) is the plain `error:` line.
+- `--json` is exactly the object above: `node` is `{ kind, location, node_id }`; `created` lists the doc and a folder's `.vnoc-id`; `changed` lists the code file with an `ID:` line added, and is empty otherwise.
+  `tests/golden/doc-new.json` pins it.
+
+**A8a's tests** (`tests/cli.rs`, `tests/lifecycle.rs`): the race is 20 rounds of two `doc new` processes started together on one function with different titles, each round on a fresh started
+copy, → one node folder, one `ID:` line, two docs, and `vnoc check` clean; a second test holds `.vnoc/local/write.lock` from the test and shows `doc new` exits `3` with the message after 5 seconds and writes nothing.
