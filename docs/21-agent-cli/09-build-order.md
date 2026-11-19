@@ -151,6 +151,14 @@ unrelated file changed is `0`. NEEDS ATTENTION lists lost markers too (decided 2
 
 Commit: `cli A6: calls, missing, check`; then `cli A6b: a lost ID: line shows in NEEDS ATTENTION, with Write ID`. As built: [`03`](03-read-commands.md) §7 – §9. **Stop point:** a read-only command; `vnoc check` works in CI. Full test run.
 
+### A6d Style for people (added 2026-11-19, after the first by-hand look)
+
+03 §11 "Style for people" and 03 §2's new layout. `cli/style.rs`: the palette as named styles (`style::location`, `style::dim`, …) over
+`anstyle`; `out.rs` writes through `anstream` (codes stripped for a pipe). Every renderer marks its parts with the palette, never with raw
+codes. `--color auto|always|never`. Thousands separators in counts. Tests: every golden is unchanged except `status`'s text (the new layout;
+JSON unchanged); a run through a pipe has no `\x1b`; `--color always` has them, `NO_COLOR=1` with `auto` has none; one golden of
+`status --color always` so the palette is pinned. Commit: `cli A6d: style for people in a terminal; status in labelled lines`.
+
 ## 3. Phase 2: write
 
 ### A7 The seam, and the lock

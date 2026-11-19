@@ -38,6 +38,23 @@ global:  --root <dir> · --driver <path> · --json · --format id|path · --quie
 
 ## 2. `status`
 
+**Layout changed in A6d (2026-11-19)**, for people and agents alike: labelled lines, numbers with thousands separators.
+
+```
+$ vnoc status
+V-NOC 0.2.0   /work/sample
+
+  code     3 folders · 12 files · 5 classes · 27 functions
+  docs     7 docs on 6 nodes
+  health   1 missing · 1 lost marker · 0 problems     → vnoc check
+  driver   python 0.2.0 · read 12 files
+```
+
+`health` is `all good` when every count is 0 (and the hint is not printed). With no `.vnoc/`, `docs` reads
+`none yet: no .vnoc/ in this project` and a second, indented line `vnoc init starts it (ask the user first)`, and there is no `health` line
+unless files failed or the scan stopped (then `health` says that). `failed N` and `stopped at 20,000 files` go on the `health` line. No driver
+started: `driver   not started (no Python files to read)`. The JSON does not change. What follows is the A2 layout, kept for its notes.
+
 As built in A2 (2026-11-19), on the sample project (`crates/vnoc/tests/sample/`, run as a copy outside the repository):
 
 ```
@@ -572,6 +589,24 @@ you changed code" step becomes one command. Needs `git` on the PATH; without it 
 | **`--quiet`** | no "next step" lines, no totals: only the rows. For hooks |
 | **standard error** | errors and the hints of 02 §4. Logs only with `VNOC_LOG` |
 | **nothing found** | a line saying so, exit `0` |
+
+**Style for people** *(settled 2026-11-19, step A6d, after the first by-hand look: "hard to read")*. Colour and weight are added **only when
+standard output is a terminal** (`anstream`, already in the build through clap: it strips the codes for a pipe, honours `NO_COLOR` and
+`CLICOLOR_FORCE`), with a global `--color auto|always|never` (default `auto`). An agent's harness reads a pipe, so it gets the plain text,
+byte for byte as before, and pays nothing. The words are the same in both; only the style differs (one exception: a search hit is
+`**retry**` in plain text and bold yellow without the asterisks in a terminal). One palette for every command, 16-colour ANSI so the
+terminal's theme applies:
+
+| What | Style |
+|---|---|
+| the program's name and version, a header's subject | bold |
+| locations (`billing/charge.py::retry_charge`), the root path | cyan |
+| kind words (`function`, `class`), labels, line numbers in code, hints (`→ …`), paths of doc files | dim |
+| numbers in counts | bold |
+| doc titles | green |
+| `MISSING`, `error:`, a failing count above 0 | red (bold for `MISSING` and `error:`) |
+| `note:`, warnings, `none yet` | yellow |
+| `all good` | green |
 
 **Renderers** *(settled 2026-11-19, before A4)*. A command builds its answer as a value (the rows, the node, the results list) and hands it to
 one of two renderers in `cli/out.rs`, text or JSON; no command formats as it computes. A new format is then one renderer, and touches no
