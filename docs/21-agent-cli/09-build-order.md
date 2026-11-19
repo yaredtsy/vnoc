@@ -261,6 +261,13 @@ in, not written anywhere yet: A11 writes it), so the guide test checks its one `
 
 Commits: `cli A10a: the tag list is vnoc tags`, then `cli A10: the skill and vnoc guide`.
 
+**As built.** Commits `f6e6506` (`cli A10a: the tag list is vnoc tags`) and `11856b2` (`cli A10: the skill and vnoc guide`). Counts after: lib 205,
+bin 2, cli 122, lifecycle 49, write 7, **guide 10**. The skill and the guide test are in 06 §5 and §6 ("As built"): the skill's description lost its
+`: ` (the format's checker refused the draft), its version is the crate's and a test holds it there, a code block is one session, and the
+`about` of every command opens with a one-line summary. `skills-ref` ran: `Valid skill: skills/vnoc` (the installed command is named
+`agentskills`). **Carried to A11:** `rules.md`'s marker comment names `vnoc agent install`, so `tests/guide.rs` skips lines starting with `<!--`
+until the command exists; remove that arm then. **Carried to A13:** the release bumps the crate's version and the skill's together.
+
 ### A11 `vnoc agent`
 
 First: read 07 §1's table again from each agent's documentation, and correct it (`docs:` commit).

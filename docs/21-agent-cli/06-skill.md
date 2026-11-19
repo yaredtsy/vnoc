@@ -62,8 +62,8 @@ binary being run, so they cannot be out of date.
 **The source is one file:** `skills/vnoc/SKILL.md` at the repository's root. The binary compiles it in (`include_str!`); `vnoc skill` prints it;
 `vnoc agent install` writes it. The same path is where the wider skill installers look (`07` §5), so nothing is kept twice.
 
-**It knows its version.** The header carries `metadata: { vnoc-version: "0.5.0" }` (a key the format reserves for the author's use; agents that
-do not know it ignore it). `vnoc agent status` compares it with the binary and says when the installed copy is older.
+**It knows its version.** The header carries `metadata: { vnoc-version: "0.2.0" }` (a key the format reserves for the author's use; agents that
+do not know it ignore it; as built it is the crate's version, and a test fails until a release changes both). `vnoc agent status` compares it with the binary and says when the installed copy is older.
 
 ## 4. The rules block
 
@@ -91,9 +91,9 @@ for its command and flags only.
 ```markdown
 ---
 name: vnoc
-description: Reads and writes V-NOC notes (the "why" attached to functions, classes, files and folders: constraints, decisions, history, plans) and shows Python code by structure: one function's exact code with its notes, a tree of a folder with signatures, search by name or by a word in a note, call trees. Use when the project has a .vnoc/ folder; when code has "ID:" docstring lines, "# FileID:" comments or .vnoc-id files; before changing a function that may have notes; when asked to document, explain the reason for, or plan a change to specific code; and when asked how the code is organised.
+description: Reads and writes V-NOC notes (the "why" attached to functions, classes, files and folders, such as constraints, decisions, history and plans) and shows Python code by structure, with one function's exact code and its notes, a tree of a folder with signatures, search by name or by a word in a note, and call trees. Use when the project has a .vnoc/ folder; when code has "ID:" docstring lines, "# FileID:" comments or .vnoc-id files; before changing a function that may have notes; when asked to document, explain the reason for, or plan a change to specific code; and when asked how the code is organised.
 metadata:
-  vnoc-version: "0.5.0"
+  vnoc-version: "0.2.0"
 ---
 # V-NOC
 
@@ -152,10 +152,23 @@ About 50 lines of body. The format's guidance is under 500 lines and about 5,000
 stand-in and its definition-line hit (seen in A5); `calls` and its cost (A0: 166 ms on httpx, more on big projects); relink only with
 knowledge of where the code went (A9); `--body-file -` (A8a). The examples are the sample's nodes.
 
+**As built (A10).** The file is `skills/vnoc/SKILL.md`, and the text above is it, with these changes, each forced by a check:
+
+- **The description has no `: `** (colon, space). In the draft it said "folders: constraints" and "structure: one function's…": in a plain YAML
+  scalar that is a syntax error, and the format's checker (`skills-ref`, below) refuses the file ("mapping values are not allowed here"); an agent
+  with a strict YAML reader would not load the skill, silently. Reworded with commas ("such as constraints, decisions…", "with one function's
+  exact code and its notes…"); it is 606 characters. The header test refuses `: ` and ` #` in the description, and a YAML indicator at its start.
+- **The version is `"0.2.0"`**, the crate's (the draft's `0.5.0` was the release it would ship in). `the_skills_version_is_the_crates` fails when
+  the crate's version moves and the skill's does not: the release step (A13) bumps both. A static file cannot read `CARGO_PKG_VERSION`, and a
+  build script that rewrote it would make the file in the repository differ from the file the installers read.
+- **Nothing else.** Every concrete example runs on the sample; a line with a `<placeholder>` is parsed by clap.
+
+**[check] done:** `skills-ref validate skills/vnoc` ran (`pip install skills-ref`, 0.1.1; its command is named `agentskills`, not `skills-ref`):
+`Valid skill: skills/vnoc`. Run on the draft as it stood in this file it failed on the colon above. The header test of §6 stands in for it where
+the checker is not installed. In A14 each agent still has to be seen listing the skill.
+
 In the real file the `description` is **one line**: not every agent reads the header with a full YAML parser, and a name or header that
-fails to parse makes the skill silently not load (VS Code's Copilot says so in its docs). The description is 587 characters, under the
-format's 1,024. **[check]** in A10: `skills-ref validate skills/vnoc` (the format's own checker; if it cannot be installed here, say so and
-check the header rules by a test), and in A14 that each agent lists the skill.
+fails to parse makes the skill silently not load (VS Code's Copilot says so in its docs). The format allows 1,024 characters.
 
 ## 6. `vnoc guide`
 
@@ -176,6 +189,30 @@ line when it starts with `vnoc ` (in a code block, or in backticks). A line with
 concrete line is run; exit `0` or `1` passes, and so does `2` when the line is meant to show a refusal (the guide marks it with a
 `# exit 2` comment after it). Write commands run on a fresh copy each. The examples' outputs in the guides are pasted from real runs on
 the sample, and a second test compares each pasted output with a run (paths normalized), so an output that changes breaks the guide.
+
+**As built (A10).** `crates/vnoc/tests/guide.rs`; the rules above, with what building them added:
+
+- **A code block is one session.** Its commands run in order on one fresh copy of the sample, so `vnoc doc new …` is seen by the `vnoc tags` after
+  it; a span in backticks in prose is a session of one. (The text above said "each write on a fresh copy": a pasted `tags` after a `doc new` needed the
+  state to carry.) The lines under a command, up to the next `vnoc ` line or the block's end, are its pasted output; the run's standard output and
+  error are taken together, in the order they came, with the copy's path as `<root>` and the version as `<version>`.
+- **The commands run through `sh`**, so a pipe works (`vnoc find … --format id | vnoc show - --no-code`); each `vnoc` in a line is also parsed by
+  clap in the test's own process (`vnoc::cli::Cli`), after a `<placeholder>` (any `<…>`, spaces included) becomes `x`. Unix only.
+- **Two lines the rules did not foresee.** `vnoc <command> --help` (SKILL.md): a placeholder for the command is allowed, as `status`, when only
+  `--help` follows it. A bare command name in prose (`vnoc doc tag`, SKILL.md): clap says an argument is missing, and since the line names no flag
+  it is a mention of the command, not a command to run; a line with a flag is never excused. Both are tested to be refusable
+  (`a_line_that_names_no_flag_the_binary_has_is_refused`: a wrong flag, a wrong command, the old `doc tags`, an unclosed quote).
+- **`# exit 2` must be true:** a line that says it and does not exit `2` fails, and so does the marker on a line that is not run.
+- **`rules.md`'s marker comment is not checked yet:** it says `vnoc agent install`, a command A11 builds. The test skips lines that start with
+  `<!--`; A11 removes that arm.
+- Also: the guide folder holds exactly the five topic files; each is at most 60 lines (they are 37 – 49); `vnoc skill` and `vnoc guide <topic>` print
+  their files byte for byte through a pipe; an unknown topic is exit `2` with the list; `--json` and `--format` on `guide` and `skill` are refused,
+  not ignored; the header test of §5; the version test of §5.
+- **The command texts, read cold (A10f).** Every command's `about` now opens with a one-line summary, what it does and when, then a blank line, then
+  the detail it had: `vnoc --help` lists each command in a line instead of a paragraph, `-h` shows the line and `--help` shows both. `vnoc -h`'s own
+  first line was the crate's description ("speaks LSP-framed JSON-RPC…"); it is now "V-NOC reads a project by structure…", and says where the
+  guide is. `find` and `tree --where` name `tag:` and `author:`; `tree --kind` says that `function` here is `kind:fn` in a query; `doc new --tag`
+  no longer says tags are "later" found.
 
 ## 7. Writing it well
 
