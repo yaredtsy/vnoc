@@ -134,6 +134,9 @@ struct DocNew {
     changed: Vec<String>,
     id_in_code: bool,
     notice: Option<String>,
+    /// a tag given that no other doc has and `tags.toml` does not describe: `note: "<t>" is a new tag in this project …` (04 §4); left out when there is none
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tag_notices: Vec<String>,
     #[serde(skip)]
     text: Lines,
 }
@@ -173,6 +176,10 @@ impl Render for DocNew {
         }
         if let Some(notice) = &self.notice {
             text.push_str(&format!("{}{notice}\n", label("notice")));
+        }
+        // about the data, not a hint: `--quiet` keeps it
+        for note in &self.tag_notices {
+            text.push_str(&format!("{note}\n"));
         }
         text
     }
@@ -316,6 +323,17 @@ pub async fn doc_new(global: &Global, args: &DocNewArgs) -> Result<(), Failure> 
         }
         None => {}
     }
+    let mut given: Vec<String> = Vec::new();
+    for tag in &args.tags {
+        if !given.contains(tag) {
+            given.push(tag.clone());
+        }
+    }
+    let tag_notices = super::tags::new_tag_notices(
+        &opened.project,
+        std::path::Path::new(&attached.result.doc),
+        &given,
+    );
     out::render(
         &DocNew {
             schema: 1,
@@ -330,6 +348,7 @@ pub async fn doc_new(global: &Global, args: &DocNewArgs) -> Result<(), Failure> 
             changed,
             id_in_code: attached.result.id_in_code,
             notice: attached.result.notice,
+            tag_notices,
             text: Lines {
                 head: head_line(kind_word(node.kind), &location, None, Some(&id)),
                 empty: args.body_file.is_none(),

@@ -4600,3 +4600,523 @@ fn two_lost_markers_in_one_file_are_both_put_back_in_their_places() {
     );
     assert_eq!(stdout_of(&root, &["check"]), "no problems\n");
 }
+
+// ---------------------------------------------------------------------------------------------- tags: list, edit, describe (A9b)
+
+const TAGS_TOML: &str = "plan     = \"A change we intend to make. Retag as done when it ships.\"\ndecision = \"Why we chose this way over the others.\"\ndone     = \"A plan that shipped.\"\n";
+
+/// A started project with `tags.toml` (plan, decision, done) and three docs: "Split rates" (plan, billing; claude-code) on `rate_for`, "Why place
+/// retries" (plan, billing) on `OrderService.place`, "Rounding rule" (decision) on `apply_tax`. `done` is described and used by no doc.
+fn tags_project(label: &str) -> PathBuf {
+    let root = started_copy(label, &[]);
+    std::fs::write(root.join(".vnoc/tags.toml"), TAGS_TOML).unwrap();
+    stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "Split rates",
+            "--tag",
+            "plan",
+            "--tag",
+            "billing",
+            "--author",
+            "claude-code",
+        ],
+    );
+    stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "orders/service.py::OrderService.place",
+            "--title",
+            "Why place retries",
+            "--tag",
+            "plan",
+            "--tag",
+            "billing",
+        ],
+    );
+    stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "Rounding rule",
+            "--tag",
+            "decision",
+        ],
+    );
+    root
+}
+
+/// `vnoc <args>` with a driver that does not exist: a command that needs none must not care.
+fn without_a_driver(root: &Path, args: &[&str]) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.current_dir(root)
+        .env_remove("VNOC_DRIVER")
+        .stdin(Stdio::null())
+        .args(["--driver", "/nonexistent"])
+        .args(args);
+    run(cmd)
+}
+
+fn rate_doc(root: &Path) -> PathBuf {
+    root.join(format!(".vnoc/nodes/D7/{RATE_ID}/split-rates.md"))
+}
+
+#[test]
+fn doc_tags_lists_every_tag_with_its_count_and_meaning_and_needs_no_driver() {
+    let root = tags_project("doc-tags");
+    let listed = without_a_driver(&root, &["doc", "tags"]);
+    assert_eq!(code(&listed), 0, "{}", text(&listed.stderr));
+    assert!(listed.stderr.is_empty());
+    assert_eq!(
+        text(&listed.stdout),
+        "billing   2 docs\nplan      2 docs  A change we intend to make. Retag as done when it ships.\ndecision  1 doc   Why we chose this way over the others.\ndone      0 docs  A plan that shipped.\n"
+    );
+    let authors = without_a_driver(&root, &["doc", "tags", "--authors"]);
+    assert_eq!(text(&authors.stdout), "claude-code  1 doc\n");
+    let json: Value =
+        serde_json::from_slice(&without_a_driver(&root, &["doc", "tags", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(
+        json,
+        json!({
+            "schema": 1, "command": "doc tags",
+            "tags": [
+                { "tag": "billing", "docs": 2, "description": null },
+                { "tag": "plan", "docs": 2, "description": "A change we intend to make. Retag as done when it ships." },
+                { "tag": "decision", "docs": 1, "description": "Why we chose this way over the others." },
+                { "tag": "done", "docs": 0, "description": "A plan that shipped." },
+            ]
+        })
+    );
+    let json: Value = serde_json::from_slice(
+        &without_a_driver(&root, &["doc", "tags", "--authors", "--json"]).stdout,
+    )
+    .unwrap();
+    assert_eq!(
+        json["authors"],
+        json!([{ "author": "claude-code", "docs": 1 }])
+    );
+    // a project with no tags says so, and so does one nobody started
+    let none = started_copy("doc-tags-none", &[]);
+    assert_eq!(
+        text(&without_a_driver(&none, &["doc", "tags"]).stdout),
+        "no tags\n"
+    );
+    assert_eq!(
+        text(&without_a_driver(&none, &["doc", "tags", "--authors"]).stdout),
+        "no authors\n"
+    );
+    assert_eq!(
+        text(&without_a_driver(&bare_copy("doc-tags-bare"), &["doc", "tags"]).stdout),
+        "no tags\n"
+    );
+}
+
+#[test]
+fn a_tags_toml_with_a_bad_key_is_a_problem_once_and_the_rest_is_read() {
+    let root = tags_project("tags-toml");
+    std::fs::write(
+        root.join(".vnoc/tags.toml"),
+        "plan = \"A change we intend to make.\"\nBad_Key = \"x\"\n",
+    )
+    .unwrap();
+    // the good key still describes its tag
+    let listed = stdout_of(&root, &["doc", "tags"]);
+    assert!(
+        listed.contains("plan      2 docs  A change we intend to make.\n"),
+        "{listed}"
+    );
+    // `check` says what is wrong and whose line it is
+    let (exit, checked, _) = stdout_any(&root, &["check"]);
+    assert_eq!(exit, 1, "{checked}");
+    assert_eq!(
+        checked,
+        "broken  .vnoc/tags.toml  `Bad_Key` is not a tag: lower-case letters, digits and `-` (skipped)\n  → open .vnoc/tags.toml and fix the line named (V-NOC reads this file and never writes it)\n1 problem\n"
+    );
+    // a file that is not TOML: one problem, nothing described
+    std::fs::write(root.join(".vnoc/tags.toml"), "plan = [oops\n").unwrap();
+    let (exit, checked, _) = stdout_any(&root, &["check"]);
+    assert_eq!(exit, 1);
+    assert_eq!(
+        checked.matches("broken  .vnoc/tags.toml").count(),
+        1,
+        "{checked}"
+    );
+    assert!(!stdout_of(&root, &["doc", "tags"]).contains("A change"));
+}
+
+#[test]
+fn doc_tag_rewrites_only_the_tags_line_and_says_when_nothing_changes() {
+    let root = tags_project("doc-tag");
+    let file = rate_doc(&root);
+    let before = std::fs::read_to_string(&file).unwrap();
+    assert!(before.contains("\ntags: [plan, billing]\n"));
+    let args = [
+        "doc",
+        "tag",
+        "billing/tax.py::rate_for",
+        "--add",
+        "done",
+        "--remove",
+        "plan",
+    ];
+    let stdout = stdout_of(&root, &args);
+    assert_eq!(
+        stdout,
+        format!("tags         .vnoc/nodes/D7/{RATE_ID}/split-rates.md  [billing, done]\n")
+    );
+    // the one line changed, every other byte as it was
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        before.replace("tags: [plan, billing]", "tags: [billing, done]")
+    );
+    let after_first = std::fs::read(&file).unwrap();
+    // the same command again: it says so, exit 0, and the file is not written
+    let again = stdout_of(&root, &args);
+    assert_eq!(
+        again,
+        format!(
+            "tags         .vnoc/nodes/D7/{RATE_ID}/split-rates.md  [billing, done]\nalready has \"done\"\nalready without \"plan\"\n"
+        )
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), after_first);
+    // by the node's ID, with no driver
+    let by_id = without_a_driver(&root, &["doc", "tag", RATE_ID, "--add", "ship"]);
+    assert_eq!(code(&by_id), 0, "{}", text(&by_id.stderr));
+    assert!(
+        text(&by_id.stdout).contains("[billing, done, ship]"),
+        "{}",
+        text(&by_id.stdout)
+    );
+    // the last tags removed: the line goes
+    let out = stdout_of(
+        &root,
+        &[
+            "doc", "tag", RATE_ID, "--remove", "billing", "--remove", "done", "--remove", "ship",
+        ],
+    );
+    assert!(out.contains("  []\n"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        before.replace("tags: [plan, billing]\n", "")
+    );
+    // no tags line and an add: after `author:`
+    stdout_of(&root, &["doc", "tag", RATE_ID, "--add", "plan"]);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        before.replace("tags: [plan, billing]", "tags: [plan]")
+    );
+    // JSON
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &[
+            "doc",
+            "tag",
+            "billing/tax.py::rate_for",
+            "--add",
+            "billing",
+            "--add",
+            "plan",
+            "--remove",
+            "gone",
+            "--json",
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        json,
+        json!({
+            "schema": 1, "command": "doc tag",
+            "doc": format!(".vnoc/nodes/D7/{RATE_ID}/split-rates.md"),
+            "tags": ["plan", "billing"], "added": ["billing"], "removed": [],
+            "unchanged": [{ "tag": "plan", "state": "has" }, { "tag": "gone", "state": "without" }],
+            "notice": null
+        })
+    );
+}
+
+#[test]
+fn doc_tag_on_a_node_with_two_docs_needs_the_file_and_the_rules_are_exit_2() {
+    let root = tags_project("doc-tag-rules");
+    stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "Second note",
+            "--tag",
+            "plan",
+        ],
+    );
+    let file = rate_doc(&root);
+    let before = std::fs::read(&file).unwrap();
+    let (exit, stdout, stderr) = stdout_any(
+        &root,
+        &["doc", "tag", "billing/tax.py::rate_for", "--add", "done"],
+    );
+    assert_eq!((exit, stdout.as_str()), (2, ""));
+    assert_eq!(
+        stderr,
+        "error: billing/tax.py::rate_for has 2 docs: name one of second-note.md · split-rates.md (the file name goes after the node)\n"
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    // with the file: that doc, and with a name that is not one, the names it has
+    stdout_of(
+        &root,
+        &[
+            "doc",
+            "tag",
+            "billing/tax.py::rate_for",
+            "split-rates",
+            "--add",
+            "done",
+        ],
+    );
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("tags: [plan, billing, done]")
+    );
+    let (exit, _, stderr) = stdout_any(
+        &root,
+        &[
+            "doc",
+            "tag",
+            "billing/tax.py::rate_for",
+            "nope.md",
+            "--add",
+            "x",
+        ],
+    );
+    assert_eq!(exit, 2);
+    assert!(stderr.contains("no doc named nope.md on billing/tax.py::rate_for: it has second-note.md · split-rates.md"), "{stderr}");
+
+    // the rules: something to do, a tag that is a tag, a node that is there and has docs
+    let after = std::fs::read(&file).unwrap();
+    let (exit, _, stderr) = stdout_any(&root, &["doc", "tag", "billing/tax.py::apply_tax"]);
+    assert_eq!(exit, 2);
+    assert_eq!(
+        stderr,
+        "error: give at least one --add <tag> or --remove <tag>\n"
+    );
+    for args in [
+        ["--add", "Plan"],
+        ["--add", "two words"],
+        ["--remove", "Plan"],
+    ] {
+        let mut full = vec!["doc", "tag", "billing/tax.py::apply_tax"];
+        full.extend_from_slice(&args);
+        let (exit, stdout, stderr) = stdout_any(&root, &full);
+        assert_eq!((exit, stdout.as_str()), (2, ""), "{args:?}");
+        assert!(
+            stderr.starts_with("error: `")
+                && stderr.ends_with("is not a tag: lower-case letters, digits and `-`\n"),
+            "{stderr}"
+        );
+    }
+    assert_eq!(std::fs::read(&file).unwrap(), after);
+    let (exit, _, stderr) =
+        stdout_any(&root, &["doc", "tag", "billing/tax.py::nope", "--add", "x"]);
+    assert_eq!(exit, 2);
+    assert!(
+        stderr.starts_with("error: no node at billing/tax.py::nope"),
+        "{stderr}"
+    );
+    let (exit, _, stderr) = stdout_any(
+        &root,
+        &["doc", "tag", "orders/models.py::Line", "--add", "x"],
+    );
+    assert_eq!(exit, 2);
+    assert_eq!(stderr, "error: no docs on orders/models.py::Line\n");
+    // a doc with no frontmatter has nowhere to put a tag
+    let bare_doc = root.join(format!(".vnoc/nodes/JB/{ROUND_ID}/rounding-rule.md"));
+    std::fs::write(&bare_doc, "# Rounding rule\n\nno frontmatter\n").unwrap();
+    let (exit, _, stderr) = stdout_any(
+        &root,
+        &["doc", "tag", "billing/tax.py::apply_tax", "--add", "x"],
+    );
+    assert_eq!(exit, 2);
+    assert!(stderr.contains("has no frontmatter"), "{stderr}");
+}
+
+#[test]
+fn a_new_tag_is_a_note_with_the_nearest_known_one_and_never_a_refusal() {
+    let root = tags_project("new-tag-note");
+    // near a described tag: `planning` starts with `plan`
+    let near = stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "Soon",
+            "--tag",
+            "planning",
+        ],
+    );
+    assert!(
+        near.ends_with("note: \"planning\" is a new tag in this project (described: decision, done, plan); did you mean \"plan\"?\n"),
+        "{near}"
+    );
+    // near a tag that is only used (`billin` for `billing`), and `--quiet` keeps the note (it is about the data)
+    let quiet = stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "Billing soon",
+            "--tag",
+            "billin",
+            "--quiet",
+        ],
+    );
+    assert!(
+        quiet.ends_with("note: \"billin\" is a new tag in this project (described: decision, done, plan); did you mean \"billing\"?\n"),
+        "{quiet}"
+    );
+    // nothing is near: no question
+    let none = stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "Odd",
+            "--tag",
+            "zebra",
+        ],
+    );
+    assert!(
+        none.ends_with(
+            "note: \"zebra\" is a new tag in this project (described: decision, done, plan)\n"
+        ),
+        "{none}"
+    );
+    // a described tag nobody uses yet, and a tag another doc has, are not new
+    let known = stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "Known",
+            "--tag",
+            "done",
+            "--tag",
+            "billing",
+        ],
+    );
+    assert!(!known.contains("note:"), "{known}");
+    // the note is part of the answer in `--json`
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "Json",
+            "--tag",
+            "quokka",
+            "--json",
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        json["tag_notices"],
+        json!(["note: \"quokka\" is a new tag in this project (described: decision, done, plan)"])
+    );
+    // `doc tag --add`: the note for a tag it added; a tag the doc had is `already has`, with no note
+    let tagged = stdout_of(
+        &root,
+        &["doc", "tag", "billing/tax.py::rate_for", "--add", "plaan"],
+    );
+    assert!(tagged.ends_with("note: \"plaan\" is a new tag in this project (described: decision, done, plan); did you mean \"plan\"?\n"), "{tagged}");
+    let again = stdout_of(
+        &root,
+        &["doc", "tag", "billing/tax.py::rate_for", "--add", "plaan"],
+    );
+    assert!(
+        again.contains("already has \"plaan\"") && !again.contains("note:"),
+        "{again}"
+    );
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &[
+            "doc",
+            "tag",
+            "billing/tax.py::rate_for",
+            "--add",
+            "zzz9",
+            "--json",
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        json["notice"],
+        "note: \"zzz9\" is a new tag in this project (described: decision, done, plan)"
+    );
+
+    // a project that describes nothing: no parenthesis
+    let plain = started_copy("new-tag-note-plain", &[]);
+    stdout_of(
+        &plain,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "One",
+            "--tag",
+            "plan",
+        ],
+    );
+    let out = stdout_of(
+        &plain,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::apply_tax",
+            "--title",
+            "Two",
+            "--tag",
+            "planning",
+        ],
+    );
+    assert!(
+        out.ends_with("note: \"planning\" is a new tag in this project; did you mean \"plan\"?\n"),
+        "{out}"
+    );
+    let first = stdout_of(
+        &started_copy("new-tag-note-first", &[]),
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "One",
+            "--tag",
+            "plan",
+        ],
+    );
+    assert!(
+        first.ends_with("note: \"plan\" is a new tag in this project\n"),
+        "{first}"
+    );
+}

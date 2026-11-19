@@ -221,6 +221,15 @@ pub enum DocCommand {
     Read(DocReadArgs),
     /// Prints the file paths of a node's docs, one per line: for your own read and edit tools. A node named by its ID needs no driver.
     Path(DocFileArgs),
+    /// Lists every tag the docs carry with how many docs have it and what it means (from `.vnoc/tags.toml`, which people write: read it, do not edit it); a
+    /// described tag no doc has yet is listed with 0. Most used first. Run it BEFORE you tag a note and reuse a tag that fits (prefer a described one);
+    /// do not invent a synonym of one that exists. With --authors, the authors of the docs instead. Needs no driver.
+    Tags(DocTagsArgs),
+    /// Changes the tags of ONE doc: `vnoc doc tag <node> [file] --add done --remove plan`. Only the doc's `tags:` line is rewritten (the rest of the file is
+    /// as it was) and the doc's file is read again just before it is written. A node with several docs needs the file name. A tag the doc has already (or
+    /// lacks, to remove) changes nothing and is said, exit 0: running a command twice is never an error. A tag nobody uses yet is accepted, with a note
+    /// when it looks like a misspelling of a known one. Move a plan's tag when its state changes.
+    Tag(DocTagArgs),
     /// Attaches a new note (doc) to ONE function, class, file or folder, and prints where it is. Use it to leave a note or a plan for what you
     /// are about to change or have just learned: the note says why, not what. The project must have been started (`vnoc init`, which is the
     /// user's decision). Unless the project or --no-marker says otherwise, an `ID:` line is added to the code (a docstring line; a comment for a
@@ -255,6 +264,29 @@ pub struct DocNewArgs {
     /// A tag for the note, repeatable: lower-case letters, digits and `-`. V-NOC gives no tag a meaning; it only shows and (later) finds them.
     #[arg(long = "tag", value_name = "TAG")]
     pub tags: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct DocTagsArgs {
+    /// List the authors of the docs (`author:` in the frontmatter) instead of the tags.
+    #[arg(long)]
+    pub authors: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DocTagArgs {
+    /// The node whose doc to change (see `vnoc show --help` for how to name one). A node named by its ID needs no driver.
+    #[arg(value_name = "NODE")]
+    pub node: String,
+    /// The file name of the doc, as `doc list` shows it (`split-rates.md`). Needed when the node has several docs.
+    #[arg(value_name = "FILE")]
+    pub file: Option<String>,
+    /// A tag to add, repeatable: lower-case letters, digits and `-`. Appended after the doc's tags, in the order given.
+    #[arg(long = "add", value_name = "TAG")]
+    pub add: Vec<String>,
+    /// A tag to take off, repeatable. The last one removed takes the `tags:` line with it.
+    #[arg(long = "remove", value_name = "TAG")]
+    pub remove: Vec<String>,
 }
 
 #[derive(Debug, Args)]

@@ -8,8 +8,10 @@ mod doc_text;
 mod layout;
 mod lock;
 mod read;
+mod tags;
 mod trash;
 
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -20,6 +22,10 @@ pub use doc_text::{DocStats, DocText, DocTexts};
 pub use lock::{DEFAULT_WAIT, LockError, WriteLock};
 pub(crate) use read::after_frontmatter;
 pub use read::{DocInfo, Frontmatter, LoadProblem, LoadReport, NodeRecord, frontmatter};
+pub use tags::{
+    AuthorCount, Change, Descriptions, TagCount, TagError, WriteError, author_counts, is_tag,
+    rewrite_tags, tag_counts,
+};
 pub use trash::{MovePlan, TrashEntry, TrashError};
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +47,19 @@ pub struct Settings {
     pub initialized: bool,
     /// `[ids] default` is `"on-attach"` (the default): attaching writes an ID into the code
     pub markers: bool,
+}
+
+/// Why the tags of a doc were not changed.
+#[derive(Debug, thiserror::Error)]
+pub enum EditTagsError {
+    #[error(transparent)]
+    Tag(#[from] TagError),
+    #[error("{0} is not a doc of a node")]
+    NotADoc(PathBuf),
+    #[error("the doc is not UTF-8 text")]
+    NotUtf8,
+    #[error(transparent)]
+    Write(#[from] WriteError),
 }
 
 pub struct UserData {
@@ -195,6 +214,33 @@ impl UserData {
     /// Every node folder, read. Broken ones are reported, not fatal.
     pub fn load_all(&self) -> LoadReport {
         read::load_all(&self.root)
+    }
+
+    /// What each tag means, from `.vnoc/tags.toml` (none when the file is not there; its problems are `load_all`'s).
+    pub fn tag_descriptions(&self) -> Descriptions {
+        tags::read_descriptions(&self.root).0
+    }
+
+    /// Changes the tags of the doc at `path` (a Markdown file under `nodes/`): read, rewritten as `rewrite_tags` says, and written atomically only if
+    /// the file is still what was read. Nothing is written when nothing changes. The caller holds the write lock.
+    pub fn edit_doc_tags(
+        &self,
+        path: &Path,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<Change, EditTagsError> {
+        if !self.is_doc(path) {
+            return Err(EditTagsError::NotADoc(path.to_path_buf()));
+        }
+        let text = fs::read(path)
+            .map_err(WriteError::from)
+            .map_err(EditTagsError::Write)?;
+        let text = String::from_utf8(text).map_err(|_| EditTagsError::NotUtf8)?;
+        let (new, change) = rewrite_tags(&text, add, remove)?;
+        if change.changes_text() {
+            tags::write_if_unchanged(path, &text, &new)?;
+        }
+        Ok(change)
     }
 
     /// The doc texts of `records` (what `load_all` gave), reading only the files whose stamp moved since `held`. Disk work only.
@@ -447,6 +493,23 @@ mod tests {
             (read.title.as_deref(), read.author.as_deref(), read.tags),
             (Some("Split it"), Some("claude-code"), tags.to_vec())
         );
+    }
+
+    #[test]
+    fn a_bad_key_in_tags_toml_is_a_problem_of_the_load_and_the_rest_is_read() {
+        let data = fresh("tags-toml");
+        data.initialize(true).unwrap();
+        assert!(data.load_all().problems.is_empty());
+        std::fs::write(data.root.join("tags.toml"), "plan = \"ok\"\nBad = \"x\"\n").unwrap();
+        let report = data.load_all();
+        assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
+        assert!(
+            report.problems[0]
+                .text
+                .starts_with(".vnoc/tags.toml: `Bad` is not a tag")
+        );
+        assert_eq!(report.problems[0].file, data.root.join("tags.toml"));
+        assert_eq!(data.tag_descriptions().get("plan"), Some("ok"));
     }
 
     #[test]

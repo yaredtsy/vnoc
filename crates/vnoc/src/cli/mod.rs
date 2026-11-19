@@ -17,6 +17,7 @@ mod relink;
 mod show;
 mod status;
 pub mod style;
+mod tags;
 mod tree;
 mod write;
 

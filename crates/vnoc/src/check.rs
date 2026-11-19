@@ -117,6 +117,10 @@ fn from_problem(project: &Project, problem: &Problem, kind: FindingKind) -> Find
                 "open {at} and delete the `ID:` line of the copy (the node keeps its ID where it was found)"
             )
         }
+        // the tags' descriptions are not a node: V-NOC reads that file and never writes it, so the line is the team's to fix
+        _ if path.ends_with("tags.toml") => {
+            format!("open {at} and fix the line named (V-NOC reads this file and never writes it)")
+        }
         _ => format!("open {at}: fix the file, or remove it if it is not a node"),
     };
     // one line: a TOML error runs over several, and the text starts with the file it is about, which the row already says

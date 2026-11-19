@@ -24,7 +24,7 @@ use crate::protocol::{RelinkParams, WriteIdParams, Written};
 use crate::userdata::UserData;
 
 /// An argument that cannot be the target: the sentence, or with `--json` a value on standard output. Exit `2`.
-fn refused(global: &Global, command: &str, error: NodeError) -> Result<(), Failure> {
+pub(super) fn refused(global: &Global, command: &str, error: NodeError) -> Result<(), Failure> {
     if global.json {
         out::json(&json!({ "schema": 1, "command": command, "error": error.json() }))?;
     } else {

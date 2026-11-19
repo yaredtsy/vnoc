@@ -12,6 +12,11 @@ pub fn project_file(root: &Path) -> PathBuf {
     root.join("vnoc.toml")
 }
 
+/// What each tag means: optional, written by people (`docs/04-storage/01-vnoc-folder.md`).
+pub fn tags_file(root: &Path) -> PathBuf {
+    root.join("tags.toml")
+}
+
 pub fn gitignore_file(root: &Path) -> PathBuf {
     root.join(".gitignore")
 }

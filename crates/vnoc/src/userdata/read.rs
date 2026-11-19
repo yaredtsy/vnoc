@@ -78,6 +78,10 @@ pub fn load_all(root: &Path) -> LoadReport {
             }
         }
     }
+    // the tags' descriptions are read here too: a file that does not parse is a problem of `.vnoc/` like a `node.toml` that does not
+    report
+        .problems
+        .extend(super::tags::read_descriptions(root).1);
     report
 }
 

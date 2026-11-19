@@ -34,6 +34,8 @@ pub async fn run(global: &Global, command: &DocCommand) -> Result<(), Failure> {
             .await
         }
         DocCommand::Path(args) => file_command(global, args, None, "doc path", View::Path).await,
+        DocCommand::Tags(args) => super::tags::tags(global, args).await,
+        DocCommand::Tag(args) => super::tags::tag(global, args).await,
         DocCommand::New(args) => super::write::doc_new(global, args).await,
     }
 }
@@ -242,7 +244,7 @@ fn of_node(lookup: &Lookup, node: &Node) -> DocsAnswer {
 }
 
 /// Every argument is an ID (`-` is read first): then no index is needed.
-fn only_ids(args: &[String]) -> bool {
+pub(super) fn only_ids(args: &[String]) -> bool {
     !args.is_empty()
         && args
             .iter()
@@ -452,6 +454,68 @@ fn whole_project(opened: &Opened) -> Vec<DocsAnswer> {
         ));
     }
     groups
+}
+
+/// The docs of the ONE node `arg` names, and the project they are in: a node named by its ID is read from `.vnoc/` with no driver, any other name goes
+/// through the index. The inner `Err` is a node that cannot be found, with the sentence every command gives.
+pub(super) async fn node_docs(
+    global: &Global,
+    arg: &str,
+) -> Result<
+    (
+        crate::project::Project,
+        Result<(String, Vec<Doc>), NodeError>,
+    ),
+    Failure,
+> {
+    if only_ids(std::slice::from_ref(&arg.to_string())) {
+        let project = open_without_driver(global)?;
+        let answer = by_id(&project, arg).map(|a| (a.name(), a.docs));
+        return Ok((project, answer));
+    }
+    let opened = open_from(global).await?;
+    let lookup = Lookup::new(&opened, 1);
+    let answer = lookup.resolve(arg).map(|target| {
+        let a = of_target(&lookup, target);
+        (a.name(), a.docs)
+    });
+    Ok((opened.project.clone(), answer))
+}
+
+/// The one doc of `docs` that `file` names, or the node's only doc when no file is given. A node with none, or with several and no file, is an error
+/// that says what it has.
+pub(super) fn choose_doc(name: &str, docs: Vec<Doc>, file: Option<&str>) -> Result<Doc, NodeError> {
+    let have = |docs: &[Doc]| -> String {
+        if docs.is_empty() {
+            "no docs".to_string()
+        } else {
+            docs.iter()
+                .map(|d| d.file.as_str())
+                .collect::<Vec<_>>()
+                .join(" · ")
+        }
+    };
+    match (file, docs.len()) {
+        (Some(file), _) => {
+            let wanted = |doc: &Doc| doc.file == file || doc.file == format!("{file}.md");
+            match docs.iter().position(wanted) {
+                Some(at) => Ok(docs.into_iter().nth(at).expect("found above")),
+                None => Err(NodeError::new(
+                    "no_doc",
+                    format!("no doc named {file} on {name}: it has {}", have(&docs)),
+                )),
+            }
+        }
+        (None, 1) => Ok(docs.into_iter().next().expect("one")),
+        (None, 0) => Err(NodeError::new("no_doc", format!("no docs on {name}"))),
+        (None, n) => Err(NodeError::new(
+            "no_doc",
+            format!(
+                "{name} has {n} docs: name one of {} (the file name goes after the node)",
+                have(&docs)
+            ),
+        )),
+    }
 }
 
 /// `--where` as given: nothing, or a query that says something.

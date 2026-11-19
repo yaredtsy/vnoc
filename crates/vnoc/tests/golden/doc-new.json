@@ -14,5 +14,8 @@
     "node_id": "4KF02248CHCTYAG49B0KKZ5SD7"
   },
   "notice": null,
-  "schema": 1
+  "schema": 1,
+  "tag_notices": [
+    "note: \"plan\" is a new tag in this project"
+  ]
 }

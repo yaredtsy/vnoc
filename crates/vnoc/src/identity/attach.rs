@@ -26,7 +26,7 @@ use crate::driver_host::DriverHost;
 use crate::index::Index;
 use crate::project::Project;
 use crate::protocol::{AttachParams, AttachResult, Document};
-use crate::userdata::{NewDoc, UserData, UserDataError, after_frontmatter};
+use crate::userdata::{NewDoc, UserData, UserDataError, after_frontmatter, is_tag};
 
 /// The longest body a doc is made with: a note is a note.
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
@@ -335,14 +335,6 @@ fn once_each(tags: &[String]) -> Vec<String> {
         }
     }
     seen
-}
-
-/// A tag is lower-case ASCII letters, digits and `-`, and not empty.
-fn is_tag(tag: &str) -> bool {
-    !tag.is_empty()
-        && tag
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// A function, class or file marker is an edit of the node's own file: the open document (the editor), or the file itself (`Disk`, when no

@@ -38,6 +38,43 @@ pub fn nearest_in(
     }
 }
 
+/// The word among `words` that `name` was most likely meant to be, for a typed word that is not one of them (a tag, in `vnoc doc new --tag`). The edit
+/// rule of [`nearest_in`] without the length floor (1 edit up to 4 letters, 2 from 5), and also a word that **starts** the other (`plan` and
+/// `planning`: 3 letters or more in the shorter), counted as that many edits as the lengths differ. The closest wins, and on a tie the first of `words`
+/// (the caller puts the ones it prefers first). Case is ignored; `name` itself is never the answer. `None` when nothing is near.
+pub fn nearest_word<'a>(words: &[&'a str], name: &str) -> Option<&'a str> {
+    let given = letters(name);
+    if given.is_empty() {
+        return None;
+    }
+    let allowed = if given.len() <= 4 { 1 } else { 2 };
+    words
+        .iter()
+        .enumerate()
+        .filter_map(|(at, word)| {
+            let other = letters(word);
+            if other == given {
+                return None;
+            }
+            let (short, long) = if other.len() < given.len() {
+                (&other, &given)
+            } else {
+                (&given, &other)
+            };
+            let by_prefix =
+                (short.len() >= 3 && long.starts_with(short)).then(|| long.len() - short.len());
+            let edits = match (edits_within(&given, &other, allowed), by_prefix) {
+                (Some(e), Some(p)) => e.min(p),
+                (Some(e), None) => e,
+                (None, Some(p)) => p,
+                (None, None) => return None,
+            };
+            Some((edits, at))
+        })
+        .min()
+        .map(|(_, at)| words[at])
+}
+
 fn find(
     corpus: &Corpus,
     name: &str,
@@ -111,6 +148,32 @@ fn edits_within(a: &[char], b: &[char], allowed: usize) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::NodeEntry;
+
+    #[test]
+    fn a_typed_word_is_matched_to_the_nearest_word_by_edits_or_by_its_start() {
+        let known = ["plan", "decision", "done", "billing"];
+        let table = [
+            ("planning", Some("plan")),    // starts with it
+            ("plans", Some("plan")),       // one edit
+            ("plam", Some("plan")),        // one edit
+            ("dnoe", Some("done")), // a swap and a swap: two edits is too many for four letters...
+            ("Decison", Some("decision")), // case ignored, one letter dropped
+            ("don", Some("done")),  // starts the other: three letters
+            ("do", None),           // too short to start anything
+            ("billings", Some("billing")),
+            ("zebra", None),
+            ("plan", None), // itself is never the answer
+            ("", None),
+        ];
+        for (name, want) in table {
+            assert_eq!(nearest_word(&known, name), want, "{name:?}");
+        }
+        // a tie goes to the first listed
+        assert_eq!(nearest_word(&["plat", "plan"], "plax"), Some("plat"));
+        assert_eq!(nearest_word(&["plan", "plat"], "plax"), Some("plan"));
+        // closer beats earlier
+        assert_eq!(nearest_word(&["planning", "plan"], "plans"), Some("plan"));
+    }
 
     fn entry(kind: Kind, qualname: &str, path: &str) -> NodeEntry {
         let name = qualname.rsplit('.').next().unwrap().to_string();

@@ -21,7 +21,7 @@ mod words;
 use std::sync::Arc;
 
 pub use docs::DocIndex;
-pub use nearest::{Scope, nearest, nearest_in};
+pub use nearest::{Scope, nearest, nearest_in, nearest_word};
 pub use query::{KindFilter, Query, parse};
 pub use run::{matches, run};
 
