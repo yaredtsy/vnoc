@@ -323,6 +323,10 @@ now. Finding nothing prints `no matches`, the `notes` if a filter was wrong, and
   tree by its id** (`Node::find`, 02 §2); the search's types do not grow for it.
 - An ID of a **Missing** node: `prepare` keeps only a reference that named a node of the tree. It gains `reference: Option<Found>` (what the
   reference resolved to, kept), and `find` prints the `MISSING  was …` line of 02 §4 above the rows. The box ignores the new field.
+- *(Settled 2026-11-19, before A5.)* **The limits are the command's own: 20 nodes and 10 docs by default**, not the box's
+  `Limits::default()` (200 and 50, right for a list a person scrolls, too much for a model that reads every row). `--limit N` sets both.
+  Each group's header always gives the total (`nodes (20 of 143)`), and a cut group ends with `… 123 more (narrow the query, or --limit N)`;
+  `--quiet` drops that line. The order is `run`'s, so a bigger limit only adds rows below.
 - A path with a `/` as the query (`vnoc find src/orders.py`) is a reference since S9a, as in the box: that file or folder is first, marked
   exact, and the path tiers list what is in it below. A name with no `/` (`orders.py`) is only words. A call's `()` or `(` at the end of a
   word is dropped, and a traceback line (`File "a.py", line 12`) is the reference `a.py:12`.
@@ -353,6 +357,15 @@ file      src/settings.py                                                       
 
 - The files are the index's (Python, not git-ignored). The pattern is the `regex` crate's syntax, matched line by line.
 - A hit is given to the **innermost** def whose range holds its line; a hit in no def goes to the file.
+- *(Settled 2026-11-19, before A5.)* **Order:** nodes in the tree's order (folders, files, defs in source order), not by hit count, so a
+  query gives the same answer every time and `--limit` cuts the end. **At most 5 lines per node**, then `  … 12 more hits`; the node row
+  always says the total (`3 hits`). `--names` prints no lines. Lines are printed as they are in the file, with their 1-based numbers; a line
+  over 200 characters is cut with `…`.
+- **`<path>…`** goes through the node arguments' resolution (02 §2: relative to the current folder, then the root); a path that is not a
+  file or folder of the index is the error of 02 §4.
+- **`--docs`** reads each doc file from disk (the paths `Index::doc_texts()` lists) and matches the lines after the frontmatter, **numbered as in
+  the `.md` file**, so an agent can open the note at that line. Each hit group is `doc  <title>  on <location>  <path>`.
+- A pattern that does not compile is `2` with the `regex` crate's message. No match is `no matches`, exit `0`.
 - **The stand-in for callers.** `vnoc grep 'parse_order\('` lists the functions that mention the call. It is by text, not by resolution, and the
   guide says so in those words. Real callers need either a solve per candidate or an eager index: [`08`](08-mcp-and-plugins.md) §3.
 
