@@ -198,6 +198,34 @@ already finds V-NOC's files. `vnoc.agentsSetUp` is set on activation from the sa
 `{ agents: string[], confirm: true }` that skips the two questions: for the window suite, like the other commands that take one. It runs the
 binary the extension runs, in the workspace's git root; a failure shows the binary's own error line.
 
+*(As built, A12, 2026-11-20.)*
+
+- **Files.** `extension/src/cliInstall.ts` is the pure part (what to make, move, leave or refuse, the PATH advice, the Windows `vnoc.cmd` text and the
+  user-PATH edits; no `vscode`, no file system; `cliInstall.test.ts` runs it on each platform × each state of the link's place × each mode).
+  `agentsJson.ts` is the pure reading of the binary's `agent … --json` (and the offer's decision; `agentsJson.test.ts` reads fixtures the real binary
+  printed, in `extension/src/fixtures/`). `cliSetup.ts` is the impure part: it reads the machine, does what the plans say, and draws the two questions.
+  `commands.ts` registers the three commands; `Core` now says which core and driver binary it runs (`binaryPath`, `driverPath`), and the link is made to
+  that one.
+- **The link** is a symlink made beside a temporary one and renamed over (nobody sees half of it); the target is `path.resolve` of the binary, not its
+  `realpath`, so the `…/<publisher>.<name>-<version>/bin/vnoc` shape that identifies another version's link is kept. "Another version's folder" is read
+  from `package.json`'s `publisher` and `name`, not written in the code. `vnoc.cliInstalled` is true when the command is there, points to a program named
+  `vnoc` (or `vnoc.exe`) and that program exists. Uninstall removes a link to a program named `vnoc`, or our wrapper, and refuses anything else.
+- **What the commands answer** (for the window suite; the user sees the messages): `{ done: "create" | "move" | "leave" | "remove" | "refuse", message }`
+  for install and uninstall, `{ wrote, left }` for set up (`undefined` when the user stopped at a question or the binary failed).
+- **Windows [check], still open:** the wrapper and the user-PATH edit (`reg.exe query/add` on `HKCU\Environment` `Path` as `REG_EXPAND_SZ`, then a
+  `WM_SETTINGCHANGE` broadcast through PowerShell) are written and their decisions are unit-tested, but no Windows machine has run them. The window
+  suite never installs on Windows (it would write the real user PATH): there it only runs the refusal of a foreign `vnoc.cmd`. Whether install added the
+  folder is remembered in `globalState`, so uninstall takes the entry out only then.
+- **Set Up Coding Agents** runs the binary in the workspace folder (the binary finds the git root from there; no structure read is made at activation).
+  The QuickPick lists the binary's rows: label the name, description `found in this project` for a detected one (ticked), detail `skill: <file> · rules:
+  <file>`. The dry run is always made, also with `{ agents, confirm: true }`, which skips the pick and the modal only. A dry run or an install the binary
+  exits `2` on because it left a file still prints its JSON: that is read, and the left files are said with their reason. A failure with no JSON shows the
+  binary's `error:` line.
+- **The offer** is decided by the binary: "somebody here uses an agent" is `agent list --json` finding any agent (its detection, which includes
+  `AGENTS.md`, `CLAUDE.md`, `.claude/`, `.agents/` and the other agents' signs), so TypeScript names no folder. **The first attach settles it:** the flag
+  `vnoc.agentsOffered` (`workspaceState`) is set at the first attach whether or not anything was shown, so a workspace gets the offer at most once and
+  only at its first attach.
+
 ## 4. Permissions
 
 Most agents ask the user before running a shell command they have not been allowed. Fifteen prompts for fifteen `vnoc show` calls would end the
