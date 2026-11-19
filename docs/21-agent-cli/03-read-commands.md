@@ -608,6 +608,33 @@ terminal's theme applies:
 | `note:`, warnings, `none yet` | yellow |
 | `all good` | green |
 
+**As built in A6d (2026-11-19).**
+
+- `cli/style.rs` is the palette (`bold`, `subject`, `location`, `dim`, `title`, `bad`, `alert`, `warn`, `good`, `hit`) and `paint(style, text)`, which returns
+  **its text unchanged** when the stream is not painted. No renderer writes an escape code; a pipe gets the bytes it got before the palette existed.
+  A test runs every command twice, plain and with `--color always`, takes the codes out of the second (`anstream::adapter::strip_str`) and compares: they are
+  equal to the byte (the one exception is the search hit's stars). Another asserts that **no output of any command the suite runs through a pipe has an
+  `ESC`** (a check in the harness's `run`). `--json` and `--format` are never painted.
+- **Whether to paint** is decided once, per stream: `--color always|never` is the user's word; `auto` is `anstream`'s answer for that stream (`NO_COLOR`
+  wins, `CLICOLOR_FORCE` forces, `TERM` unset or `dumb` says no, then is-a-terminal). Standard output and standard error are decided on their own, so
+  `vnoc show … 2>/dev/null` keeps its colour. `--color` is read from the arguments **before** clap parses them, so `--help` and a usage error follow it
+  (clap's own styling, through `Error::render().ansi()`). A painted stream is written through `anstream` (it turns codes into console calls on an old
+  Windows terminal); a pipe through plain `stdout`. Closed-pipe rule unchanged, tested with and without colour.
+- **`anstream` and `anstyle` are direct dependencies at the versions clap already builds** (1.0.0 and 1.0.14): `Cargo.lock` gained two edges and no package; the
+  release binary went from 8,899,360 to 8,979,136 bytes (+79,776, +0.9 %: the palette and the number formatting).
+- **Where the table was filled in.** A header's *location* is bold cyan (`subject`): it is both a location and the subject of the answer. Kind words
+  are dim, except a finding of `check` that is a warning (`unread`), which is yellow; `no problems` is green like `all good`; the warnings' number in a
+  summary is yellow. `×3` on a call is bold. `(recursive)` and `(likely)` are dim, `(incomplete)` yellow; `(outside the project)`, `(no calls)` and
+  `… (deeper: …)` are dim. A code line's number is dim, the code is not painted. `error:` and `note:` are painted on standard error by the same rule.
+  The matched text of a `grep` line is not marked (the library does not keep where in the line it matched).
+- **Counts have thousands separators** in every command that prints one (`1,805 files`, `… 1,203 more rows`, `docs 1,000`), and only counts: line numbers, IDs and
+  `lines 1805-1900` do not. JSON is unchanged.
+- **`status`.** The new layout is in §2. `failed N` is written `failed 2` (the plan's form), after the three counts. With no `.vnoc/` and nothing wrong there is no
+  `health` line. The *docs* line of an initialised project with no docs says `no docs`. Several drivers would be one `driver` line, joined by commas.
+  The text is asserted inline (there is no text golden for it), so it was rewritten with the change; `status.json` and every other golden are as they were.
+  `tests/golden/status-color.txt` is `status --color always` on the sample, with the root and versions replaced, so the palette is pinned.
+- The global `--format` help now says *a location per line* (an ID only for a Missing node), which is what it prints.
+
 **Renderers** *(settled 2026-11-19, before A4)*. A command builds its answer as a value (the rows, the node, the results list) and hands it to
 one of two renderers in `cli/out.rs`, text or JSON; no command formats as it computes. A new format is then one renderer, and touches no
 command. **`--xml` is a trial, not a promise:** A14 adds an experimental renderer that puts each note's body inside

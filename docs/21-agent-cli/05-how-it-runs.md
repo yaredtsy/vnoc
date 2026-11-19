@@ -171,6 +171,7 @@ One function maps a library error to a code (`cli::exit_code`), with a table tes
 | Crate | For | Note |
 |---|---|---|
 | `clap` (derive) | arguments, `--help` | the help text is part of the interface: each command's `about` is written for an agent reading it cold |
+| `anstream`, `anstyle` | the palette (03 §11) | both are already built for `clap` (1.0.0 and 1.0.14): direct dependencies at the same versions add two edges to `Cargo.lock` and no package; the release binary grew 79,776 bytes (A6d) |
 | `regex` | `grep` | `regex-automata` is already in the tree (through `ignore` → `globset`, and `tracing-subscriber` → `matchers`); `regex` itself is **not** (checked in A0, below) |
 
 **Checked in A0 (2026-11-17):** `cargo tree -p vnoc -i regex-automata` shows `regex-automata` 0.4.18; `-i regex` finds no such package. `regex-syntax`
