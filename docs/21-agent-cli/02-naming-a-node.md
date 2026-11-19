@@ -119,6 +119,28 @@ the first version's example could not be printed by the function it named. Two p
    suggestion); **4, one**; **5 or more, two**. An edit is a letter dropped, added or changed, or two neighbours swapped (optimal string
    alignment). The name compared is the **last part** of the qualified name on both sides (`parse_ordr` against `parse_order`, not
    against `OrderService.parse_order`). Signature: `nearest(corpus, name, in_file: Option<&str>, limit)`.
+**Changed 2026-11-19 (A6e), after the first by-hand use.** On the user's project, `main.py::man` (the file has one def, `main`) suggested
+`DriverManager`, `SocketManager` and `PerformanceTimer` from other folders: the project-wide word pass ran before edit distance and
+matched `man` inside those names, and the 3-letter floor would have refused `main` anyway. When a reference **names a file** that the index
+has, the order is now:
+
+1. **In that file:** the word pass (as before), then `nearest` restricted to the file with **no length floor** (1 edit up to 4 letters, 2
+   from 5); if still nothing and the file has **10 defs or fewer**, they are listed: `main.py has: main` (the hint is the list).
+2. **Other files, strong matches only:** a def whose last name **equals** the name given (case ignored: the right name in the wrong file),
+   or is within `nearest`'s edits **with** the floor. Never a word hit, a name that only contains the letters.
+3. Nothing: no hint.
+
+A qualified name with **no** file (`OrderService.parse_order`, the NoFile case) keeps the project-wide word pass: it is a search.
+
+**Every hint list is one per line**, indented under the error, in every error of this table that has one (`did you mean`, `found`, the files
+of an ambiguous name, a file's defs):
+
+```
+error: no node at src/orders.py::parse_ordr
+  did you mean
+    src/orders.py::OrderService.parse_order
+```
+
 3. **A qualified name with no file** (`OrderService.parse_order`) parses as a path and is `Why::NoFile`. `cli/` picks the sentence:
    if the text has no `/` and `suggest` finds something, it is the second row of the table (`names no file · found: …`); else
    `no file …`. No new `Why` case. It is used only here: the box stays without typo tolerance, as doc 20 decided.
