@@ -110,7 +110,8 @@ pub struct Doc {
 }
 
 impl Doc {
-    /// The doc as `show` and `doc list` print it under a node: `  <title>  [tags]  <path>`, the tags dim and only when it has some.
+    /// The doc as `show` and `doc list` print it under a node (03 §11, one fact per line): `  <title>  [tags]`, the tags dim and only when it has some, and the
+    /// path on its own line under it, two more spaces in.
     pub fn row(&self) -> String {
         let tags = if self.tags.is_empty() {
             String::new()
@@ -121,7 +122,7 @@ impl Doc {
             )
         };
         format!(
-            "  {}{tags}  {}\n",
+            "  {}{tags}\n    {}\n",
             style::paint(style::title(), &self.title),
             style::paint(style::dim(), &self.path)
         )

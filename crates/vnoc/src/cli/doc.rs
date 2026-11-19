@@ -40,7 +40,7 @@ pub async fn run(global: &Global, command: &DocCommand) -> Result<(), Failure> {
     }
 }
 
-/// `body` without its first line when that is the doc's own `# title`: the `── <title>  <path>` header says it already, and every note would pay for
+/// `body` without its first line when that is the doc's own `# title`: the `── <title>` header says it already, and every note would pay for
 /// it twice. The blank lines before it and right after it go with it. Any other first line is printed as it is, and so is everything after it:
 /// nothing else is cut, and a line is never rewritten.
 fn without_title<'a>(body: &'a str, title: &str) -> &'a str {
@@ -183,7 +183,7 @@ impl Render for DocsAnswer {
                     .iter()
                     .map(|doc| {
                         let mut text = format!(
-                            "{} {}  {}\n{}",
+                            "{} {}\n   {}\n{}",
                             style::paint(style::dim(), "──"),
                             style::paint(style::title(), &doc.title),
                             style::paint(style::dim(), &doc.path),

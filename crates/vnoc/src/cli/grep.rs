@@ -275,13 +275,14 @@ impl Render for Grep {
                 Some(location) => style::paint(style::location(), location),
                 None => format!("{} {}", style::paint(style::dim(), "ID"), doc.node_id),
             };
+            // the doc's path is a long fact of its own (03 §11): on the line under the row
             text.push_str(&format!(
-                "{}  {}  {} {on}  {}   {}\n",
+                "{}  {}  {} {on}   {}\n  {}\n",
                 style::paint(style::dim(), "doc"),
                 style::paint(style::title(), &doc.title),
                 style::paint(style::dim(), "on"),
-                style::paint(style::dim(), &doc.path),
-                hits_word(doc.hits)
+                hits_word(doc.hits),
+                style::paint(style::dim(), &doc.path)
             ));
             if !self.style.names {
                 text.push_str(&numbered(&doc.shown));
@@ -306,6 +307,8 @@ impl Render for Grep {
         }
         if !quiet {
             let one = if what == "nodes" { "node" } else { "doc" };
+            // the summary stands off from the rows by one blank line (03 §11)
+            text.push('\n');
             text.push_str(&format!(
                 "{} · {}\n",
                 style::count(self.total, one, what),

@@ -29,12 +29,23 @@ pub enum FindingKind {
 }
 
 impl FindingKind {
-    /// The word a row starts with, the same as in `--json`.
+    /// The word of `--json`: snake_case, stable.
     pub fn word(self) -> &'static str {
         match self {
             FindingKind::Missing => "missing",
             FindingKind::LostMarker => "lost_marker",
             FindingKind::DuplicateId => "duplicate_id",
+            FindingKind::Broken => "broken",
+            FindingKind::Unread => "unread",
+        }
+    }
+
+    /// The words a row of the text starts with: English, for a person (03 §11).
+    pub fn label(self) -> &'static str {
+        match self {
+            FindingKind::Missing => "missing",
+            FindingKind::LostMarker => "lost marker",
+            FindingKind::DuplicateId => "duplicate ID",
             FindingKind::Broken => "broken",
             FindingKind::Unread => "unread",
         }
@@ -59,6 +70,16 @@ pub struct Finding {
     /// the repo path of the file it is about, which `only` is matched against
     #[serde(skip)]
     pub repo_path: Option<RepoPath>,
+    // What the text prints (03 §11, one fact per line); `--json` keeps `path`, `message` and `fix` as they always were.
+    /// what the row names: the node's location, else its file
+    #[serde(skip)]
+    pub location: String,
+    /// the sentence under the row, with the ID in it
+    #[serde(skip)]
+    pub said: String,
+    /// the fix, cut into lines that fit (the first is what to run; a continuation is indented under it)
+    #[serde(skip)]
+    pub fix_lines: Vec<String>,
 }
 
 /// `1 problem`, `2 problems`.
@@ -90,6 +111,15 @@ fn marker_of(kind: Kind) -> &'static str {
         Kind::Function | Kind::Class => "`ID:` line",
         Kind::File => "`# FileID:` comment",
         Kind::Folder => "`.vnoc-id` file",
+    }
+}
+
+/// The marker as the text names it, without code quotes: an `ID:` line, a `# FileID:` comment, a `.vnoc-id` file.
+fn marker_words(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Function | Kind::Class => "ID: line",
+        Kind::File => "# FileID: comment",
+        Kind::Folder => ".vnoc-id file",
     }
 }
 
@@ -137,9 +167,20 @@ fn from_problem(project: &Project, problem: &Problem, kind: FindingKind) -> Find
     })
     .unwrap_or(said)
     .to_string();
+    // the text cuts a long fix in two: what to do, then the reason or the way out
+    let fix_lines = match kind {
+        FindingKind::DuplicateId => vec![
+            format!("open {at} and delete the `ID:` line of the copy"),
+            "(the node keeps its ID where it was found)".to_string(),
+        ],
+        _ => vec![fix.clone()],
+    };
     Finding {
         kind,
         fails: true,
+        location: path.clone(),
+        said: message.clone(),
+        fix_lines,
         path,
         message,
         fix,
@@ -164,6 +205,12 @@ pub fn check(index: &Index, project: &Project, only: Option<&[RepoPath]>) -> Vec
         found.push(Finding {
             kind: FindingKind::Missing,
             fails: true,
+            location: was.clone(),
+            said: format!("its code is not found (ID {}); {docs}", node.id),
+            fix_lines: vec![
+                format!("vnoc relink {} <node>", node.id),
+                "or remove it in VS Code if the code is gone".to_string(),
+            ],
             path: below(prefix, &node.path),
             message: format!(
                 "documented code not found: was {was} · ID {} · {docs}",
@@ -187,6 +234,13 @@ pub fn check(index: &Index, project: &Project, only: Option<&[RepoPath]>) -> Vec
         found.push(Finding {
             kind: FindingKind::LostMarker,
             fails: true,
+            location: location.clone(),
+            said: format!(
+                "its {} is gone (ID {}); found by its name only",
+                marker_words(lost.kind),
+                lost.id
+            ),
+            fix_lines: vec![format!("vnoc repair {location}")],
             path: below(prefix, &lost.path),
             message: format!(
                 "the {} of {location} is gone (ID {}): the node was found by its name only",
@@ -211,6 +265,12 @@ pub fn check(index: &Index, project: &Project, only: Option<&[RepoPath]>) -> Vec
         found.push(Finding {
             kind: FindingKind::Unread,
             fails: false,
+            location: below(prefix, &failed.path),
+            said: format!("the driver could not read it: {}", first_line(&failed.error)),
+            fix_lines: vec![
+                "fix the file; V-NOC reads it again when it parses".to_string(),
+                "(a warning: it does not fail the check)".to_string(),
+            ],
             path: below(prefix, &failed.path),
             message: format!("the driver could not read it: {}", first_line(&failed.error)),
             fix: "fix the file; V-NOC reads it again when it parses (a warning: it does not fail the check)".to_string(),

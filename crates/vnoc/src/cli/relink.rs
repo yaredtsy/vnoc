@@ -13,7 +13,7 @@ use super::nodes::{Lookup, NodeError, Target, expand, id_of, kind_word};
 use super::out::{self, Render};
 use super::project::open_from;
 use super::show::head_line;
-use super::write::{attach_failure, label, marker_words, take_lock};
+use super::write::{attach_failure, continued, label, marker_words, take_lock};
 use super::{Failure, Global, style};
 use crate::identity::{
     EditSink, Env, MarkerWritten, RelinkError, WriteIdError, relink as relink_flow,
@@ -71,11 +71,12 @@ struct RelinkedText {
 
 impl Render for Relinked {
     fn text(&self, _quiet: bool) -> String {
+        // the ID and where the code was are two facts: a row each
         let mut text = format!(
-            "{}{}  {} {}\n",
+            "{}{}\n{}{}\n",
             label("relinked"),
             self.id,
-            style::paint(style::dim(), "was"),
+            label("was"),
             style::paint(style::location(), &self.was)
         );
         text.push_str(&format!(
@@ -87,14 +88,10 @@ impl Render for Relinked {
             text.push_str(&format!("{}{file}\n", label("created")));
         }
         if let Some((file, what)) = &self.text.marker {
-            text.push_str(&format!(
-                "{}{file}   {}\n",
-                label("changed"),
-                style::paint(
-                    style::dim(),
-                    format!("({what}; read the file again before you edit it)")
-                )
-            ));
+            text.push_str(&format!("{}{file}\n", label("changed")));
+            text.push_str(&continued(&format!(
+                "{what}; read the file again before you edit it"
+            )));
         }
         if let Some(notice) = &self.notice {
             text.push_str(&format!("{}{notice}\n", label("notice")));
@@ -418,10 +415,10 @@ pub async fn repair(global: &Global, args: &RepairArgs) -> Result<(), Failure> {
         match &row.outcome {
             Outcome::Repaired { line, what } => {
                 answer.rows.push(format!(
-                    "{}{}  {}",
+                    "{}{}\n{}",
                     label("repaired"),
                     style::paint(style::location(), &row.todo.location),
-                    style::paint(style::dim(), format!("({what})"))
+                    continued(what).trim_end_matches('\n')
                 ));
                 answer.repaired.push(Repaired {
                     location: row.todo.location.clone(),
@@ -432,10 +429,10 @@ pub async fn repair(global: &Global, args: &RepairArgs) -> Result<(), Failure> {
             Outcome::Left { reason } => {
                 named_left |= row.todo.named;
                 answer.rows.push(format!(
-                    "{}{}  {}",
+                    "{}{}\n{}",
                     label("left"),
                     style::paint(style::location(), &row.todo.location),
-                    reason
+                    continued(reason).trim_end_matches('\n')
                 ));
                 answer.left.push(Left {
                     location: row.todo.location.clone(),

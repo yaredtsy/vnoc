@@ -10,7 +10,6 @@ use vnoc_domain::{NodeId, RepoPath};
 use super::nodes::{Doc, Lookup};
 use super::out::{self, Render};
 use super::project::{open_from, open_without_driver};
-use super::show::missing_line;
 use super::{Failure, Format, Global, style};
 use crate::check::{Finding, FindingKind, check};
 use crate::project::Project;
@@ -82,25 +81,43 @@ impl Render for MissingAnswer {
         if self.missing.is_empty() {
             return "nothing is Missing\n".to_string();
         }
-        let mut text = String::new();
-        for row in &self.missing {
-            text.push_str(&format!(
-                "{}\n",
-                missing_line(&row.was, &row.node_id, row.docs.len())
-            ));
-            if !quiet {
-                let hints = format!(
-                    "→ vnoc relink {} <node>\n  or remove it in VS Code if the code is gone",
-                    row.node_id
-                );
-                for (n, hint) in hints.lines().enumerate() {
-                    let indent = if n == 0 { "  " } else { "" };
-                    text.push_str(&format!("{indent}{}\n", style::paint(style::dim(), hint)));
-                }
-            }
-        }
-        text
+        let blocks: Vec<String> = self
+            .missing
+            .iter()
+            .map(|row| {
+                let docs = row.docs.len();
+                finding_block(
+                    &style::paint(style::alert(), "missing"),
+                    &row.was,
+                    &format!(
+                        "its code is not found (ID {}); {docs} doc{}",
+                        row.node_id,
+                        if docs == 1 { "" } else { "s" }
+                    ),
+                    &[
+                        format!("vnoc relink {} <node>", row.node_id),
+                        "or remove it in VS Code if the code is gone".to_string(),
+                    ],
+                    quiet,
+                )
+            })
+            .collect();
+        blocks.join("\n")
     }
+}
+
+/// One finding as text, one fact per line (03 §11): the row (the kind in words, the location), the sentence under it, and the fix (`→`, then a line
+/// that carries on, indented under the first word). A fix is a hint: `--quiet` leaves it out.
+fn finding_block(kind: &str, location: &str, said: &str, fix: &[String], quiet: bool) -> String {
+    let mut text = format!("{kind}  {}\n", style::paint(style::location(), location));
+    text.push_str(&format!("  {said}\n"));
+    if !quiet {
+        for (n, line) in fix.iter().enumerate() {
+            let lead = if n == 0 { "  → " } else { "    " };
+            text.push_str(&format!("{lead}{}\n", style::paint(style::dim(), line)));
+        }
+    }
+    text
 }
 
 pub async fn run(global: &Global, args: &super::args::CheckArgs) -> Result<(), Failure> {
@@ -251,30 +268,34 @@ impl Render for CheckAnswer {
                 "nothing to check (no .vnoc/ here)\n".to_string()
             };
         }
-        let mut text = String::new();
-        for finding in &self.findings {
-            // a warning's kind word is yellow, as a warning is; the others are dim like every kind word
-            let kind = style::paint(
-                if finding.kind == FindingKind::Unread {
-                    style::warn()
-                } else {
-                    style::dim()
-                },
-                finding.kind.word(),
-            );
-            text.push_str(&format!(
-                "{kind}  {}  {}\n",
-                style::paint(style::location(), &finding.path),
-                finding.message
-            ));
-            if !quiet {
-                text.push_str(&format!(
-                    "  {}\n",
-                    style::paint(style::dim(), format!("→ {}", finding.fix))
-                ));
-            }
-        }
+        // each finding is a block of its own, a blank line between two; the summary follows after one blank line (and stands alone when there is none)
+        let blocks: Vec<String> = self
+            .findings
+            .iter()
+            .map(|finding| {
+                // a warning's kind word is yellow, as a warning is; the others are dim like every kind word
+                let kind = style::paint(
+                    if finding.kind == FindingKind::Unread {
+                        style::warn()
+                    } else {
+                        style::dim()
+                    },
+                    finding.kind.label(),
+                );
+                finding_block(
+                    &kind,
+                    &finding.location,
+                    &finding.said,
+                    &finding.fix_lines,
+                    quiet,
+                )
+            })
+            .collect();
+        let mut text = blocks.join("\n");
         if !quiet {
+            if !text.is_empty() {
+                text.push('\n');
+            }
             text.push_str(&format!("{}\n", summary(self.failing, self.warnings)));
         }
         text

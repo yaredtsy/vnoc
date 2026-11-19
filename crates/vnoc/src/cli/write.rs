@@ -45,6 +45,15 @@ pub(super) fn label(word: &str) -> String {
     style::paint(style::dim(), format!("{word:<13}"))
 }
 
+/// A line that carries on the row above it, under the value (03 §11, one fact per line): a sentence about a path, or the arrow that says what to do with it. Dim.
+pub(super) fn continued(sentence: &str) -> String {
+    format!(
+        "{}{}\n",
+        " ".repeat(13),
+        style::paint(style::dim(), sentence)
+    )
+}
+
 // -------------------------------------------------------------------------------------------------------------------------------- init
 
 #[derive(Serialize)]
@@ -69,16 +78,21 @@ impl Render for Init {
             "no ID: lines are written; notes are attached by name"
         };
         if self.already {
-            return format!("{} already set up: {} ({ids})\n", ".vnoc/", self.config);
+            return format!(
+                "{}.vnoc/ is already set up\n{}{}\n{}{ids}\n",
+                label("already"),
+                label("in"),
+                self.config,
+                label("ids")
+            );
         }
         let mut text = String::new();
-        for (at, path) in self.created.iter().enumerate() {
-            let note = if !quiet && at + 1 == self.created.len() {
-                format!("   {}", style::paint(style::dim(), format!("({ids})")))
-            } else {
-                String::new()
-            };
-            text.push_str(&format!("{}{path}{note}\n", label("created")));
+        for path in &self.created {
+            text.push_str(&format!("{}{path}\n", label("created")));
+        }
+        // what the project does from now on: a hint about the first attach, so `--quiet` leaves it out
+        if !quiet {
+            text.push_str(&format!("{}{ids}\n", label("ids")));
         }
         text
     }
@@ -155,24 +169,19 @@ struct Lines {
 impl Render for DocNew {
     fn text(&self, quiet: bool) -> String {
         let mut text = format!("{}{}\n", label("attached to"), self.text.head);
-        let arrow = if self.text.empty && !quiet {
-            format!("   {}", style::paint(style::dim(), "← write the note here"))
-        } else {
-            String::new()
-        };
-        text.push_str(&format!("{}{}{arrow}\n", label("created"), self.doc));
+        // the path is the one thing the agent needs, on a row of its own; what to do with it is the line under it (a long path and an arrow on one row wrap)
+        text.push_str(&format!("{}{}\n", label("created"), self.doc));
+        if self.text.empty && !quiet {
+            text.push_str(&continued("← write the note here"));
+        }
         if let Some(folder_marker) = &self.text.folder_marker {
             text.push_str(&format!("{}{folder_marker}\n", label("created")));
         }
         if let Some((file, what)) = &self.text.marker {
-            text.push_str(&format!(
-                "{}{file}   {}\n",
-                label("changed"),
-                style::paint(
-                    style::dim(),
-                    format!("({what}; read the file again before you edit it)")
-                )
-            ));
+            text.push_str(&format!("{}{file}\n", label("changed")));
+            text.push_str(&continued(&format!(
+                "{what}; read the file again before you edit it"
+            )));
         }
         if let Some(notice) = &self.notice {
             text.push_str(&format!("{}{notice}\n", label("notice")));

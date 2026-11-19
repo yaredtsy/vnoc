@@ -170,11 +170,13 @@ struct TagEdit {
 
 impl Render for TagEdit {
     fn text(&self, _quiet: bool) -> String {
+        // the tags are the fact; the doc's path, which is long, is a row of its own after them (03 §11)
         let mut text = format!(
-            "{}{}  {}\n",
-            label("tags"),
-            self.doc,
-            style::paint(style::dim(), format!("[{}]", self.tags.join(", ")))
+            "{}{}\n{}{}\n",
+            label("tagged"),
+            style::paint(style::dim(), format!("[{}]", self.tags.join(", "))),
+            label("in"),
+            self.doc
         );
         for tag in &self.unchanged {
             text.push_str(&format!("already {} \"{}\"\n", tag.state, tag.tag));
