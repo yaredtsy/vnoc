@@ -173,6 +173,16 @@ system allows it.
 
 - The extension's folder name holds its version, so **on every activation**, if the link exists and points into another version's folder, it is
   moved to this one.
+- *(Settled 2026-11-20, before A12.)* **What the link points to:** the core binary the extension itself runs (`core.ts`'s choice: the
+  `vnoc.server.path` setting, else `<extension>/bin/vnoc` installed, else the repository's `target/debug/vnoc` in a development window),
+  as a resolved absolute path. **Who moves it:** only an extension in **production** mode (`ExtensionMode.Production`), and only when the
+  link points into **another version's V-NOC extension folder** (`…/<publisher>.vnoc-<version>/bin/vnoc`). A development window (F5) or the
+  test suite never moves a link it did not make in that session, and a link that points anywhere else is the user's and is never touched
+  (install says so and stops). So a dev window and an installed V-NOC never fight over `~/.local/bin/vnoc`.
+- **Where:** `~/.local/bin` (macOS, Linux) or `%LOCALAPPDATA%\vnoc\bin` (Windows); `VNOC_CLI_DIR` overrides it, for the tests and for
+  anyone who keeps tools elsewhere.
+- In a development window the driver is not next to `target/debug/vnoc` (it is in `drivers/python/target/debug/`), so the linked command
+  needs `VNOC_DRIVER` there; install says so in that mode only.
 - *V-NOC: Uninstall `vnoc` Command from PATH* removes what the install made, and nothing else.
 - The driver comes along by C8: the binary looks next to its real path.
 - Sets the context key `vnoc.cliInstalled` (a walkthrough step completes on it).
@@ -183,6 +193,10 @@ multi-select list with the detected ones ticked, runs `vnoc agent install --agen
 the binary's: the extension only draws the two questions. It **offers itself once**, after
 the first doc is attached in a project that has an `AGENTS.md`, `CLAUDE.md`, `.claude/` or `.agents/` (someone here uses an agent); never
 silently, never twice. Sets `vnoc.agentsSetUp`.
+*(Settled 2026-11-20, before A12.)* "Once" is per workspace (`workspaceState`), and the offer is skipped when `vnoc agent status --json`
+already finds V-NOC's files. `vnoc.agentsSetUp` is set on activation from the same status. The command takes an optional argument
+`{ agents: string[], confirm: true }` that skips the two questions: for the window suite, like the other commands that take one. It runs the
+binary the extension runs, in the workspace's git root; a failure shows the binary's own error line.
 
 ## 4. Permissions
 
