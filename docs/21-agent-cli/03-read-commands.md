@@ -430,7 +430,12 @@ Exit `1` if any of these, each as one line with the file and the fix:
 | a file the driver could not read | `Index::failed` | a warning only: it does not fail the check (a syntax error mid-edit is normal) |
 
 The first, third and fourth are what the NEEDS ATTENTION view and the Problems lines show, from the same functions, so CI and the editor agree.
-The second is new to both: the extension shows it as a link icon, not as a problem **[decide in A6]** whether NEEDS ATTENTION lists it too.
+The second is new to both: the extension shows it as a link icon, not as a problem. **Decided 2026-11-19, before A6: NEEDS ATTENTION lists it
+too**, as a fourth group, **ID lost**. `check` fails CI on it, and a person must see in the editor what failed CI (the rule above). Each row
+is the node (icon, `name  path`); clicking it reveals the node as a Missing row's click does; its one action is the existing *Write ID*
+(`vnoc.writeId`), which puts the line back. The core sends it as a protocol **addition**: `StructureResult.lost_markers: [LostMarker]`,
+`LostMarker { id, key, kind, path, qualname }` (snake_case, `key` = the tree id `vnoc.writeId` takes); an extension that does not know the
+field ignores it, and the extension reads a missing field as `[]`. Built in A6b, its own commit.
 
 `--changed` keeps only the problems in files that differ from `HEAD` (`git status --porcelain`): fast enough to run after every edit, and what a
 hook would call ([`08`](08-mcp-and-plugins.md)). With no git, it is the full check.

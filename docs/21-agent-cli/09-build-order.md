@@ -146,8 +146,8 @@ Commit: `cli A5: find and grep`.
 
 Tests: `calls` on a sample function, depth 1 and 2; on the sample `missing` lists the one, `check` exits `1` and names the Missing node **and the
 lost marker**, each with its fix; a clean copy exits `0`; a file with a syntax error is a warning and still `0`; `--changed` with only an
-unrelated file changed is `0`. **[decide]** here whether NEEDS ATTENTION lists lost markers too (then `structure` carries them: a protocol
-addition), and write it into 03 §9.
+unrelated file changed is `0`. NEEDS ATTENTION lists lost markers too (decided 2026-11-19, 03 §9): **A6b**, its own commit, `structure` carries them
+(`lost_markers`, a protocol addition), the extension shows a fourth group with *Write ID* on each row; a window test.
 
 Commit: `cli A6: calls, missing, check`. **Stop point:** a read-only command; `vnoc check` works in CI. Full test run.
 
