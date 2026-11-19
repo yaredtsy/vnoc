@@ -163,6 +163,28 @@ test("a call card is a card of the callee: its kind, its range and docs from the
   assert.deepEqual([print.key, print.range, print.line, print.call!.look.unknown], [null, null, null, true], "a callee the project does not know: no code, no line");
 });
 
+test("focused on a function, a call card still finds its callee in the whole project: range, docs, link and inClass (the callee is outside the focus)", () => {
+  const link = { state: "linked" } as unknown as TreeNode["link"];
+  const run = { ...withRange(n("K.run", "function"), 40), docs: 3, link };
+  const project = n("/", "folder", [
+    n("app.py", "file", [withRange(n("checkout", "function"), 1)]),
+    n("lib.py", "file", [n("K", "class", [run])]),
+  ]);
+  const focused = project.children[0].children[0]; // checkout: lib.py and K are not in what is drawn
+  const tree: Calls = { state: "known", children: [call("K.run", "run", { path: "lib.py" }), call("nope", "nope")] };
+  const l = layout(focused, new Set(), new Set(), callsTable({ checkout: tree }), new Set(), project);
+  const found = l.nodes.find((p) => p.id === callId("checkout", ["K.run"]))!;
+  assert.deepEqual(found.range, range(40));
+  assert.deepEqual([found.docs, found.link, found.inClass, found.line], [3, link, true, 41]);
+  // a key that is in neither tree has none of it
+  const lost = l.nodes.find((p) => p.id === callId("checkout", ["nope"]))!;
+  assert.deepEqual([lost.range, lost.docs, lost.link, lost.inClass], [null, 0, null, false]);
+  // without the whole tree the index is the drawn root's, as before
+  const alone = layout(focused, new Set(), new Set(), callsTable({ checkout: tree })).nodes.find((p) => p.id === callId("checkout", ["K.run"]))!;
+  assert.deepEqual([alone.range, alone.docs, alone.link, alone.inClass], [null, 0, null, false]);
+  assert.deepEqual(l.nodes.map((p) => p.id), ["checkout", callId("checkout", ["K.run"]), callId("checkout", ["nope"])], "what is drawn is the focused root and its calls, not the whole project");
+});
+
 test("opening a call card draws what its callee calls, one level deeper, with its own call id", () => {
   const table = { checkout: checkoutTree, [Corder]: known(orderCall.children) };
   const l = layout(app, new Set(["app.py", "checkout", Corder]), new Set(), callsTable(table));

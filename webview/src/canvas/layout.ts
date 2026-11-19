@@ -153,10 +153,11 @@ export function layout(
   codeOpen: ReadonlySet<string> = new Set(),
   callsOf: (id: string) => Calls = unknownCalls,
   sitesOpen: ReadonlySet<string> = new Set(),
+  whole: TreeNode = root,
 ): Layout {
-  const drawn = build(MAX_CARDS, root, expanded, codeOpen, callsOf, sitesOpen);
+  const drawn = build(MAX_CARDS, root, expanded, codeOpen, callsOf, sitesOpen, whole);
   // when the budget held something back, a second walk with none says how many cards there would have been
-  return { ...drawn, total: drawn.capped ? build(Infinity, root, expanded, codeOpen, callsOf, sitesOpen).nodes.length : drawn.nodes.length };
+  return { ...drawn, total: drawn.capped ? build(Infinity, root, expanded, codeOpen, callsOf, sitesOpen, whole).nodes.length : drawn.nodes.length };
 }
 
 /**
@@ -164,7 +165,7 @@ export function layout(
  * calls, together: a family) do not all fit, that card is drawn closed with its `+N`, and so is every open card after it. The root and its whole family
  * are always drawn, past the budget if they must be: they count against it, so everything below them stays closed (03 §6.1).
  */
-function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, codeOpen: ReadonlySet<string>, callsOf: (id: string) => Calls, sitesOpen: ReadonlySet<string>): Omit<Layout, "total"> & { capped: boolean } {
+function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, codeOpen: ReadonlySet<string>, callsOf: (id: string) => Calls, sitesOpen: ReadonlySet<string>, whole: TreeNode): Omit<Layout, "total"> & { capped: boolean } {
   const nodes: Placed[] = [];
   let capped = false;
   /** The cards drawn or promised: the root, and every family accepted so far (its cards are drawn when the walk gets to them). */
@@ -190,13 +191,13 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
     y += cardHeight(p) + (ROW_H - CARD_H);
   };
 
-  // every structure node with the kind of its parent: a call card shows its callee's data
+  // every structure node of the whole project (`whole`, not only what is drawn: a callee outside the focus has its range, docs and link too) with the kind of its parent: a call card shows its callee's data
   const index = new Map<string, { node: TreeNode; parentKind: Kind | null }>();
   const collect = (n: TreeNode, parentKind: Kind | null) => {
     index.set(n.id, { node: n, parentKind });
     for (const c of n.children) collect(c, n.kind);
   };
-  collect(root, null);
+  collect(whole, null);
 
   const walk = (n: TreeNode, depth: number, parentId: string | null, parentKind: Kind | null) => {
     // classes and functions have a range; a file's code is all of it; a folder has none
