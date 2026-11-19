@@ -145,8 +145,9 @@ done     = "A plan that shipped."
   before anyone writes). The tags themselves live only in each doc's frontmatter (`tags:`): this file never says which docs carry what.
 - Keys are tags as docs write them: lower case, letters, digits, `-`. A key that is not a valid tag, or a value that is not a string, is
   reported once under Problems (rule 3) and skipped; the rest of the file is read.
-- V-NOC **reads** it and never writes it: no command creates or edits it, and `vnoc init` writes no starter tags (V-NOC gives no tag a
-  meaning). An agent is told to read it, not to change it ([`../21-agent-cli/04-write-commands.md`](../21-agent-cli/04-write-commands.md) §4).
+- People write it, by hand or with **`vnoc tag describe <tag> "<text>"`** (added 2026-11-20), which changes one key and keeps everything
+  else in the file (comments, order). `vnoc init` writes no starter tags (V-NOC gives no tag a meaning). An agent is told to read it, not to
+  change it ([`../21-agent-cli/04-write-commands.md`](../21-agent-cli/04-write-commands.md) §4).
 - Its own file, not a table in `vnoc.toml`: settings and a vocabulary change at different rates, and two files conflict less in a merge.
 - An addition to the format (§5 rule 1): a V-NOC that does not know the file ignores it. `format` stays `1`.
 

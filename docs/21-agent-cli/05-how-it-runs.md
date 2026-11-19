@@ -24,7 +24,10 @@ library   Project · DriverHost · index::refresh · Index · UserData · identi
 - `cli/` lives in the library crate (`crates/vnoc/src/cli/`), so the integration tests can call `cli::run` as well as run the binary.
 - **The extension starts the core as `vnoc --stdio`**, not with no arguments: `vscode-languageclient` appends `--stdio` for an executable
   started with `TransportKind.stdio` (`extension/src/core.ts`; checked 2026-11-18 in `vscode-languageclient` 9.0.1, `lib/node/main.js`).
-  So `main.rs` decides before clap: the arguments are empty, `[--stdio]`, `[serve]` or `[serve, --stdio]` → the main loop. Anything else
+  So `main.rs` decides before clap: the arguments are empty, `[--stdio]`, `[serve]` or `[serve, --stdio]` → the main loop.
+  *(Changed 2026-11-20, A11c: the user ran bare `vnoc` in a terminal, it waited silently, and Enter crashed it with `Invalid header: "\n"`.)*
+  **Empty arguments start the server only when standard input is not a terminal** (the extension always pipes it). In a terminal, bare
+  `vnoc` prints the short help and exits `0`. `--stdio` and `serve` start the server whatever stdin is. Anything else
   goes to clap. `--stdio` is not a clap flag and does not show in `--help`. A later release of the extension passes `serve`; all four work
   from A2 on, and an old extension with a new core keeps working. `lifecycle.rs` starts the core with no arguments, the window suite with
   `--stdio`: A2 tests both.

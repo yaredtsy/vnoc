@@ -286,6 +286,14 @@ text and deletes nothing it did not write; `--global` writes no rules. By hand: 
 
 Commit: `cli A11: vnoc agent install writes the skill and the rules`.
 
+### A11c Two things the user hit by hand (added 2026-11-20)
+
+Bare `vnoc` in a terminal prints the help instead of waiting as a server (05 §1); `vnoc tag describe` writes `.vnoc/tags.toml` (04 §4).
+Tests: the start decision as a table (args × stdin is a terminal); lifecycle.rs (no arguments, piped) unedited; `vnoc` with no arguments
+and stdin a terminal (a pty, or the decision function) prints help, exit 0; `tag describe` creates the file, keeps a hand-written comment
+and key order, `--clear`, a bad tag, a line break, no `.vnoc/`; `vnoc tags` shows the hint when nothing is described. Commit:
+`cli A11c: bare vnoc in a terminal prints help; vnoc tag describe`.
+
 ### A12 The extension's two commands
 
 | Files | What |

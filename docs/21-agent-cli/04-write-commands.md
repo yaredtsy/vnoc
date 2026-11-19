@@ -285,12 +285,19 @@ tags: [plan, billing]           tags: [billing, done]
 - Output: `tags  <doc path>  [billing, done]`, plus the new-tag notice if any. JSON: `{schema, command: "doc tag", doc, tags, added,
   removed, unchanged, notice}`.
 
-**What is not built:** renaming a tag across the project (a bulk write: C3); a command that writes `tags.toml` (a project's vocabulary is
-the team's decision, made in a pull request); a whitelist (a refused tag would stop an agent mid-task for a word). If a team asks for strict
+**`vnoc tag describe <tag> "<text>"` / `vnoc tag describe <tag> --clear`** *(added 2026-11-20, A11c: the user found no way to describe a
+tag; hand-editing a file nobody is told about is not a way)*: writes one key of `.vnoc/tags.toml`, creating the file if missing, with
+`toml_edit` so a person's comments, order and other keys stay as they are; a new key is appended. Atomic, under the write lock, refused in a
+project with no `.vnoc/`. A bad tag → `2`. A description is one line (a line break → `2`). Output `described  plan  "<text>"` and `in
+.vnoc/tags.toml`; `--clear` removes the key (`not described` when it had none, exit `0`). It is a **person's** command: the skill tells agents
+not to run it unless the user asked, and `vnoc tag` is in the write list (01 §3). `vnoc tags` ends with a dim hint when no tag has a
+description: `→ describe one: vnoc tag describe <tag> "<what it means>"` (`--quiet` drops it).
+
+**What is not built:** renaming a tag across the project (a bulk write: C3); a whitelist (a refused tag would stop an agent mid-task for a word). If a team asks for strict
 tags, an optional `strict = true` in `tags.toml` is where it would go.
 
 **In the skill (A10):** before tagging, run `vnoc tags` and reuse a tag that fits, preferring described ones; never invent a synonym of
-one that exists; move a plan's tag when its state changes (`vnoc doc tag … --add done --remove plan`); read `tags.toml`, do not edit it.
+one that exists; move a plan's tag when its state changes (`vnoc doc tag … --add done --remove plan`); read `tags.toml`, do not change it (`vnoc tag describe` is the user's).
 
 **Later, not in 0.5:** the extension shows descriptions on hover of a tag in the sidebar's doc rows, and gets a `vnoc/tags` request (a thin
 wrapper over the same library function, C2) when it has a screen that lists or edits tags.
