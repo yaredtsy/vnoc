@@ -46,6 +46,9 @@ export class Core {
   missing: MissingNode[] = [];
   /** The absolute path of the git root. Node ids and the paths in `vnoc/attach` start there. */
   gitRoot: string | undefined;
+  /** The core and the driver this extension runs (`binary()`'s choice), once `ready`: the command line is made from the same files (07 §3). */
+  binaryPath: string | undefined;
+  driverPath: string | undefined;
 
   /**
    * Which run of the core this is: 1 for the first, one more each time it starts again (a crash, or `restart`). A restarted core counts the index
@@ -93,6 +96,8 @@ export class Core {
     const folder = vscode.workspace.workspaceFolders?.[0];
     const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"], "The V-NOC core", "build it: `cargo build -p vnoc`");
     const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"], "The Python driver", "build it: `cargo build` in drivers/python");
+    this.binaryPath = path.resolve(core);
+    this.driverPath = path.resolve(driver);
     // the client's own handler decides when to restart; when it gives up, the user hears it once, from us, with buttons (its own message is only logged)
     let defaults: ErrorHandler | undefined;
     const errorHandler: ErrorHandler = {

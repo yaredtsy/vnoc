@@ -19,6 +19,7 @@ import type { Surfaces } from "./surfaces";
 import { type ContextId, type ContextState, MAIN } from "@vnoc/shared/session.ts";
 import type { SessionStore } from "./session";
 import { attachMissingHere, relinkMissing } from "./relink";
+import type { CliSetup } from "./cliSetup";
 import { writeId } from "./writeId";
 import { emptyTrash, removeAllMissing, removeMissing, restoreRemoved } from "./trash";
 import { absolute, selectionOf } from "./files";
@@ -68,6 +69,8 @@ export class Commands {
     private readonly draftDocs: DraftDocs,
     /** a doc's path is checked here (§8): inside `<git root>/.vnoc/nodes/`, a `.md` */
     private readonly docs: Docs,
+    /** the command in PATH, the coding agents, and the offer made after a first attach (07 §3) */
+    private readonly cli: CliSetup,
   ) {}
 
   private readonly request = <T>(method: string, params?: object) => this.core.request<T>(method, params);
@@ -162,6 +165,10 @@ export class Commands {
         await this.addDocTo(node.id);
       }),
       on("vnoc.refreshStructure", () => this.core.notify("vnoc/rebuild")), // the way out if the tree ever does not follow the code
+      // the command line (07 §3): the palette only. Each answers what it did, for the window suite; `setUpAgents` takes `{ agents, confirm: true }` to skip its two questions
+      on("vnoc.installCli", () => this.cli.installCli()),
+      on("vnoc.uninstallCli", () => this.cli.uninstallCli()),
+      on("vnoc.setUpAgents", (arg) => this.cli.setUpAgents(arg)),
       this.followCursor(),
     ];
   }
@@ -410,7 +417,10 @@ export class Commands {
     const root = this.core.gitRoot ?? structure!.git_root;
     const node = findNode(this.core.tree!, key);
     if (!node || node.id === "/") throw new Error("That node is not in the structure any more.");
-    return addDoc((method, params) => this.core.request(method, params), root, node, node.docs);
+    const added = await addDoc((method, params) => this.core.request(method, params), root, node, node.docs);
+    // the first attach in a workspace is when to offer the agents' files (07 §3): a favour, not awaited, and it never fails the attach
+    if (added) void this.cli.offerAfterFirstAttach();
+    return added;
   }
 
   /**

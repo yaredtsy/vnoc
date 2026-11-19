@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "command": "agent install",
+  "dry_run": false,
+  "root": "/path/to/project",
+  "agents": [
+    "claude",
+    "codex"
+  ],
+  "actions": [
+    {
+      "part": "skill",
+      "path": ".claude/skills/vnoc/SKILL.md",
+      "change": "create",
+      "agents": [
+        "claude"
+      ],
+      "readers": [
+        "claude",
+        "cline"
+      ],
+      "why": null
+    },
+    {
+      "part": "skill",
+      "path": ".agents/skills/vnoc/SKILL.md",
+      "change": "create",
+      "agents": [
+        "codex"
+      ],
+      "readers": [
+        "codex",
+        "cursor",
+        "pi",
+        "opencode",
+        "copilot",
+        "amp",
+        "goose",
+        "windsurf",
+        "gemini",
+        "other"
+      ],
+      "why": null
+    },
+    {
+      "part": "rules",
+      "path": "AGENTS.md",
+      "change": "add_block",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "readers": [
+        "claude",
+        "cline",
+        "codex",
+        "cursor",
+        "pi",
+        "opencode",
+        "copilot",
+        "amp",
+        "goose",
+        "windsurf",
+        "other"
+      ],
+      "why": null
+    },
+    {
+      "part": "import",
+      "path": "CLAUDE.md",
+      "change": "create",
+      "agents": [
+        "claude"
+      ],
+      "readers": [
+        "claude"
+      ],
+      "why": null
+    }
+  ],
+  "permissions": [
+    {
+      "agent": "claude",
+      "text": "to let Claude Code run V-NOC's read commands without asking, add to .claude/settings.json:\n  \"permissions\": { \"allow\": [\"Bash(vnoc status *)\", \"Bash(vnoc show *)\", \"Bash(vnoc code *)\", \"Bash(vnoc doc list *)\", \"Bash(vnoc doc read *)\",\n                             \"Bash(vnoc doc path *)\", \"Bash(vnoc tree *)\", \"Bash(vnoc find *)\", \"Bash(vnoc grep *)\", \"Bash(vnoc calls *)\",\n                             \"Bash(vnoc missing *)\", \"Bash(vnoc check *)\", \"Bash(vnoc tags *)\", \"Bash(vnoc guide *)\",\n                             \"Bash(vnoc skill *)\"] }"
+    },
+    {
+      "agent": "codex",
+      "text": "to let Codex run them without asking, add to ~/.codex/rules/default.rules:\n  prefix_rule(pattern = [\"vnoc\", [\"status\", \"show\", \"code\", \"tree\", \"find\", \"grep\", \"calls\", \"missing\", \"check\", \"tags\", \"guide\", \"skill\"]], decision = \"allow\")\n  prefix_rule(pattern = [\"vnoc\", \"doc\", [\"list\", \"read\", \"path\"]], decision = \"allow\")"
+    }
+  ]
+}

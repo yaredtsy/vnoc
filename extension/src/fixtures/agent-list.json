@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "command": "agent list",
+  "agents": [
+    {
+      "name": "claude",
+      "detected": false,
+      "skill": ".claude/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "cline",
+      "detected": false,
+      "skill": ".claude/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "codex",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "cursor",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "pi",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "opencode",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "copilot",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "amp",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "goose",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "windsurf",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    },
+    {
+      "name": "gemini",
+      "detected": false,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "GEMINI.md"
+    },
+    {
+      "name": "other",
+      "detected": true,
+      "skill": ".agents/skills/vnoc/SKILL.md",
+      "rules": "AGENTS.md"
+    }
+  ]
+}
