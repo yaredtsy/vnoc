@@ -166,9 +166,11 @@ Empty Trash ("V-NOC: Empty Trash")
 
 ### The "Needs Attention" view
 
-One native view, `vnoc.attention`, under Structure, with three groups. `when: vnoc.hasAttention`: it is there only when something is in it.
-The third group, **Not read**, comes from the structure the extension already holds (`structure.failed`, `structure.truncated`), not from the
+One native view, `vnoc.attention`, under Structure, with four groups. `when: vnoc.hasAttention`: it is there only when something is in it.
+**Not read** comes from the structure the extension already holds (`structure.failed`, `structure.truncated`), not from the
 core's attention list; `hasAttention` counts it too. So the canvas bar's `⚠` always lands on a view that lists why it is shown.
+**ID lost** (added 2026-11-19, CLI plan A6b, [`21-agent-cli/03`](21-agent-cli/03-read-commands.md) §9) lists the nodes whose `node.toml` says the ID is in the
+code and whose code has none (`structure.lost_markers`): they are in the tree, found by name, and `vnoc check` fails on them, so the editor shows what failed CI.
 
 ```
 NEEDS ATTENTION
@@ -177,6 +179,8 @@ NEEDS ATTENTION
 │   └── ▭ src/billing        folder · 1 doc
 ├── Problems (1)
 │   └── ⚠ this ID is also at src/copy.py::parse_order
+├── ID lost (1)                                      added 2026-11-19 (CLI A6b)
+│   └── ƒ rate_for           billing/tax.py
 └── Not read (2)                                     added 2026-11-13 (16-ui-redesign 02 §3 #4)
     ├── ⚠ app/legacy.py      not UTF-8
     └── ⚠ too many files: the structure stops at 10,000
@@ -186,6 +190,7 @@ NEEDS ATTENTION
 |---|---|---|
 | Missing | opens its docs: the docs tab pinned to the ID (`vnoc/docs` takes any ID), titled with the stored name | Relink… · Remove… · Open Docs |
 | Problem | goes to the place: the other copy for a duplicate, the broken file for a broken file. When `file` is a folder, reveal it in the Explorer; do not open it as a document | — |
+| ID lost | the sidebar's click on that node (the code, or the canvas, as `vnoc.sidebar.click` says) | **Write ID** (hover button and menu; puts the `ID:` line back). Tooltip: *"node.toml says the ID is in the code, and the code has none: V-NOC found this node by its name. Write ID puts the line back."* |
 | Not read: a file | opens the file (the reason is the row's description; the full error is its tooltip) | — |
 | Not read: "too many files" (when `structure.truncated`) | — (tooltip: how many files were read, and that V-NOC stopped there) | — |
 | Missing (group title) | — | view title `…` menu: Remove All Missing… · Restore Removed Doc… |

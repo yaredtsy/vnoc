@@ -44,7 +44,7 @@ As built in A2 (2026-11-19), on the sample project (`crates/vnoc/tests/sample/`,
 $ vnoc status
 V-NOC 0.2.0   root /work/sample   drivers python 0.2.0 (12 files)
 3 folders · 12 files · 5 classes · 27 functions · 7 docs on 6 nodes
-missing 1 · problems 0      → vnoc check
+missing 1 · lost markers 1 · problems 0      → vnoc check
 ```
 
 - **Line 1:** the version of `vnoc`, the root (**the one absolute path any command prints**: it is the root itself; everything else is relative to
@@ -52,9 +52,10 @@ missing 1 · problems 0      → vnoc check
 - **Line 2:** the counts of `index::structure` (folders *under* the root, files, classes, functions and methods together), then the docs and the
   nodes they are on (`Index::doc_counts`; a Missing node's docs are counted). `no docs` when there are none. Singular where the count is 1
   (`1 file`, `1 class`).
-- **Line 3:** `missing N · problems N`, then `failed N` if files could not be outlined and `stopped at 20,000 files` if the scan hit its cap. The
-  hint `→ vnoc check` is there only when `missing + problems > 0`, and never with `--quiet`.
-- Still to come, not built: the **lost markers** count (A6, with `check`) and the line about the installed skill and rules (A11).
+- **Line 3:** `missing N · lost markers N · problems N`, then `failed N` if files could not be outlined and `stopped at 20,000 files` if the scan hit
+  its cap. The hint `→ vnoc check` is there only when `missing + lost markers + problems > 0`, and never with `--quiet`. *(A6, 2026-11-19: `lost markers`
+  is `Index::lost_markers().len()`, §9; the golden `status.json` gained one field, `lost_markers`.)*
+- Still to come, not built: the line about the installed skill and rules (A11).
 - Always exit `0` when it answered, whatever it found: a Missing node is a finding, not a failure of `status` (`check` is the command that exits `1`).
 - `--format` is a usage error here (exit `2`): `status prints no list; --format is for list commands`.
 
@@ -70,6 +71,7 @@ scan stopped. The one command to run when anything seems off; the walkthrough's 
   "stats": { "folders": 3, "files": 12, "classes": 5, "functions": 27 },
   "docs": { "docs": 7, "nodes": 6 },
   "missing": [ { "id": "7N1HNCPA163HHSN91HX48T9QGE", "kind": "function", "path": "api/routes.py", "qualname": "legacy_export", "docs": 1 } ],
+  "lost_markers": [ { "id": "4KF02248CHCTYAG49B0KKZ5SD7", "key": "billing/tax.py::rate_for", "kind": "function", "path": "billing/tax.py", "qualname": "rate_for" } ],
   "problems": [], "failed": [], "truncated": false }
 ```
 
@@ -79,8 +81,8 @@ started (`driver not started …` stays the text). The reason is C5: JSON only g
 next to a later list for ever. More languages (a driver saying which files it reads, the scan asking each driver) is not planned here: README §5.
 When it comes, a driver that fails is a row of the list with its error, not the whole command's exit `3`.
 
-`files` is how many files that driver outlined (the tree's files). `initialized` is whether `.vnoc/` is a folder at the git root. `missing`, `problems` and `failed` are the
-protocol's own types (`MissingNode`, `Problem`, `FailedFile`: snake_case), as `vnoc/structure` sends them.
+`files` is how many files that driver outlined (the tree's files). `initialized` is whether `.vnoc/` is a folder at the git root. `missing`, `lost_markers`, `problems` and `failed` are the
+protocol's own types (`MissingNode`, `LostMarker`, `Problem`, `FailedFile`: snake_case), as `vnoc/structure` sends them.
 
 ## 3. `show`, `code`, `doc`
 
@@ -412,10 +414,64 @@ What a function calls, merged as the canvas shows it (`calls::merge`), default d
 Callees only: the core has no callers today (`16-ui-redesign/06` §5). This is the slow command (the driver analyses the whole project): the guide
 says to ask once with the depth wanted, not level by level.
 
+```
+$ vnoc calls orders/service.py::OrderService.place
+function  orders/service.py::OrderService.place   lines 15-18
+  parse_order  orders/service.py::OrderService.parse_order
+    Line  orders/models.py::Line
+    Order  orders/models.py::Order
+
+$ vnoc calls orders/service.py::OrderService.place --depth 1
+function  orders/service.py::OrderService.place   lines 15-18
+  parse_order  orders/service.py::OrderService.parse_order
+    … (deeper: vnoc calls orders/service.py::OrderService.parse_order --depth 1)
+
+$ vnoc calls calc.py::twice                     # a function called twice, then one that calls itself
+function  calc.py::twice   lines 5-7
+  helper  calc.py::helper  ×2
+$ vnoc calls calc.py::loop --depth 3
+function  calc.py::loop   lines 10-13
+  loop  calc.py::loop  (recursive)
+  helper  calc.py::helper
+```
+
+**As built in A6 (2026-11-19).**
+
+- `cli/calls.rs` is `calls::tree_for` (the function `vnoc/callTree` answers with, so a test asks the core over LSP and the command for the same node and
+  compares the trees) and a printer. The argument is one `<node>`, resolved as `show` resolves it (the current folder first).
+- **Text:** the start's header line is the one `show` prints (`show::head_line`: kind, location, `lines A-B`, `ID …`), then each call two spaces in per
+  level: `  <name>  <location>`, then `  ×N` when it was called more than once (the merge's `call_count`), then `  (recursive)`, `  (likely)`,
+  `  (incomplete)` for those marks. A node the tree stopped at (`cut`) gets a child line `… (deeper: vnoc calls <location> --depth N)`, with the
+  depth that was asked. A function that calls nothing the driver can resolve prints `  (no calls)`. `--quiet` changes nothing here.
+- **A target the index does not have** is `  <qualname>  (outside the project)` when the driver gave it no file, and `  <name>  <path>::<qualname> (not
+  in the index)` when it gave a file the index does not read (an ignored one). The second is not in the plan; one sentence for both would say a
+  file in the project is outside it. **Not exercised end to end:** the Python driver does not return standard-library targets, so no sample call
+  reaches either; the rows are unit-tested.
+- **`--depth N`:** 1 to 32 (`calls::DEPTH_CAP`), default 2. clap refuses `0`, `33` and `x` as a usage error, exit `2`.
+- **Errors:** a file, a folder or a Missing node: exit `2`, `calls start at a function or a class: orders/service.py is a file` (`… is a folder`,
+  `… is Missing (its code is gone)`); a name that is nowhere: `show`'s error with its hint. A driver without `callTree`: exit `3`. The driver
+  refusing the request: exit `2` with its words. With `--json` the `2` is a value on standard output, `{ "schema": 1, "command": "calls", "error": { "why", "message" } }`.
+- **`--json`:** `{ schema, command: "calls", depth, revision, root }`: `revision` and `root` are the protocol's `CallTreeResult`, **flattened beside**
+  the other fields, not nested, so a call node has the fields the extension's has (`key`, `name`, `qualname`, `path`, `kind`, `call_count`,
+  `call_sites`, `marks`, `children`). Golden file `tests/golden/calls.json`; text golden `tests/golden/calls-place.txt`.
+- **Time:** not measured in A6. The tree is one `callTree` request to a driver that is already running by the time the index is built.
+
 ## 8. `missing`
 
 Documented nodes that are not found, each with its ID, its last known place, its doc count, and the two things that can be done:
 `→ vnoc relink <ID> <node>` if the code moved; a person removes it in VS Code if it is gone.
+
+```
+$ vnoc missing
+MISSING  was api/routes.py::legacy_export  ID 7N1HNCPA163HHSN91HX48T9QGE  docs 1
+  → vnoc relink 7N1HNCPA163HHSN91HX48T9QGE <node>
+  or remove it in VS Code if the code is gone
+```
+
+**As built in A6.** One row per Missing node (the `MISSING  was …` line is `show`'s for a Missing node, with the same `was` and the same count of docs),
+in the order of `Index::missing` (by path); `--quiet` drops the two hint lines. `vnoc relink` is **planned, not built** (A9): the hint names it, as the plan
+says, and `--help` of `missing` and of `check` say it is not built yet. None: `nothing is Missing`, exit `0`. `--format id` is the IDs, `--format path` the files they were last in
+(once each). `--json`: `{ schema, command: "missing", missing: [ { was, node_id, docs: [ { title, path } ] } ] }` (golden `missing.json`).
 
 ## 9. `check`
 
@@ -439,6 +495,58 @@ field ignores it, and the extension reads a missing field as `[]`. Built in A6b,
 
 `--changed` keeps only the problems in files that differ from `HEAD` (`git status --porcelain`): fast enough to run after every edit, and what a
 hook would call ([`08`](08-mcp-and-plugins.md)). With no git, it is the full check.
+
+```
+$ vnoc check                                    # the sample: one Missing node, one lost marker
+missing  api/routes.py  documented code not found: was api/routes.py::legacy_export · ID 7N1HNCPA163HHSN91HX48T9QGE · 1 doc
+  → vnoc relink 7N1HNCPA163HHSN91HX48T9QGE <node> if the code moved; remove it in VS Code if the code is gone
+lost_marker  billing/tax.py  the `ID:` line of billing/tax.py::rate_for is gone (ID 4KF02248CHCTYAG49B0KKZ5SD7): the node was found by its name only
+  → vnoc repair billing/tax.py::rate_for
+2 problems
+$ echo $?
+1
+```
+
+**As built in A6 (2026-11-19).**
+
+- `crates/vnoc/src/check.rs` is the library: `check(&Index, &Project, only: Option<&[RepoPath]>) -> Vec<Finding>`. A `Finding` has `kind`
+  (`missing`, `lost_marker`, `duplicate_id`, `broken`, `unread`: the words of `--json` and the first word of a row), `fails` (all but `unread`), `path`
+  (below the root; absolute when `.vnoc/` is above it), `message`, `fix`, and `id` for a node. The order is the table's (a group is in the index's order,
+  by path). `Index::problems` was split into `broken()` and `duplicate_ids()` (it is both, in that order, as before) so a finding can say which it is.
+- **A row is one line:** `<kind>  <path>  <message>`, then `  → <fix>`. A `node.toml` error from the TOML parser runs over several lines and starts
+  with the path the row already says: the row keeps its first line, without the path. **The summary** is `2 problems`, `2 problems · 1 warning`, `0 problems · 1
+  warning`, or `no problems`. `--quiet` keeps the rows and drops the fixes and the summary; with nothing found it prints **nothing** (a hook wants
+  rows only).
+- **Exit `1`** when a finding fails, **after** the rows are printed: `Failure::CheckFailed` prints nothing more (it was going to print `error: check found problems`,
+  which is not an error of the command). **`0`** otherwise, warnings included.
+- **No `.vnoc/` at the git root:** `nothing to check (no .vnoc/ here)`, exit `0`, and **no driver is looked for or started** (a CI job without one can still say it).
+  `--json` has `"initialized": false` and no findings. `initialized` is in every `check --json`: `{ schema, command: "check", initialized, findings, failing, warnings }`
+  (golden `check.json`). `--format` is a usage error for `check`: it prints findings, not a list of nodes.
+- **The fixes.** Missing: `vnoc relink <ID> <node> if the code moved; remove it in VS Code if the code is gone`. Lost marker: `vnoc repair <location>`.
+  **Neither `relink` nor `repair` exists yet** (A9): the lines name the planned commands, as the plan's table does, and an agent that runs one today gets
+  clap's `unrecognized subcommand`. ID twice: `open <file>:<line> and delete the `ID:` line of the copy (the node keeps its ID where it was found)`.
+  Broken: `open <file>: fix the file, or remove it if it is not a node`. Unread: `fix the file; V-NOC reads it again when it parses (a warning: it does not fail the check)`.
+- **What "could not read" is.** The plan said a syntax error mid-edit is a warning. It is not even that: the Python driver parses past a syntax error and
+  outlines what it can (`Def.syntax_error` marks a def; the core does not look at it), so the file is read and `check` has nothing to say. What fails a
+  file is what the driver cannot read **at all**: bytes that are not UTF-8 (`cannot read binary.py: stream did not contain valid UTF-8`). That is the
+  `unread` finding. The tests cover both: a broken `def f(:` is `no problems`, a binary file is a warning and exit `0`. A def with a syntax error
+  could be a warning of its own (the tree already knows it); that is not built, and not decided.
+- **`--changed`:** the files of `git -C <git root> status --porcelain -z --untracked-files=all`: staged, unstaged, each untracked file, and **both names of
+  a rename** (the plan said the new path; a Missing node is anchored at the **old** one, so a rename away from it would have hidden the finding). Paths are
+  git-root-relative, which is what the index's repo paths are. A finding is kept when its file is in the list; a Missing node's file is its last known one;
+  a duplicate ID's, the copy's; a broken file's, the file. With nothing changed: `no problems`, exit `0`. **No git, or git failing** (no `.git` at the git
+  root, `git` not on the PATH, a failing `git status`): the full check, and one line on standard error, `note: <why>: checking everything`, not an error.
+- **`Index::lost_markers()`** is a record whose `node.toml` has `id_in_code = "yes"`, found by its **anchor** (`FoundBy::Anchor`), sorted by path then name. `no`, `never`,
+  a value a newer V-NOC wrote, and no field at all are never lost: that node never had its ID in the code. A file's lost marker is its `# FileID:`
+  comment, a folder's its `.vnoc-id`; the row's sentence says which. Not Missing: a Missing node is in `missing` only.
+
+**A6b as built (NEEDS ATTENTION).** `index::structure` fills `lost_markers` (`#[serde(default)]`). The extension's view has a fourth group,
+**ID lost (N)**, **between Problems and Not read** (the plan said "after Problems"; Not read is the group that is information, not a thing to do),
+shown only with rows. A row: the node's icon, its name (a def) or path (a file or a folder), the path as its description, and the tooltip
+*"node.toml says the ID is in the code, and the code has none: V-NOC found this node by its name. Write ID puts the line back."* A **click** is the sidebar's
+click on that node (`vnoc.open` now takes the row: the code in an editor, or the node on the canvas, as `vnoc.sidebar.click` says); **the inline action and
+the context menu** are `vnoc.writeId`, which takes the row too. No new command. `vnoc.hasAttention` counts the rows. The rows are `shared/attention.ts`'s `lostIdRows`
+(pure, unit-tested); a window test deletes an `ID:` line, sees the group with its one row, clicks it, runs Write ID on it and sees the group go.
 
 ## 10. `changed` (optional, step A15)
 
