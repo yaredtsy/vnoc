@@ -49,6 +49,7 @@ V-NOC 0.2.0   /work/sample
   docs     7 docs on 6 nodes
   health   1 missing · 1 lost marker · 0 problems     → vnoc check
   driver   python 0.2.0 · read 12 files
+  agents   not set up (vnoc agent install)
 ```
 
 `health` is `all good` when every count is 0 (and the hint is not printed). With no `.vnoc/`, `docs` reads
@@ -73,7 +74,13 @@ missing 1 · lost markers 1 · problems 0      → vnoc check
 - **Line 3:** `missing N · lost markers N · problems N`, then `failed N` if files could not be outlined and `stopped at 20,000 files` if the scan hit
   its cap. The hint `→ vnoc check` is there only when `missing + lost markers + problems > 0`, and never with `--quiet`. *(A6, 2026-11-19: `lost markers`
   is `Index::lost_markers().len()`, §9; the golden `status.json` gained one field, `lost_markers`.)*
-- Still to come, not built: the line about the installed skill and rules (A11).
+- **`agents`, the last line (A11, as built):** what `vnoc agent install` left in this project, read from the files themselves (nothing is stored about
+  the pick, 07 §2). `not set up (vnoc agent install)`; or `skill current (.claude/skills, .agents/skills) · rules in AGENTS.md`; or, for the worst
+  file, `skill older (0.2.0 → 0.3.0): vnoc agent install`, `skill newer (…; this vnoc is …)`, `skill changed by hand: vnoc agent install`; and
+  `rules missing: vnoc agent install --rules-only` (or `skill missing: … --skill-only`) when one half is there and the other is not. It lists the
+  skill folders and the rules files, not agent names: `.agents/skills` serves ten names and the files cannot say which of them was picked. The JSON
+  gains `agents: { files: [{ part, path, state, serves, version? }], missing: [] }` (an addition: the golden `status.json` has `files: []`, `missing: []`). The
+  user-level skills (`--global`) are in `vnoc agent status`, not here.
 - Always exit `0` when it answered, whatever it found: a Missing node is a finding, not a failure of `status` (`check` is the command that exits `1`).
 - `--format` is a usage error here (exit `2`): `status prints no list; --format is for list commands`.
 

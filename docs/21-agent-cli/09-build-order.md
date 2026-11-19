@@ -286,6 +286,11 @@ text and deletes nothing it did not write; `--global` writes no rules. By hand: 
 
 Commit: `cli A11: vnoc agent install writes the skill and the rules`.
 
+**As built.** Commits `4dbc50d` (plan edits), `8bec354` (`cli A10b`: the skill offers notes instead of writing them unasked), `7d19319` (07 §1 and §4 read again from each agent's documentation:
+no mapping changed; Claude Code's allow-rule is `Bash(vnoc show *)`, Codex's `prefix_rule(pattern = [...], decision = "allow")`), `1340dc3` (`cli A11`). Counts after:
+lib 223, bin 2, cli 122, lifecycle 49, write 7, guide 10, **agent 12**. The details are in 07 §2 ("As built") and 03 §2 (the `agents` line); the guide test no
+longer skips `rules.md`'s marker comment, and parses (never runs) any `vnoc agent` line, and runs every line with `HOME` set to the copy.
+
 ### A11c Two things the user hit by hand (added 2026-11-20)
 
 Bare `vnoc` in a terminal prints the help instead of waiting as a server (05 §1); `vnoc tag describe` writes `.vnoc/tags.toml` (04 §4).

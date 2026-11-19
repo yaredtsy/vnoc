@@ -122,6 +122,39 @@ system allows it.
 
 `vnoc skill` only prints `SKILL.md` to standard output, for anyone who wants to put it somewhere this command does not.
 
+**As built (A11).** `crates/vnoc/src/agents.rs` (the table, `detect`, `plan`, `apply`, `status`, `plan_remove`; `plan` reads the disk and writes nothing) and
+`cli/agent.rs` (the pick, the printing, the exit codes). What the plan above did not say, or said differently:
+
+- **What a line says.** `created` / `replaced` / `added` (the block, after what was there) / `current` (nothing to do) / `left` (and why) / `deleted` /
+  `removed`, each with a line under it: `the skill, for claude` (the names picked that map to that file). With `--dry-run` the verbs are `will create`… and
+  nothing is written; `--json` gives `{ schema, command: "agent install", dry_run, root, agents, actions: [{ part, path, change, agents, readers, why }],
+  permissions: [{ agent, text }] }` (the extension's A12 reads it). `commit these files so your team's agents get them` follows only when something was written in
+  the project (not for `--global`, not with `--quiet`). `~/` paths are the home folder's.
+- **Exit codes.** `install`: `2` when a file was left (a `SKILL.md` that is not V-NOC's; markers that cannot be trusted: a `<!-- vnoc:start` with no
+  `<!-- vnoc:end -->` after it), and `2` for an unknown name, `--global` with `--rules-only`, no agent found with no flag; the files that could be written are written all
+  the same. `remove` leaves a `SKILL.md` that is not V-NOC's and says so, exit `0` (it had nothing of V-NOC's to take back). `3` for a write that failed or no home folder.
+- **The rules file for `claude`** also looks at `.claude/CLAUDE.md` (Claude Code reads it as `CLAUDE.md`, and then ignores `AGENTS.md`): `CLAUDE.md`, else
+  `.claude/CLAUDE.md`, else `AGENTS.md`; each unless it holds an `@AGENTS.md` import, which sends the block to `AGENTS.md`. Claude Code reads `AGENTS.md` itself
+  only from v2.1.277 (§1).
+- **`--all`** is the whole table (`other` included), so the rules go to `AGENTS.md`, and to `CLAUDE.md` or `GEMINI.md` only when that file already exists: it does not
+  create the two that are for one agent.
+- **The block** is replaced from the line that starts `<!-- vnoc:start` to the end of `<!-- vnoc:end -->`; the rest of the file is kept byte for byte, line endings
+  included. Appended: after exactly one blank line (none added when the file already ends in one), then the block and a line break. `remove` undoes that
+  to the byte (the blank line it added goes with it); a file with nothing left is deleted, and a rules file V-NOC created (`GEMINI.md`, `AGENTS.md`) is that case.
+- **`status`** reads the two project skill folders (and the two user-level ones: `~/…` lines), and the rules files `AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`,
+  `GEMINI.md`. A skill file is V-NOC's when its header has `metadata.vnoc-version`. States: `current`; `older` / `newer` (its version against this binary's);
+  `changed` (this version's number, other words: `changed by hand`; for a rules block, which carries no version: it differs from this V-NOC's text, edited
+  or from another version); `missing` is a half with no file while the other half is there. A `SKILL.md` that is not V-NOC's is not listed. Each file says who reads it
+  (`serves`): a folder is read by every name that maps to it.
+- **`remove --agent codex`** takes the skill folder and the rules file of `codex`, and each says who else reads it (`also read by cursor, pi…`): a shared file is removed
+  for all. For `claude`, `AGENTS.md` is only a candidate while that is where `claude`'s block would be written now, so taking back `claude` does not take the block
+  the other agents read. `remove` with no `--agent` takes everything V-NOC wrote. The `vnoc` skill folder is removed only when it is empty after its `SKILL.md`; the
+  folders above it (`.claude/skills/`) are left.
+- **The terminal pick** (stdin and stdout both terminals, neither flag): the twelve names numbered on standard error, `[x]` on the ones found, one line read: Enter takes the
+  ticked, or numbers separated by spaces or commas; anything else is exit `2` and nothing is written. Not tried in a pty (the parsing is a unit test).
+- **The permission lines** are printed for `claude` and `codex` only, and not with `--global`; §4 has their syntax and its sources.
+- **Not done:** the `[check]` above, with an agent that reads both folders, that two skills of the same name show once. It needs an agent in front of it (A14).
+
 ## 3. From VS Code
 
 **V-NOC: Install `vnoc` Command in PATH** (`vnoc.installCli`; the way VS Code installs `code`).
