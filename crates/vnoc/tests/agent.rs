@@ -145,6 +145,8 @@ created      .agents/skills/vnoc/SKILL.md
              the skill, for codex
 created      AGENTS.md
              the rules block, for claude, codex
+created      CLAUDE.md
+             imports AGENTS.md, so every Claude Code reads the rules
 "
     );
     // the lines: Claude Code's and Codex's, nothing about the writes
@@ -167,9 +169,11 @@ created      AGENTS.md
         [
             ".agents/skills/vnoc/SKILL.md",
             ".claude/skills/vnoc/SKILL.md",
-            "AGENTS.md"
+            "AGENTS.md",
+            "CLAUDE.md"
         ]
     );
+    assert_eq!(get(&root, "CLAUDE.md"), "@AGENTS.md\n");
     assert_eq!(get(&root, ".claude/skills/vnoc/SKILL.md"), SKILL);
     assert_eq!(get(&root, ".agents/skills/vnoc/SKILL.md"), SKILL);
     assert_eq!(get(&root, "AGENTS.md"), RULES);
@@ -239,7 +243,8 @@ fn all_names_unknown_agents_and_conflicting_flags_are_refused() {
         [
             ".agents/skills/vnoc/SKILL.md",
             ".claude/skills/vnoc/SKILL.md",
-            "AGENTS.md"
+            "AGENTS.md",
+            "CLAUDE.md"
         ]
     );
     let (root, home) = world("bad");
@@ -401,6 +406,11 @@ fn dry_run_writes_nothing_and_json_lists_the_actions() {
             (
                 "rules".to_string(),
                 "AGENTS.md".to_string(),
+                "create".to_string()
+            ),
+            (
+                "import".to_string(),
+                "CLAUDE.md".to_string(),
                 "create".to_string()
             ),
             (
@@ -679,7 +689,7 @@ fn vnoc_status_has_a_line_for_the_agents() {
     );
     let json: Value =
         serde_json::from_slice(&vnoc(&root, &home, &["status", "--json"]).stdout).unwrap();
-    assert_eq!(json["agents"]["files"].as_array().unwrap().len(), 3);
+    assert_eq!(json["agents"]["files"].as_array().unwrap().len(), 4);
     assert_eq!(json["agents"]["files"][0]["state"], "current");
     assert_eq!(json["agents"]["missing"], json!([]));
     // an older skill says what to run
@@ -709,4 +719,154 @@ fn vnoc_status_has_a_line_for_the_agents() {
         line(&["status"]),
         "  agents   rules in AGENTS.md · skill missing: vnoc agent install --skill-only"
     );
+}
+
+// ------------------------------------------------------------------------------------------------------ the import file for `claude`
+
+const IMPORT_LINES: &str = "             imports AGENTS.md, so every Claude Code reads the rules\n";
+
+/// A project with only an `AGENTS.md` of somebody's own text.
+fn only_agents_md(label: &str) -> (PathBuf, PathBuf, &'static str) {
+    let (root, home) = world(label);
+    let original = "# Mine\n\nSome rules.\n";
+    put(&root, "AGENTS.md", original);
+    (root, home, original)
+}
+
+#[test]
+fn claude_with_no_claude_md_gets_a_one_line_one_that_imports_agents_md() {
+    let (root, home, original) = only_agents_md("import");
+    let o = vnoc(&root, &home, &["agent", "install", "--agent", "claude"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(
+        out(&o).contains(&format!("created      CLAUDE.md\n{IMPORT_LINES}")),
+        "{}",
+        out(&o)
+    );
+    assert_eq!(get(&root, "CLAUDE.md"), "@AGENTS.md\n");
+    let rules = get(&root, "AGENTS.md");
+    assert!(rules.starts_with(original) && rules.contains(RULES.trim_end()));
+    // the block is in one file: the import file holds nothing else
+    assert_eq!(rules.matches("<!-- vnoc:start").count(), 1);
+
+    // status names it, and it is current
+    let status = out(&vnoc(&root, &home, &["agent", "status"]));
+    assert!(
+        status.contains(
+            "current      CLAUDE.md\n             the import of AGENTS.md, read by claude\n"
+        ),
+        "{status}"
+    );
+    // twice: nothing changes, and it says so
+    let again = vnoc(&root, &home, &["agent", "install", "--agent", "claude"]);
+    assert_eq!(code(&again), 0);
+    assert!(
+        out(&again).contains(&format!("current      CLAUDE.md\n{IMPORT_LINES}")),
+        "{}",
+        out(&again)
+    );
+    assert!(!out(&again).contains("commit these files"));
+    assert_eq!(get(&root, "CLAUDE.md"), "@AGENTS.md\n");
+    assert_eq!(get(&root, "AGENTS.md"), rules);
+
+    // remove takes it back, and AGENTS.md is what it was
+    let o = vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(
+        out(&o).contains(&format!("deleted      CLAUDE.md\n{IMPORT_LINES}")),
+        "{}",
+        out(&o)
+    );
+    assert!(!root.join("CLAUDE.md").exists());
+    assert_eq!(get(&root, "AGENTS.md"), original);
+}
+
+#[test]
+fn remove_keeps_an_import_file_a_person_added_a_line_to_and_says_so() {
+    let (root, home, original) = only_agents_md("import-edited");
+    vnoc(&root, &home, &["agent", "install", "--agent", "claude"]);
+    put(&root, "CLAUDE.md", "@AGENTS.md\nAnd always say please.\n");
+    // status: no longer the line V-NOC wrote
+    let status = out(&vnoc(&root, &home, &["agent", "status"]));
+    assert!(status.contains("changed      CLAUDE.md\n"), "{status}");
+    let o = vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(
+        out(&o).contains("left         CLAUDE.md\n")
+            && out(&o)
+                .contains("it has more than the one import line V-NOC wrote, so it is not removed"),
+        "{}",
+        out(&o)
+    );
+    assert_eq!(
+        get(&root, "CLAUDE.md"),
+        "@AGENTS.md\nAnd always say please.\n"
+    );
+    assert_eq!(get(&root, "AGENTS.md"), original);
+    // an identical file that no block of V-NOC's goes with is a person's own: it is not removed either
+    let (root, home) = world("import-theirs");
+    put(&root, "CLAUDE.md", "@AGENTS.md\n");
+    put(&root, "AGENTS.md", "mine\n");
+    let o = vnoc(&root, &home, &["agent", "remove"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(get(&root, "CLAUDE.md"), "@AGENTS.md\n");
+}
+
+#[test]
+fn a_claude_md_that_is_there_or_one_in_dot_claude_gets_no_import_file() {
+    // an existing CLAUDE.md takes the block, as before
+    let (root, home) = world("import-existing");
+    put(&root, "CLAUDE.md", "# Claude's own\n");
+    let o = vnoc(&root, &home, &["agent", "install", "--agent", "claude"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(get(&root, "CLAUDE.md").starts_with("# Claude's own\n"));
+    assert!(get(&root, "CLAUDE.md").contains(RULES.trim_end()));
+    assert!(!root.join("AGENTS.md").exists());
+    assert!(!out(&o).contains("imports AGENTS.md"), "{}", out(&o));
+    // .claude/CLAUDE.md is Claude Code's too: the block goes there, and no CLAUDE.md is made
+    let (root, home) = world("import-dot-claude");
+    put(&root, ".claude/CLAUDE.md", "# in the folder\n");
+    let o = vnoc(&root, &home, &["agent", "install", "--agent", "claude"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!root.join("CLAUDE.md").exists());
+    assert!(get(&root, ".claude/CLAUDE.md").contains(RULES.trim_end()));
+    // another agent alone never makes one
+    let (root, home, _) = only_agents_md("import-codex");
+    vnoc(&root, &home, &["agent", "install", "--agent", "codex"]);
+    assert!(!root.join("CLAUDE.md").exists());
+    assert!(root.join("AGENTS.md").is_file());
+}
+
+#[test]
+fn dry_run_lists_the_import_file_and_writes_nothing() {
+    let (root, home, original) = only_agents_md("import-dry");
+    let o = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude", "--dry-run"],
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(
+        out(&o).contains(&format!("will create  CLAUDE.md\n{IMPORT_LINES}")),
+        "{}",
+        out(&o)
+    );
+    assert!(!root.join("CLAUDE.md").exists());
+    assert!(!root.join(".claude").exists());
+    assert_eq!(get(&root, "AGENTS.md"), original);
+}
+
+#[test]
+fn all_writes_the_import_file_too_and_the_json_names_it() {
+    let (root, home, _) = only_agents_md("import-all");
+    let o = vnoc(&root, &home, &["agent", "install", "--all", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let json: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(
+        json["actions"].as_array().unwrap().iter().any(|a| {
+            a["part"] == "import" && a["path"] == "CLAUDE.md" && a["change"] == "create"
+        }),
+        "{json}"
+    );
+    assert_eq!(get(&root, "CLAUDE.md"), "@AGENTS.md\n");
 }

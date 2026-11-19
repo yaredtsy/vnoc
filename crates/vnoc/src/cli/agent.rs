@@ -207,9 +207,12 @@ fn about(action: &Action, command: &str, picked: &[Agent]) -> String {
         (Part::Rules, Change::RemoveBlock) => "the V-NOC block; the rest of the file is as it was",
         (Part::Rules, Change::Delete) => "it held nothing but the V-NOC block",
         (Part::Rules, _) => "the rules block",
+        (Part::Import, _) => "imports AGENTS.md, so every Claude Code reads the rules",
     };
     let mut line = what.to_string();
-    if command == "agent install" {
+    if action.part == Part::Import {
+        // the sentence says who it is for
+    } else if command == "agent install" {
         line.push_str(&format!(", for {}", who(&action.agents)));
     } else if !picked.is_empty() {
         // a folder or a file is shared: taking it back for one agent takes it from every agent that reads it
@@ -455,6 +458,7 @@ fn describe(state: &State, part: Part) -> (&'static str, String, bool) {
             match part {
                 Part::Skill => "by hand: vnoc agent install replaces it".to_string(),
                 Part::Rules => "it differs from this vnoc's block (edited, or from another version): vnoc agent install replaces it".to_string(),
+                Part::Import => "it has more than the one import line V-NOC wrote: vnoc agent remove leaves it".to_string(),
             },
             false,
         ),
@@ -478,6 +482,7 @@ impl Render for StatusAnswer {
             let part = match file.part {
                 Part::Skill => "the skill",
                 Part::Rules => "the rules block",
+                Part::Import => "the import of AGENTS.md",
             };
             let line = if detail.is_empty() {
                 format!("{part}, read by {}", who(&file.serves))
@@ -489,7 +494,7 @@ impl Render for StatusAnswer {
         for part in &self.status.missing {
             let (what, fix) = match part {
                 Part::Skill => ("the skill", "--skill-only"),
-                Part::Rules => ("the rules block", "--rules-only"),
+                Part::Rules | Part::Import => ("the rules block", "--rules-only"),
             };
             text.push_str(&format!(
                 "{}{what}\n{}",
@@ -546,14 +551,14 @@ pub fn summary(status: &agents::Status) -> String {
             .iter()
             .map(|f| match part {
                 Part::Skill => f.path.trim_end_matches("/vnoc/SKILL.md").to_string(),
-                Part::Rules => f.path.clone(),
+                Part::Rules | Part::Import => f.path.clone(),
             })
             .collect::<Vec<_>>()
             .join(", ");
         parts.push(match worst.map(|f| &f.state) {
             None => match part {
                 Part::Skill => format!("skill current ({places})"),
-                Part::Rules => format!("rules in {places}"),
+                Part::Rules | Part::Import => format!("rules in {places}"),
             },
             Some(State::Older { version }) => style::paint(
                 style::warn(),
@@ -576,7 +581,7 @@ pub fn summary(status: &agents::Status) -> String {
     for part in &status.missing {
         let (name, flag) = match part {
             Part::Skill => ("skill", "--skill-only"),
-            Part::Rules => ("rules", "--rules-only"),
+            Part::Rules | Part::Import => ("rules", "--rules-only"),
         };
         parts.push(style::paint(
             style::warn(),

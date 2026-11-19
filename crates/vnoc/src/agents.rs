@@ -171,6 +171,23 @@ fn imports_agents_md(text: &str) -> bool {
     })
 }
 
+/// The one line of the `CLAUDE.md` that V-NOC creates for `claude` when the project has none (07 §2, "The import file for `claude`").
+const IMPORT_FILE: &str = "CLAUDE.md";
+const IMPORT_TEXT: &str = "@AGENTS.md\n";
+
+/// Whether `text` is exactly the import file V-NOC writes (a Windows checkout may have turned the line break into `\r\n`).
+fn is_import_file(text: &str) -> bool {
+    text.replace("\r\n", "\n") == IMPORT_TEXT
+}
+
+/// Whether `AGENTS.md` in the project holds V-NOC's block: what makes a `CLAUDE.md` that imports it a part of V-NOC's setup, and not only a person's own.
+fn agents_md_has_block(root: &Path) -> bool {
+    matches!(
+        read_text(&root.join("AGENTS.md")),
+        Ok(Some(text)) if matches!(find_block(&text), Block::At(..))
+    )
+}
+
 /// The rules file `agent` is given in this project, relative to the root, or `None` when it would be created only by a name and `all` is not
 /// asking for that (07 §2: `--all` writes the files that exist, and `AGENTS.md`).
 fn rules_file(root: &Path, agent: Agent, all: bool) -> Option<&'static str> {
@@ -232,6 +249,8 @@ pub fn detect(root: &Path) -> Vec<Agent> {
 pub enum Part {
     Skill,
     Rules,
+    /// the one-line `CLAUDE.md` that imports `AGENTS.md`
+    Import,
 }
 
 /// What happens to one file.
@@ -550,6 +569,33 @@ impl Plan<'_> {
             }
         }
         self.push(action);
+        if agent == Agent::Claude && name == "AGENTS.md" {
+            self.import_file();
+        }
+    }
+
+    /// `claude` with no `CLAUDE.md` (and no `.claude/CLAUDE.md`): the block went to `AGENTS.md`, which Claude Code reads only from v2.1.277, so a
+    /// `CLAUDE.md` of exactly one import line is created, and every version reads the block (07 §2). One that is already exactly that line is `Same`.
+    /// Any other `CLAUDE.md` is not this rule's: it is not touched here.
+    fn import_file(&mut self) {
+        let full = self.root.join(IMPORT_FILE);
+        let (change, content) = match read_text(&full) {
+            Ok(Some(text)) if is_import_file(&text) => (Change::Same, None),
+            Ok(None) if !self.root.join(".claude/CLAUDE.md").exists() => {
+                (Change::Create, Some(IMPORT_TEXT.to_string()))
+            }
+            _ => return,
+        };
+        self.push(Action {
+            part: Part::Import,
+            path: IMPORT_FILE.to_string(),
+            change,
+            agents: vec![Agent::Claude],
+            readers: vec![Agent::Claude],
+            why: None,
+            content,
+            full,
+        });
     }
 }
 
@@ -692,6 +738,25 @@ pub fn status(root: &Path, home: Option<&Path>, texts: &Texts) -> Status {
             serves,
         });
     }
+    // the import file: V-NOC's while it is exactly the line; one that imports `AGENTS.md` and has more is said to be changed, but only where V-NOC's
+    // block is in `AGENTS.md` (a person's own `CLAUDE.md` that imports it is not news in a project V-NOC was never set up in)
+    if let Ok(Some(text)) = read_text(&root.join(IMPORT_FILE)) {
+        let state = if is_import_file(&text) {
+            Some(State::Current)
+        } else if imports_agents_md(&text) && agents_md_has_block(root) {
+            Some(State::Changed)
+        } else {
+            None
+        };
+        if let Some(state) = state {
+            status.files.push(FileStatus {
+                part: Part::Import,
+                path: IMPORT_FILE.to_string(),
+                state,
+                serves: vec![Agent::Claude],
+            });
+        }
+    }
     let has = |part| status.files.iter().any(|f| f.part == part);
     match (has(Part::Skill), has(Part::Rules)) {
         (true, false) => status.missing.push(Part::Rules),
@@ -784,10 +849,50 @@ pub fn plan_remove(
                 content,
             });
         }
+        if agent == Agent::Claude {
+            plan.remove_import_file();
+        }
     }
     // the skills first, then the rules files (a stable sort: the order inside each is the table's)
-    plan.actions.sort_by_key(|a| a.part == Part::Rules);
+    plan.actions.sort_by_key(|a| a.part != Part::Skill);
     plan.actions
+}
+
+impl Plan<'_> {
+    /// The import file V-NOC wrote for `claude`: deleted while it is exactly its one line, and only where V-NOC's block is in `AGENTS.md` (an
+    /// identical file a person made is theirs). A `CLAUDE.md` that imports `AGENTS.md` and has more in it is left, and said.
+    fn remove_import_file(&mut self) {
+        let full = self.root.join(IMPORT_FILE);
+        let Ok(Some(text)) = read_text(&full) else {
+            return;
+        };
+        if !agents_md_has_block(self.root) {
+            return;
+        }
+        let (change, why) = if is_import_file(&text) {
+            (Change::Delete, None)
+        } else if imports_agents_md(&text) {
+            (
+                Change::Leave,
+                Some(
+                    "it has more than the one import line V-NOC wrote, so it is not removed"
+                        .to_string(),
+                ),
+            )
+        } else {
+            return;
+        };
+        self.push(Action {
+            part: Part::Import,
+            path: IMPORT_FILE.to_string(),
+            change,
+            agents: vec![Agent::Claude],
+            readers: vec![Agent::Claude],
+            why,
+            content: None,
+            full,
+        });
+    }
 }
 
 /// `text` without the block at `start..end`: the line break after it goes with it, and so does the blank line that was put before it, when it
@@ -916,11 +1021,12 @@ mod tests {
         for (name, skill, rules) in table {
             let agent = Agent::parse(name).unwrap();
             let actions = plan(&root, None, &[agent], &Options::default(), &texts());
-            assert_eq!(
-                paths(&actions),
-                [(skill, Change::Create), (rules, Change::Create)],
-                "{name}"
-            );
+            // `claude` in a project with no CLAUDE.md also gets the import file (07 §2)
+            let mut expected = vec![(skill, Change::Create), (rules, Change::Create)];
+            if agent == Agent::Claude {
+                expected.push(("CLAUDE.md", Change::Create));
+            }
+            assert_eq!(paths(&actions), expected, "{name}");
             assert_eq!(actions[0].part, Part::Skill);
             assert_eq!(actions[1].part, Part::Rules);
             assert_eq!(actions[0].agents, [agent]);
@@ -986,6 +1092,7 @@ mod tests {
                 (".claude/skills/vnoc/SKILL.md", Change::Create),
                 (".agents/skills/vnoc/SKILL.md", Change::Create),
                 ("AGENTS.md", Change::Create),
+                ("CLAUDE.md", Change::Create),
             ]
         );
         assert_eq!(actions[2].agents, [Agent::Claude, Agent::Cursor]);
@@ -1011,6 +1118,7 @@ mod tests {
                 (".claude/skills/vnoc/SKILL.md", Change::Create),
                 (".agents/skills/vnoc/SKILL.md", Change::Create),
                 ("AGENTS.md", Change::Create),
+                ("CLAUDE.md", Change::Create),
             ]
         );
         // a GEMINI.md and a CLAUDE.md that are there get the block too
@@ -1297,6 +1405,7 @@ mod tests {
                 (".claude/skills/vnoc/SKILL.md", State::Current),
                 (".agents/skills/vnoc/SKILL.md", State::Current),
                 ("AGENTS.md", State::Current),
+                ("CLAUDE.md", State::Current),
             ]
         );
         assert_eq!(seen.files[0].serves, [Agent::Claude, Agent::Cline]);
@@ -1342,7 +1451,7 @@ mod tests {
             ".agents/skills/vnoc/SKILL.md",
             "---\nname: vnoc\n---\nmine\n",
         );
-        assert_eq!(status(&root, None, &texts()).files.len(), 2);
+        assert_eq!(status(&root, None, &texts()).files.len(), 3); // AGENTS.md and the import file
 
         // missing: the skill with no rules, and the rules with no skill
         let root = fresh("status-missing");
