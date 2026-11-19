@@ -216,7 +216,23 @@ Tests: on the sample, `relink` the Missing node to a function: `missing` is empt
 refusals is `2` with its words; `repair` puts the lost `ID:` line back and `check` passes; `repair` on a clean project says nothing to do, `0`;
 a node set to never carry an ID is left.
 
-Commit: `cli A9: relink and repair`. **Stop point:** agents can write. Full test run.
+Commit: `cli A9: relink and repair`.
+
+### A9b Tags: list, edit, describe *(added 2026-11-20; 04 §4 "Listing, editing and describing tags")*
+
+| Files | What |
+|---|---|
+| `crates/vnoc/src/userdata/tags.rs` (new, library) | read `.vnoc/tags.toml` (bad keys/values → Problems, the rest read); `tag_counts(&DocTexts, &Descriptions)`; `rewrite_tags(text, add, remove) -> Result<(String, Change), …>` (pure: only the `tags:` line, block form folded, rules of 04 §4) |
+| `crates/vnoc/src/cli/doc.rs` | `doc tags [--authors]` (no driver); `doc tag <node> [file] --add … --remove …` (the write lock, atomic, re-read before write) |
+| `crates/vnoc/src/cli/write.rs` | the new-tag notice in `doc new` (and `doc tag`) |
+
+Tests: `rewrite_tags` as a table (add, remove, both, the last removed, no line and an add, the block form, already has / already without,
+a bad tag, every other line byte-identical); `tags.toml` with a bad key and a good one; `doc tags` on a sample copy with three tagged docs
+and a described unused tag, with `--driver /nonexistent`; `doc tag` on a node with two docs and no file → `2` with the names; the file
+changed between read and write → refused, untouched; the new-tag notice with a near tag (`planning` → `plan`) and with none; twice the
+same `doc tag` command → the second says `already…`, exit `0`.
+
+Commit: `cli A9b: doc tags lists them, doc tag edits one doc's, tags.toml describes them`. **Stop point:** agents can write. Full test run.
 
 ## 4. Phase 3: skill, install
 

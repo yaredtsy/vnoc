@@ -81,6 +81,7 @@ All paths V-NOC stores are relative to the project root, with `/` separators. Th
 ├── .vnoc/
 │   ├── vnoc.toml                      committed    project settings
 │   ├── .gitignore                     committed    one line: local/
+│   ├── tags.toml                      committed    optional: what each tag means (added 2026-11-20, docs/21 04 §4)
 │   ├── nodes/                         committed
 │   │   └── 7K/                                     shard = last 2 characters of the ID
 │   │       └── 0Q8V5W4T2F7KX9M3B6D1RZ4H7K/        one folder per documented node
@@ -130,6 +131,24 @@ local/
 ```
 
 Written once, when `.vnoc/` is created. V-NOC never edits the repo's root `.gitignore`.
+
+### `tags.toml` (optional; added 2026-11-20)
+
+```toml
+# .vnoc/tags.toml: what each tag means. Written by people, reviewed in a pull request like code.
+plan     = "A change we intend to make. Retag as done when it ships."
+decision = "Why we chose this way over the others. Keep it after the change."
+done     = "A plan that shipped."
+```
+
+- **Descriptions, not a whitelist.** A doc may carry a tag that is not here; a tag here may be on no doc yet (a team can set its vocabulary
+  before anyone writes). The tags themselves live only in each doc's frontmatter (`tags:`): this file never says which docs carry what.
+- Keys are tags as docs write them: lower case, letters, digits, `-`. A key that is not a valid tag, or a value that is not a string, is
+  reported once under Problems (rule 3) and skipped; the rest of the file is read.
+- V-NOC **reads** it and never writes it: no command creates or edits it, and `vnoc init` writes no starter tags (V-NOC gives no tag a
+  meaning). An agent is told to read it, not to change it ([`../21-agent-cli/04-write-commands.md`](../21-agent-cli/04-write-commands.md) §4).
+- Its own file, not a table in `vnoc.toml`: settings and a vocabulary change at different rates, and two files conflict less in a merge.
+- An addition to the format (§5 rule 1): a V-NOC that does not know the file ignores it. `format` stays `1`.
 
 ### `node.toml`
 

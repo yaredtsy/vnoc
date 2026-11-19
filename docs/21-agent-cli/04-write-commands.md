@@ -235,6 +235,64 @@ One reader does all of it: `userdata/read.rs` gets `frontmatter(text) -> { title
   `doc read`); a node that had docs and has none left prints `  no docs match`. **`--where` needs the index, so a node named by its ID starts the driver too.** With a file named (`doc read <node> <file>`), the file is
   chosen first, then the query narrows what is left. `doc path` has no `--where`.
 
+### Listing, editing and describing tags *(settled 2026-11-20)*
+
+**Where tags live.** Only in each doc's frontmatter. There is no list of tags to keep in step: the list is **computed from the docs** every
+time. The doc texts the core reads on every run (doc 20; 17 ms for 1,000 docs, A0) already carry each doc's `tags` and `author` since A8a,
+so listing them is a count over memory, not a second read.
+
+**`vnoc doc tags [--authors]`**: every tag with how many docs carry it, and its description from `.vnoc/tags.toml` when it has one;
+described tags no doc carries yet are listed with `0 docs`. `--authors` lists authors the same way. Needs **no driver** (tags are not about
+code): `.vnoc/` and the doc texts only, about 60 ms on 1,000 docs by A0's numbers. Sorted by count, then by name. JSON:
+`{schema, command: "doc tags", tags: [{tag, docs, description}], authors?: [{author, docs}]}`.
+
+```
+$ vnoc doc tags
+plan        4 docs   A change we intend to make. Retag as done when it ships.
+billing     2 docs
+decision    1 doc    Why we chose this way over the others.
+done        0 docs   A plan that shipped.
+```
+
+**A tag nobody has used yet is accepted, never an error.** There is nothing to register first: once a doc carries it, it exists. Because of
+drift (`plan`, `planning`, `todo`), `doc new` and `doc tag --add` print a **notice** (stdout, exit `0`) when a tag is on no other doc and is not
+described: `note: "planning" is a new tag in this project (described: plan, decision, done); did you mean "plan"?`. The "did you mean" is
+`nearest` over the known tags (described ones first), with the node names' edit rule. `--quiet` keeps the notice: it is about the data, not
+a hint.
+
+**`vnoc doc tag <node> [file] [--add <t>]… [--remove <t>]…`**: one doc per call (C3: no bulk), the doc chosen as `doc read` chooses it
+(the node's only doc, or `file`; a node with several docs and no `file` → `2` with their file names). It rewrites **only the `tags:` line**:
+
+```
+before                          after `--add done --remove plan`
+---                             ---
+node: 4KF0…                     node: 4KF0…
+hint: billing/tax.py::rate_for  hint: billing/tax.py::rate_for
+tags: [plan, billing]           tags: [billing, done]
+---                             ---
+```
+
+- The `node:` and `hint:` lines, the title and the body stay byte for byte; the write is atomic (temp file, then rename) under the write
+  lock (A7), and refused if the file changed between read and write.
+- Order: the doc's tags as they were, removals taken out, additions appended in the order given; a tag already there is not added twice.
+- The last tag removed: the `tags:` line goes. No `tags:` line and an `--add`: the line is written after `author:` (or `hint:`).
+- A hand-written block list (`tags:` then `- plan` lines) is rewritten as one line: the only formatting change, and only of those lines.
+- Removing a tag the doc does not have, or adding one it has: nothing changes for that tag, the output says `already without "plan"` /
+  `already has "done"`, exit `0`. Running the same command twice is never an error.
+- A bad tag (upper case, a space…) → `2` with the rule, nothing written.
+- Output: `tags  <doc path>  [billing, done]`, plus the new-tag notice if any. JSON: `{schema, command: "doc tag", doc, tags, added,
+  removed, unchanged, notice}`.
+
+**What is not built:** renaming a tag across the project (a bulk write: C3); a command that writes `tags.toml` (a project's vocabulary is
+the team's decision, made in a pull request); a whitelist (a refused tag would stop an agent mid-task for a word). If a team asks for strict
+tags, an optional `strict = true` in `tags.toml` is where it would go.
+
+**In the skill (A10):** before tagging, run `vnoc doc tags` and reuse a tag that fits, preferring described ones; never invent a synonym of
+one that exists; move a plan's tag when its state changes (`vnoc doc tag … --add done --remove plan`); read `tags.toml`, do not edit it.
+
+**Later, not in 0.5:** the extension shows descriptions on hover of a tag in the sidebar's doc rows, and gets a `vnoc/tags` request (a thin
+wrapper over the same library function, C2) when it has a screen that lists or edits tags.
+
 ## 5. Editing a doc
 
 No command. A doc is a Markdown file; `vnoc doc path` (or the path `doc new` printed) is all an agent needs, and its own edit tool does the rest.

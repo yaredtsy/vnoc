@@ -39,8 +39,8 @@ commands: `vnoc check` fails a pull request that left a doc Missing.
 
 | In | Out (later) |
 |---|---|
-| `status` `show` `code` `doc list/read/path` `tree` `find` `grep` `calls` `missing` `check` | `vnoc mcp`, VS Code language-model tools, plugins and hooks ([`08`](08-mcp-and-plugins.md)) |
-| `init` `doc new` `relink` `repair` | remove, trash, empty trash: **never** for agents |
+| `status` `show` `code` `doc list/read/path/tags` `tree` `find` `grep` `calls` `missing` `check` | `vnoc mcp`, VS Code language-model tools, plugins and hooks ([`08`](08-mcp-and-plugins.md)) |
+| `init` `doc new` `doc tag` `relink` `repair` | remove, trash, empty trash: **never** for agents |
 | `guide` `skill` `agent install/status/remove` | `diff`, `history` (graph diff, function history: futureplan 01, 03) |
 | plain text by default, `--json` on every command | Homebrew, `cargo install`, an npm wrapper |
 | *Install `vnoc` Command in PATH* · *Set Up Coding Agents* · `vnoc` and the driver in each GitHub release | callers (`calls --callers`): call trees are solved lazily, one entry at a time, so there is no reverse map to ask. `grep` is the honest stand-in; [`08`](08-mcp-and-plugins.md) §3 has the two ways to build the real thing |

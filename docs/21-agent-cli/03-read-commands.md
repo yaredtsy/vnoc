@@ -26,6 +26,7 @@ vnoc code <node>…  [--context N]                only the code, with line numbe
 vnoc doc list [<node>…] [--where '<query>']     title, tags and path of each doc; with no node, every doc of the project
 vnoc doc read <node> [file] [--where '<query>'] print the doc (all of the node's, separated, when no file is given)
 vnoc doc path <node> [file]                     the path, for the agent's own read and edit tools
+vnoc doc tags [--authors]                       every tag (or author) with its doc count and its description (A9b; 04 §4)
 vnoc tree [<node>…] [--depth N] [--kind K,…] [--where '<query>'] [--sig] [--lines] [--docs] [--flat] [--limit N]
 vnoc find '<query>' [--limit N] [--nodes | --docs]
 vnoc grep '<regex>' [<path>…] [-i] [--docs] [--names] [--limit N]
