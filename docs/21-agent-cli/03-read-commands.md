@@ -38,16 +38,43 @@ global:  --root <dir> · --driver <path> · --json · --format id|path · --quie
 
 ## 2. `status`
 
+As built in A2 (2026-11-19), on the sample project (`crates/vnoc/tests/sample/`, run as a copy outside the repository):
+
 ```
 $ vnoc status
-V-NOC 0.5.0   root /repo   driver python 0.5.0
-12 folders · 84 files · 31 classes · 412 functions · 27 docs on 19 nodes
-missing 1 · problems 0 · lost markers 2      → vnoc check
-skill installed (0.5.0) · rules in AGENTS.md
+V-NOC 0.2.0   root /work/sample   driver python 0.2.0
+3 folders · 10 files · 5 classes · 25 functions · 7 docs on 6 nodes
+missing 1 · problems 0      → vnoc check
 ```
 
-In a project with no `.vnoc/`: the counts, then `no .vnoc/ here yet: nothing is documented (vnoc init starts it; ask the user first)`. The one
-command to run when anything seems off; the walkthrough's "is it working?" step.
+- **Line 1:** the version of `vnoc`, the root (**the one absolute path any command prints**: it is the root itself; everything else is relative to
+  it, 02 §2), and the driver that ran. A folder with no Python file never starts a driver, and says `driver not started (no Python files to read)`.
+- **Line 2:** the counts of `index::structure` (folders *under* the root, files, classes, functions and methods together), then the docs and the
+  nodes they are on (`Index::doc_counts`; a Missing node's docs are counted). `no docs` when there are none. Singular where the count is 1
+  (`1 file`, `1 class`).
+- **Line 3:** `missing N · problems N`, then `failed N` if files could not be outlined and `stopped at 20,000 files` if the scan hit its cap. The
+  hint `→ vnoc check` is there only when `missing + problems > 0`, and never with `--quiet`.
+- Still to come, not built: the **lost markers** count (A6, with `check`) and the line about the installed skill and rules (A11).
+- Always exit `0` when it answered, whatever it found: a Missing node is a finding, not a failure of `status` (`check` is the command that exits `1`).
+- `--format` is a usage error here (exit `2`): `status prints no list; --format is for list commands`.
+
+In a project with no `.vnoc/` at the git root: lines 1 and 2 (`no docs`), then
+`no .vnoc/ here yet: nothing is documented (vnoc init starts it; ask the user first)`, exit `0`; there is no third line unless files failed or the
+scan stopped. The one command to run when anything seems off; the walkthrough's "is it working?" step.
+
+`--json`, one value (golden file `crates/vnoc/tests/golden/status.json`, with the root and the two versions replaced before comparing):
+
+```json
+{ "schema": 1, "command": "status", "version": "0.2.0", "root": "/work/sample", "initialized": true,
+  "driver": { "name": "python", "version": "0.2.0" },
+  "stats": { "folders": 3, "files": 10, "classes": 5, "functions": 25 },
+  "docs": { "docs": 7, "nodes": 6 },
+  "missing": [ { "id": "7N1HNCPA163HHSN91HX48T9QGE", "kind": "function", "path": "api/routes.py", "qualname": "legacy_export", "docs": 1 } ],
+  "problems": [], "failed": [], "truncated": false }
+```
+
+`driver` is `null` when none was started. `initialized` is whether `.vnoc/` is a folder at the git root. `missing`, `problems` and `failed` are the
+protocol's own types (`MissingNode`, `Problem`, `FailedFile`: snake_case), as `vnoc/structure` sends them.
 
 ## 3. `show`, `code`, `doc`
 

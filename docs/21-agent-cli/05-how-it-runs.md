@@ -150,7 +150,9 @@ only; `lib.rs` has none. From A2:
 
 - `#![deny(clippy::print_stdout, clippy::print_stderr)]` on the library too;
 - `cli/out.rs` is the **one** module with `#[allow]`: it writes through a locked `stdout`, and every command prints through it;
-- logs go to standard error with `VNOC_LOG`, as now; a command prints nothing else there unless it fails;
+- logs go to standard error with `VNOC_LOG`, as now; a command prints nothing else there unless it fails. *(As built in A2: a command's default
+  filter is `warn`, and when `VNOC_LOG` is not set `main` sets it to `warn` for the process before any thread exists, because the driver it starts
+  reads the same variable and its own default is `info`: without that, every command printed the driver's "analyzer wire format" line.)*;
 - a closed pipe (`vnoc tree | head`) ends the command quietly with `0`, not with a panic message.
 
 ## 5. Exit codes (C6)
