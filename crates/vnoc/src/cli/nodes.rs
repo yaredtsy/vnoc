@@ -20,14 +20,74 @@ use crate::index::{Index, Node};
 use crate::node_ref::{self, Found, NodeRef, Why, is_absolute};
 use crate::project::Project;
 use crate::search::{self, CorpusSlot};
-use crate::suggest::suggest;
+use crate::suggest::{Suggestion, suggest};
 use crate::userdata::UserData;
 
 /// An argument that named nothing, or nothing that has what the command needs: the case (`why`, a stable word for `--json`) and the sentence.
 #[derive(Debug)]
 pub struct NodeError {
     pub why: &'static str,
+    /// one line, as `--json` has always had it: the sentence, then the hints after ` · ` (the text output does not print this: it puts them under
+    /// the sentence)
     pub message: String,
+    /// the sentence alone
+    said: String,
+    pub hints: Option<Hints>,
+}
+
+/// A list a sentence is followed by: what the name may have meant, what was found, what the file has, the files a name is. One per line in the text.
+#[derive(Debug)]
+pub struct Hints {
+    /// `did you mean`, `found`, `main.py has:`, `name one of`
+    pub lead: String,
+    /// as they can be pasted back as an argument
+    pub items: Vec<String>,
+    /// how many more there were than are shown
+    pub more: usize,
+}
+
+impl NodeError {
+    /// A sentence with nothing after it.
+    pub fn new(why: &'static str, message: impl Into<String>) -> NodeError {
+        let message = message.into();
+        NodeError {
+            why,
+            said: message.clone(),
+            message,
+            hints: None,
+        }
+    }
+
+    /// A sentence and a list under it. `joined` is how the one-line `message` introduces the list (` · did you mean: `).
+    fn with_hints(why: &'static str, said: String, joined: &str, hints: Hints) -> NodeError {
+        let mut line = format!("{said}{joined}{}", hints.items.join(" · "));
+        if hints.more > 0 {
+            line.push_str(&format!(" · and {} more", hints.more));
+        }
+        NodeError {
+            why,
+            said,
+            message: line,
+            hints: Some(hints),
+        }
+    }
+
+    /// The error as `--json` has it: `message` is one line, and `hints` (an addition) is the list.
+    pub fn json(&self) -> Value {
+        let mut value = json!({ "why": self.why, "message": self.message });
+        if let Some(hints) = &self.hints {
+            value["hints"] = json!(hints.items);
+        }
+        value
+    }
+
+    /// The error on standard error: the sentence, and the list one per line under it.
+    pub fn print(&self) {
+        out::error(&self.said);
+        if let Some(hints) = &self.hints {
+            out::hints(&hints.lead, &hints.items, hints.more);
+        }
+    }
 }
 
 /// A doc of a node: its title and its file, as [`doc_path`] prints it.
@@ -118,10 +178,7 @@ impl<'a> Lookup<'a> {
     /// The node `arg` names. A relative path is tried from the current folder first and then from the root; each try is `node_ref`'s own.
     pub fn resolve(&self, arg: &str) -> Result<Target<'_>, NodeError> {
         let Some(written) = node_ref::parse(arg) else {
-            return Err(NodeError {
-                why: "empty",
-                message: "an empty reference names no node".into(),
-            });
+            return Err(NodeError::new("empty", "an empty reference names no node"));
         };
         let joined = self.joined(&written);
         let project = &self.opened.project;
@@ -277,76 +334,109 @@ impl<'a> Lookup<'a> {
     /// The sentence of 02 §4 for `why`. Every hint in it can be pasted back as the argument.
     fn explain(&self, why: &Why, r: &NodeRef) -> NodeError {
         let root = self.opened.project.open_dir().display();
-        let (slug, message) = match why {
+        let plain = |slug: &'static str, message: String| NodeError::new(slug, message);
+        match why {
             Why::NoDef { path, name } if name.is_empty() => {
-                ("no_def", format!("no node at {path}"))
+                plain("no_def", format!("no node at {path}"))
             }
             Why::NoDef { path, name } => {
-                let hints = self.locations(&r.clone().with_path(path.clone()), 3);
                 let said = format!("no node at {path}::{name}");
-                ("no_def", with_hints(said, " · did you mean: ", &hints))
+                let asked = r.clone().with_path(path.clone());
+                match self.suggestion(&asked, 3) {
+                    // what the named file has: the sentence says whose
+                    (Suggestion::Has(_), items, more) => NodeError::with_hints(
+                        "no_def",
+                        said,
+                        &format!(" · {} has: ", base_name(path)),
+                        Hints {
+                            lead: format!("{} has:", base_name(path)),
+                            items,
+                            more,
+                        },
+                    ),
+                    (Suggestion::Nothing, _, _) => plain("no_def", said),
+                    (_, items, more) => NodeError::with_hints(
+                        "no_def",
+                        said,
+                        " · did you mean: ",
+                        Hints {
+                            lead: "did you mean".into(),
+                            items,
+                            more,
+                        },
+                    ),
+                }
             }
             Why::NoFile(text) => {
                 // `OrderService.parse_order` parses as a path: with no folder in it, it may be a name
-                let hints = match r {
+                let found = match r {
                     NodeRef::Path(_) if !text.contains('/') && !text.contains('\\') => {
-                        self.locations(r, 5)
+                        Some(self.suggestion(r, 5))
                     }
-                    _ => Vec::new(),
+                    _ => None,
                 };
-                if hints.is_empty() {
-                    ("no_file", format!("no file {text}"))
-                } else {
-                    let said = format!("\"{text}\" names no file");
-                    ("no_file", with_hints(said, " · found: ", &hints))
+                match found {
+                    Some((Suggestion::Found(_) | Suggestion::Near(_), items, more)) => {
+                        NodeError::with_hints(
+                            "no_file",
+                            format!("\"{text}\" names no file"),
+                            " · found: ",
+                            Hints {
+                                lead: "found".into(),
+                                items,
+                                more,
+                            },
+                        )
+                    }
+                    _ => plain("no_file", format!("no file {text}")),
                 }
             }
-            Why::NotRead(path) => (
+            Why::NotRead(path) => plain(
                 "not_read",
                 format!(
                     "{path} is not read by V-NOC (it reads Python files that git does not ignore)"
                 ),
             ),
             Why::Failed { path, message } => {
-                ("failed", format!("{path} could not be read: {message}"))
+                plain("failed", format!("{path} could not be read: {message}"))
             }
             Why::Ambiguous { name, files } => {
-                let shown: Vec<&str> = files.iter().take(5).map(String::as_str).collect();
-                let more = match files.len() - shown.len() {
-                    0 => String::new(),
-                    n => format!(" · and {n} more"),
-                };
-                (
+                let shown: Vec<String> = files.iter().take(5).cloned().collect();
+                NodeError::with_hints(
                     "ambiguous",
-                    format!(
-                        "{name} names {} files: {}{more}",
-                        files.len(),
-                        shown.join(" · ")
-                    ),
+                    format!("{name} names {} files", files.len()),
+                    ": ",
+                    Hints {
+                        lead: "name one of".into(),
+                        more: files.len() - shown.len(),
+                        items: shown,
+                    },
                 )
             }
-            Why::PastEnd { path, lines } => (
+            Why::PastEnd { path, lines } => plain(
                 "past_end",
                 format!(
                     "{path} has {lines} line{}",
                     if *lines == 1 { "" } else { "s" }
                 ),
             ),
-            Why::NoId(id) => ("no_id", format!("no node has the ID {id}")),
-            Why::Outside(path) => (
+            Why::NoId(id) => plain("no_id", format!("no node has the ID {id}")),
+            Why::Outside(path) => plain(
                 "outside",
                 format!("{path} is outside this project (root: {root})"),
             ),
-        };
-        NodeError { why: slug, message }
+        }
     }
 
-    /// Up to `limit` locations `suggest` gives for `r`, each as it can be pasted back (the path relative to the root).
-    fn locations(&self, r: &NodeRef, limit: usize) -> Vec<String> {
+    /// What `suggest` gives for `r`, as locations that can be pasted back (the path relative to the root): the shown ones, and how many more there are.
+    /// A file's own defs (`Has`) are all shown; the others are cut at `shown`.
+    fn suggestion(&self, r: &NodeRef, shown: usize) -> (Suggestion, Vec<String>, usize) {
         let corpus = self.corpus();
-        suggest(corpus, r, limit)
-            .into_iter()
-            .map(|at| {
+        let found = suggest(corpus, r, 50);
+        let all: Vec<String> = found
+            .indexes()
+            .iter()
+            .map(|&at| {
                 let node = &corpus.nodes()[at];
                 // a node's id is `<repo path>::<qualname>#n`: what follows the `::` is the part that does not depend on the root
                 match node.id.split_once("::") {
@@ -354,22 +444,26 @@ impl<'a> Lookup<'a> {
                     None => node.path.clone(),
                 }
             })
-            .collect()
+            .collect();
+        let keep = if matches!(found, Suggestion::Has(_)) {
+            all.len()
+        } else {
+            shown.min(all.len())
+        };
+        let more = all.len() - keep;
+        (found, all.into_iter().take(keep).collect(), more)
     }
+}
+
+/// `main.py` of `api/main.py`.
+fn base_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
 /// What to say when a reference found nothing and the library has no reason: it cannot happen (a miss always has one), and a sentence is better
 /// than a panic.
 fn unexplained(r: &NodeRef) -> Why {
     Why::NoFile(r.path().unwrap_or_default().to_string())
-}
-
-fn with_hints(said: String, lead: &str, hints: &[String]) -> String {
-    if hints.is_empty() {
-        said
-    } else {
-        format!("{said}{lead}{}", hints.join(" · "))
-    }
 }
 
 /// A repo path as shown below the opened folder.
@@ -508,11 +602,9 @@ pub fn emit<'a, A: Answer>(
             Err(e) => {
                 failed = true;
                 if global.json {
-                    results.push(
-                        json!({ "arg": arg, "error": { "why": e.why, "message": e.message } }),
-                    );
+                    results.push(json!({ "arg": arg, "error": e.json() }));
                 } else {
-                    out::error(&e.message);
+                    e.print();
                 }
             }
         }

@@ -6,7 +6,7 @@ use serde_json::json;
 use vnoc_driver_protocol::CallMark;
 
 use super::args::CallsArgs;
-use super::nodes::{Lookup, Target, id_of, kind_word, lines_of};
+use super::nodes::{Lookup, NodeError, Target, id_of, kind_word, lines_of};
 use super::out::{self, Render};
 use super::project::open_from;
 use super::show::head_line;
@@ -23,23 +23,27 @@ pub async fn run(global: &Global, args: &CallsArgs) -> Result<(), Failure> {
         Ok(Target::Missing(missing)) => {
             return refused(
                 global,
-                "missing",
-                format!(
-                    "calls start at a function or a class: {} is Missing (its code is gone)",
-                    missing.was
+                NodeError::new(
+                    "missing",
+                    format!(
+                        "calls start at a function or a class: {} is Missing (its code is gone)",
+                        missing.was
+                    ),
                 ),
             );
         }
-        Err(error) => return refused(global, error.why, error.message),
+        Err(error) => return refused(global, error),
     };
     if matches!(node.kind, Kind::File | Kind::Folder) {
         return refused(
             global,
-            "not_a_def",
-            format!(
-                "calls start at a function or a class: {} is a {}",
-                node.location(),
-                kind_word(node.kind)
+            NodeError::new(
+                "not_a_def",
+                format!(
+                    "calls start at a function or a class: {} is a {}",
+                    node.location(),
+                    kind_word(node.kind)
+                ),
             ),
         );
     }
@@ -74,18 +78,15 @@ pub async fn run(global: &Global, args: &CallsArgs) -> Result<(), Failure> {
     out::render(&answer, global)
 }
 
-/// An argument that cannot start a call tree: the sentence, and `--json` has it in the value (exit `2`, as `show` does for a node it cannot find).
-fn refused(global: &Global, why: &'static str, message: String) -> Result<(), Failure> {
+/// An argument that cannot start a call tree: the sentence (and its hints, one per line), or with `--json` a value on standard output. Exit `2`, as
+/// `show` does for a node it cannot find.
+fn refused(global: &Global, error: NodeError) -> Result<(), Failure> {
     if global.json {
-        out::json(&json!({
-            "schema": 1,
-            "command": "calls",
-            "error": { "why": why, "message": message },
-        }))?;
-        Err(Failure::Reported)
+        out::json(&json!({ "schema": 1, "command": "calls", "error": error.json() }))?;
     } else {
-        Err(Failure::NoSuchNode(message))
+        error.print();
     }
+    Err(Failure::Reported)
 }
 
 /// What `calls` answers: the protocol's tree with the flags it was asked with, and the rows its text is made of.

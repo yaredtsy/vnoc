@@ -1,28 +1,62 @@
 //! The names closest to one that was typed wrong (`docs/21-agent-cli/02-naming-a-node.md` §4), for a command's "did you mean".
 //!
 //! This is **not** search: `run` has no typo tolerance on purpose (doc 20), so the box stays as it is, and this is used only after a name found
-//! nothing. How many edits count depends on the length of the name given: 3 letters or fewer allow none (a short name is too near to too many),
-//! 4 allow one, 5 or more allow two. An edit is a letter dropped, added or changed, or two neighbouring letters swapped (optimal string alignment).
+//! nothing. How many edits count depends on the length of the name given: 3 letters or fewer allow none (a short name is too near to too many; inside
+//! one file, [`nearest_in`] drops that floor), 4 allow one, 5 or more allow two. An edit is a letter dropped, added or changed, or two neighbouring letters swapped (optimal string alignment).
 //! Case is ignored. Only the last part of a qualified name is compared, on both sides (`parse_ordr` against `parse_order`, never against
 //! `OrderService.parse_order`).
 
-use crate::{Corpus, Kind};
+use crate::{Corpus, Kind, NodeEntry};
 
 /// The classes and functions whose name is within the allowed edits of `name`, as indexes into [`Corpus::nodes`]: the nodes of `in_file` (a
 /// path as the nodes have it) first, then the closer, then reading order; at most `limit`. A file or a folder is named by a path, so it is never
 /// a suggestion here.
 pub fn nearest(corpus: &Corpus, name: &str, in_file: Option<&str>, limit: usize) -> Vec<usize> {
+    find(corpus, name, true, |_| true, in_file, limit)
+}
+
+/// Where [`nearest_in`] looks: one file's own nodes, or every node except that file's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope<'a> {
+    File(&'a str),
+    Elsewhere(&'a str),
+}
+
+/// The same, inside a [`Scope`], and with or without the length floor. `floor: true` is `nearest`'s rule (3 letters or fewer allow no edit: a short
+/// name is too near to too many names in a whole project). `floor: false` is for **one file**, which has few names to be near to: 1 edit up to 4
+/// letters (a name of 1 to 4 letters, `man` for `main`), 2 from 5; only an empty name gets nothing. Closer first, then reading order.
+pub fn nearest_in(
+    corpus: &Corpus,
+    name: &str,
+    scope: Scope<'_>,
+    floor: bool,
+    limit: usize,
+) -> Vec<usize> {
+    match scope {
+        Scope::File(file) => find(corpus, name, floor, |node| node.path == file, None, limit),
+        Scope::Elsewhere(file) => find(corpus, name, floor, |node| node.path != file, None, limit),
+    }
+}
+
+fn find(
+    corpus: &Corpus,
+    name: &str,
+    floor: bool,
+    keep: impl Fn(&NodeEntry) -> bool,
+    in_file: Option<&str>,
+    limit: usize,
+) -> Vec<usize> {
     let given = letters(last_part(name));
-    let allowed = match given.len() {
-        0..=3 => return Vec::new(),
-        4 => 1,
+    let allowed = match (given.len(), floor) {
+        (0, _) | (1..=3, true) => return Vec::new(),
+        (1..=4, _) => 1,
         _ => 2,
     };
     let mut found: Vec<(bool, usize, usize)> = corpus
         .nodes()
         .iter()
         .enumerate()
-        .filter(|(_, node)| matches!(node.kind, Kind::Class | Kind::Function))
+        .filter(|(_, node)| matches!(node.kind, Kind::Class | Kind::Function) && keep(node))
         .filter_map(|(at, node)| {
             let edits = edits_within(&given, &letters(last_part(&node.name)), allowed)?;
             Some((in_file != Some(node.path.as_str()), edits, at))
@@ -203,5 +237,51 @@ mod tests {
         ];
         let c = Corpus::new(nodes, Vec::new());
         assert!(nearest(&c, "orders.pi", None, 5).is_empty());
+    }
+
+    #[test]
+    fn inside_one_file_a_short_name_has_no_floor() {
+        let c = corpus(&[
+            ("a.py", "main"),
+            ("b.py", "main"),
+            ("a.py", "manager"),
+            ("a.py", "xyz"),
+        ]);
+        let in_a = |name: &str, floor: bool| -> Vec<String> {
+            nearest_in(&c, name, Scope::File("a.py"), floor, 10)
+                .into_iter()
+                .map(|at| c.nodes()[at].qualname.clone().unwrap())
+                .collect()
+        };
+        // `man` is a letter from `main`; `manager` is four letters further, and only this file is looked at
+        assert_eq!(in_a("man", false), ["main"]);
+        assert_eq!(in_a("xy", false), ["xyz"], "two letters, one edit");
+        assert_eq!(
+            in_a("q", false),
+            Vec::<String>::new(),
+            "one letter is one edit from a 1-2 letter name, and there is none"
+        );
+        assert_eq!(
+            in_a("", false),
+            Vec::<String>::new(),
+            "an empty name gets nothing"
+        );
+        // with the floor it is `nearest`'s rule: three letters or fewer allow none
+        assert_eq!(in_a("man", true), Vec::<String>::new());
+        // 4 letters: one edit; 5 or more: two
+        assert_eq!(in_a("mian", false), ["main"]);
+        assert_eq!(in_a("manage", false), ["manager"]);
+    }
+
+    #[test]
+    fn elsewhere_leaves_the_named_file_out() {
+        let c = corpus(&[
+            ("a.py", "parse_order"),
+            ("b.py", "parse_ordr"),
+            ("c.py", "parse_order"),
+        ]);
+        let names = |scope| -> Vec<usize> { nearest_in(&c, "parse_order", scope, true, 10) };
+        assert_eq!(names(Scope::Elsewhere("a.py")), [2, 1]);
+        assert_eq!(names(Scope::File("a.py")), [0]);
     }
 }

@@ -123,13 +123,13 @@ pub async fn run(global: &Global, args: &TreeArgs) -> Result<(), Failure> {
             }
             Ok(Target::Missing(missing)) => {
                 failed = true;
-                let error = NodeError {
-                    why: "missing",
-                    message: format!(
+                let error = NodeError::new(
+                    "missing",
+                    format!(
                         "{} is Missing: there is no tree (vnoc show {} reads its docs)",
                         missing.was, missing.id
                     ),
-                };
+                );
                 all.report(arg, error, global);
             }
             Err(error) => {
@@ -224,11 +224,10 @@ impl Tree {
     /// An argument that named nothing: its sentence on standard error in place, or an entry of `errors` with `--json`.
     fn report(&mut self, arg: &str, error: NodeError, global: &Global) {
         if global.json {
-            self.errors.push(
-                json!({ "arg": arg, "error": { "why": error.why, "message": error.message } }),
-            );
+            self.errors
+                .push(json!({ "arg": arg, "error": error.json() }));
         } else {
-            out::error(&error.message);
+            error.print();
         }
     }
 }

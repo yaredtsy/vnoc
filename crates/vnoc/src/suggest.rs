@@ -1,39 +1,134 @@
 //! "Did you mean": the nodes a name that found nothing was probably meant for (`docs/21-agent-cli/02-naming-a-node.md` §4).
 //!
-//! Search has no typo tolerance (doc 20), so this is two passes. First `run` on the last part of the name, inside the file it was given with and
-//! then anywhere: it finds a name given without its class (`orders/service.py::parse_order` is `OrderService.parse_order`). If that finds nothing,
-//! `nearest` finds the names a few letters away (`parse_ordr`). Only classes and functions are suggested.
+//! Search has no typo tolerance (doc 20), so this is a few passes over the corpus, and **the file the name was given with is looked at first**. When
+//! the reference names a file the index has:
+//!
+//! 1. **in that file**: the word pass (a name given without its class: `orders/service.py::parse_order` is `OrderService.parse_order`), then
+//!    `nearest_in` the file with no length floor (`man` is one letter from `main`);
+//! 2. **in other files, strong matches only**: a def whose last name is the name given (the right name in the wrong file), or within `nearest`'s edits
+//!    with its floor. Never a word hit: a name that only *contains* the letters (`man` in `DriverManager`) is no suggestion;
+//! 3. else, if the file has at most [`FEW`] defs, **all of them** (what the file has, which is more use than nothing);
+//! 4. else nothing.
+//!
+//! A qualified name with **no** file (`OrderService.parse_order`) is a search for a name: the project-wide word pass, then `nearest`. Only classes and
+//! functions are suggested.
 //!
 //! The query is **built as a value**, never formatted into a string and parsed: a path with a space in it would not survive that.
 
-use vnoc_search::{Corpus, KindFilter, Limits, Query, nearest, run};
+use vnoc_search::{Corpus, Kind, KindFilter, Limits, Query, Scope, nearest, nearest_in, run};
 
 use crate::node_ref::NodeRef;
 
-/// Shorter names are too near to too many others: no suggestion, as `nearest` has it.
+/// Shorter names are too near to too many others across a project: no suggestion from there, as `nearest` has it.
 const SHORTEST: usize = 3;
 
-/// The corpus nodes (indexes into [`Corpus::nodes`]) `r` was probably meant for, at most `limit`. `r`'s path is what the file is looked for by, as the
-/// corpus has it (relative to the opened folder: a command makes it so first). A reference with no name to look for (an ID, a file and a line, a
-/// path with a folder in it) gets none.
-pub fn suggest(corpus: &Corpus, r: &NodeRef, limit: usize) -> Vec<usize> {
-    let Some((name, file)) = asked(r) else {
-        return Vec::new();
-    };
-    if name.chars().count() < SHORTEST || limit == 0 {
-        return Vec::new();
-    }
-    if let Some(file) = file {
-        let found = words(corpus, &name, Some(file), limit);
-        if !found.is_empty() {
-            return found;
+/// A file with this many defs or fewer is listed whole when nothing is near the name.
+pub const FEW: usize = 10;
+
+/// What a name that found nothing was probably meant for. Each is indexes into [`Corpus::nodes`]; the command says them in its own words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Suggestion {
+    /// `did you mean`: near the name given, the named file's own first
+    Near(Vec<usize>),
+    /// a name with no file, looked up as a name in the whole project: `found`
+    Found(Vec<usize>),
+    /// nothing is near, and the file is small: every def it has, in reading order (`main.py has: …`)
+    Has(Vec<usize>),
+    Nothing,
+}
+
+impl Suggestion {
+    /// The indexes, whatever kind it is.
+    pub fn indexes(&self) -> &[usize] {
+        match self {
+            Suggestion::Near(at) | Suggestion::Found(at) | Suggestion::Has(at) => at,
+            Suggestion::Nothing => &[],
         }
     }
-    let found = words(corpus, &name, None, limit);
-    if !found.is_empty() {
-        return found;
+}
+
+/// What `r` was probably meant for, at most `limit` (`Has` is the whole small file, whatever the limit). `r`'s path is what the file is looked for by,
+/// as the corpus has it (relative to the opened folder: a command makes it so first). A reference with no name to look for (an ID, a file and a line, a
+/// path with a folder in it) gets nothing.
+pub fn suggest(corpus: &Corpus, r: &NodeRef, limit: usize) -> Suggestion {
+    let Some((name, file)) = asked(r) else {
+        return Suggestion::Nothing;
+    };
+    if name.is_empty() || limit == 0 {
+        return Suggestion::Nothing;
     }
-    nearest(corpus, &name, file, limit)
+    let long_enough = name.chars().count() >= SHORTEST;
+    // a file the index has: it has a node (the file's own, or a def)
+    let file = file.filter(|f| corpus.nodes().iter().any(|n| n.path == *f));
+    let Some(file) = file else {
+        // a name asked for as a name: the whole project
+        if !long_enough {
+            return Suggestion::Nothing;
+        }
+        let found = words(corpus, &name, None, limit);
+        let found = if found.is_empty() {
+            nearest(corpus, &name, None, limit)
+        } else {
+            found
+        };
+        return if found.is_empty() {
+            Suggestion::Nothing
+        } else {
+            Suggestion::Found(found)
+        };
+    };
+
+    // 1. in the file
+    if long_enough {
+        let found = words(corpus, &name, Some(file), limit);
+        if !found.is_empty() {
+            return Suggestion::Near(found);
+        }
+    }
+    let found = nearest_in(corpus, &name, Scope::File(file), false, limit);
+    if !found.is_empty() {
+        return Suggestion::Near(found);
+    }
+    // 2. in other files: the same name, or a few letters away; never a word that only contains it
+    let mut strong: Vec<usize> = corpus
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| {
+            is_def(n.kind) && n.path != file && last_name(&n.name).eq_ignore_ascii_case(&name)
+        })
+        .map(|(at, _)| at)
+        .collect();
+    for at in nearest_in(corpus, &name, Scope::Elsewhere(file), true, limit) {
+        if !strong.contains(&at) {
+            strong.push(at);
+        }
+    }
+    strong.truncate(limit);
+    if !strong.is_empty() {
+        return Suggestion::Near(strong);
+    }
+    // 3. what a small file has
+    let defs: Vec<usize> = corpus
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| is_def(n.kind) && n.path == file)
+        .map(|(at, _)| at)
+        .collect();
+    if !defs.is_empty() && defs.len() <= FEW {
+        return Suggestion::Has(defs);
+    }
+    Suggestion::Nothing
+}
+
+fn is_def(kind: Kind) -> bool {
+    matches!(kind, Kind::Class | Kind::Function)
+}
+
+/// `parse_order` of `OrderService.parse_order`.
+fn last_name(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
 }
 
 /// The name to look for (the last part of the qualified name) and the file it was asked in.
@@ -135,7 +230,9 @@ mod tests {
     fn suggested(corpus: &Corpus, text: &str) -> Vec<String> {
         let r = node_ref::parse(text).unwrap();
         suggest(corpus, &r, 5)
-            .into_iter()
+            .indexes()
+            .iter()
+            .copied()
             .map(|at| {
                 let n = &corpus.nodes()[at];
                 format!("{}::{}", n.path, n.qualname.as_deref().unwrap())
@@ -162,13 +259,10 @@ mod tests {
     #[test]
     fn a_misspelt_name_finds_the_nearest() {
         let corpus = sample();
-        // the file's own `parse_order` first, then the one in the other file
+        // the file's own `parse_order`, and nothing from the other file: other files are asked only when the named one has nothing near
         assert_eq!(
             suggested(&corpus, "orders/service.py::OrderService.parse_ordr"),
-            [
-                "orders/service.py::OrderService.parse_order",
-                "my orders/legacy.py::parse_order"
-            ]
+            ["orders/service.py::OrderService.parse_order"]
         );
         assert_eq!(
             suggested(&corpus, "billing/charge.py::retry_chrage"),
@@ -181,12 +275,21 @@ mod tests {
     }
 
     #[test]
-    fn the_files_own_names_come_before_the_others() {
+    fn the_named_file_is_asked_first_and_the_others_only_when_it_has_nothing_near() {
         let corpus = sample();
-        // `parse_order` is in two files: the one named comes first
-        let in_legacy = suggested(&corpus, "my orders/legacy.py::parse_ordr");
-        assert_eq!(in_legacy[0], "my orders/legacy.py::parse_order");
-        assert!(in_legacy.contains(&"orders/service.py::OrderService.parse_order".to_string()));
+        // `parse_order` is in two files: the one named answers, and the other is not added to it
+        assert_eq!(
+            suggested(&corpus, "my orders/legacy.py::parse_ordr"),
+            ["my orders/legacy.py::parse_order"]
+        );
+        // the file has nothing near: the other file's is the same name (a typo of it, with the floor)
+        assert_eq!(
+            suggested(&corpus, "billing/tax.py::parse_ordr"),
+            [
+                "orders/service.py::OrderService.parse_order",
+                "my orders/legacy.py::parse_order"
+            ]
+        );
     }
 
     #[test]
@@ -198,7 +301,10 @@ mod tests {
             rest: "parse_order".into(),
         };
         let found = suggest(&corpus, &r, 5);
-        assert_eq!(corpus.nodes()[found[0]].path, "my orders/legacy.py");
+        assert_eq!(
+            corpus.nodes()[found.indexes()[0]].path,
+            "my orders/legacy.py"
+        );
     }
 
     #[test]
@@ -216,7 +322,19 @@ mod tests {
     #[test]
     fn short_names_and_references_with_no_name_get_nothing() {
         let corpus = sample();
-        assert!(suggested(&corpus, "orders/service.py::pl").is_empty());
+        // `pl` is near nothing, and `service.py` is a small file: it is listed whole (below), not guessed at
+        assert!(matches!(
+            suggest(
+                &corpus,
+                &node_ref::parse("orders/service.py::pl").unwrap(),
+                5
+            ),
+            Suggestion::Has(_)
+        ));
+        assert!(
+            suggested(&corpus, "billing/tax.py::pl").len() == 2,
+            "a small file lists what it has"
+        );
         assert!(suggested(&corpus, "orders/service.py:12").is_empty());
         assert!(
             suggested(&corpus, "orders/nothing.py").is_empty(),
@@ -230,6 +348,101 @@ mod tests {
     #[test]
     fn a_limit_of_zero_gives_none() {
         let r = node_ref::parse("orders/service.py::parse_order").unwrap();
-        assert!(suggest(&sample(), &r, 0).is_empty());
+        assert_eq!(suggest(&sample(), &r, 0), Suggestion::Nothing);
+    }
+
+    /// A project in which `api/main.py` has the one def `main`, as the user's `main.py` has, and which has `Manager` classes elsewhere.
+    fn user_project() -> Corpus {
+        let f = |q, p| node(Kind::Function, q, p);
+        let mut nodes = vec![
+            f("main", "api/main.py"),
+            node(Kind::Class, "DriverManager", "core/driver.py"),
+            node(Kind::Class, "SocketManager", "core/socket.py"),
+            node(Kind::Class, "PerformanceTimer", "core/perf.py"),
+            f("manage", "core/other.py"),
+            f("Main", "web/app.py"),
+        ];
+        // a big file: eleven defs
+        nodes.extend(
+            (0..11).map(|n| node(Kind::Function, &format!("handler_{n}"), "web/handlers.py")),
+        );
+        Corpus::new(nodes, Vec::new())
+    }
+
+    #[test]
+    fn a_short_misspelt_name_finds_the_files_one_def_and_nothing_that_only_contains_the_letters() {
+        let corpus = user_project();
+        assert_eq!(
+            suggested(&corpus, "api/main.py::man"),
+            ["api/main.py::main"]
+        );
+        // `Manager`, `manage` and `PerformanceTimer` are never suggested for it
+        let all = suggested(&corpus, "api/main.py::man");
+        assert!(all.iter().all(|s| s.starts_with("api/main.py")), "{all:?}");
+        assert!(matches!(
+            suggest(&corpus, &node_ref::parse("api/main.py::man").unwrap(), 3),
+            Suggestion::Near(_)
+        ));
+    }
+
+    #[test]
+    fn the_same_name_in_another_file_is_a_strong_match_whatever_its_length_and_case() {
+        let corpus = user_project();
+        // `main` is in `api/main.py`, and `Main` in `web/app.py`: asked in a file that has neither
+        assert_eq!(
+            suggested(&corpus, "core/perf.py::main"),
+            ["api/main.py::main", "web/app.py::Main"]
+        );
+        // a word that only contains it is not: `man` is inside `DriverManager`, `SocketManager` and `manage`
+        assert!(
+            suggested(&corpus, "core/perf.py::man")
+                .iter()
+                .all(|s| !s.contains("Manager") && !s.contains("manage"))
+        );
+    }
+
+    #[test]
+    fn a_small_file_is_listed_whole_when_nothing_is_near_and_a_big_one_is_not() {
+        let corpus = user_project();
+        let r = node_ref::parse("api/main.py::zzzzzz").unwrap();
+        let Suggestion::Has(defs) = suggest(&corpus, &r, 3) else {
+            panic!("a file with one def lists it");
+        };
+        assert_eq!(defs.len(), 1);
+        assert_eq!(corpus.nodes()[defs[0]].qualname.as_deref(), Some("main"));
+        // eleven defs is more than FEW: no hint at all
+        assert_eq!(
+            suggest(
+                &corpus,
+                &node_ref::parse("web/handlers.py::zzzzzz").unwrap(),
+                3
+            ),
+            Suggestion::Nothing
+        );
+        // exactly ten is still listed, in reading order and in full whatever the limit
+        let ten = Corpus::new(
+            (0..10)
+                .map(|n| node(Kind::Function, &format!("handler_{n}"), "ten.py"))
+                .collect(),
+            Vec::new(),
+        );
+        let Suggestion::Has(all) = suggest(&ten, &node_ref::parse("ten.py::zzzzzz").unwrap(), 3)
+        else {
+            panic!("ten defs are listed");
+        };
+        assert_eq!(all, (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_name_with_no_file_is_found_not_guessed() {
+        let corpus = user_project();
+        assert!(matches!(
+            suggest(&corpus, &node_ref::parse("DriverManagr").unwrap(), 5),
+            Suggestion::Found(_)
+        ));
+        assert_eq!(
+            suggest(&corpus, &node_ref::parse("nothing_like_it").unwrap(), 5),
+            Suggestion::Nothing
+        );
     }
 }

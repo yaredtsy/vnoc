@@ -39,6 +39,9 @@
     {
       "arg": "orders/service.py::parse_ordr",
       "error": {
+        "hints": [
+          "orders/service.py::OrderService.parse_order"
+        ],
         "message": "no node at orders/service.py::parse_ordr · did you mean: orders/service.py::OrderService.parse_order",
         "why": "no_def"
       }

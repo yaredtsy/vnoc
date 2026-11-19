@@ -36,10 +36,10 @@ pub async fn run(global: &Global, args: &GrepArgs) -> Result<(), Failure> {
             }
             Ok(Target::Missing(missing)) => errors.push((
                 arg,
-                NodeError {
-                    why: "missing",
-                    message: format!("{} is Missing: there is no code to search", missing.was),
-                },
+                NodeError::new(
+                    "missing",
+                    format!("{} is Missing: there is no code to search", missing.was),
+                ),
             )),
             Err(error) => errors.push((arg, error)),
         }
@@ -49,12 +49,12 @@ pub async fn run(global: &Global, args: &GrepArgs) -> Result<(), Failure> {
         if global.json {
             let list: Vec<_> = errors
                 .iter()
-                .map(|(arg, e)| json!({ "arg": arg, "error": { "why": e.why, "message": e.message } }))
+                .map(|(arg, e)| json!({ "arg": arg, "error": e.json() }))
                 .collect();
             out::json(&json!({ "schema": 1, "command": "grep", "errors": list }))?;
         } else {
             for (_, error) in &errors {
-                out::error(&error.message);
+                error.print();
             }
         }
         return Err(Failure::Reported);

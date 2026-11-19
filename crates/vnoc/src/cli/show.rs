@@ -103,11 +103,12 @@ pub fn missing_view(missing: Missing) -> MissingView {
 fn node_view(lookup: &Lookup, node: &Node, args: &ShowArgs) -> Result<NodeView, NodeError> {
     let code = match node.range {
         Some(range) if !args.no_code => {
-            let excerpt =
-                source::excerpt(&file_of(lookup, node), &range, 0).map_err(|e| NodeError {
-                    why: "unreadable",
-                    message: format!("{} could not be read: {e}", node.path),
-                })?;
+            let excerpt = source::excerpt(&file_of(lookup, node), &range, 0).map_err(|e| {
+                NodeError::new(
+                    "unreadable",
+                    format!("{} could not be read: {e}", node.path),
+                )
+            })?;
             let cut = if args.full {
                 0
             } else {

@@ -21,13 +21,13 @@ pub async fn run(global: &Global, args: &CodeArgs) -> Result<(), Failure> {
     > {
         let node = match target {
             Target::Missing(missing) => {
-                return Err(NodeError {
-                    why: "missing",
-                    message: format!(
+                return Err(NodeError::new(
+                    "missing",
+                    format!(
                         "{} is Missing: there is no code (vnoc show {} reads its docs)",
                         missing.was, missing.id
                     ),
-                });
+                ));
             }
             Target::Node(node) => node,
         };
@@ -38,17 +38,17 @@ pub async fn run(global: &Global, args: &CodeArgs) -> Result<(), Failure> {
             } else {
                 "a folder"
             };
-            return Err(NodeError {
-                why: "no_code",
-                message: format!("{location} is {what}: use vnoc show for a file or a folder"),
-            });
+            return Err(NodeError::new(
+                "no_code",
+                format!("{location} is {what}: use vnoc show for a file or a folder"),
+            ));
         };
         let excerpt =
             source::excerpt(&file_of(lookup, node), &range, args.context).map_err(|e| {
-                NodeError {
-                    why: "unreadable",
-                    message: format!("{} could not be read: {e}", node.path),
-                }
+                NodeError::new(
+                    "unreadable",
+                    format!("{} could not be read: {e}", node.path),
+                )
             })?;
         Ok(CodeAnswer {
             kind: if node.kind == Kind::Class {

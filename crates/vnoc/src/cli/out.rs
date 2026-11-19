@@ -56,6 +56,23 @@ pub fn error(message: &str) {
     );
 }
 
+/// The list under an error, one item per line, indented: `  did you mean` (dim) and the items under it (locations, cyan), then `and N more`. On
+/// standard error, with the error's own line.
+pub fn hints(lead: &str, items: &[String], more: usize) {
+    let mut err = style::writer(Stream::Err);
+    let _ = writeln!(err, "  {}", style::paint_err(style::dim(), lead));
+    for item in items {
+        let _ = writeln!(err, "    {}", style::paint_err(style::location(), item));
+    }
+    if more > 0 {
+        let _ = writeln!(
+            err,
+            "    {}",
+            style::paint_err(style::dim(), format!("and {} more", style::grouped(more)))
+        );
+    }
+}
+
 /// A remark about the request that did not stop it (a filter of a query that means nothing): one line on standard error, `note: …`.
 pub fn note(message: &str) {
     let _ = writeln!(

@@ -239,10 +239,7 @@ fn by_id(project: &crate::project::Project, arg: &str) -> Result<DocsAnswer, Nod
         unreachable!("only IDs come here")
     };
     let Some(toml) = UserData::new(project.git_root()).node_toml(&id) else {
-        return Err(NodeError {
-            why: "no_id",
-            message: format!("no node has the ID {id}"),
-        });
+        return Err(NodeError::new("no_id", format!("no node has the ID {id}")));
     };
     let (location, kind) = anchor_of(project, &toml);
     Ok(DocsAnswer::node(
@@ -306,9 +303,9 @@ async fn file_command(
             let wanted = |doc: &Doc| doc.file == *file || doc.file == format!("{file}.md");
             if !answer.docs.iter().any(wanted) {
                 let have: Vec<&str> = answer.docs.iter().map(|d| d.file.as_str()).collect();
-                return Err(NodeError {
-                    why: "no_doc",
-                    message: format!(
+                return Err(NodeError::new(
+                    "no_doc",
+                    format!(
                         "no doc named {file} on {}: it has {}",
                         answer.name(),
                         if have.is_empty() {
@@ -317,7 +314,7 @@ async fn file_command(
                             have.join(" · ")
                         }
                     ),
-                });
+                ));
             }
             answer.docs.retain(wanted);
         }

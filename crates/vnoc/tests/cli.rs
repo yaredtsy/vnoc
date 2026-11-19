@@ -955,7 +955,7 @@ fn one_wrong_node_among_three_prints_its_error_in_place_and_exits_2() {
     assert_eq!(
         merged,
         format!(
-            "{METHOD}\nerror: no node at orders/service.py::OrderService.parse_ordr · did you mean: {METHOD}\nbilling/invoice.py::Invoice\n"
+            "{METHOD}\nerror: no node at orders/service.py::OrderService.parse_ordr\n  did you mean\n    {METHOD}\nbilling/invoice.py::Invoice\n"
         )
     );
     assert_eq!(exit, 2);
@@ -973,16 +973,16 @@ fn every_row_of_the_table_of_what_goes_wrong_has_its_sentence() {
     let rows: Vec<(&str, String)> = vec![
         (
             "orders/service.py::parse_ordr",
-            format!("no node at orders/service.py::parse_ordr · did you mean: {METHOD}"),
+            format!("no node at orders/service.py::parse_ordr\n  did you mean\n    {METHOD}"),
         ),
         (
             // a name given without its class
             "orders/service.py::parse_order",
-            format!("no node at orders/service.py::parse_order · did you mean: {METHOD}"),
+            format!("no node at orders/service.py::parse_order\n  did you mean\n    {METHOD}"),
         ),
         (
             "OrderService.parse_order",
-            format!("\"OrderService.parse_order\" names no file · found: {METHOD}"),
+            format!("\"OrderService.parse_order\" names no file\n  found\n    {METHOD}"),
         ),
         ("src/ordrs.py", "no file src/ordrs.py".into()),
         (
@@ -996,7 +996,8 @@ fn every_row_of_the_table_of_what_goes_wrong_has_its_sentence() {
         ),
         (
             "status.py",
-            "status.py names 2 files: billing/status.py · orders/status.py".into(),
+            "status.py names 2 files\n  name one of\n    billing/status.py\n    orders/status.py"
+                .into(),
         ),
         (
             "billing/tax.py:99",
@@ -1103,7 +1104,7 @@ fn a_path_relative_to_the_current_folder_and_one_relative_to_the_root_both_work(
     // from the root the same name is ambiguous, and the error says which files
     assert_eq!(
         error_of(&root, &["show", "status.py"]),
-        "status.py names 2 files: billing/status.py · orders/status.py"
+        "status.py names 2 files\n  name one of\n    billing/status.py\n    orders/status.py"
     );
     // a file name alone with a line finds the one file of that name
     assert_eq!(
@@ -1677,7 +1678,7 @@ fn tree_starts_are_named_as_in_show_and_errors_come_in_place() {
     );
     assert_eq!(
         error_of(&root, &["tree", "orders/service.py::parse_ordr"]),
-        format!("no node at orders/service.py::parse_ordr · did you mean: {METHOD}")
+        format!("no node at orders/service.py::parse_ordr\n  did you mean\n    {METHOD}")
     );
     assert_eq!(
         error_of(&root, &["tree", MISSING_ID]),
@@ -2872,4 +2873,162 @@ fn clap_help_follows_the_same_choice() {
     let out = run(vnoc(&root, &["--color", "always", "no-such-command"]));
     assert_eq!(code(&out), 2);
     assert!(out.stderr.contains(&0x1b));
+}
+
+// ------------------------------------------------------------------------------------------------ "did you mean" (A6e)
+
+/// The user's case, on a copy of the sample: `api/main.py` has ONE def, `main`; other folders have names that only contain the letters `man`, and a
+/// file with eleven defs. (The files are added to the copy, not to `tests/sample/`: a new file there would move every count in every golden.)
+fn user_case(label: &str) -> PathBuf {
+    let root = sample_copy(label);
+    std::fs::write(root.join("api/main.py"), "def main():\n    return 0\n").unwrap();
+    std::fs::create_dir_all(root.join("core")).unwrap();
+    std::fs::write(
+        root.join("core/drivers.py"),
+        "class DriverManager:\n    pass\n\n\nclass SocketManager:\n    pass\n\n\nclass PerformanceTimer:\n    pass\n\n\ndef manage():\n    pass\n",
+    )
+    .unwrap();
+    let eleven: String = (0..11)
+        .map(|n| format!("def handler_{n}():\n    pass\n\n\n"))
+        .collect();
+    std::fs::write(root.join("core/handlers.py"), eleven).unwrap();
+    root
+}
+
+#[test]
+fn a_typo_looks_in_the_named_file_first_and_a_name_that_only_contains_the_letters_is_never_suggested()
+ {
+    let root = user_case("mean-main");
+    assert_eq!(
+        error_of(&root, &["show", "api/main.py::man"]),
+        "no node at api/main.py::man\n  did you mean\n    api/main.py::main"
+    );
+    // from another small file: nothing is near `man` (`DriverManager`, `SocketManager`, `manage` only contain it), so the file lists what it has
+    let elsewhere = error_of(&root, &["show", "billing/tax.py::man"]);
+    assert!(
+        !elsewhere.contains("Manager") && !elsewhere.contains("manage"),
+        "{elsewhere}"
+    );
+    assert_eq!(
+        elsewhere,
+        "no node at billing/tax.py::man\n  tax.py has:\n    billing/tax.py::rate_for\n    billing/tax.py::apply_tax"
+    );
+}
+
+#[test]
+fn a_file_that_has_few_defs_lists_them_and_one_that_has_many_says_nothing() {
+    let root = user_case("mean-has");
+    assert_eq!(
+        error_of(&root, &["show", "api/main.py::zzzzzz"]),
+        "no node at api/main.py::zzzzzz\n  main.py has:\n    api/main.py::main"
+    );
+    assert_eq!(
+        error_of(&root, &["show", "core/drivers.py::zzzzzz"]),
+        "no node at core/drivers.py::zzzzzz\n  drivers.py has:\n    core/drivers.py::DriverManager\n    core/drivers.py::SocketManager\n    core/drivers.py::PerformanceTimer\n    core/drivers.py::manage"
+    );
+    // eleven defs is more than ten: no list, no guess
+    assert_eq!(
+        error_of(&root, &["show", "core/handlers.py::zzzzzz"]),
+        "no node at core/handlers.py::zzzzzz"
+    );
+}
+
+#[test]
+fn the_right_name_in_the_wrong_file_is_suggested_from_the_right_one() {
+    let root = user_case("mean-wrong-file");
+    assert_eq!(
+        error_of(&root, &["show", "billing/tax.py::parse_order"]),
+        format!("no node at billing/tax.py::parse_order\n  did you mean\n    {METHOD}")
+    );
+    // and a typo of it, from a file with nothing near it
+    assert_eq!(
+        error_of(&root, &["show", "billing/tax.py::parse_ordr"]),
+        format!("no node at billing/tax.py::parse_ordr\n  did you mean\n    {METHOD}")
+    );
+}
+
+#[test]
+fn every_command_that_names_a_node_prints_its_hints_one_per_line() {
+    let root = user_case("mean-commands");
+    for command in ["show", "code", "tree", "calls", "doc"] {
+        let args: Vec<&str> = if command == "doc" {
+            vec!["doc", "list", "api/main.py::man"]
+        } else {
+            vec![command, "api/main.py::man"]
+        };
+        assert_eq!(
+            error_of(&root, &args),
+            "no node at api/main.py::man\n  did you mean\n    api/main.py::main",
+            "{command}"
+        );
+    }
+    let grep = error_of(&root, &["grep", "x", "api/main.py::man"]);
+    assert!(
+        grep.ends_with("  did you mean\n    api/main.py::main"),
+        "{grep}"
+    );
+}
+
+#[test]
+fn an_ambiguous_file_name_lists_its_files_one_per_line_and_says_how_many_more() {
+    let root = sample_copy("mean-many");
+    for n in 0..7 {
+        std::fs::create_dir_all(root.join(format!("pkg{n}"))).unwrap();
+        std::fs::write(root.join(format!("pkg{n}/dup.py")), "def f():\n    pass\n").unwrap();
+    }
+    assert_eq!(
+        error_of(&root, &["show", "dup.py"]),
+        "dup.py names 7 files\n  name one of\n    pkg0/dup.py\n    pkg1/dup.py\n    pkg2/dup.py\n    pkg3/dup.py\n    pkg4/dup.py\n    and 2 more"
+    );
+    // a name with no file: found, one per line
+    let found = error_of(&root, &["show", "OrderService.parse_order"]);
+    assert_eq!(
+        found,
+        format!("\"OrderService.parse_order\" names no file\n  found\n    {METHOD}")
+    );
+}
+
+#[test]
+fn in_json_the_message_stays_one_line_and_the_hints_are_a_list() {
+    let root = user_case("mean-json");
+    let out = run(vnoc(&root, &["show", "api/main.py::man", "--json"]));
+    assert_eq!(code(&out), 2);
+    assert!(out.stderr.is_empty());
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let error = &value["results"][0]["error"];
+    assert_eq!(error["why"], "no_def");
+    assert_eq!(
+        error["message"],
+        "no node at api/main.py::man · did you mean: api/main.py::main"
+    );
+    assert_eq!(error["hints"], json!(["api/main.py::main"]));
+    // no list, no field: an error without hints has the two fields it always had
+    let out = run(vnoc(&root, &["show", "core/handlers.py::zzzzzz", "--json"]));
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        value["results"][0]["error"],
+        json!({ "why": "no_def", "message": "no node at core/handlers.py::zzzzzz" })
+    );
+}
+
+#[test]
+fn the_hint_lines_are_painted_in_a_terminal_and_say_the_same_words() {
+    let root = user_case("mean-colour");
+    let out = run(vnoc(
+        &root,
+        &["--color", "always", "show", "api/main.py::man"],
+    ));
+    let shown = text(&out.stderr);
+    assert!(
+        shown.starts_with("\x1b[1m\x1b[31merror:\x1b[0m no node at api/main.py::man\n"),
+        "{shown:?}"
+    );
+    assert!(
+        shown.contains("\n  \x1b[2mdid you mean\x1b[0m\n    \x1b[36mapi/main.py::main\x1b[0m\n"),
+        "{shown:?}"
+    );
+    assert_eq!(
+        without_codes(&shown),
+        "error: no node at api/main.py::man\n  did you mean\n    api/main.py::main\n"
+    );
 }
