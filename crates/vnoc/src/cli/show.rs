@@ -90,7 +90,7 @@ fn pair(lines: Option<(u32, u32)>) -> Option<[u32; 2]> {
     lines.map(|(a, b)| [a, b])
 }
 
-fn missing_view(missing: Missing) -> MissingView {
+pub fn missing_view(missing: Missing) -> MissingView {
     MissingView {
         missing: true,
         was: missing.was,

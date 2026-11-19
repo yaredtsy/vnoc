@@ -23,6 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ignore = "0.4"
 toml_edit = "0.22"
 clap = { version = "4", features = ["derive"] }
+regex = "1"
 
 [target.'cfg(not(unix))'.dependencies]
 tokio-util = { version = "0.7", features = ["compat"] }

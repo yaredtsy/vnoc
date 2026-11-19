@@ -28,13 +28,18 @@ impl Excerpt {
     }
 }
 
+/// A file's text as every reader of source here sees it: bytes that are not UTF-8 become U+FFFD and a byte order mark is dropped.
+pub fn read_text(path: &Path) -> io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_string())
+}
+
 /// The lines of `range` (0-based and inclusive, as the driver gives it) with `context` lines more on each side, read from `path`. The context stops
 /// at the file's first and last line, and a range past the end of the file (it was shortened since the index was built) gives the lines that are there.
 /// A UTF-8 byte order mark is dropped, `\r\n` ends a line like `\n`, and bytes that are not UTF-8 become U+FFFD.
 pub fn excerpt(path: &Path, range: &Range, context: u32) -> io::Result<Excerpt> {
-    let bytes = std::fs::read(path)?;
-    let text = String::from_utf8_lossy(&bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let text = read_text(path)?;
     let all: Vec<&str> = text.lines().collect();
     let total = all.len() as u32;
     let start = range.start.line.saturating_sub(context);

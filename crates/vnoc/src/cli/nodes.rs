@@ -197,6 +197,11 @@ impl<'a> Lookup<'a> {
         (why, written)
     }
 
+    /// A node whose code is gone, by its ID: what its record says and its docs.
+    pub fn describe_missing(&self, id: NodeId) -> Missing {
+        self.missing(&self.opened.index.read().unwrap(), id)
+    }
+
     fn missing(&self, index: &Index, id: NodeId) -> Missing {
         let project = &self.opened.project;
         let (was, path) = match index.record_toml(&id).and_then(|toml| toml.location().ok()) {

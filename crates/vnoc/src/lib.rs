@@ -6,6 +6,7 @@
 pub mod calls;
 pub mod cli;
 pub mod driver_host;
+pub mod grep;
 pub mod identity;
 pub mod index;
 pub mod node_ref;

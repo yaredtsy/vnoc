@@ -195,6 +195,9 @@ pub struct Prepared {
     pub query: Query,
     /// the place in the corpus's nodes of the node the reference named, when it named one the tree has
     pub exact: Option<usize>,
+    /// what the reference in the query resolved to, kept as it came (`None` when the query holds none): the command line tells an ID that is
+    /// Missing from one that is nowhere. The box and the server ignore it.
+    pub reference: Option<Found>,
 }
 
 /// Parses `text`, resolves a reference in it, and gets the corpus (kept under `(revision, generation)`, built on the first call after a change).
@@ -223,8 +226,9 @@ pub fn prepare(
         )
     });
     // a node the tree has first; a Missing ID or a reference that names nothing leaves the words to find what they find
-    let exact = match reference.map(|r| index.resolve_ref(project, &r)) {
-        Some(Found::Node(id)) => corpus.position(&id),
+    let reference = reference.map(|r| index.resolve_ref(project, &r));
+    let exact = match &reference {
+        Some(Found::Node(id)) => corpus.position(id),
         _ => None,
     };
     Prepared {
@@ -232,6 +236,7 @@ pub fn prepare(
         corpus,
         query,
         exact,
+        reference,
     }
 }
 

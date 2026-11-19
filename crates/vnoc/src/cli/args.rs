@@ -76,6 +76,53 @@ pub enum Command {
     /// --sig, --lines, --docs and --flat. Use it instead of reading many files to learn how a project is laid out, or to find what is
     /// undocumented (`--where 'no:doc kind:fn' --flat`).
     Tree(TreeArgs),
+    /// Finds nodes by a few letters of a name, by a word in a note, or by a filter, and prints the best first: the nodes (functions, classes,
+    /// files, folders) and then the notes (docs) that match, each group with its total. The query is words plus `kind:fn|class|file|folder|method`,
+    /// `in:<folder>`, `has:doc`, `no:doc` (`-` before a filter turns it round). A pasted reference (`src/orders.py:142`, an ID) answers where that
+    /// node is now. It finds nothing by typo: a misspelt name is an error of `show`, with a "did you mean". Use it to learn where something lives.
+    Find(FindArgs),
+    /// Searches the TEXT of the code with a regular expression and answers in nodes: the function (or class, or file) each hit is in, with its line
+    /// numbers, so you read functions, not lines. By text, not by meaning: `grep 'parse_order\('` lists the functions that mention the call, which
+    /// is a stand-in for callers, not a resolved list. With --docs it searches the notes instead.
+    Grep(GrepArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct FindArgs {
+    /// The query: words, filters, or one reference. Several words need no quotes; a filter with a space in it does.
+    #[arg(required = true, value_name = "QUERY")]
+    pub query: Vec<String>,
+    /// At most this many nodes and this many docs. Default 20 nodes and 10 docs; the totals are always said.
+    #[arg(long, value_name = "N")]
+    pub limit: Option<usize>,
+    /// Only the nodes.
+    #[arg(long, conflicts_with = "docs")]
+    pub nodes: bool,
+    /// Only the docs.
+    #[arg(long)]
+    pub docs: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct GrepArgs {
+    /// A regular expression (the `regex` crate's syntax), matched line by line.
+    #[arg(value_name = "REGEX")]
+    pub pattern: String,
+    /// Folders or files to search (see `vnoc show --help` for how to name one). Default: the whole project.
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<String>,
+    /// Ignore case.
+    #[arg(short = 'i', long)]
+    pub ignore_case: bool,
+    /// Search the bodies of the notes instead of the code; lines are numbered as in the `.md` file.
+    #[arg(long)]
+    pub docs: bool,
+    /// Only the rows of the nodes, no lines.
+    #[arg(long)]
+    pub names: bool,
+    /// At most this many nodes (default 50); the total is always said.
+    #[arg(long, value_name = "N", default_value_t = 50)]
+    pub limit: usize,
 }
 
 #[derive(Debug, Subcommand)]

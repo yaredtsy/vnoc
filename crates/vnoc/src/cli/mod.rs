@@ -6,6 +6,8 @@
 mod args;
 mod code;
 mod doc;
+mod find;
+mod grep;
 mod nodes;
 mod out;
 pub mod project;
@@ -78,6 +80,8 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Code(args) => code::run(&cli.global, args).await,
         Command::Doc(command) => doc::run(&cli.global, command).await,
         Command::Tree(args) => tree::run(&cli.global, args).await,
+        Command::Find(args) => find::run(&cli.global, args).await,
+        Command::Grep(args) => grep::run(&cli.global, args).await,
     }
 }
 
