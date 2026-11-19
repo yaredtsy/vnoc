@@ -13,6 +13,15 @@
   ],
   "failed": [],
   "initialized": true,
+  "lost_markers": [
+    {
+      "id": "4KF02248CHCTYAG49B0KKZ5SD7",
+      "key": "billing/tax.py::rate_for",
+      "kind": "function",
+      "path": "billing/tax.py",
+      "qualname": "rate_for"
+    }
+  ],
   "missing": [
     {
       "docs": 1,

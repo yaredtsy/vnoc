@@ -85,6 +85,35 @@ pub enum Command {
     /// numbers, so you read functions, not lines. By text, not by meaning: `grep 'parse_order\('` lists the functions that mention the call, which
     /// is a stand-in for callers, not a resolved list. With --docs it searches the notes instead.
     Grep(GrepArgs),
+    /// Prints what a function (or a class's `__init__`) calls, as a tree, with calls to the same function merged (`×3` when it is called three times)
+    /// and each row's location. Callees only: it does not list who calls the function (`vnoc grep 'name\('` is the stand-in). It is the slow command,
+    /// as the whole project is analysed: ask once with the depth you want (--depth, default 2, at most 32), not level by level. A file, a folder or a
+    /// node whose code is gone has no calls: exit 2.
+    Calls(CallsArgs),
+    /// Lists the documented nodes whose code is not found: each with its ID, where it was last known, how many notes it has, and what can be done
+    /// (`vnoc relink`, or remove it in VS Code if the code is gone). Prints `nothing is Missing` when none is.
+    Missing,
+    /// Checks the project's documentation and exits 1 if something is wrong, for CI and for after you edit: a documented node whose code is not found,
+    /// a node whose `ID:` line was lost, an ID written in two places, a broken file in `.vnoc/`. Each is one line with its file and the fix. A file
+    /// that does not parse is a warning and does not fail the check. With --changed only the files that git says differ from HEAD are looked at.
+    Check(CheckArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CallsArgs {
+    /// The function or class to start from, named as `vnoc show` takes it (a location, a file and a line, an ID).
+    #[arg(value_name = "NODE")]
+    pub node: String,
+    /// How many levels of calls to follow, 1 to 32.
+    #[arg(long, value_name = "N", default_value_t = 2, value_parser = clap::value_parser!(u32).range(1..=32))]
+    pub depth: u32,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckArgs {
+    /// Only the problems in files that differ from HEAD (`git status`: staged, unstaged, untracked, renamed). Without git it is the full check.
+    #[arg(long)]
+    pub changed: bool,
 }
 
 #[derive(Debug, Args)]

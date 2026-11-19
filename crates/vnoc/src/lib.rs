@@ -4,8 +4,10 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 pub mod calls;
+pub mod check;
 pub mod cli;
 pub mod driver_host;
+
 pub mod grep;
 pub mod identity;
 pub mod index;

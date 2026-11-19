@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use vnoc_domain::{LocationKey, NodeId, RepoPath, occurrences};
-use vnoc_driver_protocol::Def;
+use vnoc_driver_protocol::{Def, DefKind};
 
 pub use build::{BuildError, Touched, refresh};
 pub use structure::structure;
@@ -23,7 +23,7 @@ pub use tree::{Kind, Node};
 pub use view::{Counts, KindSel, Lookups, Row, TreeOptions, View, tree_view};
 
 use crate::identity::{FoundBy, Markers, Resolved, resolve};
-use crate::protocol::{FailedFile, MissingNode, Problem};
+use crate::protocol::{FailedFile, LostMarker, MissingNode, Problem};
 use crate::scan::Folder;
 use crate::userdata::{DocTexts, LoadProblem, LoadReport, NodeRecord};
 
@@ -163,6 +163,13 @@ impl Index {
 
     /// What the user should look at: broken files first, then IDs written twice. `git_root` makes the files absolute.
     pub fn problems(&self, git_root: &std::path::Path) -> Vec<Problem> {
+        let mut all = self.broken(git_root);
+        all.extend(self.duplicate_ids(git_root));
+        all
+    }
+
+    /// The `.vnoc/` files that do not parse and the `.vnoc-id` files that cannot be read (what `problems` lists first).
+    pub fn broken(&self, git_root: &std::path::Path) -> Vec<Problem> {
         let absolute = |repo_path: &str| git_root.join(repo_path).to_string_lossy().into_owned();
         let broken = self.problems.iter().map(|p| Problem {
             text: p.text.clone(),
@@ -174,25 +181,72 @@ impl Index {
             file: Some(absolute(file)),
             line: None,
         });
-        let duplicates = self.duplicates.iter().map(|d| {
-            // a def is shown at its line; a file or a folder at its top (a folder has no file to open, so its marker is)
-            let line = self.def_at(&d.copy).map(|def| def.range.start.line);
-            let file = match (d.copy.qualname().is_empty(), self.is_folder(d.copy.path())) {
-                (true, true) => format!(
-                    "{}/{}",
-                    d.copy.path(),
-                    crate::identity::folder_marker::FILE_NAME
-                ),
-                _ => d.copy.path().to_string(),
-            };
-            let text = format!("{}: its ID is also at {}", place(&d.winner), place(&d.copy));
-            Problem {
-                text,
-                file: Some(absolute(&file)),
-                line,
-            }
-        });
-        broken.chain(markers).chain(duplicates).collect()
+        broken.chain(markers).collect()
+    }
+
+    /// An ID written in two places: one problem per copy that is not the node (what `problems` lists last).
+    pub fn duplicate_ids(&self, git_root: &std::path::Path) -> Vec<Problem> {
+        let absolute = |repo_path: &str| git_root.join(repo_path).to_string_lossy().into_owned();
+        self.duplicates
+            .iter()
+            .map(|d| {
+                // a def is shown at its line; a file or a folder at its top (a folder has no file to open, so its marker is)
+                let line = self.def_at(&d.copy).map(|def| def.range.start.line);
+                let file = match (d.copy.qualname().is_empty(), self.is_folder(d.copy.path())) {
+                    (true, true) => format!(
+                        "{}/{}",
+                        d.copy.path(),
+                        crate::identity::folder_marker::FILE_NAME
+                    ),
+                    _ => d.copy.path().to_string(),
+                };
+                let text = format!("{}: its ID is also at {}", place(&d.winner), place(&d.copy));
+                Problem {
+                    text,
+                    file: Some(absolute(&file)),
+                    line,
+                }
+            })
+            .collect()
+    }
+
+    /// Nodes whose `ID:` line was lost: `node.toml` says the ID is in the code (`id_in_code = "yes"`) and the node was found by its anchor, not by a
+    /// marker. A record that never carried an ID (`no`, `never`, or no field) is not lost: it was never in the code. Sorted by path, then name.
+    pub fn lost_markers(&self) -> Vec<LostMarker> {
+        let mut lost: Vec<LostMarker> = self
+            .attached
+            .iter()
+            .filter(|(_, a)| a.by == FoundBy::Anchor)
+            .filter(|(_, a)| {
+                self.records.get(&a.id).is_some_and(|r| {
+                    matches!(r.toml.id_in_code(), Some(vnoc_domain::IdInCode::Yes))
+                })
+            })
+            .filter_map(|(key, a)| {
+                let location: LocationKey = key.parse().ok()?;
+                let kind = if location.qualname().is_empty() {
+                    if self.is_folder(location.path()) {
+                        Kind::Folder
+                    } else {
+                        Kind::File
+                    }
+                } else {
+                    match self.def_at(&location)?.kind {
+                        DefKind::Class => Kind::Class,
+                        DefKind::Function => Kind::Function,
+                    }
+                };
+                Some(LostMarker {
+                    id: a.id.to_string(),
+                    key: place(&location),
+                    kind,
+                    path: location.path().to_string(),
+                    qualname: location.qualname().to_string(),
+                })
+            })
+            .collect();
+        lost.sort_by(|a, b| (&a.path, &a.qualname, &a.id).cmp(&(&b.path, &b.qualname, &b.id)));
+        lost
     }
 
     /// The tree the sidebar and the canvas draw. `prefix`: the opened folder's place in the repo.
@@ -828,5 +882,91 @@ mod tests {
                 Some(under_repo("pkg/.vnoc-id"))
             ]
         );
+    }
+
+    /// The set of lost markers as (key, kind) pairs.
+    fn lost(index: &Index) -> Vec<(String, Kind)> {
+        index
+            .lost_markers()
+            .into_iter()
+            .map(|l| (l.key, l.kind))
+            .collect()
+    }
+
+    #[test]
+    fn a_node_found_by_its_marker_is_not_lost() {
+        let g = at("a.py", "g");
+        // f has its ID in the code, though its record says `a.py::g` (it moved): found by its marker. g's record is at g and g has no ID: lost.
+        let index = index(
+            &[("a.py", vec![def("f", 0, Some(id(1))), def("g", 4, None)])],
+            vec![
+                (id(1), record(&g, Some(NodeKind::Function), 1)),
+                (id(2), record(&g, Some(NodeKind::Function), 1)),
+            ],
+        );
+        // id(1) is found at f by its marker; id(2) is found at g by its anchor, and its record says the ID is in the code
+        assert_eq!(lost(&index), [("a.py::g".to_string(), Kind::Function)]);
+        assert_eq!(index.lost_markers()[0].id, id(2).to_string());
+    }
+
+    #[test]
+    fn found_by_name_with_the_id_in_code_is_lost_and_never_or_no_is_not() {
+        let (f, g, h) = (at("a.py", "f"), at("a.py", "g"), at("a.py", "h"));
+        let mut no = record(&g, Some(NodeKind::Function), 0);
+        no.toml.set_id_in_code(vnoc_domain::IdInCode::No);
+        let mut never = record(&h, Some(NodeKind::Function), 0);
+        never.toml.set_id_in_code(vnoc_domain::IdInCode::Never);
+        // a record that does not say (an older file, or a hand-written one)
+        let silent = NodeRecord {
+            toml: NodeToml::parse("path = \"a.py\"\nqualname = \"k\"\n").unwrap(),
+            docs: vec![],
+        };
+        let index = index(
+            &[(
+                "a.py",
+                vec![
+                    def("f", 0, None),
+                    def("g", 3, None),
+                    def("h", 6, None),
+                    def("k", 9, None),
+                ],
+            )],
+            vec![
+                (id(1), record(&f, Some(NodeKind::Function), 2)),
+                (id(2), no),
+                (id(3), never),
+                (id(4), silent),
+            ],
+        );
+        // only the record that says `yes`
+        assert_eq!(lost(&index), [("a.py::f".to_string(), Kind::Function)]);
+    }
+
+    #[test]
+    fn a_missing_node_is_not_a_lost_marker_and_a_class_and_a_file_are_named_for_what_they_are() {
+        let file = at("a.py", "");
+        let class = at("a.py", "K");
+        let gone = at("a.py", "gone");
+        let mut klass = def("K", 2, None);
+        klass.kind = DefKind::Class;
+        let index = index(
+            &[("a.py", vec![def("f", 0, None), klass])],
+            vec![
+                (id(1), record(&file, Some(NodeKind::File), 1)),
+                (id(2), record(&class, Some(NodeKind::Class), 1)),
+                (id(3), record(&gone, Some(NodeKind::Function), 1)),
+            ],
+        );
+        assert!(index.is_missing(&id(3)));
+        assert_eq!(
+            lost(&index),
+            [
+                ("a.py".to_string(), Kind::File),
+                ("a.py::K".to_string(), Kind::Class)
+            ],
+            "the file is named by its path, sorted before the def; the Missing node is in `missing` only"
+        );
+        let first = &index.lost_markers()[0];
+        assert_eq!((first.path.as_str(), first.qualname.as_str()), ("a.py", ""));
     }
 }

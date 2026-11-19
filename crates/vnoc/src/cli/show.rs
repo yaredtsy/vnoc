@@ -180,15 +180,31 @@ impl Render for ShowAnswer {
     }
 }
 
+/// The line a node is introduced by: `function  src/a.py::f   lines 3-9   ID …`.
+pub fn head_line(
+    kind: &str,
+    location: &str,
+    lines: Option<[u32; 2]>,
+    node_id: Option<&str>,
+) -> String {
+    let mut head = format!("{kind}  {location}");
+    if let Some([a, b]) = lines {
+        head.push_str(&format!("   lines {a}-{b}"));
+    }
+    if let Some(id) = node_id {
+        head.push_str(&format!("   ID {id}"));
+    }
+    head
+}
+
 impl Render for NodeView {
     fn text(&self, quiet: bool) -> String {
-        let mut head = format!("{}  {}", self.kind, self.location);
-        if let Some([a, b]) = self.lines {
-            head.push_str(&format!("   lines {a}-{b}"));
-        }
-        if let Some(id) = &self.node_id {
-            head.push_str(&format!("   ID {id}"));
-        }
+        let head = head_line(
+            self.kind,
+            &self.location,
+            self.lines,
+            self.node_id.as_deref(),
+        );
         let mut text = format!("{head}\n{}", docs_block(&self.docs, &self.location, quiet));
         if let Some(code) = &self.code {
             text.push_str("code\n");

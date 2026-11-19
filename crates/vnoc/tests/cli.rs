@@ -437,13 +437,13 @@ fn status_in_text_has_its_three_lines() {
         format!(
             "V-NOC {version}   root <root>   drivers python {driver_version} (12 files)\n\
              {}\n\
-             missing 1 · problems 0      → vnoc check\n",
+             missing 1 · lost markers 1 · problems 0      → vnoc check\n",
             "3 folders · 12 files · 5 classes · 27 functions · 7 docs on 6 nodes"
         )
     );
     // quiet drops the hint, and nothing else
     let quiet = run(vnoc(&root, &["status", "--quiet"]));
-    assert!(text(&quiet.stdout).contains("missing 1 · problems 0\n"));
+    assert!(text(&quiet.stdout).contains("missing 1 · lost markers 1 · problems 0\n"));
     assert!(!text(&quiet.stdout).contains("vnoc check"));
 }
 
@@ -2141,4 +2141,470 @@ fn find_tries_a_reference_from_the_current_folder_first_as_show_does() {
     );
     // a reference the current folder does not change is as written
     assert_eq!(first(&billing, "orders/service.py:12").0, METHOD);
+}
+
+// ------------------------------------------------------------------------------------------------ `calls`, `missing`, `check`
+
+const PLACE: &str = "orders/service.py::OrderService.place";
+const LOST_ID: &str = "4KF02248CHCTYAG49B0KKZ5SD7";
+
+/// A second, clean copy of the sample: the Missing node's record is deleted (what `relink` or removing it in VS Code would leave) and the lost `ID:`
+/// line is put back by text. Nothing is left for `check` to say.
+fn clean_copy(label: &str) -> PathBuf {
+    let root = sample_copy(label);
+    let record = root.join(format!(".vnoc/nodes/GE/{MISSING_ID}"));
+    std::fs::remove_dir_all(&record).unwrap();
+    let tax = root.join("billing/tax.py");
+    let code = std::fs::read_to_string(&tax).unwrap();
+    let fixed = code.replace(
+        "def rate_for(country):\n",
+        &format!("def rate_for(country):\n    \"\"\"ID: {LOST_ID}\"\"\"\n"),
+    );
+    assert_ne!(fixed, code, "the def line is there");
+    std::fs::write(&tax, fixed).unwrap();
+    root
+}
+
+/// A scratch module with a function called twice, one that calls itself, and one that calls nothing.
+fn add_calc(root: &Path) {
+    std::fs::write(
+        root.join("calc.py"),
+        "def helper(x):\n    return x\n\n\ndef twice(x):\n    helper(x)\n    helper(x + 1)\n\n\ndef loop(n):\n    if n:\n        return loop(n - 1)\n    return helper(n)\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn calls_prints_the_merged_tree_two_levels_by_default_and_deeper_with_depth() {
+    let root = sample_copy("calls-tree");
+    // default depth 2: the header as `show` prints it, then each call two spaces in
+    let two = stdout_of(&root, &["calls", PLACE]);
+    golden_text("calls-place.txt", &two);
+    assert!(
+        two.starts_with(&format!(
+            "function  {PLACE}   lines 15-18\n  parse_order  {METHOD}\n"
+        )),
+        "{two}"
+    );
+    // depth 1 stops at the callee and says how to go on
+    let one = stdout_of(&root, &["calls", PLACE, "--depth", "1"]);
+    assert_eq!(
+        one,
+        format!(
+            "function  {PLACE}   lines 15-18\n  parse_order  {METHOD}\n    … (deeper: vnoc calls {METHOD} --depth 1)\n"
+        )
+    );
+    // a function with an ID shows it in the header; a def that calls nothing says so
+    let parse = stdout_of(&root, &["calls", METHOD]);
+    assert!(
+        parse.starts_with(&format!(
+            "function  {METHOD}   lines 10-13   ID {METHOD_ID}\n"
+        )),
+        "{parse}"
+    );
+    assert_eq!(
+        stdout_of(&root, &["calls", "api/health.py::ping", "--depth", "1"])
+            .lines()
+            .count(),
+        2
+    );
+    // every form of naming a node works, and the current folder is tried first
+    let from_orders = stdout_of(
+        &root.join("orders"),
+        &["calls", "service.py:16", "--depth", "1"],
+    );
+    assert_eq!(from_orders, one);
+}
+
+#[test]
+fn calls_merges_a_function_called_twice_and_marks_a_recursion() {
+    let root = sample_copy("calls-merge");
+    add_calc(&root);
+    assert_eq!(
+        stdout_of(&root, &["calls", "calc.py::twice"]),
+        "function  calc.py::twice   lines 5-7\n  helper  calc.py::helper  ×2\n"
+    );
+    assert_eq!(
+        stdout_of(&root, &["calls", "calc.py::loop", "--depth", "3"]),
+        "function  calc.py::loop   lines 10-13\n  loop  calc.py::loop  (recursive)\n  helper  calc.py::helper\n"
+    );
+    assert_eq!(
+        stdout_of(&root, &["calls", "calc.py::helper"]),
+        "function  calc.py::helper   lines 1-2\n  (no calls)\n"
+    );
+}
+
+#[test]
+fn calls_in_json_is_the_protocols_tree_and_a_golden_file() {
+    let root = sample_copy("calls-json");
+    let found = json_of(&root, &["calls", "--json", PLACE]);
+    golden("calls.json", &found);
+    assert_eq!(
+        (
+            found["schema"].as_u64(),
+            found["command"].as_str(),
+            found["depth"].as_u64()
+        ),
+        (Some(1), Some("calls"), Some(2))
+    );
+    // the tree is `vnoc/callTree`'s: the same shape, and the same answer over LSP
+    let mut core = Core::start(&[], Some(&driver_path()), &root);
+    let asked = core
+        .request("vnoc/callTree", json!({ "key": PLACE, "depth": 2 }))
+        .unwrap();
+    core.finish();
+    assert_eq!(found["root"], asked["root"]);
+    assert_eq!(found["revision"], asked["revision"]);
+}
+
+#[test]
+fn calls_on_what_has_no_calls_is_exit_2_with_the_sentence() {
+    let root = sample_copy("calls-errors");
+    let file = run(vnoc(&root, &["calls", "orders/service.py"]));
+    assert_eq!(code(&file), 2);
+    assert!(file.stdout.is_empty());
+    assert_eq!(
+        text(&file.stderr),
+        "error: calls start at a function or a class: orders/service.py is a file\n"
+    );
+    assert_eq!(
+        error_of(&root, &["calls", "orders"]),
+        "calls start at a function or a class: orders is a folder"
+    );
+    assert_eq!(
+        error_of(&root, &["calls", MISSING_ID]),
+        "calls start at a function or a class: api/routes.py::legacy_export is Missing (its code is gone)"
+    );
+    // a name that is nowhere is `show`'s error, with its hint
+    assert!(
+        error_of(
+            &root,
+            &["calls", "orders/service.py::OrderService.parse_ordr"]
+        )
+        .contains("did you mean")
+    );
+    // the depth is 1 to 32: clap says so
+    for depth in ["0", "33", "x"] {
+        assert_eq!(
+            code(&run(vnoc(&root, &["calls", PLACE, "--depth", depth]))),
+            2,
+            "{depth}"
+        );
+    }
+    assert_eq!(
+        code(&run(vnoc(&root, &["calls", PLACE, "--depth", "32"]))),
+        0
+    );
+    // with --json the sentence is in the value
+    let out = run(vnoc(&root, &["calls", "orders/service.py", "--json"]));
+    assert_eq!(code(&out), 2);
+    assert!(out.stderr.is_empty());
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["error"]["why"], "not_a_def");
+}
+
+#[test]
+fn missing_lists_the_one_with_its_two_ways_out_and_says_so_when_none() {
+    let root = sample_copy("missing-list");
+    assert_eq!(
+        stdout_of(&root, &["missing"]),
+        format!(
+            "MISSING  was api/routes.py::legacy_export  ID {MISSING_ID}  docs 1\n  → vnoc relink {MISSING_ID} <node>\n  or remove it in VS Code if the code is gone\n"
+        )
+    );
+    assert_eq!(
+        stdout_of(&root, &["missing", "--quiet"]),
+        format!("MISSING  was api/routes.py::legacy_export  ID {MISSING_ID}  docs 1\n")
+    );
+    assert_eq!(
+        stdout_of(&root, &["missing", "--format", "id"]),
+        format!("{MISSING_ID}\n")
+    );
+    assert_eq!(
+        stdout_of(&root, &["missing", "--format", "path"]),
+        "api/routes.py\n"
+    );
+    let json = json_of(&root, &["missing", "--json"]);
+    golden("missing.json", &json);
+    assert_eq!(json["missing"][0]["node_id"], MISSING_ID);
+    assert_eq!(
+        stdout_of(&clean_copy("missing-none"), &["missing"]),
+        "nothing is Missing\n"
+    );
+}
+
+#[test]
+fn check_names_the_missing_node_and_the_lost_marker_each_with_its_fix_and_exits_1() {
+    let root = sample_copy("check-fails");
+    let out = run(vnoc(&root, &["check"]));
+    assert_eq!(code(&out), 1);
+    assert!(
+        out.stderr.is_empty(),
+        "the findings are the answer, not an error: {}",
+        text(&out.stderr)
+    );
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "missing  api/routes.py  documented code not found: was api/routes.py::legacy_export · ID {MISSING_ID} · 1 doc\n\
+             \x20 → vnoc relink {MISSING_ID} <node> if the code moved; remove it in VS Code if the code is gone\n\
+             lost_marker  billing/tax.py  the `ID:` line of billing/tax.py::rate_for is gone (ID {LOST_ID}): the node was found by its name only\n\
+             \x20 → vnoc repair billing/tax.py::rate_for\n\
+             2 problems\n"
+        )
+    );
+    // --quiet keeps the rows and drops the fixes and the summary; the exit code is the same
+    let quiet = run(vnoc(&root, &["check", "--quiet"]));
+    assert_eq!(code(&quiet), 1);
+    let rows = text(&quiet.stdout);
+    assert_eq!(rows.lines().count(), 2);
+    assert!(
+        rows.lines().all(|l| !l.starts_with("  →")) && !rows.contains("problems"),
+        "{rows}"
+    );
+}
+
+#[test]
+fn check_in_json_is_a_golden_file_and_exits_1() {
+    let root = sample_copy("check-json");
+    let out = run(vnoc(&root, &["check", "--json"]));
+    assert_eq!(code(&out), 1);
+    let found: Value = serde_json::from_slice(&out.stdout).unwrap();
+    golden("check.json", &found);
+    assert_eq!(
+        (found["failing"].as_u64(), found["warnings"].as_u64()),
+        (Some(2), Some(0))
+    );
+    let kinds: Vec<&str> = found["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["missing", "lost_marker"]);
+    assert_eq!(found["findings"][1]["id"], LOST_ID);
+    assert_eq!(found["findings"][1]["fails"], true);
+}
+
+#[test]
+fn check_on_a_clean_project_exits_0_and_a_file_that_cannot_be_read_is_a_warning_not_a_failure() {
+    let root = clean_copy("check-clean");
+    let out = run(vnoc(&root, &["check"]));
+    assert_eq!(
+        (code(&out), text(&out.stdout)),
+        (0, "no problems\n".to_string()),
+        "{}",
+        text(&out.stderr)
+    );
+    // nothing found and --quiet: nothing is printed (only the rows)
+    assert_eq!(stdout_of(&root, &["check", "--quiet"]), "");
+    // a syntax error: the driver reads on past it, so there is nothing to warn of and the check still passes
+    std::fs::write(
+        root.join("broken.py"),
+        "def f(:\n    pass\n\n\ndef g():\n    pass\n",
+    )
+    .unwrap();
+    assert_eq!(stdout_of(&root, &["check"]), "no problems\n");
+    // a file the driver cannot read at all (not UTF-8): one line, a warning, exit 0
+    std::fs::write(root.join("binary.py"), b"\xff\xfe\x00 not text\n").unwrap();
+    let out = run(vnoc(&root, &["check"]));
+    let shown = text(&out.stdout);
+    assert_eq!(code(&out), 0, "{shown}");
+    assert!(
+        shown.starts_with("unread  binary.py  the driver could not read it: cannot read binary.py"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("\n  → fix the file; V-NOC reads it again when it parses"),
+        "{shown}"
+    );
+    assert!(shown.ends_with("0 problems · 1 warning\n"), "{shown}");
+    let json = json_of(&root, &["check", "--json"]);
+    assert_eq!(
+        (json["failing"].as_u64(), json["warnings"].as_u64()),
+        (Some(0), Some(1))
+    );
+    assert_eq!(json["findings"][0]["fails"], false);
+    // --quiet keeps the row of a warning too
+    assert_eq!(stdout_of(&root, &["check", "--quiet"]).lines().count(), 1);
+}
+
+#[test]
+fn check_names_an_id_written_twice_and_a_node_toml_that_does_not_parse() {
+    let root = clean_copy("check-files");
+    // the ID of `parse_order` copied into another function
+    let other = root.join("orders/status.py");
+    let code_text = std::fs::read_to_string(&other).unwrap();
+    let first_def = code_text
+        .lines()
+        .find(|l| l.starts_with("def "))
+        .expect("a function in status.py")
+        .to_string();
+    std::fs::write(
+        &other,
+        code_text.replacen(
+            &format!("{first_def}\n"),
+            &format!("{first_def}\n    \"\"\"ID: {METHOD_ID}\"\"\"\n"),
+            1,
+        ),
+    )
+    .unwrap();
+    // a node folder whose node.toml is not TOML
+    std::fs::create_dir_all(root.join(".vnoc/nodes/ZZ/0ZZZZZZZZZZZZZZZZZZZZZZZZZ")).unwrap();
+    std::fs::write(
+        root.join(".vnoc/nodes/ZZ/0ZZZZZZZZZZZZZZZZZZZZZZZZZ/node.toml"),
+        "path = [[[",
+    )
+    .unwrap();
+    let out = run(vnoc(&root, &["check"]));
+    let shown = text(&out.stdout);
+    assert_eq!(code(&out), 1, "{shown}");
+    let words: Vec<&str> = shown
+        .lines()
+        .filter(|l| !l.starts_with("  →"))
+        .map(|l| l.split("  ").next().unwrap())
+        .collect();
+    assert_eq!(words, ["duplicate_id", "broken", "2 problems"], "{shown}");
+    assert!(shown.contains("its ID is also at"), "{shown}");
+    assert!(
+        shown.contains("  → open .vnoc/nodes/ZZ/0ZZZZZZZZZZZZZZZZZZZZZZZZZ/node.toml"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("delete the `ID:` line of the copy"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn check_in_a_folder_with_no_vnoc_says_so_and_exits_0() {
+    let root = scratch("check-no-vnoc");
+    std::fs::write(root.join("a.py"), "def f():\n    pass\n").unwrap();
+    assert_eq!(
+        stdout_of(&root, &["check"]),
+        "nothing to check (no .vnoc/ here)\n"
+    );
+    assert_eq!(stdout_of(&root, &["check", "--quiet"]), "");
+    let json = json_of(&root, &["check", "--json"]);
+    assert_eq!(
+        (json["initialized"].clone(), json["failing"].as_u64()),
+        (json!(false), Some(0))
+    );
+    // no driver is needed to say it
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.current_dir(&root)
+        .env_remove("VNOC_DRIVER")
+        .args(["--driver", "/no/such/driver", "check"]);
+    let out = run(cmd);
+    assert_eq!(
+        (code(&out), text(&out.stdout)),
+        (0, "nothing to check (no .vnoc/ here)\n".to_string())
+    );
+    // check prints findings, not a list of nodes
+    assert_eq!(code(&run(vnoc(&root, &["check", "--format", "id"]))), 2);
+}
+
+/// `git <args>` in `root`, with an identity so a commit can be made.
+fn git(root: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .expect("git is installed");
+    assert!(out.status.success(), "git {args:?}: {}", text(&out.stderr));
+}
+
+#[test]
+fn check_changed_looks_only_at_the_files_git_says_differ() {
+    let root = sample_copy("check-changed");
+    git(&root, &["init", "-q"]);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "sample"]);
+    // nothing differs from HEAD: nothing to say, though the full check fails
+    assert_eq!(code(&run(vnoc(&root, &["check"]))), 1);
+    let none = run(vnoc(&root, &["check", "--changed"]));
+    assert_eq!(
+        (code(&none), text(&none.stdout)),
+        (0, "no problems\n".to_string())
+    );
+    // an unrelated file is changed: still nothing (the Missing node and the lost marker are in other files)
+    let models = root.join("orders/models.py");
+    std::fs::write(
+        &models,
+        format!("{}\n# touched\n", std::fs::read_to_string(&models).unwrap()),
+    )
+    .unwrap();
+    let unrelated = run(vnoc(&root, &["check", "--changed"]));
+    assert_eq!(
+        (code(&unrelated), text(&unrelated.stdout)),
+        (0, "no problems\n".to_string()),
+        "{}",
+        text(&unrelated.stderr)
+    );
+    // `tax.py` is changed: its lost marker, and only that
+    let tax = root.join("billing/tax.py");
+    std::fs::write(
+        &tax,
+        format!("{}\n# touched\n", std::fs::read_to_string(&tax).unwrap()),
+    )
+    .unwrap();
+    let changed = run(vnoc(&root, &["check", "--changed"]));
+    let shown = text(&changed.stdout);
+    assert_eq!(code(&changed), 1, "{shown}");
+    assert!(
+        shown.starts_with("lost_marker  billing/tax.py  "),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("missing") && shown.ends_with("1 problem\n"),
+        "{shown}"
+    );
+    assert!(changed.stderr.is_empty());
+    // an untracked file counts: the Missing node is anchored in `api/routes.py`, which is now changed too (a staged rename away)
+    git(&root, &["mv", "api/routes.py", "api/routes_v2.py"]);
+    let renamed = run(vnoc(&root, &["check", "--changed", "--quiet"]));
+    let rows = text(&renamed.stdout);
+    assert!(
+        rows.contains("missing  api/routes.py  "),
+        "the old name of a renamed file is looked at: {rows}"
+    );
+    assert!(rows.contains("lost_marker  billing/tax.py  "), "{rows}");
+}
+
+#[test]
+fn check_changed_without_git_is_the_full_check_with_one_note() {
+    let root = sample_copy("check-no-git");
+    let full = run(vnoc(&root, &["check"]));
+    let changed = run(vnoc(&root, &["check", "--changed"]));
+    assert_eq!(code(&changed), 1);
+    assert_eq!(text(&changed.stdout), text(&full.stdout));
+    let said = text(&changed.stderr);
+    assert_eq!(said.lines().count(), 1, "{said}");
+    assert!(
+        said.starts_with("note: ")
+            && said.ends_with("is not a git repository: checking everything\n"),
+        "{said}"
+    );
+}
+
+#[test]
+fn status_counts_the_lost_markers_in_text_and_json() {
+    let root = sample_copy("status-lost");
+    let json = status_json(&root, &root, &[]);
+    assert_eq!(json["lost_markers"].as_array().unwrap().len(), 1);
+    assert_eq!(json["lost_markers"][0]["key"], "billing/tax.py::rate_for");
+    assert_eq!(json["lost_markers"][0]["kind"], "function");
+    assert_eq!(json["lost_markers"][0]["id"], LOST_ID);
+    // a project with none says 0 and has no hint for it
+    let clean = clean_copy("status-clean");
+    assert!(stdout_of(&clean, &["status"]).ends_with("missing 0 · lost markers 0 · problems 0\n"));
 }

@@ -1,0 +1,88 @@
+{
+  "command": "calls",
+  "depth": 2,
+  "revision": 1,
+  "root": {
+    "call_count": 1,
+    "call_sites": [],
+    "children": [
+      {
+        "call_count": 1,
+        "call_sites": [
+          {
+            "end": {
+              "character": 37,
+              "line": 15
+            },
+            "path": "orders/service.py",
+            "start": {
+              "character": 16,
+              "line": 15
+            }
+          }
+        ],
+        "children": [
+          {
+            "call_count": 1,
+            "call_sites": [
+              {
+                "end": {
+                  "character": 62,
+                  "line": 11
+                },
+                "path": "orders/service.py",
+                "start": {
+                  "character": 17,
+                  "line": 11
+                }
+              }
+            ],
+            "children": [],
+            "key": "orders/models.py::Line",
+            "kind": "class",
+            "marks": [],
+            "name": "Line",
+            "path": "orders/models.py",
+            "qualname": "Line"
+          },
+          {
+            "call_count": 1,
+            "call_sites": [
+              {
+                "end": {
+                  "character": 42,
+                  "line": 12
+                },
+                "path": "orders/service.py",
+                "start": {
+                  "character": 15,
+                  "line": 12
+                }
+              }
+            ],
+            "children": [],
+            "key": "orders/models.py::Order",
+            "kind": "class",
+            "marks": [],
+            "name": "Order",
+            "path": "orders/models.py",
+            "qualname": "Order"
+          }
+        ],
+        "key": "orders/service.py::OrderService.parse_order",
+        "kind": "function",
+        "marks": [],
+        "name": "parse_order",
+        "path": "orders/service.py",
+        "qualname": "OrderService.parse_order"
+      }
+    ],
+    "key": "orders/service.py::OrderService.place",
+    "kind": "function",
+    "marks": [],
+    "name": "place",
+    "path": "orders/service.py",
+    "qualname": "OrderService.place"
+  },
+  "schema": 1
+}

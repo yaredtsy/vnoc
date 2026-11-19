@@ -1,0 +1,25 @@
+{
+  "command": "check",
+  "failing": 2,
+  "findings": [
+    {
+      "fails": true,
+      "fix": "vnoc relink 7N1HNCPA163HHSN91HX48T9QGE <node> if the code moved; remove it in VS Code if the code is gone",
+      "id": "7N1HNCPA163HHSN91HX48T9QGE",
+      "kind": "missing",
+      "message": "documented code not found: was api/routes.py::legacy_export · ID 7N1HNCPA163HHSN91HX48T9QGE · 1 doc",
+      "path": "api/routes.py"
+    },
+    {
+      "fails": true,
+      "fix": "vnoc repair billing/tax.py::rate_for",
+      "id": "4KF02248CHCTYAG49B0KKZ5SD7",
+      "kind": "lost_marker",
+      "message": "the `ID:` line of billing/tax.py::rate_for is gone (ID 4KF02248CHCTYAG49B0KKZ5SD7): the node was found by its name only",
+      "path": "billing/tax.py"
+    }
+  ],
+  "initialized": true,
+  "schema": 1,
+  "warnings": 0
+}

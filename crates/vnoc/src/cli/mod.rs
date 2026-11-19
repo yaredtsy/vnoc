@@ -4,6 +4,8 @@
 //! one function, [`exit_code`], says what each failure exits with (C6).
 
 mod args;
+mod calls;
+mod check;
 mod code;
 mod doc;
 mod find;
@@ -65,7 +67,11 @@ pub async fn run(args: Vec<OsString>) -> i32 {
     match execute(&cli).await {
         Ok(()) => 0,
         Err(failure) => {
-            if !matches!(failure, Failure::Closed | Failure::Reported) {
+            // `check` printed its findings and its summary: they are its answer, and the exit code says the rest
+            if !matches!(
+                failure,
+                Failure::Closed | Failure::Reported | Failure::CheckFailed
+            ) {
                 out::error(&failure.to_string());
             }
             exit_code(&failure)
@@ -82,6 +88,9 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Tree(args) => tree::run(&cli.global, args).await,
         Command::Find(args) => find::run(&cli.global, args).await,
         Command::Grep(args) => grep::run(&cli.global, args).await,
+        Command::Calls(args) => calls::run(&cli.global, args).await,
+        Command::Missing => check::missing(&cli.global).await,
+        Command::Check(args) => check::run(&cli.global, args).await,
     }
 }
 

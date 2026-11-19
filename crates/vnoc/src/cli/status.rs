@@ -7,7 +7,7 @@ use serde::Serialize;
 use super::project::{Opened, open_from};
 use super::{Failure, Global, out};
 use crate::index;
-use crate::protocol::{FailedFile, MissingNode, Problem, Stats};
+use crate::protocol::{FailedFile, LostMarker, MissingNode, Problem, Stats};
 
 #[derive(Serialize)]
 struct Status {
@@ -21,6 +21,8 @@ struct Status {
     stats: Stats,
     docs: Docs,
     missing: Vec<MissingNode>,
+    /// nodes found by their name only, whose `ID:` line was lost (`check` fails on them)
+    lost_markers: Vec<LostMarker>,
     problems: Vec<Problem>,
     failed: Vec<FailedFile>,
     truncated: bool,
@@ -89,6 +91,7 @@ async fn status_of(opened: &Opened) -> Status {
             nodes: docs.1,
         },
         missing: answer.missing,
+        lost_markers: index.lost_markers(),
         problems: answer.problems,
         failed: answer.failed,
         truncated: answer.truncated,
@@ -139,6 +142,7 @@ fn text(s: &Status, quiet: bool) -> String {
     let mut third = Vec::new();
     if s.initialized {
         third.push(format!("missing {}", s.missing.len()));
+        third.push(format!("lost markers {}", s.lost_markers.len()));
         third.push(format!("problems {}", s.problems.len()));
     }
     if !s.failed.is_empty() {
@@ -149,7 +153,7 @@ fn text(s: &Status, quiet: bool) -> String {
     }
     if !third.is_empty() {
         out.push_str(&third.join(" · "));
-        if s.missing.len() + s.problems.len() > 0 && !quiet {
+        if s.missing.len() + s.lost_markers.len() + s.problems.len() > 0 && !quiet {
             out.push_str("      → vnoc check");
         }
         out.push('\n');
@@ -186,6 +190,7 @@ mod tests {
             },
             docs: Docs { docs: 7, nodes: 7 },
             missing: vec![],
+            lost_markers: vec![],
             problems: vec![],
             failed: vec![],
             truncated: false,
@@ -198,7 +203,7 @@ mod tests {
             text(&status(true), false),
             "V-NOC 0.2.0   root /r   drivers python 0.2.0 (10 files)\n\
              3 folders · 10 files · 1 class · 21 functions · 7 docs on 7 nodes\n\
-             missing 0 · problems 0\n"
+             missing 0 · lost markers 0 · problems 0\n"
         );
     }
 
@@ -223,10 +228,9 @@ mod tests {
             docs: 1,
         });
         s.truncated = true;
-        assert!(
-            text(&s, false)
-                .contains("missing 1 · problems 0 · stopped at 20,000 files      → vnoc check\n")
-        );
+        assert!(text(&s, false).contains(
+            "missing 1 · lost markers 0 · problems 0 · stopped at 20,000 files      → vnoc check\n"
+        ));
         assert!(!text(&s, true).contains("vnoc check"));
     }
 }

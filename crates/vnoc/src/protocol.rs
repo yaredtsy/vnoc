@@ -57,6 +57,22 @@ pub struct MissingNode {
     pub docs: usize,
 }
 
+/// A documented node whose `ID:` line was lost: `node.toml` says the ID is in the code, and the code has none, so the node was found only by its name
+/// and path. Writing the ID back (`vnoc.writeId` with `key`) makes the doc follow the code again. Not a problem of the files and not Missing: the
+/// node is in the tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LostMarker {
+    /// the permanent ID
+    pub id: String,
+    /// the node's id in the tree, which `vnoc/writeId` takes: `path::qualname[#n]` for a def, the path for a file or a folder
+    pub key: String,
+    pub kind: Kind,
+    /// as `node.toml` says it, and so as the tree's ids start: at the git root
+    pub path: String,
+    /// empty for a file or a folder
+    pub qualname: String,
+}
+
 /// Something the user should look at: where to go when they click it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Problem {
