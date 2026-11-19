@@ -176,7 +176,8 @@ with the message; `lifecycle.rs` and the window suite pass with no edits (attach
 
 Commit: `cli A7: who applies an ID edit is a parameter; one write lock`.
 
-### A8 `init`, `doc new`
+### A8 `init`, `doc new` *(split 2026-11-20: **A8a** init, doc new, author and tags in the frontmatter, the race; **A8b** `tag:` / `author:` in
+search, the wire, the sidebar, `--where` on `doc list` / `doc read`. A8a's first commit also replaces A7's BOM shift by 04 §2's rule.)*
 
 | Files | What |
 |---|---|

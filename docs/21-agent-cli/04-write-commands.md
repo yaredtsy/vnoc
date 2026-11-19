@@ -84,6 +84,11 @@ An enum, not a trait: there are two cases, both known, and `async fn` in a trait
 - `document_for` in `attach.rs` today refuses a def or a file with no open document (`MissingDocument`). With `Disk`, the caller builds the
   document from the file; the check stays for the editor.
 
+**The byte-order mark** *(settled 2026-11-20, review of A7).* A7 kept U+FEFF in the `Document` text read from disk and moved a driver edit at
+(0, 0) past it. Replaced by the editor's own rule: VS Code's buffer has no mark, so **`Document::from_disk` drops a leading U+FEFF**, the driver
+plans against the same text it gets from the editor, and the `Disk` sink re-reads the file, drops the mark for the comparison, applies the
+edits, and **writes the mark back** if the file had one. No position is shifted and the driver is not touched; one rule for both sinks.
+
 ## 3. `init`
 
 `UserData::initialize(markers)`: writes `.vnoc/.gitignore` (`local/`) and `.vnoc/vnoc.toml` (`format = 1`; `[ids] default = "none"` with
@@ -161,8 +166,8 @@ One reader does all of it: `userdata/read.rs` gets `frontmatter(text) -> { title
   one of the two, filters alone still find no doc. The row goes into 20's 01 §3 in the same commit.
 - `matches` follows `run`, as built: the table that holds them together (`tests/matches.rs`) gets rows with tags.
 - `SearchDoc` (the wire) gains `tags` and `author`; the sidebar's doc row shows the tags after the title, dim.
-- **[decide]** *Add Doc* in the extension has no place to give a tag or an author. Until it has one, only the command and a hand edit of
-  the frontmatter set them. A small step after A8 (an optional second input in the title prompt), or left for later: your call.
+- *Add Doc* in the extension has no place to give a tag or an author. **Decided 2026-11-20: left for later**, after release 0.5: only the
+  command and a hand edit of the frontmatter set them. The sidebar still shows and finds them (A8b). Not on the CLI's path.
 
 ## 5. Editing a doc
 
@@ -239,4 +244,5 @@ changed      src/orders.py   (an ID: line was added at line 141; read the file a
 Every file a write created or changed is one line. The last line is there for a reason: the agent's picture of `src/orders.py` is now one line
 out of date, and an edit made from the old picture either fails or removes the line just added.
 
-With `--json`: `{ "schema": 1, "command": "doc new", "node": {…}, "doc": "…", "created": […], "changed": […], "idInCode": true, "notice": null }`.
+With `--json`: `{ "schema": 1, "command": "doc new", "node": {…}, "doc": "…", "created": […], "changed": […], "id_in_code": true, "notice": null }`
+(snake_case, as every other answer: 03 §11; the first version wrote `idInCode`).
