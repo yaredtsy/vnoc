@@ -96,13 +96,16 @@ pub enum MarkerWritten {
     FolderFile,
 }
 
-/// What an attach did: the answer the editor gets, and what was written into the code.
+/// What a flow did: the answer the editor gets, and what was written into the code.
 #[derive(Debug)]
-pub struct Attached {
-    pub result: AttachResult,
+pub struct Done<T> {
+    pub result: T,
     /// `None` when the code was not touched (the node had its ID, or none was allowed, or the marker could not be written)
     pub marker: Option<MarkerWritten>,
 }
+
+/// What an attach did.
+pub type Attached = Done<AttachResult>;
 
 /// What an attach works with.
 pub struct Env<'a> {
@@ -290,7 +293,7 @@ pub async fn attach(
         },
     )?;
 
-    Ok(Attached {
+    Ok(Done {
         result: AttachResult {
             id: id.to_string(),
             doc: doc.to_string_lossy().into_owned(),

@@ -470,10 +470,13 @@ fn relink(
             host: &core.host,
             edits: EditSink::Editor(core.client.clone()),
         };
-        let result = identity::relink(env, params).await.map_err(|e| match e {
-            identity::RelinkError::UserData(_) => internal(e),
-            _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
-        })?;
+        let result = identity::relink(env, params)
+            .await
+            .map_err(|e| match e {
+                identity::RelinkError::UserData(_) => internal(e),
+                _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
+            })?
+            .result;
         core.spawn_update(Work::Files(vec![])); // node.toml moved: the tree shows the docs at the new place
         Ok(result)
     })
@@ -500,10 +503,13 @@ fn write_id(
             host: &core.host,
             edits: EditSink::Editor(core.client.clone()),
         };
-        let result = identity::write_id(env, params).await.map_err(|e| match e {
-            identity::WriteIdError::UserData(_) => internal(e),
-            _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
-        })?;
+        let result = identity::write_id(env, params)
+            .await
+            .map_err(|e| match e {
+                identity::WriteIdError::UserData(_) => internal(e),
+                _ => ResponseError::new(ErrorCode::INVALID_PARAMS, e),
+            })?
+            .result;
         if result.written {
             core.spawn_update(Work::Files(vec![])); // node.toml changed: the node is found by its ID from now on
         }

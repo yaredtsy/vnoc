@@ -213,14 +213,26 @@ impl Index {
     /// Nodes whose `ID:` line was lost: `node.toml` says the ID is in the code (`id_in_code = "yes"`) and the node was found by its anchor, not by a
     /// marker. A record that never carried an ID (`no`, `never`, or no field) is not lost: it was never in the code. Sorted by path, then name.
     pub fn lost_markers(&self) -> Vec<LostMarker> {
+        self.found_by_name(vnoc_domain::IdInCode::Yes)
+    }
+
+    /// Nodes attached by name **on purpose**: `node.toml` says `id_in_code = "no"` (the project did not write IDs then, or the marker could not be
+    /// written) and the node is found by its anchor. What the extension's *Write ID* is for; `vnoc repair --all` offers them. Sorted as
+    /// [`Index::lost_markers`].
+    pub fn attached_by_name(&self) -> Vec<LostMarker> {
+        self.found_by_name(vnoc_domain::IdInCode::No)
+    }
+
+    /// The nodes found by their anchor whose record says `id_in_code` is `want`.
+    fn found_by_name(&self, want: vnoc_domain::IdInCode) -> Vec<LostMarker> {
         let mut lost: Vec<LostMarker> = self
             .attached
             .iter()
             .filter(|(_, a)| a.by == FoundBy::Anchor)
             .filter(|(_, a)| {
-                self.records.get(&a.id).is_some_and(|r| {
-                    matches!(r.toml.id_in_code(), Some(vnoc_domain::IdInCode::Yes))
-                })
+                self.records
+                    .get(&a.id)
+                    .is_some_and(|r| r.toml.id_in_code().as_ref() == Some(&want))
             })
             .filter_map(|(key, a)| {
                 let location: LocationKey = key.parse().ok()?;

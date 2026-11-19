@@ -27,13 +27,21 @@ use crate::userdata::{UserData, UserDataError, WriteLock};
 /// 04 §3: what a command that needs `.vnoc/` says when the project has none. The user decides to start V-NOC, not the agent.
 const NO_VNOC: &str = "this project has no .vnoc/ yet. Starting it adds ID: lines to code when a note is attached. Ask the user, then: vnoc init";
 
+/// What the `changed` line says was added to the code (04 §8): an `ID:` line, or for a file its `# FileID:` comment, and where.
+pub(super) fn marker_words(kind: Kind, line: u32) -> String {
+    match kind {
+        Kind::File => format!("a # FileID: comment was added at line {line}"),
+        _ => format!("an ID: line was added at line {line}"),
+    }
+}
+
 /// `.vnoc/vnoc.toml` that cannot be read, or is from a newer V-NOC: the environment's problem, not the request's.
 fn settings_failure(e: UserDataError) -> Failure {
     Failure::Environment(e.to_string())
 }
 
 /// A label of the answer's lines, padded to one column.
-fn label(word: &str) -> String {
+pub(super) fn label(word: &str) -> String {
     style::paint(style::dim(), format!("{word:<13}"))
 }
 
@@ -191,7 +199,7 @@ fn read_body(source: Option<&str>) -> Result<String, Failure> {
 }
 
 /// The write lock, waited for off the runtime's thread (it sleeps between tries). `None`: no `.vnoc/` yet, which `doc new` has already refused.
-async fn take_lock(project: &Project) -> Result<Option<WriteLock>, Failure> {
+pub(super) async fn take_lock(project: &Project) -> Result<Option<WriteLock>, Failure> {
     let data = UserData::new(project.git_root());
     tokio::task::spawn_blocking(move || data.write_lock())
         .await
@@ -210,7 +218,7 @@ fn refused(global: &Global, error: NodeError) -> Result<(), Failure> {
 }
 
 /// What an `AttachError` is to a command: a rule broken by the request is exit `2`, anything else is the environment's (`3`).
-fn attach_failure(e: AttachError, project: &Project) -> Failure {
+pub(super) fn attach_failure(e: AttachError, project: &Project) -> Failure {
     match e {
         AttachError::TitleTaken { title, path } => Failure::Usage(format!(
             "this node already has \"{title}\" → {} (edit that file, or --again)",
@@ -257,8 +265,8 @@ pub async fn doc_new(global: &Global, args: &DocNewArgs) -> Result<(), Failure> 
                 NodeError::new(
                     "missing",
                     format!(
-                        "a note is attached to code that is there: {} is Missing (its code is gone). Relink it to where the code is now (`vnoc relink` is not built yet: ask the user to relink it in VS Code)",
-                        missing.was
+                        "a note is attached to code that is there: {} is Missing (its code is gone). Point its notes at where the code is now with `vnoc relink {} <node>`",
+                        missing.was, missing.id
                     ),
                 ),
             );
@@ -294,10 +302,7 @@ pub async fn doc_new(global: &Global, args: &DocNewArgs) -> Result<(), Failure> 
     match attached.marker {
         Some(MarkerWritten::Line(line)) => {
             changed.push(node.path.clone());
-            let what = match node.kind {
-                Kind::File => format!("a # FileID: comment was added at line {line}"),
-                _ => format!("an ID: line was added at line {line}"),
-            };
+            let what = marker_words(node.kind, line);
             marker = Some((node.path.clone(), what));
         }
         Some(MarkerWritten::FolderFile) => {

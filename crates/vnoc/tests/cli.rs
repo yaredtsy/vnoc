@@ -4281,3 +4281,322 @@ fn where_on_the_doc_commands_says_what_it_ignores_and_what_it_needs() {
         text(&out.stderr)
     );
 }
+
+// ------------------------------------------------------------------------------------------------------ `relink` and `repair` (A9)
+
+#[test]
+fn relink_points_a_missing_nodes_notes_at_a_function_and_writes_its_id_there() {
+    let root = sample_copy("relink");
+    let before = std::fs::read_to_string(root.join("api/routes.py")).unwrap();
+    let out = run(vnoc(
+        &root,
+        &["relink", MISSING_ID, "api/routes.py::get_order"],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty());
+    let stdout = text(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "{stdout}");
+    assert_eq!(
+        lines[0],
+        format!("relinked     {MISSING_ID}  was api/routes.py::legacy_export")
+    );
+    assert_eq!(lines[1], "to           function  api/routes.py::get_order");
+    let at: usize = lines[2]
+        .split("at line ")
+        .nth(1)
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        lines[2],
+        format!(
+            "changed      api/routes.py   (an ID: line was added at line {at}; read the file again before you edit it)"
+        )
+    );
+    // the ID is at the new place, as the one line that was added
+    assert_eq!(
+        line_n(&root.join("api/routes.py"), at),
+        format!("    \"\"\"ID: {MISSING_ID}\"\"\"")
+    );
+    let after = std::fs::read_to_string(root.join("api/routes.py")).unwrap();
+    assert_eq!(after.lines().count(), before.lines().count() + 1);
+    // nothing is Missing, and `check` has no `missing` finding any more (the lost marker of rate_for is a finding of its own)
+    assert_eq!(stdout_of(&root, &["missing"]), "nothing is Missing\n");
+    let (exit, checked, _) = stdout_any(&root, &["check"]);
+    assert_eq!(exit, 1);
+    assert!(!checked.contains("missing  "), "{checked}");
+    assert!(checked.contains("lost_marker"), "{checked}");
+    // `show` finds the node by its ID now, at the new place
+    let shown = stdout_of(&root, &["show", "api/routes.py::get_order", "--no-code"]);
+    assert!(shown.contains(&format!("ID {MISSING_ID}")), "{shown}");
+}
+
+#[test]
+fn relink_in_json_says_where_it_was_and_what_it_changed() {
+    let root = sample_copy("relink-json");
+    let made: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &["relink", MISSING_ID, "api/routes.py::get_order", "--json"],
+    ))
+    .unwrap();
+    assert_eq!(
+        made,
+        json!({
+            "schema": 1, "command": "relink", "id": MISSING_ID, "was": "api/routes.py::legacy_export",
+            "node": { "kind": "function", "location": "api/routes.py::get_order", "node_id": MISSING_ID },
+            "created": [], "changed": ["api/routes.py"], "id_in_code": true, "notice": null
+        })
+    );
+}
+
+#[test]
+fn relink_refuses_with_the_librarys_words_and_changes_nothing() {
+    let root = sample_copy("relink-refused");
+    let routes = std::fs::read(root.join("api/routes.py")).unwrap();
+    let toml =
+        std::fs::read(root.join(".vnoc/nodes/GE/7N1HNCPA163HHSN91HX48T9QGE/node.toml")).unwrap();
+    let refused = |args: &[&str]| error_of(&root, args);
+    // a place that has notes of its own: the stored one (found by name) and one with an ID in the code
+    assert_eq!(
+        refused(&["relink", MISSING_ID, "billing/tax.py::rate_for"]),
+        "that node already has its own docs"
+    );
+    assert_eq!(
+        refused(&["relink", MISSING_ID, METHOD]),
+        "that node already has its own docs"
+    );
+    // another kind: the node was a function
+    assert_eq!(
+        refused(&["relink", MISSING_ID, "orders/models.py::Line"]),
+        "this is a class, and the docs belong to a function"
+    );
+    assert_eq!(
+        refused(&["relink", MISSING_ID, "orders/models.py"]),
+        "this is a file, and the docs belong to a function"
+    );
+    // an ID that is not Missing, one nobody has, and text that is no ID
+    assert_eq!(
+        refused(&["relink", METHOD_ID, "api/routes.py::get_order"]),
+        "that node is not Missing: its docs are shown where its code is"
+    );
+    assert_eq!(
+        refused(&[
+            "relink",
+            "0Q8V5W4T2F7KX9M3B6D1RZ4H7K",
+            "api/routes.py::get_order"
+        ]),
+        "no node has the ID 0Q8V5W4T2F7KX9M3B6D1RZ4H7K"
+    );
+    assert_eq!(
+        refused(&["relink", "not-an-id", "api/routes.py::get_order"]),
+        "`not-an-id` is not a node ID"
+    );
+    // a target that is not there, and one that is Missing too
+    assert!(
+        refused(&["relink", MISSING_ID, "api/routes.py::nope"])
+            .starts_with("no node at api/routes.py::nope")
+    );
+    assert!(
+        refused(&["relink", MISSING_ID, MISSING_ID]).starts_with(
+            "relink to code that is there: api/routes.py::legacy_export is Missing too"
+        ),
+    );
+    assert_eq!(std::fs::read(root.join("api/routes.py")).unwrap(), routes);
+    assert_eq!(
+        std::fs::read(root.join(".vnoc/nodes/GE/7N1HNCPA163HHSN91HX48T9QGE/node.toml")).unwrap(),
+        toml
+    );
+}
+
+#[test]
+fn repair_puts_a_lost_id_line_back_and_check_agrees() {
+    let root = sample_copy("repair");
+    let before = std::fs::read_to_string(root.join("billing/tax.py")).unwrap();
+    let stdout = stdout_of(&root, &["repair"]);
+    assert_eq!(
+        stdout,
+        "repaired     billing/tax.py::rate_for  (ID: line written at line 7)\n"
+    );
+    let after = std::fs::read_to_string(root.join("billing/tax.py")).unwrap();
+    assert_eq!(
+        line_n(&root.join("billing/tax.py"), 7),
+        format!("    \"\"\"ID: {LOST_ID}\"\"\"")
+    );
+    let mut expected: Vec<&str> = before.lines().collect();
+    let added = format!("    \"\"\"ID: {LOST_ID}\"\"\"");
+    expected.insert(6, &added);
+    assert_eq!(after, expected.join("\n") + "\n");
+    // `check` has only the Missing node left; after the relink it is clean
+    let (exit, checked, _) = stdout_any(&root, &["check"]);
+    assert_eq!(exit, 1);
+    assert!(!checked.contains("lost_marker"), "{checked}");
+    stdout_of(&root, &["relink", MISSING_ID, "api/routes.py::get_order"]);
+    assert_eq!(stdout_of(&root, &["check"]), "no problems\n");
+    // nothing left to repair
+    assert_eq!(stdout_of(&root, &["repair"]), "nothing to repair\n");
+    let json: Value = serde_json::from_str(&stdout_of(&root, &["repair", "--json"])).unwrap();
+    assert_eq!(
+        json,
+        json!({ "schema": 1, "command": "repair", "repaired": [], "left": [] })
+    );
+}
+
+#[test]
+fn repair_on_a_clean_project_has_nothing_to_do() {
+    let root = started_copy("repair-clean", &[]);
+    assert_eq!(stdout_of(&root, &["repair"]), "nothing to repair\n");
+    assert_eq!(
+        stdout_of(&root, &["repair", "--all"]),
+        "nothing to repair\n"
+    );
+    // and in a project nobody started
+    let bare = bare_copy("repair-bare");
+    assert_eq!(stdout_of(&bare, &["repair"]), "nothing to repair\n");
+    assert!(!bare.join(".vnoc").exists());
+}
+
+#[test]
+fn repair_leaves_what_the_library_refuses_and_says_why() {
+    let root = sample_copy("repair-refuses");
+    let node_toml = root.join(format!(".vnoc/nodes/D7/{LOST_ID}/node.toml"));
+    // a node set to never carry an ID: named, it is left with its reason and the exit is 2
+    let toml = std::fs::read_to_string(&node_toml).unwrap();
+    std::fs::write(
+        &node_toml,
+        toml.replace("id_in_code = \"yes\"", "id_in_code = \"never\""),
+    )
+    .unwrap();
+    let tax = std::fs::read(root.join("billing/tax.py")).unwrap();
+    let (exit, stdout, stderr) = stdout_any(&root, &["repair", "billing/tax.py::rate_for"]);
+    assert_eq!((exit, stderr.as_str()), (2, ""));
+    assert_eq!(
+        stdout,
+        "left         billing/tax.py::rate_for  this node was set to never have an ID in the code\n"
+    );
+    assert_eq!(std::fs::read(root.join("billing/tax.py")).unwrap(), tax);
+    // the sweep does not touch it: it never carried one
+    assert_eq!(stdout_of(&root, &["repair"]), "nothing to repair\n");
+
+    // a node whose ID is in the code already
+    let (exit, stdout, _) = stdout_any(&root, &["repair", METHOD]);
+    assert_eq!(exit, 2);
+    assert_eq!(
+        stdout,
+        format!("left         {METHOD}  the ID of that node is already in the code\n")
+    );
+    // a node with no docs, a node that is not there, and a Missing one: each says so, exit 2
+    let (exit, stdout, _) = stdout_any(&root, &["repair", "orders/models.py::Line"]);
+    assert_eq!(exit, 2);
+    assert!(
+        stdout.contains("that node has no docs, so there is no ID to write"),
+        "{stdout}"
+    );
+    let (exit, stdout, stderr) = stdout_any(&root, &["repair", "billing/tax.py::nope"]);
+    assert_eq!((exit, stdout.as_str()), (2, ""));
+    assert!(
+        stderr.starts_with("error: no node at billing/tax.py::nope"),
+        "{stderr}"
+    );
+    let (exit, _, stderr) = stdout_any(&root, &["repair", MISSING_ID]);
+    assert_eq!(exit, 2);
+    assert!(stderr.contains("is Missing: its code is gone"), "{stderr}");
+    // `--all` and nodes do not go together
+    assert_eq!(stdout_any(&root, &["repair", "--all", METHOD]).0, 2);
+
+    // a project that writes no IDs: a node named is left with that reason
+    let off = sample_copy("repair-ids-off");
+    std::fs::write(
+        off.join(".vnoc/vnoc.toml"),
+        "format = 1\n\n[ids]\ndefault = \"none\"\n",
+    )
+    .unwrap();
+    let (exit, stdout, _) = stdout_any(&off, &["repair", "billing/tax.py::rate_for"]);
+    assert_eq!(exit, 2);
+    assert!(
+        stdout.contains("this project does not write IDs"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn repair_all_also_writes_the_ids_of_notes_attached_by_name_on_purpose() {
+    let root = started_copy("repair-all", &[]);
+    stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "By name",
+            "--no-marker",
+        ],
+    );
+    let tax = std::fs::read(root.join("billing/tax.py")).unwrap();
+    // the plain sweep leaves it: it was never in the code
+    assert_eq!(stdout_of(&root, &["repair"]), "nothing to repair\n");
+    assert_eq!(std::fs::read(root.join("billing/tax.py")).unwrap(), tax);
+    // `--all` offers it, as Write ID does
+    let stdout = stdout_of(&root, &["repair", "--all"]);
+    assert_eq!(
+        stdout,
+        "repaired     billing/tax.py::rate_for  (ID: line written at line 7)\n"
+    );
+    assert!(
+        std::fs::read_to_string(root.join("billing/tax.py"))
+            .unwrap()
+            .contains("ID: 4KF0")
+    );
+    assert_eq!(
+        stdout_of(&root, &["repair", "--all"]),
+        "nothing to repair\n"
+    );
+}
+
+#[test]
+fn two_lost_markers_in_one_file_are_both_put_back_in_their_places() {
+    let root = started_copy("repair-two", &[]);
+    for (node, title) in [
+        ("billing/tax.py::rate_for", "First"),
+        ("billing/tax.py::apply_tax", "Second"),
+    ] {
+        stdout_of(&root, &["doc", "new", node, "--title", title]);
+    }
+    let file = root.join("billing/tax.py");
+    let with_ids = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(with_ids.matches("ID: ").count(), 2);
+    // both ID lines are lost (a person deleted them)
+    let lost: String = with_ids
+        .lines()
+        .filter(|l| !l.contains("ID: "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&file, &lost).unwrap();
+    let (exit, checked, _) = stdout_any(&root, &["check"]);
+    assert_eq!(exit, 1);
+    assert_eq!(checked.matches("lost_marker").count(), 2, "{checked}");
+
+    let stdout = stdout_of(&root, &["repair"]);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    // a file's nodes are written from the top, so each line reported is where it stays, and the second is planned against the text the first left
+    assert_eq!(
+        lines[0],
+        "repaired     billing/tax.py::rate_for  (ID: line written at line 7)"
+    );
+    assert_eq!(
+        lines[1],
+        "repaired     billing/tax.py::apply_tax  (ID: line written at line 12)"
+    );
+    assert!(line_n(&file, 7).contains("ID: ") && line_n(&file, 12).contains("ID: "));
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        with_ids,
+        "both lines are back, where they were"
+    );
+    assert_eq!(stdout_of(&root, &["check"]), "no problems\n");
+}

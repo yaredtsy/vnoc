@@ -13,6 +13,7 @@ mod grep;
 mod nodes;
 mod out;
 pub mod project;
+mod relink;
 mod show;
 mod status;
 pub mod style;
@@ -94,6 +95,8 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Grep(args) => grep::run(&cli.global, args).await,
         Command::Calls(args) => calls::run(&cli.global, args).await,
         Command::Init(args) => write::init(&cli.global, args).await,
+        Command::Relink(args) => relink::relink(&cli.global, args).await,
+        Command::Repair(args) => relink::repair(&cli.global, args).await,
         Command::Missing => check::missing(&cli.global).await,
         Command::Check(args) => check::run(&cli.global, args).await,
     }

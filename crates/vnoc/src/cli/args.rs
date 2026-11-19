@@ -101,14 +101,23 @@ pub enum Command {
     /// `.vnoc/` is left as it is, and the command says so (exit 0). It needs no driver.
     Init(InitArgs),
     /// Lists the documented nodes whose code is not found: each with its ID, where it was last known, how many notes it has, and what can be done
-    /// (`vnoc relink <ID> <node>` if the code moved: that command is not built yet, so ask the user to relink it in VS Code; or remove it in VS Code if the
-    /// code is gone). Prints `nothing is Missing` when none is.
+    /// (`vnoc relink <ID> <node>` if the code moved; or remove it in VS Code if the code is gone: no command removes a note). Prints `nothing is Missing`
+    /// when none is.
     Missing,
+    /// Points a Missing node's notes at the code's new place: `vnoc relink <ID> <node>`, where the ID is the one `vnoc missing` prints and the node is the
+    /// function, class, file or folder the code is now. Writes the ID into the code at the new place (an `ID:` line; the command says which file it changed
+    /// and where, and you must read that file again before you edit it), unless the project writes no IDs. Refused, with the reason, for a node that is not
+    /// Missing, a place that has notes of its own, or a place of another kind.
+    Relink(RelinkArgs),
+    /// Writes lost `ID:` lines back into the code (the ones `vnoc check` reports as lost markers). With no node: every lost one. With nodes: those. With --all:
+    /// the lost ones and every note attached by name on purpose. One line for each node: `repaired` (with the line written), or `left` with the reason (the
+    /// node is set to never carry an ID, the project writes none, the ID is in the code already). Exit 2 when a node you NAMED was left; a sweep that leaves
+    /// some is exit 0. Prints `nothing to repair` when there is nothing to do. The files are written one node at a time, each read again just before.
+    Repair(RepairArgs),
     /// Checks the project's documentation and exits 1 if something is wrong, for CI and for after you edit: a documented node whose code is not found,
     /// a node whose `ID:` line was lost, an ID written in two places, a broken file in `.vnoc/`. Each is one line with its file and the fix. A file the
-    /// driver cannot read at all (not UTF-8) is a warning and does not fail the check; a syntax error is no finding. The fixes name `vnoc relink` and
-    /// `vnoc repair`, which are not built yet: until they are, ask the user to relink, remove or Write ID in VS Code. With --changed only the files that
-    /// git says differ from HEAD are looked at.
+    /// driver cannot read at all (not UTF-8) is a warning and does not fail the check; a syntax error is no finding. The fixes name the commands that
+    /// mend it (`vnoc relink`, `vnoc repair`). With --changed only the files that git says differ from HEAD are looked at.
     Check(CheckArgs),
 }
 
@@ -124,6 +133,28 @@ pub struct InitArgs {
     /// no `ID:` lines are ever written, and notes are found by name (`[ids] default = "none"` in `.vnoc/vnoc.toml`). Only the first start decides.
     #[arg(long, value_enum, value_name = "on|off", default_value_t = Switch::On)]
     pub markers: Switch,
+}
+
+#[derive(Debug, Args)]
+pub struct RelinkArgs {
+    /// The permanent ID of the Missing node, as `vnoc missing` prints it.
+    #[arg(value_name = "ID")]
+    pub id: String,
+    /// Where its code is now: a function, class, file or folder (see `vnoc show --help` for how to name one). It must have no notes of its own and be
+    /// of the same kind as the node was.
+    #[arg(value_name = "NODE")]
+    pub node: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RepairArgs {
+    /// Nodes to repair (see `vnoc show --help` for how to name one). With none: every node `vnoc check` reports as a lost marker. `-` reads names from
+    /// standard input.
+    #[arg(value_name = "NODE")]
+    pub nodes: Vec<String>,
+    /// Also the nodes attached by name on purpose (their record says no ID is in the code), which is what the extension's Write ID does. Not with nodes.
+    #[arg(long, conflicts_with = "nodes")]
+    pub all: bool,
 }
 
 #[derive(Debug, Args)]
