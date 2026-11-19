@@ -5252,9 +5252,10 @@ fn bare_vnoc_in_a_terminal_prints_the_help_and_exits_0_instead_of_waiting_as_a_s
     assert_eq!(code(&help), 0);
     assert!(text(&help.stdout).contains("Usage: vnoc"));
     assert_eq!(text(&bare.stdout), text(&help.stdout));
-    // `--stdio` still starts the server with a terminal on stdin: it waits for a client (killed after 2 s: 124), it is not turned into help
-    let stdio = run_in_a_terminal(&["--stdio"], 2).unwrap();
-    assert_eq!(code(&stdio), 124, "{}", text(&stdio.stdout));
+    // `--stdio` is for an editor: with a terminal on stdin it is refused with its sentence (A11e), never a server that waits (that would be 124)
+    let stdio = run_in_a_terminal(&["--stdio"], 30).unwrap();
+    assert_eq!(code(&stdio), 2, "{}", text(&stdio.stdout));
+    assert_eq!(text(&stdio.stderr), NOT_PIPES);
 }
 
 fn tags_file(root: &Path) -> PathBuf {
@@ -5482,4 +5483,119 @@ fn vnoc_tags_ends_with_the_hint_when_nothing_is_described_and_not_with_quiet() {
         stdout_of(&root, &["tags"]),
         "plan  1 doc  A change we intend to make.\n"
     );
+}
+
+// ------------------------------------------------------------------------------------------- the server starts on pipes only (A11e)
+
+const NOT_PIPES: &str = "error: vnoc --stdio is for an editor, which talks to it through pipes; for a command, see vnoc -h\n";
+
+/// `vnoc <args>` with the given standard input and output, and no driver, so a run that wrongly became a server could only wait.
+#[cfg(unix)]
+fn with_streams(args: &[&str], stdin: Stdio, stdout: Stdio) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc"))
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_LOG")
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR_FORCE")
+        .args(args)
+        .stdin(stdin)
+        .stdout(stdout)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .ok();
+    let status = child.wait().unwrap();
+    Output {
+        status,
+        stdout: Vec::new(),
+        stderr: stderr.into_bytes(),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn vnoc_with_dev_null_or_a_file_as_input_prints_the_help_and_does_not_panic() {
+    let help = run(vnoc(&scratch("null-help"), &["-h"]));
+    let help = text(&help.stdout);
+    assert!(help.contains("Usage: vnoc"));
+    // `vnoc < /dev/null`: the help on standard output, exit 0, nothing on standard error
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.env_remove("VNOC_DRIVER").stdin(Stdio::null());
+    let out = run(cmd);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), help);
+    // a regular file as input
+    let file = scratch("file-input").join("in.txt");
+    std::fs::write(&file, "x\n").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.env_remove("VNOC_DRIVER")
+        .stdin(std::fs::File::open(&file).unwrap());
+    let out = run(cmd);
+    assert_eq!((code(&out), text(&out.stdout)), (0, help.clone()));
+    // a pipe in and a file out is not an editor either: the help goes into the file
+    let target = file.with_file_name("out.txt");
+    let out = with_streams(
+        &[],
+        Stdio::piped(),
+        Stdio::from(std::fs::File::create(&target).unwrap()),
+    );
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), help);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_explicit_server_forms_without_pipes_are_exit_2_with_one_sentence() {
+    for args in [vec!["--stdio"], vec!["serve"], vec!["serve", "--stdio"]] {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+        cmd.env_remove("VNOC_DRIVER")
+            .args(&args)
+            .stdin(Stdio::null());
+        let out = cmd.output().unwrap();
+        assert_eq!(code(&out), 2, "{args:?}");
+        assert_eq!(text(&out.stderr), NOT_PIPES, "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
+    }
+    // a pipe in and a file out: the server could not write its protocol there
+    let target = scratch("stdio-file-out").join("out.txt");
+    let out = with_streams(
+        &["--stdio"],
+        Stdio::piped(),
+        Stdio::from(std::fs::File::create(target).unwrap()),
+    );
+    assert_eq!((code(&out), text(&out.stderr).as_str()), (2, NOT_PIPES));
+}
+
+/// The editor's case: Node gives a child a **socket** for each stream, not a FIFO. The server must still start on it.
+#[cfg(unix)]
+#[test]
+fn a_socket_is_a_pipe_for_the_server() {
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
+    let (stdin_end, ours_in) = UnixStream::pair().unwrap();
+    let (stdout_end, ours_out) = UnixStream::pair().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc"))
+        .arg("--stdio")
+        .env_remove("VNOC_DRIVER")
+        .stdin(Stdio::from(OwnedFd::from(stdin_end)))
+        .stdout(Stdio::from(OwnedFd::from(stdout_end)))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let running = child.try_wait().unwrap().is_none();
+    drop((ours_in, ours_out));
+    if running {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    assert!(running, "the server exited on a socket");
 }
