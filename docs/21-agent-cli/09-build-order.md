@@ -299,6 +299,15 @@ and stdin a terminal (a pty, or the decision function) prints help, exit 0; `tag
 and key order, `--clear`, a bad tag, a line break, no `.vnoc/`; `vnoc tags` shows the hint when nothing is described. Commit:
 `cli A11c: bare vnoc in a terminal prints help; vnoc tag describe`.
 
+### A11d `claude` with no `CLAUDE.md` (added 2026-11-20, review of A11)
+
+07 §2 "The import file for `claude`". Tests: `--agent claude` on a project with only `AGENTS.md` (other text) → block in AGENTS.md and a
+`CLAUDE.md` of exactly `@AGENTS.md`; installed twice → unchanged; `remove` deletes it; `remove` after a person added a line to it → kept;
+an existing `CLAUDE.md` → no import file, block in CLAUDE.md as before; `.claude/CLAUDE.md` present → no import file; `--dry-run` lists it;
+`status` names it. Also (05 §1, narrowed): bare `vnoc` starts the server only when stdin is a pipe; `--stdio` without pipes → exit 2 with
+its sentence, no panic. Commits: `cli A11d: claude gets a one-line CLAUDE.md that imports AGENTS.md`, `cli A11e: the server starts on
+pipes only, and says so otherwise`.
+
 ### A12 The extension's two commands
 
 | Files | What |

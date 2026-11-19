@@ -76,7 +76,7 @@ question cheap here: **a name is only a label on one of two skill folders and on
 
 | You pick | The skill goes to | The rules block goes to |
 |---|---|---|
-| `claude` | `.claude/skills/vnoc/` | `CLAUDE.md` if there is one (unless it imports `@AGENTS.md`), else `AGENTS.md` |
+| `claude` | `.claude/skills/vnoc/` | `CLAUDE.md` if there is one (unless it imports `@AGENTS.md`), else `AGENTS.md` **and a one-line `CLAUDE.md`: `@AGENTS.md`** (A11d) |
 | `cline` | `.claude/skills/vnoc/` | `AGENTS.md` |
 | `codex` `cursor` `pi` `opencode` `copilot` `amp` `goose` `windsurf` | `.agents/skills/vnoc/` | `AGENTS.md` |
 | `gemini` | `.agents/skills/vnoc/` | `GEMINI.md` (created if missing: Gemini CLI reads only that by default) |
@@ -85,6 +85,13 @@ question cheap here: **a name is only a label on one of two skill folders and on
 Picking three agents that share a folder writes that folder once. `--all` is every row: both folders, and each rules file that exists (plus
 `AGENTS.md`). An agent that is not in the table is `other`, and gets what the open format says; a new agent, or one that moves, is a row in
 this table and never a new mechanism.
+
+**The import file for `claude`** *(decided 2026-11-20, review of A11; built in A11d)*. With no `CLAUDE.md` (and no `.claude/CLAUDE.md`), the
+block goes to `AGENTS.md`, which Claude Code reads only from v2.1.277 (§1). So `install --agent claude` (and `--all`) also creates `CLAUDE.md`
+holding exactly one line, `@AGENTS.md`: the import is old, so every version reads the block, and a newer one is not changed (it reads
+`AGENTS.md` either way, once). The block stays in one file. `remove` deletes that `CLAUDE.md` only while it is still exactly that line;
+`status` counts it as V-NOC's. A `CLAUDE.md` that exists is never touched by this rule (it gets the block, as before, unless it already
+imports `@AGENTS.md`).
 
 **How the pick is made:**
 

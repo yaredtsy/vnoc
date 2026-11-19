@@ -27,7 +27,12 @@ library   Project · DriverHost · index::refresh · Index · UserData · identi
   So `main.rs` decides before clap: the arguments are empty, `[--stdio]`, `[serve]` or `[serve, --stdio]` → the main loop.
   *(Changed 2026-11-20, A11c: the user ran bare `vnoc` in a terminal, it waited silently, and Enter crashed it with `Invalid header: "\n"`.)*
   **Empty arguments start the server only when standard input is not a terminal** (the extension always pipes it). In a terminal, bare
-  `vnoc` prints the short help and exits `0`. `--stdio` and `serve` start the server whatever stdin is. Anything else
+  `vnoc` prints the short help and exits `0`. `--stdio` and `serve` start the server whatever stdin is.
+  *(Narrowed 2026-11-20, A11d, after A11c found `vnoc < /dev/null` panics with "stdin is a pipe".)* On Unix the server's stdin must be a
+  **pipe** (`async_lsp::stdio::PipeStdin`). So: empty arguments start the server only when stdin **is a pipe**; a terminal, a file,
+  `/dev/null` or a socket → the help, exit `0`. `--stdio` / `serve` with a stdin or stdout that is not a pipe → exit `2` with
+  `vnoc --stdio is for an editor, which talks to it through pipes; for a command, see vnoc -h`, never a panic. Windows keeps "not a terminal"
+  (its server reads stdin through tokio, which takes any handle). Anything else
   goes to clap. `--stdio` is not a clap flag and does not show in `--help`. A later release of the extension passes `serve`; all four work
   from A2 on, and an old extension with a new core keeps working. `lifecycle.rs` starts the core with no arguments, the window suite with
   `--stdio`: A2 tests both.
