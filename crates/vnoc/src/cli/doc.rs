@@ -34,7 +34,6 @@ pub async fn run(global: &Global, command: &DocCommand) -> Result<(), Failure> {
             .await
         }
         DocCommand::Path(args) => file_command(global, args, None, "doc path", View::Path).await,
-        DocCommand::Tags(args) => super::tags::tags(global, args).await,
         DocCommand::Tag(args) => super::tags::tag(global, args).await,
         DocCommand::New(args) => super::write::doc_new(global, args).await,
     }

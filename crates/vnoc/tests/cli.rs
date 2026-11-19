@@ -4719,24 +4719,23 @@ fn rate_doc(root: &Path) -> PathBuf {
 }
 
 #[test]
-fn doc_tags_lists_every_tag_with_its_count_and_meaning_and_needs_no_driver() {
-    let root = tags_project("doc-tags");
-    let listed = without_a_driver(&root, &["doc", "tags"]);
+fn tags_lists_every_tag_with_its_count_and_meaning_and_needs_no_driver() {
+    let root = tags_project("tags");
+    let listed = without_a_driver(&root, &["tags"]);
     assert_eq!(code(&listed), 0, "{}", text(&listed.stderr));
     assert!(listed.stderr.is_empty());
     assert_eq!(
         text(&listed.stdout),
         "billing   2 docs\nplan      2 docs  A change we intend to make. Retag as done when it ships.\ndecision  1 doc   Why we chose this way over the others.\ndone      0 docs  A plan that shipped.\n"
     );
-    let authors = without_a_driver(&root, &["doc", "tags", "--authors"]);
+    let authors = without_a_driver(&root, &["tags", "--authors"]);
     assert_eq!(text(&authors.stdout), "claude-code  1 doc\n");
     let json: Value =
-        serde_json::from_slice(&without_a_driver(&root, &["doc", "tags", "--json"]).stdout)
-            .unwrap();
+        serde_json::from_slice(&without_a_driver(&root, &["tags", "--json"]).stdout).unwrap();
     assert_eq!(
         json,
         json!({
-            "schema": 1, "command": "doc tags",
+            "schema": 1, "command": "tags",
             "tags": [
                 { "tag": "billing", "docs": 2, "description": null },
                 { "tag": "plan", "docs": 2, "description": "A change we intend to make. Retag as done when it ships." },
@@ -4745,10 +4744,9 @@ fn doc_tags_lists_every_tag_with_its_count_and_meaning_and_needs_no_driver() {
             ]
         })
     );
-    let json: Value = serde_json::from_slice(
-        &without_a_driver(&root, &["doc", "tags", "--authors", "--json"]).stdout,
-    )
-    .unwrap();
+    let json: Value =
+        serde_json::from_slice(&without_a_driver(&root, &["tags", "--authors", "--json"]).stdout)
+            .unwrap();
     assert_eq!(
         json["authors"],
         json!([{ "author": "claude-code", "docs": 1 }])
@@ -4756,15 +4754,15 @@ fn doc_tags_lists_every_tag_with_its_count_and_meaning_and_needs_no_driver() {
     // a project with no tags says so, and so does one nobody started
     let none = started_copy("doc-tags-none", &[]);
     assert_eq!(
-        text(&without_a_driver(&none, &["doc", "tags"]).stdout),
+        text(&without_a_driver(&none, &["tags"]).stdout),
         "no tags\n"
     );
     assert_eq!(
-        text(&without_a_driver(&none, &["doc", "tags", "--authors"]).stdout),
+        text(&without_a_driver(&none, &["tags", "--authors"]).stdout),
         "no authors\n"
     );
     assert_eq!(
-        text(&without_a_driver(&bare_copy("doc-tags-bare"), &["doc", "tags"]).stdout),
+        text(&without_a_driver(&bare_copy("doc-tags-bare"), &["tags"]).stdout),
         "no tags\n"
     );
 }
@@ -4778,7 +4776,7 @@ fn a_tags_toml_with_a_bad_key_is_a_problem_once_and_the_rest_is_read() {
     )
     .unwrap();
     // the good key still describes its tag
-    let listed = stdout_of(&root, &["doc", "tags"]);
+    let listed = stdout_of(&root, &["tags"]);
     assert!(
         listed.contains("plan      2 docs  A change we intend to make.\n"),
         "{listed}"
@@ -4799,7 +4797,7 @@ fn a_tags_toml_with_a_bad_key_is_a_problem_once_and_the_rest_is_read() {
         1,
         "{checked}"
     );
-    assert!(!stdout_of(&root, &["doc", "tags"]).contains("A change"));
+    assert!(!stdout_of(&root, &["tags"]).contains("A change"));
 }
 
 #[test]

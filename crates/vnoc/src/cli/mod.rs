@@ -100,6 +100,7 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Repair(args) => relink::repair(&cli.global, args).await,
         Command::Missing => check::missing(&cli.global).await,
         Command::Check(args) => check::run(&cli.global, args).await,
+        Command::Tags(args) => tags::tags(&cli.global, args).await,
     }
 }
 

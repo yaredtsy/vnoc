@@ -119,6 +119,10 @@ pub enum Command {
     /// driver cannot read at all (not UTF-8) is a warning and does not fail the check; a syntax error is no finding. The fixes name the commands that
     /// mend it (`vnoc relink`, `vnoc repair`). With --changed only the files that git says differ from HEAD are looked at.
     Check(CheckArgs),
+    /// Lists every tag the docs carry with how many docs have it and what it means (from `.vnoc/tags.toml`, which people write: read it, do not edit it); a
+    /// described tag no doc has yet is listed with 0. Most used first. Run it BEFORE you tag a note and reuse a tag that fits (prefer a described one);
+    /// do not invent a synonym of one that exists. With --authors, the authors of the docs instead. Needs no driver.
+    Tags(TagsArgs),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -221,10 +225,6 @@ pub enum DocCommand {
     Read(DocReadArgs),
     /// Prints the file paths of a node's docs, one per line: for your own read and edit tools. A node named by its ID needs no driver.
     Path(DocFileArgs),
-    /// Lists every tag the docs carry with how many docs have it and what it means (from `.vnoc/tags.toml`, which people write: read it, do not edit it); a
-    /// described tag no doc has yet is listed with 0. Most used first. Run it BEFORE you tag a note and reuse a tag that fits (prefer a described one);
-    /// do not invent a synonym of one that exists. With --authors, the authors of the docs instead. Needs no driver.
-    Tags(DocTagsArgs),
     /// Changes the tags of ONE doc: `vnoc doc tag <node> [file] --add done --remove plan`. Only the doc's `tags:` line is rewritten (the rest of the file is
     /// as it was) and the doc's file is read again just before it is written. A node with several docs needs the file name. A tag the doc has already (or
     /// lacks, to remove) changes nothing and is said, exit 0: running a command twice is never an error. A tag nobody uses yet is accepted, with a note
@@ -267,7 +267,7 @@ pub struct DocNewArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct DocTagsArgs {
+pub struct TagsArgs {
     /// List the authors of the docs (`author:` in the frontmatter) instead of the tags.
     #[arg(long)]
     pub authors: bool,

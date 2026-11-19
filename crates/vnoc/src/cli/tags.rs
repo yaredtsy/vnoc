@@ -1,4 +1,4 @@
-//! `vnoc doc tags` and `vnoc doc tag` (`docs/21-agent-cli/04-write-commands.md` §4, "Listing, editing and describing tags"), and the notice `doc new` and
+//! `vnoc tags` and `vnoc doc tag` (`docs/21-agent-cli/04-write-commands.md` §4, "Listing, editing and describing tags"), and the notice `doc new` and
 //! `doc tag` give for a tag nobody uses yet.
 //!
 //! The list of tags is **computed** from the docs every time: the doc texts carry each doc's tags and authors, so listing is a count over them, and it needs
@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::args::{DocTagArgs, DocTagsArgs};
+use super::args::{DocTagArgs, TagsArgs};
 use super::doc::{choose_doc, node_docs};
 use super::out::{self, Render};
 use super::project::open_without_driver;
@@ -29,7 +29,7 @@ fn read_project(project: &Project) -> (DocTexts, Descriptions) {
     (texts, data.tag_descriptions())
 }
 
-// ----------------------------------------------------------------------------------------------------------------------------- doc tags
+// --------------------------------------------------------------------------------------------------------------------------------- tags
 
 #[derive(Serialize)]
 struct TagRow {
@@ -105,8 +105,8 @@ impl Render for Tags {
     }
 }
 
-/// `vnoc doc tags [--authors]`
-pub async fn tags(global: &Global, args: &DocTagsArgs) -> Result<(), Failure> {
+/// `vnoc tags [--authors]`
+pub async fn tags(global: &Global, args: &TagsArgs) -> Result<(), Failure> {
     let project = open_without_driver(global)?;
     let (texts, descriptions) = read_project(&project);
     let tags = tag_counts(&texts, &descriptions, None)
@@ -135,7 +135,7 @@ pub async fn tags(global: &Global, args: &DocTagsArgs) -> Result<(), Failure> {
     out::render(
         &Tags {
             schema: 1,
-            command: "doc tags",
+            command: "tags",
             tags,
             authors,
             authors_asked: args.authors,
