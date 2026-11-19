@@ -179,5 +179,11 @@ workspace with `regex = "1"` added, the list of crates in `cargo tree -p vnoc` g
 time of crates already there (`regex-automata` gets its `meta` and `nfa-pikevm` parts, `aho-corasick` its literal search), not the count. The step
 that adds the dependency (A5) measures the build time and the release size.
 
+**Measured in A5 (2026-11-19), the step that added it:** the release binary went from **7,771,808 to 8,705,808 bytes** (+934,000, +12 %). A clean
+`cargo build --release -p vnoc` took 53.9 s before and 49.6 s after (CPU time 267 s and 260 s: the difference is the load of the machine, a load
+average of 12 – 15 during both), so `regex` costs **no build time anyone can measure** and about 0.9 MB. `Cargo.lock` gained one package, `regex`
+1.13.1, as the scratch copy said. `THIRD_PARTY_NOTICES.md` did **not** change: `regex` was already in it, through the driver's workspace, which
+`scripts/notices.mjs` covers too.
+
 Each new crate needs `node scripts/notices.mjs` run again and `extension/THIRD_PARTY_NOTICES.md` committed (`scripts/package.mjs` refuses to
 package without it). The step that adds the crate does it.
