@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 /// V-NOC reads a project by structure: the functions and classes of its code, and the notes attached to them.
 ///
@@ -24,29 +24,144 @@ pub struct Cli {
     pub command: Command,
 }
 
-/// The flags every command takes.
+/// The heading the global flags are listed under: after the command's own options, one short line each in `-h`, the paragraph in `--help`.
+const GLOBAL: &str = "Global options";
+
+/// The flags every command takes. Each is defined once, here; [`Cli::definition`] hides the ones that mean nothing for a command from its `-h`.
 #[derive(Debug, Args)]
 pub struct Global {
-    /// The project folder. Default: the nearest folder at or above the current one that has `.git`, else one that has `.vnoc/`, else the current folder.
-    #[arg(long, global = true, value_name = "DIR")]
+    #[arg(
+        long,
+        global = true,
+        value_name = "DIR",
+        help_heading = GLOBAL,
+        help = "the project folder (default: found from here)",
+        long_help = "The project folder. Default: the nearest folder at or above the current one that has `.git`, else one that has `.vnoc/`, else the current folder."
+    )]
     pub root: Option<PathBuf>,
-    /// The language driver to run. Default: `$VNOC_DRIVER`, else `vnoc-driver-python` next to this binary.
-    #[arg(long, global = true, value_name = "PATH")]
+    #[arg(
+        long,
+        global = true,
+        value_name = "PATH",
+        help_heading = GLOBAL,
+        help = "the language driver (default: $VNOC_DRIVER, else next to vnoc)",
+        long_help = "The language driver to run. Default: `$VNOC_DRIVER`, else `vnoc-driver-python` next to this binary."
+    )]
     pub driver: Option<PathBuf>,
-    /// Print one JSON value, `{ "schema": 1, "command": …, … }`, instead of text.
-    #[arg(long, global = true, conflicts_with = "format")]
+    #[arg(
+        long,
+        global = true,
+        conflicts_with = "format",
+        help_heading = GLOBAL,
+        help = "one JSON value instead of text",
+        long_help = "Print one JSON value, `{ \"schema\": 1, \"command\": …, … }`, instead of text."
+    )]
     pub json: bool,
-    /// For commands that print a list: one location per line (`id`; a node whose code is gone has no location, so its ID) or one file path per line
-    /// (`path`), and nothing else.
-    #[arg(long, global = true, value_enum, value_name = "FORMAT")]
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        value_name = "FORMAT",
+        hide_possible_values = true,
+        help_heading = GLOBAL,
+        help = "one id or path per line (id | path)",
+        long_help = "For commands that print a list: one location per line (`id`; a node whose code is gone has no location, so its ID) or one file path per line (`path`), and nothing else [possible values: id, path]."
+    )]
     pub format: Option<Format>,
-    /// Print only the rows: no hints about what to run next, no totals.
-    #[arg(long, global = true)]
+    #[arg(
+        long,
+        global = true,
+        help_heading = GLOBAL,
+        help = "rows only",
+        long_help = "Print only the rows: no hints about what to run next, no totals."
+    )]
     pub quiet: bool,
-    /// Colour and weight for a person's terminal: `auto` (the default) uses them when standard output is a terminal and `NO_COLOR` is not set
-    /// (`CLICOLOR_FORCE` forces them); `always` and `never` decide. A pipe gets plain text, the same words either way.
-    #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = super::style::When::Auto)]
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        value_name = "WHEN",
+        default_value_t = super::style::When::Auto,
+        hide_default_value = true,
+        hide_possible_values = true,
+        help_heading = GLOBAL,
+        help = "auto | always | never",
+        long_help = "Colour and weight for a person's terminal: `auto` (the default) uses them when standard output is a terminal and `NO_COLOR` is not set (`CLICOLOR_FORCE` forces them); `always` and `never` decide. A pipe gets plain text, the same words either way [default: auto] [possible values: auto, always, never]."
+    )]
     pub color: super::style::When,
+}
+
+impl Cli {
+    /// The parser, as `run` uses it: the derived definition, with the global flags that mean nothing for a command hidden from that command's `-h`
+    /// (they are still accepted). `--driver` is hidden where the driver is never started (`tags`, `tag`, `guide`, `skill`, `agent`, `init`); `--format`
+    /// where the command prints no list for it to shape (it is kept by `show`, `code`, `doc list|read|path`, `tree`, `find`, `grep`, `missing`).
+    /// A global flag is added to each command when the parser is built, so it is built first and then changed in place.
+    pub fn definition() -> clap::Command {
+        let mut command = <Cli as CommandFactory>::command();
+        command.build();
+        hide_what_means_nothing(command, &[])
+    }
+
+    /// Parses `args` (the program's name first) with [`Cli::definition`].
+    pub fn parse_args<I, T>(args: I) -> Result<Cli, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let matches = Cli::definition().try_get_matches_from(args)?;
+        Cli::from_arg_matches(&matches)
+    }
+}
+
+/// Whether the command at `path` (its names from the first, none for `vnoc` itself) starts the driver.
+fn starts_driver(path: &[String]) -> bool {
+    !matches!(
+        path.first().map(String::as_str),
+        Some("tags" | "tag" | "guide" | "skill" | "agent" | "init")
+    )
+}
+
+/// Whether the command at `path` has a list for `--format` to shape.
+fn takes_format(path: &[String]) -> bool {
+    let names: Vec<&str> = path.iter().map(String::as_str).collect();
+    matches!(
+        names.as_slice(),
+        [] | ["show" | "code" | "tree" | "find" | "grep" | "missing" | "doc"]
+            | ["doc", "list" | "read" | "path"]
+    )
+}
+
+/// `mut_arg` takes the flag out and puts it back at the end, which after `build` leaves the parser's table of `-h`, `--json`… pointing at the wrong
+/// flags; `mut_args` changes each in place.
+fn hide_from_short_help(command: clap::Command, id: &'static str) -> clap::Command {
+    command.mut_args(|a| {
+        if a.get_id() == id {
+            a.hide_short_help(true)
+        } else {
+            a
+        }
+    })
+}
+
+fn hide_what_means_nothing(mut command: clap::Command, path: &[String]) -> clap::Command {
+    let names: Vec<String> = command
+        .get_subcommands()
+        .map(|s| s.get_name().to_string())
+        .collect();
+    for name in names {
+        let mut below = path.to_vec();
+        below.push(name.clone());
+        command = command.mut_subcommand(name, |sub| hide_what_means_nothing(sub, &below));
+    }
+    if !path.is_empty() {
+        if !starts_driver(path) {
+            command = hide_from_short_help(command, "driver");
+        }
+        if !takes_format(path) {
+            command = hide_from_short_help(command, "format");
+        }
+    }
+    command
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -106,11 +221,11 @@ pub enum Command {
     /// as the whole project is analysed: ask once with the depth you want (--depth, default 2, at most 32), not level by level. A file, a folder or a
     /// node whose code is gone has no calls: exit 2.
     Calls(CallsArgs),
-    /// Starts V-NOC in this project. Run it only when the user has said to.
+    /// Starts V-NOC in this project. The project's owner decides when: an agent runs it only when the user says so.
     ///
-    /// Starts V-NOC in this project: creates `.vnoc/` (its `vnoc.toml` and a `.gitignore` for `local/`). Say nothing and ask nobody: the OWNER of
-    /// the project decides this, because from then on attaching a note writes an `ID:` line into the code. Run it only when the user has said to
-    /// (or asked you to start V-NOC); `--markers off` starts it with no `ID:` lines at all, so notes are attached by name. A project that already has
+    /// Starts V-NOC in this project: creates `.vnoc/` (its `vnoc.toml` and a `.gitignore` for `local/`). The OWNER of the project decides this,
+    /// because from then on attaching a note writes an `ID:` line into the code: an agent runs it only when the user has said to (or asked it to
+    /// start V-NOC). `--markers off` starts it with no `ID:` lines at all, so notes are attached by name. A project that already has
     /// `.vnoc/` is left as it is, and the command says so (exit 0). It needs no driver.
     Init(InitArgs),
     /// Lists the documented nodes whose code is not found, and what can be done about each.
@@ -146,11 +261,11 @@ pub enum Command {
     /// described tag no doc has yet is listed with 0. Most used first. Run it BEFORE you tag a note and reuse a tag that fits (prefer a described one);
     /// do not invent a synonym of one that exists. With --authors, the authors of the docs instead. Needs no driver.
     Tags(TagsArgs),
-    /// Writes what a tag means into `.vnoc/tags.toml`. It is for the person who keeps the project's vocabulary: do not run it unless asked.
+    /// Writes what a tag means into `.vnoc/tags.toml`. For the person who keeps the project's vocabulary; an agent runs it only when the user asks.
     ///
     /// `vnoc tag describe <tag> "<text>"` sets the description `vnoc tags` shows for a tag; `--clear` takes it away. It changes that one key of `.vnoc/tags.toml`
     /// (the file is created when it is not there) and leaves the rest of the file as it is. It is the user's command, as `vnoc init` is: the vocabulary is the
-    /// project's to decide, so an agent reads `vnoc tags` and does not describe tags unless the user asks. Needs no driver.
+    /// project's to decide, so an agent reads `vnoc tags` and describes a tag only when the user asks. Needs no driver.
     #[command(subcommand)]
     Tag(TagCommand),
     /// Prints a short how-to with examples: `vnoc guide` lists the subjects, `vnoc guide <topic>` prints one.
@@ -164,7 +279,7 @@ pub enum Command {
     /// Prints the skill file (`SKILL.md`) that tells an agent when to use V-NOC, what never to do to the code it marks, and the commands that
     /// matter, exactly as this binary carries it. It changes nothing. It needs no project and no driver.
     Skill,
-    /// Sets up the coding agents the user names: writes the skill and the rules block where their tools look. It is the user's step, not yours.
+    /// Sets up the coding agents the user names: writes the skill and the rules block where their tools look. The user's step: an agent runs it only when asked.
     ///
     /// `vnoc agent install` writes the V-NOC skill (`SKILL.md`) into `.claude/skills/vnoc/` or `.agents/skills/vnoc/` and a marked block of rules into
     /// `AGENTS.md`, `CLAUDE.md` or `GEMINI.md`, for the agents picked, and prints each file it wrote or left. `list` names the agents it knows and
@@ -402,7 +517,7 @@ pub struct TagsArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum TagCommand {
-    /// Sets what a tag means: `vnoc tag describe plan "A change we intend to make"`. The user's command: do not run it unless asked.
+    /// Sets what a tag means: `vnoc tag describe plan "A change we intend to make"`. For the person who keeps the project's vocabulary; an agent runs it only when the user asks.
     ///
     /// Sets the description of one tag in `.vnoc/tags.toml`, which `vnoc tags` shows next to it: one line, a sentence about what the tag means. The file is
     /// created when it is not there; a comment, the order and every other key in it stay as they are, a new key goes at the end, and a tag that has a
@@ -564,4 +679,146 @@ pub struct CodeArgs {
     /// Lines of the file to add above and below the def (its decorators are already in it).
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub context: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `vnoc` and every command below it, by the words that name it.
+    fn every_command(command: &clap::Command, path: &str, into: &mut Vec<(String, clap::Command)>) {
+        into.push((path.to_string(), command.clone()));
+        for sub in command.get_subcommands() {
+            every_command(sub, &format!("{path} {}", sub.get_name()), into);
+        }
+    }
+
+    fn all() -> Vec<(String, clap::Command)> {
+        let mut all = Vec::new();
+        every_command(&Cli::definition(), "vnoc", &mut all);
+        all
+    }
+
+    #[test]
+    fn every_short_help_has_the_global_options_under_their_own_heading() {
+        let all = all();
+        assert!(all.len() > 20, "{} commands", all.len());
+        for (path, mut command) in all {
+            let help = command.render_help().to_string();
+            assert!(help.contains("\nGlobal options:\n"), "{path}:\n{help}");
+            // the command's own options come first
+            let own = help.find("Options:\n").expect("an Options section");
+            assert!(own < help.find("Global options:").unwrap(), "{path}");
+            // one short line each: no paragraph under the heading
+            let globals = help.split("Global options:\n").nth(1).unwrap();
+            for line in globals.lines() {
+                assert!(
+                    line.len() < 90,
+                    "{path}: a global option on a long line: {line}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn what_means_nothing_for_a_command_is_not_in_its_short_help_and_is_still_accepted() {
+        let shown = |path: &[&str], flag: &str| {
+            let mut command = Cli::definition();
+            for name in path {
+                command = command.find_subcommand(name).unwrap().clone();
+            }
+            command.render_help().to_string().contains(flag)
+        };
+        for path in [
+            &["tags"][..],
+            &["tag"],
+            &["tag", "describe"],
+            &["guide"],
+            &["skill"],
+            &["agent"],
+            &["agent", "install"],
+            &["init"],
+        ] {
+            assert!(!shown(path, "--driver"), "{path:?}");
+        }
+        for path in [
+            &["show"][..],
+            &["doc"],
+            &["doc", "new"],
+            &["status"],
+            &["check"],
+        ] {
+            assert!(shown(path, "--driver"), "{path:?}");
+        }
+        for path in [
+            &["show"][..],
+            &["code"],
+            &["tree"],
+            &["find"],
+            &["grep"],
+            &["missing"],
+            &["doc", "list"],
+            &["doc", "read"],
+            &["doc", "path"],
+        ] {
+            assert!(shown(path, "--format"), "{path:?}");
+        }
+        for path in [
+            &["status"][..],
+            &["tags"],
+            &["calls"],
+            &["init"],
+            &["relink"],
+            &["repair"],
+            &["check"],
+            &["tag", "describe"],
+            &["doc", "new"],
+            &["doc", "tag"],
+            &["agent", "list"],
+        ] {
+            assert!(!shown(path, "--format"), "{path:?}");
+        }
+        // hidden is not removed
+        assert!(Cli::try_parse_from(["vnoc", "tags", "--driver", "x", "--format", "id"]).is_ok());
+        assert!(Cli::parse_args(["vnoc", "tags", "--driver", "x", "--format", "id"]).is_ok());
+    }
+
+    /// A doc comment that wraps over two lines is one paragraph, and clap joins its lines with a space. The check: for every two lines of a doc comment
+    /// in this file, the last word of the first glued to the first word of the second (`else` + `the` = `elsethe`) is in no help text, short or
+    /// long, of any command, unless this file writes that word itself.
+    #[test]
+    fn no_wrapped_doc_comment_loses_its_space_at_a_line_end() {
+        let source = include_str!("args.rs");
+        let lines: Vec<&str> = source
+            .lines()
+            .filter_map(|l| l.trim_start().strip_prefix("///"))
+            .collect();
+        let mut helps = String::new();
+        for (_, mut command) in all() {
+            helps.push_str(&command.render_help().to_string());
+            helps.push_str(&command.render_long_help().to_string());
+        }
+        let mut checked = 0;
+        for pair in lines.windows(2) {
+            let (a, b) = (pair[0].trim(), pair[1].trim());
+            let (Some(last), Some(first)) = (
+                a.split_whitespace().next_back(),
+                b.split_whitespace().next(),
+            ) else {
+                continue; // a blank line is a paragraph break
+            };
+            let glued = format!("{last}{first}");
+            // the test's own text writes the examples; a word this file spells itself is not a join
+            if source.matches(&glued).count() > 1 {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                !helps.contains(&glued),
+                "`{last}` and `{first}` are glued into `{glued}` in a help text"
+            );
+        }
+        assert!(checked > 100, "only {checked} line ends checked");
+        assert!(!helps.contains("elsethe"));
+    }
 }

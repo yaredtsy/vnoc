@@ -616,11 +616,16 @@ pub fn apply(actions: &[Action], root: &Path, home: Option<&Path>) -> io::Result
         match action.change {
             Change::Delete => {
                 fs::remove_file(&action.full).map_err(at)?;
-                // the skill's own folder (`…/skills/vnoc/`) goes with its file, when nothing else is in it; a rules file's folder is the project
-                if action.part == Part::Skill
-                    && let Some(dir) = action.full.parent()
-                {
-                    let _ = fs::remove_dir(dir);
+                // the skill's own folder (`…/skills/vnoc/`) goes with its file, and `skills/` and then `.claude/` or `.agents/` after it, each only while
+                // it is empty (`remove_dir` refuses a folder with anything in it); a rules file's folder is the project
+                if action.part == Part::Skill {
+                    let mut dir = action.full.parent();
+                    for _ in 0..3 {
+                        match dir {
+                            Some(d) if fs::remove_dir(d).is_ok() => dir = d.parent(),
+                            _ => break,
+                        }
+                    }
                 }
             }
             Change::RemoveBlock
@@ -1512,8 +1517,8 @@ mod tests {
             "a file that held only the block goes"
         );
         assert!(!root.join(".agents/skills/vnoc").exists());
-        // the folders around it are not V-NOC's to delete
-        assert!(root.join(".agents/skills").is_dir());
+        // the folders V-NOC made around it go too, once they are empty (A11f)
+        assert!(!root.join(".agents").exists());
         // and nothing is left to remove
         assert!(plan_remove(&root, None, None, false).is_empty());
 

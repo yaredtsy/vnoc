@@ -5599,3 +5599,59 @@ fn a_socket_is_a_pipe_for_the_server() {
     let _ = child.wait();
     assert!(running, "the server exited on a socket");
 }
+
+// ------------------------------------------------------------------------------------------------------ `-h` shows the command first (A11f)
+
+#[test]
+fn short_help_lists_the_commands_own_options_first_and_the_global_ones_in_short() {
+    let root = scratch("short-help");
+    let tags = text(&run(vnoc(&root, &["tags", "-h"])).stdout);
+    assert!(tags.contains("--authors"), "{tags}");
+    assert!(
+        !tags.contains("--driver") && !tags.contains("--format"),
+        "{tags}"
+    );
+    let (own, global) = tags.split_once("\nGlobal options:\n").expect("the heading");
+    assert!(
+        own.contains("--authors") && !own.contains("--root"),
+        "{tags}"
+    );
+    // one short line each, in the order the plan gives
+    assert_eq!(
+        global,
+        "      --root <DIR>    the project folder (default: found from here)\n      --json          one JSON value instead of text\n      --quiet         rows only\n      --color <WHEN>  auto | always | never\n"
+    );
+    // the commands that do start the driver, and print lists, keep their flags
+    let show = text(&run(vnoc(&root, &["show", "-h"])).stdout);
+    assert!(show.contains("--driver <PATH>") && show.contains("--format <FORMAT>"));
+    let doc_new = text(&run(vnoc(&root, &["doc", "new", "-h"])).stdout);
+    assert!(doc_new.contains("--driver <PATH>") && !doc_new.contains("--format"));
+    // the person reading `vnoc tag -h` is the one who asks
+    let tag = text(&run(vnoc(&root, &["tag", "-h"])).stdout);
+    assert!(
+        tag.contains("an agent runs it only when the user asks") && !tag.contains("unless asked"),
+        "{tag}"
+    );
+    // a hidden flag is still accepted
+    let accepted = run(vnoc(&root, &["tags", "--format", "id"]));
+    assert_eq!(code(&accepted), 0, "{}", text(&accepted.stderr));
+}
+
+#[test]
+fn long_help_still_has_the_paragraphs_and_every_flag() {
+    let root = scratch("long-help");
+    let long = text(&run(vnoc(&root, &["tags", "--help"])).stdout);
+    for paragraph in [
+        "Default: the nearest folder at or above the current one that has `.git`, else one that has `.vnoc/`, else the current folder.",
+        "Default: `$VNOC_DRIVER`, else `vnoc-driver-python` next to this binary.",
+        "Print one JSON value, `{ \"schema\": 1, \"command\": …, … }`, instead of text.",
+        "[possible values: id, path]",
+        "Print only the rows: no hints about what to run next, no totals.",
+        "A pipe gets plain text, the same words either way [default: auto] [possible values: auto, always, never].",
+    ] {
+        assert!(long.contains(paragraph), "{paragraph}\n{long}");
+    }
+    assert!(long.contains("Global options:"));
+    // no word was glued at a line end
+    assert!(!long.contains("elsethe"));
+}

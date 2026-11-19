@@ -25,8 +25,6 @@ mod write;
 
 use std::ffi::OsString;
 
-use clap::Parser;
-
 pub use args::{Cli, Command, Format, Global};
 
 /// Why a command did not do what it was asked. Each case has one exit code ([`exit_code`]), so a new error cannot pick one by accident.
@@ -68,7 +66,7 @@ pub fn exit_code(failure: &Failure) -> i32 {
 pub async fn run(args: Vec<OsString>) -> i32 {
     // `--color` is read before clap parses, because clap's own output (`--help`, a usage error) is painted by it too
     style::init(style::when_in(&args));
-    let cli = match Cli::try_parse_from(std::iter::once(OsString::from("vnoc")).chain(args)) {
+    let cli = match Cli::parse_args(std::iter::once(OsString::from("vnoc")).chain(args)) {
         Ok(cli) => cli,
         Err(e) => return out::clap_error(&e),
     };

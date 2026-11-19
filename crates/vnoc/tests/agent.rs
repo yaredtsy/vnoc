@@ -870,3 +870,62 @@ fn all_writes_the_import_file_too_and_the_json_names_it() {
     );
     assert_eq!(get(&root, "CLAUDE.md"), "@AGENTS.md\n");
 }
+
+// ------------------------------------------------------------------------------------------ remove leaves no empty folder it made (A11f)
+
+fn exists(root: &Path, name: &str) -> bool {
+    root.join(name).exists()
+}
+
+#[test]
+fn remove_on_a_fresh_install_leaves_no_folder_it_made() {
+    let (root, home) = world("remove-tidy");
+    let o = vnoc(&root, &home, &["agent", "install", "--all"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(
+        exists(&root, ".claude/skills/vnoc/SKILL.md")
+            && exists(&root, ".agents/skills/vnoc/SKILL.md")
+    );
+    let o = vnoc(&root, &home, &["agent", "remove"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(!exists(&root, ".claude"), "{:?}", files(&root));
+    assert!(!exists(&root, ".agents"), "{:?}", files(&root));
+    assert!(files(&root).is_empty(), "{:?}", files(&root));
+    // `--global` goes the same way in the home folder
+    let o = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude,codex", "--global"],
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let o = vnoc(&root, &home, &["agent", "remove", "--global"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(files(&home).is_empty(), "{:?}", files(&home));
+    assert!(!exists(&home, ".claude") && !exists(&home, ".agents"));
+}
+
+#[test]
+fn remove_never_removes_a_folder_with_anything_left_in_it() {
+    let (root, home) = world("remove-keeps");
+    put(&root, ".claude/settings.json", "{}\n");
+    put(&root, ".agents/notes.txt", "mine\n");
+    put(
+        &root,
+        ".claude/skills/other/SKILL.md",
+        "---\nname: other\n---\n",
+    );
+    vnoc(&root, &home, &["agent", "install", "--all"]);
+    let o = vnoc(&root, &home, &["agent", "remove"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    // the skill folders V-NOC made are gone, and everything that was there stays, with the folders that hold it
+    assert!(!exists(&root, ".claude/skills/vnoc") && !exists(&root, ".agents/skills"));
+    assert_eq!(get(&root, ".claude/settings.json"), "{}\n");
+    assert!(exists(&root, ".claude/skills/other/SKILL.md"));
+    assert_eq!(get(&root, ".agents/notes.txt"), "mine\n");
+    // with only a settings file beside it: `.claude/` stays, and `skills/` goes
+    let (root, home) = world("remove-settings");
+    put(&root, ".claude/settings.json", "{}\n");
+    vnoc(&root, &home, &["agent", "install", "--agent", "claude"]);
+    vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
+    assert_eq!(files(&root), [".claude/settings.json"]);
+}
