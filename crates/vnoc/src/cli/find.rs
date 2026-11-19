@@ -86,6 +86,8 @@ pub async fn run(global: &Global, args: &FindArgs) -> Result<(), Failure> {
                 title_match: doc.title_match,
                 snippet: doc.snippet,
                 snippet_match: doc.snippet_match,
+                tags: doc.tags,
+                author: doc.author,
             }
         })
         .collect();
@@ -145,6 +147,12 @@ struct DocRow {
     title_match: Vec<(u32, u32)>,
     snippet: String,
     snippet_match: Vec<(u32, u32)>,
+    /// the doc's `tags:`; left out of `--json` when it has none
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
+    /// the doc's `author:`; left out of `--json` when it has none
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<String>,
 }
 
 /// What `find` answers.
@@ -300,8 +308,16 @@ impl Render for Find {
                 } else {
                     String::new()
                 };
+                let tags = if row.tags.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "  {}",
+                        style::paint(style::dim(), format!("[{}]", row.tags.join(", ")))
+                    )
+                };
                 text.push_str(&format!(
-                    "  {}  {} {missing}{}\n",
+                    "  {}{tags}  {} {missing}{}\n",
                     style::paint(style::title(), &row.title),
                     style::paint(style::dim(), "on"),
                     style::paint(style::location(), &row.location)

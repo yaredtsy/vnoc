@@ -216,6 +216,8 @@ fn a_thousand_docs_of_two_kb_on_ten_thousand_names() {
                 doc_path: format!(".vnoc/nodes/{d}/{d}.md"),
                 title: text.text(30),
                 body: text.text(2_000),
+                tags: Vec::new(),
+                author: None,
             }
         })
         .collect();

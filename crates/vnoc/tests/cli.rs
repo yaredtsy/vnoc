@@ -3964,3 +3964,320 @@ fn two_doc_news_at_once_on_one_function_make_one_node_one_id_line_and_two_docs()
         );
     }
 }
+
+// ---------------------------------------------------------------------------------------------- `tag:` and `author:` (A8b)
+
+const RATE_ID: &str = "4KF02248CHCTYAG49B0KKZ5SD7";
+const PLACE_ID: &str = "0NK72G02NTNQCSBCAZMX1VATMV";
+const ROUND_ID: &str = "6W9JVH8GKHQ64D5G6MG5ZVB4JB";
+
+/// A started project with three docs made by the command: "Split rates" (tag plan, by claude-code) on `rate_for`, "Why place retries" (tags plan and
+/// billing, no author) on `OrderService.place`, and "Rounding rule" (no tags) on `apply_tax`.
+fn tagged_project(label: &str) -> PathBuf {
+    let root = started_copy(label, &[]);
+    let make = |node: &str, title: &str, body: &str, extra: &[&str]| {
+        let mut args = vec!["doc", "new", node, "--title", title, "--body-file", "-"];
+        args.extend_from_slice(extra);
+        let out = run_with_stdin(vnoc(&root, &args), body.as_bytes());
+        assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    };
+    make(
+        "billing/tax.py::rate_for",
+        "Split rates",
+        "Split the rate lookup from the rounding.\n\nStep one: extract rate_for.\n",
+        &["--tag", "plan", "--author", "claude-code"],
+    );
+    make(
+        "orders/service.py::OrderService.place",
+        "Why place retries",
+        "Orders retry because the gateway does.\n",
+        &["--tag", "plan", "--tag", "billing"],
+    );
+    make(
+        "billing/tax.py::apply_tax",
+        "Rounding rule",
+        "Round half up.\n",
+        &[],
+    );
+    root
+}
+
+#[test]
+fn find_with_a_tag_or_an_author_lists_the_docs_and_the_nodes_that_have_them() {
+    let root = tagged_project("find-tags");
+    let both = stdout_of(&root, &["find", "tag:plan"]);
+    assert_eq!(
+        both,
+        format!(
+            "nodes (2)\n  function  billing/tax.py::rate_for   lines 6-8   ID {RATE_ID}   · 1 doc\n  function  orders/service.py::OrderService.place   lines 15-19   ID {PLACE_ID}   · 1 doc\n\
+             docs (2)\n  Split rates  [plan]  on billing/tax.py::rate_for\n    Split the rate lookup from the rounding. Step one: extract rate_for.\n    .vnoc/nodes/D7/{RATE_ID}/split-rates.md\n  \
+             Why place retries  [plan, billing]  on orders/service.py::OrderService.place\n    Orders retry because the gateway does.\n    .vnoc/nodes/MV/{PLACE_ID}/why-place-retries.md\n"
+        )
+    );
+    // a second filter narrows: ONE doc must carry both
+    let one = stdout_of(&root, &["find", "tag:plan author:claude-code"]);
+    assert!(
+        one.starts_with("nodes (1)\n") && one.contains("docs (1)\n  Split rates  [plan]"),
+        "{one}"
+    );
+    assert!(!one.contains("Why place retries"));
+    let billing = stdout_of(&root, &["find", "tag:plan tag:billing"]);
+    assert!(
+        billing.contains("docs (1)\n  Why place retries  [plan, billing]"),
+        "{billing}"
+    );
+    let not_plan = stdout_of(&root, &["find", "tag:billing", "--docs"]);
+    assert!(not_plan.contains("Why place retries"), "{not_plan}");
+    // the node filters narrow the docs a tag lists
+    let fns = stdout_of(&root, &["find", "kind:fn tag:plan"]);
+    assert_eq!(fns, both, "both docs are on functions");
+    let classes = stdout_of(&root, &["find", "kind:class tag:plan"]);
+    assert_eq!(classes, "no matches\n");
+    // `kind:fn` alone lists nodes and no doc
+    let kinds = stdout_of(&root, &["find", "kind:fn"]);
+    assert!(
+        kinds.starts_with("nodes (20 of 27)\n") && !kinds.contains("docs ("),
+        "{kinds}"
+    );
+    // a tag nothing has
+    assert_eq!(
+        stdout_of(&root, &["find", "tag:nothing-has-this"]),
+        "no matches\n"
+    );
+    // words as before, narrowed by a tag
+    let words = stdout_of(&root, &["find", "retries tag:billing", "--docs"]);
+    assert!(words.contains("Why place retries"), "{words}");
+    assert_eq!(
+        stdout_of(&root, &["find", "retries author:claude-code", "--docs"]),
+        "no matches\n"
+    );
+
+    // `--json`: the tags and the author only where the doc has them
+    let json: Value =
+        serde_json::from_str(&stdout_of(&root, &["find", "tag:plan", "--json"])).unwrap();
+    let docs = json["docs"].as_array().unwrap();
+    assert_eq!(docs[0]["tags"], json!(["plan"]));
+    assert_eq!(docs[0]["author"], "claude-code");
+    assert_eq!(docs[1]["tags"], json!(["plan", "billing"]));
+    assert!(docs[1].get("author").is_none());
+    let plain: Value =
+        serde_json::from_str(&stdout_of(&root, &["find", "rounding", "--json"])).unwrap();
+    assert!(plain["docs"][0].get("tags").is_none() && plain["docs"][0].get("author").is_none());
+    // `--format id`: the nodes, as always
+    assert_eq!(
+        stdout_of(&root, &["find", "tag:plan", "--format", "id"]),
+        "billing/tax.py::rate_for\norders/service.py::OrderService.place\n"
+    );
+}
+
+#[test]
+fn tree_where_a_tag_keeps_the_nodes_that_have_such_a_doc_and_their_ancestors() {
+    let root = tagged_project("tree-tags");
+    let tree = stdout_of(&root, &["tree", "--where", "tag:plan"]);
+    assert_eq!(
+        without_root(&tree, &root)
+            .lines()
+            .skip(1)
+            .collect::<Vec<_>>(),
+        [
+            "  billing/",
+            "    tax.py",
+            "      rate_for  · 1 doc",
+            "  orders/",
+            "    service.py",
+            "      class OrderService",
+            "        place  · 1 doc",
+        ]
+    );
+    let flat = stdout_of(
+        &root,
+        &["tree", "--where", "tag:plan author:claude-code", "--flat"],
+    );
+    assert!(
+        flat.contains("billing/tax.py::rate_for") && !flat.contains("OrderService.place"),
+        "{flat}"
+    );
+}
+
+#[test]
+fn doc_list_and_doc_read_take_where_and_keep_the_docs_the_query_finds() {
+    let root = tagged_project("doc-where");
+    let rate = format!(".vnoc/nodes/D7/{RATE_ID}/split-rates.md");
+    let place = format!(".vnoc/nodes/MV/{PLACE_ID}/why-place-retries.md");
+
+    // no node: every doc of the project that passes, grouped by node
+    let all = stdout_of(&root, &["doc", "list", "--where", "tag:plan"]);
+    assert_eq!(
+        all,
+        format!(
+            "function  billing/tax.py::rate_for   ID {RATE_ID}\n  Split rates  [plan]  {rate}\n\nfunction  orders/service.py::OrderService.place   ID {PLACE_ID}\n  Why place retries  [plan, billing]  {place}\n"
+        )
+    );
+    let by = stdout_of(
+        &root,
+        &[
+            "doc",
+            "list",
+            "--where",
+            "author:claude-code",
+            "--format",
+            "path",
+        ],
+    );
+    assert_eq!(by, format!("{rate}\n"));
+    let words = stdout_of(
+        &root,
+        &["doc", "list", "--where", "retries", "--format", "path"],
+    );
+    assert_eq!(words, format!("{place}\n"));
+    assert_eq!(
+        stdout_of(&root, &["doc", "list", "--where", "tag:nothing"]),
+        "no docs match\n"
+    );
+
+    // nodes named: their docs that pass; a node whose docs do not says so
+    let named = stdout_of(
+        &root,
+        &[
+            "doc",
+            "list",
+            "billing/tax.py::rate_for",
+            "billing/tax.py::apply_tax",
+            "--where",
+            "tag:plan",
+        ],
+    );
+    assert_eq!(
+        named,
+        format!(
+            "function  billing/tax.py::rate_for   ID {RATE_ID}\n  Split rates  [plan]  {rate}\n\nfunction  billing/tax.py::apply_tax   ID {ROUND_ID}\n  no docs match\n"
+        )
+    );
+    // a node named by its ID goes through the index when `--where` is given
+    let by_id = stdout_of(&root, &["doc", "list", PLACE_ID, "--where", "tag:billing"]);
+    assert!(
+        by_id.contains("Why place retries  [plan, billing]"),
+        "{by_id}"
+    );
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &["doc", "list", "--where", "tag:billing", "--json"],
+    ))
+    .unwrap();
+    assert_eq!(json["results"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        json["results"][0]["docs"][0]["tags"],
+        json!(["plan", "billing"])
+    );
+    assert!(json["results"][0].get("arg").is_none());
+
+    // `doc read <node> --where`
+    let read = stdout_of(
+        &root,
+        &[
+            "doc",
+            "read",
+            "billing/tax.py::rate_for",
+            "--where",
+            "author:claude-code",
+        ],
+    );
+    assert_eq!(
+        read,
+        format!(
+            "── Split rates  {rate}\nSplit the rate lookup from the rounding.\n\nStep one: extract rate_for.\n"
+        )
+    );
+    assert_eq!(
+        stdout_of(
+            &root,
+            &[
+                "doc",
+                "read",
+                "billing/tax.py::rate_for",
+                "--where",
+                "author:nobody"
+            ]
+        ),
+        "no docs on billing/tax.py::rate_for match\n"
+    );
+    // a file named and the query both
+    let both = stdout_of(
+        &root,
+        &[
+            "doc",
+            "read",
+            "billing/tax.py::rate_for",
+            "split-rates",
+            "--where",
+            "tag:plan",
+        ],
+    );
+    assert!(both.starts_with("── Split rates"), "{both}");
+    let (exit, _, stderr) = stdout_any(
+        &root,
+        &[
+            "doc",
+            "read",
+            "billing/tax.py::rate_for",
+            "nope.md",
+            "--where",
+            "tag:plan",
+        ],
+    );
+    assert_eq!(exit, 2, "{stderr}");
+}
+
+#[test]
+fn where_on_the_doc_commands_says_what_it_ignores_and_what_it_needs() {
+    let root = tagged_project("doc-where-notes");
+    let run_where = |query: &str| {
+        let out = run(vnoc(
+            &root,
+            &["doc", "list", "--where", query, "--format", "path"],
+        ));
+        (code(&out), text(&out.stdout), text(&out.stderr))
+    };
+    // `has:doc` and `no:doc` are about nodes: a note, and the rest of the query still answers
+    let (exit, stdout, stderr) = run_where("has:doc tag:billing");
+    assert_eq!(exit, 0);
+    assert!(stdout.contains("why-place-retries.md"), "{stdout}");
+    assert_eq!(
+        stderr,
+        "note: `has:doc` and `no:doc` are about nodes, not docs: ignored here\n"
+    );
+    // nothing about a doc: a note, and no doc
+    let (exit, stdout, stderr) = run_where("kind:fn");
+    assert_eq!((exit, stdout.as_str()), (0, ""));
+    assert!(
+        stderr.starts_with("note: nothing in this query is about a doc"),
+        "{stderr}"
+    );
+    // a value that means nothing is the note `find` gives, and nothing is found
+    let (exit, stdout, stderr) = run_where("kind:fnn tag:plan");
+    assert_eq!((exit, stdout.as_str()), (0, ""));
+    assert!(
+        stderr.starts_with("note: `kind:fnn` is not a kind"),
+        "{stderr}"
+    );
+    // `kind:` and `in:` narrow by the doc's node
+    assert_eq!(run_where("kind:class tag:plan").1, "");
+    assert!(
+        run_where("in:orders/ tag:plan")
+            .1
+            .contains("why-place-retries.md")
+    );
+    assert!(
+        !run_where("in:orders/ tag:plan")
+            .1
+            .contains("split-rates.md")
+    );
+    // a blank query is a usage error
+    let out = run(vnoc(&root, &["doc", "list", "--where", "  "]));
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).starts_with("error: --where needs a query"),
+        "{}",
+        text(&out.stderr)
+    );
+}

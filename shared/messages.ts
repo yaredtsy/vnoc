@@ -126,6 +126,10 @@ export interface SearchDoc {
   title_match: [number, number][];
   snippet: string;
   snippet_match: [number, number][];
+  /** the doc's frontmatter `tags:`, lower case, in the order written. Left out by a core older than A8b, and empty when the doc has none. */
+  tags?: string[];
+  /** the doc's frontmatter `author:` */
+  author?: string | null;
 }
 
 export interface SearchResult {
@@ -172,6 +176,10 @@ export interface DocInfo {
   title: string;
   /** absolute path of the Markdown file */
   path: string;
+  /** the doc's frontmatter `tags:`, lower case, in the order written. Left out by a core older than A8b, and empty when the doc has none. */
+  tags?: string[];
+  /** the doc's frontmatter `author:` */
+  author?: string | null;
 }
 
 /** `likely`: the engine's best guess for the callee, not a certainty (the Python driver sends it from analyzer D28) */

@@ -12,7 +12,7 @@ use super::args::{DocCommand, DocFileArgs, DocListArgs};
 use super::nodes::{
     Answer, Doc, Lookup, NodeError, Target, docs_by_id, each, emit, expand, id_of, kind_word, shown,
 };
-use super::out::Render;
+use super::out::{self, Render};
 use super::project::{Opened, open_from, open_without_driver};
 use super::show::{head_line, missing_line};
 use super::{Failure, Global, style};
@@ -23,8 +23,17 @@ use crate::userdata::{UserData, after_frontmatter};
 pub async fn run(global: &Global, command: &DocCommand) -> Result<(), Failure> {
     match command {
         DocCommand::List(args) => list(global, args).await,
-        DocCommand::Read(args) => file_command(global, args, "doc read", View::Read).await,
-        DocCommand::Path(args) => file_command(global, args, "doc path", View::Path).await,
+        DocCommand::Read(args) => {
+            file_command(
+                global,
+                &args.file,
+                args.where_.as_deref(),
+                "doc read",
+                View::Read,
+            )
+            .await
+        }
+        DocCommand::Path(args) => file_command(global, args, None, "doc path", View::Path).await,
         DocCommand::New(args) => super::write::doc_new(global, args).await,
     }
 }
@@ -77,6 +86,9 @@ pub struct DocsAnswer {
     bodies: Option<Vec<DocBody>>,
     #[serde(skip)]
     view: Option<View>,
+    /// `--where` narrowed the docs: an empty list says "no docs match", not "no docs"
+    #[serde(skip)]
+    narrowed: bool,
 }
 
 impl DocsAnswer {
@@ -90,6 +102,7 @@ impl DocsAnswer {
             docs,
             bodies: None,
             view: None,
+            narrowed: false,
         }
     }
 
@@ -103,6 +116,7 @@ impl DocsAnswer {
             docs,
             bodies: None,
             view: None,
+            narrowed: false,
         }
     }
 
@@ -160,7 +174,8 @@ impl Render for DocsAnswer {
                     return String::new();
                 };
                 if bodies.is_empty() {
-                    return format!("no docs on {}\n", self.name());
+                    let match_ = if self.narrowed { " match" } else { "" };
+                    return format!("no docs on {}{match_}\n", self.name());
                 }
                 bodies
                     .iter()
@@ -183,7 +198,11 @@ impl Render for DocsAnswer {
             View::List => {
                 let mut text = format!("{}\n", self.header());
                 if self.docs.is_empty() {
-                    text.push_str("  no docs\n");
+                    text.push_str(if self.narrowed {
+                        "  no docs match\n"
+                    } else {
+                        "  no docs\n"
+                    });
                 }
                 for doc in &self.docs {
                     text.push_str(&doc.row());
@@ -267,12 +286,34 @@ fn anchor_of(project: &crate::project::Project, toml: &vnoc_domain::NodeToml) ->
 }
 
 async fn list(global: &Global, args: &DocListArgs) -> Result<(), Failure> {
+    let narrow_by = narrowing(args.where_.as_deref())?;
     if args.nodes.is_empty() {
         let opened = open_from(global).await?;
-        let groups = whole_project(&opened);
-        return print_all("doc list", global, groups);
+        let mut groups = whole_project(&opened);
+        if let Some(text) = narrow_by {
+            let narrow = Narrow::new(&Lookup::new(&opened, 0), text);
+            for group in &mut groups {
+                narrow.apply(&mut group.docs);
+            }
+            groups.retain(|group| !group.docs.is_empty());
+            return print_all("doc list", global, groups, true);
+        }
+        return print_all("doc list", global, groups, false);
     }
     let nodes = expand(&args.nodes)?;
+    if let Some(text) = narrow_by {
+        // the query is answered by the index: the doc texts and the nodes they belong to
+        let opened = open_from(global).await?;
+        let narrow = std::cell::OnceCell::new();
+        return each("doc list", global, &nodes, &opened, &|lookup, target| {
+            let mut answer = of_target(lookup, target);
+            narrow
+                .get_or_init(|| Narrow::new(lookup, text))
+                .apply(&mut answer.docs);
+            answer.narrowed = true;
+            Ok::<_, NodeError>(answer)
+        });
+    }
     if only_ids(&nodes) {
         let project = open_without_driver(global)?;
         return emit(
@@ -291,50 +332,64 @@ async fn list(global: &Global, args: &DocListArgs) -> Result<(), Failure> {
 async fn file_command(
     global: &Global,
     args: &DocFileArgs,
+    narrow_by: Option<&str>,
     command: &'static str,
     view: View,
 ) -> Result<(), Failure> {
+    let narrow_by = narrowing(narrow_by)?;
     let nodes = expand(std::slice::from_ref(&args.node))?;
-    let finish = |mut answer: DocsAnswer| -> Result<DocsAnswer, NodeError> {
-        if let Some(file) = &args.file {
-            let wanted = |doc: &Doc| doc.file == *file || doc.file == format!("{file}.md");
-            if !answer.docs.iter().any(wanted) {
-                let have: Vec<&str> = answer.docs.iter().map(|d| d.file.as_str()).collect();
-                return Err(NodeError::new(
-                    "no_doc",
-                    format!(
-                        "no doc named {file} on {}: it has {}",
-                        answer.name(),
-                        if have.is_empty() {
-                            "no docs".to_string()
-                        } else {
-                            have.join(" · ")
-                        }
-                    ),
-                ));
+    let narrow = std::cell::OnceCell::new();
+    let finish =
+        |mut answer: DocsAnswer, lookup: Option<&Lookup>| -> Result<DocsAnswer, NodeError> {
+            if let Some(file) = &args.file {
+                let wanted = |doc: &Doc| doc.file == *file || doc.file == format!("{file}.md");
+                if !answer.docs.iter().any(wanted) {
+                    let have: Vec<&str> = answer.docs.iter().map(|d| d.file.as_str()).collect();
+                    return Err(NodeError::new(
+                        "no_doc",
+                        format!(
+                            "no doc named {file} on {}: it has {}",
+                            answer.name(),
+                            if have.is_empty() {
+                                "no docs".to_string()
+                            } else {
+                                have.join(" · ")
+                            }
+                        ),
+                    ));
+                }
+                answer.docs.retain(wanted);
             }
-            answer.docs.retain(wanted);
-        }
-        answer.view = Some(view);
-        Ok(if view == View::Read {
-            answer.read()
-        } else {
-            answer
-        })
-    };
-    if only_ids(&nodes) {
+            if let (Some(text), Some(lookup)) = (narrow_by, lookup) {
+                narrow
+                    .get_or_init(|| Narrow::new(lookup, text))
+                    .apply(&mut answer.docs);
+                answer.narrowed = true;
+            }
+            answer.view = Some(view);
+            Ok(if view == View::Read {
+                answer.read()
+            } else {
+                answer
+            })
+        };
+    // a node named by its ID needs no index, unless `--where` asks the index which docs match
+    if only_ids(&nodes) && narrow_by.is_none() {
         let project = open_without_driver(global)?;
         return emit(
             command,
             global,
-            nodes
-                .iter()
-                .map(|arg| (arg.as_str(), by_id(&project, arg).and_then(&finish))),
+            nodes.iter().map(|arg| {
+                (
+                    arg.as_str(),
+                    by_id(&project, arg).and_then(|answer| finish(answer, None)),
+                )
+            }),
         );
     }
     let opened = open_from(global).await?;
     each(command, global, &nodes, &opened, &|lookup, target| {
-        finish(of_target(lookup, target))
+        finish(of_target(lookup, target), Some(lookup))
     })
 }
 
@@ -399,14 +454,76 @@ fn whole_project(opened: &Opened) -> Vec<DocsAnswer> {
     groups
 }
 
+/// `--where` as given: nothing, or a query that says something.
+fn narrowing(text: Option<&str>) -> Result<Option<&str>, Failure> {
+    match text {
+        Some(query) if query.trim().is_empty() => Err(Failure::Usage(
+            "--where needs a query: `tag:plan`, `author:claude-code`, words from the text".into(),
+        )),
+        other => Ok(other),
+    }
+}
+
+/// What `--where` keeps (03 §3): the docs `vnoc_search::run` finds for the query with **no node rows and no limit**, by their file, and where each
+/// stands in `run`'s order. The query is doc 20's, unchanged (Q9). Only what is about a doc narrows by itself: `tag:`, `author:` and words in the text;
+/// `in:` and `kind:` narrow by the doc's node (on a node given by name they are already answered), and `has:doc` and `no:doc`, which are about nodes,
+/// are a note and are ignored.
+struct Narrow {
+    rank: std::collections::HashMap<String, usize>,
+}
+
+impl Narrow {
+    fn new(lookup: &Lookup, text: &str) -> Narrow {
+        let mut query = vnoc_search::parse(text);
+        for note in &query.notes {
+            out::note(note);
+        }
+        if query.docs.take().is_some() {
+            out::note("`has:doc` and `no:doc` are about nodes, not docs: ignored here");
+        }
+        let about_docs =
+            query.has_doc_filters() || !query.words.is_empty() || !query.phrases.is_empty();
+        if !about_docs && !query.keeps_nothing {
+            out::note(
+                "nothing in this query is about a doc: add `tag:`, `author:` or words from the text (`kind:` and `in:` alone select no doc)",
+            );
+        }
+        let corpus = lookup.corpus();
+        let limits = vnoc_search::Limits {
+            nodes: 0,
+            docs: usize::MAX / 2,
+        };
+        let found = vnoc_search::run(corpus, &query, None, limits);
+        let rank = found
+            .docs
+            .iter()
+            .enumerate()
+            .map(|(at, hit)| (corpus.docs()[hit.index].doc_path.clone(), at))
+            .collect();
+        Narrow { rank }
+    }
+
+    /// Keeps the docs the query found, in `run`'s order.
+    fn apply(&self, docs: &mut Vec<Doc>) {
+        let at = |doc: &Doc| self.rank.get(doc.abs.to_string_lossy().as_ref()).copied();
+        docs.retain(|doc| at(doc).is_some());
+        docs.sort_by_key(|doc| at(doc));
+    }
+}
+
 /// The groups of `doc list` with no node, as the flags ask: there is no argument to name them by, so none is in the JSON.
 fn print_all(
     command: &'static str,
     global: &Global,
     groups: Vec<DocsAnswer>,
+    narrowed: bool,
 ) -> Result<(), Failure> {
     if groups.is_empty() && !global.json && global.format.is_none() {
-        return super::out::text("no docs\n");
+        return super::out::text(if narrowed {
+            "no docs match\n"
+        } else {
+            "no docs\n"
+        });
     }
     emit(
         command,

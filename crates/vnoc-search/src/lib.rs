@@ -68,6 +68,10 @@ pub struct DocEntry {
     pub doc_path: String,
     pub title: String,
     pub body: String,
+    /// The frontmatter's `tags:`, lower case (a `tag:` filter is compared with them as they are).
+    pub tags: Vec<String>,
+    /// The frontmatter's `author:`, as written (an `author:` filter ignores case).
+    pub author: Option<String>,
 }
 
 /// The nodes and docs to search. Built once per change, kept, and searched on every key: the words of every name are split here, not per query.
@@ -218,6 +222,8 @@ mod tests {
             doc_path: String::new(),
             title: String::new(),
             body: body.to_string(),
+            tags: Vec::new(),
+            author: None,
         }
     }
 

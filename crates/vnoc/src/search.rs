@@ -85,6 +85,8 @@ pub fn corpus_of(
                 doc_path: text.path.to_string_lossy().into_owned(),
                 title: text.title.clone(),
                 body: text.body.clone(),
+                tags: text.tags.clone(),
+                author: text.author.clone(),
             };
             if let Some(&at) = by_node_id.get(node_id.as_str()) {
                 let n = &nodes[at];
@@ -280,6 +282,8 @@ pub fn answer(revision: u64, corpus: &Corpus, query: &Query, results: Results) -
                 title_match: hit.title_ranges,
                 snippet: hit.snippet,
                 snippet_match: hit.snippet_ranges,
+                tags: doc.tags.clone(),
+                author: doc.author.clone(),
             }
         })
         .collect();

@@ -133,6 +133,17 @@ pub fn doc_on(name: &str, file: &str, title: &str, body: &str) -> DocEntry {
         doc_path: format!(".vnoc/nodes/{file}"),
         title: title.to_string(),
         body: body.to_string(),
+        tags: Vec::new(),
+        author: None,
+    }
+}
+
+/// `doc` with these tags and this author (the frontmatter's `tags:` and `author:`).
+pub fn tagged(doc: DocEntry, tags: &[&str], author: Option<&str>) -> DocEntry {
+    DocEntry {
+        tags: strings(tags),
+        author: author.map(str::to_string),
+        ..doc
     }
 }
 
@@ -155,6 +166,8 @@ pub fn doc_missing(
         doc_path: format!(".vnoc/nodes/{file}"),
         title: title.to_string(),
         body: body.to_string(),
+        tags: Vec::new(),
+        author: None,
     }
 }
 

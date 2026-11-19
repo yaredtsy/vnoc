@@ -30,6 +30,13 @@ pub struct Query {
     /// Paths a node must be inside, each: lower case, `/`, no leading `./`, no trailing `/`.
     pub inside: Vec<String>,
     pub not_inside: Vec<String>,
+    /// Tags a doc must carry, each (`tag:plan`): lower case. A doc passes with every one of them; a node passes when ONE of its docs does.
+    pub tags: Vec<String>,
+    /// Tags a doc must not carry (`-tag:draft`).
+    pub not_tags: Vec<String>,
+    /// The author a doc must have (`author:claude-code`), each: lower case, compared ignoring case. Two different ones keep nothing.
+    pub authors: Vec<String>,
+    pub not_authors: Vec<String>,
     /// The token (less a call's `()` or `(`), when the whole query is one token shaped like a reference. It is a word too; the core resolves it.
     pub reference: Option<String>,
     /// What was wrong with a filter, each line once.
@@ -44,6 +51,16 @@ impl Query {
             || self.docs.is_some()
             || !self.inside.is_empty()
             || !self.not_inside.is_empty()
+            || self.has_doc_filters()
+    }
+
+    /// Whether the query has a filter about a doc itself (`tag:`, `author:`): the nodes that have such a doc pass, and a query of filters alone lists
+    /// those docs (`docs/21-agent-cli/04-write-commands.md` §4).
+    pub fn has_doc_filters(&self) -> bool {
+        !self.tags.is_empty()
+            || !self.not_tags.is_empty()
+            || !self.authors.is_empty()
+            || !self.not_authors.is_empty()
     }
 
     /// A value that means nothing: no node passes, and `line` says why (once).
@@ -65,7 +82,12 @@ impl Query {
         };
         let value = value.trim();
         let name = lower(name);
-        if value.is_empty() || !matches!(name.as_str(), "kind" | "has" | "no" | "in") {
+        if value.is_empty()
+            || !matches!(
+                name.as_str(),
+                "kind" | "has" | "no" | "in" | "tag" | "author"
+            )
+        {
             return false;
         }
         match name.as_str() {
@@ -77,6 +99,23 @@ impl Query {
                 } else {
                     self.inside.push(path);
                 }
+            }
+            // a value is never wrong: a tag or an author nothing has finds nothing, and says nothing
+            "tag" => {
+                let list = if negated {
+                    &mut self.not_tags
+                } else {
+                    &mut self.tags
+                };
+                add_once(list, lower(value));
+            }
+            "author" => {
+                let list = if negated {
+                    &mut self.not_authors
+                } else {
+                    &mut self.authors
+                };
+                add_once(list, lower(value));
             }
             _ => self.doc(&name, value, negated),
         }
@@ -131,6 +170,12 @@ impl Query {
             }
             _ => self.docs = Some(wants),
         }
+    }
+}
+
+fn add_once(list: &mut Vec<String>, value: String) {
+    if !list.contains(&value) {
+        list.push(value);
     }
 }
 

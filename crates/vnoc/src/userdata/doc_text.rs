@@ -436,6 +436,8 @@ mod tests {
                 doc_path: d.path.to_string_lossy().into_owned(),
                 title: d.title.clone(),
                 body: d.body.clone(),
+                tags: d.tags.clone(),
+                author: d.author.clone(),
             })
             .collect();
         let started = Instant::now();

@@ -150,3 +150,113 @@ fn the_rows_that_matter() {
     assert!(!hit("", None)[4]);
     assert!(matches(&corpus, &parse("billing"), None, &[]).is_empty());
 }
+
+/// The same agreement for `tag:` and `author:`: a node is a hit when one of its docs passes, a query of filters alone lists those docs, and a doc
+/// with words is narrowed by them.
+#[test]
+fn matches_agrees_with_run_for_tags_and_authors() {
+    let docs = vec![
+        tagged(
+            doc_on(
+                "total",
+                "a",
+                "Split total",
+                "Split it in two. Shared zanzibar.",
+            ),
+            &["plan", "billing"],
+            Some("claude-code"),
+        ),
+        tagged(
+            doc_on("total", "a2", "Draft", "Not yet."),
+            &["draft"],
+            Some("Ana"),
+        ),
+        tagged(doc_on("bill_all", "x", "X", "one"), &["a"], None),
+        tagged(doc_on("bill_all", "y", "Y", "two"), &["b"], None),
+        tagged(
+            doc_on("Invoice", "b", "On invoices", "Zanzibar again."),
+            &["plan"],
+            Some("Ana"),
+        ),
+        tagged(
+            doc_on("pay", "d", "Paying", "billing of the retry policy"),
+            &["plan"],
+            None,
+        ),
+        tagged(
+            doc_on("rebill", "r", "Rebill", "draft only"),
+            &["draft"],
+            None,
+        ),
+        tagged(
+            doc_missing("gone.py", Some(Kind::Function), "e", "Lost", "left no code"),
+            &["plan"],
+            Some("claude-code"),
+        ),
+    ];
+    // each node's `docs` is how many it has, as the core builds it (`no:doc` and `has:doc` read it)
+    let mut nodes = tree_nodes();
+    for doc in &docs {
+        if let Some(at) = doc.node {
+            nodes[at].docs += 1;
+        }
+    }
+    let corpus = Corpus::new(nodes, docs);
+    let mut ids: Vec<&str> = corpus.nodes().iter().map(|n| n.id.as_str()).collect();
+    ids.push("not/in/the/corpus.py");
+    let queries = [
+        "tag:plan",
+        "tag:plan tag:billing",
+        "tag:a tag:b",
+        "tag:a",
+        "-tag:draft",
+        "tag:plan -tag:billing",
+        "author:claude-code",
+        "author:Claude-Code",
+        "-author:claude-code",
+        "author:ana author:claude-code",
+        "tag:plan author:ana",
+        "kind:fn tag:plan",
+        "kind:class tag:plan",
+        "in:billing/ tag:plan",
+        "no:doc tag:plan",
+        "has:doc tag:plan",
+        "zanzibar tag:plan",
+        "zanzibar tag:draft",
+        "zanzibar author:ana",
+        "bill tag:plan",
+        "\"retry policy\" tag:plan",
+        "tag:nothing-has-this",
+        "tag:plan kind:fnn",
+    ];
+    let exacts = [None, Some(at("rebill")), Some(at("pay")), Some(9_999)];
+    for query in queries {
+        for exact in exacts {
+            let got = matches(&corpus, &parse(query), exact, &ids);
+            assert_eq!(
+                got,
+                by_run(&corpus, query, exact, &ids),
+                "{query:?} with exact {exact:?}"
+            );
+        }
+    }
+    // and the rows that matter: a node whose docs carry the tags apart is not a hit for both
+    let hit = |query: &str| -> Vec<&str> {
+        let got = matches(&corpus, &parse(query), None, &ids);
+        ids.iter()
+            .zip(got)
+            .filter(|&(_, hit)| hit)
+            .map(|(id, _)| *id)
+            .collect()
+    };
+    assert_eq!(hit("tag:a"), ["billing/invoice.py::bill_all"]);
+    assert!(hit("tag:a tag:b").is_empty());
+    assert_eq!(
+        hit("tag:plan"),
+        [
+            "billing/invoice.py::total",
+            "billing/invoice.py::Invoice",
+            "billing/invoice.py::pay"
+        ]
+    );
+}

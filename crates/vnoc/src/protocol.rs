@@ -167,6 +167,12 @@ pub struct SearchDoc {
     pub title_match: Vec<(u32, u32)>,
     pub snippet: String,
     pub snippet_match: Vec<(u32, u32)>,
+    /// the frontmatter's `tags:`, lower case, in the order written; empty when the doc has none
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// the frontmatter's `author:`
+    #[serde(default)]
+    pub author: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -325,6 +331,12 @@ pub struct DocInfo {
     pub title: String,
     /// absolute path of the Markdown file
     pub path: String,
+    /// the frontmatter's `tags:`, lower case, in the order written; empty when the doc has none
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// the frontmatter's `author:`
+    #[serde(default)]
+    pub author: Option<String>,
 }
 
 impl Request for Docs {

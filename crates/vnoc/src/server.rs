@@ -668,6 +668,8 @@ fn docs(
                 file: d.file,
                 title: d.title,
                 path: d.path.to_string_lossy().into_owned(),
+                tags: d.tags,
+                author: d.author,
             })
             .collect())
     })

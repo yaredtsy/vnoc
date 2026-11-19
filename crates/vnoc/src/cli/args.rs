@@ -186,8 +186,8 @@ pub enum DocCommand {
     /// Lists the docs of each node you name: the title and the file of each. With no node: every doc of the project, grouped by node.
     List(DocListArgs),
     /// Prints the docs of a node: each under a line `── <title>  <path>`, with the text as it is in the file and its frontmatter left out.
-    /// Name one doc by its file name to print only that. A node named by its ID needs no driver.
-    Read(DocFileArgs),
+    /// Name one doc by its file name to print only that; or narrow them with --where. A node named by its ID needs no driver (unless --where is used).
+    Read(DocReadArgs),
     /// Prints the file paths of a node's docs, one per line: for your own read and edit tools. A node named by its ID needs no driver.
     Path(DocFileArgs),
     /// Attaches a new note (doc) to ONE function, class, file or folder, and prints where it is. Use it to leave a note or a plan for what you
@@ -231,6 +231,20 @@ pub struct DocListArgs {
     /// Nodes to list the docs of (see `vnoc show --help` for how to name one). With none: the whole project. `-` reads names from standard input.
     #[arg(value_name = "NODE")]
     pub nodes: Vec<String>,
+    /// Only the docs a `find` query finds, by what is about a doc: `tag:plan`, `author:claude-code` (`-tag:draft` turns one round), and words in
+    /// its text. `vnoc doc list --where 'tag:plan'` is every plan in the project. `in:` and `kind:` narrow by the doc's node; `has:doc` and `no:doc`
+    /// are about nodes and are ignored. Needs the index, so a node named by its ID starts the driver too.
+    #[arg(long = "where", value_name = "QUERY")]
+    pub where_: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct DocReadArgs {
+    #[command(flatten)]
+    pub file: DocFileArgs,
+    /// Only the docs a `find` query finds, as for `vnoc doc list --where` (`tag:plan author:claude-code`, words in the text).
+    #[arg(long = "where", value_name = "QUERY")]
+    pub where_: Option<String>,
 }
 
 #[derive(Debug, Args)]

@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils.ts";
 import type { SearchDoc, SearchNode } from "@vnoc/shared/messages.ts";
 import { placeOf } from "@vnoc/shared/search.ts";
 import { KINDS, kindIcon } from "../node-card/kinds.ts";
-import { docsHeader, nodesHeader, splitMatch } from "./search.ts";
+import { docsHeader, nodesHeader, splitMatch, tagsLabel } from "./search.ts";
 import type { Piece } from "./search.ts";
 
 /** The id of a result's element (the box's `aria-activedescendant`). */
@@ -29,7 +29,7 @@ const HEADER = "flex-none px-2 py-0.5 text-[0.85em] text-muted-foreground select
 /**
  * The flat list that takes the panels' place while there is a query (06 §5, 20-search/05 §1): two groups, **Nodes** then **Docs**, each under a header with its count and drawn
  * only when it has rows. A node row: the kind's icon, the name with the letters the core found bold, where the node is dim. A doc row, two lines: the doc icon, the title with its
- * matches bold, the node's name dim on the right (a Missing node's has the Missing mark); then the snippet, dim, with its matches bold. The two groups are one list for the keys: the
+ * matches bold, then its tags dim (`[plan, billing]`, as the node's name is dim: only when it has some), the node's name dim on the right (a Missing node's has the Missing mark); then the snippet, dim, with its matches bold. The two groups are one list for the keys: the
  * active place counts the node rows first. The active row has the list's selection colour and is kept in view. A click picks. Draws; `useSearch` decides.
  * `notes`: what the core said was wrong with a filter, one line each in the dim colour above the rows. `noMatches`: the answer for the box's text came and has no rows at all.
  */
@@ -104,6 +104,7 @@ export function SearchResults({ rows, docs, total, docsTotal, notes, noMatches, 
                     </span>
                     <span className="min-w-0 flex-1 truncate">
                       <Marked pieces={splitMatch(d.title, d.title_match)} />
+                      {tagsLabel(d.tags) && <span className={cn("pl-1.5 text-[0.88em]", dim(i))}>{tagsLabel(d.tags)}</span>}
                     </span>
                     <span className={cn("flex max-w-[45%] flex-none items-center gap-1 truncate text-[0.92em]", dim(i))}>
                       {d.missing && (

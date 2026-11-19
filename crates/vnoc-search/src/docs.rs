@@ -542,6 +542,8 @@ mod tests {
             doc_path: String::new(),
             title: title.to_string(),
             body: body.to_string(),
+            tags: Vec::new(),
+            author: None,
         }
     }
 
