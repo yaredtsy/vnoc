@@ -59,5 +59,9 @@ body { background: var(--background); color: var(--foreground); font-family: var
 .markdown pre { background: var(--code-bg); padding: 10px 12px; overflow: auto; border-radius: 6px; }
 .markdown pre code { background: none; padding: 0; }
 .markdown blockquote { margin-left: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted-foreground); }
+/* markdown-it writes an alignment as an inline `style="text-align:…"` on th/td, which wins over the `left` here */
+.markdown table { border-collapse: collapse; margin: 0 0 .9em; display: block; overflow-x: auto; max-width: 100%; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 4px 10px; text-align: left; vertical-align: top; }
+.markdown th { font-weight: 600; background: var(--code-bg); }
 .markdown img { max-width: 100%; border-radius: 6px; }
 .markdown .missing-image { opacity: .6; font-style: italic; }
