@@ -3655,6 +3655,8 @@ fn author_and_tags_are_frontmatter_lines_and_show_and_doc_list_print_the_tags() 
             "plan",
             "--tag",
             "billing",
+            "--tag",
+            "plan", // given twice: written once, the first place kept
         ],
     );
     let folder = &node_folders(&root)[0];

@@ -286,7 +286,7 @@ pub async fn attach(
             hint: &hint,
             body: &options.body,
             author: options.author.as_deref().map(str::trim),
-            tags: &options.tags,
+            tags: &once_each(&options.tags),
         },
     )?;
 
@@ -321,6 +321,17 @@ pub fn check_note(title: &str, options: &AttachOptions) -> Result<(), AttachErro
         return Err(AttachError::BodyHasFrontmatter);
     }
     Ok(())
+}
+
+/// `tags` with a tag given twice kept once, in the order first given.
+fn once_each(tags: &[String]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::with_capacity(tags.len());
+    for tag in tags {
+        if !seen.contains(tag) {
+            seen.push(tag.clone());
+        }
+    }
+    seen
 }
 
 /// A tag is lower-case ASCII letters, digits and `-`, and not empty.
@@ -472,6 +483,16 @@ mod tests {
             body: body.into(),
             ..AttachOptions::default()
         }
+    }
+
+    #[test]
+    fn a_tag_given_twice_is_kept_once_in_the_order_first_given() {
+        let tags = |list: &[&str]| list.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            once_each(&tags(&["plan", "billing", "plan", "x", "billing"])),
+            tags(&["plan", "billing", "x"])
+        );
+        assert_eq!(once_each(&[]), Vec::<String>::new());
     }
 
     #[test]

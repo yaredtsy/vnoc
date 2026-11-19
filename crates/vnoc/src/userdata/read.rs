@@ -174,8 +174,16 @@ pub struct Frontmatter {
 /// Reads a doc's title, author and tags. A doc without the keys, or with a value this does not understand, has none of them: never an error
 /// (a doc is a file anyone may edit by hand).
 ///
-/// The values are read the way V-NOC writes them: `author: <text>` (a pair of quotes around it is taken off) and `tags: [a, b]` on one line (the
-/// brackets are optional; a list written over several lines is not read). The first line of a key wins.
+/// The values are read the way V-NOC writes them, and the way a person writes them by hand: `author: <text>` (a pair of quotes around it is taken
+/// off), and tags as `tags: [a, b]` on one line (the brackets are optional, so `tags: plan` is one tag) or as a block list:
+///
+/// ```text
+/// tags:
+///   - plan
+///   - billing
+/// ```
+///
+/// Tags are lower-cased. The first line of a key wins; anything else this does not understand is no tags.
 pub fn frontmatter(text: &str) -> Frontmatter {
     let mut read = Frontmatter {
         title: split_doc(text).0,
@@ -185,7 +193,8 @@ pub fn frontmatter(text: &str) -> Frontmatter {
         return read;
     };
     let (mut saw_author, mut saw_tags) = (false, false);
-    for line in block.lines() {
+    let lines: Vec<&str> = block.lines().collect();
+    for (at, line) in lines.iter().enumerate() {
         let Some((key, value)) = line.split_once(':') else {
             continue;
         };
@@ -198,11 +207,22 @@ pub fn frontmatter(text: &str) -> Frontmatter {
             "tags" if !saw_tags => {
                 saw_tags = true;
                 let value = value.trim();
-                let value = value
-                    .strip_prefix('[')
-                    .map_or(value, |inner| inner.strip_suffix(']').unwrap_or(inner));
-                read.tags = value
-                    .split(',')
+                let items: Vec<&str> = if value.is_empty() {
+                    // the block form: the `- x` lines that follow (blank lines between them do not end it)
+                    lines[at + 1..]
+                        .iter()
+                        .map(|l| l.trim())
+                        .filter(|l| !l.is_empty())
+                        .map_while(|l| l.strip_prefix('-'))
+                        .collect()
+                } else {
+                    let value = value
+                        .strip_prefix('[')
+                        .map_or(value, |inner| inner.strip_suffix(']').unwrap_or(inner));
+                    value.split(',').collect()
+                };
+                read.tags = items
+                    .into_iter()
                     .map(|tag| unquoted(tag).to_lowercase())
                     .filter(|tag| !tag.is_empty())
                     .collect();
@@ -279,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_doc_reads_its_author_and_tags_and_a_doc_without_them_reads_as_none() {
-        let cases: [(&str, Option<&str>, Vec<String>); 10] = [
+        let cases: [(&str, Option<&str>, Vec<String>); 14] = [
             (
                 "---\nnode: X\nhint: a::b\nauthor: claude-code\ntags: [plan, billing]\n---\n# T\n",
                 Some("claude-code"),
@@ -306,8 +326,18 @@ mod tests {
                 None,
                 vec![],
             ),
-            // a list over several lines is not read, and is not an error
-            ("---\ntags:\n  - plan\n---\n", None, vec![]),
+            // the block form, indented or not, with quotes, other case, blank lines, and a key after it
+            (
+                "---\nnode: X\ntags:\n  - Plan\n  - \"billing\"\n\n  - 'v2'\nauthor: z\n---\n",
+                Some("z"),
+                tags(&["plan", "billing", "v2"]),
+            ),
+            ("---\ntags:\n- plan\n- x\n---\n", None, tags(&["plan", "x"])),
+            // `tags: plan` is one tag
+            ("---\ntags: plan\n---\n", None, tags(&["plan"])),
+            // a block with nothing the reader knows is no tags, and not an error
+            ("---\ntags:\n  plan: yes\n---\n", None, vec![]),
+            ("---\ntags:\nauthor: z\n---\n", Some("z"), vec![]),
             // a key inside the body is not the frontmatter's
             (
                 "---\nnode: X\n---\nauthor: not me\ntags: [no]\n",
