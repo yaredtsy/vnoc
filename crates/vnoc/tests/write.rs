@@ -248,6 +248,29 @@ async fn a_byte_order_mark_is_kept_for_a_function_and_for_a_file() {
 }
 
 #[tokio::test]
+async fn a_byte_order_mark_is_kept_when_the_function_is_further_down() {
+    let root = sample_copy("bom-later");
+    let file = root.join("bom.py");
+    let before = [
+        BOM,
+        b"\"\"\"A module with a mark.\"\"\"\n\nimport os\n\n\ndef later(a):\n    return os.sep + a\n".as_slice(),
+    ]
+    .concat();
+    std::fs::write(&file, &before).unwrap();
+    let opened = open(&root, &driver_path()).await.unwrap();
+
+    let result = attach_on_disk(&opened, "bom.py::later", None)
+        .await
+        .unwrap();
+
+    assert!(result.id_in_code, "{:?}", result.notice);
+    let after = std::fs::read(&file).unwrap();
+    assert!(after.starts_with(BOM));
+    assert_eq!(without_the_id_line(&after, &result.id), before);
+    no_temp_files(&root);
+}
+
+#[tokio::test]
 async fn crlf_line_ends_are_kept_for_a_function_and_for_a_file() {
     for (key, label) in [("crlf.py::with_crlf", "crlf-def"), ("crlf.py", "crlf-file")] {
         let root = sample_copy(label);

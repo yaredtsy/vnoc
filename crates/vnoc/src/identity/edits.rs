@@ -90,41 +90,34 @@ fn text_edit(e: &TextEdit) -> async_lsp::lsp_types::TextEdit {
     }
 }
 
+/// U+FEFF as UTF-8: the byte-order mark some editors put in front of a file.
+const BOM: &[u8] = b"\xef\xbb\xbf";
+
 /// The file is read again: the plan was made for `document.text`, and a plan for other bytes would put the line in the wrong place.
+/// A byte-order mark is not part of the text, as in an editor's buffer: it is set aside for the comparison and put back in front on the write.
 fn apply_on_disk(document: &Document, edits: &[TextEdit]) -> Result<(), String> {
     let path = document
         .uri
         .to_file_path()
         .map_err(|()| format!("{} is not a file", document.uri))?;
-    let now = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let (mark, now) = split_bom(&bytes);
     if now != document.text.as_bytes() {
         return Err("the file changed while the ID was being written".into());
     }
-    let new_text = apply_text_edits(&document.text, &past_the_bom(&document.text, edits))?;
-    write_atomic(&path, new_text.as_bytes()).map_err(|e| e.to_string())
+    let new_text = apply_text_edits(&document.text, edits)?;
+    write_atomic(&path, &[mark, new_text.as_bytes()].concat()).map_err(|e| e.to_string())
 }
 
-/// The driver plans for the text it is given, and has no notion of a byte-order mark: "the start of the file" is line 0, character 0. In an
-/// editor that is right (its buffer has no mark), but the text of a file read from disk keeps U+FEFF as its first character, and a comment
-/// put before it would leave the mark at the start of line 2, which Python refuses. So here a position at the very start is the place after the mark.
-fn past_the_bom(text: &str, edits: &[TextEdit]) -> Vec<TextEdit> {
-    let mut edits = edits.to_vec();
-    if text.starts_with('\u{feff}') {
-        for position in edits
-            .iter_mut()
-            .flat_map(|e| [&mut e.range.start, &mut e.range.end])
-        {
-            if (position.line, position.character) == (0, 0) {
-                position.character = 1; // U+FEFF is one UTF-16 unit
-            }
-        }
-    }
-    edits
+/// The leading byte-order mark (empty when there is none) and the rest.
+fn split_bom(bytes: &[u8]) -> (&[u8], &[u8]) {
+    bytes.split_at(if bytes.starts_with(BOM) { BOM.len() } else { 0 })
 }
 
 impl Document {
-    /// The file as the driver will plan against it: version `0`, the text decoded **verbatim** (line ends as they are, a byte-order mark kept
-    /// as U+FEFF). A file that is not UTF-8 is `InvalidData`: no document can be made of it.
+    /// The file as the driver will plan against it, which is what an editor would send: version `0`, the text decoded **verbatim** (line ends as
+    /// they are) except for a leading byte-order mark, which an editor's buffer does not have. A file that is not UTF-8 is `InvalidData`: no
+    /// document can be made of it.
     pub fn from_disk(path: &Path) -> io::Result<Document> {
         let uri = Url::from_file_path(path).map_err(|()| {
             io::Error::new(
@@ -132,7 +125,8 @@ impl Document {
                 format!("{} is not an absolute path", path.display()),
             )
         })?;
-        let text = String::from_utf8(std::fs::read(path)?).map_err(|_| {
+        let bytes = std::fs::read(path)?;
+        let text = String::from_utf8(split_bom(&bytes).1.to_vec()).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "the file is not UTF-8 text")
         })?;
         Ok(Document {
@@ -342,16 +336,36 @@ mod tests {
     }
 
     #[test]
-    fn disk_puts_an_insert_at_the_start_of_a_file_after_its_byte_order_mark() {
+    fn disk_writes_the_byte_order_mark_back_in_front_and_shifts_nothing() {
         let dir = fresh("bom");
         let file = dir.join("a.py");
         std::fs::write(&file, b"\xef\xbb\xbfx = 1\n").unwrap();
         let document = Document::from_disk(&file).unwrap();
+        assert_eq!(
+            document.text, "x = 1\n",
+            "the text is what an editor would send"
+        );
         apply_on_disk(&document, &[edit((0, 0), (0, 0), "# FileID: X\n")]).unwrap();
         assert_eq!(
             std::fs::read(&file).unwrap(),
             b"\xef\xbb\xbf# FileID: X\nx = 1\n"
         );
+        // a file with no mark gets none
+        std::fs::write(&file, b"x = 1\n").unwrap();
+        let document = Document::from_disk(&file).unwrap();
+        apply_on_disk(&document, &[edit((0, 0), (0, 0), "# FileID: X\n")]).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"# FileID: X\nx = 1\n");
+    }
+
+    #[test]
+    fn a_file_that_changed_only_by_gaining_a_mark_is_the_same_text() {
+        let dir = fresh("bom-gained");
+        let file = dir.join("a.py");
+        std::fs::write(&file, b"x = 1\n").unwrap();
+        let document = Document::from_disk(&file).unwrap();
+        std::fs::write(&file, b"\xef\xbb\xbfx = 1\n").unwrap();
+        apply_on_disk(&document, &[edit((0, 0), (0, 0), "# a\n")]).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"\xef\xbb\xbf# a\nx = 1\n");
     }
 
     #[test]
@@ -381,13 +395,10 @@ mod tests {
     }
 
     #[test]
-    fn a_byte_order_mark_and_line_ends_are_kept_in_the_document() {
+    fn a_document_keeps_its_line_ends_and_has_no_byte_order_mark() {
         let dir = fresh("verbatim");
         let file = dir.join("a.py");
         std::fs::write(&file, b"\xef\xbb\xbfa\r\nb\r\n").unwrap();
-        assert_eq!(
-            Document::from_disk(&file).unwrap().text,
-            "\u{feff}a\r\nb\r\n"
-        );
+        assert_eq!(Document::from_disk(&file).unwrap().text, "a\r\nb\r\n");
     }
 }
