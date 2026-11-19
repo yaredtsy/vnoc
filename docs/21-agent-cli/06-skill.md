@@ -97,7 +97,8 @@ metadata:
 ---
 # V-NOC
 
-This project attaches notes to code. A note says WHY: a constraint, a decision, some history, a trap, a plan. Not what the code does.
+This project attaches notes to code (the commands and their output call them docs). A note says WHY: a constraint, a decision, some
+history, a trap, a plan. Not what the code does.
 `vnoc` reads the code by structure and keeps each note attached to its function even when the function moves.
 
 Start with `vnoc status`. It prints the project's root: if that is not the project you are working on, add `--root <folder>` to every
@@ -130,7 +131,8 @@ If one is wrong, the error says what was meant: use its suggestion.
 only if you know where the code went (`vnoc relink <ID> <node>`).
 
 ## Writing a note
-Write one when the user asks, or when you learned something a future reader could not see in the code. One note, one subject.
+Write one when the user asks. When you learned something a future reader could not see in the code, offer to write it down; do not
+write it unasked. One note, one subject.
 `vnoc doc new <node> --title "…" --author <your name>` prints the new file's path; write the note into that file, or pass the body
 with `--body-file -`. It adds an `ID:` line to the function: read the source file again before you edit it.
 Tags: run `vnoc tags` first and reuse one that fits (`.vnoc/tags.toml` says what each means; do not edit it). A plan is
@@ -166,6 +168,11 @@ knowledge of where the code went (A9); `--body-file -` (A8a). The examples are t
 **[check] done:** `skills-ref validate skills/vnoc` ran (`pip install skills-ref`, 0.1.1; its command is named `agentskills`, not `skills-ref`):
 `Valid skill: skills/vnoc`. Run on the draft as it stood in this file it failed on the colon above. The header test of §6 stands in for it where
 the checker is not installed. In A14 each agent still has to be seen listing the skill.
+
+**Changed after the A10 review (2026-11-20), into `skills/vnoc/SKILL.md` in A11's first commit:** "offer to write it down; do not write it
+unasked" in place of "or when you learned something…": every `doc new` puts an `ID:` line into the user's source, so a note the user did
+not ask for is an edit to code they did not ask for. A14 checks that agents still offer good notes. And "(the commands and their output
+call them docs)": the skill says notes, every output says `docs (1)`, `· 1 doc`.
 
 In the real file the `description` is **one line**: not every agent reads the header with a full YAML parser, and a name or header that
 fails to parse makes the skill silently not load (VS Code's Copilot says so in its docs). The format allows 1,024 characters.

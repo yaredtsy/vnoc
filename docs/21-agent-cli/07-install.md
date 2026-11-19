@@ -128,15 +128,18 @@ silently, never twice. Sets `vnoc.agentsSetUp`.
 Most agents ask the user before running a shell command they have not been allowed. Fifteen prompts for fifteen `vnoc show` calls would end the
 experiment. Every agent has its own allow-list; V-NOC's part is to make the list easy to write:
 
-- **The command names split cleanly** (01 §3): the writes are `vnoc init`, `vnoc doc new`, `vnoc relink`, `vnoc repair`, `vnoc agent`; every
-  other command only reads. A prefix rule can allow the reads and still ask for the writes.
+- **The command names split cleanly** (01 §3): the writes are `vnoc init`, `vnoc doc new`, `vnoc doc tag`, `vnoc relink`, `vnoc repair`,
+  `vnoc agent`; every other command only reads, and no read starts with a write's name (hence `vnoc tags`, A10a). A prefix rule can allow
+  the reads and still ask for the writes. `vnoc agent list` and `vnoc agent status` read, but stay under the one `vnoc agent` prefix, which
+  is not allowed by default: setting up agents is the user's step.
 - `vnoc agent install` **prints** the lines for the agents picked (it does not write settings files: those are the user's):
 
 ```
 to let Claude Code run V-NOC's read commands without asking, add to .claude/settings.json:
   "permissions": { "allow": ["Bash(vnoc status:*)", "Bash(vnoc show:*)", "Bash(vnoc code:*)", "Bash(vnoc doc list:*)", "Bash(vnoc doc read:*)",
                              "Bash(vnoc doc path:*)", "Bash(vnoc tree:*)", "Bash(vnoc find:*)", "Bash(vnoc grep:*)", "Bash(vnoc calls:*)",
-                             "Bash(vnoc missing:*)", "Bash(vnoc check:*)", "Bash(vnoc guide:*)"] }
+                             "Bash(vnoc missing:*)", "Bash(vnoc check:*)", "Bash(vnoc tags:*)", "Bash(vnoc guide:*)",
+                             "Bash(vnoc skill:*)"] }
 ```
 
 **[check]** in A11 the rule syntax of Claude Code and Codex on the day; print only what was checked.
