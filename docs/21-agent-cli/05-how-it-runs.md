@@ -13,7 +13,7 @@ how a command runs
 ## 1. One binary
 
 ```
-main.rs   parse arguments (clap, derive)  ─┬─ none, or `serve`  → today's LSP main loop, untouched
+main.rs   parse arguments (clap, derive)  ─┬─ none, `--stdio`, `serve`  → today's LSP main loop, untouched
                                             └─ a command          → cli::run(command) → exit code
 cli/      args.rs (the clap types) · out.rs (text, --format, --json) · one file per command group
           each handler: open the project, build what it needs, call the library, print
@@ -22,18 +22,32 @@ library   Project · DriverHost · index::refresh · Index · UserData · identi
 ```
 
 - `cli/` lives in the library crate (`crates/vnoc/src/cli/`), so the integration tests can call `cli::run` as well as run the binary.
-- The extension keeps starting the core with no arguments. A later release passes `serve`; both work from A2 on.
+- **The extension starts the core as `vnoc --stdio`**, not with no arguments: `vscode-languageclient` appends `--stdio` for an executable
+  started with `TransportKind.stdio` (`extension/src/core.ts`; checked 2026-11-18 in `vscode-languageclient` 9.0.1, `lib/node/main.js`).
+  So `main.rs` decides before clap: the arguments are empty, `[--stdio]`, `[serve]` or `[serve, --stdio]` → the main loop. Anything else
+  goes to clap. `--stdio` is not a clap flag and does not show in `--help`. A later release of the extension passes `serve`; all four work
+  from A2 on, and an old extension with a new core keeps working. `lifecycle.rs` starts the core with no arguments, the window suite with
+  `--stdio`: A2 tests both.
 - The driver runs as the server runs it (`DriverHost`), and exits with the command (`DriverClient`'s `Drop`).
 
 ## 2. The root (C9)
 
 1. `--root <dir>`, if given;
-2. else the nearest folder at or above the current one that holds `.vnoc/`;
-3. else the nearest that holds `.git`;
+2. else the nearest folder at or above the current one that holds `.git` (a folder, or the file a worktree or submodule has);
+3. else the nearest that holds `.vnoc/`;
 4. else the current folder.
 
-The command opens that folder (`Project::open`), so the whole repository is in scope wherever in it the agent's shell happens to be. `.vnoc/`
-is at the git root (`UserData::new(project.git_root())`), so 2 and 3 name the same folder in every ordinary repository.
+The command opens that folder (`Project::open`), so the whole repository is in scope wherever in it the agent's shell happens to be.
+
+*(Order changed 2026-11-18, before A2: the first version put `.vnoc/` before `.git`.)* `.vnoc/` is read at the **git root**
+(`UserData::new(project.git_root())`), and `Project::open` walks up to `.git` by itself. So in an ordinary repository both rules name the
+same folder, and where they differ the old order was wrong: a `.vnoc/` below the git root (a test fixture, a copied folder, the sample in
+`crates/vnoc/tests/sample/`) would have been chosen as the root while the core read the repository's own `.vnoc/`. With `.git` first, the
+root and the folder the core reads `.vnoc/` from are always the same. Rule 3 is for a project with no git at all. `--root` below a git root
+is allowed: it is what the extension does when a subfolder is opened (the scope is that folder, `.vnoc/` is the repository's).
+
+The sample project cannot be used where it lies (its git root is this repository): tests, the guide's examples and by-hand checks run it
+as a **copy outside the repository**.
 
 ## 3. One shot (C4)
 

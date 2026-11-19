@@ -67,7 +67,7 @@ calls. Commit: `cli A1: structure and the call tree are library functions`.
 | `crates/vnoc/tests/cli.rs` | the harness: the binary by `env!("CARGO_BIN_EXE_vnoc")`, a temp copy of the sample, the driver as `lifecycle.rs` finds it |
 
 Tests: `status` on the sample, text and `--json` (the first golden file); from a subfolder the root is the same; `--root`; a folder with no
-`.vnoc/` answers and exits `0`; no driver → `3` with the three places it looked; an unknown flag → `2`; **`vnoc` with no arguments still answers
+`.vnoc/` answers and exits `0`; no driver → `3` with the three places it looked; an unknown flag → `2`; **`vnoc` with no arguments, with `--stdio`, and with `serve` still answers
 `initialize`** (`lifecycle.rs`, unchanged); `vnoc status | head -1` exits quietly; the exit-code table (`cli::exit_code`).
 
 Commit: `cli A2: vnoc is a command too; status`.
