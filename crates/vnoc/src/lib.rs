@@ -3,6 +3,7 @@
 //! Nothing in the library prints: in `vnoc --stdio` standard output is the protocol, and a command prints through `cli/out.rs` alone (05 §4).
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+pub mod agents;
 pub mod calls;
 pub mod check;
 pub mod cli;

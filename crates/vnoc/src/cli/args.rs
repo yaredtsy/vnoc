@@ -157,6 +157,75 @@ pub enum Command {
     /// Prints the skill file (`SKILL.md`) that tells an agent when to use V-NOC, what never to do to the code it marks, and the commands that
     /// matter, exactly as this binary carries it. It changes nothing. It needs no project and no driver.
     Skill,
+    /// Sets up the coding agents the user names: writes the skill and the rules block where their tools look. It is the user's step, not yours.
+    ///
+    /// `vnoc agent install` writes the V-NOC skill (`SKILL.md`) into `.claude/skills/vnoc/` or `.agents/skills/vnoc/` and a marked block of rules into
+    /// `AGENTS.md`, `CLAUDE.md` or `GEMINI.md`, for the agents picked, and prints each file it wrote or left. `list` names the agents it knows and
+    /// which it finds here; `status` says whether what it wrote is current; `remove` takes back exactly what it wrote. It needs no driver and
+    /// never writes outside the project (or the home folder with --global), and never writes an agent's settings.
+    #[command(subcommand)]
+    Agent(AgentCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentCommand {
+    /// Lists the agents V-NOC knows by name, which of them this project shows signs of, and what each would get.
+    List,
+    /// Writes the skill and the rules block for the agents picked: `vnoc agent install --agent claude,codex`.
+    ///
+    /// With neither --agent nor --all: in a terminal it asks (the agents found here are ticked); otherwise it takes the agents found here, and
+    /// exits 2 listing the names when it finds none. An agent that is not in the list is `other`. A `SKILL.md` that V-NOC did not write is
+    /// left (exit 2) unless --force; in a rules file only the block between its markers is replaced, the rest is as it was; installing twice
+    /// changes nothing. Prints each file it wrote or left, then what to commit, then the lines that let Claude Code and Codex run V-NOC's
+    /// read commands without asking (it writes no settings file).
+    Install(InstallArgs),
+    /// Says, for each file V-NOC wrote, whether it is current, older than this V-NOC, or changed by hand, and which agents read it.
+    Status,
+    /// Takes back what `install` wrote: its skill folders, and the block from the rules files; a rules file that held nothing else is deleted.
+    ///
+    /// Nothing else is touched. A skill folder and a rules file are shared by every agent that maps to them, so removing for one agent removes
+    /// the file for all of them (each line says who reads it). A `SKILL.md` that V-NOC did not write is left.
+    Remove(RemoveArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct InstallArgs {
+    /// The agents, comma-separated: claude, cline, codex, cursor, pi, opencode, copilot, amp, goose, windsurf, gemini, or other. Name yourself if you are one.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_name = "NAME,…",
+        conflicts_with = "all"
+    )]
+    pub agent: Vec<String>,
+    /// Every agent in the list: both skill folders, and each rules file that exists, with `AGENTS.md`.
+    #[arg(long)]
+    pub all: bool,
+    /// Write the skill into the user folders (`~/.claude/skills/vnoc/`, `~/.agents/skills/vnoc/`) of the agents picked, and no rules.
+    #[arg(long)]
+    pub global: bool,
+    /// Only the skill.
+    #[arg(long, conflicts_with = "rules_only")]
+    pub skill_only: bool,
+    /// Only the rules block.
+    #[arg(long)]
+    pub rules_only: bool,
+    /// Print what would be written or left and write nothing. With --json: the actions, for a program to show.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Replace a `SKILL.md` that V-NOC did not write.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RemoveArgs {
+    /// The agents, comma-separated, as for `install`. Without it: every file V-NOC wrote.
+    #[arg(long, value_delimiter = ',', value_name = "NAME,…")]
+    pub agent: Vec<String>,
+    /// Remove the skill from the user folders instead of the project's.
+    #[arg(long)]
+    pub global: bool,
 }
 
 #[derive(Debug, Args)]

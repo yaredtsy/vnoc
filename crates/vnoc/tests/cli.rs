@@ -480,7 +480,8 @@ fn status_in_text_has_labelled_lines() {
              \x20 code     3 folders · 12 files · 5 classes · 27 functions\n\
              \x20 docs     7 docs on 6 nodes\n\
              \x20 health   1 missing · 1 lost marker · 0 problems     → vnoc check\n\
-             \x20 driver   python {driver_version} · read 12 files\n"
+             \x20 driver   python {driver_version} · read 12 files\n\
+             \x20 agents   not set up (vnoc agent install)\n"
         )
     );
     // quiet drops the hint, and nothing else
@@ -527,7 +528,7 @@ fn a_folder_without_a_vnoc_folder_answers_and_says_so() {
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     let shown = without_root(&text(&out.stdout), &dir);
     let lines: Vec<&str> = shown.lines().collect();
-    assert_eq!(lines.len(), 6, "{shown}");
+    assert_eq!(lines.len(), 7, "{shown}");
     assert!(
         lines[0].starts_with("V-NOC ") && lines[0].ends_with("   <root>"),
         "{shown}"
@@ -543,6 +544,7 @@ fn a_folder_without_a_vnoc_folder_answers_and_says_so() {
         "           vnoc init starts it (ask the user first)"
     );
     assert!(lines[5].starts_with("  driver   python "), "{shown}");
+    assert_eq!(lines[6], "  agents   not set up (vnoc agent install)");
     assert!(
         !shown.contains("health"),
         "no health line without `.vnoc/`: {shown}"
@@ -1237,7 +1239,8 @@ fn a_folder_with_no_python_starts_no_driver_and_says_so() {
     let shown = without_root(&stdout_of(&dir, &["status"]), &dir);
     assert!(
         shown.starts_with("V-NOC ")
-            && shown.ends_with("  driver   not started (no Python files to read)\n"),
+            && shown.contains("  driver   not started (no Python files to read)\n")
+            && shown.ends_with("  agents   not set up (vnoc agent install)\n"),
         "{shown}"
     );
     let json = status_json(&dir, &dir, &[]);

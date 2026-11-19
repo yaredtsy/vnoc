@@ -1,4 +1,8 @@
 {
+  "agents": {
+    "files": [],
+    "missing": []
+  },
   "command": "status",
   "docs": {
     "docs": 7,

@@ -3,6 +3,7 @@
 //! A command is three things: parse, call, print. `run` parses, one function per command calls the library and prints through `out`, and
 //! one function, [`exit_code`], says what each failure exits with (C6).
 
+mod agent;
 mod args;
 mod calls;
 mod check;
@@ -104,6 +105,7 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Tags(args) => tags::tags(&cli.global, args).await,
         Command::Guide(args) => guide::guide(&cli.global, args),
         Command::Skill => guide::skill(&cli.global),
+        Command::Agent(command) => agent::run(&cli.global, command),
     }
 }
 

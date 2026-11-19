@@ -4,3 +4,4 @@
   [2mdocs  [0m   [1m7[0m docs on [1m6[0m nodes
   [2mhealth[0m   [31m1[0m missing · [31m1[0m lost marker · [1m0[0m problems     [2m→ vnoc check[0m
   [2mdriver[0m   python <version> · read [1m12[0m files
+  [2magents[0m   not set up (vnoc agent install)

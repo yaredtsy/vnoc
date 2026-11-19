@@ -4,6 +4,7 @@
 //! A line is a command line when it starts with `vnoc ` inside a code block, or when a span in backticks does (in prose). Then:
 //! - with a `<placeholder>` it is parsed by clap, in this process, and not run (the subcommand and every flag must exist);
 //! - a bare command name (`vnoc doc tag`, in prose) is the same: clap only, since it lacks the arguments the prose is not about;
+//! - `vnoc agent …` is the same too: it writes files (into the home folder with `--global`), and `tests/agent.rs` runs it;
 //! - any other is run, through `sh`, on a copy of the sample: exit `0` or `1` passes, and `2` only when the line ends in a `# exit 2` comment
 //!   (a refusal shown on purpose), which must then be true;
 //! - the lines under a command in a code block are the output it printed: they must equal a run, once the copy's path and the version are normalized.
@@ -123,9 +124,6 @@ fn sessions(name: &str, text: &str) -> Vec<Session> {
                         .push(raw.to_string());
                 }
             }
-            // the marker comments of `rules.md` name `vnoc agent install`, a command A11 builds: until then they are not lines to check
-            // (A11 removes this arm, so the comment is checked too)
-            None if raw.starts_with("<!--") => {}
             None => {
                 // prose: the odd pieces between backticks
                 for span in raw.split('`').skip(1).step_by(2) {
@@ -261,6 +259,13 @@ fn plan(line: &str) -> Result<Plan, String> {
             run = false;
         }
     }
+    // `vnoc agent …` writes skill and rules files (and `--global` into the home folder): clap understands it here, and `tests/agent.rs` runs it
+    if segments.iter().any(|w| {
+        w.first().map(String::as_str) == Some("vnoc")
+            && w.get(1).map(String::as_str) == Some("agent")
+    }) {
+        run = false;
+    }
     let refusal = comment_of(line).is_some_and(|c| c.trim() == "exit 2");
     if refusal && !run {
         return Err("`# exit 2` on a line that is not run".into());
@@ -352,6 +357,9 @@ fn run_line(root: &Path, line: &str) -> (i32, String) {
         .current_dir(root)
         .env("PATH", path)
         .env("VNOC_DRIVER", driver_path())
+        // whatever a line does with the home folder, it is not the real one
+        .env("HOME", root)
+        .env("USERPROFILE", root)
         .env_remove("VNOC_LOG")
         .env_remove("NO_COLOR")
         .env_remove("CLICOLOR")
@@ -529,9 +537,22 @@ fn a_line_that_names_no_flag_the_binary_has_is_refused() {
         "vnoc grep 'parse_order\\(' --names",
         "vnoc find 'no:doc kind:class' --format id | vnoc show - --no-code",
         "vnoc show billing/tax.py::rate_fro  # exit 2",
+        "vnoc agent install",
+        "vnoc agent install --agent claude,codex --global",
+        "vnoc agent status",
     ] {
         assert!(plan(line).is_ok(), "{line}: {:?}", plan(line).err());
     }
+    // an agent line is understood, never run
+    for line in [
+        "vnoc agent install",
+        "vnoc agent remove --global",
+        "vnoc agent list",
+    ] {
+        assert!(matches!(plan(line), Ok(Plan::ParsedOnly)), "{line}");
+    }
+    assert!(plan("vnoc agent install --nope").is_err());
+    assert!(plan("vnoc agent frob").is_err());
     // a comment is not a flag, and a refusal is only claimed for a line that runs
     assert!(plan("vnoc show <node>  # exit 2").is_err());
     assert!(matches!(

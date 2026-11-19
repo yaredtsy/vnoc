@@ -26,6 +26,8 @@ struct Status {
     problems: Vec<Problem>,
     failed: Vec<FailedFile>,
     truncated: bool,
+    /// the skill and the rules block `vnoc agent install` wrote here (07 §2): the files are the record
+    agents: crate::agents::Status,
 }
 
 #[derive(Serialize)]
@@ -95,6 +97,7 @@ async fn status_of(opened: &Opened) -> Status {
         problems: answer.problems,
         failed: answer.failed,
         truncated: answer.truncated,
+        agents: crate::agents::status(project.open_dir(), None, &crate::agents::Texts::built_in()),
     }
 }
 
@@ -207,6 +210,7 @@ fn text(s: &Status, quiet: bool) -> String {
             .join(", ")
     };
     out.push_str(&line("driver", &driver));
+    out.push_str(&line("agents", &super::agent::summary(&s.agents)));
     out
 }
 
@@ -238,6 +242,7 @@ mod tests {
             problems: vec![],
             failed: vec![],
             truncated: false,
+            agents: crate::agents::Status::default(),
         }
     }
 
@@ -273,7 +278,8 @@ mod tests {
              \x20 code     3 folders · 10 files · 1 class · 21 functions\n\
              \x20 docs     7 docs on 7 nodes\n\
              \x20 health   all good\n\
-             \x20 driver   python 0.2.0 · read 10 files\n"
+             \x20 driver   python 0.2.0 · read 10 files\n\
+             \x20 agents   not set up (vnoc agent install)\n"
         );
     }
 
@@ -319,7 +325,8 @@ mod tests {
              \x20 code     3 folders · 10 files · 1 class · 21 functions\n\
              \x20 docs     none yet: no .vnoc/ in this project\n\
              \x20          vnoc init starts it (ask the user first)\n\
-             \x20 driver   python 0.2.0 · read 10 files\n"
+             \x20 driver   python 0.2.0 · read 10 files\n\
+             \x20 agents   not set up (vnoc agent install)\n"
         );
         // but a file that failed is a health line, with or without `.vnoc/`
         let mut s = status(false);
@@ -334,7 +341,9 @@ mod tests {
     fn no_driver_started_says_so() {
         let mut s = status(true);
         s.drivers.clear();
-        assert!(text(&s, false).ends_with("  driver   not started (no Python files to read)\n"));
+        assert!(text(&s, false).contains("  driver   not started (no Python files to read)\n"));
+        // the agents line is the last one
+        assert!(text(&s, false).ends_with("  agents   not set up (vnoc agent install)\n"));
     }
 
     #[test]
