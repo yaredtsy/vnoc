@@ -12,7 +12,7 @@ use super::args::{Depth, KindArg, TreeArgs};
 use super::nodes::{Lookup, NodeError, Target, expand, id_of, kind_word};
 use super::out::{self, Render};
 use super::project::open_from;
-use super::{Failure, Format, Global};
+use super::{Failure, Format, Global, style};
 use crate::index::{Counts, Kind, KindSel, Lookups, Node, Row, TreeOptions, tree_view};
 
 pub async fn run(global: &Global, args: &TreeArgs) -> Result<(), Failure> {
@@ -233,8 +233,9 @@ impl Tree {
     }
 }
 
+/// `1 file`, `3 files`: the number grouped by thousands, and bold in a terminal.
 fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
+    style::count(n, one, many)
 }
 
 /// `4 files · 3 classes · 31 functions · 6 docs inside`, with no part that is 0. The docs are those of the nodes **below**, so they are not read as
@@ -266,7 +267,7 @@ impl Tree {
         if self.style.lines
             && let Some([a, b]) = row.lines
         {
-            parts.push(format!("{a}-{b}"));
+            parts.push(style::paint(style::dim(), format!("{a}-{b}")));
         }
         let params = row
             .params
@@ -299,20 +300,24 @@ impl Tree {
             };
             return format!(
                 "{}  {}{sig}{tail}{titles}\n",
-                kind_word(row.kind),
-                row.location
+                style::paint(style::dim(), kind_word(row.kind)),
+                style::paint(style::location(), &row.location)
             );
         }
         let indent = "  ".repeat(row.depth);
         let label = match row.kind {
             Kind::Folder => format!("{}/", row.name),
             Kind::File => row.name.clone(),
-            Kind::Class => format!("class {}", row.name),
+            Kind::Class => format!("{} {}", style::paint(style::dim(), "class"), row.name),
             Kind::Function => format!("{}{params}", row.name),
         };
         let mut text = format!("{indent}{label}{tail}\n");
         for title in &row.titles {
-            text.push_str(&format!("{indent}  doc: {title}\n"));
+            text.push_str(&format!(
+                "{indent}  {} {}\n",
+                style::paint(style::dim(), "doc:"),
+                style::paint(style::title(), title)
+            ));
         }
         text
     }
@@ -326,12 +331,13 @@ impl Render for Tree {
         }
         if self.cut > 0 {
             let rows = if self.cut == 1 { "row" } else { "rows" };
-            let cut = self.cut;
-            text.push_str(&if quiet {
-                format!("… {cut} more {rows}\n")
+            let cut = style::grouped(self.cut);
+            let said = if quiet {
+                format!("… {cut} more {rows}")
             } else {
-                format!("… {cut} more {rows} (narrow with a path, --depth or --where)\n")
-            });
+                format!("… {cut} more {rows} (narrow with a path, --depth or --where)")
+            };
+            text.push_str(&format!("{}\n", style::paint(style::dim(), said)));
         }
         text
     }

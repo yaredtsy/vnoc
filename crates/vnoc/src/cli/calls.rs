@@ -10,7 +10,7 @@ use super::nodes::{Lookup, Target, id_of, kind_word, lines_of};
 use super::out::{self, Render};
 use super::project::open_from;
 use super::show::head_line;
-use super::{Failure, Global};
+use super::{Failure, Global, style};
 use crate::calls::{self, CallsError};
 use crate::index::Kind;
 use crate::protocol::{CallTreeNode, CallTreeResult};
@@ -159,24 +159,40 @@ fn rows_of(nodes: &[CallTreeNode], lookup: &Lookup) -> Vec<Row> {
 fn write_rows(text: &mut String, rows: &[Row], level: usize, depth: u32) {
     let indent = "  ".repeat(level);
     for row in rows {
-        text.push_str(&format!("{indent}{}  {}", row.name, row.place));
+        // a place the index has is a location; what it lacks is said in dim words
+        let place = if row.place.starts_with('(') || row.place.ends_with(" (not in the index)") {
+            style::paint(style::dim(), &row.place)
+        } else {
+            style::paint(style::location(), &row.place)
+        };
+        text.push_str(&format!("{indent}{}  {place}", row.name));
         if row.times > 1 {
-            text.push_str(&format!("  ×{}", row.times));
+            text.push_str(&format!(
+                "  {}",
+                style::paint(
+                    style::bold(),
+                    format!("×{}", style::grouped(row.times as usize))
+                )
+            ));
         }
-        for (mark, word) in [
-            (CallMark::Recursive, "recursive"),
-            (CallMark::Likely, "likely"),
-            (CallMark::Incomplete, "incomplete"),
+        for (mark, word, how) in [
+            (CallMark::Recursive, "recursive", style::dim()),
+            (CallMark::Likely, "likely", style::dim()),
+            (CallMark::Incomplete, "incomplete", style::warn()),
         ] {
             if row.marks.contains(&mark) {
-                text.push_str(&format!("  ({word})"));
+                text.push_str(&format!("  {}", style::paint(how, format!("({word})"))));
             }
         }
         text.push('\n');
         write_rows(text, &row.children, level + 1, depth);
         if let Some(location) = &row.deeper {
             text.push_str(&format!(
-                "{indent}  … (deeper: vnoc calls {location} --depth {depth})\n"
+                "{indent}  {}\n",
+                style::paint(
+                    style::dim(),
+                    format!("… (deeper: vnoc calls {location} --depth {depth})")
+                )
             ));
         }
     }
@@ -186,7 +202,7 @@ impl Render for Calls {
     fn text(&self, _quiet: bool) -> String {
         let mut text = format!("{}\n", self.head);
         if self.rows.is_empty() {
-            text.push_str("  (no calls)\n");
+            text.push_str(&format!("  {}\n", style::paint(style::dim(), "(no calls)")));
         }
         write_rows(&mut text, &self.rows, 1, self.depth_asked);
         text

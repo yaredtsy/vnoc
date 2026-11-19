@@ -7,7 +7,7 @@ use super::nodes::{Answer, NodeError, Target, each, file_of, id_of, lines_of, lo
 use super::out::Render;
 use super::project::open_from;
 use super::show::numbered;
-use super::{Failure, Global};
+use super::{Failure, Global, style};
 use crate::index::Kind;
 use crate::source;
 
@@ -97,7 +97,12 @@ impl Render for CodeAnswer {
         let mut text = String::new();
         if self.headed {
             let [a, b] = self.lines;
-            text.push_str(&format!("── {}  lines {a}-{b}\n", self.location));
+            text.push_str(&format!(
+                "{} {}  {}\n",
+                style::paint(style::dim(), "──"),
+                style::paint(style::subject(), &self.location),
+                style::paint(style::dim(), format!("lines {a}-{b}"))
+            ));
         }
         text.push_str(&numbered(self.code.first, &self.code.lines, ""));
         text

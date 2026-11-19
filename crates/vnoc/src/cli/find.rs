@@ -12,7 +12,7 @@ use super::nodes::{Lookup, doc_path, id_of, kind_word};
 use super::out::{self, Render};
 use super::project::open_from;
 use super::show::{MissingView, missing_view};
-use super::{Failure, Format, Global};
+use super::{Failure, Format, Global, style};
 use crate::node_ref::Found;
 use crate::protocol::SearchNode;
 use crate::search::{self, CorpusSlot};
@@ -166,17 +166,24 @@ struct Find {
     show_docs: bool,
 }
 
-/// `text` with the parts `ranges` name (UTF-16 units of `text`, sorted and merged, as the search gives them) between `**`.
+/// `text` with the parts `ranges` name (UTF-16 units of `text`, sorted and merged, as the search gives them) between `**`; in a terminal they are bold
+/// yellow and the asterisks are not written (the one place the words differ: a pipe has no other way to show a hit).
 fn highlight(text: &str, ranges: &[(u32, u32)]) -> String {
     let marks: Vec<u32> = ranges
         .iter()
         .filter(|(start, end)| start < end)
         .flat_map(|&(start, end)| [start, end])
         .collect();
+    let painted = style::on(style::Stream::Out);
     let (mut out, mut at, mut next) = (String::new(), 0u32, 0usize);
+    // marks come in pairs: the first opens a hit, the second closes it
     let mut marked = |out: &mut String, at: u32| {
         while next < marks.len() && marks[next] == at {
-            out.push_str("**");
+            match (painted, next % 2 == 0) {
+                (false, _) => out.push_str("**"),
+                (true, true) => out.push_str(&format!("{}", style::hit().render())),
+                (true, false) => out.push_str(&format!("{}", style::hit().render_reset())),
+            }
             next += 1;
         }
     };
@@ -219,10 +226,11 @@ impl Find {
     }
 
     fn group_header(name: &str, shown: usize, total: usize) -> String {
+        let name = style::paint(style::dim(), name);
         if shown == total {
-            format!("{name} ({total})\n")
+            format!("{name} ({})\n", style::num(total))
         } else {
-            format!("{name} ({shown} of {total})\n")
+            format!("{name} ({} of {})\n", style::num(shown), style::num(total))
         }
     }
 
@@ -231,8 +239,14 @@ impl Find {
             return String::new();
         }
         format!(
-            "  … {} more (narrow the query, or --limit N)\n",
-            total - shown
+            "  {}\n",
+            style::paint(
+                style::dim(),
+                format!(
+                    "… {} more (narrow the query, or --limit N)",
+                    style::grouped(total - shown)
+                )
+            )
         )
     }
 }
@@ -250,16 +264,25 @@ impl Render for Find {
                 self.nodes_total,
             ));
             for row in &self.nodes {
-                text.push_str(&format!("  {}  {}", kind_word(row.hit.kind), row.location));
+                text.push_str(&format!(
+                    "  {}  {}",
+                    style::paint(style::dim(), kind_word(row.hit.kind)),
+                    style::paint(style::location(), &row.location)
+                ));
                 if let Some([a, b]) = row.lines {
-                    text.push_str(&format!("   lines {a}-{b}"));
+                    text.push_str(&format!(
+                        "   {}",
+                        style::paint(style::dim(), format!("lines {a}-{b}"))
+                    ));
                 }
                 if let Some(id) = &row.node_id {
-                    text.push_str(&format!("   ID {id}"));
+                    text.push_str(&format!("   {} {id}", style::paint(style::dim(), "ID")));
                 }
                 if row.hit.docs > 0 {
-                    let docs = if row.hit.docs == 1 { "doc" } else { "docs" };
-                    text.push_str(&format!("   · {} {docs}", row.hit.docs));
+                    text.push_str(&format!(
+                        "   · {}",
+                        style::count(row.hit.docs, "doc", "docs")
+                    ));
                 }
                 text.push('\n');
             }
@@ -272,15 +295,24 @@ impl Render for Find {
                 self.docs_total,
             ));
             for row in &self.docs {
-                let missing = if row.missing { "MISSING " } else { "" };
-                text.push_str(&format!("  {}  on {missing}{}\n", row.title, row.location));
+                let missing = if row.missing {
+                    format!("{} ", style::paint(style::alert(), "MISSING"))
+                } else {
+                    String::new()
+                };
+                text.push_str(&format!(
+                    "  {}  {} {missing}{}\n",
+                    style::paint(style::title(), &row.title),
+                    style::paint(style::dim(), "on"),
+                    style::paint(style::location(), &row.location)
+                ));
                 if !row.snippet.is_empty() {
                     text.push_str(&format!(
                         "    {}\n",
                         highlight(&row.snippet, &row.snippet_match)
                     ));
                 }
-                text.push_str(&format!("    {}\n", row.path));
+                text.push_str(&format!("    {}\n", style::paint(style::dim(), &row.path)));
             }
             text.push_str(&Find::more(self.docs.len(), self.docs_total, quiet));
         }

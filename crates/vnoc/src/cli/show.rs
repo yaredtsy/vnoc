@@ -12,7 +12,7 @@ use super::nodes::{
 };
 use super::out::Render;
 use super::project::open_from;
-use super::{Failure, Global};
+use super::{Failure, Global, style};
 use crate::index::Node;
 use crate::source;
 
@@ -150,12 +150,23 @@ fn node_view(lookup: &Lookup, node: &Node, args: &ShowArgs) -> Result<NodeView, 
 
 /// `docs (N)`, each doc, and the hint to read them (`--quiet` leaves the hint out).
 pub fn docs_block(docs: &[Doc], read: &str, quiet: bool) -> String {
-    let mut text = format!("docs ({})\n", docs.len());
+    let mut text = format!(
+        "{} ({})\n",
+        style::paint(style::dim(), "docs"),
+        style::num(docs.len())
+    );
     for doc in docs {
-        text.push_str(&format!("  {}  {}\n", doc.title, doc.path));
+        text.push_str(&format!(
+            "  {}  {}\n",
+            style::paint(style::title(), &doc.title),
+            style::paint(style::dim(), &doc.path)
+        ));
     }
     if !docs.is_empty() && !quiet {
-        text.push_str(&format!("  → vnoc doc read {read}\n"));
+        text.push_str(&format!(
+            "  {}\n",
+            style::paint(style::dim(), format!("→ vnoc doc read {read}"))
+        ));
     }
     text
 }
@@ -167,7 +178,10 @@ pub fn numbered(first: u32, lines: &[String], indent: &str) -> String {
     lines
         .iter()
         .enumerate()
-        .map(|(n, line)| format!("{indent}{:>width$}  {line}\n", first as usize + n))
+        .map(|(n, line)| {
+            let number = style::paint(style::dim(), format!("{:>width$}", first as usize + n));
+            format!("{indent}{number}  {line}\n")
+        })
         .collect()
 }
 
@@ -187,12 +201,19 @@ pub fn head_line(
     lines: Option<[u32; 2]>,
     node_id: Option<&str>,
 ) -> String {
-    let mut head = format!("{kind}  {location}");
+    let mut head = format!(
+        "{}  {}",
+        style::paint(style::dim(), kind),
+        style::paint(style::subject(), location)
+    );
     if let Some([a, b]) = lines {
-        head.push_str(&format!("   lines {a}-{b}"));
+        head.push_str(&format!(
+            "   {}",
+            style::paint(style::dim(), format!("lines {a}-{b}"))
+        ));
     }
     if let Some(id) = node_id {
-        head.push_str(&format!("   ID {id}"));
+        head.push_str(&format!("   {} {id}", style::paint(style::dim(), "ID")));
     }
     head
 }
@@ -207,41 +228,68 @@ impl Render for NodeView {
         );
         let mut text = format!("{head}\n{}", docs_block(&self.docs, &self.location, quiet));
         if let Some(code) = &self.code {
-            text.push_str("code\n");
+            text.push_str(&format!("{}\n", style::paint(style::dim(), "code")));
             text.push_str(&numbered(code.first, &code.lines, "  "));
             if code.more > 0 {
-                let more = code.more;
-                let lines = if more == 1 { "line" } else { "lines" };
-                text.push_str(&if quiet {
-                    format!("  … {more} more {lines}\n")
+                let more = style::grouped(code.more);
+                let lines = if code.more == 1 { "line" } else { "lines" };
+                let said = if quiet {
+                    format!("… {more} more {lines}")
                 } else {
                     format!(
-                        "  … {more} more {lines} (vnoc code {}, or --full)\n",
+                        "… {more} more {lines} (vnoc code {}, or --full)",
                         self.location
                     )
-                });
+                };
+                text.push_str(&format!("  {}\n", style::paint(style::dim(), said)));
             }
         } else if let Some(children) = &self.children {
-            text.push_str(&format!("contains ({})\n", children.len()));
+            text.push_str(&format!(
+                "{} ({})\n",
+                style::paint(style::dim(), "contains"),
+                style::num(children.len())
+            ));
             for child in children {
-                text.push_str(&format!("  {}  {}", child.kind, child.name));
+                text.push_str(&format!(
+                    "  {}  {}",
+                    style::paint(style::dim(), child.kind),
+                    child.name
+                ));
                 if let Some([a, b]) = child.lines {
-                    text.push_str(&format!("  lines {a}-{b}"));
+                    text.push_str(&format!(
+                        "  {}",
+                        style::paint(style::dim(), format!("lines {a}-{b}"))
+                    ));
                 }
-                text.push_str(&format!("  docs {}\n", child.docs));
+                text.push_str(&format!(
+                    "  {} {}\n",
+                    style::paint(style::dim(), "docs"),
+                    style::num(child.docs)
+                ));
             }
         }
         text
     }
 }
 
+/// `MISSING  was <where>  ID <id>  docs N`: a node whose code is gone, as every command that names one says it.
+pub fn missing_line(was: &str, node_id: &str, docs: usize) -> String {
+    format!(
+        "{}  {} {}  {} {node_id}  {} {}",
+        style::paint(style::alert(), "MISSING"),
+        style::paint(style::dim(), "was"),
+        style::paint(style::location(), was),
+        style::paint(style::dim(), "ID"),
+        style::paint(style::dim(), "docs"),
+        style::num(docs)
+    )
+}
+
 impl Render for MissingView {
     fn text(&self, quiet: bool) -> String {
         let mut text = format!(
-            "MISSING  was {}  ID {}  docs {}\n",
-            self.was,
-            self.node_id,
-            self.docs.len()
+            "{}\n",
+            missing_line(&self.was, &self.node_id, self.docs.len())
         );
         // the ID reads it: a Missing node has no location any more
         if !self.docs.is_empty() {

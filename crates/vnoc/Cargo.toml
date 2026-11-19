@@ -23,6 +23,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ignore = "0.4"
 toml_edit = "0.22"
 clap = { version = "4", features = ["derive"] }
+# The colour of the command line: the versions clap already builds (no new crate), used directly for the palette and the writer
+anstream = "1"
+anstyle = "1"
 regex = "1"
 
 [target.'cfg(not(unix))'.dependencies]

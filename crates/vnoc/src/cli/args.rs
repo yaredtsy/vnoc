@@ -40,12 +40,17 @@ pub struct Global {
     /// Print one JSON value, `{ "schema": 1, "command": …, … }`, instead of text.
     #[arg(long, global = true, conflicts_with = "format")]
     pub json: bool,
-    /// For commands that print a list: one ID per line (`id`) or one file path per line (`path`), and nothing else.
+    /// For commands that print a list: one location per line (`id`; a node whose code is gone has no location, so its ID) or one file path per line
+    /// (`path`), and nothing else.
     #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub format: Option<Format>,
     /// Print only the rows: no hints about what to run next, no totals.
     #[arg(long, global = true)]
     pub quiet: bool,
+    /// Colour and weight for a person's terminal: `auto` (the default) uses them when standard output is a terminal and `NO_COLOR` is not set
+    /// (`CLICOLOR_FORCE` forces them); `always` and `never` decide. A pipe gets plain text, the same words either way.
+    #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = super::style::When::Auto)]
+    pub color: super::style::When,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]

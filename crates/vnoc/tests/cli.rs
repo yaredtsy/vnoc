@@ -76,13 +76,39 @@ fn vnoc(cwd: &Path, args: &[&str]) -> Command {
     cmd.current_dir(cwd)
         .env_remove("VNOC_DRIVER")
         .env_remove("VNOC_LOG")
+        // what colours a terminal is the test's to say, not the environment's
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR")
+        .env_remove("CLICOLOR_FORCE")
         .stdin(Stdio::null());
     cmd.arg("--driver").arg(driver_path()).args(args);
     cmd
 }
 
+/// Runs the command, and checks the one rule of A6d for every command the suite runs: **through a pipe nothing is painted**. A test that asks for
+/// colour (`--color always`, `CLICOLOR_FORCE`) says so in the command and is not checked here.
 fn run(mut cmd: Command) -> Output {
-    cmd.output().unwrap()
+    let asks_for_colour = cmd
+        .get_args()
+        .any(|a| a == "always" || a == "--color=always")
+        || cmd
+            .get_envs()
+            .any(|(k, v)| k == "CLICOLOR_FORCE" && v.is_some());
+    let out = cmd.output().unwrap();
+    if !asks_for_colour {
+        for (name, bytes) in [
+            ("standard output", &out.stdout),
+            ("standard error", &out.stderr),
+        ] {
+            assert!(
+                !bytes.contains(&0x1b),
+                "{:?}: an escape code on {name} through a pipe: {}",
+                cmd.get_args().collect::<Vec<_>>(),
+                String::from_utf8_lossy(bytes).escape_debug()
+            );
+        }
+    }
+    out
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -424,7 +450,7 @@ fn status_in_json_is_the_golden_file() {
 }
 
 #[test]
-fn status_in_text_has_its_three_lines() {
+fn status_in_text_has_labelled_lines() {
     let root = sample_copy("status-text");
     let json = status_json(&root, &root, &[]);
     let driver_version = json["drivers"][0]["version"].as_str().unwrap().to_string();
@@ -435,15 +461,16 @@ fn status_in_text_has_its_three_lines() {
     assert_eq!(
         without_root(&text(&out.stdout), &root),
         format!(
-            "V-NOC {version}   root <root>   drivers python {driver_version} (12 files)\n\
-             {}\n\
-             missing 1 · lost markers 1 · problems 0      → vnoc check\n",
-            "3 folders · 12 files · 5 classes · 27 functions · 7 docs on 6 nodes"
+            "V-NOC {version}   <root>\n\n\
+             \x20 code     3 folders · 12 files · 5 classes · 27 functions\n\
+             \x20 docs     7 docs on 6 nodes\n\
+             \x20 health   1 missing · 1 lost marker · 0 problems     → vnoc check\n\
+             \x20 driver   python {driver_version} · read 12 files\n"
         )
     );
     // quiet drops the hint, and nothing else
     let quiet = run(vnoc(&root, &["status", "--quiet"]));
-    assert!(text(&quiet.stdout).contains("missing 1 · lost markers 1 · problems 0\n"));
+    assert!(text(&quiet.stdout).contains("  health   1 missing · 1 lost marker · 0 problems\n"));
     assert!(!text(&quiet.stdout).contains("vnoc check"));
 }
 
@@ -485,18 +512,25 @@ fn a_folder_without_a_vnoc_folder_answers_and_says_so() {
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     let shown = without_root(&text(&out.stdout), &dir);
     let lines: Vec<&str> = shown.lines().collect();
-    assert_eq!(lines.len(), 3, "{shown}");
+    assert_eq!(lines.len(), 6, "{shown}");
     assert!(
-        lines[0].starts_with("V-NOC ") && lines[0].contains("root <root>   drivers python "),
+        lines[0].starts_with("V-NOC ") && lines[0].ends_with("   <root>"),
         "{shown}"
     );
-    assert_eq!(
-        lines[1],
-        "0 folders · 1 file · 0 classes · 1 function · no docs"
-    );
+    assert_eq!(lines[1], "");
     assert_eq!(
         lines[2],
-        "no .vnoc/ here yet: nothing is documented (vnoc init starts it; ask the user first)"
+        "  code     0 folders · 1 file · 0 classes · 1 function"
+    );
+    assert_eq!(lines[3], "  docs     none yet: no .vnoc/ in this project");
+    assert_eq!(
+        lines[4],
+        "           vnoc init starts it (ask the user first)"
+    );
+    assert!(lines[5].starts_with("  driver   python "), "{shown}");
+    assert!(
+        !shown.contains("health"),
+        "no health line without `.vnoc/`: {shown}"
     );
 }
 
@@ -630,6 +664,28 @@ fn a_reader_that_goes_away_ends_the_command_quietly() {
     let out = child.wait_with_output().unwrap();
     assert_eq!(code(&out), 0);
     assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+}
+
+#[test]
+fn a_reader_that_is_gone_before_the_first_write_is_quiet_with_or_without_colour() {
+    // the read end is closed while the command is still building the index, so its first write is a write to a closed pipe: through `anstream`
+    // (`--color always`) as through standard output
+    let root = sample_copy("pipe-gone");
+    for args in [
+        &["status"][..],
+        &["status", "--color", "always"][..],
+        &["tree", "--color", "always"][..],
+    ] {
+        let mut child = vnoc(&root, args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(code(&out), 0, "{args:?}");
+        assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
+    }
 }
 
 // ------------------------------------------------------------------------------------------------------- the server
@@ -1163,11 +1219,7 @@ fn a_folder_with_no_python_starts_no_driver_and_says_so() {
     let shown = without_root(&stdout_of(&dir, &["status"]), &dir);
     assert!(
         shown.starts_with("V-NOC ")
-            && shown
-                .lines()
-                .next()
-                .unwrap()
-                .ends_with("root <root>   driver not started (no Python files to read)"),
+            && shown.ends_with("  driver   not started (no Python files to read)\n"),
         "{shown}"
     );
     let json = status_json(&dir, &dir, &[]);
@@ -2606,5 +2658,218 @@ fn status_counts_the_lost_markers_in_text_and_json() {
     assert_eq!(json["lost_markers"][0]["id"], LOST_ID);
     // a project with none says 0 and has no hint for it
     let clean = clean_copy("status-clean");
-    assert!(stdout_of(&clean, &["status"]).ends_with("missing 0 · lost markers 0 · problems 0\n"));
+    let shown = stdout_of(&clean, &["status"]);
+    assert!(shown.contains("  health   all good\n"), "{shown}");
+    assert!(
+        !shown.contains("vnoc check"),
+        "nothing to check, no hint: {shown}"
+    );
+}
+
+// ------------------------------------------------------------------------------------------------ style for people (A6d)
+
+/// What `anstream` takes out of a text: every escape code.
+fn without_codes(text: &str) -> String {
+    anstream::adapter::strip_str(text).to_string()
+}
+
+/// `vnoc <args>` as a terminal's user sees it when `--color always` is given: the output, and the exit code.
+fn painted(cwd: &Path, args: &[&str]) -> (String, i32) {
+    let mut all = vec!["--color", "always"];
+    all.extend_from_slice(args);
+    let out = run(vnoc(cwd, &all));
+    (text(&out.stdout), code(&out))
+}
+
+#[test]
+fn with_colour_every_command_says_the_same_words_and_only_the_style_differs() {
+    // the rule of A6d, command by command: take the codes out of what a terminal gets and it is what a pipe gets, to the byte (a search hit is the one
+    // exception, `**retry**` in a pipe and bold yellow in a terminal, so the stars are taken out of the pipe's)
+    let root = sample_copy("colour-same");
+    let commands: Vec<Vec<&str>> = vec![
+        vec!["status"],
+        vec!["status", "--quiet"],
+        vec!["show", METHOD],
+        vec!["show", "orders/service.py"],
+        vec!["show", "billing", "orders"],
+        vec!["show", MISSING_ID],
+        vec!["code", METHOD, "billing/tax.py::apply_tax"],
+        vec!["doc", "list", "billing/charge.py"],
+        vec!["doc", "list"],
+        vec!["doc", "read", "billing/charge.py"],
+        vec!["tree", "billing", "--docs", "--sig"],
+        vec!["tree", "--flat", "--lines", "--where", "no:doc kind:fn"],
+        vec!["find", "retry"],
+        vec!["find", "e", "--limit", "3"],
+        vec!["grep", "MAX_ATTEMPTS", "billing"],
+        vec!["grep", "delete the tests", "--docs"],
+        vec!["calls", PLACE],
+        vec!["calls", PLACE, "--depth", "1"],
+        vec!["missing"],
+        vec!["check"],
+    ];
+    for args in commands {
+        let plain = run(vnoc(&root, &args));
+        let (coloured, exit) = painted(&root, &args);
+        assert_eq!(exit, code(&plain), "{args:?}");
+        assert!(
+            coloured.contains("\x1b["),
+            "{args:?} has no style: {coloured:?}"
+        );
+        let expected = if args[0] == "find" {
+            text(&plain.stdout).replace("**", "")
+        } else {
+            text(&plain.stdout)
+        };
+        assert_eq!(without_codes(&coloured), expected, "{args:?}");
+    }
+}
+
+#[test]
+fn the_machine_formats_are_never_painted() {
+    let root = sample_copy("colour-machine");
+    for args in [
+        vec!["show", METHOD, "--json"],
+        vec!["find", "retry", "--format", "id"],
+        vec!["tree", "billing", "--format", "path"],
+        vec!["check", "--json"],
+        vec!["missing", "--format", "id"],
+    ] {
+        let plain = run(vnoc(&root, &args));
+        let (coloured, _) = painted(&root, &args);
+        assert_eq!(
+            coloured,
+            text(&plain.stdout),
+            "{args:?}: --json and --format are for programs"
+        );
+    }
+}
+
+#[test]
+fn a_hit_is_stars_in_a_pipe_and_bold_yellow_in_a_terminal() {
+    let root = sample_copy("colour-hit");
+    assert!(
+        stdout_of(&root, &["find", "retry", "--docs"])
+            .contains("The **retry** count lives in MAX_ATTEMPTS.")
+    );
+    let (shown, _) = painted(&root, &["find", "retry", "--docs"]);
+    assert!(
+        shown.contains("The \x1b[1m\x1b[33mretry\x1b[0m count lives in MAX_ATTEMPTS."),
+        "{shown:?}"
+    );
+    assert!(!shown.contains("**"));
+}
+
+#[test]
+fn the_palette_marks_a_missing_node_an_error_and_a_note() {
+    let root = sample_copy("colour-palette");
+    let (shown, _) = painted(&root, &["show", MISSING_ID]);
+    assert!(shown.starts_with("\x1b[1m\x1b[31mMISSING\x1b[0m  \x1b[2mwas\x1b[0m \x1b[36mapi/routes.py::legacy_export\x1b[0m"), "{shown:?}");
+    assert!(
+        shown.contains("\x1b[32mThe old CSV export\x1b[0m"),
+        "a doc title is green: {shown:?}"
+    );
+    // an error line, on standard error: `error:` is bold red
+    let out = run(vnoc(&root, &["--color", "always", "show", "nowhere.py"]));
+    assert_eq!(code(&out), 2);
+    let said = text(&out.stderr);
+    assert!(
+        said.starts_with("\x1b[1m\x1b[31merror:\x1b[0m no file nowhere.py"),
+        "{said:?}"
+    );
+    // a note is yellow
+    let out = run(vnoc(&root, &["--color", "always", "find", "kind:fnn"]));
+    assert!(
+        text(&out.stderr).starts_with("\x1b[33mnote:\x1b[0m `kind:fnn` is not a kind"),
+        "{:?}",
+        text(&out.stderr)
+    );
+    // a failing count above 0 is red, a count of 0 is bold
+    let (status, _) = painted(&root, &["status"]);
+    assert!(status.contains("\x1b[31m1\x1b[0m missing"), "{status:?}");
+    assert!(status.contains("\x1b[1m0\x1b[0m problems"), "{status:?}");
+}
+
+#[test]
+fn status_with_colour_is_a_golden_file_that_pins_the_palette() {
+    let root = sample_copy("colour-golden");
+    let json = status_json(&root, &root, &[]);
+    let driver_version = json["drivers"][0]["version"].as_str().unwrap().to_string();
+    let (shown, exit) = painted(&root, &["status"]);
+    assert_eq!(exit, 0);
+    let shown = without_root(&shown, &root)
+        .replace(env!("CARGO_PKG_VERSION"), "<version>")
+        .replace(&driver_version, "<version>");
+    golden_text("status-color.txt", &shown);
+}
+
+#[test]
+fn the_environment_and_the_flag_decide_whether_to_paint() {
+    let root = sample_copy("colour-env");
+    let with_env = |env: &[(&str, &str)], args: &[&str]| -> Output {
+        let mut cmd = vnoc(&root, args);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd.output().unwrap()
+    };
+    // CLICOLOR_FORCE stands in for a terminal (a test has none): `auto` paints
+    assert!(
+        with_env(&[("CLICOLOR_FORCE", "1")], &["status"])
+            .stdout
+            .contains(&0x1b)
+    );
+    // NO_COLOR wins over it under `auto`
+    assert!(
+        !with_env(&[("CLICOLOR_FORCE", "1"), ("NO_COLOR", "1")], &["status"])
+            .stdout
+            .contains(&0x1b)
+    );
+    assert!(
+        !with_env(
+            &[("CLICOLOR_FORCE", "1"), ("NO_COLOR", "1")],
+            &["--color", "auto", "status"]
+        )
+        .stdout
+        .contains(&0x1b)
+    );
+    // the flag is the user's word over both
+    assert!(
+        !with_env(&[("CLICOLOR_FORCE", "1")], &["--color", "never", "status"])
+            .stdout
+            .contains(&0x1b)
+    );
+    assert!(
+        with_env(&[("NO_COLOR", "1")], &["--color", "always", "status"])
+            .stdout
+            .contains(&0x1b)
+    );
+    // a pipe with nothing said is plain
+    assert!(!with_env(&[], &["status"]).stdout.contains(&0x1b));
+    // the flag takes three words and no more
+    assert_eq!(
+        code(&run(vnoc(&root, &["--color", "sometimes", "status"]))),
+        2
+    );
+}
+
+#[test]
+fn clap_help_follows_the_same_choice() {
+    let root = sample_copy("colour-help");
+    let plain = run(vnoc(&root, &["status", "--help"]));
+    assert_eq!(code(&plain), 0);
+    let (shown, exit) = painted(&root, &["status", "--help"]);
+    assert_eq!(exit, 0);
+    assert!(shown.contains("\x1b["), "{shown:?}");
+    assert_eq!(without_codes(&shown), text(&plain.stdout));
+    // the flag after the command, `=` form, and never
+    let after = run(vnoc(&root, &["status", "--help", "--color=always"]));
+    assert!(after.stdout.contains(&0x1b));
+    let mut never = vnoc(&root, &["status", "--help", "--color", "never"]);
+    never.env("CLICOLOR_FORCE", "1");
+    assert!(!never.output().unwrap().stdout.contains(&0x1b));
+    // a usage error is on standard error, painted by the same rule
+    let out = run(vnoc(&root, &["--color", "always", "no-such-command"]));
+    assert_eq!(code(&out), 2);
+    assert!(out.stderr.contains(&0x1b));
 }

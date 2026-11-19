@@ -9,6 +9,7 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
+use super::style::{self, Stream};
 use super::{Failure, Global};
 
 /// What a command answers, as a value that can be written as JSON (`Serialize`: the shape is the promise, C5) and as text. A command builds this
@@ -27,9 +28,10 @@ pub fn render<T: Render>(value: &T, global: &Global) -> Result<(), Failure> {
     }
 }
 
-/// Writes `text` to standard output, locked, and flushes.
+/// Writes `text` to standard output, locked, and flushes. A terminal gets it through `anstream`; a pipe gets the bytes as they are (the renderers
+/// painted nothing: `style`).
 pub fn text(text: &str) -> Result<(), Failure> {
-    let mut stdout = io::stdout().lock();
+    let mut stdout = style::writer(Stream::Out);
     stdout
         .write_all(text.as_bytes())
         .and_then(|()| stdout.flush())
@@ -47,25 +49,40 @@ pub fn json<T: Serialize>(value: &T) -> Result<(), Failure> {
 /// A failure's line on standard error. Nothing else is written there by a command (logs only with `VNOC_LOG`).
 pub fn error(message: &str) {
     // a closed standard error has nowhere to complain to
-    let _ = writeln!(io::stderr().lock(), "error: {message}");
+    let _ = writeln!(
+        style::writer(Stream::Err),
+        "{} {message}",
+        style::paint_err(style::alert(), "error:")
+    );
 }
 
 /// A remark about the request that did not stop it (a filter of a query that means nothing): one line on standard error, `note: …`.
 pub fn note(message: &str) {
-    let _ = writeln!(io::stderr().lock(), "note: {message}");
+    let _ = writeln!(
+        style::writer(Stream::Err),
+        "{} {message}",
+        style::paint_err(style::warn(), "note:")
+    );
 }
 
 /// clap's own answer to `--help`, `--version` or a mistake: its text goes to standard output for the first two and to standard error for the
 /// last, as clap decides. Returns clap's exit code (0, or 2 for a usage error).
 pub fn clap_error(e: &clap::Error) -> i32 {
-    let rendered = e.render().to_string();
-    let written = if e.use_stderr() {
-        io::stderr().lock().write_all(rendered.as_bytes())
+    let (stream, to_stderr) = if e.use_stderr() {
+        (Stream::Err, true)
     } else {
-        let mut stdout = io::stdout().lock();
-        stdout
-            .write_all(rendered.as_bytes())
-            .and_then(|()| stdout.flush())
+        (Stream::Out, false)
+    };
+    // clap's own styling (bold headings, the usage line) follows `--color` as everything else does
+    let rendered = if style::on(stream) {
+        e.render().ansi().to_string()
+    } else {
+        e.render().to_string()
+    };
+    let written = {
+        let mut out = style::writer(if to_stderr { Stream::Err } else { Stream::Out });
+        out.write_all(rendered.as_bytes())
+            .and_then(|()| out.flush())
     };
     match written {
         Err(w) if w.kind() != io::ErrorKind::BrokenPipe => 3,

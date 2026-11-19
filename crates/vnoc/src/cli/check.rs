@@ -10,8 +10,9 @@ use vnoc_domain::{NodeId, RepoPath};
 use super::nodes::{Doc, Lookup};
 use super::out::{self, Render};
 use super::project::{open_from, open_without_driver};
-use super::{Failure, Format, Global};
-use crate::check::{Finding, check, summary};
+use super::show::missing_line;
+use super::{Failure, Format, Global, style};
+use crate::check::{Finding, FindingKind, check};
 use crate::project::Project;
 
 pub async fn missing(global: &Global) -> Result<(), Failure> {
@@ -84,14 +85,18 @@ impl Render for MissingAnswer {
         let mut text = String::new();
         for row in &self.missing {
             text.push_str(&format!(
-                "MISSING  was {}  ID {}  docs {}\n",
-                row.was,
-                row.node_id,
-                row.docs.len()
+                "{}\n",
+                missing_line(&row.was, &row.node_id, row.docs.len())
             ));
             if !quiet {
-                text.push_str(&format!("  → vnoc relink {} <node>\n", row.node_id));
-                text.push_str("  or remove it in VS Code if the code is gone\n");
+                let hints = format!(
+                    "→ vnoc relink {} <node>\n  or remove it in VS Code if the code is gone",
+                    row.node_id
+                );
+                for (n, hint) in hints.lines().enumerate() {
+                    let indent = if n == 0 { "  " } else { "" };
+                    text.push_str(&format!("{indent}{}\n", style::paint(style::dim(), hint)));
+                }
             }
         }
         text
@@ -204,6 +209,39 @@ impl CheckAnswer {
     }
 }
 
+/// `2 problems`, `2 problems · 1 warning`, `0 problems · 1 warning`, `no problems`: the failing number is red, the warnings' yellow.
+fn summary(failing: usize, warnings: usize) -> String {
+    let word = |n: usize, one: &str, many: &str| {
+        if n == 1 {
+            one.to_string()
+        } else {
+            many.to_string()
+        }
+    };
+    let problems = format!(
+        "{} {}",
+        style::failing(failing),
+        word(failing, "problem", "problems")
+    );
+    let warned = format!(
+        "{} {}",
+        style::paint(
+            if warnings > 0 {
+                style::warn()
+            } else {
+                style::bold()
+            },
+            style::grouped(warnings)
+        ),
+        word(warnings, "warning", "warnings")
+    );
+    match (failing, warnings) {
+        (0, 0) => style::paint(style::good(), "no problems"),
+        (_, 0) => problems,
+        _ => format!("{problems} · {warned}"),
+    }
+}
+
 impl Render for CheckAnswer {
     fn text(&self, quiet: bool) -> String {
         if !self.initialized {
@@ -215,18 +253,29 @@ impl Render for CheckAnswer {
         }
         let mut text = String::new();
         for finding in &self.findings {
-            text.push_str(&format!(
-                "{}  {}  {}\n",
+            // a warning's kind word is yellow, as a warning is; the others are dim like every kind word
+            let kind = style::paint(
+                if finding.kind == FindingKind::Unread {
+                    style::warn()
+                } else {
+                    style::dim()
+                },
                 finding.kind.word(),
-                finding.path,
+            );
+            text.push_str(&format!(
+                "{kind}  {}  {}\n",
+                style::paint(style::location(), &finding.path),
                 finding.message
             ));
             if !quiet {
-                text.push_str(&format!("  → {}\n", finding.fix));
+                text.push_str(&format!(
+                    "  {}\n",
+                    style::paint(style::dim(), format!("→ {}", finding.fix))
+                ));
             }
         }
         if !quiet {
-            text.push_str(&format!("{}\n", summary(&self.findings)));
+            text.push_str(&format!("{}\n", summary(self.failing, self.warnings)));
         }
         text
     }

@@ -12,7 +12,7 @@ use super::args::GrepArgs;
 use super::nodes::{Lookup, NodeError, Target, doc_path, expand, kind_word};
 use super::out::{self, Render};
 use super::project::open_from;
-use super::{Failure, Format, Global};
+use super::{Failure, Format, Global, style};
 use crate::grep::{DocHits, HitLine, NodeHits, grep, grep_docs};
 
 pub async fn run(global: &Global, args: &GrepArgs) -> Result<(), Failure> {
@@ -207,7 +207,7 @@ impl Grep {
 }
 
 fn hits_word(n: usize) -> String {
-    format!("{n} {}", if n == 1 { "hit" } else { "hits" })
+    style::count(n, "hit", "hits")
 }
 
 /// `  44  text`, the numbers right-aligned to the widest of these lines.
@@ -219,7 +219,10 @@ fn numbered(lines: &[HitLine]) -> String {
         .unwrap_or(0);
     lines
         .iter()
-        .map(|l| format!("  {:>width$}  {}\n", l.line, l.text))
+        .map(|l| {
+            let number = style::paint(style::dim(), format!("{:>width$}", l.line));
+            format!("  {number}  {}\n", l.text)
+        })
         .collect()
 }
 
@@ -227,10 +230,12 @@ fn more_hits(more: usize) -> String {
     if more == 0 {
         String::new()
     } else {
-        format!(
-            "  … {more} more {}\n",
+        let said = format!(
+            "… {} more {}",
+            style::grouped(more),
             if more == 1 { "hit" } else { "hits" }
-        )
+        );
+        format!("  {}\n", style::paint(style::dim(), said))
     }
 }
 
@@ -238,20 +243,26 @@ impl Render for Grep {
     fn text(&self, quiet: bool) -> String {
         let mut text = String::new();
         for node in self.nodes.iter().flatten() {
-            text.push_str(&format!("{}  {}", kind_word(node.kind), node.location));
+            text.push_str(&format!(
+                "{}  {}",
+                style::paint(style::dim(), kind_word(node.kind)),
+                style::paint(style::location(), &node.location)
+            ));
             if let Some([a, b]) = node.lines {
-                text.push_str(&format!("   lines {a}-{b}"));
+                text.push_str(&format!(
+                    "   {}",
+                    style::paint(style::dim(), format!("lines {a}-{b}"))
+                ));
             }
             if node.docs > 0 {
-                text.push_str(&format!(
-                    "   · {} {}",
-                    node.docs,
-                    if node.docs == 1 { "doc" } else { "docs" }
-                ));
+                text.push_str(&format!("   · {}", style::count(node.docs, "doc", "docs")));
             }
             text.push_str(&format!("   {}", hits_word(node.hits)));
             if node.outside_def {
-                text.push_str("   (outside any def)");
+                text.push_str(&format!(
+                    "   {}",
+                    style::paint(style::dim(), "(outside any def)")
+                ));
             }
             text.push('\n');
             if !self.style.names {
@@ -260,14 +271,16 @@ impl Render for Grep {
             }
         }
         for doc in self.docs.iter().flatten() {
-            let on = doc
-                .location
-                .clone()
-                .unwrap_or_else(|| format!("ID {}", doc.node_id));
+            let on = match &doc.location {
+                Some(location) => style::paint(style::location(), location),
+                None => format!("{} {}", style::paint(style::dim(), "ID"), doc.node_id),
+            };
             text.push_str(&format!(
-                "doc  {}  on {on}  {}   {}\n",
-                doc.title,
-                doc.path,
+                "{}  {}  {} {on}  {}   {}\n",
+                style::paint(style::dim(), "doc"),
+                style::paint(style::title(), &doc.title),
+                style::paint(style::dim(), "on"),
+                style::paint(style::dim(), &doc.path),
                 hits_word(doc.hits)
             ));
             if !self.style.names {
@@ -280,19 +293,24 @@ impl Render for Grep {
         }
         let what = if self.docs.is_some() { "docs" } else { "nodes" };
         if self.cut > 0 {
-            text.push_str(&if quiet {
-                format!("… {} more {what}\n", self.cut)
+            let cut = style::grouped(self.cut);
+            let said = if quiet {
+                format!("… {cut} more {what}")
             } else {
                 format!(
-                    "… {} more {what} (narrow with a path or the pattern, or --limit N; {} in all)\n",
-                    self.cut, self.total
+                    "… {cut} more {what} (narrow with a path or the pattern, or --limit N; {} in all)",
+                    style::grouped(self.total)
                 )
-            });
+            };
+            text.push_str(&format!("{}\n", style::paint(style::dim(), said)));
         }
         if !quiet {
             let one = if what == "nodes" { "node" } else { "doc" };
-            let n = if self.total == 1 { one } else { what };
-            text.push_str(&format!("{} {n} · {}\n", self.total, hits_word(self.hits)));
+            text.push_str(&format!(
+                "{} · {}\n",
+                style::count(self.total, one, what),
+                hits_word(self.hits)
+            ));
         }
         text
     }

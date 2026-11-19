@@ -1,0 +1,6 @@
+[1mV-NOC <version>[0m   [36m<root>[0m
+
+  [2mcode  [0m   [1m3[0m folders · [1m12[0m files · [1m5[0m classes · [1m27[0m functions
+  [2mdocs  [0m   [1m7[0m docs on [1m6[0m nodes
+  [2mhealth[0m   [31m1[0m missing · [31m1[0m lost marker · [1m0[0m problems     [2m→ vnoc check[0m
+  [2mdriver[0m   python <version> · read [1m12[0m files

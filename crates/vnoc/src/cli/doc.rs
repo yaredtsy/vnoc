@@ -14,7 +14,8 @@ use super::nodes::{
 };
 use super::out::Render;
 use super::project::{Opened, open_from, open_without_driver};
-use super::{Failure, Global};
+use super::show::{head_line, missing_line};
+use super::{Failure, Global, style};
 use crate::index::Node;
 use crate::node_ref::{self, NodeRef};
 use crate::userdata::{UserData, after_frontmatter};
@@ -127,18 +128,15 @@ impl DocsAnswer {
     /// Where the node is, as its header says it.
     fn header(&self) -> String {
         match (&self.was, &self.location, &self.kind) {
-            (Some(was), _, _) => format!(
-                "MISSING  was {was}  ID {}  docs {}",
-                self.node_id.as_deref().unwrap_or(""),
-                self.docs.len()
-            ),
-            (None, Some(location), kind) => {
-                let mut head = format!("{}  {location}", kind.as_deref().unwrap_or("node"));
-                if let Some(id) = &self.node_id {
-                    head.push_str(&format!("   ID {id}"));
-                }
-                head
+            (Some(was), _, _) => {
+                missing_line(was, self.node_id.as_deref().unwrap_or(""), self.docs.len())
             }
+            (None, Some(location), kind) => head_line(
+                kind.as_deref().unwrap_or("node"),
+                location,
+                None,
+                self.node_id.as_deref(),
+            ),
             _ => String::new(),
         }
     }
@@ -166,7 +164,13 @@ impl Render for DocsAnswer {
                 bodies
                     .iter()
                     .map(|doc| {
-                        let mut text = format!("── {}  {}\n{}", doc.title, doc.path, doc.body);
+                        let mut text = format!(
+                            "{} {}  {}\n{}",
+                            style::paint(style::dim(), "──"),
+                            style::paint(style::title(), &doc.title),
+                            style::paint(style::dim(), &doc.path),
+                            doc.body
+                        );
                         if !text.ends_with('\n') {
                             text.push('\n');
                         }
@@ -181,7 +185,11 @@ impl Render for DocsAnswer {
                     text.push_str("  no docs\n");
                 }
                 for doc in &self.docs {
-                    text.push_str(&format!("  {}  {}\n", doc.title, doc.path));
+                    text.push_str(&format!(
+                        "  {}  {}\n",
+                        style::paint(style::title(), &doc.title),
+                        style::paint(style::dim(), &doc.path)
+                    ));
                 }
                 text
             }

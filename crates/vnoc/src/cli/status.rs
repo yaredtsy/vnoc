@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use super::project::{Opened, open_from};
-use super::{Failure, Global, out};
+use super::{Failure, Global, out, style};
 use crate::index;
 use crate::protocol::{FailedFile, LostMarker, MissingNode, Problem, Stats};
 
@@ -98,71 +98,115 @@ async fn status_of(opened: &Opened) -> Status {
     }
 }
 
-/// `1 file`, `3 files`.
+/// `1 file`, `3 files`: the number in bold, grouped by thousands.
 fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
+    style::count(n, one, many)
+}
+
+/// One labelled line: `  code     …`. The label is dim and the same width in every line.
+fn line(label: &str, rest: &str) -> String {
+    format!(
+        "  {}   {rest}\n",
+        style::paint(style::dim(), format!("{label:<6}"))
+    )
 }
 
 fn text(s: &Status, quiet: bool) -> String {
-    let driver = if s.drivers.is_empty() {
-        "driver not started (no Python files to read)".to_string()
+    let mut out = format!(
+        "{}   {}\n\n",
+        style::paint(style::bold(), format!("V-NOC {}", s.version)),
+        style::paint(style::location(), &s.root)
+    );
+    out.push_str(&line(
+        "code",
+        &[
+            count(s.stats.folders, "folder", "folders"),
+            count(s.stats.files, "file", "files"),
+            count(s.stats.classes, "class", "classes"),
+            count(s.stats.functions, "function", "functions"),
+        ]
+        .join(" · "),
+    ));
+    if s.initialized {
+        let docs = if s.docs.docs > 0 {
+            format!(
+                "{} on {}",
+                count(s.docs.docs, "doc", "docs"),
+                count(s.docs.nodes, "node", "nodes")
+            )
+        } else {
+            "no docs".to_string()
+        };
+        out.push_str(&line("docs", &docs));
     } else {
-        let each: Vec<String> = s
-            .drivers
+        out.push_str(&line(
+            "docs",
+            &format!(
+                "{}: no .vnoc/ in this project",
+                style::paint(style::warn(), "none yet")
+            ),
+        ));
+        // the second line of the cell, under the first
+        out.push_str(&format!(
+            "{}vnoc init starts it (ask the user first)\n",
+            " ".repeat(11)
+        ));
+    }
+    // health: what is wrong, or `all good`. Files that failed and a scan that stopped are on it too, with or without a `.vnoc/`.
+    let mut health = Vec::new();
+    if s.initialized {
+        health.push(format!("{} missing", style::failing(s.missing.len())));
+        let lost = s.lost_markers.len();
+        health.push(format!(
+            "{} lost {}",
+            style::failing(lost),
+            if lost == 1 { "marker" } else { "markers" }
+        ));
+        let problems = s.problems.len();
+        health.push(format!(
+            "{} {}",
+            style::failing(problems),
+            if problems == 1 { "problem" } else { "problems" }
+        ));
+    }
+    if !s.failed.is_empty() {
+        health.push(format!("failed {}", style::failing(s.failed.len())));
+    }
+    if s.truncated {
+        health.push(style::paint(style::warn(), "stopped at 20,000 files"));
+    }
+    if !health.is_empty() {
+        let wrong = s.missing.len() + s.lost_markers.len() + s.problems.len() + s.failed.len();
+        let mut rest = if s.initialized && wrong == 0 && !s.truncated {
+            style::paint(style::good(), "all good")
+        } else {
+            health.join(" · ")
+        };
+        if s.missing.len() + s.lost_markers.len() + s.problems.len() > 0 && !quiet {
+            rest.push_str(&format!(
+                "     {}",
+                style::paint(style::dim(), "→ vnoc check")
+            ));
+        }
+        out.push_str(&line("health", &rest));
+    }
+    let driver = if s.drivers.is_empty() {
+        "not started (no Python files to read)".to_string()
+    } else {
+        s.drivers
             .iter()
             .map(|d| {
                 format!(
-                    "{} {} ({})",
+                    "{} {} · read {}",
                     d.name,
                     d.version,
                     count(d.files, "file", "files")
                 )
             })
-            .collect();
-        format!("drivers {}", each.join(", "))
+            .collect::<Vec<_>>()
+            .join(", ")
     };
-    let docs = if s.initialized && s.docs.docs > 0 {
-        format!(
-            "{} on {}",
-            count(s.docs.docs, "doc", "docs"),
-            count(s.docs.nodes, "node", "nodes")
-        )
-    } else {
-        "no docs".to_string()
-    };
-    let mut out = format!(
-        "V-NOC {}   root {}   {driver}\n{} · {} · {} · {} · {docs}\n",
-        s.version,
-        s.root,
-        count(s.stats.folders, "folder", "folders"),
-        count(s.stats.files, "file", "files"),
-        count(s.stats.classes, "class", "classes"),
-        count(s.stats.functions, "function", "functions"),
-    );
-    let mut third = Vec::new();
-    if s.initialized {
-        third.push(format!("missing {}", s.missing.len()));
-        third.push(format!("lost markers {}", s.lost_markers.len()));
-        third.push(format!("problems {}", s.problems.len()));
-    }
-    if !s.failed.is_empty() {
-        third.push(format!("failed {}", s.failed.len()));
-    }
-    if s.truncated {
-        third.push("stopped at 20,000 files".to_string());
-    }
-    if !third.is_empty() {
-        out.push_str(&third.join(" · "));
-        if s.missing.len() + s.lost_markers.len() + s.problems.len() > 0 && !quiet {
-            out.push_str("      → vnoc check");
-        }
-        out.push('\n');
-    }
-    if !s.initialized {
-        out.push_str(
-            "no .vnoc/ here yet: nothing is documented (vnoc init starts it; ask the user first)\n",
-        );
-    }
+    out.push_str(&line("driver", &driver));
     out
 }
 
@@ -197,40 +241,148 @@ mod tests {
         }
     }
 
+    fn lost(n: usize) -> Vec<LostMarker> {
+        (0..n)
+            .map(|i| LostMarker {
+                id: format!("ID{i}"),
+                key: format!("a.py::f{i}"),
+                kind: crate::index::Kind::Function,
+                path: "a.py".into(),
+                qualname: format!("f{i}"),
+            })
+            .collect()
+    }
+
+    fn missing(n: usize) -> Vec<MissingNode> {
+        (0..n)
+            .map(|i| MissingNode {
+                id: format!("X{i}"),
+                kind: None,
+                path: "a.py".into(),
+                qualname: "f".into(),
+                docs: 1,
+            })
+            .collect()
+    }
+
     #[test]
-    fn the_lines_of_a_project_with_docs() {
+    fn a_project_with_nothing_wrong_is_all_good_and_has_no_hint() {
         assert_eq!(
             text(&status(true), false),
-            "V-NOC 0.2.0   root /r   drivers python 0.2.0 (10 files)\n\
-             3 folders · 10 files · 1 class · 21 functions · 7 docs on 7 nodes\n\
-             missing 0 · lost markers 0 · problems 0\n"
+            "V-NOC 0.2.0   /r\n\n\
+             \x20 code     3 folders · 10 files · 1 class · 21 functions\n\
+             \x20 docs     7 docs on 7 nodes\n\
+             \x20 health   all good\n\
+             \x20 driver   python 0.2.0 · read 10 files\n"
         );
     }
 
     #[test]
-    fn a_project_without_a_vnoc_folder_says_so_and_has_no_third_line() {
+    fn health_counts_each_thing_and_the_hint_is_for_a_problem_and_not_for_quiet() {
+        let mut s = status(true);
+        s.missing = missing(1);
+        s.lost_markers = lost(1);
+        let shown = text(&s, false);
+        assert!(
+            shown.contains("  health   1 missing · 1 lost marker · 0 problems     → vnoc check\n"),
+            "{shown}"
+        );
+        s.lost_markers = lost(2);
+        assert!(text(&s, true).contains("  health   1 missing · 2 lost markers · 0 problems\n"));
+        assert!(!text(&s, true).contains("vnoc check"));
+    }
+
+    #[test]
+    fn a_failed_file_and_a_stopped_scan_are_on_the_health_line_and_are_not_all_good() {
+        let mut s = status(true);
+        s.truncated = true;
+        s.failed = vec![FailedFile {
+            path: "b.py".into(),
+            error: "x".into(),
+        }];
+        let shown = text(&s, false);
+        assert!(
+            shown.contains("  health   0 missing · 0 lost markers · 0 problems · failed 1 · stopped at 20,000 files\n"),
+            "{shown}"
+        );
+        assert!(
+            !shown.contains("vnoc check"),
+            "no hint: nothing to check yet"
+        );
+    }
+
+    #[test]
+    fn a_project_without_a_vnoc_folder_says_none_yet_and_has_no_health_line() {
         assert_eq!(
             text(&status(false), false),
-            "V-NOC 0.2.0   root /r   drivers python 0.2.0 (10 files)\n\
-             3 folders · 10 files · 1 class · 21 functions · no docs\n\
-             no .vnoc/ here yet: nothing is documented (vnoc init starts it; ask the user first)\n"
+            "V-NOC 0.2.0   /r\n\n\
+             \x20 code     3 folders · 10 files · 1 class · 21 functions\n\
+             \x20 docs     none yet: no .vnoc/ in this project\n\
+             \x20          vnoc init starts it (ask the user first)\n\
+             \x20 driver   python 0.2.0 · read 10 files\n"
         );
+        // but a file that failed is a health line, with or without `.vnoc/`
+        let mut s = status(false);
+        s.failed = vec![FailedFile {
+            path: "b.py".into(),
+            error: "x".into(),
+        }];
+        assert!(text(&s, false).contains("  health   failed 1\n"));
     }
 
     #[test]
-    fn the_hint_is_for_a_problem_and_not_for_quiet() {
+    fn no_driver_started_says_so() {
         let mut s = status(true);
-        s.missing.push(MissingNode {
-            id: "X".into(),
-            kind: None,
-            path: "a.py".into(),
-            qualname: "f".into(),
-            docs: 1,
-        });
-        s.truncated = true;
-        assert!(text(&s, false).contains(
-            "missing 1 · lost markers 0 · problems 0 · stopped at 20,000 files      → vnoc check\n"
-        ));
-        assert!(!text(&s, true).contains("vnoc check"));
+        s.drivers.clear();
+        assert!(text(&s, false).ends_with("  driver   not started (no Python files to read)\n"));
+    }
+
+    #[test]
+    fn counts_have_thousands_separators() {
+        let mut s = status(true);
+        s.stats.files = 1805;
+        s.stats.functions = 12_345;
+        s.docs.docs = 1000;
+        let shown = text(&s, false);
+        assert!(
+            shown.contains("1,805 files · 1 class · 12,345 functions"),
+            "{shown}"
+        );
+        assert!(shown.contains("1,000 docs on 7 nodes"), "{shown}");
+        assert!(shown.contains("read 10 files"));
+    }
+
+    #[test]
+    fn in_a_terminal_the_palette_marks_the_parts_and_the_words_are_the_same() {
+        let mut s = status(true);
+        s.missing = missing(1);
+        let plain = text(&s, false);
+        let painted = style::with_color(true, || text(&s, false));
+        assert_ne!(plain, painted);
+        // taking the codes out gives the plain text back, to the byte
+        let stripped =
+            String::from_utf8(anstream::adapter::strip_bytes(painted.as_bytes()).into_vec())
+                .unwrap();
+        assert_eq!(stripped, plain);
+        assert!(
+            painted.starts_with("\x1b[1mV-NOC 0.2.0\x1b[0m   \x1b[36m/r\x1b[0m\n\n"),
+            "{painted:?}"
+        );
+        assert!(
+            painted.contains("\x1b[2mcode  \x1b[0m"),
+            "labels are dim: {painted:?}"
+        );
+        assert!(
+            painted.contains("\x1b[31m1\x1b[0m missing"),
+            "a failing count is red: {painted:?}"
+        );
+        assert!(
+            painted.contains("\x1b[1m0\x1b[0m problems"),
+            "a count of 0 is bold, not red: {painted:?}"
+        );
+        assert!(
+            painted.contains("\x1b[2m→ vnoc check\x1b[0m"),
+            "the hint is dim"
+        );
     }
 }

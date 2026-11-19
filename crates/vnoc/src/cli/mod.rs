@@ -15,6 +15,7 @@ mod out;
 pub mod project;
 mod show;
 mod status;
+pub mod style;
 mod tree;
 
 use std::ffi::OsString;
@@ -60,6 +61,8 @@ pub fn exit_code(failure: &Failure) -> i32 {
 /// Runs the command line `args` (without the program's name) and returns the exit code. clap's own usage errors are `2` and `--help` /
 /// `--version` are `0`, as clap has them.
 pub async fn run(args: Vec<OsString>) -> i32 {
+    // `--color` is read before clap parses, because clap's own output (`--help`, a usage error) is painted by it too
+    style::init(style::when_in(&args));
     let cli = match Cli::try_parse_from(std::iter::once(OsString::from("vnoc")).chain(args)) {
         Ok(cli) => cli,
         Err(e) => return out::clap_error(&e),

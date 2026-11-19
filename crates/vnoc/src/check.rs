@@ -66,21 +66,6 @@ fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// The summary line of a check: `2 problems · 1 warning`, or `no problems`.
-pub fn summary(findings: &[Finding]) -> String {
-    let problems = findings.iter().filter(|f| f.fails).count();
-    let warnings = findings.len() - problems;
-    match (problems, warnings) {
-        (0, 0) => "no problems".to_string(),
-        (_, 0) => count(problems, "problem", "problems"),
-        _ => format!(
-            "{} · {}",
-            count(problems, "problem", "problems"),
-            count(warnings, "warning", "warnings")
-        ),
-    }
-}
-
 /// A repo path as it is shown: below the opened folder.
 fn below(prefix: &str, repo_path: &str) -> String {
     if prefix.is_empty() {
