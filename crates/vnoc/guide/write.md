@@ -19,8 +19,8 @@ Returns the rate for a country from RATES, or 0.0 when the country is not in it.
 ```
 
 ## Attach it, tag it, move the tag
-Run `vnoc tags` first and reuse a tag that fits (`.vnoc/tags.toml` says what each means: read it, do not edit it). A plan is `--tag plan`;
-when it ships, `doc tag` moves it.
+Run `vnoc tags` first and reuse a tag that fits (`.vnoc/tags.toml` says what each means: read it, do not edit it; `vnoc tag describe <tag> "<text>"` is the user's
+command for that, so do not run it unless asked). A plan is `--tag plan`; when it ships, `doc tag` moves it.
 
 ```
 vnoc tags

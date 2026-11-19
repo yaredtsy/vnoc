@@ -1,24 +1,24 @@
-//! `vnoc tags` and `vnoc doc tag` (`docs/21-agent-cli/04-write-commands.md` §4, "Listing, editing and describing tags"), and the notice `doc new` and
-//! `doc tag` give for a tag nobody uses yet.
+//! `vnoc tags`, `vnoc doc tag` and `vnoc tag describe` (`docs/21-agent-cli/04-write-commands.md` §4, "Listing, editing and describing tags"), and the
+//! notice `doc new` and `doc tag` give for a tag nobody uses yet.
 //!
 //! The list of tags is **computed** from the docs every time: the doc texts carry each doc's tags and authors, so listing is a count over them, and it needs
-//! no driver. `.vnoc/tags.toml` says what a tag means; V-NOC reads it and never writes it.
+//! no driver. `.vnoc/tags.toml` says what a tag means; people write it, by hand or with `vnoc tag describe`, and nothing else writes it.
 
 use std::path::Path;
 
 use serde::Serialize;
 
-use super::args::{DocTagArgs, TagsArgs};
+use super::args::{DocTagArgs, TagCommand, TagDescribeArgs, TagsArgs};
 use super::doc::{choose_doc, node_docs};
 use super::out::{self, Render};
 use super::project::open_without_driver;
 use super::relink::refused;
-use super::write::{label, take_lock};
+use super::write::{NO_VNOC, label, settings_failure, take_lock};
 use super::{Failure, Global, style};
 use crate::project::Project;
 use crate::userdata::{
-    Descriptions, DocTexts, EditTagsError, TagCount, UserData, WriteError, author_counts, is_tag,
-    tag_counts,
+    DescribeTagError, Described, Descriptions, DocTexts, EditTagsError, TagCount, UserData,
+    WriteError, author_counts, check_description, is_tag, tag_counts,
 };
 
 /// The doc texts of the whole project, read from `.vnoc/` alone (no index, no driver), and what `tags.toml` says.
@@ -60,7 +60,7 @@ fn docs_word(n: usize) -> String {
 }
 
 impl Render for Tags {
-    fn text(&self, _quiet: bool) -> String {
+    fn text(&self, quiet: bool) -> String {
         // the names, the counts and the descriptions, each in a column
         let rows: Vec<(String, usize, Option<&str>)> = if self.authors_asked {
             self.authors
@@ -100,6 +100,22 @@ impl Render for Tags {
                 None => text.push_str(&docs_word(docs)),
             }
             text.push('\n');
+        }
+        // nothing is described yet: say how, once (a hint is not an answer, so `--quiet` drops it)
+        if !quiet
+            && !self.authors_asked
+            && self
+                .tags
+                .iter()
+                .all(|r| r.description.as_deref().is_none_or(str::is_empty))
+        {
+            text.push_str(&format!(
+                "{}\n",
+                style::paint(
+                    style::dim(),
+                    "→ describe one: vnoc tag describe <tag> \"<what it means>\""
+                )
+            ));
         }
         text
     }
@@ -250,6 +266,80 @@ pub async fn tag(global: &Global, args: &DocTagArgs) -> Result<(), Failure> {
             unchanged,
             notice: (!notices.is_empty()).then(|| notices.join("\n")),
             notices,
+        },
+        global,
+    )
+}
+
+// -------------------------------------------------------------------------------------------------------------------------- tag describe
+
+const TAGS_FILE: &str = ".vnoc/tags.toml";
+
+#[derive(Serialize)]
+struct TagDescribed {
+    schema: u32,
+    command: &'static str,
+    tag: String,
+    /// the description now, null after `--clear`
+    description: Option<String>,
+    file: &'static str,
+    #[serde(skip)]
+    done: Described,
+}
+
+impl Render for TagDescribed {
+    fn text(&self, _quiet: bool) -> String {
+        let tag = style::paint(style::title(), &self.tag);
+        match (self.done, &self.description) {
+            (Described::Set, Some(text)) => format!(
+                "{}{tag}  \"{text}\"\n{}{TAGS_FILE}\n",
+                label("described"),
+                label("in")
+            ),
+            (Described::Cleared, _) => format!("{}{tag}\n", label("cleared")),
+            _ => format!("{}  {tag}\n", label("not described")),
+        }
+    }
+}
+
+/// What a `DescribeTagError` is to a command: a request that breaks a rule is `2`; a file that is not TOML, or cannot be written, is the environment's (`3`).
+fn describe_failure(e: DescribeTagError) -> Failure {
+    match e {
+        DescribeTagError::Describe(crate::userdata::DescribeError::NotToml(_))
+        | DescribeTagError::Write(_) => Failure::Environment(e.to_string()),
+        DescribeTagError::Describe(_) => Failure::Usage(e.to_string()),
+    }
+}
+
+/// `vnoc tag …`
+pub async fn tag_command(global: &Global, command: &TagCommand) -> Result<(), Failure> {
+    match command {
+        TagCommand::Describe(args) => describe(global, args).await,
+    }
+}
+
+/// `vnoc tag describe <tag> "<text>"` and `vnoc tag describe <tag> --clear`
+async fn describe(global: &Global, args: &TagDescribeArgs) -> Result<(), Failure> {
+    let text = args.text.as_deref().filter(|_| !args.clear);
+    // the rules of the request, before the project is looked at
+    check_description(&args.tag, text).map_err(|e| Failure::Usage(e.to_string()))?;
+    let project = open_without_driver(global)?;
+    let data = UserData::new(project.git_root());
+    if !data.settings().map_err(settings_failure)?.initialized {
+        return Err(Failure::Usage(NO_VNOC.into()));
+    }
+    let _one_writer = take_lock(&project).await?;
+    let done = data
+        .describe_tag(&args.tag, text)
+        .map_err(describe_failure)?;
+    out::render(
+        &TagDescribed {
+            schema: 1,
+            command: "tag describe",
+            tag: args.tag.clone(),
+            description: text.map(|t| t.trim().to_string()),
+            file: TAGS_FILE,
+            done,
         },
         global,
     )

@@ -1,12 +1,14 @@
 //! `vnoc`: the core process, and the command line.
 //!
 //! The editor extension starts it as `vnoc --stdio` (vscode-languageclient adds the flag) and speaks LSP-framed JSON-RPC on its stdin / stdout.
-//! `vnoc`, `vnoc --stdio`, `vnoc serve` and `vnoc serve --stdio` all run that main loop. Anything else is a command (`vnoc status`).
+//! `vnoc --stdio`, `vnoc serve` and `vnoc serve --stdio` run that main loop, and so does `vnoc` with no arguments **unless standard input is a terminal**:
+//! a person who types `vnoc` gets the help, not a server that waits for LSP frames. Anything else is a command (`vnoc status`).
 //!
 //! **In the server, stdout IS the protocol.** Nothing else may write there; logs go to stderr (`VNOC_LOG=debug` for more).
 #![deny(clippy::print_stdout)]
 
 use std::ffi::OsString;
+use std::io::IsTerminal;
 
 use async_lsp::MainLoop;
 use async_lsp::concurrency::ConcurrencyLayer;
@@ -16,13 +18,15 @@ use async_lsp::tracing::TracingLayer;
 use tower::ServiceBuilder;
 
 /// Whether these arguments (without the program's name) start the server. Decided **before** clap: the extension's `--stdio` is not a flag
-/// of the command line, and it must never reach the parser as an unknown one.
-fn starts_server(args: &[OsString]) -> bool {
+/// of the command line, and it must never reach the parser as an unknown one. No arguments start it only when standard input is not a terminal
+/// (the editor always pipes it); the other three ways start it whatever standard input is.
+fn starts_server(args: &[OsString], stdin_is_terminal: bool) -> bool {
     let args: Vec<Option<&str>> = args.iter().map(|a| a.to_str()).collect();
-    matches!(
-        args.as_slice(),
-        [] | [Some("--stdio")] | [Some("serve")] | [Some("serve"), Some("--stdio")]
-    )
+    match args.as_slice() {
+        [] => !stdin_is_terminal,
+        [Some("--stdio")] | [Some("serve")] | [Some("serve"), Some("--stdio")] => true,
+        _ => false,
+    }
 }
 
 /// Logs go to standard error: `VNOC_LOG`, else `default`.
@@ -37,8 +41,12 @@ fn init_logging(default: &str) {
 }
 
 fn main() {
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let server = starts_server(&args);
+    let mut args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let server = starts_server(&args, std::io::stdin().is_terminal());
+    if args.is_empty() && !server {
+        // bare `vnoc` in a terminal: the short help, as `vnoc -h` prints it
+        args.push(OsString::from("-h"));
+    }
     if !server && std::env::var_os("VNOC_LOG").is_none() {
         // A command says nothing on standard error unless it fails (05 §4), and the driver it starts reads the same variable: its own
         // default is `info`. Set before the runtime exists, so no other thread is reading the environment.
@@ -90,24 +98,30 @@ async fn serve() {
 mod tests {
     use super::*;
 
-    fn starts(args: &[&str]) -> bool {
-        starts_server(&args.iter().map(OsString::from).collect::<Vec<_>>())
+    fn starts(args: &[&str], terminal: bool) -> bool {
+        starts_server(
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            terminal,
+        )
     }
 
+    /// (arguments, the server starts when stdin is piped, the server starts when stdin is a terminal)
     #[test]
-    fn the_four_ways_to_start_the_server() {
-        assert!(starts(&[]));
-        assert!(starts(&["--stdio"]));
-        assert!(starts(&["serve"]));
-        assert!(starts(&["serve", "--stdio"]));
-    }
-
-    #[test]
-    fn anything_else_is_a_command() {
-        assert!(!starts(&["status"]));
-        assert!(!starts(&["--stdio", "status"]));
-        assert!(!starts(&["--help"]));
-        assert!(!starts(&["serve", "extra"]));
-        assert!(!starts(&["--stdio", "--stdio"]));
+    fn the_server_starts_as_this_table_says() {
+        let table: [(&[&str], bool, bool); 9] = [
+            (&[], true, false), // the extension of an older release; a person gets the help
+            (&["--stdio"], true, true),
+            (&["serve"], true, true),
+            (&["serve", "--stdio"], true, true),
+            (&["status"], false, false),
+            (&["--stdio", "status"], false, false),
+            (&["--help"], false, false),
+            (&["serve", "extra"], false, false),
+            (&["--stdio", "--stdio"], false, false),
+        ];
+        for (args, piped, terminal) in table {
+            assert_eq!(starts(args, false), piped, "{args:?}, stdin piped");
+            assert_eq!(starts(args, true), terminal, "{args:?}, stdin a terminal");
+        }
     }
 }

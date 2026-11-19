@@ -23,8 +23,8 @@ pub use lock::{DEFAULT_WAIT, LockError, WriteLock};
 pub(crate) use read::after_frontmatter;
 pub use read::{DocInfo, Frontmatter, LoadProblem, LoadReport, NodeRecord, frontmatter};
 pub use tags::{
-    AuthorCount, Change, Descriptions, TagCount, TagError, WriteError, author_counts, is_tag,
-    rewrite_tags, tag_counts,
+    AuthorCount, Change, DescribeError, Described, Descriptions, TagCount, TagError, WriteError,
+    author_counts, check_description, is_tag, rewrite_tags, tag_counts,
 };
 pub use trash::{MovePlan, TrashEntry, TrashError};
 
@@ -47,6 +47,15 @@ pub struct Settings {
     pub initialized: bool,
     /// `[ids] default` is `"on-attach"` (the default): attaching writes an ID into the code
     pub markers: bool,
+}
+
+/// Why a tag was not described.
+#[derive(Debug, thiserror::Error)]
+pub enum DescribeTagError {
+    #[error(transparent)]
+    Describe(#[from] DescribeError),
+    #[error(transparent)]
+    Write(#[from] WriteError),
 }
 
 /// Why the tags of a doc were not changed.
@@ -219,6 +228,32 @@ impl UserData {
     /// What each tag means, from `.vnoc/tags.toml` (none when the file is not there; its problems are `load_all`'s).
     pub fn tag_descriptions(&self) -> Descriptions {
         tags::read_descriptions(&self.root).0
+    }
+
+    /// Sets (`Some`) or takes away (`None`) the description of `tag` in `.vnoc/tags.toml`, creating the file when it is not there (`describe_in` says what
+    /// changes in it). Nothing is written when nothing changes. The caller holds the write lock.
+    pub fn describe_tag(
+        &self,
+        tag: &str,
+        description: Option<&str>,
+    ) -> Result<Described, DescribeTagError> {
+        check_description(tag, description)?;
+        let file = layout::tags_file(&self.root);
+        let was = match fs::read_to_string(&file) {
+            Ok(text) => Some(text),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(WriteError::from(e).into()),
+        };
+        let (new, done) = tags::describe_in(was.as_deref().unwrap_or(""), tag, description)?;
+        match &was {
+            // a file that is not there is created, but only for a description: `--clear` of nothing makes no file
+            None if done == Described::Set => {
+                atomic::write_atomic(&file, new.as_bytes()).map_err(WriteError::from)?
+            }
+            Some(was) if *was != new => tags::write_if_unchanged(&file, was, &new)?,
+            _ => {}
+        }
+        Ok(done)
     }
 
     /// Changes the tags of the doc at `path` (a Markdown file under `nodes/`): read, rewritten as `rewrite_tags` says, and written atomically only if

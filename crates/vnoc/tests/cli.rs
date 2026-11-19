@@ -5207,3 +5207,279 @@ fn a_finding_is_a_row_with_the_kind_in_words_a_sentence_and_a_fix_and_json_keeps
     );
     assert_eq!(finding["fix"], "vnoc repair billing/tax.py::rate_for");
 }
+
+// ------------------------------------------------------------------------------------------------- bare `vnoc`, and `tag describe` (A11c)
+
+/// `vnoc <args>` with standard input a terminal: a pseudo-terminal's slave is its stdin, its output is a pipe. Python's `pty` makes the terminal;
+/// `None` when there is no `python3` to make it (the decision itself is a table in `main.rs`). A command still running after `seconds` is killed
+/// and exits `124`: that is a server, waiting for a client that is never going to write.
+#[cfg(unix)]
+fn run_in_a_terminal(args: &[&str], seconds: u32) -> Option<Output> {
+    let script = "import pty, subprocess, sys\n\
+                  _, slave = pty.openpty()\n\
+                  try:\n\
+                  \x20   done = subprocess.run(sys.argv[2:], stdin=slave, capture_output=True, timeout=int(sys.argv[1]))\n\
+                  except subprocess.TimeoutExpired:\n\
+                  \x20   sys.exit(124)\n\
+                  sys.stdout.buffer.write(done.stdout)\n\
+                  sys.stderr.buffer.write(done.stderr)\n\
+                  sys.exit(done.returncode)\n";
+    let mut cmd = Command::new("python3");
+    cmd.args([
+        "-I",
+        "-c",
+        script,
+        &seconds.to_string(),
+        env!("CARGO_BIN_EXE_vnoc"),
+    ])
+    .args(args)
+    .env_remove("VNOC_DRIVER")
+    .env_remove("VNOC_LOG")
+    .stdin(Stdio::null());
+    cmd.output().ok()
+}
+
+#[cfg(unix)]
+#[test]
+fn bare_vnoc_in_a_terminal_prints_the_help_and_exits_0_instead_of_waiting_as_a_server() {
+    let Some(bare) = run_in_a_terminal(&[], 30) else {
+        eprintln!("no python3: the terminal case is covered by the table in main.rs");
+        return;
+    };
+    assert_eq!(code(&bare), 0, "{}", text(&bare.stderr));
+    assert!(bare.stderr.is_empty(), "{}", text(&bare.stderr));
+    let help = run(vnoc(&scratch("bare-help"), &["-h"]));
+    assert_eq!(code(&help), 0);
+    assert!(text(&help.stdout).contains("Usage: vnoc"));
+    assert_eq!(text(&bare.stdout), text(&help.stdout));
+    // `--stdio` still starts the server with a terminal on stdin: it waits for a client (killed after 2 s: 124), it is not turned into help
+    let stdio = run_in_a_terminal(&["--stdio"], 2).unwrap();
+    assert_eq!(code(&stdio), 124, "{}", text(&stdio.stdout));
+}
+
+fn tags_file(root: &Path) -> PathBuf {
+    root.join(".vnoc/tags.toml")
+}
+
+#[test]
+fn tag_describe_creates_tags_toml_and_vnoc_tags_shows_the_text() {
+    let root = started_copy("describe-new", &[]);
+    assert!(!tags_file(&root).exists());
+    let shown = stdout_of(
+        &root,
+        &["tag", "describe", "plan", "A change we intend to make."],
+    );
+    assert_eq!(
+        shown,
+        "described    plan  \"A change we intend to make.\"\nin           .vnoc/tags.toml\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tags_file(&root)).unwrap(),
+        "plan = \"A change we intend to make.\"\n"
+    );
+    // no temporary file is left behind
+    let left: Vec<_> = std::fs::read_dir(root.join(".vnoc"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    // a described tag no doc has is listed with 0, with its text
+    assert_eq!(
+        stdout_of(&root, &["tags"]),
+        "plan  0 docs  A change we intend to make.\n"
+    );
+    // what the command wrote is read back without a problem
+    let (_, checked, _) = stdout_any(&root, &["check"]);
+    assert!(!checked.contains("tags.toml"), "{checked}");
+    // quotes, a backslash and non-ASCII text come back as they were put in
+    let odd = "say \"no\" to C:\\temp \u{2014} caf\u{e9}";
+    stdout_of(&root, &["tag", "describe", "odd-1", odd]);
+    let json: Value = serde_json::from_str(&stdout_of(&root, &["tags", "--json"])).unwrap();
+    assert!(
+        json["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["tag"] == "odd-1" && row["description"] == odd),
+        "{json}"
+    );
+    let (_, checked, _) = stdout_any(&root, &["check"]);
+    assert!(!checked.contains("tags.toml"), "{checked}");
+}
+
+#[test]
+fn tag_describe_changes_one_key_and_keeps_the_comments_the_order_and_the_other_keys() {
+    let root = started_copy("describe-keeps", &[]);
+    let written = "# The words this project tags with.\nplan = \"old\"   # said in the review\n\ndecision = \"Why we chose.\"\n";
+    std::fs::write(tags_file(&root), written).unwrap();
+    // a third key goes at the end; nothing above it moves
+    stdout_of(&root, &["tag", "describe", "done", "A plan that shipped."]);
+    let after_third = std::fs::read_to_string(tags_file(&root)).unwrap();
+    assert_eq!(
+        after_third,
+        format!("{written}done = \"A plan that shipped.\"\n")
+    );
+    // describing one again changes only its value: the comment on its line stays, so do the first line, the gap and the order
+    stdout_of(
+        &root,
+        &["tag", "describe", "plan", "A change we mean to make."],
+    );
+    assert_eq!(
+        std::fs::read_to_string(tags_file(&root)).unwrap(),
+        "# The words this project tags with.\nplan = \"A change we mean to make.\"   # said in the review\n\ndecision = \"Why we chose.\"\ndone = \"A plan that shipped.\"\n"
+    );
+    // the same text again writes nothing
+    let before = std::fs::read(tags_file(&root)).unwrap();
+    let again = stdout_of(
+        &root,
+        &["tag", "describe", "plan", "A change we mean to make."],
+    );
+    assert!(again.starts_with("described    plan  "), "{again}");
+    assert_eq!(std::fs::read(tags_file(&root)).unwrap(), before);
+    // a file that does not end in a line break still gets a key of its own line
+    std::fs::write(tags_file(&root), "plan = \"a\"").unwrap();
+    stdout_of(&root, &["tag", "describe", "done", "b"]);
+    assert_eq!(
+        std::fs::read_to_string(tags_file(&root)).unwrap(),
+        "plan = \"a\"\ndone = \"b\"\n"
+    );
+}
+
+#[test]
+fn tag_describe_clear_takes_the_key_away_and_says_so_when_there_was_none() {
+    let root = started_copy("describe-clear", &[]);
+    // nothing to clear and no file: no file is made
+    assert_eq!(
+        stdout_of(&root, &["tag", "describe", "plan", "--clear"]),
+        "not described  plan\n"
+    );
+    assert!(!tags_file(&root).exists());
+    std::fs::write(
+        tags_file(&root),
+        "# vocabulary\nplan = \"A\"\n# about done\ndone = \"B\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        stdout_of(&root, &["tag", "describe", "plan", "--clear"]),
+        "cleared      plan\n"
+    );
+    let left = std::fs::read_to_string(tags_file(&root)).unwrap();
+    assert!(
+        left.contains("done = \"B\"") && !left.contains("plan"),
+        "{left}"
+    );
+    assert_eq!(
+        stdout_of(&root, &["tag", "describe", "plan", "--clear"]),
+        "not described  plan\n"
+    );
+    assert_eq!(std::fs::read_to_string(tags_file(&root)).unwrap(), left);
+    // the JSON of each
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &["tag", "describe", "done", "--clear", "--json"],
+    ))
+    .unwrap();
+    assert_eq!(
+        json,
+        json!({ "schema": 1, "command": "tag describe", "tag": "done", "description": null, "file": ".vnoc/tags.toml" })
+    );
+    let json: Value = serde_json::from_str(&stdout_of(
+        &root,
+        &["tag", "describe", "plan", "A change.", "--json"],
+    ))
+    .unwrap();
+    assert_eq!(
+        json,
+        json!({ "schema": 1, "command": "tag describe", "tag": "plan", "description": "A change.", "file": ".vnoc/tags.toml" })
+    );
+}
+
+#[test]
+fn tag_describe_refuses_a_bad_tag_a_line_break_an_empty_text_and_a_project_nobody_started() {
+    let root = started_copy("describe-refuse", &[]);
+    assert_eq!(
+        error_of(&root, &["tag", "describe", "Plan", "x"]),
+        "`Plan` is not a tag: lower-case letters, digits and `-`"
+    );
+    assert_eq!(
+        error_of(&root, &["tag", "describe", "plan", "one\ntwo"]),
+        "a description is one line: it has a line break"
+    );
+    assert_eq!(
+        error_of(&root, &["tag", "describe", "plan", "one\r\ntwo"]),
+        "a description is one line: it has a line break"
+    );
+    for empty in ["", "   "] {
+        assert_eq!(
+            error_of(&root, &["tag", "describe", "plan", empty]),
+            "a description cannot be empty: use --clear to take it away"
+        );
+    }
+    // a text and --clear together, or neither: clap's usage errors, exit 2
+    assert_eq!(code(&run(vnoc(&root, &["tag", "describe", "plan"]))), 2);
+    assert_eq!(
+        code(&run(vnoc(
+            &root,
+            &["tag", "describe", "plan", "x", "--clear"]
+        ))),
+        2
+    );
+    assert!(!tags_file(&root).exists(), "a refusal writes nothing");
+    // a file that is not TOML is left as it is: the person fixes it
+    std::fs::write(tags_file(&root), "plan = [oops\n").unwrap();
+    let out = run(vnoc(&root, &["tag", "describe", "done", "x"]));
+    assert_eq!(code(&out), 3, "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("not valid TOML"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(tags_file(&root)).unwrap(),
+        "plan = [oops\n"
+    );
+    // no .vnoc/: doc new's sentence about `vnoc init`, and nothing is created
+    let bare = bare_copy("describe-no-vnoc");
+    let (exit, stdout, stderr) = stdout_any(&bare, &["tag", "describe", "plan", "x"]);
+    assert_eq!((exit, stdout.as_str(), stderr.as_str()), (2, "", NO_VNOC));
+    let (exit, _, stderr) = stdout_any(&bare, &["tag", "describe", "plan", "--clear"]);
+    assert_eq!((exit, stderr.as_str()), (2, NO_VNOC));
+    assert!(!bare.join(".vnoc").exists());
+}
+
+#[test]
+fn vnoc_tags_ends_with_the_hint_when_nothing_is_described_and_not_with_quiet() {
+    let root = started_copy("describe-hint", &[]);
+    // no tags at all: nothing to describe yet, no hint
+    assert_eq!(stdout_of(&root, &["tags"]), "no tags\n");
+    stdout_of(
+        &root,
+        &[
+            "doc",
+            "new",
+            "billing/tax.py::rate_for",
+            "--title",
+            "Split rates",
+            "--tag",
+            "plan",
+        ],
+    );
+    let hint = "→ describe one: vnoc tag describe <tag> \"<what it means>\"\n";
+    assert_eq!(stdout_of(&root, &["tags"]), format!("plan  1 doc\n{hint}"));
+    assert_eq!(stdout_of(&root, &["tags", "--quiet"]), "plan  1 doc\n");
+    // the authors are not tags: no hint under them
+    assert_eq!(stdout_of(&root, &["tags", "--authors"]), "no authors\n");
+    // JSON carries no hint
+    let json: Value = serde_json::from_str(&stdout_of(&root, &["tags", "--json"])).unwrap();
+    assert!(json.get("hint").is_none(), "{json}");
+    // one description is enough: the hint is gone
+    stdout_of(
+        &root,
+        &["tag", "describe", "plan", "A change we intend to make."],
+    );
+    assert_eq!(
+        stdout_of(&root, &["tags"]),
+        "plan  1 doc  A change we intend to make.\n"
+    );
+}

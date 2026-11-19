@@ -146,6 +146,13 @@ pub enum Command {
     /// described tag no doc has yet is listed with 0. Most used first. Run it BEFORE you tag a note and reuse a tag that fits (prefer a described one);
     /// do not invent a synonym of one that exists. With --authors, the authors of the docs instead. Needs no driver.
     Tags(TagsArgs),
+    /// Writes what a tag means into `.vnoc/tags.toml`. It is for the person who keeps the project's vocabulary: do not run it unless asked.
+    ///
+    /// `vnoc tag describe <tag> "<text>"` sets the description `vnoc tags` shows for a tag; `--clear` takes it away. It changes that one key of `.vnoc/tags.toml`
+    /// (the file is created when it is not there) and leaves the rest of the file as it is. It is the user's command, as `vnoc init` is: the vocabulary is the
+    /// project's to decide, so an agent reads `vnoc tags` and does not describe tags unless the user asks. Needs no driver.
+    #[command(subcommand)]
+    Tag(TagCommand),
     /// Prints a short how-to with examples: `vnoc guide` lists the subjects, `vnoc guide <topic>` prints one.
     ///
     /// Prints a short how-to for one subject, with examples that were run on a sample project: `vnoc guide` lists the subjects (read, tree, find,
@@ -391,6 +398,34 @@ pub struct TagsArgs {
     /// List the authors of the docs (`author:` in the frontmatter) instead of the tags.
     #[arg(long)]
     pub authors: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TagCommand {
+    /// Sets what a tag means: `vnoc tag describe plan "A change we intend to make"`. The user's command: do not run it unless asked.
+    ///
+    /// Sets the description of one tag in `.vnoc/tags.toml`, which `vnoc tags` shows next to it: one line, a sentence about what the tag means. The file is
+    /// created when it is not there; a comment, the order and every other key in it stay as they are, a new key goes at the end, and a tag that has a
+    /// description gets the new one. With --clear the key is taken away (`not described` and exit 0 when it had none). The project must have been started
+    /// (`vnoc init`). A tag is lower-case letters, digits and `-`; a text with a line break, or an empty one, is refused (exit 2).
+    Describe(TagDescribeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct TagDescribeArgs {
+    /// The tag: lower-case letters, digits and `-`. It need not be used by a doc yet.
+    #[arg(value_name = "TAG")]
+    pub tag: String,
+    /// What the tag means, in one line.
+    #[arg(
+        value_name = "TEXT",
+        required_unless_present = "clear",
+        conflicts_with = "clear"
+    )]
+    pub text: Option<String>,
+    /// Take the description away instead.
+    #[arg(long)]
+    pub clear: bool,
 }
 
 #[derive(Debug, Args)]

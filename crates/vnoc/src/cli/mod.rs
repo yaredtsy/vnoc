@@ -103,6 +103,7 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Missing => check::missing(&cli.global).await,
         Command::Check(args) => check::run(&cli.global, args).await,
         Command::Tags(args) => tags::tags(&cli.global, args).await,
+        Command::Tag(command) => tags::tag_command(&cli.global, command).await,
         Command::Guide(args) => guide::guide(&cli.global, args),
         Command::Skill => guide::skill(&cli.global),
         Command::Agent(command) => agent::run(&cli.global, command),

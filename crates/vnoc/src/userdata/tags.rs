@@ -1,15 +1,15 @@
 //! Tags (`docs/21-agent-cli/04-write-commands.md` §4, "Listing, editing and describing tags").
 //!
 //! A tag lives only in the frontmatter of the docs that carry it: the list of tags is **computed** from the doc texts, never kept. `.vnoc/tags.toml`
-//! (optional, written by people, never by V-NOC) says what a tag means. This file reads it, counts tags and authors, and rewrites one doc's `tags:`
-//! line.
+//! (optional, written by people) says what a tag means. This file reads it, counts tags and authors, rewrites one doc's `tags:` line, and changes one
+//! key of `tags.toml` for `vnoc tag describe` (nothing else in V-NOC writes that file).
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
 
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item, Value};
 
 use super::doc_text::DocTexts;
 use super::layout;
@@ -88,6 +88,80 @@ pub fn read_descriptions(root: &Path) -> (Descriptions, Vec<LoadProblem>) {
         }
     }
     (Descriptions(described), problems)
+}
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum DescribeError {
+    #[error("`{0}` is not a tag: lower-case letters, digits and `-`")]
+    BadTag(String),
+    #[error("a description is one line: it has a line break")]
+    LineBreak,
+    #[error("a description cannot be empty: use --clear to take it away")]
+    Empty,
+    #[error(".vnoc/tags.toml is not valid TOML ({0}): fix the file by hand first")]
+    NotToml(String),
+}
+
+/// What `vnoc tag describe` did to the key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Described {
+    /// the key now holds the description
+    Set,
+    /// the key was there and is gone
+    Cleared,
+    /// `--clear` of a tag that had no description: nothing changed
+    NotDescribed,
+}
+
+/// The rules of a description, checked before anything is read: a tag, and for a text one non-empty line (`None` is `--clear`, which takes any tag).
+pub fn check_description(tag: &str, description: Option<&str>) -> Result<(), DescribeError> {
+    if !is_tag(tag) {
+        return Err(DescribeError::BadTag(tag.to_string()));
+    }
+    if let Some(text) = description {
+        if text.contains(['\n', '\r']) {
+            return Err(DescribeError::LineBreak);
+        }
+        if text.trim().is_empty() {
+            return Err(DescribeError::Empty);
+        }
+    }
+    Ok(())
+}
+
+/// The text of `tags.toml` (`""` for a file that is not there) with the key `tag` set to `description`, or taken out for `None` (pure). **Only that key
+/// changes**: comments, order, spacing and every other key stay as they are. A new key goes after the last one; a key that is there keeps its place and
+/// the comment at the end of its line.
+pub fn describe_in(
+    text: &str,
+    tag: &str,
+    description: Option<&str>,
+) -> Result<(String, Described), DescribeError> {
+    check_description(tag, description)?;
+    let mut doc: DocumentMut = text
+        .parse()
+        .map_err(|e: toml_edit::TomlError| DescribeError::NotToml(e.message().to_string()))?;
+    let done = match description {
+        Some(description) => {
+            let mut new = Value::from(description.trim());
+            match doc.get_mut(tag) {
+                // the key stays as it is (its comment above, its spacing), and the value keeps what trails it on the line
+                Some(old) => {
+                    if let Some(old) = old.as_value() {
+                        *new.decor_mut() = old.decor().clone();
+                    }
+                    *old = Item::Value(new);
+                }
+                None => {
+                    doc.insert(tag, Item::Value(new));
+                }
+            }
+            Described::Set
+        }
+        None if doc.remove(tag).is_some() => Described::Cleared,
+        None => Described::NotDescribed,
+    };
+    Ok((doc.to_string(), done))
 }
 
 /// One tag, how many docs carry it, and what it means when `tags.toml` says.
@@ -550,5 +624,46 @@ mod tests {
         write_if_unchanged(&file, &was, &new).unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), new);
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn describe_in_changes_one_key_and_nothing_else() {
+        let text = "# header\nplan = \"old\"  # why\n\n# about done\ndone = 'A'\n";
+        let (new, done) = describe_in(text, "plan", Some(" new ")).unwrap();
+        assert_eq!(done, Described::Set);
+        assert_eq!(
+            new,
+            "# header\nplan = \"new\"  # why\n\n# about done\ndone = 'A'\n"
+        );
+        let (new, _) = describe_in(text, "fresh-1", Some("x")).unwrap();
+        assert_eq!(new, format!("{text}fresh-1 = \"x\"\n"));
+        let (new, done) = describe_in(text, "done", None).unwrap();
+        assert_eq!(done, Described::Cleared);
+        assert!(new.starts_with("# header\nplan = \"old\"  # why\n"));
+        assert!(!new.contains("done"));
+        assert_eq!(
+            describe_in(text, "other", None).unwrap(),
+            (text.to_string(), Described::NotDescribed)
+        );
+        assert_eq!(
+            describe_in("", "plan", Some("a")).unwrap().0,
+            "plan = \"a\"\n"
+        );
+    }
+
+    #[test]
+    fn describe_in_refuses_what_the_rules_forbid_and_a_file_that_is_not_toml() {
+        let refused = |tag, text| describe_in("", tag, text).unwrap_err();
+        assert_eq!(
+            refused("Plan", Some("x")),
+            DescribeError::BadTag("Plan".into())
+        );
+        assert_eq!(refused("plan", Some("a\nb")), DescribeError::LineBreak);
+        assert_eq!(refused("plan", Some("a\rb")), DescribeError::LineBreak);
+        assert_eq!(refused("plan", Some("  ")), DescribeError::Empty);
+        assert!(matches!(
+            describe_in("plan = [oops", "plan", Some("x")),
+            Err(DescribeError::NotToml(_))
+        ));
     }
 }
