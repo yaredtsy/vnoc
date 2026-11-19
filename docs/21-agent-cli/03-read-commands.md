@@ -207,7 +207,7 @@ $ vnoc doc path billing/charge.py why-charges-are-retried.md
   project**, grouped by node: the nodes of the tree in its order, then the Missing ones, then any node whose code was not read (outside the
   folder, ignored), shown with the place its record gives. `no docs` when the project has none. `--format id` is a location per node, `--format
   path` is the doc files only.
-- **`doc read <node> [file]`:** each doc under `── <title>  <path>`, then the text **as it is in the file with its frontmatter left out**
+- **`doc read <node> [file]`:** each doc under `── <title>` and its path on the line under it (A9c: `   <path>`), then the text **as it is in the file with its frontmatter left out**
   (the `# title` line is kept), a blank line between docs. A node with no doc: `no docs on <location>`. `file` is a doc's file name in that node's
   folder, with or without `.md`; an unknown one is exit `2`: `no doc named nope.md on <location>: it has a.md · b.md`. The text is never
   rewritten into advice and never cut (01 §3): the sample's scenario-5 note prints its sentence as it is.
@@ -484,13 +484,14 @@ Documented nodes that are not found, each with its ID, its last known place, its
 
 ```
 $ vnoc missing
-MISSING  was api/routes.py::legacy_export  ID 7N1HNCPA163HHSN91HX48T9QGE  docs 1
+missing  api/routes.py::legacy_export
+  its code is not found (ID 7N1HNCPA163HHSN91HX48T9QGE); 1 doc
   → vnoc relink 7N1HNCPA163HHSN91HX48T9QGE <node>
-  or remove it in VS Code if the code is gone
+    or remove it in VS Code if the code is gone
 ```
 
-**As built in A6.** One row per Missing node (the `MISSING  was …` line is `show`'s for a Missing node, with the same `was` and the same count of docs),
-in the order of `Index::missing` (by path); `--quiet` drops the two hint lines. `vnoc relink` is built (A9, [`04`](04-write-commands.md) §6): the hint names it, and
+**As built in A6, laid out as 11 says since A9c.** One block per Missing node (`show` and `doc list` keep their own `MISSING  was …` header for a Missing node), a blank line
+between two, in the order of `Index::missing` (by path); `--quiet` drops the fix lines. `vnoc relink` is built (A9, [`04`](04-write-commands.md) §6): the hint names it, and
 `--help` of `missing` and of `check` no longer say otherwise. None: `nothing is Missing`, exit `0`. `--format id` is the IDs, `--format path` the files they were last in
 (once each). `--json`: `{ schema, command: "missing", missing: [ { was, node_id, docs: [ { title, path } ] } ] }` (golden `missing.json`).
 
@@ -519,10 +520,15 @@ hook would call ([`08`](08-mcp-and-plugins.md)). With no git, it is the full che
 
 ```
 $ vnoc check                                    # the sample: one Missing node, one lost marker
-missing  api/routes.py  documented code not found: was api/routes.py::legacy_export · ID 7N1HNCPA163HHSN91HX48T9QGE · 1 doc
-  → vnoc relink 7N1HNCPA163HHSN91HX48T9QGE <node> if the code moved; remove it in VS Code if the code is gone
-lost_marker  billing/tax.py  the `ID:` line of billing/tax.py::rate_for is gone (ID 4KF02248CHCTYAG49B0KKZ5SD7): the node was found by its name only
+missing  api/routes.py::legacy_export
+  its code is not found (ID 7N1HNCPA163HHSN91HX48T9QGE); 1 doc
+  → vnoc relink 7N1HNCPA163HHSN91HX48T9QGE <node>
+    or remove it in VS Code if the code is gone
+
+lost marker  billing/tax.py::rate_for
+  its ID: line is gone (ID 4KF02248CHCTYAG49B0KKZ5SD7); found by its name only
   → vnoc repair billing/tax.py::rate_for
+
 2 problems
 $ echo $?
 1
@@ -531,11 +537,12 @@ $ echo $?
 **As built in A6 (2026-11-19).**
 
 - `crates/vnoc/src/check.rs` is the library: `check(&Index, &Project, only: Option<&[RepoPath]>) -> Vec<Finding>`. A `Finding` has `kind`
-  (`missing`, `lost_marker`, `duplicate_id`, `broken`, `unread`: the words of `--json` and the first word of a row), `fails` (all but `unread`), `path`
+  (`missing`, `lost_marker`, `duplicate_id`, `broken`, `unread`: the words of `--json`; the text says them in English, A9c: `lost marker`, `duplicate ID`), `fails` (all but `unread`), `path`
   (below the root; absolute when `.vnoc/` is above it), `message`, `fix`, and `id` for a node. The order is the table's (a group is in the index's order,
   by path). `Index::problems` was split into `broken()` and `duplicate_ids()` (it is both, in that order, as before) so a finding can say which it is.
-- **A row is one line:** `<kind>  <path>  <message>`, then `  → <fix>`. A `node.toml` error from the TOML parser runs over several lines and starts
-  with the path the row already says: the row keeps its first line, without the path. **The summary** is `2 problems`, `2 problems · 1 warning`, `0 problems · 1
+- **A finding is a block (A9c, 11):** the row `<kind in words>  <location>` (the node's location, else its file), the sentence under it with the ID in it, then `→ <fix>`; a fix that is long carries on
+  in a line indented under its first word. Blocks are separated by a blank line, the summary by one blank line more. A `node.toml` error from the TOML parser runs over several lines and starts
+  with the path the row already says: the sentence keeps its first line, without the path. `Finding` has text-only fields for this (`location`, `said`, `fix_lines`: skipped by serde), so `--json`'s `path`, `message` and `fix` are as they were. **The summary** is `2 problems`, `2 problems · 1 warning`, `0 problems · 1
   warning`, or `no problems`. `--quiet` keeps the rows and drops the fixes and the summary; with nothing found it prints **nothing** (a hook wants
   rows only).
 - **Exit `1`** when a finding fails, **after** the rows are printed: `Failure::CheckFailed` prints nothing more (it was going to print `error: check found problems`,
@@ -656,6 +663,25 @@ indented two more spaces under it. So no row wraps in an ordinary terminal for t
   lines).
 - A summary (`1 problem`, `2 nodes · 2 hits`) is preceded by one blank line.
 - The golden text files change with this; the JSON goldens do not.
+
+**As built in A9c (2026-11-20).** The table above held, with these rows it did not have:
+
+| Output | Layout |
+|---|---|
+| `doc read` | `── <title>`, then `   <path>`, then the text |
+| `grep --docs` | `doc  <title>  on <location>   N hits`, then `  <path>`, then the numbered lines |
+| `grep`'s summary (`2 nodes · 2 hits`) | one blank line before it, like `check`'s |
+| `init` | `created      <path>` for each file, `ids          <what attaching does>` (left out by `--quiet`); already started: `already      .vnoc/ is already set up`, `in           <path>`, `ids          …` |
+| `doc new` | `attached to  <kind>  <location>   ID <id>` (unchanged), `created      <path>` and, when the doc is empty, the arrow `← write the note here` **on its own line under the path** (always, not only when the row is long: the same shape every time); `changed      <file>` and under it `an ID: line was added at line N; read the file again before you edit it` |
+| `doc tag` | `tagged       [billing, done]`, `in           <path>`, then `already has "x"` / `already without "x"` lines and the `note:` lines |
+| `relink` | `relinked     <ID>`, `was          <where>`, `to           <kind>  <location>`, then `changed` (as `doc new`) or `created` or `notice` |
+| `repair` | `repaired     <location>` / `left         <location>`, and the line under it (`ID: line written at line N`, or the reason) |
+
+- A line that carries on a row is indented to the value (13 columns) and dim (`write::continued`). A `notice` row and a `note:` line are one sentence each, a fact of their own, and stay a row.
+- `show` and `doc list` keep their node header (`<kind>  <location>   lines 6-8   ID …`, and `MISSING  was <anchor>  ID <id>  docs N` for a Missing node): it is the node's name card, not a finding.
+- Checked and left as they were: `tree`, `calls`, `status` (`find`'s doc rows already put the snippet and then the path on their own lines).
+- **The blank line before an answer (the user's item d) was not found in this code.** No command prints one on standard output or standard error, in a pipe, under a pseudo-terminal, or with `--color always`; the harness now asserts it of every
+  command the suite runs. If it shows up again, `vnoc <command> | od -c | head -2` says whether it is the command's.
 
 **Renderers** *(settled 2026-11-19, before A4)*. A command builds its answer as a value (the rows, the node, the results list) and hands it to
 one of two renderers in `cli/out.rs`, text or JSON; no command formats as it computes. A new format is then one renderer, and touches no

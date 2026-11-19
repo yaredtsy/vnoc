@@ -103,11 +103,12 @@ vnoc init`.
 
 ```
 created      .vnoc/.gitignore
-created      .vnoc/vnoc.toml   (attaching a note writes an ID: line into the code)
+created      .vnoc/vnoc.toml
+ids          attaching a note writes an ID: line into the code
 ```
 
-(with `--markers off` the parenthesis says `no ID: lines are written; notes are attached by name`; `--quiet` leaves it out). Already started: one line,
-`.vnoc/ already set up: .vnoc/vnoc.toml (…)`, exit 0, nothing written; **the first answer stays**, so `init --markers off` on a project that writes IDs
+(with `--markers off` the `ids` row says `no ID: lines are written; notes are attached by name`; `--quiet` leaves it out). Already started: `already      .vnoc/ is already set up`, `in           .vnoc/vnoc.toml`
+and the `ids` row, exit 0, nothing written; **the first answer stays**, so `init --markers off` on a project that writes IDs
 changes nothing and the line says what the project does. `--json`: `{ "schema": 1, "command": "init", "created": […], "already": false, "markers": true }`
 (`created` is empty and `already` true for a project that was started). Paths are as every command prints a path: relative to the root, absolute when `.vnoc/`
 is above it. `UserData::init_files()` names the two files (the layout stays in `layout.rs`). Note: `initialize` writes `[ids] default = "none"` as the
@@ -318,7 +319,7 @@ wrapper over the same library function, C2) when it has a screen that lists or e
   as `doc read` chooses it, by `doc::choose_doc` (the node's only doc, or `file` with or without `.md`; **several docs and no file is `2`** with `<node> has 2 docs: name one of a.md · b.md (the file name goes after the
   node)`; none: `no docs on <node>`). A node named by its ID needs no driver. The write lock is taken, then `UserData::edit_doc_tags` reads the file, rewrites, **reads it again and compares** (`write_if_unchanged`:
   refused with `the file changed while the tags were being written` if it moved, the file as the other writer left it) and writes atomically; nothing is written when nothing changes. A file that changed under the
-  command is exit **3** (like a busy lock: try again); the other refusals are 2. Output: `tags         <doc path>  [billing, done]`, then `already has "done"` / `already without "plan"` lines, then
+  command is exit **3** (like a busy lock: try again); the other refusals are 2. Output (A9c): `tagged       [billing, done]`, `in           <doc path>`, then `already has "done"` / `already without "plan"` lines, then
   the new-tag notes. `--json`: `{schema, command: "doc tag", doc, tags, added, removed, unchanged: [{tag, state: "has"|"without"}], notice}` (`notice` is the notes joined by a line break, or `null`).
 - **The new-tag note** (`cli/tags.rs` `new_tag_notices`): for each tag a command added that **no other doc** carries (the doc itself is left out of the counts) and `tags.toml` does not describe:
   `note: "planning" is a new tag in this project (described: decision, done, plan); did you mean "plan"?`. The parenthesis lists every described tag, **sorted by name** (not in the file's order), and is left out when
@@ -356,9 +357,11 @@ output is one node and what happened.
   words: *that node is not Missing: its docs are shown where its code is*, *that node already has its own docs* (for a place with an `ID:` in the code and for one the index knows a node at by name),
   *this is a class, and the docs belong to a function* (the library's *no readable node.toml* is not reachable here: the command's own check says `no node has the ID …` first). Output (labels 13 wide, as 04 §8):
   ```
-  relinked     7N1HNCPA163HHSN91HX48T9QGE  was api/routes.py::legacy_export
+  relinked     7N1HNCPA163HHSN91HX48T9QGE
+  was          api/routes.py::legacy_export
   to           function  api/routes.py::get_order
-  changed      api/routes.py   (an ID: line was added at line 5; read the file again before you edit it)
+  changed      api/routes.py
+               an ID: line was added at line 5; read the file again before you edit it
   ```
   A project that writes no IDs, or a marker that could not be written: no `changed` line, and the notice (`notice       The ID could not be written (…); the docs are attached by name.`); a
   folder: `created      <folder>/.vnoc-id`; a place that already carries this ID: nothing changed, and the line is left out. `--json`: `{schema, command: "relink", id, was, node: {kind, location, node_id},
@@ -369,7 +372,7 @@ output is one node and what happened.
 - **One write lock for the whole run; the nodes are written one at a time, each flow reading its file again just before it plans** (`Document::from_disk` per call; the Disk sink re-reads and compares). The
   text from before the first edit is never reused. **A file's nodes are written from the top** (sorted by file, then the line the def starts at; a file or a folder is line 0): an `ID:` line put in
   above the others shifts them down, so doing the upper one first makes every line reported the line it stays at. The rows are printed in that order.
-- **Output:** `repaired     <location>  (ID: line written at line N)` (a file: `# FileID: comment written at line N`; a folder: `.vnoc-id written`), or `left         <location>  <reason>` with the library's
+- **Output (A9c):** `repaired     <location>` with `ID: line written at line N` on the line under it (a file: `# FileID: comment written at line N`; a folder: `.vnoc-id written`), or `left         <location>` with the reason under it, in the library's
   words (*this node was set to never have an ID in the code*, *this project does not write IDs …*, *the ID of that node is already in the code*, *that node has no docs, so there is no ID to write*, or the notice
   when the marker could not be written). Nothing to do: `nothing to repair`, exit 0 (also in a project nobody started). **Exit:** `2` when a node the user NAMED was left (the `left` line is on standard
   output, in its place); a sweep that leaves some is `0`. `--json`: `{schema, command: "repair", repaired: [{location, node_id, line}], left: [{location, node_id, reason}], errors?: […]}`.
@@ -424,8 +427,10 @@ What is added (A7), because "one attach at a time" is today a mutex **inside** o
 ```
 $ vnoc doc new src/orders.py:142 --title "Why we parse twice"
 attached to  function  src/orders.py::OrderService.parse_order   ID 0Q8V5W4T2F7KX9M3B6D1RZ4H7K
-created      .vnoc/nodes/7K/0Q8V5W4T2F7KX9M3B6D1RZ4H7K/why-we-parse-twice.md      ← write the note here
-changed      src/orders.py   (an ID: line was added at line 141; read the file again before you edit it)
+created      .vnoc/nodes/7K/0Q8V5W4T2F7KX9M3B6D1RZ4H7K/why-we-parse-twice.md
+             ← write the note here
+changed      src/orders.py
+             an ID: line was added at line 141; read the file again before you edit it
 ```
 
 Every file a write created or changed is one line. The last line is there for a reason: the agent's picture of `src/orders.py` is now one line
@@ -437,9 +442,9 @@ With `--json`: `{ "schema": 1, "command": "doc new", "node": {…}, "doc": "…"
 **As built in A8a.** The labels are one column, 13 wide (`attached to  `, `created      `, `changed      `, `notice       `), dim in a terminal.
 
 - `attached to  <kind>  <location>   ID <id>`: the head line every command uses.
-- `created      <doc path>` and, **only when no `--body-file` was given**, `   ← write the note here` (a hint: `--quiet` leaves it out). For a folder, a second `created      <folder>/.vnoc-id`.
-- `changed      <file>   (an ID: line was added at line N; read the file again before you edit it)`: the line is the plan's, 1-based; for a file the words are `a # FileID: comment was added at line N`.
-  `--quiet` keeps the parenthesis: it is a warning, not a hint.
+- `created      <doc path>` and, **only when no `--body-file` was given**, `← write the note here` **on the line under it** (A9c: a path and an arrow on one row wrap; a hint: `--quiet` leaves it out). For a folder, a second `created      <folder>/.vnoc-id`.
+- `changed      <file>` and under it `an ID: line was added at line N; read the file again before you edit it`: the line is the plan's, 1-based; for a file the words are `a # FileID: comment was added at line N`.
+  `--quiet` keeps that line: it is a warning, not a hint.
 - `notice       <the notice>` when the ID could not be written (a def with a syntax error, a file that stopped being UTF-8): the doc is attached by name, exit 0, and there is no `changed` line.
 - A command that was refused prints `error: …` on standard error and nothing on standard output; with `--json` an error about the *node* is `{ "schema": 1, "command": "doc new", "error": { "why", "message", "hints"? } }` on
   standard output (as `calls`), exit 2, and a refusal of a rule (title taken, body, tag) is the plain `error:` line.
