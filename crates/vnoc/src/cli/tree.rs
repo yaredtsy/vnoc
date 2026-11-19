@@ -237,24 +237,28 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// `4 files · 3 classes · 31 functions · 6 docs`, with no part that is 0.
+/// `4 files · 3 classes · 31 functions · 6 docs inside`, with no part that is 0. The docs are those of the nodes **below**, so they are not read as
+/// the node's own, which a row says with `· 2 docs` (a node's own docs follow the counts: `1 class · 3 functions · 2 docs`).
 fn counts_text(c: &Counts) -> String {
+    let docs = (c.docs > 0).then(|| format!("{} inside", plural(c.docs, "doc", "docs")));
     [
         (c.folders, "folder", "folders"),
         (c.files, "file", "files"),
         (c.classes, "class", "classes"),
         (c.functions, "function", "functions"),
-        (c.docs, "doc", "docs"),
     ]
     .iter()
     .filter(|(n, _, _)| *n > 0)
     .map(|(n, one, many)| plural(*n, one, many))
+    .chain(docs)
     .collect::<Vec<_>>()
     .join(" · ")
 }
 
 impl Tree {
     fn row_text(&self, row: &Row) -> String {
+        // the row's parts, after the name: what is below it, its lines, then its own docs. One rule for the separators: a part after the first is
+        // introduced by ` · `, and the node's own docs always are (`· 2 docs`, also when they are the only part)
         let mut parts: Vec<String> = Vec::new();
         if let Some(counts) = &row.counts {
             parts.push(counts_text(counts));
@@ -269,14 +273,18 @@ impl Tree {
             .as_ref()
             .map(|p| format!("({})", p.join(", ")))
             .unwrap_or_default();
+        let mut tail = parts.join(" · ");
         if row.docs > 0 {
-            parts.push(format!("· {}", plural(row.docs, "doc", "docs")));
+            let own = plural(row.docs, "doc", "docs");
+            tail.push_str(&if tail.is_empty() {
+                format!("· {own}")
+            } else {
+                format!(" · {own}")
+            });
         }
-        let tail = if parts.is_empty() {
-            String::new()
-        } else {
-            format!("  {}", parts.join("  "))
-        };
+        if !tail.is_empty() {
+            tail.insert_str(0, "  ");
+        }
         if self.style.flat {
             // the location, then what else there is: no indent, so each line stands alone
             let sig = if params.is_empty() {

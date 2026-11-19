@@ -27,6 +27,19 @@ pub async fn run(global: &Global, command: &DocCommand) -> Result<(), Failure> {
     }
 }
 
+/// `body` without its first line when that is the doc's own `# title`: the `── <title>  <path>` header says it already, and every note would pay for
+/// it twice. The blank lines before it and right after it go with it. Any other first line is printed as it is, and so is everything after it:
+/// nothing else is cut, and a line is never rewritten.
+fn without_title<'a>(body: &'a str, title: &str) -> &'a str {
+    let rest = body.trim_start_matches(['\n', '\r', ' ', '\t']);
+    let line_end = rest.find('\n').map_or(rest.len(), |at| at + 1);
+    let (first, after) = rest.split_at(line_end);
+    match first.strip_prefix("# ") {
+        Some(heading) if heading.trim() == title => after.trim_start_matches(['\n', '\r']),
+        _ => body,
+    }
+}
+
 /// Which of the three the text of an answer is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -100,7 +113,10 @@ impl DocsAnswer {
                 title: doc.title.clone(),
                 path: doc.path.clone(),
                 body: std::fs::read_to_string(&doc.abs)
-                    .map(|text| after_frontmatter(&text).unwrap_or(&text).to_string())
+                    .map(|text| {
+                        without_title(after_frontmatter(&text).unwrap_or(&text), &doc.title)
+                            .to_string()
+                    })
                     .unwrap_or_default(),
             })
             .collect();
@@ -395,4 +411,50 @@ fn print_all(
             .into_iter()
             .map(|group| ("", Ok::<_, NodeError>(group))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_line_is_dropped_when_it_is_the_title_and_only_then() {
+        let title = "Why we parse twice";
+        // the heading and the blank line after it are not printed
+        assert_eq!(
+            without_title("# Why we parse twice\n\nText.\n", title),
+            "Text.\n"
+        );
+        assert_eq!(
+            without_title("# Why we parse twice\r\n\r\nText.\r\n", title),
+            "Text.\r\n"
+        );
+        assert_eq!(
+            without_title("\n\n# Why we parse twice\nText.\n", title),
+            "Text.\n"
+        );
+        // the heading with spaces round it is still the title
+        assert_eq!(
+            without_title("# Why we parse twice  \nText.\n", title),
+            "Text.\n"
+        );
+        // another heading, another first line, a deeper heading: printed as it is
+        for body in [
+            "# Another heading\n\nText.\n",
+            "Intro first.\n\n# Why we parse twice\nText.\n",
+            "## Why we parse twice\nText.\n",
+            "#Why we parse twice\nText.\n",
+            "Text only.\n",
+            "",
+        ] {
+            assert_eq!(without_title(body, title), body, "{body:?}");
+        }
+        // only the title line goes: a second heading with the same text stays
+        assert_eq!(
+            without_title("# Why we parse twice\n\n# Why we parse twice\nx\n", title),
+            "# Why we parse twice\nx\n"
+        );
+        // a title that is the whole doc
+        assert_eq!(without_title("# Why we parse twice", title), "");
+    }
 }
