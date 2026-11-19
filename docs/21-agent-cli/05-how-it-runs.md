@@ -29,8 +29,9 @@ library   Project · DriverHost · index::refresh · Index · UserData · identi
   **Empty arguments start the server only when standard input is not a terminal** (the extension always pipes it). In a terminal, bare
   `vnoc` prints the short help and exits `0`. `--stdio` and `serve` start the server whatever stdin is.
   *(Narrowed 2026-11-20, A11d, after A11c found `vnoc < /dev/null` panics with "stdin is a pipe".)* On Unix the server's stdin must be a
-  **pipe** (`async_lsp::stdio::PipeStdin`). So: empty arguments start the server only when stdin **is a pipe**; a terminal, a file,
-  `/dev/null` or a socket → the help, exit `0`. `--stdio` / `serve` with a stdin or stdout that is not a pipe → exit `2` with
+  **pipe or a socket** (`async_lsp::stdio::PipeStdin` takes both; *as built in A11e*: Node's `child_process.spawn` with `stdio: 'pipe'`,
+  which is how the extension starts the core, gives the child **sockets**, not FIFOs, so "pipe" here means either). So: empty arguments
+  start the server only when stdin **and stdout** are pipes or sockets; a terminal, a regular file or `/dev/null` → the help, exit `0`. `--stdio` / `serve` with a stdin or stdout that is not a pipe → exit `2` with
   `vnoc --stdio is for an editor, which talks to it through pipes; for a command, see vnoc -h`, never a panic. Windows keeps "not a terminal"
   (its server reads stdin through tokio, which takes any handle). Anything else
   goes to clap. `--stdio` is not a clap flag and does not show in `--help`. A later release of the extension passes `serve`; all four work

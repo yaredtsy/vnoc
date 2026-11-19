@@ -308,6 +308,25 @@ an existing `CLAUDE.md` → no import file, block in CLAUDE.md as before; `.clau
 its sentence, no panic. Commits: `cli A11d: claude gets a one-line CLAUDE.md that imports AGENTS.md`, `cli A11e: the server starts on
 pipes only, and says so otherwise`.
 
+### A11f `-h` shows the command's own options first (added 2026-11-20, the user read `vnoc tags -h`)
+
+- **The join bug:** the `--root` help reads `…has \`.vnoc/\`, elsethe current folder` in every command: a doc comment wrapped over two
+  lines lost its space. Find every such join (a test: no help text contains a word glued at a former line end; at least check `elsethe`).
+- **Short help (`-h`) puts the command first.** Its own options with their one-line help; then a heading **Global options** with each
+  global flag on one short line (`--root <DIR>  the project folder (default: found from here)`), no paragraphs. The paragraphs move to
+  `long_help`, which `--help` prints as today.
+- **A global flag that means nothing for a command is not shown in its `-h`** (still accepted): `--driver` on the commands that never start
+  the driver (`tags`, `tag`, `guide`, `skill`, `agent`, `init`); the `doc` commands keep it (they need the driver unless given an ID).
+  `--format` only on the commands that print a list and accept it; hidden on the rest. Use clap's per-subcommand
+  `hide_short_help` (or `mut_arg`), not a second definition.
+- **`tag` and `tag describe` about:** "For the person who keeps the project's vocabulary; an agent runs it only when the user asks."
+  (in place of "do not run it unless asked"). Check the other `about`s for the same tone toward the reader.
+- **`agent remove` leaves no empty folder it made** (seen after A11d): after deleting a skill folder, remove `.claude/skills/` and
+  `.agents/skills/` when they are empty, then `.claude/` and `.agents/` when THOSE are empty. Never a folder with anything in it.
+- Tests: `vnoc tags -h` lists `--authors` and no `--driver`/`--format`; every `-h` has a Global options heading; no `elsethe`; the guide
+  test still passes (its clap parse of every line). Commit: `cli A11f: -h shows the command's own options first; the global ones in
+  short`.
+
 ### A12 The extension's two commands
 
 | Files | What |
