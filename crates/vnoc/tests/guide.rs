@@ -50,6 +50,15 @@ fn texts() -> Vec<(String, String)> {
     let mut texts = vec![
         ("SKILL.md".to_string(), read(&skill_dir().join("SKILL.md"))),
         ("rules.md".to_string(), read(&skill_dir().join("rules.md"))),
+        // the two READMEs are read by people who type what they find there (A13r)
+        (
+            "README.md".to_string(),
+            read(&repo_root().join("README.md")),
+        ),
+        (
+            "extension/README.md".to_string(),
+            read(&repo_root().join("extension/README.md")),
+        ),
     ];
     for topic in TOPICS {
         texts.push((
@@ -488,11 +497,13 @@ fn findings() -> &'static Findings {
 #[test]
 fn the_guides_have_command_lines_to_check() {
     let seen = &findings().seen;
-    assert_eq!(seen.len(), 2 + TOPICS.len());
+    assert_eq!(seen.len(), 2 + 2 + TOPICS.len());
     for (name, count) in seen {
         let least = match name.as_str() {
             "rules.md" => 1,
             "SKILL.md" => 15,
+            // the READMEs come with the commit that checks them (A13r): their minimum is raised when their text has lines
+            "README.md" | "extension/README.md" => 0,
             _ => 3,
         };
         assert!(
