@@ -2,7 +2,7 @@
   "name": "vnoc",
   "displayName": "V-NOC",
   "description": "Browse Python code as a tree and a canvas, and attach docs that stay with the code when it is renamed or moved.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "vnoc",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
@@ -234,6 +234,21 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.installCli",
+        "title": "Install `vnoc` Command in PATH",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.uninstallCli",
+        "title": "Uninstall `vnoc` Command from PATH",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.setUpAgents",
+        "title": "Set Up Coding Agents",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.revealInSidebar",
         "title": "Reveal in Sidebar",
         "category": "V-NOC"
@@ -322,6 +337,16 @@
           "command": "vnoc.removeMissing",
           "when": "view == vnoc.attention && viewItem == missing",
           "group": "2_fix@2"
+        },
+        {
+          "command": "vnoc.writeId",
+          "when": "view == vnoc.attention && viewItem == lostId",
+          "group": "inline@1"
+        },
+        {
+          "command": "vnoc.writeId",
+          "when": "view == vnoc.attention && viewItem == lostId",
+          "group": "2_fix@1"
         }
       ],
       "view/title": [
@@ -840,8 +865,8 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts src/test/suite/edit.test.ts src/test/suite/bar.test.ts src/test/suite/search.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
-    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts src/dirtyFiles.test.ts src/saveDraft.test.ts src/sidebarSlot.test.ts"
+    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts src/test/suite/edit.test.ts src/test/suite/bar.test.ts src/test/suite/search.test.ts src/test/suite/cli.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
+    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts src/dirtyFiles.test.ts src/saveDraft.test.ts src/sidebarSlot.test.ts src/cliInstall.test.ts src/agentsJson.test.ts"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

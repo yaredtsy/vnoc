@@ -1,0 +1,49 @@
+{
+  "agents": {
+    "files": [],
+    "missing": []
+  },
+  "command": "status",
+  "docs": {
+    "docs": 7,
+    "nodes": 6
+  },
+  "drivers": [
+    {
+      "files": 12,
+      "name": "python",
+      "version": "<version>"
+    }
+  ],
+  "failed": [],
+  "initialized": true,
+  "lost_markers": [
+    {
+      "id": "4KF02248CHCTYAG49B0KKZ5SD7",
+      "key": "billing/tax.py::rate_for",
+      "kind": "function",
+      "path": "billing/tax.py",
+      "qualname": "rate_for"
+    }
+  ],
+  "missing": [
+    {
+      "docs": 1,
+      "id": "7N1HNCPA163HHSN91HX48T9QGE",
+      "kind": "function",
+      "path": "api/routes.py",
+      "qualname": "legacy_export"
+    }
+  ],
+  "problems": [],
+  "root": "<root>",
+  "schema": 1,
+  "stats": {
+    "classes": 5,
+    "files": 12,
+    "folders": 3,
+    "functions": 27
+  },
+  "truncated": false,
+  "version": "<version>"
+}

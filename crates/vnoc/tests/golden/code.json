@@ -1,0 +1,70 @@
+{
+  "command": "code",
+  "results": [
+    {
+      "arg": "orders/service.py::OrderService.parse_order",
+      "code": {
+        "first": 10,
+        "lines": [
+          "    def parse_order(self, raw):",
+          "        \"\"\"ID: 31ZBQ9NKY1E881TZWC2CJCN35H\"\"\"",
+          "        lines = [Line(item[\"sku\"], item[\"qty\"], item[\"price\"]) for item in raw[\"items\"]]",
+          "        return Order(raw[\"number\"], lines)"
+        ]
+      },
+      "kind": "function",
+      "lines": [
+        10,
+        13
+      ],
+      "location": "orders/service.py::OrderService.parse_order",
+      "node_id": "31ZBQ9NKY1E881TZWC2CJCN35H",
+      "path": "orders/service.py",
+      "qualname": "OrderService.parse_order"
+    },
+    {
+      "arg": "billing/invoice.py::Invoice",
+      "code": {
+        "first": 6,
+        "lines": [
+          "class Invoice:",
+          "    \"\"\"The lines of one order, with the tax worked out.",
+          "",
+          "    ID: 7QH6ZACWQHTP8XQNJ1379TDAG2",
+          "    \"\"\"",
+          "",
+          "    def __init__(self, country):",
+          "        self.country = country",
+          "        self.lines = []",
+          "",
+          "    def add_line(self, text, amount):",
+          "        self.lines.append((text, amount))",
+          "",
+          "    def total(self):",
+          "        net = sum(amount for _, amount in self.lines)",
+          "        return apply_tax(net, self.country)"
+        ]
+      },
+      "kind": "class",
+      "lines": [
+        6,
+        21
+      ],
+      "location": "billing/invoice.py::Invoice",
+      "node_id": "7QH6ZACWQHTP8XQNJ1379TDAG2",
+      "path": "billing/invoice.py",
+      "qualname": "Invoice"
+    },
+    {
+      "arg": "orders/service.py::parse_ordr",
+      "error": {
+        "hints": [
+          "orders/service.py::OrderService.parse_order"
+        ],
+        "message": "no node at orders/service.py::parse_ordr · did you mean: orders/service.py::OrderService.parse_order",
+        "why": "no_def"
+      }
+    }
+  ],
+  "schema": 1
+}

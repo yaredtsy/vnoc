@@ -57,6 +57,12 @@ export function splitMatch(name: string, ranges: readonly [number, number][]): P
   return pieces;
 }
 
+/**
+ * A doc's tags as the row shows them after its title, dim: `[plan, billing]`, in the order written (the CLI prints the same text). `null` when it has none, and then
+ * the row is what it was before tags existed.
+ */
+export const tagsLabel = (tags: readonly string[] | undefined): string | null => (tags && tags.length > 0 ? `[${tags.join(", ")}]` : null);
+
 const header = (name: string, shown: number, total: number): string => (total > shown ? `${name} ${shown.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}` : `${name} ${shown.toLocaleString("en-US")}`);
 
 /** The header over the node rows: `Nodes 12`, or `Nodes 200 of 1,340` when the limit cut them. */

@@ -70,6 +70,10 @@ the doc count, the children for a file or a folder) through one walk, `Node::fin
 standard input: `vnoc find 'kind:fn no:doc in:billing/' --format id | vnoc code -`.
 
 One that cannot be found does not stop the others: it prints its error in place, and the exit code is `2` at the end.
+*(Settled 2026-11-18, before A3.)* "In place" for text: the error line goes to standard error, and standard output is flushed before it, so
+a harness that merges the two streams (every agent's does) sees the answers and the errors in the order of the arguments. In `--json`
+there is one value on standard output, `{ "schema": 1, "command": "show", "results": [ … ] }`, one entry per argument in order, each with
+`"arg"` (the text given) and either the answer or `"error": { "why": "<case>", "message": "<the sentence>" }`; standard error stays empty.
 
 ## 4. When nothing is found
 
@@ -110,4 +114,49 @@ the first version's example could not be printed by the function it named. Two p
    value** (`Query { words, inside, ..Default::default() }`), not formatted into a string: a path with a space would not survive a parse.
 2. If that finds nothing: **the nearest names by edit distance**, `vnoc_search::nearest(corpus, name, limit) -> Vec<usize>`, new in the
    crate (about 30 lines, a table test): names within 2 edits (1 for a name of 4 letters or fewer), case ignored, the file's own first, then
-   the closer, then reading order. It is used only here: the box stays without typo tolerance, as doc 20 decided.
+   the closer, then reading order. *(Settled 2026-11-18, before A3: the line above and A3's test "a name of 3 letters is not a
+   suggestion for another of 3" disagreed.)* The edits allowed go by the length of the name given: **3 letters or fewer, none** (no
+   suggestion); **4, one**; **5 or more, two**. An edit is a letter dropped, added or changed, or two neighbours swapped (optimal string
+   alignment). The name compared is the **last part** of the qualified name on both sides (`parse_ordr` against `parse_order`, not
+   against `OrderService.parse_order`). Signature: `nearest(corpus, name, in_file: Option<&str>, limit)`.
+**Changed 2026-11-19 (A6e), after the first by-hand use.** On the user's project, `main.py::man` (the file has one def, `main`) suggested
+`DriverManager`, `SocketManager` and `PerformanceTimer` from other folders: the project-wide word pass ran before edit distance and
+matched `man` inside those names, and the 3-letter floor would have refused `main` anyway. When a reference **names a file** that the index
+has, the order is now:
+
+1. **In that file:** the word pass (as before), then `nearest` restricted to the file with **no length floor** (1 edit up to 4 letters, 2
+   from 5); if still nothing and the file has **10 defs or fewer**, they are listed: `main.py has: main` (the hint is the list).
+2. **Other files, strong matches only:** a def whose last name **equals** the name given (case ignored: the right name in the wrong file),
+   or is within `nearest`'s edits **with** the floor. Never a word hit, a name that only contains the letters.
+3. Nothing: no hint.
+
+A qualified name with **no** file (`OrderService.parse_order`, the NoFile case) keeps the project-wide word pass: it is a search.
+
+**As built in A6e (2026-11-19).**
+
+- **One order differs from the list above:** the small file's own defs come **last**, after the other files, not at the end of step 1. The wrong-file
+  case (`billing/tax.py::parse_order`, where `tax.py` has two defs) needs the other files asked first; with the list first it would always have won. So: in the file
+  (words, then `nearest_in` with no floor) → other files (strong matches) → the file's defs if it has 10 or fewer → nothing. The 10 is `suggest::FEW`.
+- `suggest` returns a `Suggestion`: `Near` (did you mean), `Found` (a name with no file), `Has` (the file's defs), `Nothing`. The word pass in the file still needs 3
+  letters or more; `nearest_in` has no floor (1 edit for a name of 1 to 4 letters, 2 from 5; an empty name gets nothing).
+- `vnoc-search` has `nearest_in(corpus, name, Scope::File(f) | Scope::Elsewhere(f), floor, limit)` beside `nearest`, which is unchanged: a second function was simpler than a flag
+  on the first, which also orders by file. The same name in another file (case ignored) is matched whatever its length: `core/perf.py::main` finds `api/main.py::main` and `web/app.py::Main`.
+- **Text:** the sentence on the `error:` line, then the list under it, one per line: leads `did you mean` (3 shown), `found` (5), `name one of` (an ambiguous file name's files, 5) and
+  `<file name> has:` (all of them, at most 10, so never cut); a list that was cut ends `and N more`. The lead is dim and the items are locations (cyan) in a terminal. `show`,
+  `code`, `doc`, `tree`, `grep` and `calls` print the same way (`NodeError::print`).
+- **JSON:** `message` is the one line it always was (the sentence, then ` · did you mean: a · b`), and an error with a list adds `hints: ["a", "b"]`; one without has no such field.
+  `show.json`, `doc.json` and `code.json` each gained that field in the one error they hold.
+
+
+**Every hint list is one per line**, indented under the error, in every error of this table that has one (`did you mean`, `found`, the files
+of an ambiguous name, a file's defs):
+
+```
+error: no node at src/orders.py::parse_ordr
+  did you mean
+    src/orders.py::OrderService.parse_order
+```
+
+3. **A qualified name with no file** (`OrderService.parse_order`) parses as a path and is `Why::NoFile`. `cli/` picks the sentence:
+   if the text has no `/` and `suggest` finds something, it is the second row of the table (`names no file · found: …`); else
+   `no file …`. No new `Why` case. It is used only here: the box stays without typo tolerance, as doc 20 decided.

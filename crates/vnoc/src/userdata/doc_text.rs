@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use vnoc_domain::NodeId;
 
 use super::layout;
-use super::read::{NodeRecord, split_doc};
+use super::read::{NodeRecord, frontmatter, split_doc};
 
 /// A doc larger than this is not a note, and is not kept.
 pub const MAX_DOC_BYTES: u64 = 1_000_000;
@@ -34,6 +34,10 @@ pub struct DocText {
     pub title: String,
     /// the text after the frontmatter, without the title's own line
     pub body: String,
+    /// the frontmatter's `author:`, when it has one
+    pub author: Option<String>,
+    /// the frontmatter's `tags:`, lower-cased, in the order written
+    pub tags: Vec<String>,
     stamp: Stamp,
 }
 
@@ -122,10 +126,13 @@ impl DocTexts {
                         let (title, body) = split_doc(&text);
                         let title =
                             title.unwrap_or_else(|| file.trim_end_matches(".md").to_string());
+                        let read = frontmatter(&text);
                         let doc = DocText {
                             path,
                             title,
                             body: body.into_owned(),
+                            author: read.author,
+                            tags: read.tags,
                             stamp,
                         };
                         docs.insert(key, Arc::new(doc));
@@ -359,6 +366,7 @@ mod tests {
     /// By hand: `cargo test -p vnoc --release --lib -- --ignored --nocapture doc_text`. 03 §7's measurement: 1,000 docs of about 2 KB in 1,000 records.
     #[test]
     #[ignore = "a timing, run by hand"]
+    #[allow(clippy::print_stdout)]
     fn timing_1000_docs() {
         use std::time::Instant;
         use vnoc_search::{Corpus, DocEntry, Limits, parse, run};
@@ -428,6 +436,8 @@ mod tests {
                 doc_path: d.path.to_string_lossy().into_owned(),
                 title: d.title.clone(),
                 body: d.body.clone(),
+                tags: d.tags.clone(),
+                author: d.author.clone(),
             })
             .collect();
         let started = Instant::now();

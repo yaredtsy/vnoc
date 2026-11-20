@@ -85,6 +85,8 @@ pub fn corpus_of(
                 doc_path: text.path.to_string_lossy().into_owned(),
                 title: text.title.clone(),
                 body: text.body.clone(),
+                tags: text.tags.clone(),
+                author: text.author.clone(),
             };
             if let Some(&at) = by_node_id.get(node_id.as_str()) {
                 let n = &nodes[at];
@@ -195,6 +197,9 @@ pub struct Prepared {
     pub query: Query,
     /// the place in the corpus's nodes of the node the reference named, when it named one the tree has
     pub exact: Option<usize>,
+    /// what the reference in the query resolved to, kept as it came (`None` when the query holds none): the command line tells an ID that is
+    /// Missing from one that is nowhere. The box and the server ignore it.
+    pub reference: Option<Found>,
 }
 
 /// Parses `text`, resolves a reference in it, and gets the corpus (kept under `(revision, generation)`, built on the first call after a change).
@@ -223,8 +228,9 @@ pub fn prepare(
         )
     });
     // a node the tree has first; a Missing ID or a reference that names nothing leaves the words to find what they find
-    let exact = match reference.map(|r| index.resolve_ref(project, &r)) {
-        Some(Found::Node(id)) => corpus.position(&id),
+    let reference = reference.map(|r| index.resolve_ref(project, &r));
+    let exact = match &reference {
+        Some(Found::Node(id)) => corpus.position(id),
         _ => None,
     };
     Prepared {
@@ -232,6 +238,7 @@ pub fn prepare(
         corpus,
         query,
         exact,
+        reference,
     }
 }
 
@@ -275,6 +282,8 @@ pub fn answer(revision: u64, corpus: &Corpus, query: &Query, results: Results) -
                 title_match: hit.title_ranges,
                 snippet: hit.snippet,
                 snippet_match: hit.snippet_ranges,
+                tags: doc.tags.clone(),
+                author: doc.author.clone(),
             }
         })
         .collect();
@@ -413,7 +422,9 @@ mod tests {
             ))
             .unwrap();
             data.create_node(id, &toml).unwrap();
-            let doc = data.create_doc(id, "A doc", "hint").unwrap();
+            let doc = data
+                .create_doc(id, &crate::userdata::NewDoc::titled("A doc", "hint"))
+                .unwrap();
             std::fs::write(doc, text).unwrap();
         }
         let records = data.load_all().records;
@@ -579,6 +590,7 @@ mod tests {
     /// By hand: `cargo test -p vnoc --release --lib -- --ignored --nocapture search`. 04 §2's measurement.
     #[test]
     #[ignore = "a timing, run by hand"]
+    #[allow(clippy::print_stdout)]
     fn timing_10000_defs() {
         let list: Vec<(String, Vec<Def>)> = (0..100)
             .map(|f| {

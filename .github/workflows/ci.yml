@@ -85,12 +85,12 @@ jobs:
       - name: extension unit tests (the shared ones again from the extension, and menus.test.ts)
         run: pnpm --filter vnoc unit
       - name: core
-        run: cargo test -p vnoc-domain -p vnoc-driver-protocol -p vnoc-search
+        run: cargo test --no-fail-fast -p vnoc-domain -p vnoc-driver-protocol -p vnoc-search
       - name: python driver (own workspace, own toolchain)
         working-directory: drivers/python
-        run: cargo build && cargo test
+        run: cargo build && cargo test --no-fail-fast
       - name: core integration tests (need the driver built above; also leave target/debug/vnoc for the extension suite)
-        run: cargo test -p vnoc
+        run: cargo test --no-fail-fast -p vnoc
       - name: build the webview and the extension (the extension suite loads them)
         run: pnpm -r build
       - name: extension suite in a real VS Code window (downloads VS Code)

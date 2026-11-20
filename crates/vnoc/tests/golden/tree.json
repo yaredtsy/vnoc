@@ -1,0 +1,197 @@
+{
+  "command": "tree",
+  "cut": 0,
+  "errors": [
+    {
+      "arg": "nope.py",
+      "error": {
+        "message": "no file nope.py",
+        "why": "no_file"
+      }
+    }
+  ],
+  "rows": [
+    {
+      "counts": {
+        "classes": 2,
+        "docs": 4,
+        "files": 4,
+        "folders": 0,
+        "functions": 10
+      },
+      "depth": 0,
+      "docs": 0,
+      "kind": "folder",
+      "lines": null,
+      "location": "billing",
+      "name": "billing"
+    },
+    {
+      "depth": 1,
+      "docs": 2,
+      "kind": "file",
+      "lines": null,
+      "location": "billing/charge.py",
+      "name": "charge.py",
+      "titles": [
+        "Handover notes",
+        "Why charges are retried"
+      ]
+    },
+    {
+      "depth": 2,
+      "docs": 0,
+      "kind": "class",
+      "lines": [
+        7,
+        8
+      ],
+      "location": "billing/charge.py::ChargeError",
+      "name": "ChargeError"
+    },
+    {
+      "counts": {
+        "classes": 0,
+        "docs": 0,
+        "files": 0,
+        "folders": 0,
+        "functions": 1
+      },
+      "depth": 2,
+      "docs": 0,
+      "kind": "function",
+      "lines": [
+        11,
+        22
+      ],
+      "location": "billing/charge.py::retry_charge",
+      "name": "retry_charge",
+      "params": [
+        "gateway",
+        "order",
+        "attempts"
+      ]
+    },
+    {
+      "depth": 2,
+      "docs": 0,
+      "kind": "function",
+      "lines": [
+        25,
+        27
+      ],
+      "location": "billing/charge.py::refund",
+      "name": "refund",
+      "params": [
+        "gateway",
+        "order"
+      ]
+    },
+    {
+      "depth": 1,
+      "docs": 0,
+      "kind": "file",
+      "lines": null,
+      "location": "billing/invoice.py",
+      "name": "invoice.py"
+    },
+    {
+      "counts": {
+        "classes": 0,
+        "docs": 0,
+        "files": 0,
+        "folders": 0,
+        "functions": 3
+      },
+      "depth": 2,
+      "docs": 1,
+      "kind": "class",
+      "lines": [
+        6,
+        21
+      ],
+      "location": "billing/invoice.py::Invoice",
+      "name": "Invoice",
+      "titles": [
+        "Rounding rule"
+      ]
+    },
+    {
+      "depth": 2,
+      "docs": 0,
+      "kind": "function",
+      "lines": [
+        24,
+        27
+      ],
+      "location": "billing/invoice.py::render_invoice",
+      "name": "render_invoice",
+      "params": [
+        "invoice"
+      ]
+    },
+    {
+      "depth": 1,
+      "docs": 0,
+      "kind": "file",
+      "lines": null,
+      "location": "billing/status.py",
+      "name": "status.py"
+    },
+    {
+      "depth": 2,
+      "docs": 0,
+      "kind": "function",
+      "lines": [
+        4,
+        5
+      ],
+      "location": "billing/status.py::state",
+      "name": "state",
+      "params": [
+        "invoice"
+      ]
+    },
+    {
+      "depth": 1,
+      "docs": 0,
+      "kind": "file",
+      "lines": null,
+      "location": "billing/tax.py",
+      "name": "tax.py"
+    },
+    {
+      "depth": 2,
+      "docs": 1,
+      "kind": "function",
+      "lines": [
+        6,
+        7
+      ],
+      "location": "billing/tax.py::rate_for",
+      "name": "rate_for",
+      "params": [
+        "country"
+      ],
+      "titles": [
+        "Where the rates come from"
+      ]
+    },
+    {
+      "depth": 2,
+      "docs": 0,
+      "kind": "function",
+      "lines": [
+        10,
+        11
+      ],
+      "location": "billing/tax.py::apply_tax",
+      "name": "apply_tax",
+      "params": [
+        "amount",
+        "country"
+      ]
+    }
+  ],
+  "schema": 1
+}

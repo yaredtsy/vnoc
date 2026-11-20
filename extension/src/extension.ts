@@ -5,6 +5,7 @@ import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
 import { type AskToDropId, Commands, type Locate } from "./commands";
+import { CliSetup } from "./cliSetup";
 import { Core, watchFiles } from "./core";
 import { DraftCopy, type Notify, showNotification } from "./draftCopy";
 import { DirtyFiles } from "./dirtyWatch";
@@ -157,7 +158,8 @@ export function activate(ctx: vscode.ExtensionContext) {
       store.dispatch({ type: "highlight", id: null });
     },
   );
-  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs, docs);
+  const cli = new CliSetup(ctx, c, output);
+  commands = new Commands(c, store, panels, async () => void (await vscode.commands.executeCommand("vnoc.structure.focus")), callTrees, draftDocs, docs, cli);
 
   // drafts a canvas left in a window that was reloaded or closed (§7): asked once, a moment after the start
   const startCheck = setTimeout(() => void draftCopy.atStart(), START_CHECK_MS);
@@ -201,6 +203,9 @@ export function activate(ctx: vscode.ExtensionContext) {
     { dispose: () => clearTimeout(startCheck) },
   );
 
+  // the command in PATH follows this version, and `vnoc.cliInstalled` and `vnoc.agentsSetUp` are set (they wait for the core: they never hold up the start)
+  void cli.activate();
+
   // the files whose menus carry the V-NOC submenu (later: from the driver manifests)
   void vscode.commands.executeCommand("setContext", "vnoc.extensions", [".py", ".pyi"]);
 
@@ -223,6 +228,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** what Report Issue fills the form with, and the log it would copy */
     reportFacts: () => facts(help),
     logTail: () => output.tail(),
+    /** the command line's setup: the core binary the extension runs, the context keys it set, and the one-time offer (the suite asks without showing it) */
+    cli: {
+      binaryPath: () => c.binaryPath,
+      context: (key: string) => cli.context(key),
+      decideOffer: () => cli.decideOffer(),
+      resetOffer: () => cli.resetOffer(),
+      offerAfterFirstAttach: () => cli.offerAfterFirstAttach(),
+    },
     /** the run of the core: one more after each restart */
     coreEpoch: () => c.epoch,
     /** an intent, as a click on a card would send it */

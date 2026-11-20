@@ -12,6 +12,11 @@ pub fn project_file(root: &Path) -> PathBuf {
     root.join("vnoc.toml")
 }
 
+/// What each tag means: optional, written by people (`docs/04-storage/01-vnoc-folder.md`).
+pub fn tags_file(root: &Path) -> PathBuf {
+    root.join("tags.toml")
+}
+
 pub fn gitignore_file(root: &Path) -> PathBuf {
     root.join(".gitignore")
 }
@@ -27,6 +32,11 @@ pub fn nodes_dir(root: &Path) -> PathBuf {
 
 pub fn node_file(root: &Path, id: &NodeId) -> PathBuf {
     node_dir(root, id).join("node.toml")
+}
+
+/// The lock that keeps one writer at a time in the project (`lock.rs`). Not committed (`local/` is ignored).
+pub fn write_lock_file(root: &Path) -> PathBuf {
+    root.join("local").join("write.lock")
 }
 
 /// Where a removed node folder waits to be restored. Not committed (`local/` is ignored).

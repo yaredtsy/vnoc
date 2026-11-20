@@ -19,6 +19,7 @@ import type { Surfaces } from "./surfaces";
 import { type ContextId, type ContextState, MAIN } from "@vnoc/shared/session.ts";
 import type { SessionStore } from "./session";
 import { attachMissingHere, relinkMissing } from "./relink";
+import type { CliSetup } from "./cliSetup";
 import { writeId } from "./writeId";
 import { emptyTrash, removeAllMissing, removeMissing, restoreRemoved } from "./trash";
 import { absolute, selectionOf } from "./files";
@@ -68,6 +69,8 @@ export class Commands {
     private readonly draftDocs: DraftDocs,
     /** a doc's path is checked here (§8): inside `<git root>/.vnoc/nodes/`, a `.md` */
     private readonly docs: Docs,
+    /** the command in PATH, the coding agents, and the offer made after a first attach (07 §3) */
+    private readonly cli: CliSetup,
   ) {}
 
   private readonly request = <T>(method: string, params?: object) => this.core.request<T>(method, params);
@@ -86,7 +89,8 @@ export class Commands {
       // reveal the node on the canvas, opening it if closed; from an editor or a tab it opens BESIDE it, so the code stays in view (08 §4)
       on("vnoc.openInCanvas", async (arg, selected) => this.openCanvasAt((await this.nodeFor(arg, selected)).id, { beside: isEditorArg(arg, selected) })),
       // a click on a node, from the palette or a test: the sidebar row's click, in MAIN
-      on("vnoc.open", (arg) => (isTreeNode(arg) ? this.rowClick(MAIN, arg.id) : undefined)),
+      // (an ID lost row of NEEDS ATTENTION is a node of the tree: its click is the sidebar's)
+      on("vnoc.open", (arg) => (isTreeNode(arg) ? this.rowClick(MAIN, arg.id) : isAttentionRow(arg, "lostId") ? this.rowClick(MAIN, arg.item.key) : undefined)),
       on("vnoc.focusJump", (depth) => this.store.dispatch({ type: "focusJump", depth: Number(depth) })),
       on("vnoc.showLog", () => this.core.showLog()),
       on("vnoc.revealInSidebar", async (arg, selected) => {
@@ -161,6 +165,10 @@ export class Commands {
         await this.addDocTo(node.id);
       }),
       on("vnoc.refreshStructure", () => this.core.notify("vnoc/rebuild")), // the way out if the tree ever does not follow the code
+      // the command line (07 §3): the palette only. Each answers what it did, for the window suite; `setUpAgents` takes `{ agents, confirm: true }` to skip its two questions
+      on("vnoc.installCli", () => this.cli.installCli()),
+      on("vnoc.uninstallCli", () => this.cli.uninstallCli()),
+      on("vnoc.setUpAgents", (arg) => this.cli.setUpAgents(arg)),
       this.followCursor(),
     ];
   }
@@ -178,12 +186,17 @@ export class Commands {
   }
 
   /**
-   * The node a command is about. It starts from one of: a node, a card's or a sidebar row's right-click menu (`{ nodeKey }`, from `nodeContext`),
+   * The node a command is about. It starts from one of: a node, an ID lost row of NEEDS ATTENTION, a card's or a sidebar row's right-click menu (`{ nodeKey }`, from `nodeContext`),
    * the Explorer (a Uri, with the list of selected Uris as the next argument), or the editor's menu (a Uri, nothing after it: the node at the cursor).
    */
   async nodeFor(arg: unknown, selected?: unknown): Promise<TreeNode> {
     if (isTreeNode(arg)) return arg;
     const tree = this.core.tree ?? (await this.core.loadStructure()).root;
+    if (isAttentionRow(arg, "lostId")) {
+      const hit = findNode(tree, arg.item.key);
+      if (!hit) throw new Error("That node is not in the structure any more.");
+      return hit;
+    }
     if (typeof arg === "object" && arg !== null && "nodeKey" in arg) {
       const hit = findNode(tree, String((arg as { nodeKey: unknown }).nodeKey));
       if (!hit) throw new Error("That node is not in the structure any more.");
@@ -404,7 +417,10 @@ export class Commands {
     const root = this.core.gitRoot ?? structure!.git_root;
     const node = findNode(this.core.tree!, key);
     if (!node || node.id === "/") throw new Error("That node is not in the structure any more.");
-    return addDoc((method, params) => this.core.request(method, params), root, node, node.docs);
+    const added = await addDoc((method, params) => this.core.request(method, params), root, node, node.docs);
+    // the first attach in a workspace is when to offer the agents' files (07 §3): a favour, not awaited, and it never fails the attach
+    if (added) void this.cli.offerAfterFirstAttach();
+    return added;
   }
 
   /**

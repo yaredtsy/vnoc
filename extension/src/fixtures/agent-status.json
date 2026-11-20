@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "command": "agent status",
+  "set_up": true,
+  "files": [
+    {
+      "part": "skill",
+      "path": ".claude/skills/vnoc/SKILL.md",
+      "state": "current",
+      "serves": [
+        "claude",
+        "cline"
+      ]
+    },
+    {
+      "part": "skill",
+      "path": ".agents/skills/vnoc/SKILL.md",
+      "state": "current",
+      "serves": [
+        "codex",
+        "cursor",
+        "pi",
+        "opencode",
+        "copilot",
+        "amp",
+        "goose",
+        "windsurf",
+        "gemini",
+        "other"
+      ]
+    },
+    {
+      "part": "rules",
+      "path": "AGENTS.md",
+      "state": "current",
+      "serves": [
+        "claude",
+        "cline",
+        "codex",
+        "cursor",
+        "pi",
+        "opencode",
+        "copilot",
+        "amp",
+        "goose",
+        "windsurf",
+        "other"
+      ]
+    },
+    {
+      "part": "import",
+      "path": "CLAUDE.md",
+      "state": "current",
+      "serves": [
+        "claude"
+      ]
+    }
+  ],
+  "missing": []
+}

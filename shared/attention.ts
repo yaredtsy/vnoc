@@ -2,7 +2,7 @@
 // could not read, and the "too many files" row. They come from the structure the extension holds, not from the core's attention list.
 // Pure: no `vscode`, tested with `node --test`.
 
-import type { StructureResult } from "./messages";
+import type { Kind, LostMarker, StructureResult } from "./messages";
 
 export type NotReadRow =
   | { kind: "file"; path: string; /** the row's label */ label: string; /** the row's description: why, in a few words */ reason: string; /** the full error */ tooltip: string }
@@ -26,4 +26,28 @@ export function notReadRows(s: Pick<StructureResult, "failed" | "truncated"> & {
     rows.push({ kind: "truncated", label: "too many files: the structure is cut", tooltip: `${read}V-NOC stopped there, so the files after it are not on the canvas or in the sidebar.` });
   }
   return rows;
+}
+
+/** What the "ID lost" rows say when hovered: why the node is there, and what the action does. */
+export const LOST_ID_TOOLTIP = "node.toml says the ID is in the code, and the code has none: V-NOC found this node by its name. Write ID puts the line back.";
+
+/** A row of the "ID lost" group: the node is in the tree, so a click goes to it and *Write ID* is its one action. */
+export interface LostIdRow {
+  /** the node's id in the tree: what a click and *Write ID* act on */
+  key: string;
+  id: string;
+  kind: Kind;
+  /** a def shows its name; a file or a folder its path */
+  label: string;
+  /** a def shows where it is; a file or a folder what it is */
+  description: string;
+  tooltip: string;
+}
+
+/** One row per lost marker, in the order the core gave them. An older core sends no `lost_markers`: no rows, so no group. */
+export function lostIdRows(s: { lost_markers?: LostMarker[] }): LostIdRow[] {
+  return (s.lost_markers ?? []).map((m) => {
+    const isDef = m.qualname !== "";
+    return { key: m.key, id: m.id, kind: m.kind, label: isDef ? m.qualname : m.path, description: isDef ? m.path : m.kind, tooltip: LOST_ID_TOOLTIP };
+  });
 }

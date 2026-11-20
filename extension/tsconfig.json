@@ -17,6 +17,7 @@
   ],
   "exclude": [
     "src/menus.test.ts",
-    "src/report.test.ts"
+    "src/report.test.ts",
+    "src/agentsJson.test.ts"
   ]
 }

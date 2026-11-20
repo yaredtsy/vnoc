@@ -441,6 +441,15 @@ impl DriverHost {
             .unwrap_or_default()
     }
 
+    /// The running driver's name and version; `None` when no driver is running (it is started by the first request that needs it).
+    pub async fn info(&self) -> Option<(String, String)> {
+        self.client
+            .lock()
+            .await
+            .as_ref()
+            .map(|client| (client.info.name.clone(), client.info.version.clone()))
+    }
+
     pub fn set_path(&self, path: Option<PathBuf>) {
         *self.path.lock().unwrap() = path;
     }

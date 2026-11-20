@@ -57,6 +57,22 @@ pub struct MissingNode {
     pub docs: usize,
 }
 
+/// A documented node whose `ID:` line was lost: `node.toml` says the ID is in the code, and the code has none, so the node was found only by its name
+/// and path. Writing the ID back (`vnoc.writeId` with `key`) makes the doc follow the code again. Not a problem of the files and not Missing: the
+/// node is in the tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LostMarker {
+    /// the permanent ID
+    pub id: String,
+    /// the node's id in the tree, which `vnoc/writeId` takes: `path::qualname[#n]` for a def, the path for a file or a folder
+    pub key: String,
+    pub kind: Kind,
+    /// as `node.toml` says it, and so as the tree's ids start: at the git root
+    pub path: String,
+    /// empty for a file or a folder
+    pub qualname: String,
+}
+
 /// Something the user should look at: where to go when they click it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Problem {
@@ -85,6 +101,10 @@ pub struct StructureResult {
     pub missing: Vec<MissingNode>,
     /// broken `.vnoc/` files and `.vnoc-id` files, and an ID written in two places
     pub problems: Vec<Problem>,
+    /// nodes found only by their name although `node.toml` says the ID is in the code, sorted by path. An addition: a client that does not know
+    /// the field ignores it, and one reading an older core's answer gets `[]`.
+    #[serde(default)]
+    pub lost_markers: Vec<LostMarker>,
 }
 
 impl Request for Structure {
@@ -147,6 +167,12 @@ pub struct SearchDoc {
     pub title_match: Vec<(u32, u32)>,
     pub snippet: String,
     pub snippet_match: Vec<(u32, u32)>,
+    /// the frontmatter's `tags:`, lower case, in the order written; empty when the doc has none
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// the frontmatter's `author:`
+    #[serde(default)]
+    pub author: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -265,7 +291,7 @@ pub struct AttachParams {
     pub document: Option<Document>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub uri: async_lsp::lsp_types::Url,
     pub version: i32,
@@ -282,6 +308,9 @@ pub struct AttachResult {
     pub id_in_code: bool,
     /// something the user should hear (the ID could not be written, so the doc is attached by name)
     pub notice: Option<String>,
+    /// the body began with its own `# <title>` line and it was left out (the heading is V-NOC's); absent otherwise
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub title_line_dropped: bool,
 }
 
 impl Request for Attach {
@@ -305,6 +334,12 @@ pub struct DocInfo {
     pub title: String,
     /// absolute path of the Markdown file
     pub path: String,
+    /// the frontmatter's `tags:`, lower case, in the order written; empty when the doc has none
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// the frontmatter's `author:`
+    #[serde(default)]
+    pub author: Option<String>,
 }
 
 impl Request for Docs {

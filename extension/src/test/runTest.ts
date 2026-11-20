@@ -53,7 +53,8 @@ async function main() {
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(root, "out/test/suite/index"),
     launchArgs: [workspace, "--disable-extensions", `--user-data-dir=${path.join(tmp, "user")}`, `--extensions-dir=${path.join(tmp, "ext")}`, "--disable-workspace-trust"],
-    extensionTestsEnv: { VNOC_TEST_WORKSPACE: workspace },
+    // the `cli` suite installs the `vnoc` command: into this folder, never the real ~/.local/bin (and nothing of the user's PATH)
+    extensionTestsEnv: { VNOC_TEST_WORKSPACE: workspace, VNOC_CLI_DIR: path.join(tmp, "cli-bin") },
   });
 }
 main().catch((e) => {

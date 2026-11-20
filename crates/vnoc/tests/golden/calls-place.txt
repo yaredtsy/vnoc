@@ -1,0 +1,4 @@
+function  orders/service.py::OrderService.place   lines 15-18
+  parse_order  orders/service.py::OrderService.parse_order
+    Line  orders/models.py::Line
+    Order  orders/models.py::Order

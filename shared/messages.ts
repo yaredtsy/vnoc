@@ -46,6 +46,21 @@ export interface MissingNode {
   docs: number;
 }
 
+/**
+ * A documented node whose `ID:` line was lost: `node.toml` says the ID is in the code and the code has none, so the node was found by its name. It is in the
+ * tree, and *Write ID* puts the line back (`vnoc.writeId` takes `key`).
+ */
+export interface LostMarker {
+  /** the permanent ID */
+  id: string;
+  /** the node's id in the tree: `path::qualname[#n]` for a def, the path for a file or a folder */
+  key: string;
+  kind: Kind;
+  path: string;
+  /** empty for a file or a folder */
+  qualname: string;
+}
+
 /** Something to look at: where to go when it is clicked. */
 export interface Problem {
   text: string;
@@ -70,6 +85,8 @@ export interface StructureResult {
   /** documented nodes that are not in the code now, sorted by path */
   missing: MissingNode[];
   problems: Problem[];
+  /** nodes found by name whose `ID:` line was lost, sorted by path. An older core sends none: read an absent field as `[]` */
+  lost_markers?: LostMarker[];
 }
 
 /** `vnoc/search`: one node the query found. */
@@ -109,6 +126,10 @@ export interface SearchDoc {
   title_match: [number, number][];
   snippet: string;
   snippet_match: [number, number][];
+  /** the doc's frontmatter `tags:`, lower case, in the order written. Left out by a core older than A8b, and empty when the doc has none. */
+  tags?: string[];
+  /** the doc's frontmatter `author:` */
+  author?: string | null;
 }
 
 export interface SearchResult {
@@ -155,6 +176,10 @@ export interface DocInfo {
   title: string;
   /** absolute path of the Markdown file */
   path: string;
+  /** the doc's frontmatter `tags:`, lower case, in the order written. Left out by a core older than A8b, and empty when the doc has none. */
+  tags?: string[];
+  /** the doc's frontmatter `author:` */
+  author?: string | null;
 }
 
 /** `likely`: the engine's best guess for the callee, not a certainty (the Python driver sends it from analyzer D28) */

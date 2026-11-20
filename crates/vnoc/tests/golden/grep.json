@@ -1,0 +1,46 @@
+{
+  "command": "grep",
+  "cut": 0,
+  "hits": 2,
+  "nodes": [
+    {
+      "docs": 2,
+      "hits": 1,
+      "kind": "file",
+      "lines": null,
+      "location": "billing/charge.py",
+      "more": 0,
+      "node_id": "4Q57CGHF0HJ23TTYWXTZXQ8DPS",
+      "outside_def": true,
+      "path": "billing/charge.py",
+      "shown": [
+        {
+          "line": 4,
+          "text": "MAX_ATTEMPTS = 3"
+        }
+      ]
+    },
+    {
+      "docs": 0,
+      "hits": 1,
+      "kind": "function",
+      "lines": [
+        11,
+        22
+      ],
+      "location": "billing/charge.py::retry_charge",
+      "more": 0,
+      "node_id": null,
+      "path": "billing/charge.py",
+      "shown": [
+        {
+          "line": 11,
+          "text": "def retry_charge(gateway, order, attempts=MAX_ATTEMPTS):"
+        }
+      ]
+    }
+  ],
+  "pattern": "MAX_ATTEMPTS",
+  "schema": 1,
+  "total": 2
+}

@@ -6,9 +6,12 @@
 pub(crate) mod atomic;
 mod doc_text;
 mod layout;
+mod lock;
 mod read;
+mod tags;
 mod trash;
 
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +19,13 @@ use toml_edit::{DocumentMut, value};
 use vnoc_domain::{LocationKey, NodeId, NodeToml};
 
 pub use doc_text::{DocStats, DocText, DocTexts};
-pub use read::{DocInfo, LoadProblem, LoadReport, NodeRecord};
+pub use lock::{DEFAULT_WAIT, LockError, WriteLock};
+pub(crate) use read::after_frontmatter;
+pub use read::{DocInfo, Frontmatter, LoadProblem, LoadReport, NodeRecord, frontmatter};
+pub use tags::{
+    AuthorCount, Change, DescribeError, Described, Descriptions, TagCount, TagError, WriteError,
+    author_counts, check_description, is_tag, rewrite_tags, tag_counts,
+};
 pub use trash::{MovePlan, TrashEntry, TrashError};
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +47,28 @@ pub struct Settings {
     pub initialized: bool,
     /// `[ids] default` is `"on-attach"` (the default): attaching writes an ID into the code
     pub markers: bool,
+}
+
+/// Why a tag was not described.
+#[derive(Debug, thiserror::Error)]
+pub enum DescribeTagError {
+    #[error(transparent)]
+    Describe(#[from] DescribeError),
+    #[error(transparent)]
+    Write(#[from] WriteError),
+}
+
+/// Why the tags of a doc were not changed.
+#[derive(Debug, thiserror::Error)]
+pub enum EditTagsError {
+    #[error(transparent)]
+    Tag(#[from] TagError),
+    #[error("{0} is not a doc of a node")]
+    NotADoc(PathBuf),
+    #[error("the doc is not UTF-8 text")]
+    NotUtf8,
+    #[error(transparent)]
+    Write(#[from] WriteError),
 }
 
 pub struct UserData {
@@ -81,6 +112,20 @@ impl UserData {
             initialized: true,
             markers,
         })
+    }
+
+    /// The lock for one attach, relink or write-ID (waiting up to `DEFAULT_WAIT` for another writer). `None` in a project with no `.vnoc/`
+    /// yet. Blocks the thread: from async code, run it with `spawn_blocking`.
+    pub fn write_lock(&self) -> Result<Option<WriteLock>, LockError> {
+        WriteLock::take_if_initialized(&self.root, DEFAULT_WAIT)
+    }
+
+    /// The two files `initialize` writes: `.vnoc/.gitignore` and `.vnoc/vnoc.toml`.
+    pub fn init_files(&self) -> [PathBuf; 2] {
+        [
+            layout::gitignore_file(&self.root),
+            layout::project_file(&self.root),
+        ]
     }
 
     /// Creates `.vnoc/` with its `vnoc.toml` and `.gitignore` the first time. Does nothing when the project already has them
@@ -143,16 +188,11 @@ impl UserData {
         Ok(())
     }
 
-    /// Creates a new Markdown doc in the node's folder and returns its path. `hint` is for people reading a pull request.
-    pub fn create_doc(
-        &self,
-        id: &NodeId,
-        title: &str,
-        hint: &str,
-    ) -> Result<PathBuf, UserDataError> {
+    /// Creates a new Markdown doc in the node's folder and returns its path.
+    pub fn create_doc(&self, id: &NodeId, doc: &NewDoc) -> Result<PathBuf, UserDataError> {
         let folder = layout::node_dir(&self.root, id);
-        let content = format!("---\nnode: {id}\nhint: {hint}\n---\n# {}\n\n", title.trim());
-        let slug = slug(title);
+        let content = doc.render(id);
+        let slug = slug(doc.title);
         for n in 1.. {
             let name = if n == 1 {
                 format!("{slug}.md")
@@ -185,6 +225,59 @@ impl UserData {
         read::load_all(&self.root)
     }
 
+    /// What each tag means, from `.vnoc/tags.toml` (none when the file is not there; its problems are `load_all`'s).
+    pub fn tag_descriptions(&self) -> Descriptions {
+        tags::read_descriptions(&self.root).0
+    }
+
+    /// Sets (`Some`) or takes away (`None`) the description of `tag` in `.vnoc/tags.toml`, creating the file when it is not there (`describe_in` says what
+    /// changes in it). Nothing is written when nothing changes. The caller holds the write lock.
+    pub fn describe_tag(
+        &self,
+        tag: &str,
+        description: Option<&str>,
+    ) -> Result<Described, DescribeTagError> {
+        check_description(tag, description)?;
+        let file = layout::tags_file(&self.root);
+        let was = match fs::read_to_string(&file) {
+            Ok(text) => Some(text),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(WriteError::from(e).into()),
+        };
+        let (new, done) = tags::describe_in(was.as_deref().unwrap_or(""), tag, description)?;
+        match &was {
+            // a file that is not there is created, but only for a description: `--clear` of nothing makes no file
+            None if done == Described::Set => {
+                atomic::write_atomic(&file, new.as_bytes()).map_err(WriteError::from)?
+            }
+            Some(was) if *was != new => tags::write_if_unchanged(&file, was, &new)?,
+            _ => {}
+        }
+        Ok(done)
+    }
+
+    /// Changes the tags of the doc at `path` (a Markdown file under `nodes/`): read, rewritten as `rewrite_tags` says, and written atomically only if
+    /// the file is still what was read. Nothing is written when nothing changes. The caller holds the write lock.
+    pub fn edit_doc_tags(
+        &self,
+        path: &Path,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<Change, EditTagsError> {
+        if !self.is_doc(path) {
+            return Err(EditTagsError::NotADoc(path.to_path_buf()));
+        }
+        let text = fs::read(path)
+            .map_err(WriteError::from)
+            .map_err(EditTagsError::Write)?;
+        let text = String::from_utf8(text).map_err(|_| EditTagsError::NotUtf8)?;
+        let (new, change) = rewrite_tags(&text, add, remove)?;
+        if change.changes_text() {
+            tags::write_if_unchanged(path, &text, &new)?;
+        }
+        Ok(change)
+    }
+
     /// The doc texts of `records` (what `load_all` gave), reading only the files whose stamp moved since `held`. Disk work only.
     pub fn refresh_doc_texts(
         &self,
@@ -192,6 +285,79 @@ impl UserData {
         records: &[(NodeId, NodeRecord)],
     ) -> (DocTexts, DocStats) {
         held.refresh(&self.root, records)
+    }
+}
+
+/// What a new doc holds. The frontmatter is V-NOC's: `node:`, `hint:`, then `author:` and `tags:` only when there are some.
+pub struct NewDoc<'a> {
+    pub title: &'a str,
+    /// for people reading a pull request: where the node is
+    pub hint: &'a str,
+    /// the Markdown after the heading; empty for a doc of the heading alone
+    pub body: &'a str,
+    pub author: Option<&'a str>,
+    pub tags: &'a [String],
+}
+
+impl<'a> NewDoc<'a> {
+    /// A doc of its heading alone, for the tests of what sits around the writer.
+    #[cfg(test)]
+    pub(crate) fn titled(title: &'a str, hint: &'a str) -> NewDoc<'a> {
+        NewDoc {
+            title,
+            hint,
+            body: "",
+            author: None,
+            tags: &[],
+        }
+    }
+
+    fn render(&self, id: &NodeId) -> String {
+        let mut text = format!("---\nnode: {id}\nhint: {}\n", self.hint);
+        if let Some(author) = self.author {
+            text.push_str(&format!("author: {author}\n"));
+        }
+        if !self.tags.is_empty() {
+            text.push_str(&format!("tags: [{}]\n", self.tags.join(", ")));
+        }
+        text.push_str(&format!("---\n# {}\n\n", self.title.trim()));
+        text.push_str(self.body);
+        if !self.body.is_empty() && !self.body.ends_with('\n') {
+            text.push('\n');
+        }
+        text
+    }
+}
+
+/// `body` without its first line when that is a `# ` heading equal to `title` (trimmed, case and runs of spaces ignored), and without the blank lines
+/// right after it: V-NOC writes the title, so a body that starts with it would have it twice. A different heading, a `## ` one, or text stays as it is.
+/// The flag says whether a line was dropped.
+pub fn without_own_title<'b>(title: &str, body: &'b str) -> (&'b str, bool) {
+    let words =
+        |text: &str| -> Vec<String> { text.split_whitespace().map(str::to_lowercase).collect() };
+    let mut rest = body;
+    // blank lines before the heading do not hide it
+    while let Some(line) = rest.split_inclusive('\n').next() {
+        if !line.trim().is_empty() {
+            break;
+        }
+        rest = &rest[line.len()..];
+    }
+    let Some(line) = rest.split_inclusive('\n').next() else {
+        return (body, false);
+    };
+    match line.strip_prefix("# ") {
+        Some(heading) if words(heading) == words(title) => {
+            rest = &rest[line.len()..];
+            while let Some(line) = rest.split_inclusive('\n').next() {
+                if !line.trim().is_empty() {
+                    break;
+                }
+                rest = &rest[line.len()..];
+            }
+            (rest, true)
+        }
+        _ => (body, false),
     }
 }
 
@@ -244,6 +410,43 @@ mod tests {
             1,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_body_that_starts_with_the_title_loses_that_line_and_the_blank_lines_after_it() {
+        let own = |title, body| without_own_title(title, body);
+        let same = ("Body.\n", true);
+        assert_eq!(own("Same title", "# Same title\n\nBody.\n"), same);
+        assert_eq!(own("Same title", "# Same title\n\n\n  \nBody.\n"), same);
+        // case and runs of spaces do not matter; nor do spaces around the title
+        assert_eq!(own("Same title", "#   SAME   Title  \n\nBody.\n"), same);
+        assert_eq!(own("  Same   title ", "# same title\nBody.\n"), same);
+        // blank lines before the heading do not hide it
+        assert_eq!(own("Same title", "\n  \n# Same title\n\nBody.\n"), same);
+        // nothing after it
+        assert_eq!(own("Same title", "# Same title"), ("", true));
+        // the text after it keeps its own indentation
+        assert_eq!(own("T", "# T\n\n    code\n"), ("    code\n", true));
+    }
+
+    #[test]
+    fn any_other_body_is_left_as_it_is() {
+        for body in [
+            "",
+            "\n\n",
+            "Body.\n",
+            "# Another title\n\nBody.\n",
+            "## Same title\n\nBody.\n",
+            "#Same title\n\nBody.\n",
+            "Intro.\n\n# Same title\n\nBody.\n",
+            "# Same title, and more\n",
+        ] {
+            assert_eq!(
+                without_own_title("Same title", body),
+                (body, false),
+                "{body:?}"
+            );
+        }
     }
 
     #[test]
@@ -319,20 +522,15 @@ mod tests {
             "a taken ID is stepped past"
         );
 
-        let first = data
-            .create_doc(
-                &id,
-                "Why we parse twice",
-                "src/orders.py::OrderService.parse_order",
-            )
-            .unwrap();
-        let second = data
-            .create_doc(
-                &id,
-                "Why we parse twice",
-                "src/orders.py::OrderService.parse_order",
-            )
-            .unwrap();
+        let new = NewDoc {
+            title: "Why we parse twice",
+            hint: "src/orders.py::OrderService.parse_order",
+            body: "",
+            author: None,
+            tags: &[],
+        };
+        let first = data.create_doc(&id, &new).unwrap();
+        let second = data.create_doc(&id, &new).unwrap();
         assert_eq!(
             (
                 first.file_name().unwrap().to_str(),
@@ -361,6 +559,61 @@ mod tests {
             ["why-we-parse-twice-2.md", "why-we-parse-twice.md"]
         );
         assert_eq!(record.toml.id_in_code(), Some(IdInCode::No));
+    }
+
+    #[test]
+    fn a_new_doc_has_author_and_tags_only_when_given_and_the_body_after_the_heading() {
+        let id = first_free_id(&location(), |_| false).unwrap();
+        let tags = ["plan".to_string(), "billing".to_string()];
+        let full = NewDoc {
+            title: " Split it ",
+            hint: "src/orders.py::OrderService.parse_order",
+            body: "First line\n\nSecond",
+            author: Some("claude-code"),
+            tags: &tags,
+        };
+        assert_eq!(
+            full.render(&id),
+            format!(
+                "---\nnode: {id}\nhint: src/orders.py::OrderService.parse_order\nauthor: claude-code\ntags: [plan, billing]\n---\n# Split it\n\nFirst line\n\nSecond\n"
+            ),
+            "a body without a last line break gets one"
+        );
+        let bare = NewDoc {
+            author: None,
+            tags: &[],
+            body: "",
+            ..full
+        };
+        assert_eq!(
+            bare.render(&id),
+            format!(
+                "---\nnode: {id}\nhint: src/orders.py::OrderService.parse_order\n---\n# Split it\n\n"
+            )
+        );
+        // and it reads back
+        let read = frontmatter(&NewDoc { body: "x", ..full }.render(&id));
+        assert_eq!(
+            (read.title.as_deref(), read.author.as_deref(), read.tags),
+            (Some("Split it"), Some("claude-code"), tags.to_vec())
+        );
+    }
+
+    #[test]
+    fn a_bad_key_in_tags_toml_is_a_problem_of_the_load_and_the_rest_is_read() {
+        let data = fresh("tags-toml");
+        data.initialize(true).unwrap();
+        assert!(data.load_all().problems.is_empty());
+        std::fs::write(data.root.join("tags.toml"), "plan = \"ok\"\nBad = \"x\"\n").unwrap();
+        let report = data.load_all();
+        assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
+        assert!(
+            report.problems[0]
+                .text
+                .starts_with(".vnoc/tags.toml: `Bad` is not a tag")
+        );
+        assert_eq!(report.problems[0].file, data.root.join("tags.toml"));
+        assert_eq!(data.tag_descriptions().get("plan"), Some("ok"));
     }
 
     #[test]

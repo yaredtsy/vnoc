@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { Kind, TreeNode } from "@vnoc/shared/messages.ts";
 import { MAIN, emptySession, reduce } from "@vnoc/shared/session.ts";
 import type { SearchDoc, SearchNode } from "@vnoc/shared/messages.ts";
-import { docsHeader, nodesHeader, pickIntent, pointedAt, rowAt, searchKey, splitMatch } from "./search.ts";
+import { docsHeader, nodesHeader, pickIntent, pointedAt, rowAt, searchKey, splitMatch, tagsLabel } from "./search.ts";
 
 const n = (id: string, kind: Kind, path: string, name: string, children: TreeNode[] = []): TreeNode => ({ id, kind, name, path, qualname: null, range: null, syntax_error: false, node_id: null, docs: 0, link: null, children });
 const file = (path: string, ...fns: string[]) => n(path, "file", path, path.split("/").pop()!, fns.map((f) => n(`${path}::${f}`, "function", path, f)));
@@ -104,4 +104,16 @@ test("Enter on a result the focus hides: the focus shortens until it holds the n
   let partly = reduce(emptySession(), MAIN, { type: "focus", id: "billing/invoice.py" }, tree, lookup);
   partly = reduce(partly, MAIN, pickIntent("billing/rebilling.py::rebill"), tree, lookup);
   assert.deepEqual([...partly.contexts[MAIN].focus], ["billing"], "back to the step that holds it");
+});
+
+test("a doc row shows its tags after the title in the order written, and a doc with none is what it was", () => {
+  assert.equal(tagsLabel(["plan", "billing"]), "[plan, billing]");
+  assert.equal(tagsLabel(["plan"]), "[plan]");
+  // none, an empty list, and an answer from a core that does not send them: no label, so no element
+  assert.equal(tagsLabel([]), null);
+  assert.equal(tagsLabel(undefined), null);
+  // the doc as the wire has it: the two fields are optional, so a row built without them types and reads as none
+  const old: SearchDoc = { node: null, node_id: "X", node_name: "n", node_kind: null, node_path: "p", missing: true, file: "a.md", doc_path: "/a.md", title: "T", title_match: [], snippet: "", snippet_match: [] };
+  assert.equal(tagsLabel(old.tags), null);
+  assert.equal(tagsLabel({ ...old, tags: ["plan", "billing"], author: "claude-code" }.tags), "[plan, billing]");
 });

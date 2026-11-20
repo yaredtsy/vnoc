@@ -5,7 +5,7 @@
 
 use vnoc_domain::IdInCode;
 
-use super::attach::{AttachError, Env, document_for, find_target, write_marker};
+use super::attach::{AttachError, Done, Env, document_for, find_target, write_marker};
 use crate::protocol::{WriteIdParams, WriteIdResult};
 use crate::userdata::{UserData, UserDataError};
 
@@ -30,7 +30,7 @@ pub enum WriteIdError {
 pub async fn write_id(
     mut env: Env<'_>,
     params: WriteIdParams,
-) -> Result<WriteIdResult, WriteIdError> {
+) -> Result<Done<WriteIdResult>, WriteIdError> {
     // the index answers who is documented here, in the same lock as the target: a node whose ID is elsewhere in the code is not this one,
     // however old its stored anchor is
     let (location, target, id) = {
@@ -58,18 +58,27 @@ pub async fn write_id(
         params.document.as_ref(),
     )?;
 
-    if let Err(reason) = write_marker(&mut env, &target, &location, &id, document).await {
-        return Ok(WriteIdResult {
-            written: false,
-            notice: Some(format!(
-                "The ID could not be written ({reason}); the docs stay attached by name."
-            )),
-        });
-    }
+    let marker = match write_marker(&mut env, &target, &location, &id, &document).await {
+        Ok(done) => done,
+        Err(reason) => {
+            return Ok(Done {
+                result: WriteIdResult {
+                    written: false,
+                    notice: Some(format!(
+                        "The ID could not be written ({reason}); the docs stay attached by name."
+                    )),
+                },
+                marker: None,
+            });
+        }
+    };
     toml.set_id_in_code(IdInCode::Yes);
     data.write_node_toml(&id, &toml)?;
-    Ok(WriteIdResult {
-        written: true,
-        notice: None,
+    Ok(Done {
+        result: WriteIdResult {
+            written: true,
+            notice: None,
+        },
+        marker: Some(marker),
     })
 }

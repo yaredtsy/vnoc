@@ -1,0 +1,5 @@
+path = "orders/service.py"
+qualname = "OrderService.parse_order"
+id_in_code = "yes"
+status = "active"
+kind = "function"

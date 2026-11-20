@@ -167,8 +167,20 @@ fn the_parse_table() {
             },
         ),
         ("self:", words(&["self:"])),
-        ("tag:plan", words(&["tag:plan"])),
-        ("author:me", words(&["author:me"])),
+        // `tag:` and `author:` are filters now (A8b); a name that is no filter is still a word
+        ("label:plan", words(&["label:plan"])),
+        (
+            "tag:Plan -tag:draft author:Me -author:you",
+            Query {
+                tags: v(&["plan"]),
+                not_tags: v(&["draft"]),
+                authors: v(&["me"]),
+                not_authors: v(&["you"]),
+                ..Query::default()
+            },
+        ),
+        ("tag:", words(&["tag:"])),
+        ("author:\"\"", words(&["author:"])),
         ("-1", words(&["-1"])),
         ("-", words(&["-"])),
         ("kind:\"\"", words(&["kind:"])),

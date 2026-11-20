@@ -1,0 +1,17 @@
+billing/  4 files · 2 classes · 10 functions · 4 docs inside
+  charge.py  · 2 docs
+    doc: Handover notes
+    doc: Why charges are retried
+    class ChargeError
+    retry_charge(gateway, order, attempts)  1 function
+    refund(gateway, order)
+  invoice.py
+    class Invoice  3 functions · 1 doc
+      doc: Rounding rule
+    render_invoice(invoice)
+  status.py
+    state(invoice)
+  tax.py
+    rate_for(country)  · 1 doc
+      doc: Where the rates come from
+    apply_tax(amount, country)

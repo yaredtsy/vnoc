@@ -5,7 +5,7 @@
 
 use vnoc_domain::{IdInCode, NodeId, NodeKind};
 
-use super::attach::{AttachError, Env, document_for, find_target, write_marker};
+use super::attach::{AttachError, Done, Env, document_for, find_target, write_marker};
 use crate::protocol::{RelinkParams, RelinkResult, Written};
 use crate::userdata::{UserData, UserDataError};
 
@@ -29,7 +29,10 @@ pub enum RelinkError {
 
 const HAS_DOCS: &str = "that node already has its own docs";
 
-pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResult, RelinkError> {
+pub async fn relink(
+    mut env: Env<'_>,
+    params: RelinkParams,
+) -> Result<Done<RelinkResult>, RelinkError> {
     let id = NodeId::parse(&params.id).map_err(|_| RelinkError::BadId(params.id.clone()))?;
     let (to, target) = {
         let index = env.index.read().unwrap();
@@ -65,14 +68,18 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
 
     // 1. the ID, when the project writes IDs, the node may have one, and the place does not carry it already
     let mut notice = None;
+    let mut marker = None;
     let mut written = Written::Id;
     if target.in_code() != Some(id) {
         if may_write && data.settings()?.markers {
-            if let Err(reason) = write_marker(&mut env, &target, &to, &id, document).await {
-                notice = Some(format!(
-                    "The ID could not be written ({reason}); the docs are attached by name."
-                ));
-                written = Written::AnchorOnly;
+            match write_marker(&mut env, &target, &to, &id, &document).await {
+                Ok(done) => marker = Some(done),
+                Err(reason) => {
+                    notice = Some(format!(
+                        "The ID could not be written ({reason}); the docs are attached by name."
+                    ));
+                    written = Written::AnchorOnly;
+                }
             }
         } else {
             written = Written::AnchorOnly;
@@ -90,5 +97,8 @@ pub async fn relink(mut env: Env<'_>, params: RelinkParams) -> Result<RelinkResu
         });
     }
     data.write_node_toml(&id, &toml)?;
-    Ok(RelinkResult { written, notice })
+    Ok(Done {
+        result: RelinkResult { written, notice },
+        marker,
+    })
 }

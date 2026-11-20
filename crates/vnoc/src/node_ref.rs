@@ -18,8 +18,12 @@ use crate::project::Project;
 /// What a pasted text says, before the index is asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeRef {
-    /// `path::qualname`, with `#2` for a second def of the name. The path is not yet a repo path, so the text is kept.
-    Location(String),
+    /// `path::qualname`, with `#2` for a second def of the name: the text before the first `::` and the text after it. The path is not yet a repo
+    /// path, so it is kept as written; `rest` may be empty (`src/orders.py::`), which names the file.
+    Location {
+        path: String,
+        rest: String,
+    },
     /// `path:line` or `path:line:column`; the column is dropped. The line is as pasted, 1-based.
     FileLine {
         path: String,
@@ -28,6 +32,28 @@ pub enum NodeRef {
     Id(NodeId),
     /// Anything else that is not empty: a file or a folder.
     Path(String),
+}
+
+impl NodeRef {
+    /// The path the reference was written with, as written; `None` for an ID, which has none.
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            NodeRef::Location { path, .. }
+            | NodeRef::FileLine { path, .. }
+            | NodeRef::Path(path) => Some(path),
+            NodeRef::Id(_) => None,
+        }
+    }
+
+    /// The same reference at another path (a command line makes it relative to the root before it asks). An ID has no path and is returned as it is.
+    pub fn with_path(self, path: String) -> NodeRef {
+        match self {
+            NodeRef::Location { rest, .. } => NodeRef::Location { path, rest },
+            NodeRef::FileLine { line, .. } => NodeRef::FileLine { path, line },
+            NodeRef::Path(_) => NodeRef::Path(path),
+            id @ NodeRef::Id(_) => id,
+        }
+    }
 }
 
 /// Which node a [`NodeRef`] names.
@@ -49,8 +75,11 @@ pub fn parse(text: &str) -> Option<NodeRef> {
     if text.is_empty() {
         return None;
     }
-    if text.contains("::") {
-        return Some(NodeRef::Location(text.to_string()));
+    if let Some((path, rest)) = text.split_once("::") {
+        return Some(NodeRef::Location {
+            path: path.to_string(),
+            rest: rest.to_string(),
+        });
     }
     if let Some((path, line)) = file_line(text) {
         return Some(NodeRef::FileLine {
@@ -109,7 +138,7 @@ fn number(text: &str) -> Option<u32> {
 }
 
 /// Whether a pasted path is absolute: `/…`, or a Windows drive and a separator (`C:\…`, `C:/…`).
-fn is_absolute(path: &str) -> bool {
+pub(crate) fn is_absolute(path: &str) -> bool {
     let b = path.as_bytes();
     path.starts_with('/')
         || (b.len() >= 3
@@ -124,10 +153,7 @@ impl Index {
     pub fn resolve_ref(&self, project: &Project, r: &NodeRef) -> Found {
         let node = |id: String| Found::Node(id);
         match r {
-            NodeRef::Location(text) => {
-                let Some((path, rest)) = text.split_once("::") else {
-                    return Found::Nothing;
-                };
+            NodeRef::Location { path, rest } => {
                 let found = self.first_path(project, path, |p| {
                     let location = format!("{p}::{rest}").parse::<LocationKey>().ok()?;
                     if location.qualname().is_empty() {
@@ -215,6 +241,125 @@ impl Index {
     }
 }
 
+/// Why a reference found nothing (or found a file the driver could not read, or a line the file does not have): which case of `02-naming-a-node.md` §4
+/// it is. The sentence is the command line's. Paths are as the tree shows them, relative to the opened folder, except where a case is about what was
+/// typed (`NoFile`, `NotRead`, `Outside`), which keep the text as it was given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Why {
+    /// the file is in the index and has no def of that name; `name` is what followed `::`
+    NoDef { path: String, name: String },
+    /// nothing on disk has this path (also what a qualified name with no file, `OrderService.parse_order`, is: it parses as a path)
+    NoFile(String),
+    /// on disk, and not in the index: not Python, or ignored by git, or past the scan's cap
+    NotRead(String),
+    /// the file is in scope and the driver could not outline it
+    Failed { path: String, message: String },
+    /// a file name with no folder, that several files have; `files` are sorted
+    Ambiguous { name: String, files: Vec<String> },
+    /// the file has `lines` lines and the reference named a later one
+    PastEnd { path: String, lines: usize },
+    /// no node has this ID, and no Missing record does either
+    NoId(NodeId),
+    /// the path is not under the root
+    Outside(String),
+}
+
+impl Index {
+    /// Which case a reference that found nothing is. Asked **after** a miss (`resolve_ref` stays as it is, with no reason), so it may read the disk:
+    /// the file's line count for `PastEnd`, and whether a path exists for `NotRead` and `NoFile`.
+    ///
+    /// It also answers for the two things `resolve_ref` calls a node and the tree does not have: a file the driver failed on (`Failed`), and a line
+    /// past the end of a file (`PastEnd`: `resolve_ref` gives the file). `None` for a reference that names something fine: there is no reason to give.
+    pub fn why_not(&self, project: &Project, r: &NodeRef) -> Option<Why> {
+        let NodeRef::Id(id) = r else {
+            return self.why_not_path(project, r);
+        };
+        (self.found_at(id).is_none() && !self.is_missing(id)).then_some(Why::NoId(*id))
+    }
+
+    fn why_not_path(&self, project: &Project, r: &NodeRef) -> Option<Why> {
+        let given = r.path().unwrap_or_default();
+        // the file or folder the path names, by the rules `resolve_ref` uses
+        let found = self.first_path(project, given, |p| {
+            (self.is_file(p) || self.is_folder(p)).then(|| p.clone())
+        });
+        if let Some(path) = found {
+            let shown = shown(project, &path);
+            if let Some(message) = self.failure_of(&path) {
+                return Some(Why::Failed {
+                    path: shown,
+                    message: message.clone(),
+                });
+            }
+            if let NodeRef::FileLine { line, .. } = r
+                && let Some(lines) = line_count(project, &path)
+                && *line as usize > lines
+            {
+                return Some(Why::PastEnd { path: shown, lines });
+            }
+            return match r {
+                // a name after the `::`: there is a reason unless the def is there
+                NodeRef::Location { rest, .. }
+                    if !rest.is_empty() && self.resolve_ref(project, r) == Found::Nothing =>
+                {
+                    Some(Why::NoDef {
+                        path: shown,
+                        name: rest.clone(),
+                    })
+                }
+                _ => None,
+            };
+        }
+        let text = given.replace('\\', "/");
+        if given.is_empty() {
+            return Some(Why::NoFile(String::new()));
+        }
+        let outside = if is_absolute(given) {
+            project.repo_path_of(Path::new(given)).is_none()
+        } else {
+            project.repo_path(&text).is_err()
+        };
+        if outside {
+            return Some(Why::Outside(given.to_string()));
+        }
+        if !text.contains('/') {
+            let files = self.files_named(&text);
+            if files.len() > 1 {
+                let mut files: Vec<String> = files.iter().map(|f| shown(project, f)).collect();
+                files.sort();
+                return Some(Why::Ambiguous { name: text, files });
+            }
+        }
+        let on_disk = if is_absolute(given) {
+            Path::new(given).exists()
+        } else {
+            project.open_dir().join(&text).exists() || project.git_root().join(&text).exists()
+        };
+        Some(if on_disk {
+            Why::NotRead(given.to_string())
+        } else {
+            Why::NoFile(given.to_string())
+        })
+    }
+}
+
+/// A repo path as the tree shows it: relative to the opened folder.
+fn shown(project: &Project, path: &RepoPath) -> String {
+    let prefix = project.prefix();
+    path.as_str()
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|_| !prefix.is_empty())
+        .unwrap_or(path.as_str())
+        .to_string()
+}
+
+/// How many lines the file has now, `None` when it cannot be read.
+fn line_count(project: &Project, path: &RepoPath) -> Option<usize> {
+    let bytes = std::fs::read(project.git_root().join(path.as_str())).ok()?;
+    Some(String::from_utf8_lossy(&bytes).lines().count())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,7 +376,11 @@ mod tests {
     }
 
     fn location(text: &str) -> Option<NodeRef> {
-        Some(NodeRef::Location(text.to_string()))
+        let (path, rest) = text.split_once("::").unwrap();
+        Some(NodeRef::Location {
+            path: path.to_string(),
+            rest: rest.to_string(),
+        })
     }
 
     #[test]
@@ -312,5 +461,205 @@ mod tests {
     #[test]
     fn text_is_trimmed() {
         assert_eq!(parse("  nested.py:25 "), line("nested.py", 25));
+    }
+
+    // ---- why_not
+
+    use vnoc_driver_protocol::{Def, DefKind, Position, Range};
+
+    fn def(qualname: &str) -> Def {
+        let at = |line| Position { line, character: 0 };
+        Def {
+            qualname: qualname.into(),
+            name: qualname.rsplit('.').next().unwrap().into(),
+            kind: DefKind::Function,
+            parent: String::new(),
+            parent_kind: None,
+            range: Range {
+                start: at(0),
+                end: at(1),
+            },
+            params: vec![],
+            id: None,
+            syntax_error: false,
+        }
+    }
+
+    /// A project on disk and the index a driver would have made of it: `src/orders.py` and `src/a.py` read, `src/bad.py` failed, `src/app.ts` on
+    /// disk and not read, two `metering.py`, one `core/` folder.
+    fn fixture(label: &str) -> (Project, Index) {
+        let root = std::env::temp_dir().join(format!("vnoc-whynot-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (file, text) in [
+            ("src/orders.py", "def parse_order():\n    pass\n"),
+            ("src/a.py", "1\n2\n3\n4\n5\n"),
+            ("src/bad.py", "def (:\n"),
+            ("src/app.ts", "export {}\n"),
+            ("core/metering.py", "x = 1\n"),
+            ("billing/metering.py", "x = 2\n"),
+        ] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let path = |p: &str| RepoPath::new(p).unwrap();
+        let index = Index::for_tests(
+            vec![
+                (path("src/orders.py"), vec![def("parse_order")]),
+                (path("src/a.py"), vec![]),
+                (path("core/metering.py"), vec![]),
+                (path("billing/metering.py"), vec![]),
+            ],
+            vec![(path("src/bad.py"), "invalid syntax at line 1")],
+            vec![path("src"), path("core"), path("billing")],
+        );
+        (Project::open(&root).unwrap(), index)
+    }
+
+    fn why(index: &Index, project: &Project, text: &str) -> Option<Why> {
+        index.why_not(project, &parse(text).unwrap())
+    }
+
+    #[test]
+    fn why_a_reference_found_nothing_one_row_per_case() {
+        let (project, index) = fixture("table");
+        let id = NodeId::parse("0Q8V5W4T2F7KX9M3B6D1RZ4H7K").unwrap();
+        let s = |t: &str| t.to_string();
+        let rows: Vec<(&str, Why)> = vec![
+            (
+                "src/orders.py::parse_ordr",
+                Why::NoDef {
+                    path: s("src/orders.py"),
+                    name: s("parse_ordr"),
+                },
+            ),
+            (
+                "src/orders.py::Outer.parse_order#2",
+                Why::NoDef {
+                    path: s("src/orders.py"),
+                    name: s("Outer.parse_order#2"),
+                },
+            ),
+            // a qualified name with no file parses as a path, and no such path is on disk
+            (
+                "OrderService.parse_order",
+                Why::NoFile(s("OrderService.parse_order")),
+            ),
+            ("src/ordrs.py", Why::NoFile(s("src/ordrs.py"))),
+            ("src/ordrs.py:12", Why::NoFile(s("src/ordrs.py"))),
+            ("::f", Why::NoFile(s(""))),
+            ("src/app.ts", Why::NotRead(s("src/app.ts"))),
+            ("src/app.ts:3", Why::NotRead(s("src/app.ts"))),
+            (
+                "src/bad.py",
+                Why::Failed {
+                    path: s("src/bad.py"),
+                    message: s("invalid syntax at line 1"),
+                },
+            ),
+            (
+                "src/bad.py:1",
+                Why::Failed {
+                    path: s("src/bad.py"),
+                    message: s("invalid syntax at line 1"),
+                },
+            ),
+            (
+                "src/bad.py::f",
+                Why::Failed {
+                    path: s("src/bad.py"),
+                    message: s("invalid syntax at line 1"),
+                },
+            ),
+            (
+                "metering.py",
+                Why::Ambiguous {
+                    name: s("metering.py"),
+                    files: vec![s("billing/metering.py"), s("core/metering.py")],
+                },
+            ),
+            (
+                "metering.py:3",
+                Why::Ambiguous {
+                    name: s("metering.py"),
+                    files: vec![s("billing/metering.py"), s("core/metering.py")],
+                },
+            ),
+            (
+                "src/a.py:99",
+                Why::PastEnd {
+                    path: s("src/a.py"),
+                    lines: 5,
+                },
+            ),
+            ("0Q8V5W4T2F7KX9M3B6D1RZ4H7K", Why::NoId(id)),
+            (
+                "/somewhere/else/x.py",
+                Why::Outside(s("/somewhere/else/x.py")),
+            ),
+            ("../x.py", Why::Outside(s("../x.py"))),
+            ("src/../../x.py::f", Why::Outside(s("src/../../x.py"))),
+        ];
+        for (text, expect) in rows {
+            assert_eq!(why(&index, &project, text), Some(expect), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_reference_that_names_something_fine_has_no_reason() {
+        let (project, index) = fixture("fine");
+        for text in [
+            "src/a.py:5",                 // the last line of the file
+            "src/a.py:0",                 // line 0 is no line: the file
+            "src/orders.py",              // a file
+            "src/orders.py::parse_order", // a def that is there
+            "src/orders.py::",            // the file, written with a `::`
+            "src",                        // a folder
+            "src/orders.py:1",
+        ] {
+            assert_eq!(why(&index, &project, text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_path_is_shown_relative_to_the_opened_folder() {
+        let root = std::env::temp_dir().join(format!("vnoc-whynot-sub-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("services/api")).unwrap();
+        std::fs::write(root.join("services/api/a.py"), "1\n2\n").unwrap();
+        let project = Project::open(&root.join("services/api")).unwrap();
+        let index = Index::for_tests(
+            vec![(RepoPath::new("services/api/a.py").unwrap(), vec![])],
+            vec![],
+            vec![],
+        );
+        assert_eq!(
+            why(&index, &project, "a.py::missing"),
+            Some(Why::NoDef {
+                path: "a.py".into(),
+                name: "missing".into()
+            })
+        );
+        assert_eq!(
+            why(&index, &project, "a.py:9"),
+            Some(Why::PastEnd {
+                path: "a.py".into(),
+                lines: 2
+            })
+        );
+    }
+
+    #[test]
+    fn with_path_changes_only_the_path() {
+        let moved = |text: &str| parse(text).unwrap().with_path("b/x.py".into());
+        assert_eq!(moved("a.py::f#2"), location("b/x.py::f#2").unwrap());
+        assert_eq!(moved("a.py:12"), line("b/x.py", 12).unwrap());
+        assert_eq!(moved("a.py"), path("b/x.py").unwrap());
+        let id = parse("0Q8V5W4T2F7KX9M3B6D1RZ4H7K").unwrap();
+        assert_eq!(id.clone().with_path("b".into()), id);
+        assert_eq!(id.path(), None);
+        assert_eq!(parse("a.py::f").unwrap().path(), Some("a.py"));
+        assert_eq!(parse("a.py:3").unwrap().path(), Some("a.py"));
     }
 }

@@ -10,3 +10,5 @@ extension/out/
 .vscode-test/
 extension/LICENSE
 tools/media/out/
+vnoc-cli-*
+tools/agent-trial/runs/

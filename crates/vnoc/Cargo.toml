@@ -1,6 +1,6 @@
 [package]
 name = "vnoc"
-version = "0.2.0"
+version = "0.3.0"
 license = "Apache-2.0"
 edition = "2024"
 description = "The V-NOC core: speaks LSP-framed JSON-RPC to the editor extension, and the driver wire to language drivers."
@@ -22,6 +22,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ignore = "0.4"
 toml_edit = "0.22"
+clap = { version = "4", features = ["derive"] }
+# The colour of the command line: the versions clap already builds (no new crate), used directly for the palette and the writer
+anstream = "1"
+anstyle = "1"
+regex = "1"
+# `C:\\…` not `\\?\C:\…` on Windows: canonicalize without the verbatim prefix
+dunce = "1"
+dialoguer = { version = "0.12", default-features = false }
+ctrlc = { version = "3", default-features = false }
 
 [target.'cfg(not(unix))'.dependencies]
 tokio-util = { version = "0.7", features = ["compat"] }

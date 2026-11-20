@@ -5,7 +5,7 @@ build order
 ├── 1. rules for every step
 ├── 2. phase 1: read             A0 – A6     stop point: a read-only command, and `vnoc check` for CI
 ├── 3. phase 2: write            A7 – A9     stop point: agents can attach notes
-├── 4. phase 3: skill, install   A10 – A14   stop point: release 0.5
+├── 4. phase 3: skill, install   A10 – A14   stop point: release 0.3
 ├── 5. phase 4: after            A15 – A17   optional · conditional · if there is time
 ├── 6. what each step leaves working
 └── 7. tests, by kind
@@ -63,11 +63,11 @@ calls. Commit: `cli A1: structure and the call tree are library functions`.
 | `crates/vnoc/src/cli/project.rs` | the root (05 §2); `open()`: project, driver, `refresh(All)`; `open_without_driver()` |
 | `crates/vnoc/src/cli/status.rs` | `status` (03 §2), over `index::structure` |
 | `crates/vnoc/src/lib.rs` | `pub mod cli`; the `print_stdout` / `print_stderr` deny (05 §4) |
-| `crates/vnoc/tests/sample/` | **the sample project**: about ten Python files in `billing/`, `orders/`, `api/` (classes, methods, a nested def, two defs of one name), a `.vnoc/` with five docs: on a function, a method, a class, a file, a folder; one record whose code is gone (Missing); one function whose `ID:` line was removed (a lost marker); one doc holding an instruction-like sentence (06 §8 scenario 5). **The `.vnoc/` is made by the library, not typed:** an `#[ignore]` helper in `tests/cli.rs` builds it with `first_free_id`, `UserData::create_node` and `create_doc`, is run once, and its output is committed |
+| `crates/vnoc/tests/sample/` | **the sample project**: about ten Python files in `billing/`, `orders/`, `api/` (classes, methods, a nested def, two defs of one name), a `.vnoc/` with five docs: on a function, a method, a class, a file, a folder; one record whose code is gone (Missing); one function whose `ID:` line was removed (a lost marker); one doc holding an instruction-like sentence (06 §8 scenario 5). **The `.vnoc/` is made by the library, not typed:** an `#[ignore]` helper in `tests/cli.rs` builds it with `first_free_id`, `UserData::create_node` and `create_doc`, is run once, and its output is committed. *(As built: the plain sources are `crates/vnoc/tests/sample_src/`, so the helper can be run again; its output is `tests/sample/`. Re-run: `cargo test -p vnoc --test cli -- --ignored make_sample`.)* |
 | `crates/vnoc/tests/cli.rs` | the harness: the binary by `env!("CARGO_BIN_EXE_vnoc")`, a temp copy of the sample, the driver as `lifecycle.rs` finds it |
 
 Tests: `status` on the sample, text and `--json` (the first golden file); from a subfolder the root is the same; `--root`; a folder with no
-`.vnoc/` answers and exits `0`; no driver → `3` with the three places it looked; an unknown flag → `2`; **`vnoc` with no arguments still answers
+`.vnoc/` answers and exits `0`; no driver → `3` with the three places it looked; an unknown flag → `2`; **`vnoc` with no arguments, with `--stdio`, and with `serve` still answers
 `initialize`** (`lifecycle.rs`, unchanged); `vnoc status | head -1` exits quietly; the exit-code table (`cli::exit_code`).
 
 Commit: `cli A2: vnoc is a command too; status`.
@@ -99,7 +99,7 @@ Commit: `cli A3: show and code, by any name for a node`.
 
 | Files | What |
 |---|---|
-| `crates/vnoc/src/cli/doc.rs` | `doc list`, `doc read`, `doc path`; by ID without the driver |
+| `crates/vnoc/src/cli/doc.rs` | `doc list` (with no node: every doc of the project, grouped by node), `doc read`, `doc path`; by ID without the driver |
 | `crates/vnoc/src/cli/tree.rs` | printing only: indent, counts, `--flat` |
 | `crates/vnoc/src/index/view.rs` (new, library) | `tree_view(&Node, &TreeOptions) -> Vec<Row>`: depth, kinds with ancestors kept, the `--where` set, the limit and what was cut, the counts of a cut folder. Pure, over the tree `Index::tree` gives |
 
@@ -146,10 +146,18 @@ Commit: `cli A5: find and grep`.
 
 Tests: `calls` on a sample function, depth 1 and 2; on the sample `missing` lists the one, `check` exits `1` and names the Missing node **and the
 lost marker**, each with its fix; a clean copy exits `0`; a file with a syntax error is a warning and still `0`; `--changed` with only an
-unrelated file changed is `0`. **[decide]** here whether NEEDS ATTENTION lists lost markers too (then `structure` carries them: a protocol
-addition), and write it into 03 §9.
+unrelated file changed is `0`. NEEDS ATTENTION lists lost markers too (decided 2026-11-19, 03 §9): **A6b**, its own commit, `structure` carries them
+(`lost_markers`, a protocol addition), the extension shows a fourth group with *Write ID* on each row; a window test.
 
-Commit: `cli A6: calls, missing, check`. **Stop point:** a read-only command; `vnoc check` works in CI. Full test run.
+Commit: `cli A6: calls, missing, check`; then `cli A6b: a lost ID: line shows in NEEDS ATTENTION, with Write ID`. As built: [`03`](03-read-commands.md) §7 – §9. **Stop point:** a read-only command; `vnoc check` works in CI. Full test run.
+
+### A6d Style for people (added 2026-11-19, after the first by-hand look)
+
+03 §11 "Style for people" and 03 §2's new layout. `cli/style.rs`: the palette as named styles (`style::location`, `style::dim`, …) over
+`anstyle`; `out.rs` writes through `anstream` (codes stripped for a pipe). Every renderer marks its parts with the palette, never with raw
+codes. `--color auto|always|never`. Thousands separators in counts. Tests: every golden is unchanged except `status`'s text (the new layout;
+JSON unchanged); a run through a pipe has no `\x1b`; `--color always` has them, `NO_COLOR=1` with `auto` has none; one golden of
+`status --color always` so the palette is pinned. Commit: `cli A6d: style for people in a terminal; status in labelled lines`.
 
 ## 3. Phase 2: write
 
@@ -168,7 +176,8 @@ with the message; `lifecycle.rs` and the window suite pass with no edits (attach
 
 Commit: `cli A7: who applies an ID edit is a parameter; one write lock`.
 
-### A8 `init`, `doc new`
+### A8 `init`, `doc new` *(split 2026-11-20: **A8a** init, doc new, author and tags in the frontmatter, the race; **A8b** `tag:` / `author:` in
+search, the wire, the sidebar, `--where` on `doc list` / `doc read`. A8a's first commit also replaces A7's BOM shift by 04 §2's rule.)*
 
 | Files | What |
 |---|---|
@@ -181,7 +190,7 @@ Commit: `cli A7: who applies an ID edit is a parameter; one write lock`.
 | `crates/vnoc/src/protocol.rs`, `shared/messages.ts` | `DocInfo` gains `tags`, `author` (`vnoc/docs`); the doc rows of `vnoc/search` too |
 | `webview/src/sidebar/SearchResults.tsx` | a doc row shows its tags after the title |
 | `docs/20-search/01-query.md` §2, §3 | the two filters as built, and the row for a query of filters alone, in the `docs:` commit |
-| `crates/vnoc/src/cli/doc.rs` | `doc list` with no node (the whole project); `--where` on `doc list` and `doc read` (03 §3); tags shown on the rows |
+| `crates/vnoc/src/cli/doc.rs` | `--where` on `doc list` and `doc read` (03 §3); tags shown on the rows (`doc list` with no node was built in A4) |
 | `docs/04-storage/01-vnoc-folder.md` §"Docs" | the two keys, in a `docs:` commit |
 
 Tests: `doc new` with no `.vnoc/` → `2` and the sentence; `init`, then `doc new` on a function: the `ID:` line is in the file, the node folder
@@ -207,7 +216,29 @@ Tests: on the sample, `relink` the Missing node to a function: `missing` is empt
 refusals is `2` with its words; `repair` puts the lost `ID:` line back and `check` passes; `repair` on a clean project says nothing to do, `0`;
 a node set to never carry an ID is left.
 
-Commit: `cli A9: relink and repair`. **Stop point:** agents can write. Full test run.
+Commit: `cli A9: relink and repair`.
+
+### A9c One fact per line (added 2026-11-20, after the second by-hand pass)
+
+03 §11 "Layout: one fact per line": every text renderer; kind words in English; no leading blank line. Text goldens change, JSON goldens
+do not; the plain/colour equality test and the no-ESC-in-a-pipe check stay. Commit: `cli A9c: one fact per line; no row wraps for a long
+path`.
+
+### A9b Tags: list, edit, describe *(added 2026-11-20; 04 §4 "Listing, editing and describing tags")*
+
+| Files | What |
+|---|---|
+| `crates/vnoc/src/userdata/tags.rs` (new, library) | read `.vnoc/tags.toml` (bad keys/values → Problems, the rest read); `tag_counts(&DocTexts, &Descriptions)`; `rewrite_tags(text, add, remove) -> Result<(String, Change), …>` (pure: only the `tags:` line, block form folded, rules of 04 §4) |
+| `crates/vnoc/src/cli/doc.rs` | `tags [--authors]` (no driver); `doc tag <node> [file] --add … --remove …` (the write lock, atomic, re-read before write) |
+| `crates/vnoc/src/cli/write.rs` | the new-tag notice in `doc new` (and `doc tag`) |
+
+Tests: `rewrite_tags` as a table (add, remove, both, the last removed, no line and an add, the block form, already has / already without,
+a bad tag, every other line byte-identical); `tags.toml` with a bad key and a good one; `tags` on a sample copy with three tagged docs
+and a described unused tag, with `--driver /nonexistent`; `doc tag` on a node with two docs and no file → `2` with the names; the file
+changed between read and write → refused, untouched; the new-tag notice with a near tag (`planning` → `plan`) and with none; twice the
+same `doc tag` command → the second says `already…`, exit `0`.
+
+Commit: `cli A9b: tags lists them, doc tag edits one doc's, tags.toml describes them`. **Stop point:** agents can write. Full test run.
 
 ## 4. Phase 3: skill, install
 
@@ -216,13 +247,26 @@ Commit: `cli A9: relink and repair`. **Stop point:** agents can write. Full test
 | Files | What |
 |---|---|
 | `skills/vnoc/SKILL.md` | the text (06 §5), the description on one line |
+| `skills/vnoc/rules.md` | the rules block (06 §4), compiled in for A11 |
 | `crates/vnoc/guide/{read,tree,find,write,check}.md` | the topics (06 §6), examples run on the sample |
 | `crates/vnoc/src/cli/guide.rs` | `guide`, `guide <topic>`, `skill`; all `include_str!` |
 | `crates/vnoc/tests/guide.rs` | every line in a guide or the skill that starts with `vnoc ` is run on the sample: none may exit `2` for an unknown flag or command |
 
 Also: the `about` text of every command, read once as an agent would, cold. **[check]** `skills-ref validate skills/vnoc`.
 
-Commit: `cli A10: the skill and vnoc guide`.
+*(Added 2026-11-20.)* First commit of the step: `vnoc doc tags` → **`vnoc tags`** (04 §4: the read must not start with the write's name);
+the old name is not kept as an alias (nothing has shipped). The guide test's rules are 06 §6's (placeholders parsed only; `# exit 2` marks
+a refusal shown on purpose; pasted outputs compared with a run). The rules block of 06 §4 goes into `skills/vnoc/rules.md` now (compiled
+in, not written anywhere yet: A11 writes it), so the guide test checks its one `vnoc` line too.
+
+Commits: `cli A10a: the tag list is vnoc tags`, then `cli A10: the skill and vnoc guide`.
+
+**As built.** Commits `f6e6506` (`cli A10a: the tag list is vnoc tags`) and `11856b2` (`cli A10: the skill and vnoc guide`). Counts after: lib 205,
+bin 2, cli 122, lifecycle 49, write 7, **guide 10**. The skill and the guide test are in 06 §5 and §6 ("As built"): the skill's description lost its
+`: ` (the format's checker refused the draft), its version is the crate's and a test holds it there, a code block is one session, and the
+`about` of every command opens with a one-line summary. `skills-ref` ran: `Valid skill: skills/vnoc` (the installed command is named
+`agentskills`). **Carried to A11:** `rules.md`'s marker comment names `vnoc agent install`, so `tests/guide.rs` skips lines starting with `<!--`
+until the command exists; remove that arm then. **Carried to A13:** the release bumps the crate's version and the skill's together.
 
 ### A11 `vnoc agent`
 
@@ -242,6 +286,47 @@ text and deletes nothing it did not write; `--global` writes no rules. By hand: 
 
 Commit: `cli A11: vnoc agent install writes the skill and the rules`.
 
+**As built.** Commits `4dbc50d` (plan edits), `8bec354` (`cli A10b`: the skill offers notes instead of writing them unasked), `7d19319` (07 §1 and §4 read again from each agent's documentation:
+no mapping changed; Claude Code's allow-rule is `Bash(vnoc show *)`, Codex's `prefix_rule(pattern = [...], decision = "allow")`), `1340dc3` (`cli A11`). Counts after:
+lib 223, bin 2, cli 122, lifecycle 49, write 7, guide 10, **agent 12**. The details are in 07 §2 ("As built") and 03 §2 (the `agents` line); the guide test no
+longer skips `rules.md`'s marker comment, and parses (never runs) any `vnoc agent` line, and runs every line with `HOME` set to the copy.
+
+### A11c Two things the user hit by hand (added 2026-11-20)
+
+Bare `vnoc` in a terminal prints the help instead of waiting as a server (05 §1); `vnoc tag describe` writes `.vnoc/tags.toml` (04 §4).
+Tests: the start decision as a table (args × stdin is a terminal); lifecycle.rs (no arguments, piped) unedited; `vnoc` with no arguments
+and stdin a terminal (a pty, or the decision function) prints help, exit 0; `tag describe` creates the file, keeps a hand-written comment
+and key order, `--clear`, a bad tag, a line break, no `.vnoc/`; `vnoc tags` shows the hint when nothing is described. Commit:
+`cli A11c: bare vnoc in a terminal prints help; vnoc tag describe`.
+
+### A11d `claude` with no `CLAUDE.md` (added 2026-11-20, review of A11)
+
+07 §2 "The import file for `claude`". Tests: `--agent claude` on a project with only `AGENTS.md` (other text) → block in AGENTS.md and a
+`CLAUDE.md` of exactly `@AGENTS.md`; installed twice → unchanged; `remove` deletes it; `remove` after a person added a line to it → kept;
+an existing `CLAUDE.md` → no import file, block in CLAUDE.md as before; `.claude/CLAUDE.md` present → no import file; `--dry-run` lists it;
+`status` names it. Also (05 §1, narrowed): bare `vnoc` starts the server only when stdin is a pipe; `--stdio` without pipes → exit 2 with
+its sentence, no panic. Commits: `cli A11d: claude gets a one-line CLAUDE.md that imports AGENTS.md`, `cli A11e: the server starts on
+pipes only, and says so otherwise`.
+
+### A11f `-h` shows the command's own options first (added 2026-11-20, the user read `vnoc tags -h`)
+
+- **The join bug:** the `--root` help reads `…has \`.vnoc/\`, elsethe current folder` in every command: a doc comment wrapped over two
+  lines lost its space. Find every such join (a test: no help text contains a word glued at a former line end; at least check `elsethe`).
+- **Short help (`-h`) puts the command first.** Its own options with their one-line help; then a heading **Global options** with each
+  global flag on one short line (`--root <DIR>  the project folder (default: found from here)`), no paragraphs. The paragraphs move to
+  `long_help`, which `--help` prints as today.
+- **A global flag that means nothing for a command is not shown in its `-h`** (still accepted): `--driver` on the commands that never start
+  the driver (`tags`, `tag`, `guide`, `skill`, `agent`, `init`); the `doc` commands keep it (they need the driver unless given an ID).
+  `--format` only on the commands that print a list and accept it; hidden on the rest. Use clap's per-subcommand
+  `hide_short_help` (or `mut_arg`), not a second definition.
+- **`tag` and `tag describe` about:** "For the person who keeps the project's vocabulary; an agent runs it only when the user asks."
+  (in place of "do not run it unless asked"). Check the other `about`s for the same tone toward the reader.
+- **`agent remove` leaves no empty folder it made** (seen after A11d): after deleting a skill folder, remove `.claude/skills/` and
+  `.agents/skills/` when they are empty, then `.claude/` and `.agents/` when THOSE are empty. Never a folder with anything in it.
+- Tests: `vnoc tags -h` lists `--authors` and no `--driver`/`--format`; every `-h` has a Global options heading; no `elsethe`; the guide
+  test still passes (its clap parse of every line). Commit: `cli A11f: -h shows the command's own options first; the global ones in
+  short`.
+
 ### A12 The extension's two commands
 
 | Files | What |
@@ -257,27 +342,72 @@ macOS: install, `vnoc status` in a terminal, update the extension, the link foll
 
 Commit: `cli A12: Install vnoc in PATH; Set Up Coding Agents`.
 
-### A13 Releases, and the README
+### A13 Releases *(the README part moved to A13r; settled in detail 2026-11-20: 07 §6, 03 §11)*
 
 | Files | What |
 |---|---|
-| `.github/workflows/publish.yml` | per target, the archive of `extension/bin/` 's two programs; their sums into `SHA256SUMS`; `install.sh` attached |
-| `scripts/install.sh` | 07 §6 |
-| `README.md`, the extension's README | "Using V-NOC with coding agents" |
-| `CHANGELOG.md` | the command line, marked experimental |
+| `scripts/package.mjs` | after the two programs land in `extension/bin/`: `vnoc-cli-<target>.tar.gz` (`.zip` on Windows), flat: the two programs, `LICENSE`, `THIRD_PARTY_NOTICES.md` |
+| `.github/workflows/package.yml`, `publish.yml` | the artifact `cli-<target>`; `publish` checks four archives as it checks four VSIX, one `SHA256SUMS` over every file, provenance for the archives too, `install.sh` stamped with the version and uploaded |
+| `scripts/install.sh` | 07 §6: POSIX `sh`, target from `uname` (Rosetta → arm64), version from `VNOC_VERSION` / the stamp / the newest release with pre-releases, sum checked, into `~/.local/bin` |
+| `crates/vnoc/src/cli/` (the writer) | control characters from the project cleaned on a terminal (03 §11) |
+| `extension/CHANGELOG.md` | `## 0.3.0` (was `Unreleased`): everything on `main` since 0.2.0 (editing on the canvas, search) and the command line, marked experimental |
+| `docs/19-ci-cd.md` §5, §8 | the archives and `install.sh` in the release; step 1 bumps the version in four places, `extension/package.json`, `Cargo.toml` (workspace), `drivers/python/Cargo.toml`, `skills/vnoc/SKILL.md` (the guide test fails otherwise); step 5 counts the new files |
 
-Proof: the publish dry run (doc 19 §8) lists four archives and their sums; `tar -tzf` shows both programs; `install.sh` run against a dry-run
-release in a clean container puts a working `vnoc` on the PATH. **[check]** once each: `npx skills add` and `gh skill install` from the
-repository find the skill (07 §5).
+Proof: `node scripts/package.mjs` on this Mac makes `vnoc-cli-darwin-arm64.tar.gz`, `tar -tzf` lists the four files; `install.sh` against
+a `file://` fake release (the archive and a `SHA256SUMS`) installs into a temp folder and `vnoc --version` runs, and a wrong sum installs
+nothing; the same in a `debian:stable-slim` container if docker runs, with the linux archive built there or skipped and said;
+`shellcheck -s sh` (or `sh -n`) clean. The 1.1 s first run measured on a fresh copy (07 §6). The publish dry run on GitHub waits for the push
+(nothing is pushed): it is a [check] for the release. **[check]** once each, with a temp `HOME`: `npx skills add` and `gh skill install`
+from the repository find the skill (07 §5); a local path if the tool takes one, else after the push. Windows [check]s stay open.
 
-Commit: `cli A13: vnoc in every release`.
+Commit: `cli A13: vnoc in every release` (and `cli A13: control characters from the project are shown, not obeyed, on a terminal` on its own).
+
+### A13r The README, rewritten (added 2026-11-20; the user: "a big README with a table of contents, as dev tools do")
+
+The README still describes release 0.2: search is one shortcut, the command line and agents are under "What's coming", editing on the canvas
+says "Next". A13's one added section is not enough: the whole page is rewritten around a table of contents. Own step, after A13 (so the
+install section can name the real release archives and `install.sh`).
+
+| # | Section | Holds |
+|---|---|---|
+| | header, badges, one gif | as now |
+| | **Contents** | a linked list of every section |
+| 1 | Features | six cards: structure (tree, canvas, Focus) · calls · docs that survive · edit on the canvas · search · coding agents |
+| 2 | Install | the extension (Marketplace, Open VSX, .vsix) · the `vnoc` command (*Install `vnoc` Command in PATH*, `install.sh`, release archives) |
+| 3 | Quick start | the extension in five steps · the command in five lines |
+| 4 | Search | what it finds (names, words in notes, a pasted `file:line`, `#L12`, a traceback line) · the query language as a table (`kind:` `in:` `has:doc` `no:doc` `tag:` `author:` `-`, phrases) · one query, three places: the box, `vnoc find`, `vnoc tree --where` |
+| 5 | Docs that survive refactors | as now · tags and `.vnoc/tags.toml` (`vnoc tags`, `vnoc tag describe`) |
+| 6 | The `vnoc` command | every command, one line each, in three tables: read · write · set up · the four ways to name a node · `--json`, `--quiet`, exit codes · "`vnoc guide` and `vnoc <command> --help` have the rest" |
+| 7 | Using V-NOC with coding agents | `vnoc agent install` and *Set Up Coding Agents* · the skill and the rules block, what each does · the permissions question · the agents it knows · a short sample session (an agent's commands and what it learned) |
+| 8 | Keyboard shortcuts | as now, extended (the search box) |
+| 9 | The `.vnoc/` folder | what to commit; the layout in a few lines; links to `docs/04-storage` |
+| 10 | Troubleshooting | `vnoc: command not found` · "no driver found" · an "ID lost" warning · bare `vnoc` prints help · the extension shows nothing |
+| 11 | What's coming | the version table from the CHANGELOG and the tags, as they really are on the day; what is next |
+| 12 | How it is built · Contributing · Licence | as now, updated (the command line is in the core binary; the skill in `skills/vnoc/`) |
+
+Rules: an overview, not the manual (flags live in `vnoc guide` and `--help`, printed by the binary); **every `vnoc …` line in README.md
+and extension/README.md is checked by the guide test** (A10's rules: placeholders parsed only); no invented screenshots: a missing picture
+is an HTML comment `<!-- screenshot: … -->` for the user to fill (the demo film's frames may serve); English as the rest of the docs
+(plain, short sentences). `extension/README.md` (the Marketplace page) is rewritten to match, shorter: the extension's features first, a
+"Coding agents" section linking to the repository README. Commit: `docs: the README, rewritten with a table of contents`.
 
 ### A14 Trying it with agents
 
-The six scenarios of 06 §8 in Claude Code, Codex, and pi or Cursor. The table of results goes into 06 §8; the skill, the rules block and the
+*(Split 2026-11-20: **A14a** the XML switch, the trial harness `tools/agent-trial/`, Claude Code's 14 runs, then a stop; **A14b**
+Codex; **A14c** the decision (XML for note bodies or deleted), the skill and rules wording from the table, the README's
+coding-agents section if the results change it, release 0.3. The method is 06 §8 "How it is run".)*
+
+The six scenarios of 06 §8 in Claude Code, Codex, and pi or Cursor, **each with the text output and with an experimental `--xml`** (03 §11:
+a renderer, one file, built at the start of this step; note bodies inside `<doc>` tags). Recorded per run: done right or not, scenario 5
+resisted or not, tokens, calls. What wins decides the default (03 §11), and the losing renderer is deleted, not kept behind a flag. The table of results goes into 06 §8; the skill, the rules block and the
 guides are changed from it; the guide test of A10 keeps them honest. Commit: `cli A14: the skill, after six scenarios in three agents`.
 
-**Stop point: release 0.5.** Full test run; `02` §3's row.
+**Done (2026-11-20).** A14a: the XML switch and the harness `tools/agent-trial/` (`05c1261`, `1d64017`, `132f024`…), Claude Code's 14 runs. A14b: `95f34df` and
+`a58cf6b` (Codex), its 14 runs, 4 more Claude scenario-2 runs. A14c, from the 28 + 4 runs (06 §8 "Results of A14"): `705aa2b` the XML trial deleted ·
+`1a55637` the skill and rules wording · `e776e9d` `doc read` names the node, a filter written as a flag gets a tip · the record (06 §8, README) · 12 re-runs
+after the changes (reported, not committed). Release 0.3 is the next step (prepared in `release: 0.3.0`).
+
+**Stop point: release 0.3 — prepared** (the commit `release: 0.3.0`: versions, texts, plan docs; full test run; nothing merged, tagged or published). `02` §3's row.
 
 ## 5. Phase 4: after
 

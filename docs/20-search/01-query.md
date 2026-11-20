@@ -30,6 +30,8 @@ A query is split on spaces, except inside double quotes.
 | `kind:folder` `kind:file` `kind:class` `kind:function` `kind:method` | nodes of that kind | short forms `fn`, `cls`. A method is a function inside a class: `kind:function` keeps methods too, `kind:method` keeps only them. Several with a comma: `kind:class,fn` |
 | `has:doc` | nodes with at least one doc | |
 | `no:doc` | nodes with none | "functions with no docs in billing" is `kind:fn no:doc in:billing/` |
+| `tag:<t>` | docs that carry the tag; nodes that have **one doc** that does | the frontmatter's `tags:` (21 C16). Lower case: `tag:Plan` is `tag:plan`. `kind:fn tag:plan` is "the functions with a plan" |
+| `author:<a>` | docs by that author; nodes that have one | the frontmatter's `author:`, compared **ignoring case**. `author:"Ana Perez"` (quotes) for a name with a space |
 | `in:<path>` | nodes at that path or under it | relative to the opened folder, case ignored. A node is in `P` when its path **is** `P` or starts with `P/`, so `in:billing` keeps the folder and what is under it, `in:billing/invoice.py` keeps the file and its defs, and `in:bill` does not keep `billing/` (whole path segments). A trailing `/` and a leading `./` are dropped, `\` reads as `/`: `in:billing` and `in:billing/` are the same |
 
 - `-` in front turns a filter round: `-in:tests/` drops what is under `tests/`. `-has:doc` is `no:doc`. A `-` in front of a **word** is not special
@@ -44,9 +46,12 @@ A query is split on spaces, except inside double quotes.
   The same line is not given twice.
 - Every filter other than `kind:` must pass (`in:a/ in:a/b/` is the narrower; `has:doc no:doc` keeps nothing, above).
 - A name that is not a filter (`http://x`, `self:`) is a **word**.
-- With their keys (21 C16, built in step A8): `tag:<t>` and `author:<a>`. On **docs** they keep the docs that carry the tag or the author. On
-  **nodes** they keep the nodes that have at least one such doc (`kind:fn tag:plan` is "the functions with a plan"). The parser takes a list of
-  known names, so adding one is a row.
+- **`tag:` and `author:`, as built (21 A8b, 2026-11-20).** A **doc passes** when it carries every `tag:` and has the `author:` and carries none of the `-tag:` and
+  is not by a `-author:`. A **node passes** when ONE of its docs passes, all of the filters at once: a node with a doc tagged `a` and another tagged `b` does
+  not pass `tag:a tag:b`. The set of such nodes is made once per query, from the docs. Two different `author:` keep nothing (a doc has one). A value is **never
+  wrong**: a tag or an author no doc has finds nothing and adds no note (so `tag:plan,billing` is one tag, which nothing has). `-tag:draft` alone is "the docs
+  without `draft`", and so the nodes that have one: a node with no docs, or only a draft, does not pass. `tag:` with no value yet is a word, as a half-typed
+  `kind:` is. `has:doc`/`no:doc` still look at the node's count of docs, so `no:doc tag:plan` finds nothing.
 
 ## 3. What each part matches
 
@@ -54,9 +59,14 @@ A query is split on spaces, except inside double quotes.
 |---|---|---|
 | nothing (empty, or only spaces) | none | none (the page does not ask) |
 | only filters | every node that passes, in reading order (tier 0, no ranges; the limit and `nodes_total` as for words) | none |
+| only filters, **with a `tag:` or an `author:`** | the nodes that pass: those with a doc that does | **the docs that pass**, in the reading order of their nodes, then by file name (a Missing node's last, by path); the start of the body is the snippet, no ranges, no score |
 | words | names, qualified names, paths ([`02-names.md`](02-names.md)); filters narrow | the docs that hold every word ([`03-doc-text.md`](03-doc-text.md)); filters narrow **by the doc's node** |
 | a phrase | none (a phrase is for text) | the docs that hold the phrase |
 | a reference | that node, first, marked `exact` | none, unless the token is also a word some doc holds |
+
+"By the doc itself": `tag:` and `author:` narrow the docs (words or no words) by what the doc says of itself, and the node filters then by its node. `zanzibar tag:plan` is the
+docs that hold the word and carry the tag, in the order the word alone gives (BM25); a tag does not change the ranking. A query of **filters alone** lists
+docs only when it has `tag:` or `author:` (the others alone would list every doc of every function: noise).
 
 "By the doc's node": `in:billing/ retry` finds docs attached to nodes under `billing/`; `kind:class retry` docs attached to classes. A Missing
 node's doc passes `in:` by its last known path and `kind:` by the kind in its `node.toml`; it never passes `has:doc`-style questions differently
@@ -97,6 +107,8 @@ pub struct Query {
     pub docs: Option<bool>,          // has:doc → Some(true), no:doc → Some(false)
     pub keeps_nothing: bool,         // a filter value that means nothing, or has:doc with no:doc: no node passes
     pub inside: Vec<String>,         pub not_inside: Vec<String>,
+    pub tags: Vec<String>,           pub not_tags: Vec<String>,        // tag: / -tag:, lower case
+    pub authors: Vec<String>,        pub not_authors: Vec<String>,     // author: / -author:, lower case
     pub reference: Option<String>,   // the raw token; the core resolves it (04 §4)
     pub notes: Vec<String>,          // what was wrong with a filter
 }

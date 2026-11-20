@@ -11,10 +11,7 @@ use async_lsp::lsp_types::Url;
 use serde_json::{Value, json};
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
+    dunce::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")).unwrap()
 }
 
 fn driver_path() -> PathBuf {
@@ -2860,5 +2857,219 @@ fn search_finds_doc_text_and_an_edited_body_neither_moves_the_revision_nor_annou
     assert!(doc_rows(&mut core, "kind:fn zanzibar").is_empty());
     assert_eq!(doc_rows(&mut core, "in:nested.py zanzibar").len(), 1);
     assert!(doc_rows(&mut core, "in:other/ zanzibar").is_empty());
+    core.finish();
+}
+
+#[test]
+fn structure_carries_the_lost_marker_of_the_sample_and_only_it() {
+    // `tests/sample/` (a copy of it, outside this repository): `rate_for`'s record says its ID is in the code, and the code has none
+    let root = std::env::temp_dir().join(format!("vnoc-lifecycle-lost-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_tree(&repo_root().join("crates/vnoc/tests/sample"), &root);
+    let mut core = Core::start(Some(driver_path()), &root);
+    let s = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(
+        s["lost_markers"],
+        json!([{
+            "id": "4KF02248CHCTYAG49B0KKZ5SD7",
+            "key": "billing/tax.py::rate_for",
+            "kind": "function",
+            "path": "billing/tax.py",
+            "qualname": "rate_for"
+        }]),
+        "{s}"
+    );
+    // the Missing node is Missing, not lost, and the nodes found by their marker are not in it
+    assert_eq!(s["missing"].as_array().unwrap().len(), 1);
+    core.finish();
+}
+
+#[test]
+fn a_doc_made_by_the_command_shows_in_a_running_core_and_the_editors_attach_still_makes_a_second_file_for_one_title()
+ {
+    // a started project (`vnoc init` would have written this), and a core running on it
+    let (mut core, root) = orders_project("by-command", Some("format = 1\n"));
+    let key = "orders.py::OrderService.parse_order";
+
+    // the command attaches a doc, in another process, while the core runs
+    let out = Command::new(env!("CARGO_BIN_EXE_vnoc"))
+        .current_dir(&root)
+        .env_remove("VNOC_DRIVER")
+        .stdin(Stdio::null())
+        .arg("--driver")
+        .arg(driver_path())
+        .args(["doc", "new", key, "--title", "Made by a command"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // the watcher says what changed (`.vnoc/**` and `*.py`): the file the command wrote the ID line into, and the doc it made
+    let said = String::from_utf8_lossy(&out.stdout).into_owned();
+    let doc = said
+        .lines()
+        .find_map(|l| l.strip_prefix("created      "))
+        .unwrap();
+    let doc = root.join(doc.split("   ").next().unwrap());
+    assert!(doc.is_file(), "{said}");
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders.py"), doc] }),
+    );
+    // the core's tree has the node, found by the ID line the command wrote, with one doc
+    let shown = structure_when(&mut core, |s| {
+        find_node(&s["root"], &|n| n["id"] == key).is_some_and(|n| n["docs"] == 1)
+    });
+    let node = find_node(&shown["root"], &|n| n["id"] == key).unwrap();
+    assert_eq!(node["link"], "marker");
+    let id = node["node_id"].as_str().unwrap().to_string();
+    let docs = core.request("vnoc/docs", json!({ "id": id })).unwrap();
+    assert_eq!(docs[0]["file"], "made-by-a-command.md");
+    assert_eq!(docs[0]["title"], "Made by a command");
+
+    // the extension's attach (the editor sink, `again`) with the same title makes a second file, as it always did, with no new edit
+    let second = core
+        .request(
+            "vnoc/attach",
+            attach_params(&root, key, "Made by a command", None),
+        )
+        .expect("attach answers");
+    assert_eq!(second["id"], json!(id));
+    assert!(
+        second["doc"]
+            .as_str()
+            .unwrap()
+            .ends_with("made-by-a-command-2.md"),
+        "{second}"
+    );
+    assert!(
+        core.edit_requests.is_empty(),
+        "the ID was in the code already"
+    );
+    core.finish();
+}
+
+/// A doc's file with this frontmatter between its `---` lines (what a person or an agent writes by hand) and the title `# <title>` after it.
+fn write_doc_with(doc: &std::path::Path, id: &str, extra: &str, title: &str) {
+    std::fs::write(
+        doc,
+        format!("---\nnode: {id}\nhint: orders.py::OrderService.parse_order\n{extra}---\n# {title}\n\nA note.\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn vnoc_docs_and_the_search_rows_carry_the_tags_and_the_author_of_a_doc() {
+    let (mut core, root) = orders_project("tags-wire", Some("format = 1\n"));
+    let key = "orders.py::OrderService.parse_order";
+    let plain = core
+        .request("vnoc/attach", attach_params(&root, key, "Plain", None))
+        .expect("attach answers");
+    let id = plain["id"].as_str().unwrap().to_string();
+    core.wait_for("vnoc/indexChanged");
+    let tagged = core
+        .request("vnoc/attach", attach_params(&root, key, "Tagged", None))
+        .expect("attach answers");
+    let doc = PathBuf::from(tagged["doc"].as_str().unwrap());
+    write_doc_with(
+        &doc,
+        &id,
+        "author: claude-code\ntags: [plan, billing]\n",
+        "Tagged",
+    );
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+
+    // `vnoc/docs`: each doc says its tags and author; a doc with none says so (an empty list, null)
+    let docs = core.request("vnoc/docs", json!({ "id": id })).unwrap();
+    let docs = docs.as_array().unwrap();
+    let by_file = |file: &str| docs.iter().find(|d| d["file"] == file).unwrap();
+    assert_eq!(by_file("tagged.md")["tags"], json!(["plan", "billing"]));
+    assert_eq!(by_file("tagged.md")["author"], "claude-code");
+    assert_eq!(by_file("plain.md")["tags"], json!([]));
+    assert_eq!(by_file("plain.md")["author"], Value::Null);
+
+    // `vnoc/search`: a query of a tag alone is a doc row, with the tags and the author; `kind:fn` alone is none
+    let rows = wait_for_doc_rows(&mut core, "tag:plan");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["title"], "Tagged");
+    assert_eq!(rows[0]["tags"], json!(["plan", "billing"]));
+    assert_eq!(rows[0]["author"], "claude-code");
+    assert_eq!(rows[0]["node"], key);
+    assert!(
+        rows[0]["snippet"].as_str().unwrap().starts_with("A note."),
+        "the start of the body: {}",
+        rows[0]
+    );
+    assert_eq!(rows[0]["title_match"], json!([]));
+    assert!(doc_rows(&mut core, "kind:fn").is_empty());
+    assert_eq!(doc_rows(&mut core, "author:Claude-Code").len(), 1);
+    assert!(doc_rows(&mut core, "tag:plan author:somebody-else").is_empty());
+    // the nodes of that query: the function that has such a doc
+    let found = core
+        .request("vnoc/search", json!({ "query": "tag:plan" }))
+        .unwrap();
+    assert_eq!(found["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(found["nodes"][0]["id"], key);
+    assert!(found["notes"].as_array().unwrap().is_empty());
+    core.finish();
+}
+
+#[test]
+fn a_doc_whose_tags_were_edited_by_hand_is_found_by_the_new_tag_with_no_index_changed() {
+    // IDs off: the attach writes no line into the code, so only the doc's own text changes below
+    let (mut core, root) = orders_project(
+        "tags-by-hand",
+        Some("format = 1\n\n[ids]\ndefault = \"none\"\n"),
+    );
+    let key = "orders.py::OrderService.parse_order";
+    let made = core
+        .request("vnoc/attach", attach_params(&root, key, "Zoo notes", None))
+        .expect("attach answers");
+    let id = made["id"].as_str().unwrap().to_string();
+    let doc = PathBuf::from(made["doc"].as_str().unwrap());
+    // the attach's own update has landed when the tree shows the doc (an `indexChanged` already waiting may be the first build's)
+    let shown = structure_when(&mut core, |s| {
+        find_node(&s["root"], &|n| n["id"] == key).is_some_and(|n| n["docs"] == 1)
+    });
+    assert!(doc_rows(&mut core, "tag:plan").is_empty(), "no tags yet");
+    let revision = shown["revision"].clone();
+
+    // a person writes `tags: [plan]` by hand
+    core.request("vnoc/ping", Value::Null).unwrap();
+    core.notifications.clear();
+    write_doc_with(&doc, &id, "tags: [plan]\n", "Zoo notes");
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+    let rows = wait_for_doc_rows(&mut core, "tag:plan");
+    assert_eq!(rows.len(), 1, "found by the new tag");
+    assert_eq!(rows[0]["tags"], json!(["plan"]));
+
+    // then another, in the YAML block form, in capitals: read lower case, the old one is gone
+    write_doc_with(&doc, &id, "tags:\n  - Billing\n  - draft\n", "Zoo notes");
+    core.notify("vnoc/filesChanged", json!({ "paths": [&doc] }));
+    let rows = wait_for_doc_rows(&mut core, "tag:billing");
+    assert_eq!(rows.len(), 1, "the block form is read");
+    assert_eq!(rows[0]["tags"], json!(["billing", "draft"]));
+    assert!(
+        doc_rows(&mut core, "tag:plan").is_empty(),
+        "the old tag does not"
+    );
+    assert!(doc_rows(&mut core, "-tag:draft").is_empty());
+
+    // the tags are not a change to the index: the same revision, and nothing announced
+    assert_eq!(
+        core.request("vnoc/structure", Value::Null).unwrap()["revision"],
+        revision
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    core.request("vnoc/ping", Value::Null).unwrap();
+    let announced: Vec<_> = core
+        .notifications
+        .iter()
+        .filter(|(method, _)| method == "vnoc/indexChanged")
+        .collect();
+    assert!(announced.is_empty(), "a tag edit announced {announced:?}");
     core.finish();
 }

@@ -38,11 +38,9 @@ V-NOC
 ├── WHAT SHIPS WHEN ─────────────────────────────── 02-mvp-and-releases.md
 │   ├── 0.1  docs loop        tree · canvas · attach · find again · Missing
 │   ├── 0.2  call trees       (+ SQLite if startup is slow)
-│   ├── 0.3  edit in canvas   (a draft per card, written on ⌘S)
-│   ├── 0.4  search           names, filters, doc text; all in the core
-│   ├── 0.5  agents can read  the `vnoc` command + the agent skill
-│   ├── 0.6  no-ID matching   docs survive without markers
-│   ├── 0.7+ polish           CodeLens, hover (as LSP), freshness, playground
+│   ├── 0.3  edit in canvas, search, agents   a draft per card, written on ⌘S · names, filters, doc text in the core · the `vnoc` command + the agent skill
+│   ├── 0.4  no-ID matching   docs survive without markers
+│   ├── 0.5+ polish           CodeLens, hover (as LSP), freshness, playground
 │   └── 1.0  hardened, protocol frozen, all platforms
 │
 ├── HOW IT IS BUILT
@@ -117,13 +115,13 @@ V-NOC
 ├── EDIT IN THE CANVAS ───────────────────────────── 17-edit-in-canvas.md
 │   └── a draft, not a live view · save checks first · the index follows saves · the doc panel the same way · steps 9.0 – 9.6
 │
-├── SEARCH (0.4) ──────────────────────────────────── 20-search/
+├── SEARCH (0.3) ──────────────────────────────────── 20-search/
 │   ├── query · names · doc text       words, phrases, filters, a pasted reference · six tiers, fuzzy by word · BM25, a snippet
 │   ├── the core                       the vnoc-search crate (pure) · a kept corpus · vnoc/search · vnoc/searchCards · node_ref
 │   ├── on screen                      the sidebar's two groups · the palette · the canvas dims
 │   └── build order                    steps S0 – S8
 │
-├── THE VNOC COMMAND AND THE AGENT SKILL (0.5) ───── 21-agent-cli/
+├── THE VNOC COMMAND AND THE AGENT SKILL (0.3) ───── 21-agent-cli/
 │   ├── what agents get                the freedoms and the guard rails
 │   ├── read · write                   show · code · doc · tree · find · grep · calls · check │ init · doc new · relink · repair
 │   ├── how it runs                    one binary · the root · one shot, measured · exit codes

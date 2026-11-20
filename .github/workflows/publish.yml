@@ -44,7 +44,8 @@ jobs:
     uses: ./.github/workflows/ci.yml
     permissions: { contents: read, pull-requests: read }
 
-  # The four VSIX files (vsix-darwin-arm64, vsix-darwin-x64, vsix-linux-x64, vsix-win32-x64), packaged as pre-releases.
+  # The four VSIX files (vsix-darwin-arm64, vsix-darwin-x64, vsix-linux-x64, vsix-win32-x64), packaged as pre-releases, and the four command-line archives
+  # (cli-darwin-arm64, cli-darwin-x64, cli-linux-x64, cli-win32-x64).
   package:
     needs: check
     uses: ./.github/workflows/package.yml
@@ -61,7 +62,7 @@ jobs:
     permissions:
       contents: write # the GitHub release
       id-token: write # Trusted Publishing: the job's OIDC token, no stored secret
-      attestations: write # the provenance of the four files
+      attestations: write # the provenance of the files
     env:
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
@@ -70,10 +71,13 @@ jobs:
         with: { node-version: 22 }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { pattern: "vsix-*", merge-multiple: true, path: vsix }
-      - name: the four files are there
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { pattern: "cli-*", merge-multiple: true, path: cli }
+      - name: the eight files are there
         run: |
-          ls -l vsix
+          ls -l vsix cli
           [ "$(ls vsix/*.vsix | wc -l)" = "4" ] || { echo "::error::expected four VSIX files"; exit 1; }
+          [ "$(ls cli/vnoc-cli-* | wc -l)" = "4" ] || { echo "::error::expected four command-line archives"; exit 1; }
       # the login lasts 15 minutes: nothing slow before this step
       - name: "publish to the Marketplace (trusted publishing: the job's OIDC token, no secret)"
         run: npx --yes @vscode/vsce@^4.1.0 publish --oidc --skip-duplicate --packagePath vsix/*.vsix
@@ -81,12 +85,29 @@ jobs:
       - name: publish to Open VSX
         if: env.OVSX_PAT != ''
         run: for f in vsix/*.vsix; do npx --yes ovsx publish "$f" --skip-duplicate; done # the token: OVSX_PAT, which ovsx reads itself
+      # the install script is stamped with this release's version: it installs that release unless told another (scripts/install.sh, 07 §6)
+      - name: stamp install.sh
+        run: |
+          version=$(node -p "require('./extension/package.json').version")
+          sed "s/^VERSION=\"@VERSION@\"\$/VERSION=\"$version\"/" scripts/install.sh > cli/install.sh
+          grep -qx "VERSION=\"$version\"" cli/install.sh || { echo "::error::scripts/install.sh has no VERSION=\"@VERSION@\" line to stamp"; exit 1; }
+          chmod 755 cli/install.sh
+          sh -n cli/install.sh
+      # one SHA256SUMS over every file of the release: the four VSIX, the four archives and install.sh
       - name: checksums
-        run: (cd vsix && sha256sum -- *.vsix > SHA256SUMS)
+        run: |
+          mkdir -p release
+          cp vsix/*.vsix cli/vnoc-cli-* cli/install.sh release/
+          (cd release && sha256sum -- * > SHA256SUMS)
+          cat release/SHA256SUMS
+          [ "$(wc -l < release/SHA256SUMS)" = "9" ] || { echo "::error::expected nine files in SHA256SUMS"; exit 1; }
       # anyone can then check a file: gh attestation verify <file> -R yaredtsy/vnoc
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: vsix/*.vsix
+          subject-path: |
+            release/*.vsix
+            release/vnoc-cli-*
+            release/install.sh
       # every step above and below is safe to run again: "Re-run failed jobs" is the fix for a partial failure (docs/18 §5)
       - name: the GitHub release
         if: github.ref_type == 'tag'
@@ -103,4 +124,4 @@ jobs:
             echo "creating release $GITHUB_REF_NAME"
             gh release create "$GITHUB_REF_NAME" --prerelease --title "v$version" --notes-file notes.md
           fi
-          gh release upload "$GITHUB_REF_NAME" vsix/*.vsix vsix/SHA256SUMS --clobber
+          gh release upload "$GITHUB_REF_NAME" release/* --clobber

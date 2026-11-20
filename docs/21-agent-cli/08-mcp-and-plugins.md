@@ -6,15 +6,15 @@ postponed
 ├── 2. plugins         hooks are the one thing worth having; the first one to build
 ├── 3. callers         why there are none, and the ways to get them
 ├── 4. VS Code's own agent
-└── 5. the order after 0.5
+└── 5. the order after 0.3
 ```
 
 The designs are in [`../futureplan/02-agent-access/`](../futureplan/02-agent-access/README.md) (03 MCP, 04 plugins) and still stand. This file
-only records the decision for 0.5 (C15) and its conditions.
+only records the decision for 0.3 (C15) and its conditions.
 
 ## 1. MCP
 
-| MCP would add | Is that needed for 0.5? |
+| MCP would add | Is that needed for 0.3? |
 |---|---|
 | a way in for hosts **with no shell** (desktop chat apps) | no agent on the list lacks a shell: Claude Code, Codex, Cursor, pi, opencode, Gemini CLI, Copilot |
 | a **warm index**: build once, answer many times | the only real gain. A0 measures the one-shot; the outline cache (05 §3, step A16) gets most of it for every command, MCP or not. `calls` is the one command a cache does not help |
@@ -49,7 +49,7 @@ of it. For V-NOC there is exactly one hook worth the trouble:
 after the agent edits a file   →   vnoc check --changed --quiet   →   if an ID line was lost, put the message in front of the model
 ```
 
-That turns "keep the `ID:` line" from advice into a guarantee. It is the **first thing to build after 0.5**, for Claude Code, because the pieces
+That turns "keep the `ID:` line" from advice into a guarantee. It is the **first thing to build after 0.3**, for Claude Code, because the pieces
 are all here: `check --changed` (03 §9), exit code `1`, `--quiet`, and the skill at `skills/vnoc/` so a `.claude-plugin/` beside it is an
 addition. An afternoon and its testing (futureplan 02.04 §2, §7).
 
@@ -57,13 +57,13 @@ Other agents' plugins: on demand, one at a time, when a user of that agent asks.
 
 ## 3. Callers
 
-"Who calls this?" is not in 0.5, and not because nobody thought of it. A call tree is **solved lazily, from one entry**: the driver opens the
+"Who calls this?" is not in 0.3, and not because nobody thought of it. A call tree is **solved lazily, from one entry**: the driver opens the
 project and follows the calls *out of* the function it was given (`drivers/python/src/call_tree.rs`, `call_wire` with one `Entry`). Nothing
 holds the edges of functions nobody asked about, so there is no map to read backwards.
 
 | Way | How | Cost | Finds |
 |---|---|---|---|
-| **A. by text** (0.5: `vnoc grep 'name\('`) | the functions whose code mentions the name | none | too much (another `save`) and too little (a call through an alias); said to be "by text" in the guide |
+| **A. by text** (0.3: `vnoc grep 'name\('`) | the functions whose code mentions the name | none | too much (another `save`) and too little (a call through an alias); said to be "by text" in the guide |
 | **B. text, then solve** (the way Jedi finds references) | A's candidates, widened to every function in a file that mentions the name; for each, ask the driver for its tree one level deep (what `vnoc/hasCalls` already does) and keep those whose callees include the target | one solve per candidate, capped (say 50), cancellable. No new driver feature | exactly the callers among the candidates. Misses a call that never spells the name anywhere in its file (a callback passed around, `getattr`) |
 | **C. index eagerly** | solve every function once, keep the edges both ways, keep them fresh | the whole-project analysis at start-up and on change; a place to keep it (the SQLite of `04-storage/04-growth-path.md`) | everything the solver can see |
 
@@ -77,10 +77,10 @@ The extension could give Copilot's agent mode tools that talk to the **running**
 files. It is the best quality of all the doors and it is independent of this folder. Not scheduled; it shares nothing with the command line but
 the library functions, which C2 keeps ready.
 
-## 5. The order after 0.5
+## 5. The order after 0.3
 
 ```
-0.5 ships ──► the Claude Code plugin with the after-edit hook        (an afternoon; a guarantee for K1)
+0.3 ships ──► the Claude Code plugin with the after-edit hook        (an afternoon; a guarantee for K1)
           ──► the walkthrough                                        (your next piece; README §5 lists what it stands on)
           ──► callers the Jedi way (§3 B), when someone asks "who calls this" and grep is not enough
           ──► MCP, only on one of §1's three conditions
