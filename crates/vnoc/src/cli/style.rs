@@ -317,7 +317,7 @@ pub fn shaping(terminal: bool, painted: bool) -> Shaping {
 }
 
 /// A writer that collects what it is given and, when it is flushed (or dropped), writes it to `inner` shaped as `shaping` says. A command writes a
-/// whole answer and flushes, so a mark is never cut in two; text that is not UTF-8 is passed on as it is.
+/// whole answer and flushes, so a mark is never cut in two; a byte that is not UTF-8 is shown as U+FFFD (see `pass_on`).
 pub struct Shown<W: Write> {
     inner: W,
     mark: String,
@@ -340,21 +340,17 @@ impl<W: Write> Shown<W> {
             return Ok(());
         }
         let held = std::mem::take(&mut self.held);
-        match String::from_utf8(held) {
-            Ok(text) => {
-                let shaped = if self.clean {
-                    sanitize(&text, &self.mark)
-                } else {
-                    if self.mark.is_empty() {
-                        text
-                    } else {
-                        text.replace(&self.mark, "\x1b")
-                    }
-                };
-                self.inner.write_all(shaped.as_bytes())
-            }
-            Err(not_text) => self.inner.write_all(not_text.as_bytes()),
-        }
+        // A byte that is not UTF-8 is read as U+FFFD, never written as it is: a raw byte such as 0x9B is a terminal's own command (the 8-bit CSI), and the
+        // text could not be cleaned around it. (A file that is not UTF-8 is read lossily everywhere else V-NOC shows it.)
+        let text = String::from_utf8_lossy(&held);
+        let shaped = if self.clean {
+            sanitize(&text, &self.mark)
+        } else if self.mark.is_empty() {
+            text.into_owned()
+        } else {
+            text.replace(&self.mark, "\x1b")
+        };
+        self.inner.write_all(shaped.as_bytes())
     }
 }
 
@@ -649,12 +645,22 @@ mod tests {
             w
         });
         assert_eq!(out, b"x^[");
-        // not UTF-8: passed on, not changed
-        let mut out = Vec::new();
-        {
-            let mut w = Shown::new(&mut out, mark, true);
-            w.write_all(&[0x66, 0xff, 0x1b]).unwrap();
+        // not UTF-8: shown as U+FFFD, and the ESC beside it is cleaned like any other (a raw 0xff, or a raw 0x9b, is never written)
+        for clean in [true, false] {
+            let mut out = Vec::new();
+            {
+                let mut w = Shown::new(&mut out, mark, clean);
+                w.write_all(&[0x66, 0xff, 0x1b, 0x9b, 0x67]).unwrap();
+            }
+            let shown = String::from_utf8(out).expect("what is written is UTF-8");
+            if clean {
+                assert_eq!(shown, "f\u{fffd}^[\u{fffd}g", "a terminal");
+            } else {
+                assert_eq!(
+                    shown, "f\u{fffd}\x1b\u{fffd}g",
+                    "a painted pipe: lossy, the file's ESC as it is, only the marks turned back"
+                );
+            }
         }
-        assert_eq!(out, [0x66, 0xff, 0x1b]);
     }
 }
