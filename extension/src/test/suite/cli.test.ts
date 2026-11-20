@@ -49,7 +49,9 @@ function files(dir: string, base = dir): string[] {
 }
 
 /** The binary this window runs, run by hand: what the dry run says it would write. */
-const vnoc = (args: string[]) => execFileSync(api.cli.binaryPath()!, args, { cwd: workspace(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+// With a temporary home folder: `agent remove` and the permissions reach `~/.codex/rules/vnoc.rules`, and a suite must never touch the real one.
+const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-cli-home-"));
+const vnoc = (args: string[]) => execFileSync(api.cli.binaryPath()!, args, { cwd: workspace(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } });
 
 suite("cli", () => {
   suiteSetup(async () => {
@@ -163,9 +165,10 @@ suite("cli", () => {
     try {
       const before = files(root);
       // what the binary says it would write, asked of it directly
-      const dry = JSON.parse(vnoc(["agent", "install", "--agent", "claude", "--dry-run", "--json"])) as { actions: { path: string; change: string }[] };
+      const dry = JSON.parse(vnoc(["agent", "install", "--agent", "claude", "--permissions", "--dry-run", "--json"])) as { actions: { path: string; change: string }[] };
       const listed = dry.actions.filter((a) => a.change !== "same" && a.change !== "leave").map((a) => a.path);
       assert.ok(listed.length >= 2, `the dry run lists the skill and the rules: ${listed}`);
+      assert.ok(listed.includes(".claude/settings.local.json"), `and the permissions, which the command allows unless told not to: ${listed}`);
       assert.deepStrictEqual(files(root), before, "a dry run writes nothing");
 
       await api.cli.resetOffer();
@@ -183,6 +186,46 @@ suite("cli", () => {
       // again: nothing to write, nothing changes
       const again = (await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true })) as SetUpResult;
       assert.deepStrictEqual(again.wrote, []);
+    } finally {
+      cleanUp();
+    }
+  });
+
+  test("Set Up Coding Agents writes the permissions when permissions is true (the default) and none when it is false", async () => {
+    const root = workspace();
+    const settings = path.join(root, ".claude", "settings.local.json");
+    const cleanUp = () => {
+      try {
+        vnoc(["agent", "remove", "--agent", "claude"]);
+      } catch {
+        /* nothing was written */
+      }
+      ["AGENTS.md", "CLAUDE.md", ".claude"].forEach((name) => fs.rmSync(path.join(root, name), { recursive: true, force: true }));
+    };
+    const entries = (): string[] => (JSON.parse(fs.readFileSync(settings, "utf8")) as { permissions: { allow: string[] } }).permissions.allow;
+    cleanUp();
+    try {
+      // false: the files, and no settings file
+      const declined = (await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true, permissions: false })) as SetUpResult;
+      assert.ok(!declined.wrote.includes(".claude/settings.local.json"), String(declined.wrote));
+      assert.ok(!fs.existsSync(settings), "no settings file was written");
+      cleanUp();
+
+      // true, and the default: V-NOC's read commands, and never a write
+      const given = (await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true, permissions: true })) as SetUpResult;
+      assert.ok(given.wrote.includes(".claude/settings.local.json"), String(given.wrote));
+      assert.ok(entries().includes("Bash(vnoc show *)") && entries().length === 15, String(entries()));
+      assert.ok(!entries().some((e) => /agent|doc new|doc tag|relink|repair|init/.test(e)), "no write command is allowed");
+      cleanUp();
+      const byDefault = (await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true })) as SetUpResult;
+      assert.ok(byDefault.wrote.includes(".claude/settings.local.json"), String(byDefault.wrote));
+      assert.strictEqual(entries().length, 15);
+
+      // the user's own entry stays when the setup runs again over it
+      fs.writeFileSync(settings, JSON.stringify({ permissions: { allow: ["Bash(ls *)"] } }, null, 2));
+      await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true });
+      assert.strictEqual(entries()[0], "Bash(ls *)");
+      assert.strictEqual(entries().length, 16);
     } finally {
       cleanUp();
     }

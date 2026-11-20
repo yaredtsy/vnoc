@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "command": "agent install",
+  "dry_run": true,
+  "root": "/path/to/project",
+  "agents": [
+    "claude",
+    "codex"
+  ],
+  "actions": [
+    {
+      "part": "skill",
+      "path": ".claude/skills/vnoc/SKILL.md",
+      "change": "create",
+      "agents": [
+        "claude"
+      ],
+      "readers": [
+        "claude",
+        "cline"
+      ],
+      "why": null
+    },
+    {
+      "part": "skill",
+      "path": ".agents/skills/vnoc/SKILL.md",
+      "change": "create",
+      "agents": [
+        "codex"
+      ],
+      "readers": [
+        "codex",
+        "cursor",
+        "pi",
+        "opencode",
+        "copilot",
+        "amp",
+        "goose",
+        "windsurf",
+        "gemini",
+        "other"
+      ],
+      "why": null
+    },
+    {
+      "part": "rules",
+      "path": "AGENTS.md",
+      "change": "add_block",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "readers": [
+        "claude",
+        "cline",
+        "codex",
+        "cursor",
+        "pi",
+        "opencode",
+        "copilot",
+        "amp",
+        "goose",
+        "windsurf",
+        "other"
+      ],
+      "why": null
+    },
+    {
+      "part": "import",
+      "path": "CLAUDE.md",
+      "change": "create",
+      "agents": [
+        "claude"
+      ],
+      "readers": [
+        "claude"
+      ],
+      "why": null
+    },
+    {
+      "part": "permissions",
+      "path": ".claude/settings.local.json",
+      "change": "create",
+      "agents": [
+        "claude"
+      ],
+      "readers": [
+        "claude"
+      ],
+      "why": null
+    },
+    {
+      "part": "permissions",
+      "path": "~/.codex/rules/vnoc.rules",
+      "change": "create",
+      "agents": [
+        "codex"
+      ],
+      "readers": [
+        "codex"
+      ],
+      "why": null
+    }
+  ],
+  "permissions": [],
+  "can_allow": [
+    "Claude Code",
+    "Codex"
+  ]
+}

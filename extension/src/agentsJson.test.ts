@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { decideOffer, detectedNames, errorLine, left, lineOf, parseChanges, parseList, parseStatus, rulesFile, touching } from "./agentsJson.ts";
+import { allowFlag, allowQuestion, decideOffer, detectedNames, errorLine, left, lineOf, parseChanges, parseList, parseStatus, rulesFile, setUpArgument, touching } from "./agentsJson.ts";
 
 // The fixtures are what the real binary printed (`agent list --json`, `agent install --agent claude,codex [--dry-run] --json`, `agent status --json`) on a project
 // with only an AGENTS.md; the window suite runs the same commands for real.
@@ -79,4 +79,42 @@ test("the offer: once, only where somebody uses an agent, and not when V-NOC's f
   assert.equal(decideOffer({ alreadyDecided: false, detected: [], setUp: false }), "no-agent-here");
   assert.equal(decideOffer({ alreadyDecided: false, detected: ["other"], setUp: true }), "set-up");
   assert.equal(decideOffer({ alreadyDecided: false, detected: ["other"], setUp: false }), "offer");
+});
+
+test("the permissions: the dry run lists the settings file and Codex's rules file, and names the agents it can allow", () => {
+  const changes = parseChanges(fixture("agent-install-permissions-dry-run"));
+  assert.deepEqual(changes.canAllow, ["Claude Code", "Codex"]);
+  assert.deepEqual(
+    changes.actions.filter((a) => a.part === "permissions").map((a) => [a.path, a.change]),
+    [
+      [".claude/settings.local.json", "create"],
+      ["~/.codex/rules/vnoc.rules", "create"],
+    ],
+  );
+  // written, so there are no lines left to add by hand; and the confirmation shows them like any other file
+  assert.deepEqual(changes.permissions, []);
+  assert.equal(touching(changes).length, 6);
+  assert.equal(lineOf(changes.actions[4]), ".claude/settings.local.json (create)");
+  // without the flag the binary only prints the lines: nothing to allow was written, and the names are still given
+  assert.deepEqual(parseChanges(fixture("agent-install-dry-run")).canAllow, ["Claude Code", "Codex"]);
+  assert.deepEqual(parseChanges(JSON.stringify({ schema: 1, command: "agent install", actions: [] })).canAllow, []);
+});
+
+test("the question names the agents it covers, and the answer is one flag", () => {
+  assert.equal(allowQuestion(["Claude Code"]), "Let Claude Code run V-NOC's read commands without asking");
+  assert.equal(allowQuestion(["Claude Code", "Codex"]), "Let Claude Code and Codex run V-NOC's read commands without asking");
+  assert.equal(allowFlag(true), "--permissions");
+  assert.equal(allowFlag(false), "--no-permissions");
+});
+
+test("the command's argument skips the questions, and the read commands are allowed unless it says false", () => {
+  assert.deepEqual(setUpArgument({ agents: ["claude"], confirm: true }), { agents: ["claude"], confirm: true, permissions: true });
+  assert.deepEqual(setUpArgument({ agents: ["claude"], confirm: true, permissions: false }), { agents: ["claude"], confirm: true, permissions: false });
+  assert.equal(setUpArgument({ agents: ["claude"], permissions: true })?.permissions, true);
+  assert.equal(setUpArgument({ agents: ["claude"] })?.confirm, false);
+  // anything else is the palette: the questions are asked
+  assert.equal(setUpArgument(undefined), undefined);
+  assert.equal(setUpArgument({ confirm: true }), undefined);
+  assert.equal(setUpArgument({ agents: [1] }), undefined);
+  assert.equal(setUpArgument("claude"), undefined);
 });

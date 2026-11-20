@@ -87,5 +87,9 @@
       "agent": "codex",
       "text": "to let Codex run them without asking, add to ~/.codex/rules/default.rules:\n  prefix_rule(pattern = [\"vnoc\", [\"status\", \"show\", \"code\", \"tree\", \"find\", \"grep\", \"calls\", \"missing\", \"check\", \"tags\", \"guide\", \"skill\"]], decision = \"allow\")\n  prefix_rule(pattern = [\"vnoc\", \"doc\", [\"list\", \"read\", \"path\"]], decision = \"allow\")"
     }
+  ],
+  "can_allow": [
+    "Claude Code",
+    "Codex"
   ]
 }

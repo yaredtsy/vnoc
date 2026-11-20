@@ -25,8 +25,10 @@ export interface Changes {
   dryRun: boolean;
   agents: string[];
   actions: FileAction[];
-  /** the lines to add to an agent's own settings: the binary gives them for the agents whose syntax it knows */
+  /** the lines to add to an agent's own settings: the binary gives them for the agents whose syntax it knows, and only for those it did not write */
   permissions: { agent: string; text: string }[];
+  /** the names (`Claude Code`) of the picked agents whose read commands V-NOC can allow: empty when none can, so there is nothing to ask */
+  canAllow: string[];
 }
 
 export interface AgentStatus {
@@ -66,6 +68,7 @@ export function parseChanges(text: string): Changes {
     agents: strings(json.agents),
     actions: json.actions.filter(isObject).map((a) => ({ part: String(a.part), path: String(a.path), change: String(a.change), agents: strings(a.agents), why: typeof a.why === "string" ? a.why : null })),
     permissions: Array.isArray(json.permissions) ? json.permissions.filter(isObject).map((p) => ({ agent: String(p.agent), text: String(p.text) })) : [],
+    canAllow: strings(json.can_allow),
   };
 }
 
@@ -85,6 +88,21 @@ export const left = (changes: Changes): FileAction[] => changes.actions.filter((
 
 /** One action as a line of the confirmation: the path and what happens to it, in the binary's own word (`add_block` → `add block`). */
 export const lineOf = (a: FileAction): string => `${a.path} (${a.change.replace(/_/g, " ")}${a.why ? `: ${a.why}` : ""})`;
+
+/** The optional argument that skips the questions: `{ agents: string[], confirm: true, permissions?: boolean }` (`permissions` is true unless it says false). Anything else is the palette, and the questions are asked. */
+export function setUpArgument(arg: unknown): { agents: string[]; confirm: boolean; permissions: boolean } | undefined {
+  if (typeof arg !== "object" || arg === null) return undefined;
+  const { agents, confirm, permissions } = arg as { agents?: unknown; confirm?: unknown; permissions?: unknown };
+  if (!Array.isArray(agents) || !agents.every((a) => typeof a === "string")) return undefined;
+  // the read commands are allowed unless the argument says not (the question's own default is ticked)
+  return { agents: agents as string[], confirm: confirm === true, permissions: permissions !== false };
+}
+
+/** The question of the confirmation, ticked: "Let Claude Code and Codex run V-NOC's read commands without asking". */
+export const allowQuestion = (names: string[]): string => `Let ${names.join(" and ")} run V-NOC's read commands without asking`;
+
+/** The flag that carries the answer to it. */
+export const allowFlag = (allow: boolean): string => (allow ? "--permissions" : "--no-permissions");
 
 /** The rules file to offer to open after an install: the first action on a `rules` part. */
 export const rulesFile = (changes: Changes): string | undefined => changes.actions.find((a) => a.part === "rules")?.path;

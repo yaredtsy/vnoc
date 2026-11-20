@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import { type AgentRow, type Changes, decideOffer, detectedNames, errorLine, left, lineOf, type OfferDecision, parseChanges, parseList, parseStatus, rulesFile, touching } from "./agentsJson.ts";
+import { allowFlag, allowQuestion, type AgentRow, type Changes, decideOffer, detectedNames, errorLine, left, lineOf, type OfferDecision, parseChanges, parseList, parseStatus, rulesFile, setUpArgument, touching } from "./agentsJson.ts";
 import { addToPath, cliInstalled, type Facts, linkPath, type Place, planInstall, planMove, planUninstall, parseWrapper, removeFromPath, type Step, wrapperText } from "./cliInstall.ts";
 import type { Core } from "./core";
 
@@ -177,8 +177,23 @@ export class CliSetup {
     return ran.stdout;
   }
 
-  private async changes(agents: string[], dryRun: boolean): Promise<Changes> {
-    return parseChanges(await this.answer(["agent", "install", "--agent", agents.join(","), ...(dryRun ? ["--dry-run"] : []), "--json"]));
+  private async changes(agents: string[], dryRun: boolean, allow: boolean): Promise<Changes> {
+    return parseChanges(await this.answer(["agent", "install", "--agent", agents.join(","), allowFlag(allow), ...(dryRun ? ["--dry-run"] : []), "--json"]));
+  }
+
+  /**
+   * The question of the confirmation: let the agents that have a syntax V-NOC knows run its read commands without asking. A one-item list **ticked by
+   * default** (a modal has no checkbox); Enter keeps it, Space unticks it, Esc stops. `undefined`: the user stopped. Not asked when no picked agent has one.
+   */
+  private async askToAllow(names: string[]): Promise<boolean | undefined> {
+    if (names.length === 0) return true;
+    const item: vscode.QuickPickItem = {
+      label: allowQuestion(names),
+      detail: "Only the commands that read; writes (doc new, doc tag, relink, repair, init) still ask. Added to your own settings, not committed. Untick it to be asked each time.",
+      picked: true,
+    };
+    const picked = await vscode.window.showQuickPick([item], { canPickMany: true, title: "Set Up Coding Agents: permissions", placeHolder: "Enter to continue with it ticked, Space to untick it, Esc to stop" });
+    return picked === undefined ? undefined : picked.length > 0;
   }
 
   /** `vnoc.agentsSetUp` from `agent status`: V-NOC's files are in this folder. */
@@ -193,7 +208,7 @@ export class CliSetup {
    * `{ agents: string[], confirm: true }` to skip both questions (the window suite).
    */
   async setUpAgents(arg?: unknown): Promise<SetUpResult | undefined> {
-    const given = skipping(arg);
+    const given = setUpArgument(arg);
     const rows = parseList(await this.answer(["agent", "list", "--json"]));
     let agents = given?.agents;
     if (!agents) {
@@ -206,7 +221,15 @@ export class CliSetup {
       agents = picked.map((p) => p.label);
     }
 
-    const plan = await this.changes(agents, true);
+    // the binary says which of the picked agents it can allow; the question is asked before the files are listed, so the list is what will be written
+    let allow = given ? given.permissions : true;
+    if (!given) {
+      const asked = await this.askToAllow((await this.changes(agents, true, true)).canAllow);
+      if (asked === undefined) return undefined;
+      allow = asked;
+    }
+
+    const plan = await this.changes(agents, true, allow);
     if (touching(plan).length === 0) {
       void vscode.window.showInformationMessage(`V-NOC: Nothing to write: ${agents.join(", ")} ${left(plan).length > 0 ? `has files V-NOC leaves (${left(plan).map(lineOf).join("; ")})` : "already has V-NOC's files"}.`);
       await this.refreshAgentsContext();
@@ -217,7 +240,7 @@ export class CliSetup {
       if (choice !== WRITE_THEM) return undefined;
     }
 
-    const done = await this.changes(agents, false);
+    const done = await this.changes(agents, false, allow);
     const wrote = touching(done).map((a) => a.path);
     const kept = left(done).map((a) => a.path);
     const rules = rulesFile(done);
@@ -271,14 +294,6 @@ export class CliSetup {
 /** The agents the QuickPick lists: the binary's names, the detected ones ticked; the files each would get are the rows' own words. */
 function pickItems(rows: AgentRow[]): (vscode.QuickPickItem & { picked: boolean })[] {
   return rows.map((r) => ({ label: r.name, description: r.detected ? "found in this project" : "", detail: `skill: ${r.skill} · rules: ${r.rules}`, picked: r.detected }));
-}
-
-/** The optional argument that skips the two questions: `{ agents: string[], confirm: true }`. Anything else is the palette, and the questions are asked. */
-function skipping(arg: unknown): { agents: string[]; confirm: boolean } | undefined {
-  if (typeof arg !== "object" || arg === null) return undefined;
-  const { agents, confirm } = arg as { agents?: unknown; confirm?: unknown };
-  if (!Array.isArray(agents) || !agents.every((a) => typeof a === "string")) return undefined;
-  return { agents: agents as string[], confirm: confirm === true };
 }
 
 const linkDir = (f: Facts): string => {
