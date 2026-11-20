@@ -654,6 +654,16 @@ terminal's theme applies:
   `tests/golden/status-color.txt` is `status --color always` on the sample, with the root and versions replaced, so the palette is pinned.
 - The global `--format` help now says *a location per line* (an ID only for a Missing node), which is what it prints.
 
+**Control characters from the user's files, on a terminal** *(settled 2026-11-20, for A13)*. A note, a
+code line or a file name can hold `ESC` and other control characters, and printed to a terminal they are commands to it (move the cursor,
+change the title, hide text). So **when standard output is a terminal** (is-a-terminal, whatever `--color` says), every piece of text that came
+from the project (note bodies and titles, code lines, `grep` lines, paths, tags, authors) is cleaned where it enters the output, before
+V-NOC paints it (cleaning the finished text would take V-NOC's own colour codes too): C0 controls other than tab and line feed, and DEL, become caret notation (`ESC` → `^[`, DEL → `^?`); a carriage return right before a line feed
+stays (CRLF files), a lone one becomes `^M`; C1 controls (U+0080–U+009F) become `<U+009B>`. V-NOC's own paint is not touched. **A pipe,
+`--json` and `--format` get the bytes unchanged**: that is what an agent and a script read, and the bytes are the truth. Standard error follows
+the same rule for the project text it prints. A test: a note with `\x1b]0;owned\x07` and `\x1b[2J` in its body, `doc read` through a pty
+shows `^[]0;owned^G`; the same through a pipe is the bytes.
+
 **Layout: one fact per line** *(settled 2026-11-20, step A9c, after the user's second by-hand pass: "style issues, inlined")*. A row holds a
 short subject (a kind and a location, a title and its tags, a label and a value); **a long path, a sentence or a fix goes on its own line**,
 indented two more spaces under it. So no row wraps in an ordinary terminal for the common case, and an agent reads the same structure.

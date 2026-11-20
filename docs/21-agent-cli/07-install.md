@@ -288,6 +288,25 @@ Other agents' allow-lists: not read, so nothing is printed for them.
   `settings.local.json` it created and emptied. `vnoc agent status` says whether the permissions are in place.
 - Output: `allowed      V-NOC's read commands for Claude Code` / `in           .claude/settings.local.json`.
 
+**As built in A12c (2026-11-20; reviewed).** What the table above left open:
+
+- **The files are written first, then the question.** `n` or Ctrl-C at it leaves the skill and the rules in place; Ctrl-C gives the cursor
+  back and exits 130, as at the menu. A **dry run never asks**: in a terminal it shows what the default (yes) would write; with no terminal,
+  the printed lines.
+- **No question** with `--global`, `--skill-only`, `--rules-only`, `--json`, or when no picked agent has a syntax V-NOC knows. An explicit
+  `--permissions` still writes with `--skill-only` / `--rules-only`; with `--global` it is a usage error, and so is `--permissions` with
+  `--no-permissions`. `--permissions=local` is the default's own name.
+- **The merge** keeps the keys in their order (its own JSON tree; `serde_json::Value` sorts them), the indentation, CRLF, a BOM is read past. One
+  cost, accepted: a one-line array comes back one entry per line (keeping it would mean editing the text in place). A repeated key: the last
+  one counts, as JSON readers take it.
+- **Remove** deletes a settings file only when nothing but `{"permissions":{"allow":[]}}` is left, and `vnoc.rules` only when its first line is
+  V-NOC's mark. `agent status` prints one line per agent: `allowed` / `partly` / `changed` (Codex: V-NOC's file says something else) / `not
+  allowed`; `--json` has a `permissions` array. `vnoc status`'s embedded agent block does not show it.
+- **No "commit these files" line** when the only file written is `settings.local.json` (it is not committed).
+- `--json` of install gains `can_allow` (the picked agents V-NOC can allow, by name), so *Set Up Coding Agents* names them without a list of
+  its own (P1). The VS Code question is a one-item multi-select, ticked, asked before the confirmation (a modal holds no checkbox), so the
+  confirmation lists exactly what will be written. The window suite runs the binary with a temporary `HOME`.
+
 ## 5. From the repository
 
 The skill's source is `skills/vnoc/SKILL.md` at the repository's root (06 §3). That one path is also what the wider installers look for, so
@@ -315,4 +334,31 @@ For CI, cloud agents, and people without VS Code.
   the sum, unpacks into `~/.local/bin`. It is what a cloud agent's set-up step or a CI job runs in one line. No Windows script at first (the
   archive and the VS Code command cover Windows).
 - The README gets **"Using V-NOC with coding agents"**: install the command (VS Code, or the script), `vnoc agent install`, commit the files;
-  then the rules block in full, for people who want only layer 0.
+  then the rules block in full, for people who want only layer 0. *(Moved to A13r, the README rewrite.)*
+
+**Settled 2026-11-20, before A13.**
+
+- **The archive** is made by `scripts/package.mjs`, right after it copies the two programs into `extension/bin/`, so a local run makes it too
+  and it is tested before CI. Name `vnoc-cli-<target>.tar.gz` (`vnoc-cli-win32-x64.zip`), the VSIX's target names (`darwin-arm64`, `darwin-x64`,
+  `linux-x64`, `win32-x64`); the `-cli` keeps it apart from `vnoc-<target>.vsix` in one release. **Flat**, four files: `vnoc`,
+  `vnoc-driver-python` (mode 755), `LICENSE`, `THIRD_PARTY_NOTICES.md` (the programs hold other people's code; the VSIX check of package.mjs
+  holds for the archive too).
+- **CI:** `package.yml` uploads it as the artifact `cli-<target>`; `publish` downloads `cli-*` beside `vsix-*`, checks there are four of
+  each, puts **every file** (four VSIX, four archives, `install.sh`) in one `SHA256SUMS`, attests the archives as well, and uploads them all.
+  The `install.sh` it uploads is stamped with the release's version (below).
+- **`install.sh` is POSIX `sh`** (it is run as `curl -fsSL … | sh`), no `bash`, no `sudo`, writes only into its install folder.
+
+  | Step | What |
+  |---|---|
+  | target | `uname -s` / `uname -m`: Darwin arm64 → `darwin-arm64`; Darwin x86_64 → `darwin-x64`, **unless** `sysctl -n sysctl.proc_translated` says 1 (Rosetta: take `darwin-arm64`); Linux x86_64 → `linux-x64`. Anything else: `error: no vnoc build for <os> <arch>; the releases have darwin-arm64, darwin-x64, linux-x64, win32-x64`, exit 1 |
+  | version | `VNOC_VERSION` (`0.5.0` or `v0.5.0`), else the version stamped in the script at release (the line `VERSION="@VERSION@"`, replaced by `publish`), else, unstamped (run from the repository), **the newest release, pre-releases included**, from `api.github.com/repos/yaredtsy/vnoc/releases?per_page=1`. Not `releases/latest`: every V-NOC release so far is a pre-release, and `latest` skips them |
+  | download | `curl -fsSL` (else `wget -qO-`; neither: say so, exit 1) the archive and `SHA256SUMS` from `${VNOC_BASE_URL:-https://github.com/yaredtsy/vnoc/releases/download}/v<version>/` into a `mktemp -d` folder, removed on exit (`trap`) |
+  | check | the archive's line of `SHA256SUMS` against `sha256sum` (else `shasum -a 256`); a missing line or a different sum: `error: …`, exit 1, nothing installed |
+  | install | the two programs into `${VNOC_INSTALL_DIR:-$HOME/.local/bin}` (made if missing), each written to a temporary name there and moved into place (a running `vnoc` is not cut off halfway); then `vnoc --version` from there is run and printed |
+  | after | if the folder is not on `PATH`: one line to add it (`export PATH="$HOME/.local/bin:$PATH"` in the shell's rc file), not done for the user |
+
+  `VNOC_BASE_URL` also takes a `file://` folder: that is how the test runs it with no network. The one-liner in the README names the release:
+  `curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.5.0/install.sh | sh`.
+- **macOS:** a file fetched by `curl` gets no quarantine attribute, so Gatekeeper does not stop the programs; the Rust linker signs them ad hoc,
+  which Apple silicon needs. The 1.1 s first run (05, "Measured in A0") is measured again on an installed copy in A13: first run against second,
+  after a fresh copy. If it is the system's check of a new binary, it is written down (and goes in the README's troubleshooting), not fixed.

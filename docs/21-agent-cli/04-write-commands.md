@@ -137,7 +137,8 @@ Guard rails in the command itself:
 - A body over 256 KB is refused: a note is a note.
 - *(Added 2026-11-20, A12d.)* **A body that starts with the title is not given the title twice.** If its first non-blank line is a `# `
   heading equal to `--title` (case and runs of spaces ignored), that line and the blank lines after it are left out, and the output adds
-  `             the body's own "# <title>" line was left out: V-NOC writes the title`. A different first heading is the author's and stays.
+  `             the body's own "# Knowledge base API: overview" line was left out: V-NOC writes the title` (the real title in the quotes,
+  as A12c built it). A different first heading is the author's and stays.
   Seen on the user's project: an agent's overview note had `# Knowledge base API: overview` twice.
 - The frontmatter is V-NOC's: `node:`, `hint:`, `author:`, `tags:`. A body that starts with its own `---` block is refused with a
   line saying to leave the frontmatter out.

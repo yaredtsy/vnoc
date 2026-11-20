@@ -342,20 +342,54 @@ macOS: install, `vnoc status` in a terminal, update the extension, the link foll
 
 Commit: `cli A12: Install vnoc in PATH; Set Up Coding Agents`.
 
-### A13 Releases, and the README
+### A13 Releases *(the README part moved to A13r; settled in detail 2026-11-20: 07 §6, 03 §11)*
 
 | Files | What |
 |---|---|
-| `.github/workflows/publish.yml` | per target, the archive of `extension/bin/` 's two programs; their sums into `SHA256SUMS`; `install.sh` attached |
-| `scripts/install.sh` | 07 §6 |
-| `README.md`, the extension's README | "Using V-NOC with coding agents" |
-| `CHANGELOG.md` | the command line, marked experimental |
+| `scripts/package.mjs` | after the two programs land in `extension/bin/`: `vnoc-cli-<target>.tar.gz` (`.zip` on Windows), flat: the two programs, `LICENSE`, `THIRD_PARTY_NOTICES.md` |
+| `.github/workflows/package.yml`, `publish.yml` | the artifact `cli-<target>`; `publish` checks four archives as it checks four VSIX, one `SHA256SUMS` over every file, provenance for the archives too, `install.sh` stamped with the version and uploaded |
+| `scripts/install.sh` | 07 §6: POSIX `sh`, target from `uname` (Rosetta → arm64), version from `VNOC_VERSION` / the stamp / the newest release with pre-releases, sum checked, into `~/.local/bin` |
+| `crates/vnoc/src/cli/` (the writer) | control characters from the project cleaned on a terminal (03 §11) |
+| `extension/CHANGELOG.md` | `## Unreleased (0.5.0)`: everything on `main` since 0.2.0 (editing on the canvas, search) and the command line, marked experimental |
+| `docs/19-ci-cd.md` §5, §8 | the archives and `install.sh` in the release; step 1 bumps the version in four places, `extension/package.json`, `Cargo.toml` (workspace), `drivers/python/Cargo.toml`, `skills/vnoc/SKILL.md` (the guide test fails otherwise); step 5 counts the new files |
 
-Proof: the publish dry run (doc 19 §8) lists four archives and their sums; `tar -tzf` shows both programs; `install.sh` run against a dry-run
-release in a clean container puts a working `vnoc` on the PATH. **[check]** once each: `npx skills add` and `gh skill install` from the
-repository find the skill (07 §5).
+Proof: `node scripts/package.mjs` on this Mac makes `vnoc-cli-darwin-arm64.tar.gz`, `tar -tzf` lists the four files; `install.sh` against
+a `file://` fake release (the archive and a `SHA256SUMS`) installs into a temp folder and `vnoc --version` runs, and a wrong sum installs
+nothing; the same in a `debian:stable-slim` container if docker runs, with the linux archive built there or skipped and said;
+`shellcheck -s sh` (or `sh -n`) clean. The 1.1 s first run measured on a fresh copy (07 §6). The publish dry run on GitHub waits for the push
+(nothing is pushed): it is a [check] for the release. **[check]** once each, with a temp `HOME`: `npx skills add` and `gh skill install`
+from the repository find the skill (07 §5); a local path if the tool takes one, else after the push. Windows [check]s stay open.
 
-Commit: `cli A13: vnoc in every release`.
+Commit: `cli A13: vnoc in every release` (and `cli A13: control characters from the project are shown, not obeyed, on a terminal` on its own).
+
+### A13r The README, rewritten (added 2026-11-20; the user: "a big README with a table of contents, as dev tools do")
+
+The README still describes release 0.2: search is one shortcut, the command line and agents are under "What's coming", editing on the canvas
+says "Next". A13's one added section is not enough: the whole page is rewritten around a table of contents. Own step, after A13 (so the
+install section can name the real release archives and `install.sh`).
+
+| # | Section | Holds |
+|---|---|---|
+| | header, badges, one gif | as now |
+| | **Contents** | a linked list of every section |
+| 1 | Features | six cards: structure (tree, canvas, Focus) · calls · docs that survive · edit on the canvas · search · coding agents |
+| 2 | Install | the extension (Marketplace, Open VSX, .vsix) · the `vnoc` command (*Install `vnoc` Command in PATH*, `install.sh`, release archives) |
+| 3 | Quick start | the extension in five steps · the command in five lines |
+| 4 | Search | what it finds (names, words in notes, a pasted `file:line`, `#L12`, a traceback line) · the query language as a table (`kind:` `in:` `has:doc` `no:doc` `tag:` `author:` `-`, phrases) · one query, three places: the box, `vnoc find`, `vnoc tree --where` |
+| 5 | Docs that survive refactors | as now · tags and `.vnoc/tags.toml` (`vnoc tags`, `vnoc tag describe`) |
+| 6 | The `vnoc` command | every command, one line each, in three tables: read · write · set up · the four ways to name a node · `--json`, `--quiet`, exit codes · "`vnoc guide` and `vnoc <command> --help` have the rest" |
+| 7 | Using V-NOC with coding agents | `vnoc agent install` and *Set Up Coding Agents* · the skill and the rules block, what each does · the permissions question · the agents it knows · a short sample session (an agent's commands and what it learned) |
+| 8 | Keyboard shortcuts | as now, extended (the search box) |
+| 9 | The `.vnoc/` folder | what to commit; the layout in a few lines; links to `docs/04-storage` |
+| 10 | Troubleshooting | `vnoc: command not found` · "no driver found" · an "ID lost" warning · bare `vnoc` prints help · the extension shows nothing |
+| 11 | What's coming | the version table from the CHANGELOG and the tags, as they really are on the day; what is next |
+| 12 | How it is built · Contributing · Licence | as now, updated (the command line is in the core binary; the skill in `skills/vnoc/`) |
+
+Rules: an overview, not the manual (flags live in `vnoc guide` and `--help`, printed by the binary); **every `vnoc …` line in README.md
+and extension/README.md is checked by the guide test** (A10's rules: placeholders parsed only); no invented screenshots: a missing picture
+is an HTML comment `<!-- screenshot: … -->` for the user to fill (the demo film's frames may serve); English as the rest of the docs
+(plain, short sentences). `extension/README.md` (the Marketplace page) is rewritten to match, shorter: the extension's features first, a
+"Coding agents" section linking to the repository README. Commit: `docs: the README, rewritten with a table of contents`.
 
 ### A14 Trying it with agents
 
