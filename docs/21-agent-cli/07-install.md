@@ -98,7 +98,7 @@ imports `@AGENTS.md`).
 | Run | The pick |
 |---|---|
 | with `--agent …` or `--all` | those |
-| in a terminal, with neither | a numbered list of the names, **the detected ones ticked**; Enter takes the ticked ones, or type the numbers. No new dependency: one line read from standard input |
+| in a terminal, with neither | **a menu** *(changed 2026-11-20, A12b: the user expected to move and tick, "it's everyone's expectation")*: ↑/↓ to move, Space to tick or untick, Enter to accept, **the detected ones ticked** at the start; Esc or q cancels and writes nothing. It is `dialoguer`'s `MultiSelect` on standard error, so standard output stays the answer. If the terminal cannot draw it (`TERM=dumb`, or the library fails), the numbered list and one typed line, as before |
 | not in a terminal (an agent or a script runs it), with neither | the detected ones. Nothing detected: exit `2`, listing the names and `vnoc agent install --agent <name>`. An agent knows what it is; `vnoc guide` tells it to pass its own name |
 
 **Detecting** is looking for what each agent leaves in a project: `.claude/` or `CLAUDE.md` → `claude`; `.codex/` → `codex`; `.cursor/` →
@@ -184,6 +184,13 @@ system allows it.
 - In a development window the driver is not next to `target/debug/vnoc` (it is in `drivers/python/target/debug/`), so the linked command
   needs `VNOC_DRIVER` there; install says so in that mode only.
 - *V-NOC: Uninstall `vnoc` Command from PATH* removes what the install made, and nothing else.
+  *(Narrowed 2026-11-20, review of A12, built in A12b.)* "What the install made" is a link whose target is **a V-NOC extension folder's
+  `bin/vnoc`** (any version, the same pattern the mover uses) or **exactly the binary this extension runs** (so a development window can undo
+  its own), and our wrapper on Windows. A link to any other program that happens to be named `vnoc` (a person's own build, `cargo install`)
+  is theirs: refused and left, as a foreign file is. The refusal says what to do, with the command:
+  `V-NOC left ~/.local/bin/vnoc alone: it points to /usr/bin/true, which V-NOC did not make. If you don't need it: rm ~/.local/bin/vnoc,
+  then run this command again.` (Windows: `del "<path>"`.) The same sentence shape for a foreign file. Seen by the user, 2026-11-20. `vnoc.cliInstalled` keeps the wider test (any program named `vnoc`): it only says the
+  command exists.
 - The driver comes along by C8: the binary looks next to its real path.
 - Sets the context key `vnoc.cliInstalled` (a walkthrough step completes on it).
 
