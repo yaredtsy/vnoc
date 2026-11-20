@@ -268,6 +268,26 @@ a list inside `pattern` means alternatives; the most restrictive match wins; Cod
 **experimental**. `codex execpolicy check --rules <file> -- <command>` tests one (Codex is not installed here, so the printed lines were not run through it).
 Other agents' allow-lists: not read, so nothing is printed for them.
 
+**Writing them, when the user says yes** *(decided 2026-11-20, A12c; the user: "give the option, most users want the default")*.
+
+| Run | What happens |
+|---|---|
+| in a terminal, no flag | after the files, one question: `Let Claude Code run V-NOC's read commands without asking? Writes (doc new, doc tag, relink, repair, init) still ask. [Y/n]`. **Enter = yes** (the default). No → the lines are printed, as before |
+| `--permissions` | yes, without the question (scripts, the VS Code command) |
+| `--no-permissions` | no, without the question; the lines are printed |
+| not a terminal, neither flag | no question, nothing written: the lines are printed (an agent or a script never widens its own permissions) |
+| *Set Up Coding Agents* (VS Code) | a checkbox in the confirmation, "Let Claude Code run V-NOC's read commands without asking", **ticked**; it passes `--permissions` or `--no-permissions` |
+
+- **Where:** Claude Code → `.claude/settings.local.json` (only this user; not committed). `--permissions=project` writes the shared
+  `.claude/settings.json` instead. Codex → `~/.codex/rules/vnoc.rules` (a file of its own, so nothing of the user's is edited). Other
+  agents: printed only, until their format is checked. The question names the agents it covers.
+- **Merge, never replace:** JSON is parsed, the missing entries are added to `permissions.allow`, and it is written back with the file's
+  indentation; the other keys and the user's own entries stay. A file that does not parse → left alone, exit 2, the lines printed. An entry
+  already there is not added twice.
+- **`vnoc agent remove` takes back only its own entries** (the exact strings V-NOC adds), and deletes `vnoc.rules` and a
+  `settings.local.json` it created and emptied. `vnoc agent status` says whether the permissions are in place.
+- Output: `allowed      V-NOC's read commands for Claude Code` / `in           .claude/settings.local.json`.
+
 ## 5. From the repository
 
 The skill's source is `skills/vnoc/SKILL.md` at the repository's root (06 §3). That one path is also what the wider installers look for, so
