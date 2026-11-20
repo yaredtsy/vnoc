@@ -27,6 +27,7 @@ clap = { version = "4", features = ["derive"] }
 anstream = "1"
 anstyle = "1"
 regex = "1"
+dialoguer = { version = "0.12", default-features = false }
 
 [target.'cfg(not(unix))'.dependencies]
 tokio-util = { version = "0.7", features = ["compat"] }

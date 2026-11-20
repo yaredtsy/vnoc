@@ -4,6 +4,9 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+use dialoguer::MultiSelect;
+use dialoguer::console::Term;
+use dialoguer::theme::{ColorfulTheme, SimpleTheme, Theme};
 use serde::Serialize;
 
 use super::args::{AgentCommand, InstallArgs, RemoveArgs};
@@ -106,7 +109,92 @@ pub fn parse_pick(line: &str, ticked: &[Agent]) -> Result<Vec<Agent>, String> {
     Ok(picked)
 }
 
-/// The numbered list, on standard error (standard output stays the answer), and one line read from standard input.
+/// How the agents are asked for (07 §2): a menu to move in and tick, the numbered list and one typed line when the menu cannot be drawn, or no
+/// question at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prompt {
+    Menu,
+    TypedLine,
+    None,
+}
+
+/// The question is asked on standard error (standard output stays the answer), so what has to be a terminal is standard input and standard
+/// error. A terminal that cannot move a cursor (`TERM=dumb`) gets the typed line.
+pub fn prompt_for(stdin_tty: bool, stderr_tty: bool, term: Option<&str>) -> Prompt {
+    if !stdin_tty || !stderr_tty {
+        Prompt::None
+    } else if term == Some("dumb") {
+        Prompt::TypedLine
+    } else {
+        Prompt::Menu
+    }
+}
+
+/// What the user did at the menu.
+enum Menu {
+    Picked(Vec<Agent>),
+    Cancelled,
+    /// the terminal could not draw it: ask the other way
+    Unavailable,
+}
+
+fn menu(found: &[Agent]) -> Menu {
+    let width = AGENTS.iter().map(|a| a.name().len()).max().unwrap_or(0);
+    let items: Vec<(String, bool)> = AGENTS
+        .iter()
+        .map(|agent| {
+            let here = found.contains(agent);
+            let label = if here {
+                format!(
+                    "{:<width$}  {}",
+                    agent.name(),
+                    style::paint_err(style::dim(), "found here")
+                )
+            } else {
+                agent.name().to_string()
+            };
+            (label, here)
+        })
+        .collect();
+    // the title and the keys stay in the scroll-back as the question's header; the menu below clears itself when the user is done
+    let _ = writeln!(
+        std::io::stderr(),
+        "{}  {}",
+        style::paint_err(style::bold(), "Which coding agents does this project use?"),
+        style::paint_err(
+            style::dim(),
+            "(↑/↓ move, Space ticks, Enter accepts, Esc cancels)"
+        )
+    );
+    let colorful = ColorfulTheme::default();
+    let plain = SimpleTheme;
+    let theme: &dyn Theme = if style::on(style::Stream::Err) {
+        &colorful
+    } else {
+        &plain
+    };
+    let asked = MultiSelect::with_theme(theme)
+        .items_checked(items)
+        .report(false)
+        .interact_on_opt(&Term::stderr());
+    match asked {
+        Ok(Some(chosen)) => Menu::Picked(
+            chosen
+                .into_iter()
+                .filter_map(|i| AGENTS.get(i).copied())
+                .collect(),
+        ),
+        // Esc or q
+        Ok(None) => Menu::Cancelled,
+        // Ctrl-C is the user stopping too, not a terminal that failed
+        Err(dialoguer::Error::IO(e)) if e.kind() == std::io::ErrorKind::Interrupted => {
+            Menu::Cancelled
+        }
+        Err(_) => Menu::Unavailable,
+    }
+}
+
+/// The numbered list, on standard error, and one line read from standard input.
 fn ask(ticked: &[Agent]) -> Result<Vec<Agent>, Failure> {
     let mut err = std::io::stderr().lock();
     let _ = writeln!(
@@ -120,7 +208,7 @@ fn ask(ticked: &[Agent]) -> Result<Vec<Agent>, Failure> {
     }
     let _ = write!(
         err,
-        "Enter takes the ticked ones, or type numbers (for example 1 3): "
+        "Press Enter for the [x] ones, or type numbers like \"1 3\" and press Enter: "
     );
     let _ = err.flush();
     drop(err);
@@ -132,16 +220,37 @@ fn ask(ticked: &[Agent]) -> Result<Vec<Agent>, Failure> {
     parse_pick(&line, ticked).map_err(Failure::Usage)
 }
 
-fn pick(args: &InstallArgs, root: &Path) -> Result<Vec<Agent>, Failure> {
+/// The agents to write for, or `None` when the user chose to write nothing (said already, exit `0`).
+fn pick(args: &InstallArgs, root: &Path) -> Result<Option<Vec<Agent>>, Failure> {
     if args.all {
-        return Ok(AGENTS.to_vec());
+        return Ok(Some(AGENTS.to_vec()));
     }
     if !args.agent.is_empty() {
-        return parse_names(&args.agent);
+        return parse_names(&args.agent).map(Some);
     }
     let found = detect(root);
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        return ask(&found);
+    let term = std::env::var("TERM").ok();
+    let mut mode = prompt_for(
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+        term.as_deref(),
+    );
+    if mode == Prompt::Menu {
+        match menu(&found) {
+            Menu::Picked(agents) if agents.is_empty() => {
+                let _ = writeln!(std::io::stderr(), "no agent picked: nothing written");
+                return Ok(None);
+            }
+            Menu::Picked(agents) => return Ok(Some(agents)),
+            Menu::Cancelled => {
+                let _ = writeln!(std::io::stderr(), "cancelled: nothing written");
+                return Ok(None);
+            }
+            Menu::Unavailable => mode = Prompt::TypedLine,
+        }
+    }
+    if mode == Prompt::TypedLine {
+        return ask(&found).map(Some);
     }
     // an agent or a script runs this: what the project shows, and when it shows nothing the agent has to say what it is
     if found.is_empty() {
@@ -150,7 +259,7 @@ fn pick(args: &InstallArgs, root: &Path) -> Result<Vec<Agent>, Failure> {
             names()
         )));
     }
-    Ok(found)
+    Ok(Some(found))
 }
 
 // ---------------------------------------------------------------------------------------------------------------------- answer
@@ -292,7 +401,9 @@ fn install(global: &Global, args: &InstallArgs) -> Result<(), Failure> {
             "the home folder is not known (HOME is not set): --global has nowhere to write".into(),
         ));
     }
-    let picked = pick(args, &root)?;
+    let Some(picked) = pick(args, &root)? else {
+        return Ok(());
+    };
     let options = Options {
         global: args.global,
         skill: !args.rules_only,
@@ -618,5 +729,18 @@ mod tests {
         assert!(parse_pick("1 x", &ticked).is_err());
         // Enter with nothing ticked is not a pick
         assert!(parse_pick("", &[]).is_err());
+    }
+
+    #[test]
+    fn the_menu_needs_a_terminal_on_input_and_on_standard_error_that_can_draw_it() {
+        // standard output does not matter: the question is on standard error
+        assert_eq!(prompt_for(true, true, Some("xterm-256color")), Prompt::Menu);
+        assert_eq!(prompt_for(true, true, None), Prompt::Menu);
+        // a terminal that cannot move a cursor: the typed line
+        assert_eq!(prompt_for(true, true, Some("dumb")), Prompt::TypedLine);
+        // an agent or a script: no question, whatever TERM says
+        assert_eq!(prompt_for(false, true, Some("xterm")), Prompt::None);
+        assert_eq!(prompt_for(true, false, Some("xterm")), Prompt::None);
+        assert_eq!(prompt_for(false, false, Some("dumb")), Prompt::None);
     }
 }
