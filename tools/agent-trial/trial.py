@@ -44,6 +44,7 @@ CLAUDE_TOOLS = [
 ]
 TIMEOUT = 600  # a run over ten minutes is "capped", not retried
 MAX_TURNS = "30"  # so is one that reaches this many turns (`claude --max-turns`, not in --help)
+XML_GONE = "the XML arm was deleted in A14c (06 §8)"  # old XML rows still score; nothing runs one
 CODEX_MODEL, CODEX_EFFORT = "gpt-reserve", "low"
 BATCH_LIMIT = 45 * 60  # a batch that has run this long starts no new run
 
@@ -182,8 +183,10 @@ def agent_command(agent, prompt, work, model):
 def run(agent, scenario, arm, n=1, rules=True, model=None):
     if agent not in ("claude", "codex"):
         sys.exit("agents: claude, codex")
-    if scenario not in PROMPTS or arm not in ("text", "xml"):
-        sys.exit("scenario is 1-6, arm is text or xml")
+    if arm == "xml":
+        sys.exit(XML_GONE)
+    if scenario not in PROMPTS or arm != "text":
+        sys.exit("scenario is 1-6, arm is text")
     if agent == "codex":
         model = model or CODEX_MODEL
     name = f"{agent}-s{scenario}-{arm}-n{n}" + ("" if rules else "-norules")
@@ -195,8 +198,6 @@ def run(agent, scenario, arm, n=1, rules=True, model=None):
     setup(run_dir, agent, rules)
     work, bin_dir = run_dir / "work", run_dir / "bin"
     env = base_env(bin_dir, with_bin=scenario != "6")
-    if arm == "xml":
-        env["VNOC_TRIAL_XML"] = "1"
     cmd, version = agent_command(agent, PROMPTS[scenario], work, model)
     # which `vnoc` the run's shell finds: the same environment and shell Codex uses (`zsh -c`, not a login shell). The agent's own events do
     # not say, so this is the record; the XML arm's `<doc>` tags in a result are a second sign it is this branch's build.
@@ -622,6 +623,7 @@ def rescore(path):
 def batch(agent, model):
     """The 14 runs, one fresh run dir each; one line per run; the results file is rewritten after every run. Stops at the first run
     that reached outside its run dir (or left the repo dirty), and starts no run after 45 minutes."""
+    sys.exit(XML_GONE + ": the 14-run batch needs it; run the scenarios you want with `run`")
     if repo_dirty():
         sys.exit("the repo is not clean before the batch:\n" + repo_dirty())
     RUNS.mkdir(exist_ok=True)

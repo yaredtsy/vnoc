@@ -623,8 +623,8 @@ pub fn emit<'a, A: Answer>(
                     Some(Format::Id) => format!("{}\n", done.id()),
                     Some(Format::Path) => done.paths().iter().map(|p| format!("{p}\n")).collect(),
                     // a blank line between answers
-                    None if printed => format!("\n{}", out::text_of(&done, global.quiet)),
-                    None => out::text_of(&done, global.quiet),
+                    None if printed => format!("\n{}", done.text(global.quiet)),
+                    None => done.text(global.quiet),
                 };
                 // `--format` is for a script: the bytes
                 if global.format.is_some() {

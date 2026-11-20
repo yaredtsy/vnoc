@@ -166,52 +166,36 @@ impl DocsAnswer {
     }
 }
 
-impl DocsAnswer {
-    /// `doc read`'s text; with `xml` each body is inside `<doc>` tags (`out::doc_tag`, the trial of A14).
-    fn read_text(&self, xml: bool) -> String {
-        let Some(bodies) = &self.bodies else {
-            return String::new();
-        };
-        if bodies.is_empty() {
-            let match_ = if self.narrowed { " match" } else { "" };
-            return format!("no docs on {}{match_}\n", self.name());
-        }
-        bodies
-            .iter()
-            .map(|doc| {
-                let mut text = format!(
-                    "{} {}\n   {}\n",
-                    style::paint(style::dim(), "──"),
-                    style::paint(style::title(), &doc.title),
-                    style::paint(style::dim(), &doc.path),
-                );
-                if xml {
-                    text.push_str(&out::doc_tag(&doc.path, &doc.title, &doc.body));
-                } else {
-                    text.push_str(&doc.body);
-                    if !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-                }
-                text
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
 impl Render for DocsAnswer {
-    fn text_xml(&self, quiet: bool) -> String {
-        match self.view.unwrap_or(View::List) {
-            View::Read => self.read_text(true),
-            _ => self.text(quiet),
-        }
-    }
-
     fn text(&self, _quiet: bool) -> String {
         match self.view.unwrap_or(View::List) {
             View::Path => self.docs.iter().map(|d| format!("{}\n", d.path)).collect(),
-            View::Read => self.read_text(false),
+            View::Read => {
+                let Some(bodies) = &self.bodies else {
+                    return String::new();
+                };
+                if bodies.is_empty() {
+                    let match_ = if self.narrowed { " match" } else { "" };
+                    return format!("no docs on {}{match_}\n", self.name());
+                }
+                bodies
+                    .iter()
+                    .map(|doc| {
+                        let mut text = format!(
+                            "{} {}\n   {}\n{}",
+                            style::paint(style::dim(), "──"),
+                            style::paint(style::title(), &doc.title),
+                            style::paint(style::dim(), &doc.path),
+                            doc.body
+                        );
+                        if !text.ends_with('\n') {
+                            text.push('\n');
+                        }
+                        text
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
             View::List => {
                 let mut text = format!("{}\n", self.header());
                 if self.docs.is_empty() {

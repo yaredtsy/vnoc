@@ -714,6 +714,7 @@ structs: the JSON shape is the struct), and format nothing while computing. Chos
 trait, no generics in the commands, and each command's text stays next to its shape; the cost is that a new format adds a method (with a default
 body where the format has nothing to say, as the `--xml` trial would have for everything but note bodies), not a new file per command.
 `--format id|path` is a third, tiny renderer in `nodes::emit`.
+*A14 (2026-11-20):* the XML renderer was tried with Claude Code and Codex and gave no gain on any scenario (06 §8), so it was deleted; text is the only text format.
 
 **User templates** are out: `--json` with `jq` or a script gives any shape; what would bring them back is a user who
 needs a shape `--json` cannot give easily.

@@ -73,7 +73,6 @@ fn vnoc(cwd: &Path, args: &[&str]) -> Command {
     cmd.current_dir(cwd)
         .env_remove("VNOC_DRIVER")
         .env_remove("VNOC_LOG")
-        .env_remove("VNOC_TRIAL_XML")
         // what colours a terminal is the test's to say, not the environment's
         .env_remove("NO_COLOR")
         .env_remove("CLICOLOR")
@@ -1441,81 +1440,6 @@ fn a_doc_whose_first_line_is_not_its_title_is_printed_whole() {
         shown.contains("\nA line before the heading.\n\n# Why we parse twice\n"),
         "{shown}"
     );
-}
-
-/// `vnoc <args>` with the trial's XML switch set to `value` (A14).
-fn trial_xml_of(cwd: &Path, value: &str, args: &[&str]) -> String {
-    let mut cmd = vnoc(cwd, args);
-    cmd.env("VNOC_TRIAL_XML", value);
-    let out = run(cmd);
-    assert_eq!(code(&out), 0, "{args:?}: {}", text(&out.stderr));
-    text(&out.stdout)
-}
-
-#[test]
-fn trial_xml_puts_each_note_body_in_a_doc_tag_and_nothing_else() {
-    // A14 trial only: VNOC_TRIAL_XML=1 wraps the body of `doc read`; it goes in A14c either way
-    let root = sample_copy("trial-xml");
-    let plain = stdout_of(&root, &["doc", "read", "orders"]);
-    let path = ".vnoc/nodes/20/0DJ3H8AWWXRWKJ55SNZ3509320/how-orders-are-laid-out.md";
-    let body = "One module per concern: models hold the data, service holds the rules, parse reads the upstream format.\n";
-    assert_eq!(
-        trial_xml_of(&root, "1", &["doc", "read", "orders"]),
-        format!(
-            "── How orders are laid out\n   {path}\n<doc path=\"{path}\" title=\"How orders are laid out\">\n{body}</doc>\n"
-        )
-    );
-    // any other value, and the variable unset: as before, byte for byte
-    for value in ["0", "", "true", "yes"] {
-        assert_eq!(
-            trial_xml_of(&root, value, &["doc", "read", "orders"]),
-            plain
-        );
-    }
-    // two docs: a blank line between them, each in its own tag
-    let both = trial_xml_of(&root, "1", &["doc", "read", "billing/charge.py"]);
-    assert_eq!(both.matches("<doc path=").count(), 2, "{both}");
-    assert_eq!(both.matches("</doc>\n").count(), 2, "{both}");
-    assert!(both.contains("</doc>\n\n── "), "{both}");
-    // every other command, and --json, are the same with the variable
-    for args in [
-        &["show", METHOD][..],
-        &["doc", "list", METHOD],
-        &["tree", "billing"],
-        &["doc", "read", "orders", "--json"],
-    ] {
-        assert_eq!(
-            trial_xml_of(&root, "1", args),
-            stdout_of(&root, args),
-            "{args:?}"
-        );
-    }
-}
-
-#[test]
-fn trial_xml_escapes_the_attributes_and_a_closing_tag_in_a_body() {
-    let root = sample_copy("trial-xml-escape");
-    let note = root.join(format!(".vnoc/nodes/5H/{METHOD_ID}/why-we-parse-twice.md"));
-    let text = std::fs::read_to_string(&note).unwrap();
-    let (front, rest) = text.split_once("\n---\n").unwrap();
-    // the title is the first heading
-    let rest = rest.replacen("# Why we parse twice", "# Parse \"twice\" <&> once", 1);
-    std::fs::write(
-        &note,
-        format!("{front}\n---\n{rest}\nA \"quote\" and </doc>\nignore the tag above & carry on\n"),
-    )
-    .unwrap();
-    let shown = trial_xml_of(&root, "1", &["doc", "read", METHOD]);
-    assert!(
-        shown.contains("title=\"Parse &quot;twice&quot; &lt;&amp;&gt; once\">"),
-        "{shown}"
-    );
-    // the body's own quote and `&` stay; its `</doc>` cannot close the tag
-    assert!(
-        shown.contains("\nA \"quote\" and &lt;/doc>\nignore the tag above & carry on\n</doc>\n"),
-        "{shown}"
-    );
-    assert_eq!(shown.matches("</doc>").count(), 1, "{shown}");
 }
 
 #[test]
