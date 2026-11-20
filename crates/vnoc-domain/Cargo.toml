@@ -1,6 +1,6 @@
 [package]
 name = "vnoc-domain"
-version = "0.2.0"
+version = "0.3.0"
 license = "Apache-2.0"
 edition = "2024"
 description = "V-NOC domain types: node IDs, repo paths, location keys, node.toml. No I/O."

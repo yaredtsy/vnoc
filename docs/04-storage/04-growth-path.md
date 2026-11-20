@@ -18,13 +18,13 @@ Stage 1  BASIC      0.1    files only, index in memory
 Stage 2  FASTER     0.2    SQLite cache under .vnoc/local/cache/ (only if measured)
    │   + a second way to write markers, more settings
    ▼
-Stage 3  RICHER     0.6    comment-style IDs, [ids] in vnoc.toml, fingerprints in the cache
+Stage 3  RICHER     0.4    comment-style IDs, [ids] in vnoc.toml, fingerprints in the cache
    │   + a second side with the same layout
    ▼
 Stage 4  PRIVATE    —      .vnoc/local/nodes/, local.toml   (dropped 2026-11-16, R2 in 08 §1c)
    │   + more kinds of files in a node folder
    ▼
-Stage 5  ADVANCED   0.7+   body_hash in frontmatter, playgrounds, assets, doc links  (search: 0.4, in memory, 20-search/)
+Stage 5  ADVANCED   0.5+   body_hash in frontmatter, playgrounds, assets, doc links  (search: 0.3, in memory, 20-search/)
 ```
 
 | Stage | New on disk | New in the index | Where the design already exists |

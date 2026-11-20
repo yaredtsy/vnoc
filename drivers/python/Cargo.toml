@@ -1,6 +1,6 @@
 [package]
 name = "vnoc-driver-python"
-version = "0.2.0"
+version = "0.3.0"
 license = "Apache-2.0"
 edition = "2024"
 description = "The Python language driver: a thin adapter between the V-NOC driver protocol (plan_vs/07-drivers/01) and the analyzer of language_driver_rs (python-syntax, python-analysis)."

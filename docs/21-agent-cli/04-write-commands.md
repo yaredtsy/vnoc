@@ -186,7 +186,7 @@ One reader does all of it: `userdata/read.rs` gets `frontmatter(text) -> { title
   one of the two, filters alone still find no doc. The row goes into 20's 01 §3 in the same commit.
 - `matches` follows `run`, as built: the table that holds them together (`tests/matches.rs`) gets rows with tags.
 - `SearchDoc` (the wire) gains `tags` and `author`; the sidebar's doc row shows the tags after the title, dim.
-- *Add Doc* in the extension has no place to give a tag or an author. **Decided 2026-11-20: left for later**, after release 0.5: only the
+- *Add Doc* in the extension has no place to give a tag or an author. **Decided 2026-11-20: left for later**, after release 0.3: only the
   command and a hand edit of the frontmatter set them. The sidebar still shows and finds them (A8b). Not on the CLI's path.
 
 **As built in A8a** (`cli/write.rs`, `identity/attach.rs`, `userdata/`).
@@ -304,7 +304,7 @@ tags, an optional `strict = true` in `tags.toml` is where it would go.
 **In the skill (A10):** before tagging, run `vnoc tags` and reuse a tag that fits, preferring described ones; never invent a synonym of
 one that exists; move a plan's tag when its state changes (`vnoc doc tag … --add done --remove plan`); read `tags.toml`, do not change it (`vnoc tag describe` is the user's).
 
-**Later, not in 0.5:** the extension shows descriptions on hover of a tag in the sidebar's doc rows, and gets a `vnoc/tags` request (a thin
+**Later, not in 0.3:** the extension shows descriptions on hover of a tag in the sidebar's doc rows, and gets a `vnoc/tags` request (a thin
 wrapper over the same library function, C2) when it has a screen that lists or edits tags.
 
 **As built in A9b** (2026-11-20; `userdata/tags.rs`, `cli/tags.rs`).

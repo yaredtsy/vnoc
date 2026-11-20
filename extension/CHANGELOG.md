@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.5.0)
+## 0.3.0
 
 Editing on the canvas, search, and a command line for people and coding agents.
 
@@ -41,10 +41,16 @@ Editing on the canvas, search, and a command line for people and coding agents.
   agents, shows the files it will write, and writes them. The extension offers the second once, in a project where an agent is in use. **Uninstall `vnoc` Command from PATH**
   takes back only what the first made.
 - **The command in every release**: each release now has `vnoc-cli-<system>.tar.gz` (`.zip` on Windows) holding `vnoc` and the Python driver, and an
-  `install.sh` that installs the one for your system after checking its sum: `curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.5.0/install.sh | sh`.
+  `install.sh` that installs the one for your system after checking its sum: `curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.0/install.sh | sh`.
   One `SHA256SUMS` covers every file of the release, and the archives and the script carry build provenance like the VSIX files.
 - Text from your files (a note, a code line, a file name) is **shown, not obeyed** on a terminal: control characters such as `ESC` print as `^[`. A pipe and
   `--json` get the bytes as they are.
+- **`vnoc doc read` starts with the node's header** (the same line `show` prints), so a note is never read without knowing what it is attached to. A filter typed as a
+  flag (`vnoc find retry --kind fn`) is still a usage error, now with a line that says where filters go: `filters go in the query: vnoc find 'retry kind:fn'`.
+- **Tested with agents**: Claude Code (Sonnet) and Codex (`gpt-reserve`), six scenarios on a sample project, run from a fresh session each
+  (`docs/21-agent-cli/06-skill.md` §8).
+- **What was run**: the macOS Apple-silicon files (the extension and the `vnoc` archive) were run before the release. The files for the other three systems are built
+  and packaged by CI, and have not been run.
 
 ## 0.2.0
 

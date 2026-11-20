@@ -94,7 +94,7 @@ V-NOC is a **pre-release**. In VS Code's Extensions view, search **V-NOC** and c
 
 ### The `vnoc` command
 
-The command line comes with release **0.5** (it is **experimental**: the command names and the `--json` output can still change). Get it one of three ways.
+The command line comes with release **0.3** (it is **experimental**: the command names and the `--json` output can still change). Get it one of three ways.
 
 **From VS Code.** Run **V-NOC: Install `vnoc` Command in PATH** from the Command Palette. On macOS and Linux it makes `~/.local/bin/vnoc`, a link to
 the copy inside the extension (the way VS Code installs `code`), and tells you if that folder is not on your `PATH`. On Windows it adds a small
@@ -104,10 +104,10 @@ the copy inside the extension (the way VS Code installs `code`), and tells you i
 `~/.local/bin`:
 
 ```sh
-curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.5.0/install.sh | sh
+curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.0/install.sh | sh
 ```
 
-It runs on macOS (Apple silicon and Intel) and Linux x64. `VNOC_INSTALL_DIR=<folder>` installs somewhere else, and `VNOC_VERSION=0.5.0` names
+It runs on macOS (Apple silicon and Intel) and Linux x64. `VNOC_INSTALL_DIR=<folder>` installs somewhere else, and `VNOC_VERSION=0.3.0` names
 the release when you run the copy from a checkout. It needs `curl` or `wget`, and `tar`. It does not use `sudo`.
 
 **From a release file.** Each release has `vnoc-cli-<system>.tar.gz` (`vnoc-cli-win32-x64.zip` on Windows) with `vnoc`, the Python driver
@@ -356,15 +356,15 @@ with any tool. The layout is described in [docs/04-storage](docs/04-storage/READ
 
 ## What's coming
 
-V-NOC is early. Two releases are out, and the next one carries most of what this page describes.
+V-NOC is early. Three releases are out.
 
 | Version | Theme | Status |
 |---|---|---|
 | 0.1 | The docs loop | ✅ Released |
 | 0.2 | Calls | ✅ Released |
-| **0.5** | **Editing on the canvas, search, and the command line for agents** | 🚧 **Next.** (0.3 and 0.4 were planned as releases of their own; they ship inside 0.5.) |
-| 0.6 | Docs that survive without markers | 💭 Planned |
-| 0.7 and on | Polish: more editor features from the core, doc freshness | 💭 Planned |
+| **0.3** | **Editing on the canvas, search, and the command line for agents** | ✅ **Released** |
+| 0.4 | Docs that survive without markers | 💭 Planned |
+| 0.5 and on | Polish: more editor features from the core, doc freshness | 💭 Planned |
 | 1.0 | Hardening: big repositories, remote machines, the driver protocol frozen | 💭 Planned |
 
 <table>

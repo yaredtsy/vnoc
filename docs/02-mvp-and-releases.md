@@ -56,9 +56,9 @@ Each cut below removes work **without changing any frozen format**, so it can co
 | A Markdown **editor** inside the webview | The 0.1 panel only reads. A VS Code tab already edits Markdown, with undo and save. | 0.3, with the canvas editor |
 | Guided setup / Quick look as a separate mode | With an in-memory index, *everything* is Quick look until the first attach. `.vnoc/` is created then, with defaults. | later, when scope needs a UI |
 | Missing vs "not on this branch", `gix`, the `.git` watcher | That rule exists to avoid a **pop-up** on branch switch. 0.1 has no pop-up, only a list. A node that is absent on this branch shows in the list and leaves it when you switch back. | 0.6, with notifications |
-| Archive (UI) | The fields stay in `node.toml`. Missing nodes simply stay Missing until relinked or removed. | 0.6 |
-| Matching ladder steps 2–6, step 0 | Markers follow renames. Unmarked nodes that move go Missing → Relink. | 0.6 |
-| File-rename listeners | Markers already follow the file. | 0.6, for unmarked nodes |
+| Archive (UI) | The fields stay in `node.toml`. Missing nodes simply stay Missing until relinked or removed. | 0.4 |
+| Matching ladder steps 2–6, step 0 | Markers follow renames. Unmarked nodes that move go Missing → Relink. | 0.4 |
+| File-rename listeners | Markers already follow the file. | 0.4, for unmarked nodes |
 | Private docs, solo mode, `local.toml` | Additive: a second folder with the same layout. | **dropped** (2026-11-16): not scheduled |
 | Copy-on-first-run, driver downloads | The driver runs straight from the VSIX's `bin/`. | after 1.0 |
 
@@ -142,20 +142,17 @@ A `.vnoc-id` that exists but cannot be read is listed as a problem and is **neve
 | Release | One job | Main work | Adds to frozen formats |
 |---|---|---|---|
 | **0.2** | **Call trees** | driver `callTree` / `expand` (port S2) · concurrent driver host · lazy expand on the canvas · SQLite **only if** measurements ask for it | nothing |
-| **0.3** | **Edit in the canvas** | the card edits a **draft**, written into the file on ⌘S after a version check; the index follows saves only · the doc panel edits Markdown the same way ([`17-edit-in-canvas.md`](17-edit-in-canvas.md)) | nothing |
-| **0.4** | **Search** | names fuzzy by word, filters, the words of every doc, a pasted `file:line`; the canvas dims what is not a hit; all of it in a pure crate of the core ([`20-search/`](20-search/README.md)) | nothing |
-| **0.5** | **Agents can read and write notes** | the `vnoc` command: read (`show`, `code`, `doc`, `tree`, `find`, `grep`, `calls`, `check`) and write (`init`, `doc new`, `relink`, `repair`); the agent skill and `vnoc agent install`; *Install in PATH*; binaries in each release ([`21-agent-cli/`](21-agent-cli/README.md)) | two optional keys in doc frontmatter, `author:` and `tags:` (21 C16); if there is time, a `.vnoc/root/` folder for the project's own docs (C17). Both are additions. A new public surface: the command names and `--json` |
-| **0.6** | **Docs survive without markers** | matching ladder steps 2–6 · rename listeners · Missing vs "not on this branch" · notifications · archive UI · the **comment** ID style | `[ids] style` in `vnoc.toml` · a second marker syntax |
-| **0.7+** | Polish | CodeLens and hover **as LSP features of the core**, so every LSP editor gets them · doc freshness · playground | `body_hash` in frontmatter · playground files |
+| **0.3** | **Edit in the canvas, search, and the command line for agents** *(released)* | the card edits a **draft**, written into the file on ⌘S after a version check; the index follows saves only · the doc panel edits Markdown the same way ([`17-edit-in-canvas.md`](17-edit-in-canvas.md)) · search: names fuzzy by word, filters, the words of every doc, a pasted `file:line`, the canvas dims what is not a hit, all of it in a pure crate of the core ([`20-search/`](20-search/README.md)) · the `vnoc` command: read (`show`, `code`, `doc`, `tree`, `find`, `grep`, `calls`, `check`) and write (`init`, `doc new`, `relink`, `repair`); the agent skill and `vnoc agent install`; *Install in PATH*; binaries in each release ([`21-agent-cli/`](21-agent-cli/README.md)) | two optional keys in doc frontmatter, `author:` and `tags:` (21 C16). An addition. A new public surface: the command names and `--json` |
+| **0.4** | **Docs survive without markers** | matching ladder steps 2–6 · rename listeners · Missing vs "not on this branch" · notifications · archive UI · the **comment** ID style | `[ids] style` in `vnoc.toml` · a second marker syntax |
+| **0.5+** | Polish | CodeLens and hover **as LSP features of the core**, so every LSP editor gets them · doc freshness · playground | `body_hash` in frontmatter · playground files |
 | **1.0** | **Hardening** | 10,000-file repos · Remote SSH / WSL / containers · driver protocol frozen as `1` · user guide | — |
 
-**Updated 2026-11-20: 0.3 and 0.4 were not released on their own.** Edit in the canvas and search (the two rows above) ship **inside 0.5**, together with the command line, so
-the next release after 0.2 is 0.5 and the README says so ("What's coming"). The rows keep their numbers as names of the increments.
+**Updated 2026-11-20: 0.3 is edit in the canvas, search and the agent command line, released together.** The rows once numbered 0.3, 0.4 and 0.5 are one release, so what was 0.6 is now 0.4 and 0.7+ is 0.5+; the README's "What's coming" says the same.
 
 Updated 2026-11-16: search and the agent command come before markers-without-IDs (your call). **Teams and privacy is dropped**
-(private docs in `local/nodes/`, `local.toml`, solo mode): not scheduled. `local/` stays for the trash and caches. Every release from 0.4 on follows
+(private docs in `local/nodes/`, `local.toml`, solo mode): not scheduled. `local/` stays for the trash and caches. Every release from 0.3 on follows
 P1 (`08` §1c): logic in the Rust core, UI code only draws, so V-NOC can be ported to other editors. The numbers assume edit-in-canvas is the next
-release (17 is not tied to a number; if it ships differently, shift the rows). The order of 0.6–0.7+ should follow what your first users ask for.
+release (17 is not tied to a number; if it ships differently, shift the rows). The order of 0.4–0.5+ should follow what your first users ask for.
 
 ## 4. How each release stays compatible
 

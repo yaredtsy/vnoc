@@ -5,7 +5,7 @@ build order
 ├── 1. rules for every step
 ├── 2. phase 1: read             A0 – A6     stop point: a read-only command, and `vnoc check` for CI
 ├── 3. phase 2: write            A7 – A9     stop point: agents can attach notes
-├── 4. phase 3: skill, install   A10 – A14   stop point: release 0.5
+├── 4. phase 3: skill, install   A10 – A14   stop point: release 0.3
 ├── 5. phase 4: after            A15 – A17   optional · conditional · if there is time
 ├── 6. what each step leaves working
 └── 7. tests, by kind
@@ -350,7 +350,7 @@ Commit: `cli A12: Install vnoc in PATH; Set Up Coding Agents`.
 | `.github/workflows/package.yml`, `publish.yml` | the artifact `cli-<target>`; `publish` checks four archives as it checks four VSIX, one `SHA256SUMS` over every file, provenance for the archives too, `install.sh` stamped with the version and uploaded |
 | `scripts/install.sh` | 07 §6: POSIX `sh`, target from `uname` (Rosetta → arm64), version from `VNOC_VERSION` / the stamp / the newest release with pre-releases, sum checked, into `~/.local/bin` |
 | `crates/vnoc/src/cli/` (the writer) | control characters from the project cleaned on a terminal (03 §11) |
-| `extension/CHANGELOG.md` | `## Unreleased (0.5.0)`: everything on `main` since 0.2.0 (editing on the canvas, search) and the command line, marked experimental |
+| `extension/CHANGELOG.md` | `## 0.3.0` (was `Unreleased`): everything on `main` since 0.2.0 (editing on the canvas, search) and the command line, marked experimental |
 | `docs/19-ci-cd.md` §5, §8 | the archives and `install.sh` in the release; step 1 bumps the version in four places, `extension/package.json`, `Cargo.toml` (workspace), `drivers/python/Cargo.toml`, `skills/vnoc/SKILL.md` (the guide test fails otherwise); step 5 counts the new files |
 
 Proof: `node scripts/package.mjs` on this Mac makes `vnoc-cli-darwin-arm64.tar.gz`, `tar -tzf` lists the four files; `install.sh` against
@@ -395,7 +395,7 @@ is an HTML comment `<!-- screenshot: … -->` for the user to fill (the demo fil
 
 *(Split 2026-11-20: **A14a** the XML switch, the trial harness `tools/agent-trial/`, Claude Code's 14 runs, then a stop; **A14b**
 Codex; **A14c** the decision (XML for note bodies or deleted), the skill and rules wording from the table, the README's
-coding-agents section if the results change it, release 0.5. The method is 06 §8 "How it is run".)*
+coding-agents section if the results change it, release 0.3. The method is 06 §8 "How it is run".)*
 
 The six scenarios of 06 §8 in Claude Code, Codex, and pi or Cursor, **each with the text output and with an experimental `--xml`** (03 §11:
 a renderer, one file, built at the start of this step; note bodies inside `<doc>` tags). Recorded per run: done right or not, scenario 5
@@ -405,9 +405,9 @@ guides are changed from it; the guide test of A10 keeps them honest. Commit: `cl
 **Done (2026-11-20).** A14a: the XML switch and the harness `tools/agent-trial/` (`05c1261`, `1d64017`, `132f024`…), Claude Code's 14 runs. A14b: `95f34df` and
 `a58cf6b` (Codex), its 14 runs, 4 more Claude scenario-2 runs. A14c, from the 28 + 4 runs (06 §8 "Results of A14"): `705aa2b` the XML trial deleted ·
 `1a55637` the skill and rules wording · `e776e9d` `doc read` names the node, a filter written as a flag gets a tip · the record (06 §8, README) · 12 re-runs
-after the changes (reported, not committed). Release 0.5 is the next step.
+after the changes (reported, not committed). Release 0.3 is the next step (prepared in `release: 0.3.0`).
 
-**Stop point: release 0.5.** Full test run; `02` §3's row.
+**Stop point: release 0.3 — prepared** (the commit `release: 0.3.0`: versions, texts, plan docs; full test run; nothing merged, tagged or published). `02` §3's row.
 
 ## 5. Phase 4: after
 

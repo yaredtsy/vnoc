@@ -117,7 +117,7 @@ imports `@AGENTS.md`).
 - `--global` writes the skill to the picked agents' user folders (`~/.claude/skills/vnoc/`, `~/.agents/skills/vnoc/`) and **no rules**: a rule
   about `.vnoc/` does not belong in every project's context.
 - `--dry-run` prints what it would write. Nothing is ever written outside the root (or the home folder with `--global`).
-- `status`: for each file V-NOC wrote, `current`, `older (0.5.0 → 0.6.0: vnoc agent install)`, `changed by hand`; and which agents that
+- `status`: for each file V-NOC wrote, `current`, `older (0.3.0 → 0.4.0: vnoc agent install)`, `changed by hand`; and which agents that
   amounts to. Nothing is stored about the pick: the files are the record. `vnoc status` shows the same in one line.
 - `remove`: deletes the skill folders V-NOC wrote and takes the block out of the files, for the agents named or for all; nothing else.
 - All of it is file work with no driver: it is instant, and it is library code (`crates/vnoc/src/agents.rs`) the extension's command calls
@@ -351,14 +351,14 @@ For CI, cloud agents, and people without VS Code.
   | Step | What |
   |---|---|
   | target | `uname -s` / `uname -m`: Darwin arm64 → `darwin-arm64`; Darwin x86_64 → `darwin-x64`, **unless** `sysctl -n sysctl.proc_translated` says 1 (Rosetta: take `darwin-arm64`); Linux x86_64 → `linux-x64`. Anything else: `error: no vnoc build for <os> <arch>; the releases have darwin-arm64, darwin-x64, linux-x64, win32-x64`, exit 1 |
-  | version | `VNOC_VERSION` (`0.5.0` or `v0.5.0`), else the version stamped in the script at release (the line `VERSION="@VERSION@"`, replaced by `publish`), else, unstamped (run from the repository), **the newest release, pre-releases included**, from `api.github.com/repos/yaredtsy/vnoc/releases?per_page=1`. Not `releases/latest`: every V-NOC release so far is a pre-release, and `latest` skips them |
+  | version | `VNOC_VERSION` (`0.3.0` or `v0.3.0`), else the version stamped in the script at release (the line `VERSION="@VERSION@"`, replaced by `publish`), else, unstamped (run from the repository), **the newest release, pre-releases included**, from `api.github.com/repos/yaredtsy/vnoc/releases?per_page=1`. Not `releases/latest`: every V-NOC release so far is a pre-release, and `latest` skips them |
   | download | `curl -fsSL` (else `wget -qO-`; neither: say so, exit 1) the archive and `SHA256SUMS` from `${VNOC_BASE_URL:-https://github.com/yaredtsy/vnoc/releases/download}/v<version>/` into a `mktemp -d` folder, removed on exit (`trap`) |
   | check | the archive's line of `SHA256SUMS` against `sha256sum` (else `shasum -a 256`); a missing line or a different sum: `error: …`, exit 1, nothing installed |
   | install | the two programs into `${VNOC_INSTALL_DIR:-$HOME/.local/bin}` (made if missing), each written to a temporary name there and moved into place (a running `vnoc` is not cut off halfway); then `vnoc --version` from there is run and printed |
   | after | if the folder is not on `PATH`: one line to add it (`export PATH="$HOME/.local/bin:$PATH"` in the shell's rc file), not done for the user |
 
   `VNOC_BASE_URL` also takes a `file://` folder: that is how the test runs it with no network. The one-liner in the README names the release:
-  `curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.5.0/install.sh | sh`.
+  `curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.0/install.sh | sh`.
 - **macOS:** a file fetched by `curl` gets no quarantine attribute, so Gatekeeper does not stop the programs; the Rust linker signs them ad hoc,
   which Apple silicon needs. The 1.1 s first run (05, "Measured in A0") is measured again on an installed copy in A13: first run against second,
   after a fresh copy. If it is the system's check of a new binary, it is written down (and goes in the README's troubleshooting), not fixed.

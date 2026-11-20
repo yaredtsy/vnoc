@@ -1,4 +1,4 @@
-# 21. The `vnoc` command and the agent skill (release 0.5)
+# 21. The `vnoc` command and the agent skill (release 0.3)
 
 Written 2026-11-16 from the code at `0597d12`, as a review and a rewrite of the first draft (`21-agent-cli.md`, same day, now replaced by this
 folder), and from the design in [`../futureplan/02-agent-access/`](../futureplan/02-agent-access/README.md), which this folder schedules: its
@@ -113,7 +113,7 @@ The three asks of the first version of this table were answered on 2026-11-16: C
 | more languages | everything | nothing here names Python except the driver's file name and the scan |
 
 The last row is the largest lever on how useful this is to agents, and it is not in this folder: an agent works in whatever language the project
-is in, and V-NOC reads Python. Worth weighing against 0.6 when 0.5 ships.
+is in, and V-NOC reads Python. Worth weighing against 0.4 when 0.3 ships.
 
 ## 6. What search gives the commands, as built
 

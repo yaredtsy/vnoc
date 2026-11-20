@@ -1,6 +1,6 @@
 [package]
 name = "vnoc-search"
-version = "0.2.0"
+version = "0.3.0"
 license = "Apache-2.0"
 edition = "2024"
 description = "V-NOC search: ranks node names and doc text over plain lists. No I/O, no editor, no async."

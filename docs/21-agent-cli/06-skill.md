@@ -392,3 +392,9 @@ duplicating a charge." (the first sentence is the user's; the rest is Codex's).
 - **Its first read of the skill is `~/.agents/skills/vnoc/SKILL.md`**, a path that does not exist, in 8 of 14 runs; the next command reads the project's
   `.agents/skills/vnoc/SKILL.md`. The harness records such a read as `outside (read: <path>)` and carries on; a write, a delete, or a read of an outside
   file that exists stops the batch.
+
+**Known limits, accepted (A14c).** With the wording in place, Codex on `gpt-reserve`/low still does not say that `vnoc` is missing when it is not on
+the `PATH` (scenario 6: it reads the notes by the fallback and says nothing), and it adds a clause of its own to a note it writes (scenario 3). Both are
+the model's, not the text's: Claude on Sonnet does neither. `vnoc doc read <ID>` shows no MISSING header: by ID alone it reads no index, so it needs no
+driver, and cannot know the code is gone (`--where` reads the index and does show it).
+
