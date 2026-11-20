@@ -11,10 +11,7 @@ use async_lsp::lsp_types::Url;
 use serde_json::{Value, json};
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
+    dunce::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")).unwrap()
 }
 
 fn driver_path() -> PathBuf {

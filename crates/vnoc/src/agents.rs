@@ -1516,7 +1516,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vnoc-agents-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        dir.canonicalize().unwrap()
+        dunce::canonicalize(dir).unwrap()
     }
 
     fn put(root: &Path, name: &str, text: &str) {

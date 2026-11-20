@@ -608,6 +608,7 @@ you changed code" step becomes one command. Needs `git` on the PATH; without it 
 | **`--quiet`** | no "next step" lines, no totals: only the rows. For hooks |
 | **standard error** | errors and the hints of 02 §4. Logs only with `VNOC_LOG` |
 | **nothing found** | a line saying so, exit `0` |
+| **paths** | a path relative to the root (or the git root) is printed with `/` on every system; an **absolute** path is printed as the system writes it (Windows: `C:\Users\…`, never `\\?\C:\…`), like the root line. Text and JSON follow the same rule |
 
 **Style for people** *(settled 2026-11-19, step A6d, after the first by-hand look: "hard to read")*. Colour and weight are added **only when
 standard output is a terminal** (`anstream`, already in the build through clap: it strips the codes for a pipe, honours `NO_COLOR` and

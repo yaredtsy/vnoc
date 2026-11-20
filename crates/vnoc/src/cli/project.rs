@@ -25,7 +25,8 @@ pub fn driver_file_name() -> String {
 /// `.git` comes before `.vnoc/` because the core reads `.vnoc/` at the **git root**: root and that folder are then the same one.
 pub fn find_root(cwd: &Path, root_flag: Option<&Path>) -> PathBuf {
     if let Some(flag) = root_flag {
-        return cwd.join(flag); // an absolute `flag` replaces `cwd` in `join`
+        // an absolute `flag` replaces `cwd` in `join`; never a `\\?\` path
+        return dunce::simplified(&cwd.join(flag)).to_path_buf();
     }
     let nearest = |holds: &dyn Fn(&Path) -> bool| cwd.ancestors().find(|dir| holds(dir));
     nearest(&|dir| dir.join(".git").exists())
@@ -64,7 +65,7 @@ pub fn driver_path(
             format!("{} does not exist", path.display())
         }
     };
-    let beside = match current_exe.and_then(|exe| std::fs::canonicalize(exe).ok()) {
+    let beside = match current_exe.and_then(|exe| dunce::canonicalize(exe).ok()) {
         None => "the binary's own path is not known".to_string(),
         Some(real) => {
             let path = real.with_file_name(driver_file_name());
@@ -134,7 +135,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vnoc-cli-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::canonicalize(dir).unwrap()
+        dunce::canonicalize(dir).unwrap()
     }
 
     #[test]

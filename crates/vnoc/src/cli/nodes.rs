@@ -157,8 +157,10 @@ pub trait Answer: Render {
 /// **absolute** when it is not. With `--root` below the git root, `.vnoc/` is outside the root, and a path relative to the git root would be
 /// relative to nothing the agent has.
 pub fn doc_path(project: &Project, doc: &Path) -> String {
-    let path = doc.strip_prefix(project.open_dir()).unwrap_or(doc);
-    path.to_string_lossy().replace('\\', "/")
+    match doc.strip_prefix(project.open_dir()) {
+        Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+        Err(_) => doc.to_string_lossy().into_owned(),
+    }
 }
 
 /// The project as a list of nodes to look things up in: the tree, built once, and the corpus for "did you mean", built only on a miss.

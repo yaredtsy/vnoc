@@ -14,10 +14,7 @@ use vnoc_domain::{IdInCode, NodeId};
 const BOM: &[u8] = b"\xef\xbb\xbf";
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
+    dunce::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")).unwrap()
 }
 
 /// As `lifecycle.rs` finds it: `VNOC_DRIVER`, else the debug build in `drivers/python`.
@@ -55,7 +52,7 @@ fn sample_copy(label: &str) -> PathBuf {
         &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/sample"),
         &root,
     );
-    root.canonicalize().unwrap()
+    dunce::canonicalize(root).unwrap()
 }
 
 async fn attach_on_disk(

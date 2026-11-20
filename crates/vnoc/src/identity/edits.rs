@@ -217,7 +217,7 @@ mod tests {
         let d = std::env::temp_dir().join(format!("vnoc-edits-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        d.canonicalize().unwrap()
+        dunce::canonicalize(d).unwrap()
     }
 
     #[test]

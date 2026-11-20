@@ -27,6 +27,8 @@ clap = { version = "4", features = ["derive"] }
 anstream = "1"
 anstyle = "1"
 regex = "1"
+# `C:\\…` not `\\?\C:\…` on Windows: canonicalize without the verbatim prefix
+dunce = "1"
 dialoguer = { version = "0.12", default-features = false }
 ctrlc = { version = "3", default-features = false }
 

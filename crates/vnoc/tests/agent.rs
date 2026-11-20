@@ -10,10 +10,7 @@ use std::process::{Command, Output, Stdio};
 use serde_json::{Value, json};
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
+    dunce::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")).unwrap()
 }
 
 fn driver_path() -> PathBuf {
@@ -33,7 +30,7 @@ fn scratch(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vnoc-agent-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir.canonicalize().unwrap()
+    dunce::canonicalize(dir).unwrap()
 }
 
 /// A project folder and a home folder, both empty, outside this repository.
@@ -90,12 +87,13 @@ fn files(dir: &Path) -> Vec<String> {
             if path.is_dir() {
                 walk(&path, base, into);
             } else {
-                into.push(
-                    path.strip_prefix(base)
-                        .unwrap()
-                        .to_string_lossy()
-                        .into_owned(),
-                );
+                let parts: Vec<_> = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                into.push(parts.join("/"));
             }
         }
     }
