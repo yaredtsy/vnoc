@@ -1214,7 +1214,12 @@ fn doc_paths_are_absolute_when_the_root_is_below_the_git_root() {
             "service.py::OrderService.parse_order",
         ],
     );
-    let doc = top.join(format!(".vnoc/nodes/5H/{METHOD_ID}/why-we-parse-twice.md"));
+    let doc = top
+        .join(".vnoc")
+        .join("nodes")
+        .join("5H")
+        .join(METHOD_ID)
+        .join("why-we-parse-twice.md");
     assert!(
         shown.contains(&format!("  Why we parse twice\n    {}\n", doc.display())),
         "{shown}"

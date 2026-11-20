@@ -433,11 +433,11 @@ fn read_text(path: &Path) -> Result<Option<String>, String> {
 }
 
 fn shown(base: &Path, home: bool, path: &Path) -> String {
-    let rel = path
-        .strip_prefix(base)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/");
+    // under `base`: relative, `/`-separated on every system; outside it: absolute, as the system writes it
+    let Ok(rel) = path.strip_prefix(base) else {
+        return path.to_string_lossy().into_owned();
+    };
+    let rel = rel.to_string_lossy().replace('\\', "/");
     if home { format!("~/{rel}") } else { rel }
 }
 
