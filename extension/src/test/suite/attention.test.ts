@@ -53,6 +53,7 @@ suite("needs attention", () => {
   });
 
   test("a documented function that is deleted shows under Missing, and leaves when it is back", async () => {
+    await waitFor("the view has caught up: nothing is missing while the code is there", () => api.attention().missing.length === 0);
     assert.deepStrictEqual(api.attention().missing, [], "nothing is missing while the code is there");
     fs.writeFileSync(file(), "def stays():\n    pass\n");
     await until("the function under Missing", () => api.attention().missing.includes(id));
@@ -237,6 +238,7 @@ suite("write id", () => {
   test("a deleted ID line shows under ID lost, a click goes to the node, and Write ID on the row puts the line back and the group goes", async () => {
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file()));
     assert.ok(fs.readFileSync(file(), "utf8").includes(`ID: ${id}`), "the ID is in the code at the start");
+    await waitFor("the view has caught up: nothing is lost while the ID is in the code", () => api.attention().lostIds.length === 0);
     assert.deepStrictEqual(api.attention().lostIds, [], `nothing is lost while the ID is in the code: ${JSON.stringify((await api.structure()).lost_markers)}`);
     assert.strictEqual(Object.keys(api.attention().groups).some((g) => g.startsWith("ID lost")), false, "no group without rows");
 

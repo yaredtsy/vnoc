@@ -46,6 +46,7 @@ async function assertKept(key: string, node_id: string) {
   await waitFor(`${key} to carry its ID`, async () => (await find(key))?.node_id === node_id);
   const node = (await find(key))!;
   assert.deepStrictEqual([node.node_id, node.docs, node.link], [node_id, 1, "marker"], `${key} keeps its ID and its doc`);
+  await waitFor(`the view has caught up: ${key} is not under Missing`, () => !api.attention().missing.includes(node_id));
   assert.ok(!api.attention().missing.includes(node_id), `${key} is not under Missing`);
   assert.deepStrictEqual(api.webviewErrors(), []);
 }
