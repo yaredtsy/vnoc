@@ -5,9 +5,15 @@
 //! their text **unchanged**, so a pipe gets byte for byte what the command printed before there was a palette, and an agent pays nothing. The
 //! renderers never write an escape code themselves: they mark a piece of text with a named style from here.
 //!
+//! **Text from the project is shown, not obeyed, on a terminal** (03 §11, "Control characters"): a note, a code line or a file name can hold `ESC`, and on a
+//! terminal that is a command to it. [`writer`] cleans what it writes when its stream is a terminal (`^[` for `ESC`, `^G` for `BEL`, …) and **keeps V-NOC's own
+//! paint**: [`paint`] does not write `ESC`, it writes a stand-in that holds a random number made for this run, which nothing in a project can know, and the
+//! writer turns the stand-ins into `ESC` after cleaning everything else. A pipe, `--json` and `--format` use [`raw_writer`]: the bytes as they are.
+//!
 //! Whether a stream is a terminal is `anstream`'s to say (`NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, `TERM=dumb`, isatty); `--color` is the
 //! user's word over it. Until [`init`] has run nothing is painted, which is what a unit test of a renderer wants.
 
+use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use anstream::ColorChoice;
@@ -75,6 +81,25 @@ pub fn init(when: When) {
     for (slot, stream) in [(&OUT, Stream::Out), (&ERR, Stream::Err)] {
         let on = resolve(when, auto_of(stream));
         slot.store(if on { ON } else { OFF }, Ordering::Relaxed);
+    }
+    TERMINAL_OUT.store(
+        if io::stdout().is_terminal() { ON } else { OFF },
+        Ordering::Relaxed,
+    );
+    TERMINAL_ERR.store(
+        if io::stderr().is_terminal() { ON } else { OFF },
+        Ordering::Relaxed,
+    );
+}
+
+/// Whether the stream is a terminal, whatever `--color` says: the one thing that decides whether project text is cleaned. Until [`init`] has run: no.
+static TERMINAL_OUT: AtomicU8 = AtomicU8::new(UNSET);
+static TERMINAL_ERR: AtomicU8 = AtomicU8::new(UNSET);
+
+fn is_terminal(stream: Stream) -> bool {
+    match stream {
+        Stream::Out => TERMINAL_OUT.load(Ordering::Relaxed) == ON,
+        Stream::Err => TERMINAL_ERR.load(Ordering::Relaxed) == ON,
     }
 }
 
@@ -192,7 +217,163 @@ fn paint_on(stream: Stream, style: Style, text: impl AsRef<str>) -> String {
     if text.is_empty() || !on(stream) {
         return text.to_string();
     }
+    let (open, close) = (
+        standing_in(&style.to_string()),
+        standing_in(&format!("{style:#}")),
+    );
+    format!("{open}{text}{close}")
+}
+
+/// `text` in `style` with real `ESC` codes, for a string that does **not** go through [`writer`] (a menu's label, a line written to the terminal directly):
+/// nothing cleans it, so nothing but V-NOC's own text may be in it.
+pub fn paint_direct(stream: Stream, style: Style, text: impl AsRef<str>) -> String {
+    let text = text.as_ref();
+    if text.is_empty() || !on(stream) {
+        return text.to_string();
+    }
     format!("{style}{text}{style:#}")
+}
+
+// ── what a terminal is given: project text cleaned, V-NOC's paint kept ─────────────────────────────────────────────────
+
+/// What stands for `ESC` in the paint of this run: private-use marks around 128 random bits. A file in a project cannot hold it, so cleaning the
+/// finished text and then turning these back into `ESC` keeps V-NOC's paint and nothing else. (In a unit test it is `ESC` itself, so the renderers' tests
+/// read the real codes; [`Shown`] is tested with a mark of its own.)
+fn mark() -> &'static str {
+    #[cfg(test)]
+    {
+        "\x1b"
+    }
+    #[cfg(not(test))]
+    {
+        static MARK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        MARK.get_or_init(|| {
+            use std::hash::{BuildHasher, Hasher};
+            // `RandomState` is seeded by the operating system, differently for every hasher made
+            let random = || {
+                std::collections::hash_map::RandomState::new()
+                    .build_hasher()
+                    .finish()
+            };
+            format!("\u{E000}{:016x}{:016x}\u{E001}", random(), random())
+        })
+    }
+}
+
+/// `codes` (an `ESC [ … m` sequence, as `anstyle` writes it) with the mark in place of each `ESC`.
+fn standing_in(codes: &str) -> String {
+    codes.replace('\x1b', mark())
+}
+
+/// `text` as a terminal may be given it. Every piece of it that is not `mark` is cleaned; each `mark` is turned into `ESC` (V-NOC's own paint).
+///
+/// - a C0 control other than tab and line feed becomes caret notation (`ESC` → `^[`, `BEL` → `^G`, `NUL` → `^@`), and so does DEL (`^?`);
+/// - a carriage return right before a line feed stays (a CRLF file), any other becomes `^M`;
+/// - a C1 control (U+0080 to U+009F: the 8-bit forms of the same commands) becomes `<U+009B>`;
+/// - everything else, `é` and `日本` included, is as it was.
+pub fn sanitize(text: &str, mark: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        if !mark.is_empty() && rest.starts_with(mark) {
+            out.push('\x1b');
+            rest = &rest[mark.len()..];
+            continue;
+        }
+        rest = &rest[c.len_utf8()..];
+        match c {
+            '\t' | '\n' => out.push(c),
+            '\r' if rest.starts_with('\n') => out.push(c),
+            '\x7f' => out.push_str("^?"),
+            c if c.is_ascii_control() => {
+                out.push('^');
+                out.push(char::from(c as u8 ^ 0x40));
+            }
+            c if ('\u{80}'..='\u{9f}').contains(&c) => {
+                out.push_str(&format!("<U+{:04X}>", c as u32))
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// What a stream's writer does: nothing (a pipe that is not painted), turn V-NOC's marks into `ESC` (a painted pipe: `--color always`), or clean the
+/// project's text as well (a terminal, painted or not).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shaping {
+    AsIs,
+    Marks,
+    Clean,
+}
+
+/// **The decision**: a terminal's text is cleaned whatever `--color` says; otherwise only the paint's marks are turned back, and only when something was painted.
+pub fn shaping(terminal: bool, painted: bool) -> Shaping {
+    match (terminal, painted) {
+        (true, _) => Shaping::Clean,
+        (false, true) => Shaping::Marks,
+        (false, false) => Shaping::AsIs,
+    }
+}
+
+/// A writer that collects what it is given and, when it is flushed (or dropped), writes it to `inner` shaped as `shaping` says. A command writes a
+/// whole answer and flushes, so a mark is never cut in two; text that is not UTF-8 is passed on as it is.
+pub struct Shown<W: Write> {
+    inner: W,
+    mark: String,
+    clean: bool,
+    held: Vec<u8>,
+}
+
+impl<W: Write> Shown<W> {
+    pub fn new(inner: W, mark: &str, clean: bool) -> Self {
+        Shown {
+            inner,
+            mark: mark.to_string(),
+            clean,
+            held: Vec::new(),
+        }
+    }
+
+    fn pass_on(&mut self) -> io::Result<()> {
+        if self.held.is_empty() {
+            return Ok(());
+        }
+        let held = std::mem::take(&mut self.held);
+        match String::from_utf8(held) {
+            Ok(text) => {
+                let shaped = if self.clean {
+                    sanitize(&text, &self.mark)
+                } else {
+                    if self.mark.is_empty() {
+                        text
+                    } else {
+                        text.replace(&self.mark, "\x1b")
+                    }
+                };
+                self.inner.write_all(shaped.as_bytes())
+            }
+            Err(not_text) => self.inner.write_all(not_text.as_bytes()),
+        }
+    }
+}
+
+impl<W: Write> Write for Shown<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.held.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.pass_on()?;
+        self.inner.flush()
+    }
+}
+
+impl<W: Write> Drop for Shown<W> {
+    fn drop(&mut self) {
+        let _ = self.flush();
+    }
 }
 
 // ── numbers ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -225,14 +406,27 @@ pub fn count(n: usize, one: &str, many: &str) -> String {
     format!("{} {}", num(n), if n == 1 { one } else { many })
 }
 
-/// What a writer to `stream` is: a pipe gets the bytes as they are, a painted stream goes through `anstream` (which also turns codes into console
-/// calls on an old Windows terminal).
-pub fn writer(stream: Stream) -> Box<dyn std::io::Write> {
+/// What a writer to `stream` is, as it was before project text was cleaned: a pipe gets the bytes as they are, a painted stream goes through `anstream`
+/// (which also turns codes into console calls on an old Windows terminal). For what is not project text (clap's own help and errors, which carry real
+/// `ESC` codes) and for what must stay the bytes (`--json`, `--format`).
+pub fn raw_writer(stream: Stream) -> Box<dyn Write> {
     match (stream, on(stream)) {
-        (Stream::Out, true) => Box::new(anstream::AutoStream::always(std::io::stdout())),
-        (Stream::Out, false) => Box::new(std::io::stdout().lock()),
-        (Stream::Err, true) => Box::new(anstream::AutoStream::always(std::io::stderr())),
-        (Stream::Err, false) => Box::new(std::io::stderr().lock()),
+        (Stream::Out, true) => Box::new(anstream::AutoStream::always(io::stdout())),
+        (Stream::Out, false) => Box::new(io::stdout().lock()),
+        (Stream::Err, true) => Box::new(anstream::AutoStream::always(io::stderr())),
+        (Stream::Err, false) => Box::new(io::stderr().lock()),
+    }
+}
+
+/// The writer of everything a command shows people: text that came from the project is cleaned when the stream is a terminal (see the top of this file).
+pub fn writer(stream: Stream) -> Box<dyn Write> {
+    match shaping(is_terminal(stream), on(stream)) {
+        Shaping::AsIs => raw_writer(stream),
+        shaping => Box::new(Shown::new(
+            raw_writer(stream),
+            mark(),
+            shaping == Shaping::Clean,
+        )),
     }
 }
 
@@ -338,5 +532,129 @@ mod tests {
             When::Always,
             "the last one wins, as in clap"
         );
+    }
+
+    // ── project text on a terminal (03 §11) ──
+
+    #[test]
+    fn each_class_of_control_character_is_shown_and_not_obeyed() {
+        let clean = |t: &str| sanitize(t, "");
+        assert_eq!(clean("a\x1b[2Jb"), "a^[[2Jb", "ESC");
+        assert_eq!(
+            clean("\x1b]0;owned\x07"),
+            "^[]0;owned^G",
+            "ESC ] … BEL: the title, and BEL"
+        );
+        assert_eq!(clean("x\x07y"), "x^Gy", "BEL");
+        assert_eq!(clean("x\x00y"), "x^@y", "NUL");
+        assert_eq!(clean("x\x08y"), "x^Hy", "backspace");
+        assert_eq!(clean("x\x7fy"), "x^?y", "DEL");
+        assert_eq!(clean("a\r\nb\r\n"), "a\r\nb\r\n", "CRLF stays");
+        assert_eq!(clean("a\rb"), "a^Mb", "a lone CR");
+        assert_eq!(clean("a\r"), "a^M", "a CR at the very end is lone");
+        assert_eq!(clean("a\r\rb\n"), "a^M^Mb\n");
+        assert_eq!(
+            clean("a\r\r\n"),
+            "a^M\r\n",
+            "the CR before a CR is lone; the one before the LF stays"
+        );
+        assert_eq!(clean("a\u{9b}31m"), "a<U+009B>31m", "C1: the 8-bit CSI");
+        assert_eq!(clean("\u{80}\u{9f}"), "<U+0080><U+009F>");
+        assert_eq!(clean("a\tb\nc"), "a\tb\nc", "tab and line feed stay");
+        assert_eq!(
+            clean("é 日本 ✔ 𝄞 \u{a0}"),
+            "é 日本 ✔ 𝄞 \u{a0}",
+            "text in other scripts, and the first character after the C1 range"
+        );
+        assert_eq!(clean(""), "");
+    }
+
+    #[test]
+    fn the_cleaner_keeps_the_marks_of_our_own_paint_and_nothing_that_looks_like_it() {
+        let mark = "\u{E000}abcd\u{E001}";
+        // our own: `ESC` again
+        assert_eq!(
+            sanitize(&format!("{mark}[36mx{mark}[0m"), mark),
+            "\x1b[36mx\x1b[0m"
+        );
+        // the project's own `ESC [ 36 m`, and a forged mark with another number: cleaned
+        assert_eq!(sanitize("\x1b[36mx\x1b[0m", mark), "^[[36mx^[[0m");
+        assert_eq!(
+            sanitize("\u{E000}0000\u{E001}[2J", mark),
+            "\u{E000}0000\u{E001}[2J",
+            "not our mark: only text (private-use characters are not controls)"
+        );
+        // both in one line
+        assert_eq!(
+            sanitize(&format!("{mark}[1mt{mark}[0m \x1b[2J"), mark),
+            "\x1b[1mt\x1b[0m ^[[2J"
+        );
+    }
+
+    #[test]
+    fn paint_writes_the_mark_where_esc_would_be() {
+        // what `paint` writes is `mark()` in place of each `ESC`; in a unit test the mark is `ESC`, so this checks the relation and not the number
+        let painted = with_color(true, || paint(location(), "a.py::f"));
+        let standing = standing_in("\x1b[36m");
+        assert!(painted.starts_with(&standing));
+        let shown = sanitize(&painted, mark());
+        assert_eq!(shown, "\x1b[36ma.py::f\x1b[0m");
+    }
+
+    #[test]
+    fn a_terminal_cleans_whatever_colour_says_and_a_pipe_never_does() {
+        assert_eq!(shaping(true, true), Shaping::Clean);
+        assert_eq!(
+            shaping(true, false),
+            Shaping::Clean,
+            "`--color never` on a terminal: still cleaned"
+        );
+        assert_eq!(
+            shaping(false, true),
+            Shaping::Marks,
+            "`--color always` into a pipe: V-NOC's colours, the project's bytes"
+        );
+        assert_eq!(shaping(false, false), Shaping::AsIs, "a pipe");
+    }
+
+    #[test]
+    fn the_writer_turns_marks_into_esc_and_cleans_only_when_told() {
+        let mark = "\u{E000}1234\u{E001}";
+        let text = format!("{mark}[1mtitle{mark}[0m\nbody \x1b]0;owned\x07 and \x1b[2J\n");
+        let through = |clean: bool| {
+            let mut out = Vec::new();
+            {
+                let mut w = Shown::new(&mut out, mark, clean);
+                // pieces, as `writeln!` hands them over
+                w.write_all(&text.as_bytes()[..7]).unwrap();
+                w.write_all(&text.as_bytes()[7..]).unwrap();
+                w.flush().unwrap();
+            }
+            String::from_utf8(out).unwrap()
+        };
+        assert_eq!(
+            through(true),
+            "\x1b[1mtitle\x1b[0m\nbody ^[]0;owned^G and ^[[2J\n"
+        );
+        assert_eq!(
+            through(false),
+            "\x1b[1mtitle\x1b[0m\nbody \x1b]0;owned\x07 and \x1b[2J\n",
+            "a painted pipe: marks only; the file's bytes as they are"
+        );
+        // dropped without a flush: still written
+        let mut out = Vec::new();
+        drop({
+            let mut w = Shown::new(&mut out, mark, true);
+            w.write_all(b"x\x1b").unwrap();
+            w
+        });
+        assert_eq!(out, b"x^[");
+        // not UTF-8: passed on, not changed
+        let mut out = Vec::new();
+        {
+            let mut w = Shown::new(&mut out, mark, true);
+            w.write_all(&[0x66, 0xff, 0x1b]).unwrap();
+        }
+        assert_eq!(out, [0x66, 0xff, 0x1b]);
     }
 }

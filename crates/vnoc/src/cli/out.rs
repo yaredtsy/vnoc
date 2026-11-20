@@ -28,22 +28,31 @@ pub fn render<T: Render>(value: &T, global: &Global) -> Result<(), Failure> {
     }
 }
 
-/// Writes `text` to standard output, locked, and flushes. A terminal gets it through `anstream`; a pipe gets the bytes as they are (the renderers
-/// painted nothing: `style`).
+/// Writes `text` to standard output, locked, and flushes: the text of an answer for people. On a terminal what came from the project is cleaned of control
+/// characters (`style`); a pipe gets the bytes as they are.
 pub fn text(text: &str) -> Result<(), Failure> {
-    let mut stdout = style::writer(Stream::Out);
+    write_to(style::writer(Stream::Out), text)
+}
+
+/// Writes `text` to standard output as it is, whatever the stream: what `--format` prints for a script, which is the project's bytes.
+pub fn raw(text: &str) -> Result<(), Failure> {
+    write_to(style::raw_writer(Stream::Out), text)
+}
+
+fn write_to(mut stdout: Box<dyn Write>, text: &str) -> Result<(), Failure> {
     stdout
         .write_all(text.as_bytes())
         .and_then(|()| stdout.flush())
         .map_err(closed_or)
 }
 
-/// Writes one JSON value and a newline. The value is the command's own struct, with `schema` and `command` first.
+/// Writes one JSON value and a newline. The value is the command's own struct, with `schema` and `command` first. The bytes as they are: JSON writes a
+/// control character as an escape (`\u001b`) itself.
 pub fn json<T: Serialize>(value: &T) -> Result<(), Failure> {
     let mut line = serde_json::to_string(value)
         .map_err(|e| Failure::Environment(format!("could not write JSON: {e}")))?;
     line.push('\n');
-    text(&line)
+    raw(&line)
 }
 
 /// A failure's line on standard error. Nothing else is written there by a command (logs only with `VNOC_LOG`).
@@ -97,7 +106,8 @@ pub fn clap_error(e: &clap::Error) -> i32 {
         e.render().to_string()
     };
     let written = {
-        let mut out = style::writer(if to_stderr { Stream::Err } else { Stream::Out });
+        // clap's own text, with its own `ESC` codes: not the project's
+        let mut out = style::raw_writer(if to_stderr { Stream::Err } else { Stream::Out });
         out.write_all(rendered.as_bytes())
             .and_then(|()| out.flush())
     };

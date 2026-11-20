@@ -78,7 +78,7 @@ pub async fn run(global: &Global, args: &GrepArgs) -> Result<(), Failure> {
         Grep::code(args, found.nodes, total, found.hits, style)
     };
     match global.format {
-        Some(format) => out::text(&answer.lines(format)),
+        Some(format) => out::raw(&answer.lines(format)),
         None => out::render(&answer, global),
     }
 }

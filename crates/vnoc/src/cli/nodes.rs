@@ -624,7 +624,12 @@ pub fn emit<'a, A: Answer>(
                     None if printed => format!("\n{}", done.text(global.quiet)),
                     None => done.text(global.quiet),
                 };
-                out::text(&text)?;
+                // `--format` is for a script: the bytes
+                if global.format.is_some() {
+                    out::raw(&text)?;
+                } else {
+                    out::text(&text)?;
+                }
                 printed = true;
             }
             Err(e) => {

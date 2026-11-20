@@ -37,7 +37,7 @@ pub async fn missing(global: &Global) -> Result<(), Failure> {
         missing: rows,
     };
     match global.format {
-        Some(Format::Id) => out::text(
+        Some(Format::Id) => out::raw(
             &answer
                 .missing
                 .iter()
@@ -46,7 +46,7 @@ pub async fn missing(global: &Global) -> Result<(), Failure> {
         ),
         Some(Format::Path) => {
             let mut seen = HashSet::new();
-            out::text(
+            out::raw(
                 &answer
                     .missing
                     .iter()

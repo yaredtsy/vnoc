@@ -104,7 +104,7 @@ pub async fn run(global: &Global, args: &FindArgs) -> Result<(), Failure> {
         show_docs: !args.nodes,
     };
     match global.format {
-        Some(format) => out::text(&find.lines(format)),
+        Some(format) => out::raw(&find.lines(format)),
         None => out::render(&find, global),
     }
 }

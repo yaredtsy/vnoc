@@ -187,7 +187,7 @@ fn menu(found: &[Agent]) -> Menu {
                 format!(
                     "{:<width$}  {}",
                     agent.name(),
-                    style::paint_err(style::dim(), "found here")
+                    style::paint_direct(style::Stream::Err, style::dim(), "found here")
                 )
             } else {
                 agent.name().to_string()
@@ -199,8 +199,13 @@ fn menu(found: &[Agent]) -> Menu {
     let _ = writeln!(
         std::io::stderr(),
         "{}  {}",
-        style::paint_err(style::bold(), "Which coding agents does this project use?"),
-        style::paint_err(
+        style::paint_direct(
+            style::Stream::Err,
+            style::bold(),
+            "Which coding agents does this project use?"
+        ),
+        style::paint_direct(
+            style::Stream::Err,
             style::dim(),
             "(↑/↓ move, Space ticks, Enter accepts, Esc cancels)"
         )
@@ -235,7 +240,7 @@ fn ask(ticked: &[Agent]) -> Result<Vec<Agent>, Failure> {
     let _ = writeln!(
         err,
         "Which coding agents does this project use? ({} are the ones found here)",
-        style::paint_err(style::bold(), "[x]")
+        style::paint_direct(style::Stream::Err, style::bold(), "[x]")
     );
     for (i, agent) in AGENTS.iter().enumerate() {
         let mark = if ticked.contains(agent) { "[x]" } else { "[ ]" };

@@ -98,7 +98,7 @@ pub async fn run(global: &Global, args: &TreeArgs) -> Result<(), Failure> {
                     Format::Path => format!("{}\n", file_of(row)),
                 })
                 .collect();
-            out::text(&lines)?;
+            out::raw(&lines)?;
         } else {
             let text = part.text(global.quiet);
             out::text(&if printed { format!("\n{text}") } else { text })?;

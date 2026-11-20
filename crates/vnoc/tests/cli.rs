@@ -5726,3 +5726,82 @@ fn a_body_that_starts_with_the_title_does_not_get_it_twice() {
             .is_none()
     );
 }
+
+// ------------------------------------------------------------------------ control characters from the project (A13, 03 §11)
+// On a terminal they are cleaned (`style.rs` tests the cleaner, the decision and the writer; this crate has no pseudo-terminal, so that path is checked by
+// hand with `script`). Here: through a pipe, what the project holds is what comes out, to the byte.
+
+#[test]
+fn a_note_that_holds_escape_codes_comes_through_a_pipe_byte_for_byte() {
+    let root = started_copy("ctl-pipe", &[]);
+    let node = "billing/tax.py::rate_for";
+    let body = "# Evil\n\nline \x1b]0;owned\x07 and \x1b[2J and \x1b[31mred\x1b[0m, a lone \r CR, DEL \x7f.\r\nCRLF kept.\n";
+    let made = run_with_stdin(
+        vnoc(
+            &root,
+            &["doc", "new", node, "--title", "Evil", "--body-file", "-"],
+        ),
+        body.as_bytes(),
+    );
+    assert_eq!(code(&made), 0, "{}", text(&made.stderr));
+    let wanted = [
+        "\x1b]0;owned\x07",
+        "\x1b[2J",
+        "\x1b[31mred\x1b[0m",
+        "\r CR",
+        "\x7f.",
+        "\r\nCRLF kept.",
+    ];
+    // code lines too: a source file that holds the same
+    std::fs::write(
+        root.join("weird.py"),
+        "def weird():\n    return \"\x1b[2J\x07\"  # \x1b]0;owned\x07\n",
+    )
+    .unwrap();
+    // `run` is not used: it asserts that nothing through a pipe holds an escape code, which is the rule for V-NOC's own paint
+    let holds = |args: &[&str], pieces: &[&str]| {
+        let shown = vnoc(&root, args).output().unwrap();
+        assert_eq!(code(&shown), 0, "{args:?}: {}", text(&shown.stderr));
+        for piece in pieces {
+            assert!(
+                shown
+                    .stdout
+                    .windows(piece.len())
+                    .any(|w| w == piece.as_bytes()),
+                "{args:?}: {piece:?} is not in {:?}",
+                text(&shown.stdout)
+            );
+        }
+    };
+    holds(&["doc", "read", node], &wanted);
+    holds(&["grep", "--docs", "owned"], &["\x1b]0;owned\x07"]);
+    holds(
+        &["code", "weird.py::weird"],
+        &["\x1b[2J\x07", "\x1b]0;owned\x07"],
+    );
+    holds(&["grep", "owned"], &["\x1b[2J\x07", "\x1b]0;owned\x07"]);
+    // with colour asked for into the pipe: V-NOC's own paint is there, and the project's bytes are still as they were
+    let coloured = vnoc(&root, &["--color", "always", "doc", "read", node])
+        .output()
+        .unwrap();
+    assert_eq!(code(&coloured), 0);
+    assert!(
+        coloured.stdout.windows(4).any(|w| w == b"\x1b[2J"),
+        "{:?}",
+        text(&coloured.stdout)
+    );
+    assert!(
+        text(&coloured.stdout).contains("\x1b[32m"),
+        "V-NOC's own colour is kept"
+    );
+    // `--json` writes a control character as an escape of its own: the same bytes as before
+    let json = vnoc(&root, &["doc", "read", node, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        text(&json.stdout).contains("\\u001b]0;owned\\u0007"),
+        "{:?}",
+        text(&json.stdout)
+    );
+    assert!(!json.stdout.contains(&0x1b));
+}
