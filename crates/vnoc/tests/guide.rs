@@ -502,8 +502,9 @@ fn the_guides_have_command_lines_to_check() {
         let least = match name.as_str() {
             "rules.md" => 1,
             "SKILL.md" => 15,
-            // the READMEs come with the commit that checks them (A13r): their minimum is raised when their text has lines
-            "README.md" | "extension/README.md" => 0,
+            // the repository README has some 57 (24 run, the rest parsed against placeholders); the Marketplace page has one
+            "README.md" => 40,
+            "extension/README.md" => 1,
             _ => 3,
         };
         assert!(

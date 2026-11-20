@@ -149,6 +149,9 @@ A `.vnoc-id` that exists but cannot be read is listed as a problem and is **neve
 | **0.7+** | Polish | CodeLens and hover **as LSP features of the core**, so every LSP editor gets them · doc freshness · playground | `body_hash` in frontmatter · playground files |
 | **1.0** | **Hardening** | 10,000-file repos · Remote SSH / WSL / containers · driver protocol frozen as `1` · user guide | — |
 
+**Updated 2026-11-20: 0.3 and 0.4 were not released on their own.** Edit in the canvas and search (the two rows above) ship **inside 0.5**, together with the command line, so
+the next release after 0.2 is 0.5 and the README says so ("What's coming"). The rows keep their numbers as names of the increments.
+
 Updated 2026-11-16: search and the agent command come before markers-without-IDs (your call). **Teams and privacy is dropped**
 (private docs in `local/nodes/`, `local.toml`, solo mode): not scheduled. `local/` stays for the trash and caches. Every release from 0.4 on follows
 P1 (`08` §1c): logic in the Rust core, UI code only draws, so V-NOC can be ported to other editors. The numbers assume edit-in-canvas is the next
