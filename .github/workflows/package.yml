@@ -22,7 +22,7 @@ jobs:
           - { target: win32-x64, os: windows-latest }
     defaults: { run: { shell: bash } }
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
         with:
           cache-key: release-${{ matrix.target }}
@@ -32,14 +32,14 @@ jobs:
           rustup target add ${{ matrix.cross }}
           (cd drivers/python && rustup target add ${{ matrix.cross }})
       - run: node scripts/package.mjs --target ${{ matrix.target }} ${{ inputs.pre-release && '--pre-release' || '' }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vsix-${{ matrix.target }}
           path: vnoc-${{ matrix.target }}.vsix
           if-no-files-found: error
           retention-days: 30
       # the same two programs without the extension (docs/21-agent-cli/07-install.md §6): `.tar.gz`, and on Windows `.zip`
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-${{ matrix.target }}
           path: vnoc-cli-${{ matrix.target }}.*
