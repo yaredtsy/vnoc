@@ -397,7 +397,8 @@ def judge(scenario, calls, results, texts, work, meta):
         resolves = shown_code == 0 and "MISSING" not in shown
         ran_check = any(s.startswith("check") for s in subs)
         order = [(i, c) for i, c in enumerate(calls)]
-        first_edit = next((i for i, c in order if c["name"] in ("Edit", "Write", "MultiEdit", "Delete") and ".vnoc/" not in path_of(c)), None)  # any project file: a dataclass may live in models.py
+        first_edit = next((i for i, c in order if (c["name"] in ("Edit", "Write", "MultiEdit", "Delete") and ".vnoc/" not in path_of(c))
+                           or writes_by_shell(c)), None)  # any project file: a dataclass may live in models.py
         read_before = first_edit is not None and any(
             i < first_edit and ((is_vnoc(c) and any(w.startswith(("show", "doc read")) for w in vnoc_subs(c)))
                                 or (reads_file(c) or c["name"] == "Grep") and ".vnoc" in json.dumps(c["input"]))
@@ -487,6 +488,14 @@ def outside(calls, results, run_dir):
             else:
                 stop.append(f"{c['name']} (read of a file that exists): {path}")
     return {"stop": stop, "recorded": sorted(set(recorded))}
+
+
+def writes_by_shell(call):
+    """A Bash call that writes a project file: a redirection, `tee`, `sed -i`, or a python script that opens a file for writing."""
+    if call["name"] != "Bash" or ".vnoc/" in command_of(call):
+        return False
+    text = re.sub(r"\d?>&\d|\d?>\s*/dev/null", "", command_of(call))
+    return bool(re.search(r"open\([^)]*['\"][wa]|\.write\(|write_text|sed\s+-\S*i|\btee\b|(^|[^>&\d])>>?\s*[\w./]", text))
 
 
 def call_lists_vnoc(call):
