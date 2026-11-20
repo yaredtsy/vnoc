@@ -3,6 +3,8 @@
 
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dialoguer::MultiSelect;
 use dialoguer::console::Term;
@@ -130,6 +132,33 @@ pub fn prompt_for(stdin_tty: bool, stderr_tty: bool, term: Option<&str>) -> Prom
     }
 }
 
+/// Whether a dialoguer prompt is on the screen: only then does Ctrl-C have a cursor to give back.
+static PROMPT_SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// Ctrl-C at a prompt: `console` hides the cursor while it draws and, on Ctrl-C, raises SIGINT without showing it again, so the shell would be left
+/// with no cursor. Show it (when a prompt was on the screen), and end the way an interrupted program does (130).
+fn interrupted(prompt_shown: bool) -> ! {
+    if prompt_shown {
+        let mut err = std::io::stderr();
+        let _ = err.write_all(b"\x1b[?25h");
+        let _ = err.flush();
+    }
+    std::process::exit(130)
+}
+
+/// Runs a dialoguer prompt with Ctrl-C handled (see `interrupted`). The handler is installed the first time a prompt is shown, not at start-up, so
+/// the rest of the command line keeps the default Ctrl-C; it can only be set once, and it ends the process the same way the default does.
+fn at_a_prompt<T>(ask: impl FnOnce() -> T) -> T {
+    static HANDLER: Once = Once::new();
+    HANDLER.call_once(|| {
+        let _ = ctrlc::set_handler(|| interrupted(PROMPT_SHOWN.load(Ordering::SeqCst)));
+    });
+    PROMPT_SHOWN.store(true, Ordering::SeqCst);
+    let answer = ask();
+    PROMPT_SHOWN.store(false, Ordering::SeqCst);
+    answer
+}
+
 /// What the user did at the menu.
 enum Menu {
     Picked(Vec<Agent>),
@@ -173,10 +202,12 @@ fn menu(found: &[Agent]) -> Menu {
     } else {
         &plain
     };
-    let asked = MultiSelect::with_theme(theme)
-        .items_checked(items)
-        .report(false)
-        .interact_on_opt(&Term::stderr());
+    let asked = at_a_prompt(|| {
+        MultiSelect::with_theme(theme)
+            .items_checked(items)
+            .report(false)
+            .interact_on_opt(&Term::stderr())
+    });
     match asked {
         Ok(Some(chosen)) => Menu::Picked(
             chosen
@@ -186,9 +217,9 @@ fn menu(found: &[Agent]) -> Menu {
         ),
         // Esc or q
         Ok(None) => Menu::Cancelled,
-        // Ctrl-C is the user stopping too, not a terminal that failed
+        // Ctrl-C: `console` has raised SIGINT, and the handler may be ending the process already; do the same here so the answer is the same
         Err(dialoguer::Error::IO(e)) if e.kind() == std::io::ErrorKind::Interrupted => {
-            Menu::Cancelled
+            interrupted(true)
         }
         Err(_) => Menu::Unavailable,
     }
