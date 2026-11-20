@@ -402,6 +402,11 @@ a renderer, one file, built at the start of this step; note bodies inside `<doc>
 resisted or not, tokens, calls. What wins decides the default (03 §11), and the losing renderer is deleted, not kept behind a flag. The table of results goes into 06 §8; the skill, the rules block and the
 guides are changed from it; the guide test of A10 keeps them honest. Commit: `cli A14: the skill, after six scenarios in three agents`.
 
+**Done (2026-11-20).** A14a: the XML switch and the harness `tools/agent-trial/` (`05c1261`, `1d64017`, `132f024`…), Claude Code's 14 runs. A14b: `95f34df` and
+`a58cf6b` (Codex), its 14 runs, 4 more Claude scenario-2 runs. A14c, from the 28 + 4 runs (06 §8 "Results of A14"): `705aa2b` the XML trial deleted ·
+`1a55637` the skill and rules wording · `e776e9d` `doc read` names the node, a filter written as a flag gets a tip · the record (06 §8, README) · 12 re-runs
+after the changes (reported, not committed). Release 0.5 is the next step.
+
 **Stop point: release 0.5.** Full test run; `02` §3's row.
 
 ## 5. Phase 4: after

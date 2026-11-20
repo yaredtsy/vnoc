@@ -272,7 +272,7 @@ rules), and `other` for any agent that follows the open `AGENTS.md` and `.agents
 `vnoc agent install` never overwrites a file of yours: a `SKILL.md` it did not write is left (say `--force` to replace it), and in a rules file only the block is
 replaced. `vnoc agent remove` takes back only what it wrote. `vnoc agent status` says whether the files are current.
 
-**The permissions question.** Agents ask before they run a command. Fifteen questions for fifteen `vnoc show` calls would end the experiment, so for Claude Code
+**The permissions question.** Agents ask before they run a command, and a session that reads code makes many `vnoc` calls, so that would be many questions. For Claude Code
 and Codex `vnoc agent install` also asks, in a terminal, whether to let them run V-NOC's **read** commands without asking. Enter means yes. A command
 that writes (`doc new`, `doc tag`, `relink`, `repair`, `init`) still asks.
 
