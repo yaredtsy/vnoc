@@ -135,6 +135,10 @@ Guard rails in the command itself:
   .vnoc/…/why-we-parse-twice.md (edit that file, or --again)`. Today a second attach quietly makes `…-2.md`; that is right for a person who
   clicked twice on purpose and wrong for an agent that ran the command twice.
 - A body over 256 KB is refused: a note is a note.
+- *(Added 2026-11-20, A12d.)* **A body that starts with the title is not given the title twice.** If its first non-blank line is a `# `
+  heading equal to `--title` (case and runs of spaces ignored), that line and the blank lines after it are left out, and the output adds
+  `             the body's own "# <title>" line was left out: V-NOC writes the title`. A different first heading is the author's and stays.
+  Seen on the user's project: an agent's overview note had `# Knowledge base API: overview` twice.
 - The frontmatter is V-NOC's: `node:`, `hint:`, `author:`, `tags:`. A body that starts with its own `---` block is refused with a
   line saying to leave the frontmatter out.
 

@@ -134,7 +134,7 @@ only if you know where the code went (`vnoc relink <ID> <node>`).
 Write one when the user asks. When you learned something a future reader could not see in the code, offer to write it down; do not
 write it unasked. One note, one subject.
 `vnoc doc new <node> --title "…" --author <your name>` prints the new file's path; write the note into that file, or pass the body
-with `--body-file -`. It adds an `ID:` line to the function: read the source file again before you edit it.
+with `--body-file -`. V-NOC writes the title as the note's `# ` heading: start the body with the text, not with the title again. It adds an `ID:` line to the function: read the source file again before you edit it.
 Tags: run `vnoc tags` first and reuse one that fits (`.vnoc/tags.toml` says what each means; do not edit it). A plan is
 `--tag plan`; when it ships, `vnoc doc tag <node> --add done --remove plan`.
 
@@ -173,6 +173,10 @@ the checker is not installed. In A14 each agent still has to be seen listing the
 unasked" in place of "or when you learned something…": every `doc new` puts an `ID:` line into the user's source, so a note the user did
 not ask for is an edit to code they did not ask for. A14 checks that agents still offer good notes. And "(the commands and their output
 call them docs)": the skill says notes, every output says `docs (1)`, `· 1 doc`.
+
+**Changed 2026-11-20 (A12d), after the user's agent wrote a note whose title appeared twice:** the body passed with `--body-file` began
+with its own `# <title>`, and `doc new` had already written that heading. The skill says so in one sentence (above); the `write` guide says
+it too; and `doc new` drops such a first line (04 §4).
 
 In the real file the `description` is **one line**: not every agent reads the header with a full YAML parser, and a name or header that
 fails to parse makes the skill silently not load (VS Code's Copilot says so in its docs). The format allows 1,024 characters.
