@@ -158,4 +158,17 @@ mod tests {
             assert!(!topic.about.contains('\n'));
         }
     }
+
+    #[test]
+    fn the_embedded_texts_have_no_carriage_return() {
+        let texts = [SKILL, RULES]
+            .into_iter()
+            .chain(TOPICS.iter().map(|t| t.text));
+        for text in texts {
+            assert!(
+                !text.contains('\r'),
+                "a checkout turned these into CRLF: .gitattributes must keep them eol=lf"
+            );
+        }
+    }
 }

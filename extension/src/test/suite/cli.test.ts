@@ -26,6 +26,8 @@ let api: Api;
 
 const workspace = () => vscode.workspace.workspaceFolders![0].uri.fsPath;
 const real = (p: string) => fs.realpathSync(p);
+/** `real`, but a path that does not exist (a fresh runner has no ~/.local/bin) is returned as it is. */
+const realIfThere = (p: string) => (fs.existsSync(p) ? real(p) : p);
 
 /** The folder `runTest.ts` gave the command: a temporary one, empty before each test. */
 function cliDir(): string {
@@ -33,7 +35,7 @@ function cliDir(): string {
   assert.ok(dir, "VNOC_CLI_DIR is not set: the suite would install in the real home");
   fs.mkdirSync(dir, { recursive: true });
   assert.ok(real(dir).startsWith(real(os.tmpdir())), `${dir} is not under the temp folder`);
-  assert.notStrictEqual(real(dir), real(path.join(os.homedir(), ".local", "bin")));
+  assert.notStrictEqual(real(dir), realIfThere(path.join(os.homedir(), ".local", "bin")));
   return dir;
 }
 const clean = (dir: string) => fs.readdirSync(dir).forEach((name) => fs.rmSync(path.join(dir, name), { recursive: true, force: true }));
