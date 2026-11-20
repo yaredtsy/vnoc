@@ -42,6 +42,7 @@ only if you know where the code went (`vnoc relink <ID> <node>`).
 ## Writing a note
 Write one when the user asks. When you learned something a future reader could not see in the code, offer to write it down; do not
 write it unasked. One note, one subject.
+Write what the user said or what you saw in the code; do not add reasons nobody gave.
 `vnoc doc new <node> --title "…" --author <your name>` prints the new file's path; write the note into that file, or pass the body
 with `--body-file -`. V-NOC writes the title as the note's `# ` heading: start the body with the text, not with the title again.
 It adds an `ID:` line to the function: read the source file again before you edit it.
@@ -52,6 +53,6 @@ Tags: run `vnoc tags` first and reuse one that fits (`.vnoc/tags.toml` says what
 `vnoc guide` lists the topics (read · tree · find · write · check). `vnoc <command> --help` has every flag.
 
 ## Without the command
-The notes of code marked `ID: <26 characters>` are the `.md` files in `.vnoc/nodes/<last 2 characters of the ID>/<ID>/`.
-Read them with your file tools. Do not attach new notes by hand: tell the user that the `vnoc` command is needed
-(VS Code: "V-NOC: Install `vnoc` Command in PATH").
+First tell the user the `vnoc` command is not installed (VS Code: "V-NOC: Install `vnoc` Command in PATH", or `install.sh` from the
+release). Then read the notes: those of code marked `ID: <26 characters>` are the `.md` files in
+`.vnoc/nodes/<last 2 characters of the ID>/<ID>/`. Read them with your file tools. Still never attach a note by hand.
