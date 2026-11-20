@@ -43,7 +43,8 @@ only if you know where the code went (`vnoc relink <ID> <node>`).
 Write one when the user asks. When you learned something a future reader could not see in the code, offer to write it down; do not
 write it unasked. One note, one subject.
 `vnoc doc new <node> --title "…" --author <your name>` prints the new file's path; write the note into that file, or pass the body
-with `--body-file -`. It adds an `ID:` line to the function: read the source file again before you edit it.
+with `--body-file -`. V-NOC writes the title as the note's `# ` heading: start the body with the text, not with the title again.
+It adds an `ID:` line to the function: read the source file again before you edit it.
 Tags: run `vnoc tags` first and reuse one that fits (`.vnoc/tags.toml` says what each means; do not edit it). A plan is
 `--tag plan`; when it ships, `vnoc doc tag <node> --add done --remove plan`.
 

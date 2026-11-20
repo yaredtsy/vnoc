@@ -37,7 +37,8 @@ note: "done" is a new tag in this project
 ```
 
 - The new file holds its title only: write the note into the path printed, or give the body at once: `vnoc doc new <node> --title "…" --body-file -`
-  reads it from standard input (`--body-file <file>` from a file). Leave out the `---` header: V-NOC writes it. Pass your own name as `--author`.
+  reads it from standard input (`--body-file <file>` from a file). V-NOC writes the title as the note's `# ` heading: start the body with the text, not with the title
+  again. Leave out the `---` header: V-NOC writes it. Pass your own name as `--author`.
 - Every write prints each file it changed. When it says `changed <file>` (an `ID:` line was added to your source), read that file again
   before you edit it: your copy is old. A node with several notes needs the file name for `doc tag`.
 - To correct a note, edit its file (keep its first lines, between the two `---`). Nothing deletes a note.

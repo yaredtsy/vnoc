@@ -148,6 +148,9 @@ struct DocNew {
     changed: Vec<String>,
     id_in_code: bool,
     notice: Option<String>,
+    /// the body's own `# <title>` line was left out: present (true) only when it happened
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    title_line_dropped: bool,
     /// a tag given that no other doc has and `tags.toml` does not describe: `note: "<t>" is a new tag in this project …` (04 §4); left out when there is none
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tag_notices: Vec<String>,
@@ -171,6 +174,12 @@ impl Render for DocNew {
         let mut text = format!("{}{}\n", label("attached to"), self.text.head);
         // the path is the one thing the agent needs, on a row of its own; what to do with it is the line under it (a long path and an arrow on one row wrap)
         text.push_str(&format!("{}{}\n", label("created"), self.doc));
+        // about the data, not a hint: `--quiet` keeps it
+        if self.title_line_dropped {
+            text.push_str(&continued(
+                "the body's own \"# <title>\" line was left out: V-NOC writes the title",
+            ));
+        }
         if self.text.empty && !quiet {
             text.push_str(&continued("← write the note here"));
         }
@@ -357,6 +366,7 @@ pub async fn doc_new(global: &Global, args: &DocNewArgs) -> Result<(), Failure> 
             changed,
             id_in_code: attached.result.id_in_code,
             notice: attached.result.notice,
+            title_line_dropped: attached.result.title_line_dropped,
             tag_notices,
             text: Lines {
                 head: head_line(kind_word(node.kind), &location, None, Some(&id)),

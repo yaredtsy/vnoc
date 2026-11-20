@@ -5655,3 +5655,68 @@ fn long_help_still_has_the_paragraphs_and_every_flag() {
     // no word was glued at a line end
     assert!(!long.contains("elsethe"));
 }
+
+// ------------------------------------------------------------------------------------------ a note's title is written once (A12d)
+
+#[test]
+fn a_body_that_starts_with_the_title_does_not_get_it_twice() {
+    let root = started_copy("new-title-once", &[]);
+    let node = "billing/tax.py::rate_for";
+    let new = |title: &str, body: &str, extra: &[&str]| {
+        let mut args = vec!["doc", "new", node, "--title", title, "--body-file", "-"];
+        args.extend_from_slice(extra);
+        let out = run_with_stdin(vnoc(&root, &args), body.as_bytes());
+        assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+        text(&out.stdout)
+    };
+    let notice = "the body's own \"# <title>\" line was left out: V-NOC writes the title";
+    let note = |file: &str| {
+        let text = std::fs::read_to_string(node_folders(&root)[0].join(file)).unwrap();
+        text.split_once("\n---\n").unwrap().1.to_string()
+    };
+
+    let said = new("Same title", "# Same title\n\nBody.\n", &[]);
+    assert_eq!(note("same-title.md"), "# Same title\n\nBody.\n");
+    let lines: Vec<&str> = said.lines().collect();
+    assert!(
+        lines[1].starts_with("created") && lines[1].ends_with("same-title.md"),
+        "{said}"
+    );
+    assert_eq!(lines[2], format!("{}{notice}", " ".repeat(13)), "{said}");
+
+    // another case, extra spaces, blank lines before the heading
+    new(
+        "Knowledge base",
+        "\n\n#  KNOWLEDGE   base \n\n\nBody.\n",
+        &[],
+    );
+    assert_eq!(note("knowledge-base.md"), "# Knowledge base\n\nBody.\n");
+
+    // a different heading is the author's; a `## ` heading is not the title; text is text
+    for (title, body) in [
+        ("Different", "# Something else\n\nBody.\n"),
+        ("Second level", "## Second level\n\nBody.\n"),
+        ("No heading", "Body.\n"),
+    ] {
+        let said = new(title, body, &[]);
+        assert!(!said.contains("left out"), "{title}: {said}");
+        let file = format!("{}.md", title.to_lowercase().replace(' ', "-"));
+        assert_eq!(note(&file), format!("# {title}\n\n{body}"));
+    }
+
+    // the notice is about the data: --quiet keeps it; the JSON has the field only when it happened
+    let quiet = new("Quiet", "# Quiet\n\nBody.\n", &["--quiet"]);
+    assert!(quiet.contains(notice), "{quiet}");
+    let json = |title: &str, body: &str| -> Value {
+        serde_json::from_str(&new(title, body, &["--json"])).unwrap()
+    };
+    assert_eq!(
+        json("Json", "# Json\n\nBody.\n")["title_line_dropped"],
+        true
+    );
+    assert!(
+        json("Json other", "Body.\n")
+            .get("title_line_dropped")
+            .is_none()
+    );
+}

@@ -26,7 +26,9 @@ use crate::driver_host::DriverHost;
 use crate::index::Index;
 use crate::project::Project;
 use crate::protocol::{AttachParams, AttachResult, Document};
-use crate::userdata::{NewDoc, UserData, UserDataError, after_frontmatter, is_tag};
+use crate::userdata::{
+    NewDoc, UserData, UserDataError, after_frontmatter, is_tag, without_own_title,
+};
 
 /// The longest body a doc is made with: a note is a note.
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
@@ -282,12 +284,14 @@ pub async fn attach(
     } else {
         location.to_string()
     };
+    // V-NOC writes the title as the heading: a body that starts with it is not given it twice
+    let (body, title_line_dropped) = without_own_title(&params.title, &options.body);
     let doc: PathBuf = data.create_doc(
         &id,
         &NewDoc {
             title: &params.title,
             hint: &hint,
-            body: &options.body,
+            body,
             author: options.author.as_deref().map(str::trim),
             tags: &once_each(&options.tags),
         },
@@ -299,6 +303,7 @@ pub async fn attach(
             doc: doc.to_string_lossy().into_owned(),
             id_in_code,
             notice,
+            title_line_dropped,
         },
         marker,
     })

@@ -329,6 +329,38 @@ impl<'a> NewDoc<'a> {
     }
 }
 
+/// `body` without its first line when that is a `# ` heading equal to `title` (trimmed, case and runs of spaces ignored), and without the blank lines
+/// right after it: V-NOC writes the title, so a body that starts with it would have it twice. A different heading, a `## ` one, or text stays as it is.
+/// The flag says whether a line was dropped.
+pub fn without_own_title<'b>(title: &str, body: &'b str) -> (&'b str, bool) {
+    let words =
+        |text: &str| -> Vec<String> { text.split_whitespace().map(str::to_lowercase).collect() };
+    let mut rest = body;
+    // blank lines before the heading do not hide it
+    while let Some(line) = rest.split_inclusive('\n').next() {
+        if !line.trim().is_empty() {
+            break;
+        }
+        rest = &rest[line.len()..];
+    }
+    let Some(line) = rest.split_inclusive('\n').next() else {
+        return (body, false);
+    };
+    match line.strip_prefix("# ") {
+        Some(heading) if words(heading) == words(title) => {
+            rest = &rest[line.len()..];
+            while let Some(line) = rest.split_inclusive('\n').next() {
+                if !line.trim().is_empty() {
+                    break;
+                }
+                rest = &rest[line.len()..];
+            }
+            (rest, true)
+        }
+        _ => (body, false),
+    }
+}
+
 /// A file name for a title that is legal on macOS, Linux and Windows (`04-storage/01-vnoc-folder.md` §3, "Docs").
 fn slug(title: &str) -> String {
     const RESERVED: [&str; 22] = [
@@ -378,6 +410,43 @@ mod tests {
             1,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_body_that_starts_with_the_title_loses_that_line_and_the_blank_lines_after_it() {
+        let own = |title, body| without_own_title(title, body);
+        let same = ("Body.\n", true);
+        assert_eq!(own("Same title", "# Same title\n\nBody.\n"), same);
+        assert_eq!(own("Same title", "# Same title\n\n\n  \nBody.\n"), same);
+        // case and runs of spaces do not matter; nor do spaces around the title
+        assert_eq!(own("Same title", "#   SAME   Title  \n\nBody.\n"), same);
+        assert_eq!(own("  Same   title ", "# same title\nBody.\n"), same);
+        // blank lines before the heading do not hide it
+        assert_eq!(own("Same title", "\n  \n# Same title\n\nBody.\n"), same);
+        // nothing after it
+        assert_eq!(own("Same title", "# Same title"), ("", true));
+        // the text after it keeps its own indentation
+        assert_eq!(own("T", "# T\n\n    code\n"), ("    code\n", true));
+    }
+
+    #[test]
+    fn any_other_body_is_left_as_it_is() {
+        for body in [
+            "",
+            "\n\n",
+            "Body.\n",
+            "# Another title\n\nBody.\n",
+            "## Same title\n\nBody.\n",
+            "#Same title\n\nBody.\n",
+            "Intro.\n\n# Same title\n\nBody.\n",
+            "# Same title, and more\n",
+        ] {
+            assert_eq!(
+                without_own_title("Same title", body),
+                (body, false),
+                "{body:?}"
+            );
+        }
     }
 
     #[test]

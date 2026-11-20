@@ -308,6 +308,9 @@ pub struct AttachResult {
     pub id_in_code: bool,
     /// something the user should hear (the ID could not be written, so the doc is attached by name)
     pub notice: Option<String>,
+    /// the body began with its own `# <title>` line and it was left out (the heading is V-NOC's); absent otherwise
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub title_line_dropped: bool,
 }
 
 impl Request for Attach {
