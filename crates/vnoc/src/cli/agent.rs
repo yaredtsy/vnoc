@@ -6,17 +6,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use dialoguer::MultiSelect;
 use dialoguer::console::Term;
 use dialoguer::theme::{ColorfulTheme, SimpleTheme, Theme};
+use dialoguer::{Confirm, MultiSelect};
 use serde::Serialize;
 
-use super::args::{AgentCommand, InstallArgs, RemoveArgs};
+use super::args::{self, AgentCommand, InstallArgs, RemoveArgs};
 use super::out::{self, Render};
 use super::write::{continued, label};
 use super::{Failure, Global, style};
 use crate::agents::{
-    self, AGENTS, Action, Agent, Change, Options, Part, State, Texts, detect, permission_lines,
+    self, AGENTS, Action, Agent, Change, Options, Part, PermissionScope, PermissionState, State,
+    Texts, detect, permission_lines,
 };
 
 pub fn run(global: &Global, command: &AgentCommand) -> Result<(), Failure> {
@@ -159,6 +160,15 @@ fn at_a_prompt<T>(ask: impl FnOnce() -> T) -> T {
     answer
 }
 
+/// Coloured when standard error is, plain otherwise.
+fn theme() -> Box<dyn Theme> {
+    if style::on(style::Stream::Err) {
+        Box::new(ColorfulTheme::default())
+    } else {
+        Box::new(SimpleTheme)
+    }
+}
+
 /// What the user did at the menu.
 enum Menu {
     Picked(Vec<Agent>),
@@ -195,15 +205,9 @@ fn menu(found: &[Agent]) -> Menu {
             "(↑/↓ move, Space ticks, Enter accepts, Esc cancels)"
         )
     );
-    let colorful = ColorfulTheme::default();
-    let plain = SimpleTheme;
-    let theme: &dyn Theme = if style::on(style::Stream::Err) {
-        &colorful
-    } else {
-        &plain
-    };
+    let theme = theme();
     let asked = at_a_prompt(|| {
-        MultiSelect::with_theme(theme)
+        MultiSelect::with_theme(&*theme)
             .items_checked(items)
             .report(false)
             .interact_on_opt(&Term::stderr())
@@ -311,10 +315,22 @@ struct Changes {
     actions: Vec<Action>,
     /// the lines to add to an agent's own settings: only for an agent whose syntax was read (07 §4)
     permissions: Vec<Permission>,
+    /// the names (`Claude Code`, `Codex`) of the picked agents that V-NOC can write permissions for: a program that asks the user shows them
+    can_allow: Vec<&'static str>,
+    /// whether the text ends by saying to commit the files: a project file was written (the caller knows, a render may show only some of the actions)
+    #[serde(skip)]
+    commit_line: bool,
 }
 
-fn verb(change: Change, dry_run: bool) -> &'static str {
-    match (change, dry_run) {
+fn verb(action: &Action, dry_run: bool) -> &'static str {
+    let allow = action.part == Part::Permissions;
+    match (action.change, dry_run) {
+        (Change::Create | Change::Replace, false) if allow => "allowed",
+        (Change::Create | Change::Replace, true) if allow => "will allow",
+        (Change::AddEntries, false) => "allowed",
+        (Change::AddEntries, true) => "will allow",
+        (Change::RemoveEntries, false) => "removed",
+        (Change::RemoveEntries, true) => "will remove",
         (Change::Create, false) => "created",
         (Change::Create, true) => "will create",
         (Change::Replace, false) | (Change::ReplaceBlock, false) => "replaced",
@@ -348,6 +364,8 @@ fn about(action: &Action, command: &str, picked: &[Agent]) -> String {
         (Part::Rules, Change::Delete) => "it held nothing but the V-NOC block",
         (Part::Rules, _) => "the rules block",
         (Part::Import, _) => "imports AGENTS.md, so every Claude Code reads the rules",
+        // a permissions row says it in its own words (`permission_text`)
+        (Part::Permissions, _) => "",
     };
     let mut line = what.to_string();
     if action.part == Part::Import {
@@ -372,14 +390,46 @@ fn about(action: &Action, command: &str, picked: &[Agent]) -> String {
     }
 }
 
+/// A permissions row: what is allowed and for whom, then where (`in`), then what else there is to say.
+fn permission_text(action: &Action, dry_run: bool) -> String {
+    let word = verb(action, dry_run);
+    let word = if action.change == Change::Leave {
+        style::paint(style::warn(), format!("{word:<13}"))
+    } else {
+        label(word)
+    };
+    let name = action
+        .agents
+        .first()
+        .and_then(|a| agents::permission_name(*a))
+        .unwrap_or("the agent");
+    let mut text = format!("{word}V-NOC's read commands for {name}\n");
+    text.push_str(&format!("{}{}\n", label("in"), action.path));
+    let note = match (&action.why, action.change) {
+        (Some(why), _) => Some(why.as_str()),
+        (None, Change::AddEntries | Change::RemoveEntries) => {
+            Some("only V-NOC's entries; the rest of the file is as it was")
+        }
+        _ => None,
+    };
+    if let Some(note) = note {
+        text.push_str(&continued(note));
+    }
+    text
+}
+
 impl Render for Changes {
     fn text(&self, quiet: bool) -> String {
-        if self.actions.is_empty() {
+        if self.actions.is_empty() && self.permissions.is_empty() {
             return "nothing to remove\n".to_string();
         }
         let mut text = String::new();
         for action in &self.actions {
-            let word = verb(action.change, self.dry_run);
+            if action.part == Part::Permissions {
+                text.push_str(&permission_text(action, self.dry_run));
+                continue;
+            }
+            let word = verb(action, self.dry_run);
             let word = if action.change == Change::Leave {
                 style::paint(style::warn(), format!("{word:<13}"))
             } else {
@@ -388,12 +438,7 @@ impl Render for Changes {
             text.push_str(&format!("{word}{}\n", action.path));
             text.push_str(&continued(&about(action, self.command, &self.agents)));
         }
-        let wrote = !self.dry_run
-            && self
-                .actions
-                .iter()
-                .any(|a| a.change.touches() && !a.path.starts_with("~/"));
-        if wrote && self.command == "agent install" && !quiet {
+        if self.commit_line && self.command == "agent install" && !quiet {
             text.push_str("\ncommit these files so your team's agents get them\n");
         }
         if !quiet {
@@ -403,6 +448,16 @@ impl Render for Changes {
         }
         text
     }
+}
+
+/// Whether a file of the project that the team would commit was written: not the user-level files, and not the settings file only this user has.
+fn wrote_for_the_team(actions: &[Action], dry_run: bool) -> bool {
+    !dry_run
+        && actions.iter().any(|a| {
+            a.change.touches()
+                && !a.path.starts_with("~/")
+                && !a.path.ends_with("settings.local.json")
+        })
 }
 
 fn finish(global: &Global, changes: Changes) -> Result<(), Failure> {
@@ -418,6 +473,126 @@ fn finish(global: &Global, changes: Changes) -> Result<(), Failure> {
 }
 
 // ------------------------------------------------------------------------------------------------------------------- install
+
+fn scope_of(scope: args::PermissionScope) -> PermissionScope {
+    match scope {
+        args::PermissionScope::Local => PermissionScope::Local,
+        args::PermissionScope::Project => PermissionScope::Project,
+    }
+}
+
+/// What is done about the permissions of the agents that have a syntax V-NOC knows (07 §4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Allow {
+    /// write them, here
+    Write(PermissionScope),
+    /// ask first (after the files), in this way
+    Ask(Prompt),
+    /// write nothing; print the lines
+    Print,
+}
+
+/// Which of the four: `--no-permissions` is no, `--permissions` is yes, and with neither the question is asked in a terminal and only there (an agent or
+/// a script never widens its own permissions). The question is skipped for `--global`, `--skill-only`, `--rules-only` and `--json`, where it would not
+/// fit (`asked_by_default`), and when no agent picked has a syntax to write. A dry run asks nothing: it shows what the default would write.
+pub fn allow_mode(
+    no: bool,
+    yes: Option<PermissionScope>,
+    asked_by_default: bool,
+    covered: bool,
+    prompt: Prompt,
+    dry_run: bool,
+) -> Allow {
+    if no || !covered {
+        return Allow::Print;
+    }
+    if let Some(scope) = yes {
+        return Allow::Write(scope);
+    }
+    match (asked_by_default, prompt, dry_run) {
+        (false, _, _) | (_, Prompt::None, _) => Allow::Print,
+        (true, _, true) => Allow::Write(PermissionScope::Local),
+        (true, prompt, false) => Allow::Ask(prompt),
+    }
+}
+
+/// What a typed answer to `[Y/n]` means: Enter is yes. `None`: it is neither.
+pub fn parse_yes_no(line: &str) -> Option<bool> {
+    match line.trim().to_lowercase().as_str() {
+        "" | "y" | "yes" => Some(true),
+        "n" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+/// The question of 07 §4, naming only the agents it covers.
+fn permission_question(covered: &[Agent]) -> String {
+    let names: Vec<&str> = covered
+        .iter()
+        .filter_map(|a| agents::permission_name(*a))
+        .collect();
+    format!(
+        "Let {} run V-NOC's read commands without asking? Writes (doc new, doc tag, relink, repair, init) still ask.",
+        names.join(" and ")
+    )
+}
+
+/// The question on standard error, Enter being yes. Esc is no. When the terminal cannot draw it, a typed `[Y/n]`.
+fn ask_permissions(covered: &[Agent], prompt: Prompt) -> Result<bool, Failure> {
+    let question = permission_question(covered);
+    if prompt == Prompt::Menu {
+        let theme = theme();
+        let asked = at_a_prompt(|| {
+            Confirm::with_theme(&*theme)
+                .with_prompt(&question)
+                .default(true)
+                .report(false)
+                .interact_on_opt(&Term::stderr())
+        });
+        match asked {
+            Ok(answer) => return Ok(answer.unwrap_or(false)),
+            Err(dialoguer::Error::IO(e)) if e.kind() == std::io::ErrorKind::Interrupted => {
+                interrupted(true)
+            }
+            Err(_) => {}
+        }
+    }
+    let mut err = std::io::stderr().lock();
+    let _ = write!(err, "{question} [Y/n] ");
+    let _ = err.flush();
+    drop(err);
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| Failure::Environment(format!("could not read your answer: {e}")))?;
+    Ok(parse_yes_no(&line).unwrap_or_else(|| {
+        let _ = writeln!(
+            std::io::stderr(),
+            "`{}` is neither y nor n: nothing allowed",
+            line.trim()
+        );
+        false
+    }))
+}
+
+/// The lines to add by hand, for the agents whose permissions were not written (declined, left, or none asked for).
+fn lines_for(picked: &[Agent], written: &[Action]) -> Vec<Permission> {
+    permission_lines(picked)
+        .into_iter()
+        .filter(|(agent, _)| {
+            !written.iter().any(|a| {
+                a.part == Part::Permissions
+                    && a.agents.contains(agent)
+                    && matches!(
+                        a.change,
+                        Change::Create | Change::Replace | Change::AddEntries | Change::Same
+                    )
+            })
+        })
+        .map(|(agent, text)| Permission { agent, text })
+        .collect()
+}
 
 fn install(global: &Global, args: &InstallArgs) -> Result<(), Failure> {
     if args.global && args.rules_only {
@@ -442,36 +617,88 @@ fn install(global: &Global, args: &InstallArgs) -> Result<(), Failure> {
         force: args.force,
         all: args.all,
     };
-    let actions = agents::plan(
+    let mut actions = agents::plan(
         &root,
         home.as_deref(),
         &picked,
         &options,
         &Texts::built_in(),
     );
-    if !args.dry_run {
-        agents::apply(&actions, &root, home.as_deref())
-            .map_err(|e| Failure::Environment(format!("could not write {e}")))?;
-    }
-    finish(
-        global,
-        Changes {
+    let covered = agents::permission_agents(&picked);
+    let prompt = prompt_for(
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+        std::env::var("TERM").ok().as_deref(),
+    );
+    let allow = allow_mode(
+        args.no_permissions,
+        args.permissions.map(scope_of),
+        !args.global && !args.skill_only && !args.rules_only && !global.json,
+        !args.global && !covered.is_empty(),
+        prompt,
+        args.dry_run,
+    );
+    let write = |actions: &[Action]| -> Result<(), Failure> {
+        if args.dry_run {
+            return Ok(());
+        }
+        agents::apply(actions, &root, home.as_deref())
+            .map_err(|e| Failure::Environment(format!("could not write {e}")))
+    };
+    let answer =
+        |agents: &[Agent], actions: Vec<Action>, lines: Vec<Permission>, commit_line| Changes {
             schema: 1,
             command: "agent install",
             dry_run: args.dry_run,
             root: root.to_string_lossy().into_owned(),
-            permissions: if args.global {
+            agents: agents.to_vec(),
+            actions,
+            permissions: lines,
+            can_allow: if args.global {
                 Vec::new()
             } else {
-                permission_lines(&picked)
-                    .into_iter()
-                    .map(|(agent, text)| Permission { agent, text })
+                covered
+                    .iter()
+                    .filter_map(|a| agents::permission_name(*a))
                     .collect()
             },
-            agents: picked,
-            actions,
-        },
-    )
+            commit_line,
+        };
+    if let Allow::Ask(prompt) = allow {
+        // the files first, so the question comes with them in front of the user; then the question, then its answer
+        write(&actions)?;
+        let committed = wrote_for_the_team(&actions, args.dry_run);
+        let refused_files = actions.iter().any(Action::refused);
+        out::render(&answer(&picked, actions, Vec::new(), false), global)?;
+        let (more, lines) = if ask_permissions(&covered, prompt)? {
+            let more =
+                agents::plan_permissions(&root, home.as_deref(), &picked, PermissionScope::Local);
+            write(&more)?;
+            let lines = lines_for(&picked, &more);
+            (more, lines)
+        } else {
+            (Vec::new(), lines_for(&picked, &[]))
+        };
+        let refused = refused_files || more.iter().any(Action::refused);
+        out::render(&answer(&picked, more, lines, committed), global)?;
+        return if refused {
+            Err(Failure::Reported)
+        } else {
+            Ok(())
+        };
+    }
+    let lines = match allow {
+        Allow::Write(scope) => {
+            let more = agents::plan_permissions(&root, home.as_deref(), &picked, scope);
+            actions.extend(more);
+            lines_for(&picked, &actions)
+        }
+        _ if args.global => Vec::new(),
+        _ => lines_for(&picked, &[]),
+    };
+    write(&actions)?;
+    let committed = wrote_for_the_team(&actions, args.dry_run);
+    finish(global, answer(&picked, actions, lines, committed))
 }
 
 // --------------------------------------------------------------------------------------------------------------------- remove
@@ -502,6 +729,8 @@ fn remove(global: &Global, args: &RemoveArgs) -> Result<(), Failure> {
             agents: picked.unwrap_or_default(),
             actions,
             permissions: Vec::new(),
+            can_allow: Vec::new(),
+            commit_line: false,
         },
     )
 }
@@ -574,6 +803,8 @@ struct StatusAnswer {
     schema: u32,
     command: &'static str,
     set_up: bool,
+    /// per agent that has a syntax V-NOC knows: whether its read commands are allowed
+    permissions: Vec<agents::PermissionStatus>,
     #[serde(flatten)]
     status: agents::Status,
 }
@@ -601,15 +832,57 @@ fn describe(state: &State, part: Part) -> (&'static str, String, bool) {
                 Part::Skill => "by hand: vnoc agent install replaces it".to_string(),
                 Part::Rules => "it differs from this vnoc's block (edited, or from another version): vnoc agent install replaces it".to_string(),
                 Part::Import => "it has more than the one import line V-NOC wrote: vnoc agent remove leaves it".to_string(),
+                Part::Permissions => String::new(),
             },
             false,
         ),
     }
 }
 
+/// One agent's line of `status`: whether V-NOC's read commands are allowed, and where, or what to run.
+fn permission_status_text(p: &agents::PermissionStatus) -> String {
+    let name = agents::permission_name(p.agent).unwrap_or("the agent");
+    let path = p.path.as_deref().unwrap_or_default();
+    let ask = format!(
+        "vnoc agent install --agent {} --permissions",
+        p.agent.name()
+    );
+    match p.state {
+        PermissionState::InPlace => format!(
+            "{}V-NOC's read commands for {name}\n{}{path}\n",
+            label("allowed"),
+            label("in")
+        ),
+        PermissionState::Partial => format!(
+            "{}V-NOC's read commands for {name}\n{}{path}\n{}",
+            style::paint(style::warn(), format!("{:<13}", "partly")),
+            label("in"),
+            continued(&format!("some are missing: {ask} adds them"))
+        ),
+        PermissionState::Changed => format!(
+            "{}V-NOC's read commands for {name}\n{}{path}\n{}",
+            style::paint(style::warn(), format!("{:<13}", "changed")),
+            label("in"),
+            continued(&format!(
+                "it differs from this vnoc's file: {ask} replaces it"
+            ))
+        ),
+        PermissionState::Missing => format!(
+            "{}V-NOC's read commands for {name}\n{}",
+            style::paint(style::warn(), format!("{:<13}", "not allowed")),
+            continued(&format!("each one asks: {ask}"))
+        ),
+    }
+}
+
 impl Render for StatusAnswer {
     fn text(&self, _quiet: bool) -> String {
-        if self.status.files.is_empty() {
+        let nothing_allowed = self
+            .status
+            .permissions
+            .iter()
+            .all(|p| p.state == PermissionState::Missing);
+        if self.status.files.is_empty() && nothing_allowed {
             return "not set up: vnoc agent install\n".to_string();
         }
         let mut text = String::new();
@@ -625,6 +898,7 @@ impl Render for StatusAnswer {
                 Part::Skill => "the skill",
                 Part::Rules => "the rules block",
                 Part::Import => "the import of AGENTS.md",
+                Part::Permissions => "the permissions",
             };
             let line = if detail.is_empty() {
                 format!("{part}, read by {}", who(&file.serves))
@@ -636,13 +910,18 @@ impl Render for StatusAnswer {
         for part in &self.status.missing {
             let (what, fix) = match part {
                 Part::Skill => ("the skill", "--skill-only"),
-                Part::Rules | Part::Import => ("the rules block", "--rules-only"),
+                Part::Rules | Part::Import | Part::Permissions => {
+                    ("the rules block", "--rules-only")
+                }
             };
             text.push_str(&format!(
                 "{}{what}\n{}",
                 style::paint(style::warn(), format!("{:<13}", "missing")),
                 continued(&format!("nothing carries it: vnoc agent install {fix}"))
             ));
+        }
+        for p in &self.status.permissions {
+            text.push_str(&permission_status_text(p));
         }
         text
     }
@@ -657,6 +936,7 @@ fn status(global: &Global) -> Result<(), Failure> {
             schema: 1,
             command: "agent status",
             set_up: !status.files.is_empty(),
+            permissions: status.permissions.clone(),
             status,
         },
         global,
@@ -693,14 +973,14 @@ pub fn summary(status: &agents::Status) -> String {
             .iter()
             .map(|f| match part {
                 Part::Skill => f.path.trim_end_matches("/vnoc/SKILL.md").to_string(),
-                Part::Rules | Part::Import => f.path.clone(),
+                Part::Rules | Part::Import | Part::Permissions => f.path.clone(),
             })
             .collect::<Vec<_>>()
             .join(", ");
         parts.push(match worst.map(|f| &f.state) {
             None => match part {
                 Part::Skill => format!("skill current ({places})"),
-                Part::Rules | Part::Import => format!("rules in {places}"),
+                Part::Rules | Part::Import | Part::Permissions => format!("rules in {places}"),
             },
             Some(State::Older { version }) => style::paint(
                 style::warn(),
@@ -723,7 +1003,7 @@ pub fn summary(status: &agents::Status) -> String {
     for part in &status.missing {
         let (name, flag) = match part {
             Part::Skill => ("skill", "--skill-only"),
-            Part::Rules | Part::Import => ("rules", "--rules-only"),
+            Part::Rules | Part::Import | Part::Permissions => ("rules", "--rules-only"),
         };
         parts.push(style::paint(
             style::warn(),
@@ -773,5 +1053,77 @@ mod tests {
         assert_eq!(prompt_for(false, true, Some("xterm")), Prompt::None);
         assert_eq!(prompt_for(true, false, Some("xterm")), Prompt::None);
         assert_eq!(prompt_for(false, false, Some("dumb")), Prompt::None);
+    }
+
+    #[test]
+    fn the_permissions_are_asked_only_in_a_terminal_and_never_for_an_agent_or_a_script() {
+        use Allow::*;
+        let local = PermissionScope::Local;
+        // (no_permissions, --permissions, asked by default, an agent is covered, the prompt, dry run)
+        let mode = |no, yes, by_default, covered, prompt, dry| {
+            allow_mode(no, yes, by_default, covered, prompt, dry)
+        };
+        // a terminal, no flag: the question
+        assert_eq!(
+            mode(false, None, true, true, Prompt::Menu, false),
+            Ask(Prompt::Menu)
+        );
+        assert_eq!(
+            mode(false, None, true, true, Prompt::TypedLine, false),
+            Ask(Prompt::TypedLine)
+        );
+        // the flags answer it
+        assert_eq!(
+            mode(false, Some(local), true, true, Prompt::Menu, false),
+            Write(local)
+        );
+        assert_eq!(mode(true, None, true, true, Prompt::Menu, false), Print);
+        // not a terminal, no flag: nothing is written (the flag still writes: someone typed it)
+        assert_eq!(mode(false, None, true, true, Prompt::None, false), Print);
+        assert_eq!(
+            mode(
+                false,
+                Some(PermissionScope::Project),
+                true,
+                true,
+                Prompt::None,
+                false
+            ),
+            Write(PermissionScope::Project)
+        );
+        // no agent with a syntax, --global, --skill-only, --rules-only and --json: no question
+        assert_eq!(mode(false, None, true, false, Prompt::Menu, false), Print);
+        assert_eq!(mode(false, None, false, true, Prompt::Menu, false), Print);
+        // a dry run asks nothing and shows what the default would write
+        assert_eq!(
+            mode(false, None, true, true, Prompt::Menu, true),
+            Write(local)
+        );
+        assert_eq!(mode(false, None, true, true, Prompt::None, true), Print);
+    }
+
+    #[test]
+    fn the_typed_answer_is_yes_on_enter() {
+        for yes in ["", "\n", "  ", "y", "Y", "yes", "YES\n"] {
+            assert_eq!(parse_yes_no(yes), Some(true), "{yes:?}");
+        }
+        for no in ["n", "N", "no", "No\n"] {
+            assert_eq!(parse_yes_no(no), Some(false), "{no:?}");
+        }
+        assert_eq!(parse_yes_no("maybe"), None);
+        assert_eq!(parse_yes_no("1"), None);
+    }
+
+    #[test]
+    fn the_question_names_only_the_agents_it_covers() {
+        assert_eq!(
+            permission_question(&[Agent::Claude]),
+            "Let Claude Code run V-NOC's read commands without asking? Writes (doc new, doc tag, relink, repair, init) still ask."
+        );
+        assert!(
+            permission_question(&[Agent::Claude, Agent::Codex])
+                .starts_with("Let Claude Code and Codex run")
+        );
+        assert!(permission_question(&[Agent::Codex]).starts_with("Let Codex run"));
     }
 }

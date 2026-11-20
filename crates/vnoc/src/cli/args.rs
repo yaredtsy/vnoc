@@ -298,8 +298,12 @@ pub enum AgentCommand {
     /// With neither --agent nor --all: in a terminal it asks (the agents found here are ticked); otherwise it takes the agents found here, and
     /// exits 2 listing the names when it finds none. An agent that is not in the list is `other`. A `SKILL.md` that V-NOC did not write is
     /// left (exit 2) unless --force; in a rules file only the block between its markers is replaced, the rest is as it was; installing twice
-    /// changes nothing. Prints each file it wrote or left, then what to commit, then the lines that let Claude Code and Codex run V-NOC's
-    /// read commands without asking (it writes no settings file).
+    /// changes nothing. Prints each file it wrote or left, then what to commit.
+    ///
+    /// For Claude Code and Codex it also offers to let them run V-NOC's read commands without asking (never a write): in a terminal it asks,
+    /// Enter means yes; --permissions says yes and --no-permissions says no without asking; with no terminal and neither flag nothing is
+    /// written and the lines are printed. Claude Code: the entries are added to `.claude/settings.local.json` (yours, not committed;
+    /// --permissions=project: the shared `.claude/settings.json`), and what is there already stays. Codex: `~/.codex/rules/vnoc.rules`.
     Install(InstallArgs),
     /// Says, for each file V-NOC wrote, whether it is current, older than this V-NOC, or changed by hand, and which agents read it.
     Status,
@@ -338,6 +342,28 @@ pub struct InstallArgs {
     /// Replace a `SKILL.md` that V-NOC did not write.
     #[arg(long)]
     pub force: bool,
+    /// Let Claude Code and Codex run V-NOC's read commands without asking, with no question. `local` (the default) is `.claude/settings.local.json`,
+    /// `project` is the shared `.claude/settings.json`.
+    #[arg(
+        long,
+        value_name = "local|project",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "local",
+        conflicts_with_all = ["no_permissions", "global"]
+    )]
+    pub permissions: Option<PermissionScope>,
+    /// Do not write permissions and do not ask: print the lines to add instead.
+    #[arg(long)]
+    pub no_permissions: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum PermissionScope {
+    /// `.claude/settings.local.json`: only this user's, not committed
+    Local,
+    /// `.claude/settings.json`: shared with the team
+    Project,
 }
 
 #[derive(Debug, Args)]

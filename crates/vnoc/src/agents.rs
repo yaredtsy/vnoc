@@ -4,7 +4,8 @@
 //! `AGENTS.md`, `CLAUDE.md` or `GEMINI.md`. The table is data here ([`Agent`]); a new agent, or one that moves, is a row and never a new mechanism.
 //!
 //! `plan` looks at the disk and decides, file by file, and writes nothing; `apply` writes what a plan says, each file atomically. Nothing is
-//! written outside the root, or outside the home folder for a `--global` install, and no agent's settings file is ever written.
+//! written outside the root, or outside the home folder (for a `--global` install, and for Codex's permission rules). An agent's settings file is written only
+//! when the user said yes to the permissions (`plan_permissions`), and then only by adding V-NOC's entries: nothing of the user's is replaced.
 //! Nothing is stored about the pick: the files are the record (`status` reads them).
 
 use std::fs;
@@ -251,6 +252,8 @@ pub enum Part {
     Rules,
     /// the one-line `CLAUDE.md` that imports `AGENTS.md`
     Import,
+    /// the entries that let an agent run V-NOC's read commands without asking: in Claude Code's settings file, or Codex's `vnoc.rules`
+    Permissions,
 }
 
 /// What happens to one file.
@@ -273,6 +276,10 @@ pub enum Change {
     Delete,
     /// `remove`: the block is taken out of the file, and the rest is as it was
     RemoveBlock,
+    /// a settings file that is there: V-NOC's entries are added to `permissions.allow`, and nothing else is changed
+    AddEntries,
+    /// `remove`: V-NOC's entries are taken out of `permissions.allow`; the user's stay
+    RemoveEntries,
 }
 
 impl Change {
@@ -632,7 +639,9 @@ pub fn apply(actions: &[Action], root: &Path, home: Option<&Path>) -> io::Result
             | Change::Create
             | Change::Replace
             | Change::AddBlock
-            | Change::ReplaceBlock => {
+            | Change::ReplaceBlock
+            | Change::AddEntries
+            | Change::RemoveEntries => {
                 let content = action.content.as_deref().unwrap_or_default();
                 write_atomic(&action.full, content.as_bytes()).map_err(at)?;
             }
@@ -677,6 +686,9 @@ pub struct Status {
     pub files: Vec<FileStatus>,
     /// a half that is absent while the other is there: the skill with no rules, or the rules with no skill
     pub missing: Vec<Part>,
+    /// for Claude Code and Codex: whether V-NOC's read commands are allowed (`agent status` shows it; `vnoc status`'s one line has no use for it)
+    #[serde(skip)]
+    pub permissions: Vec<PermissionStatus>,
 }
 
 fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
@@ -762,6 +774,7 @@ pub fn status(root: &Path, home: Option<&Path>, texts: &Texts) -> Status {
             });
         }
     }
+    status.permissions = permission_status(root, home);
     let has = |part| status.files.iter().any(|f| f.part == part);
     match (has(Part::Skill), has(Part::Rules)) {
         (true, false) => status.missing.push(Part::Rules),
@@ -858,9 +871,13 @@ pub fn plan_remove(
             plan.remove_import_file();
         }
     }
-    // the skills first, then the rules files (a stable sort: the order inside each is the table's)
+    // the skills first, then the rules files (a stable sort: the order inside each is the table's), then the permissions
     plan.actions.sort_by_key(|a| a.part != Part::Skill);
-    plan.actions
+    let mut actions = plan.actions;
+    if !global {
+        actions.extend(plan_remove_permissions(root, home, &agents));
+    }
+    actions
 }
 
 impl Plan<'_> {
@@ -948,6 +965,547 @@ pub fn permission_lines(picked: &[Agent]) -> Vec<(Agent, &'static str)> {
         lines.push((Agent::Codex, CODEX));
     }
     lines
+}
+
+/// What V-NOC adds to Claude Code's `permissions.allow` (07 §4): the read commands. A prefix rule `Bash(vnoc show *)` also matches a bare `vnoc show`
+/// and not `vnoc showx`. `vnoc agent` is not in it, and neither is any write: those ask.
+pub const CLAUDE_ALLOW: [&str; 15] = [
+    "Bash(vnoc status *)",
+    "Bash(vnoc show *)",
+    "Bash(vnoc code *)",
+    "Bash(vnoc doc list *)",
+    "Bash(vnoc doc read *)",
+    "Bash(vnoc doc path *)",
+    "Bash(vnoc tree *)",
+    "Bash(vnoc find *)",
+    "Bash(vnoc grep *)",
+    "Bash(vnoc calls *)",
+    "Bash(vnoc missing *)",
+    "Bash(vnoc check *)",
+    "Bash(vnoc tags *)",
+    "Bash(vnoc guide *)",
+    "Bash(vnoc skill *)",
+];
+
+/// The first line of the file V-NOC writes for Codex: how V-NOC knows the file is its own (`remove` deletes only a file that has it).
+const CODEX_MARK: &str =
+    "# V-NOC: written by `vnoc agent install`; `vnoc agent remove` deletes this file.";
+
+/// Codex's rules file for V-NOC: a file of its own under `~/.codex/rules/`, so nothing of the user's is edited.
+pub fn codex_rules_text() -> String {
+    format!(
+        "{CODEX_MARK}\n\
+         # It lets Codex run V-NOC's read commands without asking; every write still asks.\n\
+         prefix_rule(pattern = [\"vnoc\", [\"status\", \"show\", \"code\", \"tree\", \"find\", \"grep\", \"calls\", \"missing\", \"check\", \"tags\", \"guide\", \"skill\"]], decision = \"allow\")\n\
+         prefix_rule(pattern = [\"vnoc\", \"doc\", [\"list\", \"read\", \"path\"]], decision = \"allow\")\n"
+    )
+}
+
+const CODEX_RULES: &str = ".codex/rules/vnoc.rules";
+
+/// Whether V-NOC's permissions go in the file the user keeps to themselves (`settings.local.json`, not committed) or the shared `settings.json`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PermissionScope {
+    Local,
+    Project,
+}
+
+impl PermissionScope {
+    fn claude_file(self) -> &'static str {
+        match self {
+            PermissionScope::Local => ".claude/settings.local.json",
+            PermissionScope::Project => ".claude/settings.json",
+        }
+    }
+}
+
+/// The agents whose permission syntax was read (07 §4), with the name a person knows them by.
+pub fn permission_name(agent: Agent) -> Option<&'static str> {
+    match agent {
+        Agent::Claude => Some("Claude Code"),
+        Agent::Codex => Some("Codex"),
+        _ => None,
+    }
+}
+
+/// The picked agents that V-NOC can write permissions for.
+pub fn permission_agents(picked: &[Agent]) -> Vec<Agent> {
+    picked
+        .iter()
+        .copied()
+        .filter(|a| permission_name(*a).is_some())
+        .collect()
+}
+
+// ---- the JSON merge: pure
+
+/// A JSON value that keeps the order its keys came in (`serde_json::Value` sorts them), so a settings file comes back with its keys where they were.
+#[derive(Clone, Debug, PartialEq)]
+enum Node {
+    Object(Vec<(String, Node)>),
+    Array(Vec<Node>),
+    Leaf(serde_json::Value),
+}
+
+impl<'de> serde::Deserialize<'de> for Node {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Node;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("any JSON value")
+            }
+            fn visit_bool<E>(self, v: bool) -> Result<Node, E> {
+                Ok(Node::Leaf(v.into()))
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<Node, E> {
+                Ok(Node::Leaf(v.into()))
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<Node, E> {
+                Ok(Node::Leaf(v.into()))
+            }
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Node, E> {
+                serde_json::Number::from_f64(v)
+                    .map(|n| Node::Leaf(n.into()))
+                    .ok_or_else(|| E::custom("a number JSON cannot hold"))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Node, E> {
+                Ok(Node::Leaf(v.into()))
+            }
+            fn visit_unit<E>(self) -> Result<Node, E> {
+                Ok(Node::Leaf(serde_json::Value::Null))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Node, A::Error> {
+                let mut items = Vec::new();
+                while let Some(item) = seq.next_element()? {
+                    items.push(item);
+                }
+                Ok(Node::Array(items))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
+                let mut members = Vec::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    members.push((key, map.next_value()?));
+                }
+                Ok(Node::Object(members))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+impl Serialize for Node {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        match self {
+            Node::Leaf(v) => v.serialize(s),
+            Node::Array(items) => {
+                let mut seq = s.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    seq.serialize_element(item)?;
+                }
+                seq.end()
+            }
+            Node::Object(members) => {
+                let mut map = s.serialize_map(Some(members.len()))?;
+                for (key, value) in members {
+                    map.serialize_entry(key, value)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
+impl Node {
+    /// The member `key` of an object (the last one, as JSON readers take a repeated key).
+    fn member_mut(&mut self, key: &str) -> Option<&mut Node> {
+        match self {
+            Node::Object(members) => members
+                .iter_mut()
+                .rev()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v),
+            _ => None,
+        }
+    }
+}
+
+/// The indentation a JSON text uses: the whitespace in front of its first indented line (a tab, or that many spaces); two spaces when it has none.
+fn indent_of(text: &str) -> String {
+    for line in text.lines().skip(1) {
+        let lead: String = line
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+        if !lead.is_empty() && lead.len() < line.len() {
+            return if lead.contains('\t') {
+                "\t".to_string()
+            } else {
+                lead
+            };
+        }
+    }
+    "  ".to_string()
+}
+
+fn parse_settings(text: &str) -> Result<Node, String> {
+    let node: Node = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        .map_err(|e| format!("it is not valid JSON ({e})"))?;
+    match node {
+        Node::Object(_) => Ok(node),
+        _ => Err("it is not a JSON object".to_string()),
+    }
+}
+
+/// The text of `node` with `indent`, ending in a line break; line breaks as `like` has them.
+fn write_settings(node: &Node, indent: &str, like: &str) -> String {
+    let mut out = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+    let mut ser = serde_json::Serializer::with_formatter(&mut out, formatter);
+    node.serialize(&mut ser)
+        .expect("a JSON value always serializes");
+    let mut text = String::from_utf8(out).expect("JSON is UTF-8");
+    text.push('\n');
+    if like.contains("\r\n") {
+        text = text.replace('\n', "\r\n");
+    }
+    text
+}
+
+/// `permissions.allow` of an object, created when it is missing, and the error when it is there in another shape.
+fn allow_list(root: &mut Node, create: bool) -> Result<Option<&mut Vec<Node>>, String> {
+    if root.member_mut("permissions").is_none() {
+        if !create {
+            return Ok(None);
+        }
+        if let Node::Object(members) = root {
+            members.push(("permissions".into(), Node::Object(Vec::new())));
+        }
+    }
+    let permissions = root.member_mut("permissions").expect("it is there now");
+    if !matches!(permissions, Node::Object(_)) {
+        return Err("`permissions` is not an object".to_string());
+    }
+    if permissions.member_mut("allow").is_none() {
+        if !create {
+            return Ok(None);
+        }
+        if let Node::Object(members) = permissions {
+            members.push(("allow".into(), Node::Array(Vec::new())));
+        }
+    }
+    match permissions.member_mut("allow").expect("it is there now") {
+        Node::Array(items) => Ok(Some(items)),
+        _ => Err("`permissions.allow` is not a list".to_string()),
+    }
+}
+
+fn is_string(node: &Node, text: &str) -> bool {
+    matches!(node, Node::Leaf(serde_json::Value::String(s)) if s == text)
+}
+
+/// A settings file with `entries` in `permissions.allow`: `text` is the file as it is (`None` when there is none). The missing entries are added to the
+/// end of the list (the list and `permissions` are made when they are not there); every other key and entry stays, in its place, and the file is written
+/// back with the indentation it had. `Ok(None)`: they are all there already. `Err`: the file is not JSON this can add to, and why.
+pub fn merge_allow(text: Option<&str>, entries: &[&str]) -> Result<Option<String>, String> {
+    let blank = text.is_none_or(|t| t.trim().is_empty());
+    let mut root = if blank {
+        Node::Object(Vec::new())
+    } else {
+        parse_settings(text.unwrap_or_default())?
+    };
+    let list = allow_list(&mut root, true)?.expect("it was made");
+    let missing: Vec<&str> = entries
+        .iter()
+        .copied()
+        .filter(|e| !list.iter().any(|n| is_string(n, e)))
+        .collect();
+    if missing.is_empty() && !blank {
+        return Ok(None);
+    }
+    list.extend(missing.into_iter().map(|e| Node::Leaf(e.into())));
+    let like = text.unwrap_or_default();
+    let indent = if blank {
+        "  ".to_string()
+    } else {
+        indent_of(like)
+    };
+    Ok(Some(write_settings(&root, &indent, like)))
+}
+
+/// What taking V-NOC's entries out of a settings file comes to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Removal {
+    /// none of them is there: nothing to do
+    Nothing,
+    /// the file without them
+    Rewrite(String),
+    /// the file held nothing but them (`{"permissions":{"allow":[…]}}`, now empty): it goes
+    Delete,
+}
+
+/// `text` without the exact strings in `entries` from `permissions.allow`. The list stays, even empty, unless that leaves the file with nothing else.
+pub fn remove_allow(text: &str, entries: &[&str]) -> Result<Removal, String> {
+    let mut root = parse_settings(text)?;
+    let Some(list) = allow_list(&mut root, false)? else {
+        return Ok(Removal::Nothing);
+    };
+    let before = list.len();
+    list.retain(|n| !entries.iter().any(|e| is_string(n, e)));
+    if list.len() == before {
+        return Ok(Removal::Nothing);
+    }
+    let empty_list = list.is_empty();
+    let bare = empty_list
+        && matches!(&root, Node::Object(m) if m.len() == 1 && m[0].0 == "permissions"
+            && matches!(&m[0].1, Node::Object(p) if p.len() == 1 && p[0].0 == "allow"));
+    if bare {
+        return Ok(Removal::Delete);
+    }
+    Ok(Removal::Rewrite(write_settings(
+        &root,
+        &indent_of(text),
+        text,
+    )))
+}
+
+/// Which of `entries` a settings file has in `permissions.allow`; `None` when the file is not there or is not usable JSON.
+fn allowed_entries(text: &str, entries: &[&str]) -> Option<usize> {
+    let mut root = parse_settings(text).ok()?;
+    let list = allow_list(&mut root, false).ok()??;
+    Some(
+        entries
+            .iter()
+            .filter(|e| list.iter().any(|n| is_string(n, e)))
+            .count(),
+    )
+}
+
+// ---- plan, remove, status
+
+fn permission_action(
+    root: &Path,
+    home: Option<&Path>,
+    agent: Agent,
+    full: PathBuf,
+    change: Change,
+    why: Option<String>,
+    content: Option<String>,
+) -> Action {
+    let in_home = home.is_some_and(|h| full.starts_with(h)) && !full.starts_with(root);
+    Action {
+        part: Part::Permissions,
+        path: match (in_home, home) {
+            (true, Some(home)) => shown(home, true, &full),
+            _ => shown(root, false, &full),
+        },
+        change,
+        agents: vec![agent],
+        readers: vec![agent],
+        why,
+        full,
+        content,
+    }
+}
+
+/// What to write so the picked agents run V-NOC's read commands without asking (07 §4, "when the user says yes"): for Claude Code the entries in
+/// `permissions.allow` of `.claude/settings.local.json` (or `settings.json`), for Codex the file `~/.codex/rules/vnoc.rules`; nothing for any other
+/// agent. Reads the disk and writes nothing. A settings file that is not JSON, or a `vnoc.rules` that is not V-NOC's, is **left** and said.
+pub fn plan_permissions(
+    root: &Path,
+    home: Option<&Path>,
+    picked: &[Agent],
+    scope: PermissionScope,
+) -> Vec<Action> {
+    let mut actions = Vec::new();
+    if picked.contains(&Agent::Claude) {
+        let full = root.join(scope.claude_file());
+        let (change, why, content) = match read_text(&full) {
+            Err(e) => (Change::Leave, Some(e), None),
+            Ok(text) => match merge_allow(text.as_deref(), &CLAUDE_ALLOW) {
+                Err(why) => (Change::Leave, Some(why), None),
+                Ok(None) => (Change::Same, None, None),
+                Ok(Some(new)) => {
+                    let exists = text.as_deref().is_some_and(|t| !t.trim().is_empty());
+                    (
+                        if exists {
+                            Change::AddEntries
+                        } else {
+                            Change::Create
+                        },
+                        None,
+                        Some(new),
+                    )
+                }
+            },
+        };
+        actions.push(permission_action(
+            root,
+            home,
+            Agent::Claude,
+            full,
+            change,
+            why,
+            content,
+        ));
+    }
+    if picked.contains(&Agent::Codex) {
+        match home {
+            None => actions.push(permission_action(
+                root,
+                home,
+                Agent::Codex,
+                root.join(CODEX_RULES),
+                Change::Leave,
+                Some("the home folder is not known (HOME is not set)".to_string()),
+                None,
+            )),
+            Some(home) => {
+                let full = home.join(CODEX_RULES);
+                let want = codex_rules_text();
+                let (change, why, content) = match read_text(&full) {
+                    Err(e) => (Change::Leave, Some(e), None),
+                    Ok(None) => (Change::Create, None, Some(want)),
+                    Ok(Some(text)) if !text.starts_with(CODEX_MARK) => (
+                        Change::Leave,
+                        Some("it was not written by V-NOC (its first line is not V-NOC's), so it is not replaced".to_string()),
+                        None,
+                    ),
+                    Ok(Some(text)) if same_text(&text, &want) => (Change::Same, None, None),
+                    Ok(Some(_)) => (Change::Replace, None, Some(want)),
+                };
+                actions.push(permission_action(
+                    root,
+                    Some(home),
+                    Agent::Codex,
+                    full,
+                    change,
+                    why,
+                    content,
+                ));
+            }
+        }
+    }
+    actions
+}
+
+/// What `remove` does about permissions for `agents`: takes exactly V-NOC's strings out of `permissions.allow` (in both settings files), deletes a
+/// settings file that held nothing else, and deletes `vnoc.rules` when it is V-NOC's. A user's own entry, and any other key, stay.
+fn plan_remove_permissions(root: &Path, home: Option<&Path>, agents: &[Agent]) -> Vec<Action> {
+    let mut actions = Vec::new();
+    if agents.contains(&Agent::Claude) {
+        for scope in [PermissionScope::Local, PermissionScope::Project] {
+            let full = root.join(scope.claude_file());
+            let Ok(Some(text)) = read_text(&full) else {
+                continue;
+            };
+            let (change, content) = match remove_allow(&text, &CLAUDE_ALLOW) {
+                Ok(Removal::Rewrite(new)) => (Change::RemoveEntries, Some(new)),
+                Ok(Removal::Delete) => (Change::Delete, None),
+                Ok(Removal::Nothing) | Err(_) => continue,
+            };
+            actions.push(permission_action(
+                root,
+                home,
+                Agent::Claude,
+                full,
+                change,
+                None,
+                content,
+            ));
+        }
+    }
+    if let (true, Some(home)) = (agents.contains(&Agent::Codex), home) {
+        let full = home.join(CODEX_RULES);
+        if let Ok(Some(text)) = read_text(&full) {
+            let ours = text.starts_with(CODEX_MARK);
+            actions.push(permission_action(
+                root,
+                Some(home),
+                Agent::Codex,
+                full,
+                if ours { Change::Delete } else { Change::Leave },
+                (!ours).then(|| {
+                    "it was not written by V-NOC (its first line is not V-NOC's), so it is not removed".to_string()
+                }),
+                None,
+            ));
+        }
+    }
+    actions
+}
+
+/// Whether V-NOC's read commands are allowed for one agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionState {
+    /// all of V-NOC's entries are in place
+    InPlace,
+    /// some of them are
+    Partial,
+    /// Codex: V-NOC's file is there and says something else than this V-NOC's
+    Changed,
+    /// none is
+    Missing,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PermissionStatus {
+    pub agent: Agent,
+    pub state: PermissionState,
+    /// where they are (`.claude/settings.local.json`, `~/.codex/rules/vnoc.rules`); absent when they are not
+    pub path: Option<String>,
+}
+
+/// One entry for Claude Code and one for Codex: whether the read commands are allowed, and where.
+fn permission_status(root: &Path, home: Option<&Path>) -> Vec<PermissionStatus> {
+    // Claude Code: the best of the two settings files
+    let mut claude = PermissionStatus {
+        agent: Agent::Claude,
+        state: PermissionState::Missing,
+        path: None,
+    };
+    for scope in [PermissionScope::Local, PermissionScope::Project] {
+        let Ok(Some(text)) = read_text(&root.join(scope.claude_file())) else {
+            continue;
+        };
+        let Some(found) = allowed_entries(&text, &CLAUDE_ALLOW) else {
+            continue;
+        };
+        let state = if found == CLAUDE_ALLOW.len() {
+            PermissionState::InPlace
+        } else if found > 0 {
+            PermissionState::Partial
+        } else {
+            continue;
+        };
+        if claude.state == PermissionState::Missing
+            || (state == PermissionState::InPlace && claude.state == PermissionState::Partial)
+        {
+            claude.state = state;
+            claude.path = Some(scope.claude_file().to_string());
+        }
+    }
+    let mut codex = PermissionStatus {
+        agent: Agent::Codex,
+        state: PermissionState::Missing,
+        path: None,
+    };
+    if let Some(home) = home {
+        let full = home.join(CODEX_RULES);
+        if let Ok(Some(text)) = read_text(&full)
+            && text.starts_with(CODEX_MARK)
+        {
+            codex.state = if same_text(&text, &codex_rules_text()) {
+                PermissionState::InPlace
+            } else {
+                PermissionState::Changed
+            };
+            codex.path = Some(shown(home, true, &full));
+        }
+    }
+    vec![claude, codex]
 }
 
 #[cfg(test)]
@@ -1579,5 +2137,418 @@ mod tests {
             assert!(!claude.contains(&format!("vnoc {write}")), "{write}");
             assert!(!both[1].1.contains(&format!("\"{write}\"")), "{write}");
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------- permissions (07 §4)
+
+    fn json(text: &str) -> serde_json::Value {
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn allow_of(text: &str) -> Vec<String> {
+        json(text)["permissions"]["allow"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn no_file_makes_one_with_the_entries() {
+        let text = merge_allow(None, &CLAUDE_ALLOW).unwrap().unwrap();
+        assert_eq!(allow_of(&text), CLAUDE_ALLOW);
+        assert!(text.starts_with(
+            "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(vnoc status *)\","
+        ));
+        assert!(text.ends_with("]\n  }\n}\n"));
+        // an empty file is no file
+        assert_eq!(
+            merge_allow(Some("  \n"), &CLAUDE_ALLOW).unwrap().unwrap(),
+            text
+        );
+    }
+
+    #[test]
+    fn the_merge_adds_only_what_is_missing_and_keeps_everything_else_in_its_place() {
+        let before = r#"{
+  "model": "opus",
+  "permissions": {
+    "deny": ["Bash(rm *)"],
+    "allow": ["Bash(ls *)", "Bash(vnoc show *)"],
+    "defaultMode": "acceptEdits"
+  },
+  "env": { "A": "1" },
+  "zeta": [1, 2.5, null, true]
+}
+"#;
+        let after = merge_allow(Some(before), &CLAUDE_ALLOW).unwrap().unwrap();
+        // the user's entry first, their own `vnoc show` where it was and not twice, then the rest in V-NOC's order
+        let mut want = vec!["Bash(ls *)".to_string(), "Bash(vnoc show *)".to_string()];
+        want.extend(
+            CLAUDE_ALLOW
+                .iter()
+                .filter(|e| **e != "Bash(vnoc show *)")
+                .map(|e| e.to_string()),
+        );
+        assert_eq!(allow_of(&after), want);
+        // everything else is the same value, and the keys keep their order
+        let (mut a, mut b) = (json(before), json(&after));
+        a["permissions"]["allow"] = json("[]");
+        b["permissions"]["allow"] = json("[]");
+        assert_eq!(a, b);
+        let pos = |k: &str| after.find(&format!("\"{k}\"")).unwrap();
+        assert!(pos("model") < pos("permissions") && pos("permissions") < pos("deny"));
+        assert!(
+            pos("deny") < pos("allow")
+                && pos("allow") < pos("defaultMode")
+                && pos("defaultMode") < pos("env")
+                && pos("env") < pos("zeta")
+        );
+        // run again: nothing to add
+        assert_eq!(merge_allow(Some(&after), &CLAUDE_ALLOW), Ok(None));
+    }
+
+    #[test]
+    fn a_permissions_object_or_a_list_that_is_missing_is_made() {
+        let after = merge_allow(Some("{\"model\": \"x\"}"), &["Bash(vnoc status *)"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            json(&after),
+            json(r#"{"model":"x","permissions":{"allow":["Bash(vnoc status *)"]}}"#)
+        );
+        let after = merge_allow(
+            Some("{\"permissions\": {\"deny\": []}}"),
+            &["Bash(vnoc status *)"],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            json(&after),
+            json(r#"{"permissions":{"deny":[],"allow":["Bash(vnoc status *)"]}}"#)
+        );
+        let after = merge_allow(Some("{}"), &["Bash(vnoc status *)"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(allow_of(&after), ["Bash(vnoc status *)"]);
+    }
+
+    #[test]
+    fn the_file_comes_back_with_its_own_indentation_and_line_breaks() {
+        let tabs = merge_allow(Some("{\n\t\"model\": \"x\"\n}\n"), &["Bash(vnoc status *)"])
+            .unwrap()
+            .unwrap();
+        assert!(tabs.contains("\n\t\"model\": \"x\",\n\t\"permissions\": {\n\t\t\"allow\": [\n\t\t\t\"Bash(vnoc status *)\""), "{tabs}");
+        let four = merge_allow(Some("{\n    \"model\": \"x\"\n}"), &["Bash(vnoc status *)"])
+            .unwrap()
+            .unwrap();
+        assert!(
+            four.contains("\n    \"model\": \"x\",\n    \"permissions\": {\n        \"allow\""),
+            "{four}"
+        );
+        let crlf = merge_allow(
+            Some("{\r\n  \"model\": \"x\"\r\n}\r\n"),
+            &["Bash(vnoc status *)"],
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            crlf.contains("\r\n") && !crlf.replace("\r\n", "").contains('\n'),
+            "{crlf:?}"
+        );
+        // one line, no indentation to copy: two spaces
+        let flat = merge_allow(Some("{\"model\":\"x\"}"), &["Bash(vnoc status *)"])
+            .unwrap()
+            .unwrap();
+        assert!(flat.starts_with("{\n  \"model\""), "{flat}");
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_added_to_is_refused_with_a_reason() {
+        for (text, reason) in [
+            ("{ not json", "not valid JSON"),
+            ("[1, 2]", "not a JSON object"),
+            ("{\"permissions\": []}", "`permissions` is not an object"),
+            (
+                "{\"permissions\": {\"allow\": \"Bash(ls *)\"}}",
+                "`permissions.allow` is not a list",
+            ),
+            ("{\"a\": 1} trailing", "not valid JSON"),
+        ] {
+            let e = merge_allow(Some(text), &CLAUDE_ALLOW).unwrap_err();
+            assert!(e.contains(reason), "{text}: {e}");
+        }
+    }
+
+    #[test]
+    fn taking_back_removes_exactly_v_nocs_strings() {
+        let mut entries = vec!["Bash(ls *)".to_string()];
+        entries.extend(CLAUDE_ALLOW.iter().map(|e| e.to_string()));
+        entries.push("Bash(vnoc status)".to_string()); // a person's own, nearly the same: stays
+        let text = serde_json::to_string_pretty(&serde_json::json!({
+            "model": "x", "permissions": { "allow": entries, "deny": ["Bash(rm *)"] }
+        }))
+        .unwrap();
+        let Ok(Removal::Rewrite(after)) = remove_allow(&text, &CLAUDE_ALLOW) else {
+            panic!()
+        };
+        assert_eq!(allow_of(&after), ["Bash(ls *)", "Bash(vnoc status)"]);
+        assert_eq!(
+            json(&after)["permissions"]["deny"],
+            json("[\"Bash(rm *)\"]")
+        );
+        assert_eq!(json(&after)["model"], "x");
+        // nothing of V-NOC's: nothing to do, the file is not rewritten
+        assert_eq!(remove_allow(&after, &CLAUDE_ALLOW), Ok(Removal::Nothing));
+        assert_eq!(remove_allow("{}", &CLAUDE_ALLOW), Ok(Removal::Nothing));
+        // the list is left, even empty, while the file has anything else
+        let only = merge_allow(Some("{\"model\": \"x\"}"), &CLAUDE_ALLOW)
+            .unwrap()
+            .unwrap();
+        let Ok(Removal::Rewrite(rest)) = remove_allow(&only, &CLAUDE_ALLOW) else {
+            panic!()
+        };
+        assert_eq!(
+            json(&rest),
+            json(r#"{"model":"x","permissions":{"allow":[]}}"#)
+        );
+        let kept = merge_allow(
+            Some("{\"permissions\": {\"deny\": [\"x\"]}}"),
+            &CLAUDE_ALLOW,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            remove_allow(&kept, &CLAUDE_ALLOW),
+            Ok(Removal::Rewrite(_))
+        ));
+        // a file V-NOC made and has emptied goes
+        let made = merge_allow(None, &CLAUDE_ALLOW).unwrap().unwrap();
+        assert_eq!(remove_allow(&made, &CLAUDE_ALLOW), Ok(Removal::Delete));
+        // and one that is not JSON is not V-NOC's to read
+        assert!(remove_allow("nope", &CLAUDE_ALLOW).is_err());
+    }
+
+    #[test]
+    fn the_printed_lines_and_the_written_entries_are_the_same_list() {
+        let (_, claude) = permission_lines(&[Agent::Claude])[0];
+        for entry in CLAUDE_ALLOW {
+            assert!(claude.contains(&format!("\"{entry}\"")), "{entry}");
+        }
+        assert_eq!(claude.matches("Bash(vnoc ").count(), CLAUDE_ALLOW.len());
+        // no write command, and not `vnoc agent`, is ever allowed
+        for entry in CLAUDE_ALLOW {
+            for write in [
+                "init", "doc new", "doc tag", "tag ", "relink", "repair", "agent",
+            ] {
+                assert!(!entry.starts_with(&format!("Bash(vnoc {write}")), "{entry}");
+            }
+        }
+        let (_, codex) = permission_lines(&[Agent::Codex])[0];
+        for line in codex_rules_text()
+            .lines()
+            .filter(|l| l.starts_with("prefix_rule"))
+        {
+            assert!(codex.contains(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_plan_creates_adds_leaves_or_finds_the_settings_file_done() {
+        let root = fresh("perm-claude");
+        let one = |scope| plan_permissions(&root, None, &[Agent::Claude], scope);
+        let a = one(PermissionScope::Local);
+        assert_eq!(paths(&a), [(".claude/settings.local.json", Change::Create)]);
+        assert_eq!(a[0].part, Part::Permissions);
+        apply(&a, &root, None).unwrap();
+        assert_eq!(
+            allow_of(&get(&root, ".claude/settings.local.json")),
+            CLAUDE_ALLOW
+        );
+        // again: nothing to do
+        assert_eq!(
+            paths(&one(PermissionScope::Local)),
+            [(".claude/settings.local.json", Change::Same)]
+        );
+        // the shared file is a file of its own
+        let b = one(PermissionScope::Project);
+        assert_eq!(paths(&b), [(".claude/settings.json", Change::Create)]);
+        // a file with the user's entry: added to
+        put(
+            &root,
+            ".claude/settings.json",
+            "{\"permissions\":{\"allow\":[\"Bash(ls *)\"]}}",
+        );
+        let c = one(PermissionScope::Project);
+        assert_eq!(paths(&c), [(".claude/settings.json", Change::AddEntries)]);
+        apply(&c, &root, None).unwrap();
+        assert_eq!(
+            allow_of(&get(&root, ".claude/settings.json"))[0],
+            "Bash(ls *)"
+        );
+        // not JSON: left, with the reason, and not touched
+        put(&root, ".claude/settings.json", "{ nope");
+        let d = one(PermissionScope::Project);
+        assert_eq!(paths(&d), [(".claude/settings.json", Change::Leave)]);
+        assert!(d[0].why.as_deref().unwrap().contains("not valid JSON"));
+        apply(&d, &root, None).unwrap();
+        assert_eq!(get(&root, ".claude/settings.json"), "{ nope");
+        // an agent that has no syntax here gets nothing
+        assert!(
+            plan_permissions(
+                &root,
+                None,
+                &[Agent::Cursor, Agent::Cline],
+                PermissionScope::Local
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn codex_gets_a_file_of_its_own_in_the_home_folder_and_never_one_that_is_not_ours() {
+        let root = fresh("perm-codex-root");
+        let home = fresh("perm-codex-home");
+        let one = || plan_permissions(&root, Some(&home), &[Agent::Codex], PermissionScope::Local);
+        let a = one();
+        assert_eq!(paths(&a), [("~/.codex/rules/vnoc.rules", Change::Create)]);
+        apply(&a, &root, Some(&home)).unwrap();
+        let text = get(&home, ".codex/rules/vnoc.rules");
+        assert_eq!(text, codex_rules_text());
+        assert!(text.starts_with("# V-NOC: written by"));
+        assert!(!root.join(".codex").exists());
+        assert_eq!(paths(&one()), [("~/.codex/rules/vnoc.rules", Change::Same)]);
+        // ours but older: replaced
+        put(
+            &home,
+            ".codex/rules/vnoc.rules",
+            &format!("{CODEX_MARK}\nprefix_rule(pattern = [\"vnoc\"], decision = \"allow\")\n"),
+        );
+        assert_eq!(
+            paths(&one()),
+            [("~/.codex/rules/vnoc.rules", Change::Replace)]
+        );
+        // not ours: left
+        put(&home, ".codex/rules/vnoc.rules", "# mine\n");
+        let b = one();
+        assert_eq!(paths(&b), [("~/.codex/rules/vnoc.rules", Change::Leave)]);
+        apply(&b, &root, Some(&home)).unwrap();
+        assert_eq!(get(&home, ".codex/rules/vnoc.rules"), "# mine\n");
+        // no home folder: nothing can be written, and it is said
+        let c = plan_permissions(&root, None, &[Agent::Codex], PermissionScope::Local);
+        assert_eq!(c[0].change, Change::Leave);
+    }
+
+    #[test]
+    fn remove_takes_back_the_entries_and_our_rules_file_and_status_says_where_they_are() {
+        let root = fresh("perm-remove-root");
+        let home = fresh("perm-remove-home");
+        let both = [Agent::Claude, Agent::Codex];
+        let none = status(&root, Some(&home), &texts());
+        assert!(
+            none.permissions
+                .iter()
+                .all(|p| p.state == PermissionState::Missing)
+        );
+        put(
+            &root,
+            ".claude/settings.local.json",
+            "{\"permissions\":{\"allow\":[\"Bash(ls *)\"]}}",
+        );
+        apply(
+            &plan_permissions(&root, Some(&home), &both, PermissionScope::Local),
+            &root,
+            Some(&home),
+        )
+        .unwrap();
+        let there = status(&root, Some(&home), &texts());
+        assert_eq!(there.permissions[0].agent, Agent::Claude);
+        assert_eq!(there.permissions[0].state, PermissionState::InPlace);
+        assert_eq!(
+            there.permissions[0].path.as_deref(),
+            Some(".claude/settings.local.json")
+        );
+        assert_eq!(there.permissions[1].state, PermissionState::InPlace);
+        assert_eq!(
+            there.permissions[1].path.as_deref(),
+            Some("~/.codex/rules/vnoc.rules")
+        );
+        // part of it: partly
+        put(
+            &root,
+            ".claude/settings.local.json",
+            "{\"permissions\":{\"allow\":[\"Bash(vnoc show *)\"]}}",
+        );
+        assert_eq!(
+            status(&root, Some(&home), &texts()).permissions[0].state,
+            PermissionState::Partial
+        );
+        put(
+            &root,
+            ".claude/settings.local.json",
+            "{\"permissions\":{\"allow\":[\"Bash(ls *)\"]}}",
+        );
+        apply(
+            &plan_permissions(&root, Some(&home), &both, PermissionScope::Local),
+            &root,
+            Some(&home),
+        )
+        .unwrap();
+
+        let take = plan_remove(&root, Some(&home), None, false);
+        let perms: Vec<_> = take
+            .iter()
+            .filter(|a| a.part == Part::Permissions)
+            .collect();
+        assert_eq!(perms.len(), 2);
+        assert_eq!(
+            (perms[0].path.as_str(), perms[0].change),
+            (".claude/settings.local.json", Change::RemoveEntries)
+        );
+        assert_eq!(
+            (perms[1].path.as_str(), perms[1].change),
+            ("~/.codex/rules/vnoc.rules", Change::Delete)
+        );
+        apply(&take, &root, Some(&home)).unwrap();
+        assert_eq!(
+            allow_of(&get(&root, ".claude/settings.local.json")),
+            ["Bash(ls *)"]
+        );
+        assert!(!home.join(".codex/rules/vnoc.rules").exists());
+        // for one agent only: the other's stay
+        apply(
+            &plan_permissions(&root, Some(&home), &both, PermissionScope::Local),
+            &root,
+            Some(&home),
+        )
+        .unwrap();
+        let only = plan_remove(&root, Some(&home), Some(&[Agent::Codex]), false);
+        assert_eq!(
+            paths(&only),
+            [("~/.codex/rules/vnoc.rules", Change::Delete)]
+        );
+        // a `vnoc.rules` that is not ours is left, and said; `--global` takes no permissions
+        put(&home, ".codex/rules/vnoc.rules", "# mine\n");
+        let mine = plan_remove(&root, Some(&home), Some(&[Agent::Codex]), false);
+        assert_eq!(paths(&mine), [("~/.codex/rules/vnoc.rules", Change::Leave)]);
+        assert!(
+            plan_remove(&root, Some(&home), None, true)
+                .iter()
+                .all(|a| a.part != Part::Permissions)
+        );
+        // a settings file V-NOC made, taken back to nothing, goes
+        let fresh_root = fresh("perm-remove-made");
+        apply(
+            &plan_permissions(&fresh_root, None, &[Agent::Claude], PermissionScope::Local),
+            &fresh_root,
+            None,
+        )
+        .unwrap();
+        let gone = plan_remove(&fresh_root, None, Some(&[Agent::Claude]), false);
+        assert_eq!(
+            paths(&gone),
+            [(".claude/settings.local.json", Change::Delete)]
+        );
     }
 }

@@ -167,6 +167,8 @@ struct Lines {
     marker: Option<(String, String)>,
     /// a folder's `.vnoc-id`
     folder_marker: Option<String>,
+    /// the doc's title, as V-NOC wrote it: the notice that the body's own title line was left out names it
+    title: String,
 }
 
 impl Render for DocNew {
@@ -176,9 +178,10 @@ impl Render for DocNew {
         text.push_str(&format!("{}{}\n", label("created"), self.doc));
         // about the data, not a hint: `--quiet` keeps it
         if self.title_line_dropped {
-            text.push_str(&continued(
-                "the body's own \"# <title>\" line was left out: V-NOC writes the title",
-            ));
+            text.push_str(&continued(&format!(
+                "the body's own \"# {}\" line was left out: V-NOC writes the title",
+                self.text.title
+            )));
         }
         if self.text.empty && !quiet {
             text.push_str(&continued("← write the note here"));
@@ -373,6 +376,7 @@ pub async fn doc_new(global: &Global, args: &DocNewArgs) -> Result<(), Failure> 
                 empty: args.body_file.is_none(),
                 marker,
                 folder_marker,
+                title: args.title.trim().to_string(),
             },
         },
         global,

@@ -5669,7 +5669,9 @@ fn a_body_that_starts_with_the_title_does_not_get_it_twice() {
         assert_eq!(code(&out), 0, "{}", text(&out.stderr));
         text(&out.stdout)
     };
-    let notice = "the body's own \"# <title>\" line was left out: V-NOC writes the title";
+    let notice = |title: &str| {
+        format!("the body's own \"# {title}\" line was left out: V-NOC writes the title")
+    };
     let note = |file: &str| {
         let text = std::fs::read_to_string(node_folders(&root)[0].join(file)).unwrap();
         text.split_once("\n---\n").unwrap().1.to_string()
@@ -5682,7 +5684,11 @@ fn a_body_that_starts_with_the_title_does_not_get_it_twice() {
         lines[1].starts_with("created") && lines[1].ends_with("same-title.md"),
         "{said}"
     );
-    assert_eq!(lines[2], format!("{}{notice}", " ".repeat(13)), "{said}");
+    assert_eq!(
+        lines[2],
+        format!("{}{}", " ".repeat(13), notice("Same title")),
+        "{said}"
+    );
 
     // another case, extra spaces, blank lines before the heading
     new(
@@ -5706,7 +5712,7 @@ fn a_body_that_starts_with_the_title_does_not_get_it_twice() {
 
     // the notice is about the data: --quiet keeps it; the JSON has the field only when it happened
     let quiet = new("Quiet", "# Quiet\n\nBody.\n", &["--quiet"]);
-    assert!(quiet.contains(notice), "{quiet}");
+    assert!(quiet.contains(&notice("Quiet")), "{quiet}");
     let json = |title: &str, body: &str| -> Value {
         serde_json::from_str(&new(title, body, &["--json"])).unwrap()
     };

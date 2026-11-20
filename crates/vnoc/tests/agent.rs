@@ -929,3 +929,414 @@ fn remove_never_removes_a_folder_with_anything_left_in_it() {
     vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
     assert_eq!(files(&root), [".claude/settings.json"]);
 }
+
+// ------------------------------------------------------------------------------------------------ the permissions (07 §4, A12c)
+// The question itself needs a terminal and is checked by hand; here the flags, and what follows from there being no terminal.
+
+const SETTINGS_LOCAL: &str = ".claude/settings.local.json";
+
+fn allow_in(root: &Path, name: &str) -> Vec<String> {
+    let v: Value = serde_json::from_str(&get(root, name)).unwrap();
+    v["permissions"]["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e.as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn permissions_writes_the_entries_to_the_local_settings_file_and_says_so() {
+    let (root, home) = world("perm-local");
+    let o = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude", "--permissions"],
+    );
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert_eq!(
+        out(&o),
+        "created      .claude/skills/vnoc/SKILL.md
+             the skill, for claude
+created      AGENTS.md
+             the rules block, for claude
+created      CLAUDE.md
+             imports AGENTS.md, so every Claude Code reads the rules
+allowed      V-NOC's read commands for Claude Code
+in           .claude/settings.local.json
+
+commit these files so your team's agents get them
+"
+    );
+    let entries = allow_in(&root, SETTINGS_LOCAL);
+    assert_eq!(entries.len(), 15);
+    assert!(entries.contains(&"Bash(vnoc show *)".to_string()));
+    assert!(entries.iter().all(|e| e.starts_with("Bash(vnoc ")));
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e.contains("agent") || e.contains("doc new"))
+    );
+    assert!(!exists(&root, ".claude/settings.json"));
+    // the lines are not printed when they were written; twice changes nothing
+    assert!(!out(&o).contains("to let Claude Code run"));
+    let again = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude", "--permissions"],
+    );
+    assert_eq!(code(&again), 0);
+    assert!(
+        out(&again).contains("current      V-NOC's read commands for Claude Code\n"),
+        "{}",
+        out(&again)
+    );
+    assert_eq!(allow_in(&root, SETTINGS_LOCAL), entries);
+    // only the settings file of this user written: nothing for the team to commit
+    let only = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude",
+            "--permissions",
+            "--skill-only",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(code(&only), 0);
+    let (root2, home2) = world("perm-local-only");
+    let o = vnoc(
+        &root2,
+        &home2,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude",
+            "--rules-only",
+            "--permissions",
+        ],
+    );
+    assert!(out(&o).contains("allowed      V-NOC's read commands for Claude Code"));
+    // the rules were written, so the team has a file; the settings alone would not say it
+    assert!(out(&o).contains("commit these files"));
+    std::fs::remove_file(root2.join("AGENTS.md")).unwrap();
+}
+
+#[test]
+fn permissions_project_writes_the_shared_file_and_not_the_local_one() {
+    let (root, home) = world("perm-project");
+    let o = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude",
+            "--permissions=project",
+        ],
+    );
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(out(&o).contains("allowed      V-NOC's read commands for Claude Code\nin           .claude/settings.json\n"), "{}", out(&o));
+    assert_eq!(allow_in(&root, ".claude/settings.json").len(), 15);
+    assert!(!exists(&root, SETTINGS_LOCAL));
+    // an unknown scope is a usage error
+    let bad = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude",
+            "--permissions=world",
+        ],
+    );
+    assert_eq!(code(&bad), 2);
+    // the flag takes its value with `=`: `--permissions project` would be a folder-less argument, not the scope
+    let both = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude",
+            "--permissions",
+            "--no-permissions",
+        ],
+    );
+    assert_eq!(code(&both), 2);
+    let global = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude",
+            "--global",
+            "--permissions",
+        ],
+    );
+    assert_eq!(code(&global), 2);
+}
+
+#[test]
+fn the_user_s_own_entries_and_keys_stay_and_nothing_is_added_twice() {
+    let (root, home) = world("perm-merge");
+    let before = "{\n\t\"model\": \"opus\",\n\t\"permissions\": {\n\t\t\"allow\": [\"Bash(ls *)\", \"Bash(vnoc show *)\"],\n\t\t\"deny\": [\"Bash(rm *)\"]\n\t}\n}\n";
+    put(&root, SETTINGS_LOCAL, before);
+    let o = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude", "--permissions"],
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("allowed      V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n             only V-NOC's entries; the rest of the file is as it was\n"), "{}", out(&o));
+    let after = get(&root, SETTINGS_LOCAL);
+    // tabs stayed tabs; the key order stayed
+    assert!(after.starts_with("{\n\t\"model\": \"opus\",\n\t\"permissions\": {\n\t\t\"allow\": [\n\t\t\t\"Bash(ls *)\","), "{after}");
+    assert!(after.find("\"allow\"").unwrap() < after.find("\"deny\"").unwrap());
+    let entries = allow_in(&root, SETTINGS_LOCAL);
+    assert_eq!(&entries[..2], ["Bash(ls *)", "Bash(vnoc show *)"]);
+    assert_eq!(
+        entries.len(),
+        16,
+        "one user entry and fifteen of ours, `vnoc show` once"
+    );
+    let v: Value = serde_json::from_str(&after).unwrap();
+    assert_eq!(v["model"], "opus");
+    assert_eq!(v["permissions"]["deny"], json!(["Bash(rm *)"]));
+}
+
+#[test]
+fn a_settings_file_that_is_not_json_is_left_exit_2_and_the_lines_are_printed() {
+    let (root, home) = world("perm-invalid");
+    put(&root, SETTINGS_LOCAL, "{ \"permissions\": ");
+    let o = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude", "--permissions"],
+    );
+    assert_eq!(code(&o), 2);
+    assert_eq!(get(&root, SETTINGS_LOCAL), "{ \"permissions\": ");
+    let text = out(&o);
+    assert!(text.contains("left         V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n             it is not valid JSON"), "{text}");
+    assert!(text.contains("to let Claude Code run V-NOC's read commands without asking, add to .claude/settings.json:"), "{text}");
+    // the rest was written all the same
+    assert!(exists(&root, ".claude/skills/vnoc/SKILL.md"));
+}
+
+#[test]
+fn no_permissions_writes_none_and_prints_the_lines_and_so_does_having_no_terminal() {
+    for flags in [&["--no-permissions"][..], &[][..]] {
+        let (root, home) = world("perm-none");
+        let mut args = vec!["agent", "install", "--agent", "claude,codex"];
+        args.extend_from_slice(flags);
+        let o = vnoc(&root, &home, &args);
+        assert_eq!((code(&o), err(&o).as_str()), (0, ""), "{flags:?}");
+        assert!(
+            !exists(&root, SETTINGS_LOCAL) && !exists(&root, ".claude/settings.json"),
+            "{flags:?}"
+        );
+        assert!(files(&home).is_empty(), "{flags:?}");
+        assert!(
+            out(&o).contains("add to .claude/settings.json:")
+                && out(&o).contains("add to ~/.codex/rules/default.rules:"),
+            "{flags:?}"
+        );
+        assert!(!out(&o).contains("allowed"), "{flags:?}");
+    }
+}
+
+#[test]
+fn codex_gets_a_rules_file_in_the_home_folder_only_and_a_file_that_is_not_ours_is_left() {
+    let (root, home) = world("perm-codex");
+    let o = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "codex", "--permissions"],
+    );
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(
+        out(&o).contains(
+            "allowed      V-NOC's read commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
+        ),
+        "{}",
+        out(&o)
+    );
+    let rules = get(&home, ".codex/rules/vnoc.rules");
+    assert!(rules.starts_with("# V-NOC: written by `vnoc agent install`"));
+    assert!(rules.contains("prefix_rule(pattern = [\"vnoc\", \"doc\", [\"list\", \"read\", \"path\"]], decision = \"allow\")"));
+    assert!(
+        !exists(&root, ".codex"),
+        "nothing of Codex's in the project"
+    );
+    // someone's own vnoc.rules: left, exit 2, the lines printed
+    put(&home, ".codex/rules/vnoc.rules", "# mine\n");
+    let o = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "codex", "--permissions"],
+    );
+    assert_eq!(code(&o), 2);
+    assert_eq!(get(&home, ".codex/rules/vnoc.rules"), "# mine\n");
+    assert!(
+        out(&o).contains("left         V-NOC's read commands for Codex"),
+        "{}",
+        out(&o)
+    );
+    assert!(out(&o).contains("add to ~/.codex/rules/default.rules:"));
+}
+
+#[test]
+fn a_dry_run_lists_the_permissions_too_and_writes_nothing() {
+    let (root, home) = world("perm-dry");
+    let o = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude,codex",
+            "--permissions",
+            "--dry-run",
+        ],
+    );
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    let text = out(&o);
+    assert!(text.contains("will allow   V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n"), "{text}");
+    assert!(
+        text.contains(
+            "will allow   V-NOC's read commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
+        ),
+        "{text}"
+    );
+    assert!(files(&root).is_empty() && files(&home).is_empty());
+    // in JSON: an action with part `permissions`
+    let j = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude",
+            "--permissions",
+            "--dry-run",
+            "--json",
+        ],
+    );
+    let v: Value = serde_json::from_str(&out(&j)).unwrap();
+    let action = v["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["part"] == "permissions")
+        .unwrap();
+    assert_eq!(action["path"], ".claude/settings.local.json");
+    assert_eq!(action["change"], "create");
+    assert_eq!(
+        v["permissions"],
+        json!([]),
+        "written, so no lines to add by hand"
+    );
+    // with --json and no flag, nothing is asked and nothing is written, as with no terminal
+    let j = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude", "--json"],
+    );
+    assert!(!exists(&root, SETTINGS_LOCAL));
+    let v: Value = serde_json::from_str(&out(&j)).unwrap();
+    assert_eq!(v["permissions"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn remove_takes_back_only_what_install_added_and_status_says_where_they_are() {
+    let (root, home) = world("perm-remove");
+    put(
+        &root,
+        SETTINGS_LOCAL,
+        "{\n  \"permissions\": {\n    \"allow\": [\"Bash(ls *)\"]\n  }\n}\n",
+    );
+    vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude,codex",
+            "--permissions",
+        ],
+    );
+    assert_eq!(allow_in(&root, SETTINGS_LOCAL).len(), 16);
+    let s = vnoc(&root, &home, &["agent", "status"]);
+    assert_eq!(code(&s), 0);
+    assert!(out(&s).contains("allowed      V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n"), "{}", out(&s));
+    assert!(
+        out(&s).contains(
+            "allowed      V-NOC's read commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
+        ),
+        "{}",
+        out(&s)
+    );
+    let sj: Value =
+        serde_json::from_str(&out(&vnoc(&root, &home, &["agent", "status", "--json"]))).unwrap();
+    assert_eq!(
+        sj["permissions"][0],
+        json!({"agent": "claude", "state": "in_place", "path": ".claude/settings.local.json"})
+    );
+
+    let o = vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    assert!(out(&o).contains("removed      V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n"), "{}", out(&o));
+    assert_eq!(
+        allow_in(&root, SETTINGS_LOCAL),
+        ["Bash(ls *)"],
+        "the user's entry stays, so does the list"
+    );
+    assert!(
+        exists(&home, ".codex/rules/vnoc.rules"),
+        "codex was not named"
+    );
+    // for everything: the rules file goes too
+    let o = vnoc(&root, &home, &["agent", "remove"]);
+    assert_eq!(code(&o), 0);
+    assert!(
+        out(&o).contains(
+            "deleted      V-NOC's read commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
+        ),
+        "{}",
+        out(&o)
+    );
+    assert!(!exists(&home, ".codex/rules/vnoc.rules"));
+    let s = vnoc(&root, &home, &["agent", "status"]);
+    assert_eq!(out(&s), "not set up: vnoc agent install\n");
+}
+
+#[test]
+fn a_settings_file_v_noc_made_goes_when_it_is_taken_back_to_nothing() {
+    let (root, home) = world("perm-made");
+    vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude", "--permissions"],
+    );
+    assert!(exists(&root, SETTINGS_LOCAL));
+    let o = vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
+    assert_eq!(code(&o), 0);
+    assert!(
+        out(&o).contains("deleted      V-NOC's read commands for Claude Code"),
+        "{}",
+        out(&o)
+    );
+    assert!(!exists(&root, SETTINGS_LOCAL));
+}
