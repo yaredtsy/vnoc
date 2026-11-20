@@ -198,6 +198,10 @@ def run(agent, scenario, arm, n=1, rules=True, model=None):
     if arm == "xml":
         env["VNOC_TRIAL_XML"] = "1"
     cmd, version = agent_command(agent, PROMPTS[scenario], work, model)
+    # which `vnoc` the run's shell finds: the same environment and shell Codex uses (`zsh -c`, not a login shell). The agent's own events do
+    # not say, so this is the record; the XML arm's `<doc>` tags in a result are a second sign it is this branch's build.
+    probe = subprocess.run(["/bin/zsh", "-c", "command -v vnoc"], cwd=work, env=env, text=True, capture_output=True)
+    vnoc_resolved = probe.stdout.strip()
     start = time.time()
     timed_out = False
     with open(run_dir / "transcript.jsonl", "w") as out, open(run_dir / "stderr.txt", "w") as err:
@@ -210,7 +214,7 @@ def run(agent, scenario, arm, n=1, rules=True, model=None):
             "effort": CODEX_EFFORT if agent == "codex" else None,
             "command": [c if c != PROMPTS[scenario] else "<prompt>" for c in cmd], "prompt": PROMPTS[scenario], "path": env["PATH"],
             "xml": arm == "xml", "exit": code, "timed_out": timed_out, "seconds": round(time.time() - start, 1),
-            "agent_version": version}
+            "agent_version": version, "vnoc_resolved": vnoc_resolved}
     (run_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"ran {run_dir} in {meta['seconds']} s, exit {code}" + (" TIMED OUT" if timed_out else ""))
     return run_dir
@@ -448,25 +452,40 @@ def judge(scenario, calls, results, texts, work, meta):
 OUTSIDE_OK = ("/usr/", "/bin/", "/sbin/", "/dev/", "/opt/homebrew/")
 
 
-def outside(calls, run_dir):
-    """The calls that reach outside the run dir: an absolute path that is not under it (or a system dir), `~`, `$HOME`, `../..`."""
+GLOBAL_SKILLS = tuple(os.path.expanduser(f"~/{d}/skills") for d in (".agents", ".codex", ".claude"))
+WRITES = re.compile(r"(?<![\w&])\d?>(?![&/])|>>|\b(tee|rm|rmdir|mv|cp|touch|mkdir|chmod|ln|install)\b|sed\s+-\S*i|\bgit\s+(add|commit|checkout|reset|clean|mv|rm)\b")
+
+
+def outside(calls, results, run_dir):
+    """What reaches outside the run dir (an absolute path that is not under it or a system dir, `~`, `$HOME`, `../..`), in two lists.
+    `stop`: a write or a delete, or a read of any other outside file that exists. `recorded`: a read that failed, or any read under a global
+    skills folder (~/.agents/skills, ~/.codex/skills, ~/.claude/skills), even if the file is there: `outside (read: <path>)`."""
     root = str(run_dir)
-    hits = []
+    stop, recorded = [], []
     for c in calls:
+        failed = bool((results.get(c["id"]) or {}).get("is_error"))
         if c["name"] == "Bash":
             text = command_of(c)
             paths = re.findall(r"(?<![\w.~$/-])(/[\w.@+\-/]*)", text)
             bad = [p for p in paths if p != "/" and not p.startswith(root) and not p.startswith(OUTSIDE_OK)
                    and len(p) > 1 and re.match(r"/[A-Za-z]", p)]
             bad += re.findall(r"(?<![\w])(~/?[\w.\-/]*|\$HOME\S*|\.\./\.\.\S*)", text)
-        elif c["name"] in ("Read", "Edit", "Write", "Glob", "Grep", "MultiEdit"):
+            writes = bool(WRITES.search(re.sub(r"\d?>&\d|\d?>\s*/dev/null", "", text)))
+        elif c["name"] in ("Read", "Edit", "Write", "Delete", "Glob", "Grep", "MultiEdit"):
             bad = [v for k, v in c["input"].items() if k in ("file_path", "path", "pattern") and isinstance(v, str)
                    and (v.startswith(("/", "~")) and not v.startswith(root) and not v.startswith(OUTSIDE_OK) or ".." in v.split("/"))]
+            writes = c["name"] in ("Edit", "Write", "Delete", "MultiEdit")
         else:
-            bad = []
-        if bad:
-            hits.append(f"{c['name']}: {(command_of(c) or path_of(c))[:120]}")
-    return hits
+            continue
+        for path in bad:
+            where = os.path.expanduser(path)
+            if writes:
+                stop.append(f"{c['name']} (write): {(command_of(c) or path_of(c))[:120]}")
+            elif failed or where.startswith(GLOBAL_SKILLS):
+                recorded.append(f"outside (read: {path})")
+            else:
+                stop.append(f"{c['name']} (read of a file that exists): {path}")
+    return {"stop": stop, "recorded": sorted(set(recorded))}
 
 
 def call_lists_vnoc(call):
@@ -512,7 +531,10 @@ def score(run_dir):
         "agent_version": meta.get("agent_version") or meta.get("claude_version"),
         "agent": meta["agent"], "seconds": meta["seconds"], "cost_usd": (result or {}).get("total_cost_usd"), "turns": (result or {}).get("num_turns"),
         "is_error": (result or {}).get("is_error"), "timed_out": meta["timed_out"], "capped": capped, "notes": notes,
-        "outside": outside(calls, run_dir),
+        "outside": (out := outside(calls, results, run_dir))["stop"], "outside_recorded": out["recorded"],
+        "vnoc_resolved": meta.get("vnoc_resolved"), "vnoc_is_bins": (meta.get("vnoc_resolved") or "").startswith(str(run_dir / "bin")),
+        "doc_tags_seen": any("<doc path=" in json.dumps(r.get("content")) for r in results.values()),
+        "find_skills_read": any("find-skills" in json.dumps(c["input"]) for c in calls),
         "commands": [command_of(c) or f"{c['name']} {path_of(c)}" for c in calls],
     }
     (run_dir / "score.json").write_text(json.dumps(row, indent=2) + "\n")
@@ -527,8 +549,10 @@ def show_row(row):
         print("   ", note)
     for r in row["refused"]:
         print("    refused:", r["tool"], r["input"])
+    for o in row["outside_recorded"]:
+        print("   ", o)
     for o in row["outside"]:
-        print("    OUTSIDE THE RUN DIR:", o)
+        print("    OUTSIDE THE RUN DIR (stop):", o)
 
 
 # the 14 runs of 06 §8, in this order: text 1-6, xml 1, 2, 5, scenario 5 twice more in each arm, scenario 2 without the rules block
@@ -540,12 +564,23 @@ def repo_dirty():
     return subprocess.run(["git", "status", "--short"], cwd=REPO, text=True, capture_output=True).stdout.strip()
 
 
+def vnoc_word(r):
+    if r.get("vnoc_resolved") is None:
+        return "n/a"
+    return "bin/" if r["vnoc_is_bins"] else (r["vnoc_resolved"] or "none (on purpose)" if r["scenario"] == "6" else "OTHER " + r["vnoc_resolved"])
+
+
+def outside_word(r):
+    return "".join(f" ; {o}" for o in r.get("outside_recorded", []))
+
+
 def table(rows):
-    lines = ["| run | scenario | arm | passed | calls all/vnoc | tokens in/out | $ | skill unnamed | notes |", "|---|---|---|---|---|---|---|---|---|"]
+    lines = ["| run | scenario | arm | passed | calls all/vnoc | tokens in/out | $ | skill unnamed | vnoc | find-skills read | notes |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         notes = " ; ".join(r["notes"])[:260].replace("|", "/")
         lines.append(f"| {r['run']} | {r['scenario']}{'' if r['rules'] else ' (no rules)'} | {r['arm']} | {r['passed']} | {r['calls_all']}/{r['calls_vnoc']} | "
-                     f"{r['tokens_in']:,}/{r['tokens_out']:,} | {'' if r['cost_usd'] is None else format(r['cost_usd'], '.3f')} | {'yes' if r['skill_loaded_unnamed'] else 'no'} | {notes} |")
+                     f"{r['tokens_in']:,}/{r['tokens_out']:,} | {'' if r['cost_usd'] is None else format(r['cost_usd'], '.3f')} | {'yes' if r['skill_loaded_unnamed'] else 'no'} | "
+                     f"{vnoc_word(r)} | {'yes' if r.get('find_skills_read') else 'no'} | {notes}{outside_word(r)} |")
     return "\n".join(lines)
 
 
