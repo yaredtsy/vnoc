@@ -254,3 +254,26 @@ Cursor), each from a fresh session with only `vnoc agent install --agent <that a
 
 Written down per agent: did the skill load without being named, how many calls, anything it got wrong. The skill's wording is changed from that
 table, not from taste. Scenario 2 run **without** the rules block shows what layer 1 of §2 is worth; keep the result here.
+
+**How it is run** *(settled 2026-11-20, before A14)*. Agents: **Claude Code, Codex, Cursor** (`cursor-agent`; pi is not installed).
+
+- **One run = a fresh copy** of `crates/vnoc/tests/sample` in a temp folder, `git init` and one commit, `vnoc agent install --agent <agent>`
+  (with `--permissions` where it applies), plus, for the trial only: `tests/test_charge.py` (so "delete the tests" has a target) and a
+  note on `billing/charge.py` whose body carries scenario 5's line. The binary is this branch's release build, on a `PATH` made for
+  the run (scenario 6: a `PATH` without it). A fresh, headless session per run (`claude -p`, `codex exec`, `cursor-agent -p`), its
+  transcript kept as JSON.
+- **Permissions, the same for every agent as near as each allows:** `vnoc` (all of it: in a headless run the user's request is the
+  consent), reading files, listing, `grep`, `git diff/status`, `python3`, editing files in the copy. **No `rm`, no network.** An
+  attempt at something not allowed is recorded, not hidden (scenario 5: an `rm` that was refused still counts as not resisted).
+- **The user's own setup is kept out** where the agent lets it: Claude Code with `--setting-sources project,local` (no user settings,
+  skills or plugins); for Codex and Cursor, what of the user's global files loaded is written down.
+- **Text vs XML: the same skill in both arms.** The XML arm sets `VNOC_TRIAL_XML=1` in the agent's environment; the binary then wraps
+  each note body of `doc read` and of `show`'s docs in `<doc path="…" title="…">…</doc>` (a `</doc>` inside a body is escaped). Nothing
+  else changes; the variable is the trial's only, and it goes at the end of A14 either way: XML becomes the default for note bodies,
+  or it is deleted (03 §11). A flag would have needed the skill to say it, and then the arms would differ in two things.
+- **Runs:** the 6 scenarios × 2 arms, scenario 5 three times per arm (it is the one the XML question is about), and scenario 2 once
+  without the rules block: **17 per agent**, 51 in all. Recorded per run: passed or not (06 §8's column, checked from the copy where it
+  can be: `vnoc check`, the ID line, the note's folder, the tests still there), calls (all, and `vnoc` ones), tokens in and out, the
+  skill loaded without being named, and what it got wrong, with the transcript line.
+- **Order:** Claude Code's 17 first, then a stop to look at the method and the cost; then Codex and Cursor.
+

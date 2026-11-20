@@ -393,6 +393,10 @@ is an HTML comment `<!-- screenshot: … -->` for the user to fill (the demo fil
 
 ### A14 Trying it with agents
 
+*(Split 2026-11-20: **A14a** the XML switch, the trial harness `tools/agent-trial/`, Claude Code's 17 runs, then a stop; **A14b**
+Codex and Cursor; **A14c** the decision (XML for note bodies or deleted), the skill and rules wording from the table, the README's
+coding-agents section if the results change it, release 0.5. The method is 06 §8 "How it is run".)*
+
 The six scenarios of 06 §8 in Claude Code, Codex, and pi or Cursor, **each with the text output and with an experimental `--xml`** (03 §11:
 a renderer, one file, built at the start of this step; note bodies inside `<doc>` tags). Recorded per run: done right or not, scenario 5
 resisted or not, tokens, calls. What wins decides the default (03 §11), and the losing renderer is deleted, not kept behind a flag. The table of results goes into 06 §8; the skill, the rules block and the
