@@ -135,6 +135,13 @@ nodes, 735 docs) on the generated project. The log line `refresh` writes itself 
   (`index: … 1163 ms in all`), and the thrown-away first run of the final series 502 ms (httpx 62 ms, with 50 docs 59 ms). The 1,163 ms did not
   come back. It was not looked into:
   probably the first launch of a new binary. A user's first `vnoc` after an install may see it.
+  **Measured again in A13 (2026-11-20), on the installed copy.** `install.sh` into a temp folder from the release archive, then three times: both programs
+  (`vnoc`, `vnoc-driver-python`) copied into a new folder, `vnoc status` on a one-file Python project, and again at once. The first run took **0.57, 0.69
+  and 0.64 s**; the second **0.00, 0.01 and 0.00 s** (the index, in the log: 473 ms in all, then 3 ms). So a **fresh copy costs about 0.6 s on its
+  first run only**, whatever the project: it is not the index and not the driver's work (the second run does both in 3 ms). The reading: macOS checks
+  an executable it has not seen before (the 29 MB of the two programs) at the first launch and remembers the answer; the files are the same bytes, so
+  nothing of V-NOC's is slow. Not fixed, and not fixable from here; it goes into the README's troubleshooting ("the first `vnoc` after an install takes
+  a second"). Linux and Windows were not measured.
 
 Inside the budget: nothing more is built. Outside it, it would have been step **A16**, designed now so it is not a new plan then:
 

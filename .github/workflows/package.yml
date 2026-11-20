@@ -1,4 +1,4 @@
-# The four VSIX files, one runner each (docs/18-ci-cd.md §4). Called only: by ci.yml on main, by publish.yml on a tag.
+# The four VSIX files, and beside each the command-line archive (vnoc-cli-<target>), one runner each (docs/19-ci-cd.md §4). Called only: by ci.yml on main, by publish.yml on a tag.
 # No `concurrency:` here: called from one release, it would compute the caller's group and block itself (docs/18 §3.1).
 name: package
 on:
@@ -36,5 +36,12 @@ jobs:
         with:
           name: vsix-${{ matrix.target }}
           path: vnoc-${{ matrix.target }}.vsix
+          if-no-files-found: error
+          retention-days: 30
+      # the same two programs without the extension (docs/21-agent-cli/07-install.md §6): `.tar.gz`, and on Windows `.zip`
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: vnoc-cli-${{ matrix.target }}.*
           if-no-files-found: error
           retention-days: 30

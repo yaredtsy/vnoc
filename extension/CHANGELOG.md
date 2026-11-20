@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased (0.5.0)
+
+Editing on the canvas, search, and a command line for people and coding agents.
+
+### Edit on the canvas
+
+- **Edit in Card**: type in a function's or class's code on its card, press **⌘S / Ctrl+S**, and the function in the file has the new text. Typing starts a
+  *draft* in the card; nothing leaves the card until you save. The tree, the doc badges and the call trees follow the save, as they do after a save in a normal editor.
+- Save **checks before it writes**: a function you changed in the editor in the meantime is never overwritten (the card tells you, and you choose). It finds
+  a function that moved, puts the indentation back, and asks before it removes a function's `ID:` line.
+- A file with unsaved changes cannot be edited from a card, and the card says so first, with a **Save** button.
+- Drafts survive hiding the canvas and reloading the window, and closing the canvas with drafts asks right after, so nothing is lost. The bar counts the
+  drafts; **Save All** and **Discard** act on them.
+- **Edit a doc in the docs panel and the docs tab**, by the same rule: a draft, saved with ⌘S.
+- **Write ID** in Needs Attention: a function whose `ID:` line was lost can have it written back from the tree.
+
+### Search
+
+- The search box finds a node by **a few letters of its name** (`chor` finds `checkout_order`), its **qualified name** (`OrderService.par`), or a **pasted
+  reference**: `src/orders.py:142`, `file.py#L12`, a traceback line, an ID.
+- **Filters** in the query: `kind:fn`, `has:doc`, `no:doc`, `in:billing/`, and `-` in front of one to leave it out.
+- **Docs are found by the words in them** (`retry`, `"retry policy"`), with a snippet around the match.
+- While the box has text, the **canvas dims every card that is not a hit**. **V-NOC: Search…** opens the box.
+
+### The command line (experimental)
+
+**New, and experimental until 1.0:** the command names and the `--json` output are a new public surface, and can still change; the release notes will say when.
+
+- **`vnoc` is a command as well as the editor's core.** `vnoc status`, `show`, `code`, `tree`, `find`, `grep`, `calls`, `missing`, `check`, `tags`, `doc
+  list | read | new | tag`, `tag`, `relink`, `repair`, `init`, `guide`, `skill`, `agent`. Text for people (one fact per line, colour on a terminal), `--json` for
+  programs, `--quiet`, and the exit codes `0` / `1` (`check` found problems) / `2` (the request cannot be met) / `3` (the environment). `vnoc guide` and `vnoc <command> --help` say the rest.
+- **Search from the shell**: `vnoc find` and `vnoc tree --where` use the same query language as the box.
+- **Notes from the shell**: `vnoc doc new` attaches a note to a node, `vnoc doc tag` tags it, `vnoc tags` lists the tags and `vnoc tag describe` writes what one means.
+  `vnoc relink` and `vnoc repair` fix a Missing node and a lost `ID:` line.
+- **Coding agents**: `vnoc agent install` writes the V-NOC **skill** and a short **rules block** where the agents the user names look for them (Claude Code, Codex,
+  Cursor, Copilot, Gemini CLI and others: `vnoc agent list`). In a terminal it is a menu; it never overwrites a file of yours, and `vnoc agent remove` takes back
+  only what it wrote. It also offers to let Claude Code and Codex run V-NOC's *read* commands without asking (the question is yes by default; a write still asks).
+- **Two VS Code commands**: **Install `vnoc` Command in PATH** (a link in `~/.local/bin`, as VS Code does for `code`) and **Set Up Coding Agents**, which lists the
+  agents, shows the files it will write, and writes them. The extension offers the second once, in a project where an agent is in use. **Uninstall `vnoc` Command from PATH**
+  takes back only what the first made.
+- **The command in every release**: each release now has `vnoc-cli-<system>.tar.gz` (`.zip` on Windows) holding `vnoc` and the Python driver, and an
+  `install.sh` that installs the one for your system after checking its sum: `curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.5.0/install.sh | sh`.
+  One `SHA256SUMS` covers every file of the release, and the archives and the script carry build provenance like the VSIX files.
+- Text from your files (a note, a code line, a file name) is **shown, not obeyed** on a terminal: control characters such as `ESC` print as `^[`. A pipe and
+  `--json` get the bytes as they are.
+
 ## 0.2.0
 
 Calls, and a new side bar.

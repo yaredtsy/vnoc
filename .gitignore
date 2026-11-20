@@ -10,3 +10,4 @@ extension/out/
 .vscode-test/
 extension/LICENSE
 tools/media/out/
+vnoc-cli-*

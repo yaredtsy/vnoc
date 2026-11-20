@@ -220,7 +220,18 @@ jobs:
         with: { name: "vsix-${{ matrix.target }}", path: "vnoc-${{ matrix.target }}.vsix", if-no-files-found: error, retention-days: 30 }
 ```
 
-The artifact names stay `vsix-<target>`: `publish.yml` already downloads `vsix-*`. `scripts/package.mjs` does not change.
+The artifact names stay `vsix-<target>`: `publish.yml` already downloads `vsix-*`. *(Changed in A13 of doc 21, 2026-11-20.)* `scripts/package.mjs`
+now also writes the **command-line archive** right after it copies the two programs into `extension/bin/` (nothing is compiled twice): `vnoc-cli-<target>.tar.gz`
+(`vnoc-cli-win32-x64.zip`), flat, four files (`vnoc`, `vnoc-driver-python`, `LICENSE`, `THIRD_PARTY_NOTICES.md`). `package.yml` uploads it as a second
+artifact, `cli-<target>`, after the `vsix-<target>` one:
+
+```yaml
+      - uses: actions/upload-artifact@v4
+        with: { name: "cli-${{ matrix.target }}", path: "vnoc-cli-${{ matrix.target }}.*", if-no-files-found: error, retention-days: 30 }
+```
+
+On Windows the zip is written by Windows' own `bsdtar` (`%SystemRoot%\System32\tar.exe -a`, by its full path: the `tar` first on the PATH of a `bash` on a
+runner is GNU tar from Git, which cannot write a zip). **[check]** until the first run on `windows-latest`.
 
 How much the release cache saves under fat LTO is **[measure]**: it skips compiling the dependencies, but the LTO step over the whole driver
 runs every time.
@@ -235,8 +246,10 @@ The file name and the place of the `vsce publish` step stay as they are (the Tru
 | `check`: the CHANGELOG has the version | `grep -qx "## $version" extension/CHANGELOG.md` or `::error::extension/CHANGELOG.md has no "## $version" section`. Fails before anything is built |
 | `build` becomes two jobs, both `needs: check` | `test: uses: ./.github/workflows/ci.yml` with `permissions: { contents: read, pull-requests: read }` (§3.2) · `package: uses: ./.github/workflows/package.yml` with `pre-release: true`. Side by side: the release takes as long as the slower of the two, not the sum |
 | `publish: needs: [test, package]` | unchanged otherwise: `environment: release`, the four-files check, `vsce publish --oidc` **first** (the 15-minute login), then Open VSX |
-| after the two stores: checksums | `(cd vsix && sha256sum *.vsix > SHA256SUMS)` |
-| after the two stores: provenance | `actions/attest-build-provenance@v2` with `subject-path: vsix/*.vsix`; the job gets `attestations: write` (it already has `id-token: write`). Anyone can then check a file with `gh attestation verify <file> -R yaredtsy/vnoc` |
+| `publish` also downloads `cli-*` *(A13)* | beside `vsix-*`, into `cli/`; the "files are there" step counts four VSIX **and four archives** (`vnoc-cli-*`) |
+| `install.sh`, stamped *(A13)* | after the two stores: `scripts/install.sh` with its line `VERSION="@VERSION@"` replaced by the extension's version (`sed`), checked for the replacement and for `sh -n`, into `cli/`. It is stamped so that `curl …/v0.5.0/install.sh \| sh` installs 0.5.0 (07 §6 of doc 21) |
+| after the two stores: checksums | all files of the release, in one folder `release/` (four VSIX, four archives, `install.sh`), **one** `SHA256SUMS` over them: `(cd release && sha256sum -- * > SHA256SUMS)`, and a check that it has nine lines |
+| after the two stores: provenance | `actions/attest-build-provenance@v2` with `subject-path` the VSIX, the archives and `install.sh` of `release/`; the job gets `attestations: write` (it already has `id-token: write`). Anyone can then check a file with `gh attestation verify <file> -R yaredtsy/vnoc` |
 | the release notes come from the CHANGELOG | `awk -v h="## $version" '$0==h{f=1;next} /^## /{if(f)exit} f' extension/CHANGELOG.md > notes.md`. A tag message is then just the version number |
 | the GitHub release is safe to run again | see below |
 | `timeout-minutes` | `check` 5, `publish` 15 |
@@ -256,7 +269,7 @@ if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
 else
   gh release create "$GITHUB_REF_NAME" --prerelease --title "v$version" --notes-file notes.md
 fi
-gh release upload "$GITHUB_REF_NAME" vsix/*.vsix vsix/SHA256SUMS --clobber
+gh release upload "$GITHUB_REF_NAME" release/* --clobber   # four VSIX, four archives, install.sh, SHA256SUMS
 ```
 
 Release and files are two commands on purpose: a `create` that fails halfway through its uploads leaves a release with some of the files, and
@@ -333,17 +346,22 @@ A published tag can then not be moved or deleted by accident; a fix is the next 
 ## 8. How to release
 
 ```
-1  on a branch: extension/package.json "version": "X.Y.Z" · extension/CHANGELOG.md "## Unreleased (…)" becomes "## X.Y.Z"
-2  PR → ci-ok green → merge. Optional: main's run leaves vsix-* artifacts. Installing one catches a packaging problem before you tag,
+1  on a branch: the version "X.Y.Z" in four places: extension/package.json · the Rust workspace (Cargo.toml's [workspace.package], and the `version` line of
+   each crates/*/Cargo.toml, which do not inherit it: crates/vnoc's is the one the guide test reads) · drivers/python/Cargo.toml · skills/vnoc/SKILL.md
+   (metadata.vnoc-version; the guide test fails when it differs from crates/vnoc's). Then `cargo build` in both workspaces refreshes the two Cargo.lock.
+   extension/CHANGELOG.md "## Unreleased (…)" becomes "## X.Y.Z"
+2  PR → ci-ok green → merge. Optional: main's run leaves vsix-* and cli-* artifacts. Installing one catches a packaging problem before you tag,
    but these are NOT the files that get published: the tag builds its own
 3  git checkout main && git pull && git tag -a vX.Y.Z -m "X.Y.Z" && git push origin vX.Y.Z
-4  Actions → publish: check, then tests and the four files side by side. The run then waits for your approval. Before approving:
+4  Actions → publish: check, then tests and the files side by side. The run then waits for your approval. Before approving:
    download your system's vsix-* artifact FROM THIS RUN · code --install-extension vnoc-<target>.vsix · open a Python folder:
-   the tree loads, a doc opens, a call tree expands. Only then "Review deployments" → approve
-5  check: the Marketplace page shows X.Y.Z for the four systems · the GitHub release has 4 files, SHA256SUMS and the CHANGELOG section
+   the tree loads, a doc opens, a call tree expands. Then the same run's cli-* artifact for your system: unpack it, run `./vnoc --version`
+   and `./vnoc status` in a Python folder (the driver is beside it). Only then "Review deployments" → approve
+5  check: the Marketplace page shows X.Y.Z for the four systems · the GitHub release has 4 VSIX + 4 archives (vnoc-cli-*) + install.sh + SHA256SUMS (10 files)
+   and the CHANGELOG section · `curl -fsSL …/vX.Y.Z/install.sh | VNOC_INSTALL_DIR=$(mktemp -d) sh` installs it and prints vX.Y.Z
 ```
 
-Step 4 runs one packaged file on one system. The other three are built and packaged but have not run anywhere. Say so in the release notes
+Step 4 runs one packaged file and one archive on one system. The other three are built and packaged but have not run anywhere. Say so in the release notes
 until there is a machine (or a job) for each.
 
 If anything in `publish` fails after a store has accepted the files: Re-run failed jobs. Every step skips or repeats safely what is already

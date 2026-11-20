@@ -1,6 +1,10 @@
-// Build everything and write one platform-specific .vsix.  Usage: node scripts/package.mjs [--target darwin-arm64|darwin-x64|linux-x64|win32-x64] [--pre-release]
+// Build everything and write one platform-specific .vsix, and beside it the command-line archive (docs/21-agent-cli/07-install.md §6):
+//   vnoc-<target>.vsix                  the extension, with the two programs inside
+//   vnoc-cli-<target>.tar.gz            (win32-x64: .zip) the same two programs, flat, with LICENSE and THIRD_PARTY_NOTICES.md: what scripts/install.sh unpacks
+// Usage: node scripts/package.mjs [--target darwin-arm64|darwin-x64|linux-x64|win32-x64] [--pre-release]
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,6 +53,31 @@ copyFileSync(join(root, "drivers/python/target", triple, "release", exe("vnoc-dr
 
 // the licence is one file, at the root of the repository: the VSIX gets a copy (extension/LICENSE is not in git)
 copyFileSync(join(root, "LICENSE"), join(root, "extension/LICENSE"));
+
+// The command-line archive: the programs that were just copied into bin/ (nothing is compiled twice), flat, with the two files their licences ask for (the
+// programs hold other people's code, as the VSIX does: the check at the top holds here too). Beside the .vsix, at the root; a CI job uploads it as `cli-<target>`.
+const archive = join(root, target.startsWith("win32") ? `vnoc-cli-${target}.zip` : `vnoc-cli-${target}.tar.gz`);
+const names = [exe("vnoc"), exe("vnoc-driver-python"), "LICENSE", "THIRD_PARTY_NOTICES.md"];
+const stage = mkdtempSync(join(tmpdir(), "vnoc-cli-"));
+try {
+  for (const name of names.slice(0, 2)) {
+    copyFileSync(join(bin, name), join(stage, name));
+    chmodSync(join(stage, name), 0o755);
+  }
+  copyFileSync(join(root, "LICENSE"), join(stage, "LICENSE"));
+  copyFileSync(join(root, "extension/THIRD_PARTY_NOTICES.md"), join(stage, "THIRD_PARTY_NOTICES.md"));
+  rmSync(archive, { force: true });
+  // `tar` makes both. On macOS and Linux a .tar.gz; on Windows Windows' own bsdtar (`tar -a` writes a zip by the extension), by its full path: the `tar` first on the PATH
+  // of a bash on a runner is GNU tar from Git, which cannot write a zip. COPYFILE_DISABLE keeps macOS from adding `._` files beside each one.
+  const tar = process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+  const env = { ...process.env, COPYFILE_DISABLE: "1" };
+  const make = process.platform === "win32" ? ["-a", "-c", "-f", archive, "-C", stage, ...names] : ["-czf", archive, "-C", stage, ...names];
+  console.log(`\n$ tar ${make.join(" ")}`);
+  execFileSync(tar, make, { stdio: "inherit", env });
+  execFileSync(tar, [process.platform === "win32" ? "-tvf" : "-tzvf", archive], { stdio: "inherit", env });
+} finally {
+  rmSync(stage, { recursive: true, force: true });
+}
 
 // vsce does not understand pnpm workspaces; the extension is bundled by esbuild, so it needs no node_modules at run time.
 run("npx", ["--no", "@vscode/vsce", "package", "--no-dependencies", "--target", target, ...(preRelease ? ["--pre-release"] : []), "--out", join(root, `vnoc-${target}.vsix`)], join(root, "extension"));
