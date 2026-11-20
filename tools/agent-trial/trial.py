@@ -207,15 +207,19 @@ def load(run_dir):
     result = next((e for e in reversed(events) if e.get("type") == "result"), None)
     calls, results = [], {}
     for e in events:
-        content = (e.get("message") or {}).get("content")
+        if e.get("type") == "system" and e.get("subtype") == "permission_denied":  # Claude Code's own record of a refused call
+            results[e.get("tool_use_id")] = {"tool_use_id": e.get("tool_use_id"), "is_error": True, "content": e.get("message")}
+            continue
+        message = e.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
             continue
         for block in content:
             if block.get("type") == "tool_use":
                 calls.append({"id": block["id"], "name": block["name"], "input": block.get("input", {})})
             elif block.get("type") == "tool_result":
-                results[block["tool_use_id"]] = block
-    texts = [b["text"] for e in events if e.get("type") == "assistant"
+                results.setdefault(block["tool_use_id"], block)
+    texts = [b["text"] for e in events if e.get("type") == "assistant" and isinstance(e.get("message"), dict)
              for b in (e["message"].get("content") or []) if isinstance(b, dict) and b.get("type") == "text"]
     return init, result, calls, results, texts
 
@@ -419,7 +423,7 @@ def score(run_dir):
         or (c["name"] == "Read" and path_of(c).endswith("skills/vnoc/SKILL.md"))
         or (c["name"] == "Bash" and re.search(r"skills/vnoc/SKILL\.md", command_of(c)) is not None)
         for c in calls)
-    refusals = [{"tool": c["name"], "input": (command_of(c) or path_of(c))[:100]} for c in calls if refused(c, results)]
+    refusals = [{"tool": c["name"], "input": (command_of(c) or path_of(c))[:100].replace("\n", " ")} for c in calls if refused(c, results)]
     denials = (result or {}).get("permission_denials", [])
     row = {
         "run": run_dir.name, "scenario": meta["scenario"], "arm": meta["arm"], "rules": meta["rules"], "passed": passed,
