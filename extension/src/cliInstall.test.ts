@@ -82,15 +82,36 @@ test("a link to this binary, to nothing of V-NOC's, or no link at all is never m
   assert.equal(planMove(mac({ place: { kind: "file" } })), undefined);
 });
 
-test("a foreign link or file is refused, and the message says whose", () => {
+test("a foreign link or file is refused, and the message says how to get rid of it", () => {
   for (const f of [mac({ place: link("/opt/tools/vnoc-1/vnoc") }), mac({ place: link("/Users/ann/work/vnoc/target/debug/vnoc") }), linux({ place: { kind: "file" } }), windows({ place: { kind: "file" } })]) {
     const plan = planInstall(f);
     assert.equal(plan.step.do, "refuse");
-    assert.ok(plan.message.includes("it is yours"), plan.message);
+    assert.ok(plan.message.includes("which V-NOC did not make") || plan.message.includes("a file V-NOC did not make"), plan.message);
+    assert.ok(plan.message.endsWith(", then run this command again."), plan.message);
     assert.equal(plan.windowsPath, undefined);
   }
   // production too: a link to a place that is not another version's folder is the user's
   assert.equal(planInstall(mac({ place: link("/opt/tools/vnoc-1/vnoc") })).step.do, "refuse");
+});
+
+test("the refusal to install says what the thing is and what to type: rm (del on Windows), then run it again", () => {
+  assert.equal(
+    planInstall(mac({ place: link("/usr/bin/true") })).message,
+    "V-NOC left ~/.local/bin/vnoc alone: it points to /usr/bin/true, which V-NOC did not make. If you don't need it: rm ~/.local/bin/vnoc, then run this command again.",
+  );
+  assert.equal(
+    planInstall(linux({ place: { kind: "file" } })).message,
+    "V-NOC left ~/.local/bin/vnoc alone: it is a file V-NOC did not make. If you don't need it: rm ~/.local/bin/vnoc, then run this command again.",
+  );
+  assert.equal(
+    planInstall(windows({ place: { kind: "file" } })).message,
+    'V-NOC left C:\\Users\\ann\\AppData\\Local\\vnoc\\bin\\vnoc.cmd alone: it is a file V-NOC did not make. If you don\'t need it: del "C:\\Users\\ann\\AppData\\Local\\vnoc\\bin\\vnoc.cmd", then run this command again.',
+  );
+  // a folder with a space in its name: the command is quoted, and names the whole path (a quoted `~` is not expanded)
+  const spaced = planInstall(mac({ env: { PATH: "/usr/bin", VNOC_CLI_DIR: "/Users/ann/my tools" }, place: link("/usr/bin/true") }));
+  assert.ok(spaced.message.includes('rm "/Users/ann/my tools/vnoc"'), spaced.message);
+  // the development window's refusal is not a foreign file: no rm
+  assert.ok(!planInstall(mac({ production: false, place: link(OLD_MAC) })).message.includes("rm "));
 });
 
 test("the PATH advice: present when the folder is not on it, by the shell, and absent when it is", () => {
@@ -140,17 +161,45 @@ test("development mode adds the VNOC_DRIVER note, production does not", () => {
   assert.ok(planInstall(mac({ production: false })).driverNote?.includes("VNOC_DRIVER set to the driver"));
 });
 
-test("uninstall removes a link to a V-NOC program or our wrapper, and nothing else", () => {
+test("uninstall takes back only what install made: a V-NOC folder's binary of any version, exactly the running binary, our wrapper", () => {
+  // this version's, and another version's (also when its folder is gone)
   assert.equal(planUninstall(mac({ place: link(mac().binary) })).step.do, "remove");
-  assert.equal(planUninstall(mac({ place: link("/Users/ann/work/vnoc/target/debug/vnoc") })).step.do, "remove");
+  assert.equal(planUninstall(mac({ place: link(OLD_MAC) })).step.do, "remove");
+  assert.equal(planUninstall(mac({ place: link(OLD_MAC, false) })).step.do, "remove");
   assert.equal(planUninstall(windows({ place: wrapper(windows().binary) })).step.do, "remove");
+  assert.equal(planUninstall(windows({ place: wrapper(OLD_WIN) })).step.do, "remove");
+  // exactly the binary this extension runs, wherever it is: a development window undoes its own link
+  const dev = mac({ production: false, binary: "/Users/ann/work/vnoc/target/debug/vnoc" });
+  assert.equal(planUninstall({ ...dev, place: link(dev.binary) }).step.do, "remove");
   assert.equal(planUninstall(mac()).step.do, "leave");
   assert.ok(planUninstall(mac()).message.startsWith("Nothing to remove"));
-  for (const f of [mac({ place: link("/usr/bin/python3") }), mac({ place: { kind: "file" } }), windows({ place: { kind: "file" } })]) {
-    const plan = planUninstall(f);
-    assert.equal(plan.step.do, "refuse");
-    assert.ok(plan.message.includes("it is yours"), plan.message);
+});
+
+test("uninstall leaves a program that is only named vnoc, a file and a foreign wrapper, and says what to type", () => {
+  // a person's own build is theirs, though it is called vnoc (and so is a different build than the one this window runs)
+  for (const place of [link("/opt/me/vnoc"), link("/Users/ann/work/vnoc/target/debug/vnoc"), link("/usr/bin/python3")]) {
+    const plan = planUninstall(mac({ place }));
+    assert.equal(plan.step.do, "refuse", JSON.stringify(place));
+    assert.ok(plan.message.includes("which V-NOC did not make. If you don't need it: rm ~/.local/bin/vnoc."), plan.message);
+    assert.ok(!plan.message.includes("run this command again"), plan.message);
   }
+  assert.equal(
+    planUninstall(mac({ place: link("/opt/me/vnoc") })).message,
+    "V-NOC left ~/.local/bin/vnoc alone: it points to /opt/me/vnoc, which V-NOC did not make. If you don't need it: rm ~/.local/bin/vnoc.",
+  );
+  assert.equal(
+    planUninstall(linux({ place: { kind: "file" } })).message,
+    "V-NOC left ~/.local/bin/vnoc alone: it is a file V-NOC did not make. If you don't need it: rm ~/.local/bin/vnoc.",
+  );
+  const win = planUninstall(windows({ place: { kind: "file" } }));
+  assert.equal(win.step.do, "refuse");
+  assert.ok(win.message.endsWith('If you don\'t need it: del "C:\\Users\\ann\\AppData\\Local\\vnoc\\bin\\vnoc.cmd".'), win.message);
+  // a wrapper that runs some other program (parsed as a wrapper, but not V-NOC's binary)
+  assert.equal(planUninstall(windows({ place: wrapper("C:\\tools\\vnoc.exe") })).step.do, "refuse");
+  // nothing was changed on the Windows PATH by a refusal
+  assert.equal(planUninstall(windows({ place: wrapper("C:\\tools\\vnoc.exe"), addedToUserPath: true })).windowsPath, undefined);
+  // but the command still counts as "there" for the context key
+  assert.equal(cliInstalled(mac({ place: link("/opt/me/vnoc") })), true);
 });
 
 test("the context key: a command that exists and points to a V-NOC program that is there", () => {

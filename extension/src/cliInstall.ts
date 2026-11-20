@@ -143,11 +143,28 @@ export function removeFromPath(value: string | undefined, dir: string): string {
     .join(";");
 }
 
-/** `~/…` for a path under the home folder, as people write it. */
+/** `~/…` for a path under the home folder, as people write it (not on Windows, where nobody writes it so: the path as it is). */
 const shown = (p: string, f: Pick<Facts, "platform" | "home">) => {
+  if (isWindows(f)) return p;
   const home = f.home.replace(/[\\/]+$/, "");
   return home && slashes(p).startsWith(`${slashes(home)}/`) ? `~/${slashes(p).slice(slashes(home).length + 1)}` : p;
 };
+
+/** The command that removes `link`, as the user would type it (Windows: `del`; a path with a space is quoted and, so that the shell takes it, not abbreviated). */
+function removeCommand(link: string, f: Pick<Facts, "platform" | "home">): string {
+  if (isWindows(f)) return `del "${link}"`;
+  const name = shown(link, f);
+  return /\s/.test(name) ? `rm "${link}"` : `rm ${name}`;
+}
+
+/**
+ * The refusal for something at the place that V-NOC did not make. `why` says what it is; the message says how to get rid of it. Install ends with "then run
+ * this command again"; uninstall has nothing to run again.
+ */
+function refusal(f: Pick<Facts, "platform" | "home">, link: string, why: string, again: boolean): { step: Step; message: string } {
+  const fix = `If you don't need it: ${removeCommand(link, f)}${again ? ", then run this command again" : ""}.`;
+  return { step: { do: "refuse", link, why }, message: `V-NOC left ${shown(link, f)} alone: ${why}. ${fix}` };
+}
 
 /** What to say when the folder is not on the PATH (macOS, Linux): the line to add, and to which file, by the shell the environment names. */
 export function pathAdvice(f: Pick<Facts, "platform" | "home" | "env">, dir: string): string | undefined {
@@ -183,14 +200,14 @@ export function planInstall(f: Facts): Plan {
   if (have.kind === "nothing") {
     step = { do: "create", link, target: f.binary };
   } else if (have.kind === "file") {
-    return refuse("it is a file that is not a link to V-NOC (it is yours). Remove or rename it, then install again.");
+    return refusal(f, link, "it is a file V-NOC did not make", true);
   } else if (have.target === f.binary) {
     step = { do: "leave", link, why: `it already runs ${f.binary}` };
   } else if (inExtensionFolder(have.target, f.extension)) {
     if (!f.production) return refuse(`it points into an installed V-NOC (${have.target}), and a development window does not move another one's link.`);
     step = { do: "move", link, from: have.target, target: f.binary };
   } else {
-    return refuse(`it points to ${have.target}, which is not made by V-NOC (it is yours). Remove it, then install again.`);
+    return refusal(f, link, `it points to ${have.target}, which V-NOC did not make`, true);
   }
 
   const windowsPath = isWindows(f) ? (onPath(dir, f.userPath, f.platform) ? "present" : "add") : undefined;
@@ -222,17 +239,20 @@ export function planMove(f: Facts): Step | undefined {
   return { do: "move", link: where.link, from: have.target, target: f.binary };
 }
 
-/** What *Uninstall `vnoc` Command from PATH* does: removes a link to a V-NOC program or our wrapper, and the user PATH entry only if install added it. */
+/**
+ * What *Uninstall `vnoc` Command from PATH* does: takes back what install made, and nothing else. That is a link to a V-NOC extension folder's binary (any
+ * version), or to exactly the binary this extension runs (so a development window can undo its own), or our wrapper. A link to any other program called `vnoc`
+ * (a person's own build) is theirs. The user PATH entry goes only if install added it.
+ */
 export function planUninstall(f: Facts): Plan {
   const where = linkPath(f);
   if ("error" in where) return { step: { do: "leave", link: "", why: where.error }, message: `V-NOC could not look for the command: ${where.error}.` };
   const { link, dir } = where;
   const have = f.place;
   if (have.kind === "nothing") return { step: { do: "leave", link, why: "there is no command to remove" }, message: `Nothing to remove: there is no ${shown(link, f)}.` };
-  if (have.kind === "file") return { step: { do: "refuse", link, why: "it is a file that is not a link to V-NOC (it is yours)" }, message: `V-NOC left ${shown(link, f)} alone: it is a file that is not a link to V-NOC (it is yours).` };
-  if (!isVnocBinary(have.target)) {
-    const why = `it points to ${have.target}, which is not a V-NOC program (it is yours)`;
-    return { step: { do: "refuse", link, why }, message: `V-NOC left ${shown(link, f)} alone: ${why}.` };
+  if (have.kind === "file") return refusal(f, link, "it is a file V-NOC did not make", false);
+  if (have.target !== f.binary && !inExtensionFolder(have.target, f.extension)) {
+    return refusal(f, link, `it points to ${have.target}, which V-NOC did not make`, false);
   }
   const windowsPath = isWindows(f) ? (f.addedToUserPath && onPath(dir, f.userPath, f.platform) ? "remove" : "keep") : undefined;
   const parts = [`Removed ${shown(link, f)}.`];

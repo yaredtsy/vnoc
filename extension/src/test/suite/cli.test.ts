@@ -95,7 +95,8 @@ suite("cli", () => {
       fs.writeFileSync(link, "mine\n");
       const file = (await vscode.commands.executeCommand("vnoc.installCli")) as CliResult;
       assert.strictEqual(file.done, "refuse", file.message);
-      assert.ok(file.message.includes("it is yours"), file.message);
+      assert.ok(file.message.includes("a file V-NOC did not make"), file.message);
+      assert.ok(file.message.includes(process.platform === "win32" ? `del "${link}"` : "If you don't need it: rm "), file.message);
       assert.strictEqual(fs.readFileSync(link, "utf8"), "mine\n");
       assert.strictEqual(((await vscode.commands.executeCommand("vnoc.uninstallCli")) as CliResult).done, "refuse");
       assert.strictEqual(fs.readFileSync(link, "utf8"), "mine\n");
@@ -119,6 +120,31 @@ suite("cli", () => {
       assert.strictEqual(fs.readlinkSync(link), other, "the link was not moved");
     } finally {
       clean(dir);
+    }
+  });
+
+  test("Uninstall leaves a link to a program that is only named vnoc, and says what to type", async function () {
+    if (process.platform === "win32") return this.skip(); // links are not made on Windows
+    const dir = cliDir();
+    clean(dir);
+    const link = path.join(dir, "vnoc");
+    const mine = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-cli-mine-"));
+    try {
+      // a person's own build: called vnoc, runs, and is not a V-NOC extension's binary nor the one this window runs
+      const theirs = path.join(mine, "vnoc");
+      fs.writeFileSync(theirs, "#!/bin/sh\necho vnoc of my own\n", { mode: 0o755 });
+      fs.symlinkSync(theirs, link);
+      const left = (await vscode.commands.executeCommand("vnoc.uninstallCli")) as CliResult;
+      assert.strictEqual(left.done, "refuse", left.message);
+      assert.ok(left.message.includes(`points to ${theirs}, which V-NOC did not make. If you don't need it: rm `), left.message);
+      assert.ok(!left.message.includes("run this command again"), left.message);
+      assert.strictEqual(fs.readlinkSync(link), theirs, "the link is as it was");
+      assert.ok(fs.existsSync(theirs));
+      // the command exists, so the context key says so: it only says the command is there
+      assert.strictEqual(api.cli.context("vnoc.cliInstalled"), true);
+    } finally {
+      clean(dir);
+      fs.rmSync(mine, { recursive: true, force: true });
     }
   });
 
