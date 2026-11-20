@@ -302,6 +302,7 @@ code
   6  def rate_for(country):
   7      return RATES.get(country, 0.0)
 vnoc doc read billing/tax.py::rate_for
+function  billing/tax.py::rate_for   lines 6-7   ID 4KF02248CHCTYAG49B0KKZ5SD7
 ── Where the rates come from
    .vnoc/nodes/D7/4KF02248CHCTYAG49B0KKZ5SD7/where-the-rates-come-from.md
 The table is the finance team's. Do not edit it without asking them.

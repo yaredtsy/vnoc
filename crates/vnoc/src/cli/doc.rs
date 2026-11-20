@@ -10,7 +10,8 @@ use vnoc_domain::NodeId;
 
 use super::args::{DocCommand, DocFileArgs, DocListArgs};
 use super::nodes::{
-    Answer, Doc, Lookup, NodeError, Target, docs_by_id, each, emit, expand, id_of, kind_word, shown,
+    Answer, Doc, Lookup, NodeError, Target, docs_by_id, each, emit, expand, id_of, kind_word,
+    lines_of, shown,
 };
 use super::out::{self, Render};
 use super::project::{Opened, open_from, open_without_driver};
@@ -81,6 +82,9 @@ pub struct DocsAnswer {
     #[serde(skip_serializing_if = "Option::is_none")]
     was: Option<String>,
     node_id: Option<String>,
+    /// the def's lines (1-based, both ends included), with `doc read` of a node the index knows: the same as `show`'s
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lines: Option<[u32; 2]>,
     docs: Vec<Doc>,
     /// the texts, with `doc read`
     #[serde(skip_serializing_if = "Option::is_none", rename = "bodies")]
@@ -100,6 +104,7 @@ impl DocsAnswer {
             missing: false,
             was: None,
             node_id,
+            lines: None,
             docs,
             bodies: None,
             view: None,
@@ -114,6 +119,7 @@ impl DocsAnswer {
             missing: true,
             was: Some(was),
             node_id: Some(node_id),
+            lines: None,
             docs,
             bodies: None,
             view: None,
@@ -150,7 +156,7 @@ impl DocsAnswer {
             (None, Some(location), kind) => head_line(
                 kind.as_deref().unwrap_or("node"),
                 location,
-                None,
+                self.lines,
                 self.node_id.as_deref(),
             ),
             _ => String::new(),
@@ -178,7 +184,8 @@ impl Render for DocsAnswer {
                     let match_ = if self.narrowed { " match" } else { "" };
                     return format!("no docs on {}{match_}\n", self.name());
                 }
-                bodies
+                // the node's header first, as `show` prints it (a Missing node: its MISSING line), then the notes
+                let notes = bodies
                     .iter()
                     .map(|doc| {
                         let mut text = format!(
@@ -194,7 +201,8 @@ impl Render for DocsAnswer {
                         text
                     })
                     .collect::<Vec<_>>()
-                    .join("\n")
+                    .join("\n");
+                format!("{}\n{notes}", self.header())
             }
             View::List => {
                 let mut text = format!("{}\n", self.header());
@@ -224,9 +232,16 @@ impl Answer for DocsAnswer {
     }
 }
 
-fn of_target(lookup: &Lookup, target: Target) -> DocsAnswer {
+fn of_target(lookup: &Lookup, target: Target, with_lines: bool) -> DocsAnswer {
     match target {
-        Target::Node(node) => of_node(lookup, node),
+        Target::Node(node) => {
+            let mut answer = of_node(lookup, node);
+            // only `doc read` names the node's lines, as its header does (`show`'s); `doc list` and `doc path` stay as they were
+            if !with_lines {
+                answer.lines = None;
+            }
+            answer
+        }
         Target::Missing(missing) => {
             DocsAnswer::missing(missing.was, missing.id.to_string(), missing.docs)
         }
@@ -234,12 +249,14 @@ fn of_target(lookup: &Lookup, target: Target) -> DocsAnswer {
 }
 
 fn of_node(lookup: &Lookup, node: &Node) -> DocsAnswer {
-    DocsAnswer::node(
+    let mut answer = DocsAnswer::node(
         kind_word(node.kind),
         node.location(),
         id_of(node).map(|id| id.to_string()),
         lookup.docs_of(id_of(node)),
-    )
+    );
+    answer.lines = lines_of(node).map(|(a, b)| [a, b]);
+    answer
 }
 
 /// Every argument is an ID (`-` is read first): then no index is needed.
@@ -307,7 +324,7 @@ async fn list(global: &Global, args: &DocListArgs) -> Result<(), Failure> {
         let opened = open_from(global).await?;
         let narrow = std::cell::OnceCell::new();
         return each("doc list", global, &nodes, &opened, &|lookup, target| {
-            let mut answer = of_target(lookup, target);
+            let mut answer = of_target(lookup, target, false);
             narrow
                 .get_or_init(|| Narrow::new(lookup, text))
                 .apply(&mut answer.docs);
@@ -325,7 +342,7 @@ async fn list(global: &Global, args: &DocListArgs) -> Result<(), Failure> {
     }
     let opened = open_from(global).await?;
     each("doc list", global, &nodes, &opened, &|lookup, target| {
-        Ok::<_, NodeError>(of_target(lookup, target))
+        Ok::<_, NodeError>(of_target(lookup, target, false))
     })
 }
 
@@ -390,7 +407,7 @@ async fn file_command(
     }
     let opened = open_from(global).await?;
     each(command, global, &nodes, &opened, &|lookup, target| {
-        finish(of_target(lookup, target), Some(lookup))
+        finish(of_target(lookup, target, view == View::Read), Some(lookup))
     })
 }
 
@@ -475,7 +492,7 @@ pub(super) async fn node_docs(
     let opened = open_from(global).await?;
     let lookup = Lookup::new(&opened, 1);
     let answer = lookup.resolve(arg).map(|target| {
-        let a = of_target(&lookup, target);
+        let a = of_target(&lookup, target, false);
         (a.name(), a.docs)
     });
     Ok((opened.project.clone(), answer))

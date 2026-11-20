@@ -16,10 +16,11 @@ code
   13          return Order(raw["number"], lines)
 ```
 
-`doc read` prints the notes themselves (`doc path`: only their files, for your own read and edit tools):
+`doc read` prints the node's line (as `show` does) and then the notes themselves (`doc path`: only their files, for your own read and edit tools):
 
 ```
 vnoc doc read orders/service.py::OrderService.parse_order
+function  orders/service.py::OrderService.parse_order   lines 10-13   ID 31ZBQ9NKY1E881TZWC2CJCN35H
 ── Why we parse twice
    .vnoc/nodes/5H/31ZBQ9NKY1E881TZWC2CJCN35H/why-we-parse-twice.md
 The upstream payload is parsed once to find the number and again, with the lines, once the order is known.

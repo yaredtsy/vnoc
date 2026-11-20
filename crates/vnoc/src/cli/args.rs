@@ -499,7 +499,7 @@ pub enum DocCommand {
     List(DocListArgs),
     /// Prints the notes of a node, as they are in their files. Read them before you change the node.
     ///
-    /// Prints the docs of a node: each under a line `── <title>  <path>`, with the text as it is in the file and its frontmatter left out.
+    /// Prints the docs of a node: first the node's line (the same as `show`'s, a Missing node's MISSING line), then each doc under a line `── <title>  <path>`, with the text as it is in the file and its frontmatter left out.
     /// Name one doc by its file name to print only that; or narrow them with --where. A node named by its ID needs no driver (unless --where is used).
     Read(DocReadArgs),
     /// Prints the file paths of a node's notes, one per line, for your own read and edit tools.
