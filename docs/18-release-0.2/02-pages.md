@@ -32,7 +32,7 @@ Sections, in order. The text below is the draft; write it as it is unless the co
   <p><b>Browse Python code as a graph in VS Code. See what a function calls. Attach docs that survive renames.</b></p>
 
   <!-- badges: Marketplace version · Open VSX version · CI · Licence · Discord -->
-  [![Marketplace](https://img.shields.io/visual-studio-marketplace/v/vnoc.vnoc?label=Marketplace&include_prereleases)](https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc)
+  [![Marketplace](https://vsmarketplacebadges.dev/version/vnoc.vnoc.svg)](https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc)
   [![Open VSX](https://img.shields.io/open-vsx/v/vnoc/vnoc?label=Open%20VSX)](https://open-vsx.org/extension/vnoc/vnoc)
   [![CI](https://github.com/yaredtsy/vnoc/actions/workflows/ci.yml/badge.svg)](https://github.com/yaredtsy/vnoc/actions/workflows/ci.yml)
   [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)

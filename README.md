@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc"><img src="https://img.shields.io/visual-studio-marketplace/v/vnoc.vnoc?label=Marketplace&include_prereleases" alt="Marketplace" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc"><img src="https://vsmarketplacebadges.dev/version/vnoc.vnoc.svg" alt="Marketplace" /></a>
   <a href="https://open-vsx.org/extension/vnoc/vnoc"><img src="https://img.shields.io/open-vsx/v/vnoc/vnoc?label=Open%20VSX" alt="Open VSX" /></a>
   <a href="https://github.com/yaredtsy/vnoc/actions/workflows/ci.yml"><img src="https://github.com/yaredtsy/vnoc/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-blue.svg" alt="Licence: Apache-2.0" /></a>

@@ -1,6 +1,6 @@
 # V-NOC
 
-[![Marketplace](https://img.shields.io/visual-studio-marketplace/v/vnoc.vnoc?label=Marketplace&include_prereleases)](https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc)
+[![Marketplace](https://vsmarketplacebadges.dev/version/vnoc.vnoc.svg)](https://marketplace.visualstudio.com/items?itemName=vnoc.vnoc)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/J5nfPHqyBr)
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](https://github.com/yaredtsy/vnoc/blob/main/LICENSE)
 
