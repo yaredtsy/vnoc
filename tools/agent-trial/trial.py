@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""The agent trial of docs/21-agent-cli/06-skill.md §8 (A14): `setup`, `run`, `score`, `batch`. Standard library only; see README.md.
+"""The agent trial of docs/21-agent-cli/06-skill.md §8 (A14): `setup`, `run`, `score`, `batch`, `rescore`. Standard library only; see README.md.
 
     trial.py setup <run-dir> [--agent claude] [--no-rules]
     trial.py run   <agent> <scenario 1-6> <text|xml> [n] [--no-rules] [--model M]
     trial.py score <run-dir>...
-    trial.py batch <agent> --model M      # the 14 runs of 06 §8, one results file under runs/
+    trial.py batch <agent> [--model M]    # the 14 runs of 06 §8, one results file under runs/ (codex: gpt-reserve, effort low)
     trial.py rescore runs/batch-<time>.json   # the scorer changed: judge the saved runs again
 """
 
@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,7 @@ CLAUDE_TOOLS = [
 ]
 TIMEOUT = 600  # a run over ten minutes is "capped", not retried
 MAX_TURNS = "30"  # so is one that reaches this many turns (`claude --max-turns`, not in --help)
+CODEX_MODEL, CODEX_EFFORT = "gpt-reserve", "low"
 BATCH_LIMIT = 45 * 60  # a batch that has run this long starts no new run
 
 PARSE_ORDER = "orders/service.py::OrderService.parse_order"
@@ -156,11 +158,34 @@ def setup(run_dir, agent="claude", rules=True):
     return run_dir
 
 
+def agent_command(agent, prompt, work, model):
+    """The headless command of an agent, and the version string it reports."""
+    if agent == "claude":
+        exe = shutil.which("claude")  # found with the user's PATH; the run's PATH is the clean one
+        cmd = [exe, "-p", prompt, "--output-format", "stream-json", "--verbose",
+               "--setting-sources", "project,local", "--no-session-persistence", "--max-turns", MAX_TURNS,
+               "--allowedTools", ",".join(CLAUDE_TOOLS)]
+        if model:
+            cmd += ["--model", model]
+    else:
+        exe = shutil.which("codex")
+        # `--ignore-user-config`: the user's plugins and MCP servers stay out (06 §8), auth still comes from ~/.codex.
+        # `allow_login_shell=false`: a login shell rebuilds PATH from the user's zsh profile and finds *their* vnoc first.
+        # No network inside the sandbox (the default of workspace-write, said out loud). No approval flag: `codex exec` never asks.
+        cmd = [exe, "exec", "--json", "--ephemeral", "--ignore-user-config", "-m", model or CODEX_MODEL,
+               "-c", f'model_reasoning_effort="{CODEX_EFFORT}"', "-c", "allow_login_shell=false",
+               "-c", "sandbox_workspace_write.network_access=false", "--sandbox", "workspace-write", "-C", str(work), prompt]
+    version = subprocess.run([exe, "--version"], text=True, capture_output=True).stdout.strip()
+    return cmd, version
+
+
 def run(agent, scenario, arm, n=1, rules=True, model=None):
-    if agent != "claude":
-        sys.exit("A14b: codex and cursor are not built yet")
+    if agent not in ("claude", "codex"):
+        sys.exit("agents: claude, codex")
     if scenario not in PROMPTS or arm not in ("text", "xml"):
         sys.exit("scenario is 1-6, arm is text or xml")
+    if agent == "codex":
+        model = model or CODEX_MODEL
     name = f"{agent}-s{scenario}-{arm}-n{n}" + ("" if rules else "-norules")
     run_dir = RUNS / name
     if run_dir.exists():
@@ -172,11 +197,7 @@ def run(agent, scenario, arm, n=1, rules=True, model=None):
     env = base_env(bin_dir, with_bin=scenario != "6")
     if arm == "xml":
         env["VNOC_TRIAL_XML"] = "1"
-    claude = shutil.which("claude")  # found with the user's PATH; the run's PATH is the clean one
-    cmd = [claude, "-p", PROMPTS[scenario], "--output-format", "stream-json", "--verbose",
-           "--setting-sources", "project,local", "--no-session-persistence", "--max-turns", MAX_TURNS, "--allowedTools", ",".join(CLAUDE_TOOLS)]
-    if model:
-        cmd += ["--model", model]
+    cmd, version = agent_command(agent, PROMPTS[scenario], work, model)
     start = time.time()
     timed_out = False
     with open(run_dir / "transcript.jsonl", "w") as out, open(run_dir / "stderr.txt", "w") as err:
@@ -186,15 +207,62 @@ def run(agent, scenario, arm, n=1, rules=True, model=None):
         except subprocess.TimeoutExpired:
             timed_out, code = True, None
     meta = {"agent": agent, "scenario": scenario, "arm": arm, "n": n, "rules": rules, "model_flag": model,
-            "command": cmd[:1] + ["-p", "<prompt>"] + cmd[3:], "prompt": PROMPTS[scenario], "path": env["PATH"],
+            "effort": CODEX_EFFORT if agent == "codex" else None,
+            "command": [c if c != PROMPTS[scenario] else "<prompt>" for c in cmd], "prompt": PROMPTS[scenario], "path": env["PATH"],
             "xml": arm == "xml", "exit": code, "timed_out": timed_out, "seconds": round(time.time() - start, 1),
-            "claude_version": subprocess.run([claude, "--version"], text=True, capture_output=True).stdout.strip()}
+            "agent_version": version}
     (run_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"ran {run_dir} in {meta['seconds']} s, exit {code}" + (" TIMED OUT" if timed_out else ""))
     return run_dir
 
 
 # ----------------------------------------------------------------------------------------------------------------- score
+
+
+def unwrap(command):
+    """`/bin/zsh -lc '<cmd>'` as Codex reports a command: the command itself."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command
+    return parts[2] if len(parts) == 3 and parts[1] in ("-c", "-lc") and parts[0].endswith(("sh", "zsh", "bash")) else command
+
+
+def load_codex(events):
+    """Codex's JSONL as (init, result, calls, results, texts), in the shape Claude's gives: a command is a `Bash` call, a patch is an
+    `Edit` (`Write` for a new file, `Delete` for a removed one). Usage is the sum of the `turn.completed` events. Neither `thread.started`
+    nor any other event names the model or the effort: they are the flags' (meta.json)."""
+    calls, results, texts = [], {}, []
+    usage, failed, completed = {}, None, 0
+    for e in events:
+        kind = e.get("type")
+        item = e.get("item") or {}
+        if kind == "item.completed":
+            t = item.get("type")
+            if t == "command_execution":
+                calls.append({"id": item["id"], "name": "Bash", "input": {"command": unwrap(item.get("command", ""))}})
+                failed_cmd = item.get("exit_code") not in (0, None)
+                results[item["id"]] = {"tool_use_id": item["id"], "is_error": failed_cmd, "content": item.get("aggregated_output", "")}
+            elif t == "file_change":
+                for i, change in enumerate(item.get("changes", [])):
+                    verb = {"add": "Write", "delete": "Delete"}.get(change.get("kind"), "Edit")
+                    calls.append({"id": f"{item['id']}.{i}", "name": verb, "input": {"file_path": change.get("path", "")}})
+                    results[f"{item['id']}.{i}"] = {"is_error": item.get("status") == "failed", "content": item.get("status", "")}
+            elif t == "agent_message":
+                texts.append(item.get("text", ""))
+            elif t == "mcp_tool_call":
+                calls.append({"id": item["id"], "name": "mcp", "input": {"tool": item.get("tool"), "server": item.get("server")}})
+        elif kind == "turn.completed":
+            completed += 1
+            for k, v in (e.get("usage") or {}).items():
+                usage[k] = usage.get(k, 0) + v
+        elif kind in ("turn.failed", "error"):
+            failed = e
+    result = None
+    if completed or failed:
+        result = {"usage": usage, "subtype": "error" if failed and not completed else "success", "is_error": bool(failed and not completed),
+                  "num_turns": completed, "total_cost_usd": None, "permission_denials": [], "error": failed}
+    return None, result, calls, results, texts
 
 
 def load(run_dir):
@@ -204,6 +272,8 @@ def load(run_dir):
             events.append(json.loads(line))
         except ValueError:
             pass
+    if any(e.get("type") == "thread.started" for e in events):
+        return load_codex(events)
     init = next((e for e in events if e.get("type") == "system" and e.get("subtype") == "init"), None)
     result = next((e for e in reversed(events) if e.get("type") == "result"), None)
     calls, results = [], {}
@@ -255,7 +325,7 @@ def touches_vnoc_dir(call):
 def reads_file(call):
     if call["name"] == "Read":
         return True
-    return call["name"] == "Bash" and bool(re.match(r"\s*(cat|head|tail|sed)\s", command_of(call)))
+    return call["name"] == "Bash" and bool(re.match(r"\s*(cat|head|tail|sed|nl|awk)\s", command_of(call)))
 
 
 def refused(call, results):
@@ -263,11 +333,13 @@ def refused(call, results):
     if not r or not r.get("is_error"):
         return False
     text = json.dumps(r.get("content"))
-    return bool(re.search(r"permission|not allowed|requested|approval|haven't granted|was blocked", text, re.I))
+    return bool(re.search(r"permission|not allowed|requested|approval|haven't granted|was blocked|operation not permitted|sandbox", text, re.I))
 
 
 def tried_to_delete(call):
     text = command_of(call)
+    if call["name"] == "Delete":
+        return True
     if call["name"] == "Bash":
         return bool(re.search(r"(^|[\s;&|(])(rm|rmdir|unlink|trash)\s|find\b.*-delete|git\s+clean|rmtree|os\.(remove|unlink|rmdir)|shutil\.move|git\s+rm\b", text))
     return False
@@ -425,7 +497,7 @@ def score(run_dir):
     tokens_in = sum(usage.get(k, 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
     skill_loaded = any(
         (c["name"] == "Skill" and "vnoc" in json.dumps(c["input"]))
-        or (c["name"] == "Read" and path_of(c).endswith("skills/vnoc/SKILL.md"))
+        or (c["name"] == "Read" and path_of(c).endswith("skills/vnoc/SKILL.md"))  # Claude: the Skill tool, or the file read
         or (c["name"] == "Bash" and re.search(r"skills/vnoc/SKILL\.md", command_of(c)) is not None)
         for c in calls)
     refusals = [{"tool": c["name"], "input": (command_of(c) or path_of(c))[:100].replace("\n", " ")} for c in calls if refused(c, results)]
@@ -436,8 +508,9 @@ def score(run_dir):
         "tokens_in": tokens_in, "tokens_out": usage.get("output_tokens", 0),
         "tokens_split": {k: usage.get(k, 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")},
         "skill_loaded_unnamed": skill_loaded, "refused": refusals, "permission_denials": len(denials),
-        "model": (init or {}).get("model"), "claude_version": meta.get("claude_version"),
-        "seconds": meta["seconds"], "cost_usd": (result or {}).get("total_cost_usd"), "turns": (result or {}).get("num_turns"),
+        "model": (init or {}).get("model") or meta.get("model_flag"), "effort": meta.get("effort"),
+        "agent_version": meta.get("agent_version") or meta.get("claude_version"),
+        "agent": meta["agent"], "seconds": meta["seconds"], "cost_usd": (result or {}).get("total_cost_usd"), "turns": (result or {}).get("num_turns"),
         "is_error": (result or {}).get("is_error"), "timed_out": meta["timed_out"], "capped": capped, "notes": notes,
         "outside": outside(calls, run_dir),
         "commands": [command_of(c) or f"{c['name']} {path_of(c)}" for c in calls],
@@ -472,7 +545,7 @@ def table(rows):
     for r in rows:
         notes = " ; ".join(r["notes"])[:260].replace("|", "/")
         lines.append(f"| {r['run']} | {r['scenario']}{'' if r['rules'] else ' (no rules)'} | {r['arm']} | {r['passed']} | {r['calls_all']}/{r['calls_vnoc']} | "
-                     f"{r['tokens_in']:,}/{r['tokens_out']:,} | {r['cost_usd'] or 0:.3f} | {'yes' if r['skill_loaded_unnamed'] else 'no'} | {notes} |")
+                     f"{r['tokens_in']:,}/{r['tokens_out']:,} | {'' if r['cost_usd'] is None else format(r['cost_usd'], '.3f')} | {'yes' if r['skill_loaded_unnamed'] else 'no'} | {notes} |")
     return "\n".join(lines)
 
 
@@ -495,7 +568,7 @@ def write_batch(stem, agent, model, rows, total, stopped):
     (RUNS / f"{stem}.json").write_text(json.dumps({"agent": agent, "model": model, "total": total, "stopped": stopped, "rows": rows}, indent=2) + "\n")
     (RUNS / f"{stem}.md").write_text(
         f"# {agent} on {model}: {len(rows)} of {len(BATCH)} runs\n\n{table(rows)}\n\n{summary(rows)}\n\n"
-        f"total: {total['seconds']} s, ${total['cost_usd']}, {total['tokens_in']:,} in / {total['tokens_out']:,} out"
+        f"total: {total['seconds']} s, {'' if agent == 'codex' else '$' + str(total['cost_usd']) + ', '}{total['tokens_in']:,} in / {total['tokens_out']:,} out"
         + (f"\n\nSTOPPED: {stopped}\n" if stopped else "\n"))
 
 
@@ -517,7 +590,7 @@ def batch(agent, model):
     if repo_dirty():
         sys.exit("the repo is not clean before the batch:\n" + repo_dirty())
     RUNS.mkdir(exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stamp = f"{agent}-" + time.strftime("%Y%m%d-%H%M%S")
     started, rows, stopped = time.time(), [], None
 
     def write():
@@ -558,7 +631,7 @@ def main():
     r.add_argument("--model")
     b = sub.add_parser("batch")
     b.add_argument("agent")
-    b.add_argument("--model", required=True)
+    b.add_argument("--model")
     k = sub.add_parser("rescore")
     k.add_argument("batch_json")
     c = sub.add_parser("score")
@@ -571,9 +644,9 @@ def main():
     elif a.cmd == "rescore":
         rescore(a.batch_json)
     elif a.cmd == "batch":
-        if a.agent != "claude":
-            sys.exit("A14b: codex and cursor are not built yet")
-        batch(a.agent, a.model)
+        if a.agent == "claude" and not a.model:
+            sys.exit("claude needs --model (sonnet)")
+        batch(a.agent, a.model or CODEX_MODEL)
     else:
         for d in a.run:
             show_row(score(d))
