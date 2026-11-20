@@ -17,6 +17,51 @@ use super::{Failure, Global};
 /// has to change (03 §11). `quiet` is the one flag a text rendering reads: the hints and totals it leaves out.
 pub trait Render: Serialize {
     fn text(&self, quiet: bool) -> String;
+
+    /// The text as `VNOC_TRIAL_XML=1` asks for it: note bodies inside `<doc>` tags. The default is the text itself, so only an answer that holds a
+    /// note body says anything here. Trial only (A14): becomes the default for note bodies or is deleted in A14c.
+    fn text_xml(&self, quiet: bool) -> String {
+        self.text(quiet)
+    }
+}
+
+/// Whether the trial's XML arm is on: `VNOC_TRIAL_XML` is `1` (anything else, or unset, is off). Trial only (A14): becomes the default for note
+/// bodies or is deleted in A14c.
+fn trial_xml() -> bool {
+    std::env::var_os("VNOC_TRIAL_XML").is_some_and(|v| v == "1")
+}
+
+/// The text of an answer in the format the environment asks for: [`Render::text`], or [`Render::text_xml`] in the trial's XML arm.
+pub fn text_of<T: Render + ?Sized>(value: &T, quiet: bool) -> String {
+    if trial_xml() {
+        value.text_xml(quiet)
+    } else {
+        value.text(quiet)
+    }
+}
+
+/// A note body inside `<doc path="…" title="…">…</doc>`, for the trial's XML arm. `&`, `<`, `>` and `"` are escaped in the attributes, and a
+/// `</doc>` inside the body is written `&lt;/doc>`, so a note cannot close its own tag. Trial only (A14): becomes the default for note bodies or
+/// is deleted in A14c.
+pub fn doc_tag(path: &str, title: &str, body: &str) -> String {
+    fn attr(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    }
+    let mut text = format!(
+        "<doc path=\"{}\" title=\"{}\">\n{}",
+        attr(path),
+        attr(title),
+        body.replace("</doc>", "&lt;/doc>")
+    );
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str("</doc>\n");
+    text
 }
 
 /// Writes `value` as the flags ask: one JSON value with `--json`, else its text.
@@ -24,7 +69,7 @@ pub fn render<T: Render>(value: &T, global: &Global) -> Result<(), Failure> {
     if global.json {
         json(value)
     } else {
-        text(&value.text(global.quiet))
+        text(&text_of(value, global.quiet))
     }
 }
 
