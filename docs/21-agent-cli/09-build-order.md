@@ -394,7 +394,7 @@ is an HTML comment `<!-- screenshot: … -->` for the user to fill (the demo fil
 ### A14 Trying it with agents
 
 *(Split 2026-11-20: **A14a** the XML switch, the trial harness `tools/agent-trial/`, Claude Code's 14 runs, then a stop; **A14b**
-Codex and Cursor; **A14c** the decision (XML for note bodies or deleted), the skill and rules wording from the table, the README's
+Codex; **A14c** the decision (XML for note bodies or deleted), the skill and rules wording from the table, the README's
 coding-agents section if the results change it, release 0.5. The method is 06 §8 "How it is run".)*
 
 The six scenarios of 06 §8 in Claude Code, Codex, and pi or Cursor, **each with the text output and with an experimental `--xml`** (03 §11:
