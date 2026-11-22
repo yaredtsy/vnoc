@@ -48,3 +48,33 @@ test("idValues: the value after `ID:`, every one, in order; a value with a colon
   assert.deepEqual(idValues("The text says ID: nothing-real, and nothing real below."), ["nothing-real,"], "prose that mentions the label counts, as for the core");
   assert.deepEqual(idValues("x = {'a': 1}  # not an ID"), []);
 });
+
+test("a comment mark glued to the label is not part of it: `#ID:`, `//ID:`, `/*ID:`, `*ID:` (any language's line comment)", () => {
+  assert.deepEqual(idValues(`# ID: ${ID_A}\ndef f() -> U32: 1`), [ID_A], "Bend, a space after the mark");
+  assert.deepEqual(idValues(`#ID: ${ID_A}\ndef f() -> U32: 1`), [ID_A], "Bend, no space");
+  assert.deepEqual(idValues(`// ID: ${ID_A}`), [ID_A]);
+  assert.deepEqual(idValues(`//ID: ${ID_A}`), [ID_A]);
+  assert.deepEqual(idValues(`/// ID:${ID_A}`), [ID_A]);
+  assert.deepEqual(idValues(`///ID: ${ID_A}`), [ID_A]);
+  assert.deepEqual(idValues(`/*ID: ${ID_A} */`), [ID_A]);
+  assert.deepEqual(idValues(`/**\n * ID: ${ID_A}\n */`), [ID_A]);
+  assert.deepEqual(idValues(`*ID: ${ID_A}`), [ID_A]);
+  assert.deepEqual(idValues(`#KeyID: x`), [], "a label that is not the whole word is still no label");
+  assert.deepEqual(idValues(`# not an ID: here`), ["here"], "loose on purpose: the word before the colon is `ID`");
+});
+
+test("Bend: the ID above a def is kept, moved or lost like a docstring's; prose in a doc comment counts, as for Python", () => {
+  const bend = (id: string) => `# ID: ${id}\ndef f() -> U32: 1`;
+  assert.equal(dropsId(bend(ID_A), bend(ID_A).replace("U32: 1", "U32: 2")), false, "the body edited");
+  assert.equal(dropsId(bend(ID_A), "def f() -> U32: 1"), true, "the line deleted");
+  assert.equal(dropsId(bend(ID_A), bend(ID_B)), true, "the ID changed");
+  assert.equal(dropsId(bend(ID_A), `#ID: ${ID_A}\ndef f() -> U32: 1`), false, "the mark and the space changed");
+  assert.equal(dropsId("def f() -> U32: 1", bend(ID_A)), false, "nothing to lose");
+  assert.deepEqual(idValues("# Reads the ID: from the header\ndef f() -> U32: 1"), ["from"], "prose that says `ID: word` counts");
+});
+
+test("Python's quote rule is unchanged by the comment marks", () => {
+  assert.deepEqual(idValues(`"""#ID: ${ID_A}"""`), [ID_A]);
+  assert.deepEqual(idValues(`"""Summary. ID: ${ID_A}"""`), [ID_A]);
+  assert.deepEqual(idValues(withId(ID_A)), [ID_A]);
+});

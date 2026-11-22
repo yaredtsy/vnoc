@@ -74,16 +74,19 @@ export function withDraft(file: string, from: number, to: number, written: strin
 }
 
 /**
- * The name the question uses (§7): the node's own name from its key, `path::Outer.inner` → `inner`, `path::f#2` → `f` (the card's name). A class that holds methods
+ * The name the question uses (§7): the node's own name, as the core's outline gives it (`Nat.double` stays `Nat.double`, a Python method `C.f` is `f`), when the caller
+ * has the node. A key alone falls back to its last dot: `path::Outer.inner` → `inner`; a file or a folder: the last part of its path, `path::f#2` → `f` (the card's name). A class that holds methods
  * is asked about by its own name even when it is a method's ID that goes: the text does not say whose it was.
  */
-export function nodeName(key: string): string {
-  const qualname = key.includes("::") ? key.slice(key.indexOf("::") + 2) : key;
+export function nodeName(key: string, name?: string): string {
+  if (name) return name;
+  if (!key.includes("::")) return key.split("/").pop() || key; // a file or a folder: its own name
+  const qualname = key.slice(key.indexOf("::") + 2);
   return qualname.replace(/#\d+$/, "").split(".").pop() || qualname;
 }
 
 /** The modal's text, and the button that goes on (Cancel is VS Code's own). */
-export const idQuestion = (key: string): string => `This removes ${nodeName(key)}'s ID: its docs will be Missing.`;
+export const idQuestion = (key: string, name?: string): string => `This removes ${nodeName(key, name)}'s ID: its docs will be Missing.`;
 export const SAVE_ANYWAY = "Save Anyway";
 
 /** The end of a text as a position, lines counted the way VS Code counts them: a line ends at `\r\n`, `\n` or a lone `\r`. */
