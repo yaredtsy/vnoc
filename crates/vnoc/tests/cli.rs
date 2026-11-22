@@ -1505,18 +1505,22 @@ fn doc_paths_are_absolute_when_the_root_is_below_the_git_root() {
 }
 
 #[test]
-fn a_folder_with_no_python_starts_no_driver_and_says_so() {
+fn a_folder_with_no_python_files_says_so_on_the_drivers_line() {
     let dir = scratch("no-python");
     std::fs::write(dir.join("README.txt"), "nothing here\n").unwrap();
     let shown = without_root(&stdout_of(&dir, &["status"]), &dir);
     assert!(
         shown.starts_with("V-NOC ")
-            && shown.contains("  driver   not started (no Python files to read)\n")
+            && shown.contains(&format!(
+                "  driver   python {} · no .py files\n",
+                env!("CARGO_PKG_VERSION")
+            ))
             && shown.ends_with("  agents   not set up (vnoc agent install)\n"),
         "{shown}"
     );
     let json = status_json(&dir, &dir, &[]);
-    assert_eq!(json["drivers"], json!([]));
+    assert_eq!(json["drivers"][0]["files"], 0);
+    assert_eq!(json["drivers"][0]["state"], "running");
 }
 
 // ------------------------------------------------------------------------------------------------------ `doc` and `tree`
@@ -6163,4 +6167,94 @@ fn a_note_that_holds_escape_codes_comes_through_a_pipe_byte_for_byte() {
         text(&json.stdout)
     );
     assert!(!json.stdout.contains(&0x1b));
+}
+
+/// A driver that says something on stderr and exits: the handshake fails.
+#[cfg(unix)]
+fn broken_driver(label: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch(label);
+    let path = dir.join("vnoc-driver-broken");
+    std::fs::write(
+        &path,
+        "#!/bin/sh\necho 'the analyzer is missing' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn a_broken_driver_is_said_once_on_stdout_and_stderr_stays_empty() {
+    let root = two_languages("broken-quiet");
+    let drivers = vec![driver_path(), broken_driver("broken-quiet-driver")];
+    let out = run(vnoc_with(&root, &drivers, &["status"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert_eq!(shown.matches("driver   broken").count(), 1, "{shown}");
+    assert!(shown.contains("driver   broken · failed:"), "{shown}");
+
+    // the driver's own words are in the reason (JSON keeps all of it)
+    let out = run(vnoc_with(&root, &drivers, &["status", "--json"]));
+    assert_eq!(code(&out), 0);
+    assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    let status: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let broken = status["drivers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["name"] == "broken")
+        .unwrap();
+    assert_eq!(broken["state"], "failed");
+    assert!(
+        broken["error"]
+            .as_str()
+            .unwrap()
+            .contains("the analyzer is missing"),
+        "{broken}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn with_vnoc_log_the_broken_drivers_lines_appear_on_stderr() {
+    let root = two_languages("broken-log");
+    let drivers = vec![driver_path(), broken_driver("broken-log-driver")];
+    let out = run({
+        let mut cmd = vnoc_with(&root, &drivers, &["status"]);
+        cmd.env("VNOC_LOG", "info");
+        cmd
+    });
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let said = text(&out.stderr);
+    assert!(said.contains("is not used"), "{said}");
+    assert!(said.contains("the analyzer is missing"), "{said}");
+    // started once, so told once
+    assert_eq!(said.matches("is not used").count(), 1, "{said}");
+}
+
+#[test]
+fn an_empty_project_names_each_drivers_extensions() {
+    let root = scratch("empty-two");
+    let out = run(vnoc_with(&root, &both_drivers(), &["status"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    let version = env!("CARGO_PKG_VERSION");
+    let shown = text(&out.stdout);
+    assert!(
+        shown.contains(&format!(
+            "  driver   bend {version} · no .bend files\n  driver   python {version} · no .py files\n"
+        )),
+        "{shown}"
+    );
+    assert!(!shown.contains("not started"), "{shown}");
+
+    let out = run(vnoc_with(&root, &both_drivers(), &["status", "--json"]));
+    let status: Value = serde_json::from_slice(&out.stdout).unwrap();
+    for driver in status["drivers"].as_array().unwrap() {
+        assert_eq!(driver["files"], 0);
+        assert_eq!(driver["state"], "running");
+    }
 }

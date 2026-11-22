@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use super::{Failure, Global};
-use crate::driver_host::{DriverHost, LanguageState};
+use crate::driver_host::{DriverHost, LanguageState, Mode};
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
 
@@ -179,6 +179,10 @@ pub fn open_without_driver(global: &Global) -> Result<Project, Failure> {
         .map_err(|e| Failure::Usage(e.to_string()))
 }
 
+/// Whether `VNOC_LOG` was in the environment when the process started (`main` sets it to `warn` for a command that finds it unset, so the
+/// variable itself cannot say). When it was, the drivers' stderr is shown, as the log is.
+pub static LOG_ASKED_FOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Opens `root`, points a driver host at `drivers`, starts them all (the handshakes say which extensions the scan collects), and builds the whole
 /// index (`refresh(…, Touched::All)`). The drivers exit when `Opened` is dropped.
 ///
@@ -187,6 +191,12 @@ pub fn open_without_driver(global: &Global) -> Result<Project, Failure> {
 pub async fn open(root: &Path, drivers: &[PathBuf]) -> Result<Opened, Failure> {
     let project = Project::open(root).map_err(|e| Failure::Usage(e.to_string()))?;
     let host = DriverHost::default();
+    // a command starts each driver once, and what a driver writes on stderr is kept for its failure: stderr stays empty when the command works
+    // (`VNOC_LOG` given: the driver's stderr is shown, as the log is)
+    host.set_mode(Mode {
+        once: true,
+        keep_stderr: !LOG_ASKED_FOR.load(std::sync::atomic::Ordering::Relaxed),
+    });
     host.set_paths(drivers.to_vec());
     host.start_all().await;
     let languages = host.languages().await;

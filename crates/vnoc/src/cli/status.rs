@@ -17,8 +17,8 @@ struct Status {
     version: &'static str,
     root: String,
     initialized: bool,
-    /// the drivers that ran, or failed (a failed one is a row with its error, not the whole command's exit 3); a driver that read no file is not
-    /// listed, so the list is empty when no file had to be read
+    /// every driver given, running or failed (a failed one is a row with its error, not the whole command's exit 3); `files` 0 for one with
+    /// nothing to read
     drivers: Vec<Driver>,
     stats: Stats,
     docs: Docs,
@@ -103,8 +103,6 @@ async fn status_of(opened: &Opened) -> Status {
                 warnings: l.warnings,
             }
         })
-        // a driver with no file to read is "not started": every driver is started now, so what says it is the count. A failed one is always shown.
-        .filter(|d| d.files > 0 || d.error.is_some())
         .collect();
     Status {
         schema: 1,
@@ -220,9 +218,6 @@ fn text(s: &Status, quiet: bool) -> String {
         }
         out.push_str(&line("health", &rest));
     }
-    if s.drivers.is_empty() {
-        out.push_str(&line("driver", "not started (no Python files to read)"));
-    }
     for d in &s.drivers {
         let shown = match &d.error {
             // the first line of the reason: the rest is in `--json`
@@ -231,6 +226,16 @@ fn text(s: &Status, quiet: bool) -> String {
                 d.name,
                 style::paint(style::warn(), "failed:"),
                 reason.lines().next().unwrap_or_default()
+            ),
+            None if d.files == 0 => format!(
+                "{} {} · no {} files",
+                d.name,
+                d.version,
+                d.extensions
+                    .iter()
+                    .map(|e| format!(".{e}"))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
             ),
             None => format!(
                 "{} {} · read {}",
@@ -383,10 +388,11 @@ mod tests {
     }
 
     #[test]
-    fn no_driver_started_says_so() {
+    fn a_driver_with_nothing_to_read_names_its_extensions() {
         let mut s = status(true);
-        s.drivers.clear();
-        assert!(text(&s, false).contains("  driver   not started (no Python files to read)\n"));
+        s.drivers[0].files = 0;
+        s.drivers[0].extensions = vec!["py".into(), "pyi".into()];
+        assert!(text(&s, false).contains("  driver   python 0.2.0 · no .py · .pyi files\n"));
         // the agents line is the last one
         assert!(text(&s, false).ends_with("  agents   not set up (vnoc agent install)\n"));
     }

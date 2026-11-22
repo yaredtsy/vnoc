@@ -149,12 +149,14 @@ fn main() {
         }
         Start::Refuse => refuse(),
     };
-    if !server && std::env::var_os("VNOC_LOG").is_none() {
+    let log_asked_for = std::env::var_os("VNOC_LOG").is_some();
+    if !server && !log_asked_for {
         // A command says nothing on standard error unless it fails (05 §4), and the driver it starts reads the same variable: its own
         // default is `info`. Set before the runtime exists, so no other thread is reading the environment.
         // SAFETY: this is the only thread; the runtime, and with it every other thread, is built below.
         unsafe { std::env::set_var("VNOC_LOG", "warn") };
     }
+    vnoc::cli::project::LOG_ASKED_FOR.store(log_asked_for, std::sync::atomic::Ordering::Relaxed);
     init_logging(if server { "warn,vnoc=info" } else { "warn" });
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

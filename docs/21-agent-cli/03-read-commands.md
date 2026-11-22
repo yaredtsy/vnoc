@@ -54,8 +54,7 @@ V-NOC 0.2.0   /work/sample
 
 `health` is `all good` when every count is 0 (and the hint is not printed). With no `.vnoc/`, `docs` reads
 `none yet: no .vnoc/ in this project` and a second, indented line `vnoc init starts it (ask the user first)`, and there is no `health` line
-unless files failed or the scan stopped (then `health` says that). `failed N` and `stopped at 20,000 files` go on the `health` line. No driver
-started: `driver   not started (no Python files to read)`. The JSON does not change. What follows is the A2 layout, kept for its notes.
+unless files failed or the scan stopped (then `health` says that). `failed N` and `stopped at 20,000 files` go on the `health` line. The JSON does not change. What follows is the A2 layout, kept for its notes.
 
 As built in A2 (2026-11-19), on the sample project (`crates/vnoc/tests/sample/`, run as a copy outside the repository):
 
@@ -67,7 +66,7 @@ missing 1 · lost markers 1 · problems 0      → vnoc check
 ```
 
 - **Line 1:** the version of `vnoc`, the root (**the one absolute path any command prints**: it is the root itself; everything else is relative to
-  it, 02 §2), and the driver that ran. *(Changed 2026-11-22, B3b: every driver is started, and a driver that read no file is not listed; with none listed the line still says `driver not started (no Python files to read)`.)*
+  it, 02 §2), and the driver that ran. *(Changed 2026-11-22, B4a: every driver given is listed, and one with no file to read says `no .<ext> files`; the line `driver not started (no Python files to read)` is gone.)*
 - **Line 2:** the counts of `index::structure` (folders *under* the root, files, classes, functions and methods together), then the docs and the
   nodes they are on (`Index::doc_counts`; a Missing node's docs are counted). `no docs` when there are none. Singular where the count is 1
   (`1 file`, `1 class`).
@@ -108,7 +107,7 @@ When it comes, a driver that fails is a row of the list with its error, not the 
 
 *(Changed 2026-11-22, built in B3b, docs/23 §5: it came.)* One `driver` line per driver, by name: `driver   bend 0.3.0 · read 2 files`, then
 `driver   python 0.3.0 · read 12 files`. A driver that failed is `driver   ts · failed: <first line of the reason>`; an extension another driver
-won is a line `driver   bend · warning: <text>`. A driver that read no file and did not fail is not listed. With one driver the text is the
+won is a line `driver   bend · warning: <text>`. A driver with no file to read is still listed, as `driver   python 0.3.0 · no .py files` (all its extensions, ` · `-joined; JSON `files` 0). *(B4a.)* A driver that fails does it on stdout only: stderr stays empty and the exit is `0` (05 §4); the driver's own stderr (last 20 lines) is added to its reason, and is shown as it is with `VNOC_LOG` set. A command starts each driver once. With one driver the text is the
 line it always was. JSON: each row of `drivers` also has `extensions` (what it says it reads, without the dot), `state` (`running` or
 `failed`), `error` (the full reason; only when it failed) and `warnings` (a list, usually empty). Fields are only added, so `schema` stays `1`
 (C5); `tests/golden/status.json` gained the three fields on purpose. When **no** driver started the command is exit `3`:

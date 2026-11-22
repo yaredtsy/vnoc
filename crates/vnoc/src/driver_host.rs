@@ -6,7 +6,7 @@
 //! new one. Each driver says which file extensions it owns (`files.extensions`), and every per-file request goes to the owner of the file's
 //! extension (docs/23 §5). Finding the drivers (discovery) is `cli::project::discover`'s.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,6 +32,9 @@ use vnoc_driver_protocol::{
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A call tree is a real analysis: the driver itself stops one after 20 seconds, and this gives it time to answer.
+/// How many of a driver's last stderr lines are kept to explain a failed handshake.
+const STDERR_KEPT: usize = 20;
+
 const CALL_TREE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn timeout_of(method: &str) -> Duration {
@@ -43,7 +46,7 @@ fn timeout_of(method: &str) -> Duration {
 
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
-    #[error("no driver is configured: set `vnoc.driver.path`, or VNOC_DRIVER")]
+    #[error("no driver is configured: set `vnoc.drivers`, `--driver`, or VNOC_DRIVERS")]
     NotConfigured,
     /// No driver owns the file's extension (`None`: the file has none).
     #[error("{}", no_driver_for(.0.as_deref()))]
@@ -51,8 +54,14 @@ pub enum HostError {
     /// A driver that answered its handshake and cannot be used: it does not say which files it owns.
     #[error("the driver is not used: {0}")]
     Unusable(String),
+    /// A driver that already failed to start in a host that tries each driver once: why, as it was said then.
+    #[error("{0}")]
+    FailedBefore(String),
     #[error("the driver is not at {0}: build it with `cargo build` in drivers/python")]
     NotFound(PathBuf),
+    /// The driver started and then failed its handshake, and said something on stderr (kept only when the host pipes it).
+    #[error("{reason}\n{stderr}")]
+    Spawned { reason: String, stderr: String },
     #[error("could not start the driver: {0}")]
     Spawn(#[source] std::io::Error),
     #[error("the driver refused the handshake: {0}")]
@@ -109,19 +118,68 @@ pub struct DriverClient {
 impl DriverClient {
     /// Starts the driver at `path`, does the handshake, and checks it can produce an outline.
     pub async fn start(path: &Path) -> Result<DriverClient, HostError> {
+        DriverClient::start_with(path, false).await
+    }
+
+    /// As [`start`](DriverClient::start). `keep_stderr`: the driver's stderr is piped, its last [`STDERR_KEPT`] lines are added to the reason when the
+    /// handshake fails and dropped otherwise (the CLI: a command that works prints nothing on stderr). Otherwise it is the core's own stderr.
+    pub async fn start_with(path: &Path, keep_stderr: bool) -> Result<DriverClient, HostError> {
         if !path.exists() {
             return Err(HostError::NotFound(path.to_path_buf()));
         }
         let mut child = Command::new(path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(if keep_stderr {
+                Stdio::piped()
+            } else {
+                Stdio::inherit()
+            })
             .kill_on_drop(true)
             .spawn()
             .map_err(HostError::Spawn)?;
         let stdin = child.stdin.take().expect("piped");
         let stdout = child.stdout.take().expect("piped");
-        DriverClient::connect(stdin, stdout, Some(child)).await
+        let said = child.stderr.take().map(|stderr| {
+            let tail = Arc::new(Mutex::new(VecDeque::<String>::new()));
+            let kept = tail.clone();
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let mut kept = kept.lock().unwrap();
+                    if kept.len() == STDERR_KEPT {
+                        kept.pop_front();
+                    }
+                    kept.push_back(line);
+                }
+            });
+            tail
+        });
+        match DriverClient::connect(stdin, stdout, Some(child)).await {
+            Ok(client) => Ok(client),
+            Err(e) => {
+                // give the reader a moment to take what the driver wrote as it died
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                let said = said
+                    .map(|t| {
+                        t.lock()
+                            .unwrap()
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default();
+                Err(if said.is_empty() {
+                    e
+                } else {
+                    HostError::Spawned {
+                        reason: e.to_string(),
+                        stderr: said,
+                    }
+                })
+            }
+        }
     }
 
     /// The handshake over any pair of pipes: the driver's process is `child`, or none for a stand-in in a test.
@@ -467,9 +525,19 @@ pub enum LanguageState {
     Failed(String),
 }
 
+/// How a host treats the drivers it was given. The default is the server's: a failed driver is tried again, its stderr is the core's own.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Mode {
+    /// a driver that failed to start, or stopped, is not started again by this host (a CLI command lives for one run)
+    pub once: bool,
+    /// the drivers' stderr is kept (the last lines explain a failed handshake) and not shown
+    pub keep_stderr: bool,
+}
+
 /// One driver the host was given.
 struct Slot {
     path: PathBuf,
+    mode: Mode,
     state: tokio::sync::Mutex<SlotState>,
     /// how a test starts a stand-in driver instead of a process
     #[cfg(test)]
@@ -492,12 +560,15 @@ struct SlotState {
     /// Why there is no running driver: it did not start, or it stopped.
     error: Option<String>,
     warnings: Vec<String>,
+    /// a start was tried (whatever came of it)
+    tried: bool,
 }
 
 impl Slot {
-    fn new(path: PathBuf) -> Slot {
+    fn new(path: PathBuf, mode: Mode) -> Slot {
         Slot {
             path,
+            mode,
             state: tokio::sync::Mutex::default(),
             #[cfg(test)]
             starter: None,
@@ -510,13 +581,22 @@ impl Slot {
         if let Some(client) = state.client.as_ref() {
             return Ok(client.clone());
         }
+        if self.mode.once && state.tried {
+            return Err(HostError::FailedBefore(
+                state
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "the driver stopped".to_string()),
+            ));
+        }
+        state.tried = true;
         #[cfg(test)]
         let start = match &self.starter {
             Some(starter) => starter().await,
-            None => DriverClient::start(&self.path).await,
+            None => DriverClient::start_with(&self.path, self.mode.keep_stderr).await,
         };
         #[cfg(not(test))]
-        let start = DriverClient::start(&self.path).await;
+        let start = DriverClient::start_with(&self.path, self.mode.keep_stderr).await;
         let started = start.and_then(|client| {
             if client.info.files.is_some() {
                 Ok(client)
@@ -542,7 +622,8 @@ impl Slot {
                 Ok(client)
             }
             Err(e) => {
-                tracing::warn!("driver at {} is not used: {e}", self.path.display());
+                // the one `warn` is `start_all`'s; a start made by a request is for the log's detail
+                tracing::info!("driver at {} is not used: {e}", self.path.display());
                 state.error = Some(e.to_string());
                 Err(e)
             }
@@ -573,6 +654,7 @@ struct Routes {
 /// to the driver of its file's extension; a driver that breaks is dropped alone, and started again by the next request for one of its files.
 #[derive(Default)]
 pub struct DriverHost {
+    mode: Mutex<Mode>,
     slots: Mutex<Vec<Arc<Slot>>>,
     /// `None` until `start_all` has run for the current slots
     routes: Mutex<Option<Arc<Routes>>>,
@@ -581,8 +663,17 @@ pub struct DriverHost {
 impl DriverHost {
     /// The drivers to run, in place of any given before. Nothing is started: `start_all` does (or the first request).
     pub fn set_paths(&self, paths: Vec<PathBuf>) {
-        *self.slots.lock().unwrap() = paths.into_iter().map(|p| Arc::new(Slot::new(p))).collect();
+        let mode = *self.mode.lock().unwrap();
+        *self.slots.lock().unwrap() = paths
+            .into_iter()
+            .map(|p| Arc::new(Slot::new(p, mode)))
+            .collect();
         *self.routes.lock().unwrap() = None;
+    }
+
+    /// How the drivers given by the next `set_paths` are run.
+    pub fn set_mode(&self, mode: Mode) {
+        *self.mode.lock().unwrap() = mode;
     }
 
     /// One driver, or none: `set_paths` with a list of one.
@@ -603,7 +694,14 @@ impl DriverHost {
         for slot in &slots {
             let slot = slot.clone();
             starting.spawn(async move {
-                let _ = slot.client().await;
+                // one `warn` per driver that could not start, per call (the server's output channel shows it). A once-only host (a command)
+                // leaves it to the `info` line of the start itself: a command that works says nothing on stderr
+                match slot.client().await {
+                    Err(e) if !slot.mode.once => {
+                        tracing::warn!("driver at {} is not used: {e}", slot.path.display())
+                    }
+                    _ => {}
+                }
             });
         }
         while starting.join_next().await.is_some() {}
@@ -937,7 +1035,7 @@ mod tests {
         let mut slots = Vec::new();
         let mut routes = Routes::default();
         for (at, client) in clients.into_iter().enumerate() {
-            let slot = Slot::new(PathBuf::from(format!("driver-{at}")));
+            let slot = Slot::new(PathBuf::from(format!("driver-{at}")), Mode::default());
             for extension in &client.info.files.as_ref().unwrap().extensions {
                 routes.by_extension.entry(extension.clone()).or_insert(at);
             }
@@ -1443,7 +1541,10 @@ mod tests {
             .iter()
             .map(|(name, script)| {
                 let (name, script) = (*name, script.clone());
-                let mut slot = Slot::new(PathBuf::from(format!("vnoc-driver-{name}")));
+                let mut slot = Slot::new(
+                    PathBuf::from(format!("vnoc-driver-{name}")),
+                    Mode::default(),
+                );
                 slot.starter = Some(Arc::new(move || {
                     let script = script.clone();
                     Box::pin(async move {
