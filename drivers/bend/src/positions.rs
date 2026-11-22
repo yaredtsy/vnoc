@@ -26,6 +26,27 @@ impl<'a> Lines<'a> {
         }
     }
 
+    /// The analyzer's own positions: 1-based line, 1-based column counted in characters, a leading byte-order mark not counted (no editor shows
+    /// it). A column past the end of its line stops at the end.
+    pub fn position_1based(&self, (line, column): (u32, u32)) -> Position {
+        let line = (line.saturating_sub(1) as usize).min(self.starts.len() - 1);
+        let from = self.starts[line];
+        let from = if line == 0 && self.text.starts_with('\u{feff}') {
+            from + '\u{feff}'.len_utf8()
+        } else {
+            from
+        };
+        let rest = self.text[from..].chars().take_while(|&c| c != '\n');
+        let character = rest
+            .take(column.saturating_sub(1) as usize)
+            .map(char::len_utf16)
+            .sum::<usize>();
+        Position {
+            line: line as u32,
+            character: character as u32,
+        }
+    }
+
     pub fn range(&self, span: Span) -> Range {
         Range {
             start: self.position(span.start),

@@ -15,9 +15,10 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# The analyzer comes from one pinned commit of language_driver_rs (`7f54b73`, branch `bend-plan`, the last one reviewed on the analyzer side), both at the same rev: two revs
+# The analyzer comes from one pinned commit of language_driver_rs (`7f54b73`, branch `bend-plan`, the last one reviewed on the analyzer side), all three at the same rev: two revs
 # would build analyzer-core twice and the types would not match. Never a `path` into a checkout: another session edits that tree. Re-pinned to `bend-v0.1.0` once tagged.
 bend-syntax = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "7f54b73462faeb54c4d7051961715af98c2f5277" }
+bend-analysis = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "7f54b73462faeb54c4d7051961715af98c2f5277" }
 analyzer-core = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "7f54b73462faeb54c4d7051961715af98c2f5277" }
 
 # The wire types are shared with the core (D1): a renamed field breaks the build on both sides, not at run time.
@@ -26,6 +27,8 @@ serde = { version = "1", features = ["derive"] }
 blake3 = "1"
 
 [dev-dependencies]
+# the tests parse call trees deeper than serde_json's default limit of 128 levels
+serde_json = { version = "1", features = ["unbounded_depth"] }
 # Tests check the driver against the domain's golden IDs. The driver itself never depends on the domain (the core picks IDs).
 vnoc-domain = { path = "../../crates/vnoc-domain" }
 

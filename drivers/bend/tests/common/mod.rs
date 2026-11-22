@@ -3,8 +3,12 @@
 #![allow(dead_code)]
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub struct Driver {
@@ -30,6 +34,7 @@ impl Driver {
     /// Starts the driver and says nothing to it.
     pub fn spawn() -> Driver {
         let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc-driver-bend"))
+            .env("VNOC_TEST_HOOKS", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -115,7 +120,36 @@ impl Driver {
         );
         let mut buf = vec![0u8; len];
         self.out.read_exact(&mut buf).unwrap();
-        serde_json::from_slice(&buf).unwrap()
+        // a call tree can be deeper than serde_json's default limit of 128 levels
+        let mut de = serde_json::Deserializer::from_slice(&buf);
+        de.disable_recursion_limit();
+        Value::deserialize(&mut de).unwrap()
+    }
+
+    /// The tree of an entry of `root`: the root node of the answer.
+    pub fn tree(&mut self, root: &Path, file: &str, qualname: &str) -> Result<Value, Value> {
+        self.tree_of(root, file, qualname, 1, None)
+    }
+
+    pub fn tree_of(
+        &mut self,
+        root: &Path,
+        file: &str,
+        qualname: &str,
+        occurrence: u32,
+        depth: Option<u32>,
+    ) -> Result<Value, Value> {
+        let mut params = json!({ "root": root.to_str().unwrap(), "file": file, "entry": { "qualname": qualname, "occurrence": occurrence } });
+        if let Some(depth) = depth {
+            params["depth"] = json!(depth);
+        }
+        self.request("vnoc/callTree", params)
+            .map(|r| r["root"].clone())
+    }
+
+    /// `{ solves, opens, reopens, sessions }` as the worker counts them (the test hooks are on).
+    pub fn stats(&mut self) -> Value {
+        self.request("vnoc/test/stats", json!({})).unwrap()
     }
 
     pub fn finish(mut self) {
@@ -126,4 +160,81 @@ impl Driver {
             "the driver exits cleanly after shutdown + exit"
         );
     }
+}
+
+/// A folder in the temp directory that goes away with the value.
+pub struct Project {
+    pub root: PathBuf,
+}
+
+static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+impl Project {
+    pub fn new(files: &[(&str, &str)]) -> Project {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "vnoc-driver-bend-test-{}-{}-{nanos}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let p = Project { root };
+        for (name, text) in files {
+            p.put(name, text);
+        }
+        p
+    }
+
+    /// Changes the project on disk while a driver may have it open. A stamp is the length and the modification time, and a clock ticks every few
+    /// milliseconds on Linux: a change made right after the last one it read can carry the same stamp. Wait a tick first.
+    pub fn write(&self, name: &str, text: &str) {
+        tick();
+        self.put(name, text);
+    }
+
+    pub fn remove(&self, name: &str) {
+        tick();
+        std::fs::remove_file(self.root.join(name)).unwrap();
+    }
+
+    fn put(&self, name: &str, text: &str) {
+        let path = self.root.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+}
+
+fn tick() {
+    std::thread::sleep(std::time::Duration::from_millis(20));
+}
+
+impl Drop for Project {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// The names of what a node calls, in order.
+pub fn callees(node: &Value) -> Vec<String> {
+    node["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["target"]["qualname"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// Every mark in a tree, in the order met.
+pub fn marks(node: &Value) -> Vec<String> {
+    let mut out: Vec<String> = node["marks"]
+        .as_array()
+        .map(|m| m.iter().map(|x| x.as_str().unwrap().to_string()).collect())
+        .unwrap_or_default();
+    for child in node["children"].as_array().into_iter().flatten() {
+        out.extend(marks(child));
+    }
+    out
 }

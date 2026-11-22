@@ -36,7 +36,7 @@ fn the_handshake_announces_what_the_driver_can_do() {
     assert_eq!(capabilities["outline"], true);
     assert_eq!(capabilities["ids.plan"], true);
     assert_eq!(capabilities["ids.file"], true);
-    assert_eq!(capabilities["callTree"], false, "not built yet");
+    assert_eq!(capabilities["callTree"], true);
     assert_eq!(
         capabilities["environmentInputs"], false,
         "Bend has no manifest"
@@ -75,8 +75,8 @@ fn unknown_notifications_are_ignored_and_unknown_requests_get_32601() {
     d.notify("$/somethingNew", json!({ "x": 1 }));
     let e = d.request("vnoc/doesNotExist", json!({})).unwrap_err();
     assert_eq!(e["code"], -32601);
-    // not built: it is announced `false`, and asking anyway is an unknown method
-    let e = d.request("vnoc/callTree", json!({})).unwrap_err();
+    // not built: `environmentInputs` is announced `false`, and asking anyway is an unknown method
+    let e = d.request("vnoc/environmentInputs", json!({})).unwrap_err();
     assert_eq!(e["code"], -32601);
     assert_eq!(
         defs(&outline(&mut d, "def f() -> Nat: 0\n")).len(),

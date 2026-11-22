@@ -32,6 +32,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "bend-analysis"
+version = "0.0.0"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=7f54b73462faeb54c4d7051961715af98c2f5277#7f54b73462faeb54c4d7051961715af98c2f5277"
+dependencies = [
+ "analyzer-core",
+ "bend-parser",
+ "bend-syntax",
+ "serde",
+ "serde_json",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "bend-parser"
 version = "0.0.0"
 source = "git+https://github.com/yaredtsy/language_driver_rs?rev=7f54b73462faeb54c4d7051961715af98c2f5277#7f54b73462faeb54c4d7051961715af98c2f5277"
@@ -471,6 +484,7 @@ version = "0.3.0"
 dependencies = [
  "analyzer-core",
  "anyhow",
+ "bend-analysis",
  "bend-syntax",
  "blake3",
  "lsp-server",
@@ -512,6 +526,12 @@ checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40de123dbb523ebcc00d61ec01840ad192578afc378d859f3429caa38308fad5"
 
 [[package]]
 name = "zmij"
