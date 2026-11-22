@@ -28,8 +28,8 @@ export interface Facts {
   env: { PATH?: string; LOCALAPPDATA?: string; VNOC_CLI_DIR?: string; SHELL?: string };
   /** the core binary the extension runs, as an absolute path (the setting, else `bin/`, else the build folder) */
   binary: string;
-  /** the Python driver the extension runs: said in the note of a development window, where the binary is not next to it */
-  driver?: string;
+  /** the drivers the extension runs: said in the note of a development window, where they are not next to the binary */
+  drivers?: string[];
   /** `ExtensionMode.Production`; a development window and the test suite are not */
   production: boolean;
   extension: Package;
@@ -187,7 +187,9 @@ export function pathAdvice(f: Pick<Facts, "platform" | "home" | "env">, dir: str
 // ------------------------------------------------------------------------------------------------------------------------------------ the plans
 
 const note = (f: Facts): string | undefined =>
-  f.production ? undefined : `This is a development window: the driver is not next to that binary, so run the command with ${f.driver ? `VNOC_DRIVER=${f.driver}` : "VNOC_DRIVER set to the driver"}.`;
+  f.production
+    ? undefined
+    : `This is a development window: the drivers are not next to that binary, so run the command with ${f.drivers?.length ? `VNOC_DRIVERS=${f.drivers.join(pathOf(f).delimiter)}` : "VNOC_DRIVERS set to the drivers' paths"}.`;
 
 /** What *Install `vnoc` Command in PATH* does. */
 export function planInstall(f: Facts): Plan {

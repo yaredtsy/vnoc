@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
-import type { Draft, EditSaveParams, EditStartParams, Events, Notes, Page, Range } from "@vnoc/shared/messages";
+import { languageExtensions } from "@vnoc/shared/languages.ts";
+import type { Draft, EditSaveParams, EditStartParams, Events, LanguageInfo, Notes, Page, Range } from "@vnoc/shared/messages";
 import type { ContextState, Intent } from "@vnoc/shared/session.ts";
 import { AttentionView } from "./attentionView";
 import { CallTrees } from "./callTree";
@@ -191,8 +192,6 @@ export function activate(ctx: vscode.ExtensionContext) {
         void vscode.commands.executeCommand("setContext", "vnoc.hasAttention", attention.hasAttention);
         void vscode.commands.executeCommand("setContext", "vnoc.hasMissing", attention.hasMissing);
       }
-      // the command is offered only when the driver that read the code has the method
-      void vscode.commands.executeCommand("setContext", "vnoc.callTree", structure.capabilities?.callTree === true);
       store.dispatch({ type: "treeChanged" });
       wantCalls();
       commands.syncCursor();
@@ -206,8 +205,15 @@ export function activate(ctx: vscode.ExtensionContext) {
   // the command in PATH follows this version, and `vnoc.cliInstalled` and `vnoc.agentsSetUp` are set (they wait for the core: they never hold up the start)
   void cli.activate();
 
-  // the files whose menus carry the V-NOC submenu (later: from the driver manifests)
-  void vscode.commands.executeCommand("setContext", "vnoc.extensions", [".py", ".pyi"]);
+  // The files whose menus carry the V-NOC submenu, and those whose drivers have call trees (Show Calls is offered only there): both come from the core,
+  // which says them once it has read its drivers' handshakes, and again after a restart. No file is a V-NOC file until then.
+  const setExtensions = (languages: LanguageInfo[]) => {
+    const { all, callTree } = languageExtensions(languages);
+    void vscode.commands.executeCommand("setContext", "vnoc.extensions", all);
+    void vscode.commands.executeCommand("setContext", "vnoc.callTreeExtensions", callTree);
+  };
+  setExtensions([]);
+  ctx.subscriptions.push(c.onLanguages(setExtensions));
 
   // What the test suite drives.
   return {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type NodeFacts, nodeContext, paneContext, panelContext } from "./nodeContext.ts";
+import { type NodeFacts, fileExtname, nodeContext, paneContext, panelContext } from "./nodeContext.ts";
 
 const RANGE = { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } };
 const callCard = (over: Partial<NodeFacts> = {}, sites = 1): NodeFacts => ({
@@ -40,4 +40,13 @@ test("the pane and the panel header: their own sections, the surface, and the co
   assert.equal(JSON.parse(paneContext("sidebar")).surface, "sidebar");
   assert.deepEqual(JSON.parse(panelContext({ id: "explore:x", kind: "explore" })), { surface: "sidebar", webviewSection: "context", preventDefaultContextMenuItems: true, contextId: "explore:x", contextKind: "explore" });
   assert.equal(JSON.parse(panelContext({ id: "main", kind: "main" })).contextKind, "main");
+});
+
+test("fileExtname: the extension of the node's file, with the dot, from its location key", () => {
+  assert.equal(fileExtname("lib.bend::Nat.double"), ".bend");
+  assert.equal(fileExtname("app/order.py::Order.reserve#2"), ".py");
+  assert.equal(fileExtname("app/order.py"), ".py");
+  assert.equal(fileExtname("pkg.d/a::f"), "");
+  assert.equal(fileExtname(".gitignore"), "");
+  assert.equal(fileExtname(null), "");
 });

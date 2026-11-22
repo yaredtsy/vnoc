@@ -49,7 +49,8 @@
       "description": "In Restricted Mode V-NOC ignores the executable paths set in workspace settings.",
       "restrictedConfigurations": [
         "vnoc.server.path",
-        "vnoc.driver.path"
+        "vnoc.driver.path",
+        "vnoc.drivers"
       ]
     }
   },
@@ -547,7 +548,7 @@
         },
         {
           "command": "vnoc.showCalls",
-          "when": "vnoc.callTree",
+          "when": "resourceExtname in vnoc.callTreeExtensions",
           "group": "3_calls@1"
         },
         {
@@ -613,7 +614,7 @@
         },
         {
           "command": "vnoc.showCalls",
-          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && (kind == function || kind == class) && vnoc.callTree",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && (kind == function || kind == class) && fileExtname in vnoc.callTreeExtensions",
           "group": "3_calls@1"
         },
         {
@@ -822,10 +823,19 @@
           "default": "",
           "description": "Path to the vnoc core binary. Empty = the build folder of this repository (development). Ignored from workspace settings in Restricted Mode."
         },
+        "vnoc.drivers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Paths to the language driver binaries (vnoc-driver-*). Empty = every driver found by itself: the ones installed with V-NOC, or in development the ones built in drivers/*/target/debug. Ignored from workspace settings in Restricted Mode."
+        },
         "vnoc.driver.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the Python driver binary. Empty = the build folder of this repository (development). Ignored from workspace settings in Restricted Mode."
+          "deprecationMessage": "Deprecated: use vnoc.drivers.",
+          "description": "Deprecated: use vnoc.drivers. Path to one driver binary, read as a list of one. Ignored from workspace settings in Restricted Mode."
         },
         "vnoc.sidebar.click": {
           "type": "string",

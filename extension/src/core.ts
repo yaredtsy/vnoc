@@ -3,8 +3,9 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { CloseAction, type ErrorHandler, LanguageClient, State, TransportKind } from "vscode-languageclient/node";
 
-import { chooseBinary } from "@vnoc/shared/binaryChoice.ts";
-import type { MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messages";
+import { chooseBinary, chooseDrivers } from "@vnoc/shared/binaryChoice.ts";
+import { languageExtensions } from "@vnoc/shared/languages.ts";
+import type { LanguageInfo, MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messages";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio client here, we use
 // its custom-request API and none of the language features). The extension never starts a driver: the core owns the drivers.
@@ -34,6 +35,32 @@ function binary(ctx: vscode.ExtensionContext, setting: string, name: string, dev
   return chosen.path;
 }
 
+/**
+ * The driver paths: `vnoc.drivers`, else `vnoc.driver.path` (deprecated: a list of one); else, from source, every driver built in `drivers/<language>/target/debug`
+ * and, installed, every driver in `bin/`. The same restricted-mode rule as `binary()`: the settings are the default's in an untrusted workspace.
+ */
+function driverPaths(ctx: vscode.ExtensionContext): string[] {
+  const settings = vscode.workspace.getConfiguration("vnoc");
+  const listed = (settings.get<string[]>("drivers") ?? []).filter((p) => p);
+  const single = settings.get<string>("driver.path");
+  const chosen = chooseDrivers({
+    configured: listed.length > 0 ? listed : single ? [single] : [],
+    developing: ctx.extensionMode !== vscode.ExtensionMode.Production,
+    driversDir: path.join(ctx.extensionPath, "..", "drivers"),
+    binDir: path.join(ctx.extensionPath, "bin"),
+    windows: process.platform === "win32",
+    list: (dir) => {
+      try {
+        return fs.readdirSync(dir);
+      } catch {
+        return [];
+      }
+    },
+  });
+  if ("error" in chosen) throw new Error(chosen.error);
+  return chosen.paths;
+}
+
 /** The running core, and the last structure it sent. */
 export class Core {
   private client: LanguageClient | undefined;
@@ -46,9 +73,15 @@ export class Core {
   missing: MissingNode[] = [];
   /** The absolute path of the git root. Node ids and the paths in `vnoc/attach` start there. */
   gitRoot: string | undefined;
-  /** The core and the driver this extension runs (`binary()`'s choice), once `ready`: the command line is made from the same files (07 §3). */
+  /** The core and the drivers this extension runs (`binary()`'s and `driverPaths()`'s choice), once `ready`: the command line is made from the same files (07 §3). */
   binaryPath: string | undefined;
-  driverPath: string | undefined;
+  driverPaths: string[] = [];
+
+  /** What the core said about its drivers (`vnoc/languages`), after it was ready and again after each restart; empty until then. */
+  languages: LanguageInfo[] = [];
+  private readonly languagesEmitter = new vscode.EventEmitter<LanguageInfo[]>();
+  /** Fires when the core has told which languages it reads: the menus and the watcher are made from it. */
+  readonly onLanguages = this.languagesEmitter.event;
 
   /**
    * Which run of the core this is: 1 for the first, one more each time it starts again (a crash, or `restart`). A restarted core counts the index
@@ -75,10 +108,28 @@ export class Core {
     private readonly onStopped: (reason: string, canRestart: boolean) => void,
   ) {
     this.ready = this.start(ctx, onIndexChanged);
-    this.ready.catch((e) => {
-      output.appendLine(String(e));
-      this.announceStop(String(e.message ?? e));
-    });
+    this.ready.then(
+      () => void this.loadLanguages(),
+      (e) => {
+        output.appendLine(String(e));
+        this.announceStop(String(e.message ?? e));
+      },
+    );
+  }
+
+  /** Asks the core which languages it reads (it answers once the first build has started every driver), and says them in the log, one line each. */
+  private async loadLanguages(): Promise<void> {
+    try {
+      this.languages = await this.request<LanguageInfo[]>("vnoc/languages");
+    } catch (e) {
+      this.output.appendLine(`could not ask which languages are read: ${String(e)}`);
+      return;
+    }
+    for (const l of this.languages) {
+      const reason = (l.error ?? "").split("\n")[0];
+      this.output.appendLine(l.state === "running" ? `${l.name} ${l.version}: ${l.extensions.map((e) => `.${e}`).join(" ")}` : `${l.name}: failed: ${reason}`);
+    }
+    this.languagesEmitter.fire(this.languages);
   }
 
   private announceStop(reason: string): void {
@@ -95,9 +146,9 @@ export class Core {
   private async start(ctx: vscode.ExtensionContext, onIndexChanged: (revision: number) => void): Promise<void> {
     const folder = vscode.workspace.workspaceFolders?.[0];
     const core = binary(ctx, "server.path", "vnoc", ["target", "debug", "vnoc"], "The V-NOC core", "build it: `cargo build -p vnoc`");
-    const driver = binary(ctx, "driver.path", "vnoc-driver-python", ["drivers", "python", "target", "debug", "vnoc-driver-python"], "The Python driver", "build it: `cargo build` in drivers/python");
+    const drivers = driverPaths(ctx).map((p) => path.resolve(p));
     this.binaryPath = path.resolve(core);
-    this.driverPath = path.resolve(driver);
+    this.driverPaths = drivers;
     // the client's own handler decides when to restart; when it gives up, the user hears it once, from us, with buttons (its own message is only logged)
     let defaults: ErrorHandler | undefined;
     const errorHandler: ErrorHandler = {
@@ -113,19 +164,22 @@ export class Core {
       "vnoc",
       "V-NOC core",
       { command: core, transport: TransportKind.stdio },
-      // not a language server: no document selector. The driver's path and the opened folder travel to the core in `initializationOptions`.
-      { documentSelector: [], outputChannel: this.output, errorHandler, initializationOptions: { driverPath: driver, root: folder?.uri.fsPath } },
+      // not a language server: no document selector. The drivers' paths and the opened folder travel to the core in `initializationOptions`.
+      { documentSelector: [], outputChannel: this.output, errorHandler, initializationOptions: { drivers, root: folder?.uri.fsPath } },
     );
     defaults = this.client.createDefaultErrorHandler();
     this.client.onDidChangeState(({ newState }) => {
       if (newState !== State.Running) return;
       this.announced = false;
       this.epoch++;
-      if (this.epoch > 1) this.restartedEmitter.fire();
+      if (this.epoch > 1) {
+        this.restartedEmitter.fire();
+        void this.loadLanguages();
+      }
     });
     this.client.onNotification("vnoc/indexChanged", (p: { revision: number }) => onIndexChanged(p.revision));
     await this.client.start();
-    this.output.appendLine(`core started: ${core}\ndriver: ${driver}`);
+    this.output.appendLine(`core started: ${core}\ndrivers: ${drivers.join(path.delimiter)}`);
   }
 
   /** `token`: cancelling it sends `$/cancelRequest` for this request, and the core stops the work under it. */
@@ -165,16 +219,21 @@ export class Core {
   }
 }
 
+/** The watcher's glob: the extensions of the languages the core reads (with the dot), and the files that change which files are in scope. */
+export function watchGlob(extensions: string[]): string {
+  return `**/{${[...extensions.map((e) => `*${e}`), ".gitignore", ".vnoc-id", ".vnoc/**"].join(",")}}`;
+}
+
 /**
- * Tells the core which files were touched. `.gitignore` is watched too: it changes which files are in scope. `.vnoc/**` and `.vnoc-id` are V-NOC's
+ * Tells the core which files were touched. The glob comes from `vnoc/languages` (`watchGlob`), made again when the list changes; until the core has said, only
+ * the files below are watched. `.gitignore` is watched too: it changes which files are in scope. `.vnoc/**` and `.vnoc-id` are V-NOC's
  * own files: a doc added by a teammate's `git pull` shows up like one added here. `onTouched` hears every path at once (the doc panel wants `.md` changes).
  *
- * A folder that appears or goes is reported too (a path with no extension: a deleted one cannot be asked). The `.py` pattern misses a folder moved
+ * A folder that appears or goes is reported too (a path with no extension: a deleted one cannot be asked). The extension pattern misses a folder moved
  * with `git mv` (one event, for the folder), and on Linux a file written into a folder in the first moments after it was made. The core walks the whole
  * project on any report, so the folder's own event is enough to find what is inside.
  */
 export function watchFiles(core: Core, onTouched: (fsPath: string) => void): vscode.Disposable {
-  const watcher = vscode.workspace.createFileSystemWatcher("**/{*.py,.gitignore,.vnoc-id,.vnoc/**}");
   const folders = vscode.workspace.createFileSystemWatcher("**/*", false, true, false); // created and deleted: a folder's content is not its own change
   const touched = new Set<string>();
   let timer: NodeJS.Timeout | undefined;
@@ -194,11 +253,20 @@ export function watchFiles(core: Core, onTouched: (fsPath: string) => void): vsc
   const folder = (uri: vscode.Uri) => {
     if (path.extname(uri.fsPath) === "" && !/[\\/](\.git|node_modules)[\\/]/.test(uri.fsPath)) report(uri);
   };
+  let glob: string | undefined;
+  let files: vscode.Disposable | undefined;
+  const watch = (extensions: string[]) => {
+    const next = watchGlob(extensions);
+    if (next === glob) return;
+    glob = next;
+    files?.dispose();
+    const watcher = vscode.workspace.createFileSystemWatcher(next);
+    files = vscode.Disposable.from(watcher, watcher.onDidCreate(touch), watcher.onDidChange(touch), watcher.onDidDelete(touch));
+  };
+  watch(languageExtensions(core.languages).all);
   return vscode.Disposable.from(
-    watcher,
-    watcher.onDidCreate(touch),
-    watcher.onDidChange(touch),
-    watcher.onDidDelete(touch),
+    core.onLanguages((languages) => watch(languageExtensions(languages).all)),
+    { dispose: () => files?.dispose() },
     folders,
     folders.onDidCreate(folder),
     folders.onDidDelete(folder),
