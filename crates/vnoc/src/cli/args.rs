@@ -44,10 +44,10 @@ pub struct Global {
         global = true,
         value_name = "PATH",
         help_heading = GLOBAL,
-        help = "the language driver (default: $VNOC_DRIVER, else next to vnoc)",
-        long_help = "The language driver to run. Default: `$VNOC_DRIVER`, else `vnoc-driver-python` next to this binary."
+        help = "a driver, repeatable (default: $VNOC_DRIVERS, else next to vnoc)",
+        long_help = "A language driver to run; repeat the flag for more than one. Drivers given here replace the default, which is: `$VNOC_DRIVERS` (paths separated as `PATH` is), else `$VNOC_DRIVER`, else every `vnoc-driver-*` file next to this binary."
     )]
-    pub driver: Option<PathBuf>,
+    pub driver: Vec<PathBuf>,
     #[arg(
         long,
         global = true,

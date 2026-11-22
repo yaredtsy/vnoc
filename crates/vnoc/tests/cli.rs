@@ -72,6 +72,7 @@ fn vnoc(cwd: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
     cmd.current_dir(cwd)
         .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
         .env_remove("VNOC_LOG")
         // what colours a terminal is the test's to say, not the environment's
         .env_remove("NO_COLOR")
@@ -152,6 +153,7 @@ impl Core {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .env_remove("VNOC_DRIVER")
+            .env_remove("VNOC_DRIVERS")
             .spawn()
             .unwrap();
         let (stdin, out) = (
@@ -558,13 +560,14 @@ fn copied_binary(label: &str) -> (PathBuf, PathBuf) {
 }
 
 #[test]
-fn no_driver_is_exit_3_and_the_message_names_the_three_places() {
+fn no_driver_is_exit_3_and_the_message_names_the_four_places() {
     let root = sample_copy("no-driver");
     let (_dir, bin) = copied_binary("no-driver-bin");
     let out = run({
         let mut cmd = Command::new(&bin);
         cmd.current_dir(&root)
             .env_remove("VNOC_DRIVER")
+            .env_remove("VNOC_DRIVERS")
             .arg("status");
         cmd
     });
@@ -572,11 +575,10 @@ fn no_driver_is_exit_3_and_the_message_names_the_three_places() {
     assert!(out.stdout.is_empty());
     let message = text(&out.stderr);
     assert!(message.contains("--driver: not given"), "{message}");
+    assert!(message.contains("VNOC_DRIVERS: not set"), "{message}");
     assert!(message.contains("VNOC_DRIVER: not set"), "{message}");
     assert!(
-        message.contains("next to the binary:")
-            && message.contains("vnoc-driver-python")
-            && message.contains("does not exist"),
+        message.contains("next to the binary: no vnoc-driver-* file in "),
         "{message}"
     );
 }
@@ -586,11 +588,10 @@ fn a_driver_given_that_does_not_exist_is_exit_3() {
     let root = sample_copy("bad-driver");
     let out = run({
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
-        cmd.current_dir(&root).env_remove("VNOC_DRIVER").args([
-            "--driver",
-            "/nonexistent/driver",
-            "status",
-        ]);
+        cmd.current_dir(&root)
+            .env_remove("VNOC_DRIVER")
+            .env_remove("VNOC_DRIVERS")
+            .args(["--driver", "/nonexistent/driver", "status"]);
         cmd
     });
     assert_eq!(code(&out), 3);
@@ -615,12 +616,280 @@ fn the_driver_is_found_beside_the_real_path_of_a_linked_binary() {
         let mut cmd = Command::new(&link);
         cmd.current_dir(&root)
             .env_remove("VNOC_DRIVER")
+            .env_remove("VNOC_DRIVERS")
             .args(["status", "--json"]);
         cmd
     });
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     let status: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(status["drivers"][0]["name"], "python");
+}
+
+// ------------------------------------------------------------------------------------- two languages (docs/23 §5, B3b)
+
+/// `drivers/bend/target/debug/vnoc-driver-bend`, as `driver_path()` finds Python's (`VNOC_DRIVER_BEND` instead of the default).
+fn bend_driver_path() -> PathBuf {
+    std::env::var_os("VNOC_DRIVER_BEND")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            repo_root()
+                .join("drivers/bend/target/debug")
+                .join(format!("vnoc-driver-bend{}", std::env::consts::EXE_SUFFIX))
+        })
+}
+
+const PY_ID: &str = "0Q8V5W4T2F7KX9M3B6D1RZ4H7K";
+const BEND_ID: &str = "3RGJ87CMS6TK775XRJV8BW977Y";
+
+/// A folder outside this repository with `a.py` and `b.bend`, one def with an ID in each.
+fn two_languages(label: &str) -> PathBuf {
+    let root = scratch(label);
+    std::fs::write(
+        root.join("a.py"),
+        format!("def py_one():\n    \"\"\"ID: {PY_ID}\"\"\"\n    return 1\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("b.bend"),
+        format!(
+            "# ID: {BEND_ID}\ndef bend_one() -> U32: bend_two()\n\ndef bend_two() -> U32: 1\n\ndef Nat.double(n: U32) -> U32: n\n"
+        ),
+    )
+    .unwrap();
+    root
+}
+
+/// `vnoc <args>` in `cwd` with exactly these drivers given by the flag (none: no flag) and neither `VNOC_DRIVER` nor `VNOC_DRIVERS` set.
+fn vnoc_with(cwd: &Path, drivers: &[PathBuf], args: &[&str]) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.current_dir(cwd)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .env_remove("VNOC_LOG")
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR")
+        .env_remove("CLICOLOR_FORCE")
+        .stdin(Stdio::null());
+    for driver in drivers {
+        cmd.arg("--driver").arg(driver);
+    }
+    cmd.args(args);
+    cmd
+}
+
+fn both_drivers() -> Vec<PathBuf> {
+    vec![driver_path(), bend_driver_path()]
+}
+
+/// The two `driver` lines of a status of `two_languages`.
+fn two_driver_lines() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    format!("  driver   bend {version} · read 1 file\n  driver   python {version} · read 1 file\n")
+}
+
+#[test]
+fn status_lists_each_driver_when_two_are_given_with_the_flag() {
+    let root = two_languages("two-flags");
+    let out = run(vnoc_with(&root, &both_drivers(), &["status"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(shown.contains(&two_driver_lines()), "{shown}");
+    assert!(
+        shown.contains("2 files · 0 classes · 4 functions"),
+        "both languages are in the count: {shown}"
+    );
+
+    let out = run(vnoc_with(&root, &both_drivers(), &["status", "--json"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let status: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(status["schema"], 1);
+    let drivers = status["drivers"].as_array().unwrap();
+    let names: Vec<&str> = drivers
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["bend", "python"]);
+    assert_eq!(drivers[0]["extensions"], json!(["bend"]));
+    assert_eq!(drivers[1]["extensions"], json!(["py"]));
+    for driver in drivers {
+        assert_eq!(driver["state"], "running");
+        assert_eq!(driver["files"], 1);
+        assert_eq!(driver["warnings"], json!([]));
+        assert!(driver.get("error").is_none());
+    }
+}
+
+#[test]
+fn status_lists_each_driver_when_they_come_from_vnoc_drivers() {
+    let root = two_languages("two-env");
+    let list = std::env::join_paths(both_drivers()).unwrap();
+    let out = run({
+        let mut cmd = vnoc_with(&root, &[], &["status"]);
+        cmd.env("VNOC_DRIVERS", &list);
+        cmd
+    });
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains(&two_driver_lines()));
+    // the list wins over the single path
+    let out = run({
+        let mut cmd = vnoc_with(&root, &[], &["status"]);
+        cmd.env("VNOC_DRIVERS", &list)
+            .env("VNOC_DRIVER", driver_path());
+        cmd
+    });
+    assert!(text(&out.stdout).contains(&two_driver_lines()));
+}
+
+/// A copy of the binary with both drivers in one new folder, as the install and the VSIX lay them out.
+fn copied_binary_with_both(label: &str) -> PathBuf {
+    let (dir, bin) = copied_binary(label);
+    for driver in both_drivers() {
+        std::fs::copy(&driver, dir.join(driver.file_name().unwrap())).unwrap();
+    }
+    bin
+}
+
+#[test]
+fn every_driver_beside_the_binary_is_found_with_no_flag_and_no_environment() {
+    let root = two_languages("two-beside");
+    let bin = copied_binary_with_both("two-beside-bin");
+    let out = run({
+        let mut cmd = Command::new(&bin);
+        cmd.current_dir(&root)
+            .env_remove("VNOC_DRIVER")
+            .env_remove("VNOC_DRIVERS")
+            .env_remove("VNOC_LOG")
+            .stdin(Stdio::null())
+            .arg("status");
+        cmd
+    });
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains(&two_driver_lines()));
+}
+
+#[test]
+fn a_def_in_each_language_is_shown_and_its_code_printed() {
+    let root = two_languages("two-show");
+    let shown = |args: &[&str]| {
+        let out = run(vnoc_with(&root, &both_drivers(), args));
+        assert_eq!(code(&out), 0, "{args:?}: {}", text(&out.stderr));
+        text(&out.stdout)
+    };
+    let bend = shown(&["show", "b.bend::bend_one"]);
+    assert!(
+        bend.starts_with("function  b.bend::bend_one   lines 1-2\n"),
+        "{bend}"
+    );
+    assert!(bend.contains("def bend_one() -> U32: bend_two()"), "{bend}");
+    // the Bend name holds a dot that is not nesting
+    let dotted = shown(&["code", "b.bend::Nat.double"]);
+    assert_eq!(dotted, "6  def Nat.double(n: U32) -> U32: n\n");
+    let python = shown(&["show", "a.py::py_one"]);
+    assert!(python.contains("def py_one():"), "{python}");
+}
+
+#[test]
+fn the_calls_of_a_bend_def_are_answered_by_the_bend_driver() {
+    let root = two_languages("two-calls");
+    let out = run(vnoc_with(
+        &root,
+        &both_drivers(),
+        &["calls", "b.bend::bend_one"],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(
+        shown.starts_with("function  b.bend::bend_one   lines 1-2\n"),
+        "{shown}"
+    );
+    assert!(shown.contains("bend_two  b.bend::bend_two"), "{shown}");
+    // and a Python def still goes to Python's
+    let out = run(vnoc_with(
+        &root,
+        &both_drivers(),
+        &["calls", "a.py::py_one"],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+}
+
+#[test]
+fn a_driver_that_cannot_start_among_two_is_a_failed_line_and_the_other_language_works() {
+    let root = two_languages("two-broken");
+    // a file that exists and is no driver
+    let broken = root.join("not-a-driver");
+    std::fs::write(&broken, "this is not a program\n").unwrap();
+    let drivers = vec![driver_path(), broken];
+    let out = run(vnoc_with(&root, &drivers, &["status"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(
+        shown.contains(&format!("  driver   python {version} · read 1 file\n")),
+        "{shown}"
+    );
+    let failed: Vec<&str> = shown
+        .lines()
+        .filter(|l| l.starts_with("  driver   not-a-driver · failed: "))
+        .collect();
+    assert_eq!(failed.len(), 1, "{shown}");
+
+    let out = run(vnoc_with(&root, &drivers, &["status", "--json"]));
+    let status: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let broken = status["drivers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["name"] == "not-a-driver")
+        .expect("the broken driver is a row");
+    assert_eq!(broken["state"], "failed");
+    assert!(!broken["error"].as_str().unwrap().is_empty());
+    assert_eq!(broken["extensions"], json!([]));
+
+    // Python's files still work; the Bend file is shown without definitions
+    let out = run(vnoc_with(&root, &drivers, &["show", "a.py::py_one"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+}
+
+#[test]
+fn when_no_driver_starts_the_failure_names_each_driver_and_its_reason() {
+    let root = two_languages("none-start");
+    let one = root.join("first-not-a-driver");
+    let two = root.join("second-not-a-driver");
+    std::fs::write(&one, "x\n").unwrap();
+    std::fs::write(&two, "x\n").unwrap();
+    let out = run(vnoc_with(&root, &[one.clone(), two.clone()], &["status"]));
+    assert_eq!(code(&out), 3);
+    assert!(out.stdout.is_empty());
+    let message = text(&out.stderr);
+    assert!(message.contains("no driver started:"), "{message}");
+    for path in [one, two] {
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let line = message
+            .lines()
+            .find(|l| l.contains(&format!("{name} ({}):", path.display())))
+            .unwrap_or_else(|| panic!("a line for {name}: {message}"));
+        assert!(line.starts_with("  "), "{line}");
+    }
+}
+
+#[test]
+fn a_driver_path_given_with_the_flag_that_is_not_there_is_exit_3_even_among_two() {
+    let root = two_languages("two-missing");
+    let missing = root.join("nope");
+    let drivers = vec![driver_path(), missing.clone()];
+    let out = run(vnoc_with(&root, &drivers, &["status"]));
+    assert_eq!(code(&out), 3);
+    assert!(out.stdout.is_empty());
+    assert!(
+        text(&out.stderr).contains(&format!(
+            "the driver given with --driver does not exist: {}",
+            missing.display()
+        )),
+        "{}",
+        text(&out.stderr)
+    );
 }
 
 // ------------------------------------------------------------------------------------------------- arguments and exits
@@ -746,6 +1015,7 @@ fn merged(cwd: &Path, args: &[&str]) -> (String, i32) {
         .args(args)
         .current_dir(cwd)
         .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
         .env_remove("VNOC_LOG")
         .stdin(Stdio::null())
         .output()
@@ -1546,6 +1816,7 @@ fn by_id_the_three_doc_commands_need_no_driver_and_by_location_they_do() {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
         cmd.current_dir(&root)
             .env_remove("VNOC_DRIVER")
+            .env_remove("VNOC_DRIVERS")
             .stdin(Stdio::null())
             .args(["--driver", "/nonexistent"])
             .args(args);
@@ -2666,6 +2937,7 @@ fn check_in_a_folder_with_no_vnoc_says_so_and_exits_0() {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
     cmd.current_dir(&root)
         .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
         .args(["--driver", "/no/such/driver", "check"]);
     let out = run(cmd);
     assert_eq!(
@@ -3263,6 +3535,7 @@ fn init_starts_a_project_once_and_needs_no_driver() {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
         cmd.current_dir(&root)
             .env_remove("VNOC_DRIVER")
+            .env_remove("VNOC_DRIVERS")
             .stdin(Stdio::null())
             .args(["--driver", "/nonexistent"])
             .args(args);
@@ -4789,6 +5062,7 @@ fn without_a_driver(root: &Path, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
     cmd.current_dir(root)
         .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
         .stdin(Stdio::null())
         .args(["--driver", "/nonexistent"])
         .args(args);
@@ -5312,6 +5586,7 @@ fn run_in_a_terminal(args: &[&str], seconds: u32) -> Option<Output> {
     ])
     .args(args)
     .env_remove("VNOC_DRIVER")
+    .env_remove("VNOC_DRIVERS")
     .env_remove("VNOC_LOG")
     .stdin(Stdio::null());
     cmd.output().ok()
@@ -5572,6 +5847,7 @@ const NOT_PIPES: &str = "error: vnoc --stdio is for an editor, which talks to it
 fn with_streams(args: &[&str], stdin: Stdio, stdout: Stdio) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc"))
         .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
         .env_remove("VNOC_LOG")
         .env_remove("NO_COLOR")
         .env_remove("CLICOLOR_FORCE")
@@ -5604,7 +5880,9 @@ fn vnoc_with_dev_null_or_a_file_as_input_prints_the_help_and_does_not_panic() {
     assert!(help.contains("Usage: vnoc"));
     // `vnoc < /dev/null`: the help on standard output, exit 0, nothing on standard error
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
-    cmd.env_remove("VNOC_DRIVER").stdin(Stdio::null());
+    cmd.env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .stdin(Stdio::null());
     let out = run(cmd);
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
@@ -5614,6 +5892,7 @@ fn vnoc_with_dev_null_or_a_file_as_input_prints_the_help_and_does_not_panic() {
     std::fs::write(&file, "x\n").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
     cmd.env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
         .stdin(std::fs::File::open(&file).unwrap());
     let out = run(cmd);
     assert_eq!((code(&out), text(&out.stdout)), (0, help.clone()));
@@ -5635,6 +5914,7 @@ fn the_explicit_server_forms_without_pipes_are_exit_2_with_one_sentence() {
     for args in [vec!["--stdio"], vec!["serve"], vec!["serve", "--stdio"]] {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
         cmd.env_remove("VNOC_DRIVER")
+            .env_remove("VNOC_DRIVERS")
             .args(&args)
             .stdin(Stdio::null());
         let out = cmd.output().unwrap();
@@ -5663,6 +5943,7 @@ fn a_socket_is_a_pipe_for_the_server() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc"))
         .arg("--stdio")
         .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
         .stdin(Stdio::from(OwnedFd::from(stdin_end)))
         .stdout(Stdio::from(OwnedFd::from(stdout_end)))
         .stderr(Stdio::null())
@@ -5721,7 +6002,7 @@ fn long_help_still_has_the_paragraphs_and_every_flag() {
     let long = text(&run(vnoc(&root, &["tags", "--help"])).stdout);
     for paragraph in [
         "Default: the nearest folder at or above the current one that has `.git`, else one that has `.vnoc/`, else the current folder.",
-        "Default: `$VNOC_DRIVER`, else `vnoc-driver-python` next to this binary.",
+        "Drivers given here replace the default, which is: `$VNOC_DRIVERS` (paths separated as `PATH` is), else `$VNOC_DRIVER`, else every `vnoc-driver-*` file next to this binary.",
         "Print one JSON value, `{ \"schema\": 1, \"command\": …, … }`, instead of text.",
         "[possible values: id, path]",
         "Print only the rows: no hints about what to run next, no totals.",

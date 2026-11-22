@@ -1,20 +1,15 @@
 //! Where a command works: the root (05 §2, C9), the driver (C8), and the project opened and built (`open`).
 //!
-//! `find_root` and `driver_path` get what they look at as arguments, not from the process, so a test can try each rule on a temp folder.
+//! `find_root` and `driver_paths` get what they look at as arguments, not from the process, so a test can try each rule on a temp folder.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use super::{Failure, Global};
-use crate::driver_host::DriverHost;
+use crate::driver_host::{DriverHost, LanguageState};
 use crate::index::{Index, Touched, refresh};
 use crate::project::Project;
-
-/// The driver's file name, next to the binary (`.exe` on Windows).
-pub fn driver_file_name() -> String {
-    format!("vnoc-driver-python{}", std::env::consts::EXE_SUFFIX)
-}
 
 /// Every driver to run (docs/23 §5), by the first rule that gives any:
 /// 1. `explicit`: paths named by the caller (`initializationOptions.drivers` or `driverPath`);
@@ -53,7 +48,7 @@ pub fn discover(
         .unwrap_or_default()
 }
 
-/// The driver files in `folder`: a file (not a folder) named `vnoc-driver-<name>` plus the OS's executable suffix, where `<name>` is lower case
+/// The driver files in `folder`: a file (or a link to one; not a folder) named `vnoc-driver-<name>` plus the OS's executable suffix, where `<name>` is lower case
 /// letters, digits, `-` or `_` (so `vnoc-driver-python.d` and `vnoc-driver-python.pdb`, which a build leaves beside it, are not drivers), and,
 /// where files have a mode, one that can be run. Sorted by file name.
 pub fn drivers_in(folder: &Path) -> Vec<PathBuf> {
@@ -62,7 +57,8 @@ pub fn drivers_in(folder: &Path) -> Vec<PathBuf> {
     };
     let mut found: Vec<PathBuf> = entries
         .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
+        // a link to a driver is a driver: `metadata` follows it (a folder named like one is not)
+        .filter(|entry| std::fs::metadata(entry.path()).is_ok_and(|m| m.is_file()))
         .filter(|entry| entry.file_name().to_str().is_some_and(is_driver_file_name))
         .filter(|entry| can_run(&entry.path()))
         .map(|entry| entry.path())
@@ -112,49 +108,44 @@ pub fn find_root(cwd: &Path, root_flag: Option<&Path>) -> PathBuf {
         .to_path_buf()
 }
 
-/// The driver to run (C8): `--driver`, else `VNOC_DRIVER`, else the driver file next to the binary, where the binary is its **real** path
-/// (`current_exe` with symlinks followed: a link in `~/.local/bin` must find the driver in the extension's `bin/`).
+/// The drivers to run (C8, docs/23 §5): [`discover`]'s list, or a failure that says where it looked.
 ///
-/// A `--driver` that does not exist is an error of its own. When nothing is found the message says where it looked, and why each place was
-/// skipped.
-pub fn driver_path(
-    flag: Option<&Path>,
-    env: Option<&OsStr>,
+/// A path given with `--driver` that does not exist is an error of its own (a typo is not a driver that failed). A path from `VNOC_DRIVERS` or
+/// `VNOC_DRIVER` is not asked about: a driver that is not there is listed by `status` as failed, with the reason. When nothing is found the
+/// message names each place and what it held.
+pub fn driver_paths(
+    flags: &[PathBuf],
+    env_list: Option<&OsStr>,
+    env_one: Option<&OsStr>,
     current_exe: Option<&Path>,
-) -> Result<PathBuf, Failure> {
-    if let Some(flag) = flag {
-        return if flag.exists() {
-            Ok(flag.to_path_buf())
-        } else {
-            Err(Failure::Environment(format!(
-                "the driver given with --driver does not exist: {}",
-                flag.display()
-            )))
-        };
+) -> Result<Vec<PathBuf>, Failure> {
+    if let Some(missing) = flags.iter().find(|flag| !flag.exists()) {
+        return Err(Failure::Environment(format!(
+            "the driver given with --driver does not exist: {}",
+            missing.display()
+        )));
     }
-    let from_env = match env.filter(|value| !value.is_empty()) {
+    let found = discover(flags, env_list, env_one, current_exe);
+    if !found.is_empty() {
+        return Ok(found);
+    }
+    let value = |env: Option<&OsStr>| match env {
         None => "not set".to_string(),
-        Some(value) => {
-            let path = Path::new(value);
-            if path.exists() {
-                return Ok(path.to_path_buf());
-            }
-            format!("{} does not exist", path.display())
-        }
+        Some(value) if value.is_empty() => "empty".to_string(),
+        Some(value) => format!("{} holds no path", value.to_string_lossy()),
     };
     let beside = match current_exe.and_then(|exe| dunce::canonicalize(exe).ok()) {
         None => "the binary's own path is not known".to_string(),
         Some(real) => {
-            let path = real.with_file_name(driver_file_name());
-            if path.exists() {
-                return Ok(path);
-            }
-            format!("{} does not exist", path.display())
+            let folder = real.parent().unwrap_or(&real);
+            format!("no vnoc-driver-* file in {}", folder.display())
         }
     };
     Err(Failure::Environment(format!(
-        "no driver found. Looked in:\n  --driver: not given\n  VNOC_DRIVER: {from_env}\n  next to the binary: {beside}\n\
-         Give one with --driver <path> or VNOC_DRIVER."
+        "no driver found. Looked in:\n  --driver: not given\n  VNOC_DRIVERS: {}\n  VNOC_DRIVER: {}\n  next to the binary: {beside}\n\
+         Give one with --driver <path> (repeat it for more), VNOC_DRIVERS or VNOC_DRIVER.",
+        value(env_list),
+        value(env_one)
     )))
 }
 
@@ -165,17 +156,18 @@ pub struct Opened {
     pub index: RwLock<Index>,
 }
 
-/// The root and the driver as this process sees them (the current folder, `VNOC_DRIVER`, `current_exe`), then [`open`].
+/// The root and the drivers as this process sees them (the current folder, `VNOC_DRIVERS`, `VNOC_DRIVER`, `current_exe`), then [`open`].
 pub async fn open_from(global: &Global) -> Result<Opened, Failure> {
     let cwd = std::env::current_dir()
         .map_err(|e| Failure::Environment(format!("the current folder is not known: {e}")))?;
     let root = find_root(&cwd, global.root.as_deref());
-    let driver = driver_path(
-        global.driver.as_deref(),
+    let drivers = driver_paths(
+        &global.driver,
+        std::env::var_os("VNOC_DRIVERS").as_deref(),
         std::env::var_os("VNOC_DRIVER").as_deref(),
         std::env::current_exe().ok().as_deref(),
     )?;
-    open(&root, &driver).await
+    open(&root, &drivers).await
 }
 
 /// The root as this process sees it, and nothing built: for a command that needs no index and so no driver (`doc read <ID>`). The driver is not
@@ -187,12 +179,36 @@ pub fn open_without_driver(global: &Global) -> Result<Project, Failure> {
         .map_err(|e| Failure::Usage(e.to_string()))
 }
 
-/// Opens `root`, points a driver host at `driver`, and builds the whole index (`refresh(…, Touched::All)`). The driver starts with the
-/// first file it has to read, and exits when `Opened` is dropped.
-pub async fn open(root: &Path, driver: &Path) -> Result<Opened, Failure> {
+/// Opens `root`, points a driver host at `drivers`, starts them all (the handshakes say which extensions the scan collects), and builds the whole
+/// index (`refresh(…, Touched::All)`). The drivers exit when `Opened` is dropped.
+///
+/// One driver that does not start is not a failure here: its files are shown without definitions and `status` says why. When **none** started,
+/// there is nothing to read the code with: a failure that names each driver and its reason.
+pub async fn open(root: &Path, drivers: &[PathBuf]) -> Result<Opened, Failure> {
     let project = Project::open(root).map_err(|e| Failure::Usage(e.to_string()))?;
     let host = DriverHost::default();
-    host.set_path(Some(driver.to_path_buf()));
+    host.set_paths(drivers.to_vec());
+    host.start_all().await;
+    let languages = host.languages().await;
+    if !languages.is_empty()
+        && languages
+            .iter()
+            .all(|l| matches!(l.state, LanguageState::Failed(_)))
+    {
+        let each: Vec<String> = languages
+            .iter()
+            .map(|l| match &l.state {
+                LanguageState::Failed(reason) => {
+                    format!("  {} ({}): {reason}", l.name, l.path.display())
+                }
+                LanguageState::Running => unreachable!("all failed"),
+            })
+            .collect();
+        return Err(Failure::Environment(format!(
+            "no driver started:\n{}",
+            each.join("\n")
+        )));
+    }
     let index = RwLock::new(Index::default());
     refresh(&project, &host, &index, Touched::All)
         .await
@@ -265,28 +281,42 @@ mod tests {
     }
 
     #[test]
-    fn the_driver_comes_from_the_flag_then_the_environment_then_beside_the_binary() {
+    fn the_drivers_come_from_the_flags_then_the_environment_lists_then_beside_the_binary() {
         let dir = fresh("driver-order");
-        let (flagged, from_env) = (dir.join("flagged"), dir.join("from-env"));
-        std::fs::write(&flagged, "").unwrap();
-        std::fs::write(&from_env, "").unwrap();
-        let exe = dir.join("bin/vnoc");
+        let (one, two) = (dir.join("one"), dir.join("two"));
+        let (from_list, from_one) = (dir.join("from-list"), dir.join("from-one"));
+        for file in [&one, &two, &from_list, &from_one] {
+            std::fs::write(file, "").unwrap();
+        }
         std::fs::create_dir_all(dir.join("bin")).unwrap();
+        let exe = dir.join("bin/vnoc");
         std::fs::write(&exe, "").unwrap();
-        let beside = dir.join("bin").join(driver_file_name());
-        std::fs::write(&beside, "").unwrap();
+        let python = put_driver(&dir.join("bin"), "python");
+        let bend = put_driver(&dir.join("bin"), "bend");
 
-        let env = Some(from_env.as_os_str());
+        let list = std::env::join_paths([&from_list, &dir.join("second")]).unwrap();
+        let single = from_one.as_os_str();
+        let flags = [one.clone(), two.clone()];
         assert_eq!(
-            driver_path(Some(&flagged), env, Some(&exe)).unwrap(),
-            flagged
+            driver_paths(&flags, Some(&list), Some(single), Some(&exe)).unwrap(),
+            flags
         );
-        assert_eq!(driver_path(None, env, Some(&exe)).unwrap(), from_env);
-        assert_eq!(driver_path(None, None, Some(&exe)).unwrap(), beside);
-        // an empty VNOC_DRIVER is not set
         assert_eq!(
-            driver_path(None, Some(OsStr::new("")), Some(&exe)).unwrap(),
-            beside
+            driver_paths(&[], Some(&list), Some(single), Some(&exe)).unwrap(),
+            [from_list.clone(), dir.join("second")]
+        );
+        assert_eq!(
+            driver_paths(&[], None, Some(single), Some(&exe)).unwrap(),
+            [from_one]
+        );
+        assert_eq!(
+            driver_paths(&[], None, None, Some(&exe)).unwrap(),
+            [bend.clone(), python.clone()]
+        );
+        // an empty value is not set
+        assert_eq!(
+            driver_paths(&[], Some(OsStr::new("")), Some(OsStr::new("")), Some(&exe)).unwrap(),
+            [bend, python]
         );
     }
 
@@ -298,48 +328,45 @@ mod tests {
             std::fs::create_dir_all(dir.join("real")).unwrap();
             std::fs::create_dir_all(dir.join("links")).unwrap();
             std::fs::write(dir.join("real/vnoc"), "").unwrap();
-            std::fs::write(dir.join("real").join(driver_file_name()), "").unwrap();
+            let python = put_driver(&dir.join("real"), "python");
+            let bend = put_driver(&dir.join("real"), "bend");
             std::os::unix::fs::symlink(dir.join("real/vnoc"), dir.join("links/vnoc")).unwrap();
             assert_eq!(
-                driver_path(None, None, Some(&dir.join("links/vnoc"))).unwrap(),
-                dir.join("real").join(driver_file_name())
+                driver_paths(&[], None, None, Some(&dir.join("links/vnoc"))).unwrap(),
+                [bend, python]
             );
         }
     }
 
     #[test]
-    fn a_driver_that_is_not_found_says_where_it_looked_and_why_each_place_was_skipped() {
+    fn a_driver_that_is_not_found_says_where_it_looked_and_what_each_place_held() {
         let dir = fresh("driver-none");
         let exe = dir.join("vnoc");
         std::fs::write(&exe, "").unwrap();
-        let Err(Failure::Environment(text)) = driver_path(None, None, Some(&exe)) else {
+        let Err(Failure::Environment(text)) = driver_paths(&[], None, None, Some(&exe)) else {
             panic!("an environment failure");
         };
         assert!(text.contains("--driver: not given"), "{text}");
+        assert!(text.contains("VNOC_DRIVERS: not set"), "{text}");
         assert!(text.contains("VNOC_DRIVER: not set"), "{text}");
         assert!(
             text.contains(&format!(
-                "{} does not exist",
-                dir.join(driver_file_name()).display()
+                "next to the binary: no vnoc-driver-* file in {}",
+                dir.display()
             )),
             "{text}"
         );
 
-        let missing = dir.join("nope");
+        // set, but with nothing in it
         let Err(Failure::Environment(text)) =
-            driver_path(None, Some(missing.as_os_str()), Some(&exe))
+            driver_paths(&[], Some(OsStr::new("")), Some(OsStr::new("")), Some(&exe))
         else {
             panic!("an environment failure");
         };
-        assert!(
-            text.contains(&format!(
-                "VNOC_DRIVER: {} does not exist",
-                missing.display()
-            )),
-            "{text}"
-        );
+        assert!(text.contains("VNOC_DRIVERS: empty"), "{text}");
+        assert!(text.contains("VNOC_DRIVER: empty"), "{text}");
 
-        let Err(Failure::Environment(text)) = driver_path(None, None, None) else {
+        let Err(Failure::Environment(text)) = driver_paths(&[], None, None, None) else {
             panic!("an environment failure");
         };
         assert!(
@@ -351,13 +378,31 @@ mod tests {
     #[test]
     fn a_driver_given_with_the_flag_that_does_not_exist_is_an_error_of_its_own() {
         let dir = fresh("driver-flag");
+        let present = dir.join("present");
+        std::fs::write(&present, "").unwrap();
         let missing = dir.join("nope");
-        let Err(Failure::Environment(text)) = driver_path(Some(&missing), None, None) else {
+        // the second of two is the one named
+        let Err(Failure::Environment(text)) =
+            driver_paths(&[present, missing.clone()], None, None, None)
+        else {
             panic!("an environment failure");
         };
-        assert!(
-            text.starts_with("the driver given with --driver does not exist"),
-            "{text}"
+        assert_eq!(
+            text,
+            format!(
+                "the driver given with --driver does not exist: {}",
+                missing.display()
+            )
+        );
+    }
+
+    #[test]
+    fn a_path_from_the_environment_that_is_not_there_is_left_to_say_so_when_it_fails_to_start() {
+        let dir = fresh("driver-env-missing");
+        let missing = dir.join("nope");
+        assert_eq!(
+            driver_paths(&[], Some(missing.as_os_str()), None, None).unwrap(),
+            [missing]
         );
     }
 
@@ -472,6 +517,22 @@ mod tests {
         let path = put_driver(&dir, "text");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(drivers_in(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_driver_is_a_driver_and_a_dangling_one_is_not() {
+        let dir = fresh("discover-driver-link");
+        let target = dir.join("elsewhere");
+        std::fs::write(&target, "").unwrap();
+        let linked = dir.join("vnoc-driver-linked");
+        std::os::unix::fs::symlink(&target, &linked).unwrap();
+        std::os::unix::fs::symlink(dir.join("gone"), dir.join("vnoc-driver-dangling")).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert_eq!(drivers_in(&dir), [linked]);
     }
 
     #[cfg(unix)]

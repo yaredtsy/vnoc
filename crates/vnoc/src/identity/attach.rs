@@ -37,7 +37,7 @@ pub const MAX_BODY_BYTES: usize = 256 * 1024;
 pub enum AttachError {
     #[error(transparent)]
     BadKey(#[from] LocationKeyError),
-    #[error("`{0}` is not in the index (is the file saved, and is it Python?)")]
+    #[error("`{0}` is not in the index (is the file saved, and does a driver read it?)")]
     NotInIndex(String),
     #[error("the document is not the file of `{0}`")]
     WrongDocument(String),

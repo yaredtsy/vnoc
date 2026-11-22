@@ -187,7 +187,7 @@ pub async fn ask(
     };
     if !in_index {
         return Err(invalid(format!(
-            "`{key}` is not in the index (is the file saved, and is it Python?)"
+            "`{key}` is not in the index (is the file saved, and does a driver read it?)"
         )));
     }
 
@@ -693,7 +693,7 @@ mod tests {
         match refused("src/orders.py::parse_order").await {
             CallsError::Invalid(text) => assert_eq!(
                 text,
-                "`src/orders.py::parse_order` is not in the index (is the file saved, and is it Python?)"
+                "`src/orders.py::parse_order` is not in the index (is the file saved, and does a driver read it?)"
             ),
             other => panic!("{other:?}"),
         }
