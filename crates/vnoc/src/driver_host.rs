@@ -57,7 +57,7 @@ pub enum HostError {
     /// A driver that already failed to start in a host that tries each driver once: why, as it was said then.
     #[error("{0}")]
     FailedBefore(String),
-    #[error("the driver is not at {0}: build it with `cargo build` in drivers/python")]
+    #[error("the driver is not at {0}: build it with `cargo build` in its folder under drivers/")]
     NotFound(PathBuf),
     /// The driver started and then failed its handshake, and said something on stderr (kept only when the host pipes it).
     #[error("{reason}\n{stderr}")]

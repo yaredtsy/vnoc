@@ -411,7 +411,7 @@ agents otherwise. Search is one Rust crate that the side bar, `vnoc find` and an
 | Folder | What is in it |
 |---|---|
 | [`crates/`](crates) | The Rust workspace: the core and the command line, the domain types, the driver protocol, search |
-| [`drivers/python/`](drivers/python) | The Python language driver (its own Cargo workspace) |
+| [`drivers/`](drivers) | One folder per language driver (Python, Bend), each its own Cargo workspace |
 | [`extension/`](extension) | The VS Code extension |
 | [`webview/`](webview) | The side bar and canvas (React + Vite) |
 | [`shared/`](shared) | TypeScript types and logic shared by the extension and the webview |
@@ -427,7 +427,7 @@ Contributions are welcome. To build from source:
 ```sh
 pnpm install
 cargo build
-(cd drivers/python && cargo build)
+for d in drivers/*/; do (cd "$d" && cargo build); done
 pnpm -r build
 ```
 

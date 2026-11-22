@@ -23,7 +23,7 @@ vnoc_playground/
 │   ├── vnoc-domain/            ✅ pure types
 │   ├── vnoc-driver-protocol/   ✅ wire types (only the core uses them)
 │   └── vnoc/                   ✅ the core program
-├── drivers/python/     ✅ its own workspace (own toolchain, own Cargo.lock)
+├── drivers/<language>/ ✅ one folder per driver (python, bend), each its own workspace (own toolchain, own Cargo.lock)
 ├── extension/          ✅ TypeScript, compiled with tsc
 ├── webview/            ✅ React + Vite; output in webview/dist  ← outside the extension, cannot ship (R1)
 ├── plan/  plan_vs/  report/  fable_plan/      four doc folders at the top level
@@ -57,7 +57,7 @@ vnoc/                                   (rename the repo when you publish)
 │   ├── media/
 │   │   ├── vnoc.svg
 │   │   └── webview/           the webview build lands HERE   (gitignored)
-│   ├── bin/                   vnoc, vnoc-driver-python       (gitignored; filled by the package step)
+│   ├── bin/                   vnoc, vnoc-driver-*            (gitignored; filled by the package step)
 │   └── package.json           the extension manifest
 │
 ├── webview/
@@ -102,7 +102,7 @@ vnoc/                                   (rename the repo when you publish)
 > ```
 > `[workspace.dependencies]` matters more as crates multiply: you bump `serde` once.
 
-**Why `drivers/python` stays a separate workspace.** It must compile with the exact Rust version and the exact `salsa` version that pylspt uses.
+**Why `drivers/python` (and each driver) stays a separate workspace.** It must compile with the exact Rust version and the exact `salsa` version that pylspt uses.
 If it joined the main workspace, the core would be forced onto those pins too. Two workspaces means two `target/` folders and two lockfiles. That cost is
 worth it, and your `Cargo.toml` comment already says so. Keep it.
 
@@ -192,10 +192,10 @@ One script, `scripts/package.mjs` (Node, so it runs the same on macOS, Linux and
 
 ```
 1. cargo build --release -p vnoc                        → target/release/vnoc
-2. (cd drivers/python && cargo build --release)         → drivers/python/target/release/vnoc-driver-python
+2. (cd drivers/<x> && cargo build --release), each     → drivers/<x>/target/release/vnoc-driver-<x>   (found, not listed: docs/23 §5)
 3. npm run build -w webview                             → extension/media/webview/assets/index.{js,css}
 4. npm run build -w extension   (esbuild)               → extension/dist/extension.js
-5. copy the two binaries                                → extension/bin/
+5. copy vnoc and every driver                               → extension/bin/
 6. (cd extension && vsce package --no-dependencies --target <platform>)   → vnoc-<platform>-0.1.0.vsix
 ```
 
@@ -207,7 +207,7 @@ extension/
 ├── dist/extension.js
 ├── media/vnoc.svg
 ├── media/webview/assets/index.js, index.css
-└── bin/vnoc, bin/vnoc-driver-python
+└── bin/vnoc, bin/vnoc-driver-*
 ```
 
 How the extension finds a binary, in order:

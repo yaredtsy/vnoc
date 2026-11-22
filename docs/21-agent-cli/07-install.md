@@ -327,7 +327,7 @@ is already the one it needs.
 
 For CI, cloud agents, and people without VS Code.
 
-- `publish.yml` also attaches, per target, `vnoc-<target>.tar.gz` (`.zip` on Windows) holding `vnoc` and `vnoc-driver-python` side by side
+- `publish.yml` also attaches, per target, `vnoc-<target>.tar.gz` (`.zip` on Windows) holding `vnoc` and every `vnoc-driver-*` (one per folder of `drivers/`) side by side
   (C8 then finds the driver), with their checksums in the existing `SHA256SUMS` (doc 19 §5). The binaries are the ones `scripts/package.mjs`
   already builds into `extension/bin/` for the VSIX, so nothing is compiled twice.
 - **An install script** (`install.sh`, attached to the release): picks the target from `uname`, downloads the archive and `SHA256SUMS`, checks
@@ -340,8 +340,8 @@ For CI, cloud agents, and people without VS Code.
 
 - **The archive** is made by `scripts/package.mjs`, right after it copies the two programs into `extension/bin/`, so a local run makes it too
   and it is tested before CI. Name `vnoc-cli-<target>.tar.gz` (`vnoc-cli-win32-x64.zip`), the VSIX's target names (`darwin-arm64`, `darwin-x64`,
-  `linux-x64`, `win32-x64`); the `-cli` keeps it apart from `vnoc-<target>.vsix` in one release. **Flat**, four files: `vnoc`,
-  `vnoc-driver-python` (mode 755), `LICENSE`, `THIRD_PARTY_NOTICES.md` (the programs hold other people's code; the VSIX check of package.mjs
+  `linux-x64`, `win32-x64`); the `-cli` keeps it apart from `vnoc-<target>.vsix` in one release. **Flat**: `vnoc`, every
+  `vnoc-driver-<language>` (mode 755), `LICENSE`, `THIRD_PARTY_NOTICES.md` (the programs hold other people's code; the VSIX check of package.mjs
   holds for the archive too).
 - **CI:** `package.yml` uploads it as the artifact `cli-<target>`; `publish` downloads `cli-*` beside `vsix-*`, checks there are four of
   each, puts **every file** (four VSIX, four archives, `install.sh`) in one `SHA256SUMS`, attests the archives as well, and uploads them all.

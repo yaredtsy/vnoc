@@ -166,6 +166,8 @@ the same time (review D2).
 
 ## 5. Several drivers at once
 
+**Built** (B3–B4, docs/23 §5): the core starts every `vnoc-driver-*` it finds and routes by extension; `package.mjs`, `install.sh`, CI and the extension find the drivers by folder and by file name and name no language. What follows is the original design.
+
 ```rust
 pub struct Drivers {
     by_extension: HashMap<String, Arc<DriverClient>>,     // "py" → python, "pyi" → python, "ts" → typescript
@@ -208,11 +210,11 @@ Turn the checklist into a program, so a new driver is checked by running one com
 
 - **Now:** a test in the core, `crates/vnoc/tests/driver_conformance.rs`, that takes a driver path from an environment variable and runs: handshake · a
   wrong protocol number is refused · an unknown method gives `-32601` · any byte on stdout outside a frame fails the run · outline of a fixture with an
-  emoji in it (catches UTF-16 mistakes) · the round-trip rule. Run it against the Python driver in CI.
+  emoji in it (catches UTF-16 mistakes) · the round-trip rule. Run it against every driver in CI (built in B4c: docs/23 §5).
 - **Later:** the same checks as a command, `vnoc driver check <path>`, for people who write drivers outside this repo.
 
 The parts that differ per language (the fixture file, the expected names) live in a small folder per driver:
-`drivers/python/conformance/{input.py, expected-outline.json}`.
+`drivers/<language>/conformance/{input.<ext>, expected-outline.json}`.
 
 ## 7. pylspt: where it lives, and what belongs in it
 

@@ -27,8 +27,8 @@ const FIRST_BODY_LINE = 5;
 
 /** What the first-attach question says V-NOC will write, by kind of node. */
 const MARKER: Record<TreeNode["kind"], string> = {
-  function: "an ID line to {name}'s docstring",
-  class: "an ID line to {name}'s docstring",
+  function: "an ID line in {name}'s code",
+  class: "an ID line in {name}'s code",
   file: "a `# FileID:` comment at the top of {name}",
   folder: "a .vnoc-id file to the folder {name}",
 };
