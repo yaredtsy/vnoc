@@ -4,7 +4,7 @@
 //! VS-D67 condition 3: unknown notifications and unknown requests plus a full lifecycle, and the core is still alive.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use async_lsp::lsp_types::Url;
@@ -1508,6 +1508,17 @@ fn attach_to_a_file_needs_its_document() {
     core.finish();
 }
 
+/// Takes away a file's read permission, so that the driver cannot read it. (A file that is not UTF-8 is read now: the drivers read bad bytes as U+FFFD, as the
+/// core does, docs/23 B4c.) Unix only: the callers do it under `cfg!(unix)`.
+#[cfg(unix)]
+fn lock(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+}
+
+#[cfg(not(unix))]
+fn lock(_: &Path) {}
+
 /// Writes a record by hand: a node folder with a `node.toml` that anchors the node at `path::qualname` (no docs needed to be listed).
 fn write_record(root: &std::path::Path, id: &str, path: &str, qualname: &str) {
     let dir = root.join(".vnoc/nodes").join(&id[24..]).join(id);
@@ -1524,8 +1535,11 @@ fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() 
     std::fs::write(root.join("orders.py"), ORDERS).unwrap();
     std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
     std::fs::write(root.join("ignored/x.py"), "def f():\n    pass\n").unwrap();
-    // not valid UTF-8: the driver cannot outline it
-    std::fs::write(root.join("bad.py"), [0xff, 0xfe, 0xfd]).unwrap();
+    // a file the driver cannot read (no read permission; unix only: a file that is not UTF-8 is read now, bad bytes as U+FFFD)
+    std::fs::write(root.join("bad.py"), "def g():\n    pass\n").unwrap();
+    if cfg!(unix) {
+        lock(&root.join("bad.py"));
+    }
     let (gone, ignored, failed) = (
         "0000000000000000000000000A",
         "0000000000000000000000000B",
@@ -1545,7 +1559,7 @@ fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() 
             .iter()
             .map(|f| f["path"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["bad.py"],
+        if cfg!(unix) { vec!["bad.py"] } else { vec![] },
         "the driver failed on it"
     );
     assert_eq!(

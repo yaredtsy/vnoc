@@ -1023,6 +1023,17 @@ fn merged(cwd: &Path, args: &[&str]) -> (String, i32) {
     (text(&out.stdout), code(&out))
 }
 
+/// Takes away a file's read permission, so that the driver cannot read it. (A file that is not UTF-8 is read now: the drivers read bad bytes as U+FFFD, as the
+/// core does, docs/23 B4c.) Unix only: the callers do it under `cfg!(unix)`.
+#[cfg(unix)]
+fn lock(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+}
+
+#[cfg(not(unix))]
+fn lock(_: &Path) {}
+
 /// What `vnoc <args>` prints on standard output, when it exits `0`.
 fn stdout_of(cwd: &Path, args: &[&str]) -> String {
     let out = run(vnoc(cwd, args));
@@ -1251,7 +1262,9 @@ fn one_wrong_node_among_three_prints_its_error_in_place_and_exits_2() {
 fn every_row_of_the_table_of_what_goes_wrong_has_its_sentence() {
     let root = sample_copy("errors");
     std::fs::write(root.join("app.ts"), "export {}\n").unwrap();
-    std::fs::write(root.join("bad.py"), b"def f():\n    return \"\xff\xfe\"\n").unwrap();
+    // a file the driver cannot read (no read permission; unix only)
+    std::fs::write(root.join("bad.py"), "def f():\n    return 1\n").unwrap();
+    lock(&root.join("bad.py"));
     let tax_lines = std::fs::read_to_string(root.join("billing/tax.py"))
         .unwrap()
         .lines()
@@ -1275,10 +1288,10 @@ fn every_row_of_the_table_of_what_goes_wrong_has_its_sentence() {
             "app.ts",
             "app.ts is not read by V-NOC (it reads Python files that git does not ignore)".into(),
         ),
+        #[cfg(unix)]
         (
             "bad.py",
-            "bad.py could not be read: cannot read bad.py: stream did not contain valid UTF-8"
-                .into(),
+            "bad.py could not be read: cannot read bad.py: Permission denied (os error 13)".into(),
         ),
         (
             "status.py",
@@ -2849,14 +2862,21 @@ fn check_on_a_clean_project_exits_0_and_a_file_that_cannot_be_read_is_a_warning_
     )
     .unwrap();
     assert_eq!(stdout_of(&root, &["check"]), "no problems\n");
-    // a file the driver cannot read at all (not UTF-8): one line, a warning, exit 0
+    // a file that is not UTF-8 is read, bad bytes as U+FFFD (as the core reads it): nothing to warn of
     std::fs::write(root.join("binary.py"), b"\xff\xfe\x00 not text\n").unwrap();
+    assert_eq!(stdout_of(&root, &["check"]), "no problems\n");
+    // a file the driver cannot read at all (no read permission; unix only): one line, a warning, exit 0
+    if !cfg!(unix) {
+        return;
+    }
+    std::fs::write(root.join("locked.py"), "def f():\n    pass\n").unwrap();
+    lock(&root.join("locked.py"));
     let out = run(vnoc(&root, &["check"]));
     let shown = text(&out.stdout);
     assert_eq!(code(&out), 0, "{shown}");
     assert!(
         shown.starts_with(
-            "unread  binary.py\n  the driver could not read it: cannot read binary.py"
+            "unread  locked.py\n  the driver could not read it: cannot read locked.py"
         ),
         "{shown}"
     );
@@ -3972,7 +3992,7 @@ fn a_file_gets_a_file_id_comment_and_a_folder_gets_a_vnoc_id_file() {
 }
 
 #[test]
-fn a_syntax_error_stops_the_id_of_that_def_only_and_a_file_that_is_not_utf8_is_not_a_node() {
+fn a_syntax_error_stops_the_id_of_that_def_only_and_a_file_that_is_not_utf8_is_attached_by_name() {
     let root = started_copy("new-syntax", &[]);
     let bad = "def good():\n    return 1\n\n\ndef broken(:\n    pass\n";
     std::fs::write(root.join("bad.py"), bad).unwrap();
@@ -4031,17 +4051,23 @@ fn a_syntax_error_stops_the_id_of_that_def_only_and_a_file_that_is_not_utf8_is_n
     assert!(json["notice"].is_null());
     assert_eq!(node_folders(&root).len(), 2);
 
-    // a file that is not UTF-8 never reaches the index (as for `show`), so it is not a node: exit 2, nothing written
+    // a file that is not UTF-8 is read, bad bytes as U+FFFD, so it is a node; its ID is not written (that would change its bytes), and the doc is attached by name
     let latin1 = b"def f():\n    return \"caf\xe9\"\n";
     std::fs::write(root.join("latin.py"), latin1).unwrap();
-    let (exit, stdout, stderr) = stdout_any(&root, &["doc", "new", "latin.py::f", "--title", "x"]);
-    assert_eq!((exit, stdout.as_str()), (2, ""));
+    let stdout = stdout_of(&root, &["doc", "new", "latin.py::f", "--title", "x"]);
     assert!(
-        stderr.starts_with("error: latin.py could not be read: "),
-        "{stderr}"
+        stdout.contains(
+            "notice       The ID could not be written (the file is not UTF-8 text); this doc is attached by name.\n"
+        ),
+        "{stdout}"
     );
+    assert!(!stdout.contains("changed"), "{stdout}");
     assert_eq!(std::fs::read(root.join("latin.py")).unwrap(), latin1);
-    assert_eq!(node_folders(&root).len(), 2, "only the two of bad.py");
+    assert_eq!(
+        node_folders(&root).len(),
+        3,
+        "the two of bad.py and this one"
+    );
 }
 
 #[test]
