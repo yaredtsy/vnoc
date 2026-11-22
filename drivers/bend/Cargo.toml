@@ -1,0 +1,35 @@
+[package]
+name = "vnoc-driver-bend"
+version = "0.3.0"
+license = "Apache-2.0"
+edition = "2024"
+description = "The Bend language driver: a thin adapter between the V-NOC driver protocol (plan_vs/07-drivers/01) and the analyzer of language_driver_rs (bend-syntax)."
+
+# Its own workspace: its own rust-toolchain.toml (1.99.1, the analyzer repo's) and its own Cargo.lock, as drivers/python.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+lsp-server = "0.10"
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The analyzer comes from one pinned commit of language_driver_rs (`7f54b73`, branch `bend-plan`, the last one reviewed on the analyzer side), both at the same rev: two revs
+# would build analyzer-core twice and the types would not match. Never a `path` into a checkout: another session edits that tree. Re-pinned to `bend-v0.1.0` once tagged.
+bend-syntax = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "7f54b73462faeb54c4d7051961715af98c2f5277" }
+analyzer-core = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "7f54b73462faeb54c4d7051961715af98c2f5277" }
+
+# The wire types are shared with the core (D1): a renamed field breaks the build on both sides, not at run time.
+vnoc-driver-protocol = { path = "../../crates/vnoc-driver-protocol" }
+serde = { version = "1", features = ["derive"] }
+blake3 = "1"
+
+[dev-dependencies]
+# Tests check the driver against the domain's golden IDs. The driver itself never depends on the domain (the core picks IDs).
+vnoc-domain = { path = "../../crates/vnoc-domain" }
+
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1
