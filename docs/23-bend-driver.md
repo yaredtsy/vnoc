@@ -78,7 +78,9 @@ One prompt at a time; the next only after the last one reports.
 | **B2** | `drivers/bend` tier 3: `vnoc/callTree` on a worker thread (sessions per root and file, refresh, cancel, deadline, a panic answers an error), `depth` → `Budget::max_depth` | `drivers/bend` |
 | **B3a** | the core's driver registry (§5): discovery, `Drivers` by extension, the scan and every request routed by the file's extension, capabilities per file, `languages` in the core's `initialize` result, a crashed driver takes only its language down | `crates/vnoc` |
 | **B3b** | the CLI on the registry: `--driver` repeatable, `VNOC_DRIVERS`, every `vnoc-driver-*` beside the binary; `vnoc status` lists the languages | `crates/vnoc/src/cli` |
-| **B4** | the extension and packaging, with no language named (§5): the extension finds drivers (bin/, dev `drivers/*/target/debug`), builds the watcher and `vnoc.extensions` from the core's `languages`; the canvas colour table; `package.mjs`, `install.sh`, `publish.yml`, `package.yml`, `ci.yml`, dependabot loop over `drivers/*/`; the conformance test runs on every driver | `extension`, `webview`, `scripts`, `.github`, `crates/vnoc/tests` |
+| **B4a** | the CLI fixes from B3b; the extension with no language named (§5): it finds every driver (`bin/`, dev `drivers/*/target/debug`), sends `drivers`, builds the watcher, `vnoc.extensions` and the call-tree menu from `vnoc/languages`; the canvas's ID-line reader reads comment markers; short names from the node, not the key's last dot; the window suite opens a `.bend` file | `crates/vnoc/src/cli`, `extension`, `shared`, `webview` |
+| **B4b** | packaging and CI with no language named: `package.mjs`, `install.sh`, the CLI archive, `publish.yml`, `package.yml`, `ci.yml`, dependabot loop over `drivers/*/`; third-party notices; the texts that still say one driver | `scripts`, `.github`, docs |
+| **B4c** | the conformance test on every driver (06 §6), each driver's `conformance/`; the byte-order-mark fix in both drivers' `Lines` | `crates/vnoc/tests`, `drivers/*` |
 | **B5** | continue a cut node from its context: an opaque `context` on `CallNode`, a `from` on `CallTreeParams` (both additive); the driver answers it with `Session::graph_from`; the core sends it when a cut node is expanded | protocol, `drivers/bend`, `crates/vnoc`, webview |
 | **B6** | by-hand check on a real Bend project in VS Code and with the CLI; README (languages), CHANGELOG; the release bump list gains `drivers/bend/Cargo.toml` | |
 | **B7** | re-pin to `bend-v0.1.0` once tagged; release | |
@@ -126,6 +128,22 @@ One prompt at a time; the next only after the last one reports.
   (letters, digits, `_`, dots; never `/ ? - # ::`). Left for B4: `extension/src/saveDraft.ts:81`, `addDoc.ts:42` cut a key at its last dot.
 - **`.pyi`: reverted in B3b.** B1 made the Python driver announce `py` and `pyi`, so B3a's scan began reading stub files, which 0.3 never
   showed. The Python driver announces `py` only until stubs are a decision of their own.
+
+### As built in B3b (906ec04 – 75a2c15, reviewed 2026-11-22)
+
+- `--driver` repeatable (short help shortened to fit the 90-column test; the order is in `long_help`); then `VNOC_DRIVERS`, `VNOC_DRIVER`,
+  then every `vnoc-driver-*` beside vnoc's real path. An env list replaces discovery, as a flag does.
+- **A `--driver` path that does not exist is exit 3 at once**, even among two: a typed path that is wrong is the user's mistake to see.
+  A path from `VNOC_DRIVERS` / `VNOC_DRIVER` is not checked first: it shows as a failed driver. A path that exists and is no driver: failed,
+  the other languages work.
+- Discovery follows symlinks (a linked driver beside a linked binary).
+- `vnoc status`: one `driver` line per driver; JSON `drivers` rows gain `extensions`, `state`, `warnings`, `error` (failure only). Schema
+  stays 1 (docs/21 C5: fields are only added); `tests/golden/status.json` changed, one-driver text did not.
+- "is it Python?" in two error messages (calls.rs, attach.rs) → "does a driver read it?".
+- Start-up, CLI, two drivers beside a copied binary: 1.25 s the first time (macOS checks new files), then 0.01 s.
+- **Fixed in B4a:** (1) a failed driver printed a `WARN … is not used` line, twice (open's `start_all` and the build's), and the driver's
+  own stderr, on a command that exits 0: against docs/21 05 §4. (2) The empty-project line `driver   not started (no Python files to read)`
+  is wrong now: every driver starts, and the driver may not be Python's.
 
 ## 5. Adding a language: the registry (B3, B4)
 
