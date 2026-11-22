@@ -145,6 +145,22 @@ One prompt at a time; the next only after the last one reports.
   own stderr, on a command that exits 0: against docs/21 05 §4. (2) The empty-project line `driver   not started (no Python files to read)`
   is wrong now: every driver starts, and the driver may not be Python's.
 
+### As built in B4a (45abe69 – dce3605, reviewed 2026-11-22)
+
+- CLI: a failed driver is started once per command, logged at `info`, its stderr piped and added to its failure reason; stderr is empty on
+  exit 0. `main` records whether `VNOC_LOG` was set before it sets `warn` (`cli::project::LOG_ASKED_FOR`); when it was, drivers' stderr is
+  shown. The server warns once per failed driver per `start_all`. An empty project: each driver's line says `no .<ext> files`.
+- Extension: `vnoc.drivers` (array) is the setting; `vnoc.driver.path` is read as a list of one (deprecated). Found by itself: `bin/vnoc-driver-*`
+  installed, `drivers/*/target/debug/vnoc-driver-*` from source (`chooseDrivers`, shared/binaryChoice.ts). `initializationOptions.drivers`;
+  the CLI command line gets `VNOC_DRIVERS`.
+- `vnoc/languages` after ready and after each restart → `vnoc.extensions`, the watcher glob (`watchGlob`, made again on change) and
+  `vnoc.callTreeExtensions`. The call-tree menus: `resourceExtname in vnoc.callTreeExtensions` (editor), `fileExtname in …` (webview node
+  menus: `nodeContext` sends the node's extension). One output line per language.
+- The canvas's ID reader drops a leading `#`, `//`, `///`, `/*`, `*` from the label word. Short names in saveDraft / addDoc come from the node.
+- Window suite: `extension/src/test/fixtures/bend/` is copied into the workspace as `bend/`; suite `bend` (6 tests). The skeleton suite's
+  counts changed for it. Known flake seen once: the edit suite's "Save says gone" timed out in one full run.
+- Left for B4b: the extension's description and `python` keyword; the first-attach prompt says "docstring" (addDoc.ts ~30), which Bend has not.
+
 ## 5. Adding a language: the registry (B3, B4)
 
 TypeScript and Rust come after Bend (their analyzers are in `language_driver_rs` already). B3 and B4 are built so that a language is added
