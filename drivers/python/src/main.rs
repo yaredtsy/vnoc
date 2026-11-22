@@ -21,7 +21,7 @@ use lsp_server::{Connection, ErrorCode, Message, Request, RequestId, Response};
 use python_analysis::Cancel;
 use serde_json::Value;
 use vnoc_driver_protocol::{
-    InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanFileIdParams,
+    Files, InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanFileIdParams,
     PlanIdsParams, method,
 };
 
@@ -204,6 +204,9 @@ fn handshake(conn: &Connection) -> anyhow::Result<()> {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect(),
+        files: Some(Files {
+            extensions: vec!["py".into(), "pyi".into()],
+        }),
     };
     conn.initialize_finish(id, serde_json::to_value(reply)?)?;
     Ok(())

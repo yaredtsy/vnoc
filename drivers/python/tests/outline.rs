@@ -130,6 +130,7 @@ fn the_handshake_announces_what_the_driver_can_do() {
     assert_eq!(init["name"], "python");
     assert_eq!(init["capabilities"]["outline"], true);
     assert_eq!(init["capabilities"]["ids.plan"], true);
+    assert_eq!(init["files"]["extensions"], json!(["py", "pyi"]));
     d.finish();
 }
 

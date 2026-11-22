@@ -47,6 +47,16 @@ pub struct InitializeResult {
     /// Which optional methods the driver implements (`"outline"`, `"ids.plan"`, …). Absent = false.
     #[serde(default)]
     pub capabilities: BTreeMap<String, bool>,
+    /// The files this driver owns. Absent from a driver that does not say; additive, so an older driver's answer still parses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Files>,
+}
+
+/// Which files a driver is for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Files {
+    /// file extensions without the dot (`"py"`)
+    pub extensions: Vec<String>,
 }
 
 /// Give `text` (an unsaved buffer) **or** `root` and `file` (a path the driver reads).
@@ -269,6 +279,37 @@ pub struct EnvironmentInputsResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_initialize_result_without_files_still_parses() {
+        let result: InitializeResult = serde_json::from_str(
+            r#"{ "protocol": 1, "name": "python", "version": "0.3.0", "capabilities": { "outline": true } }"#,
+        )
+        .unwrap();
+        assert_eq!(result.files, None);
+        assert!(
+            serde_json::to_value(&result)
+                .unwrap()
+                .get("files")
+                .is_none(),
+            "None adds no key"
+        );
+    }
+
+    #[test]
+    fn the_extensions_a_driver_owns_round_trip() {
+        let text = r#"{ "protocol": 1, "name": "python", "version": "0.3.0", "files": { "extensions": ["py", "pyi"] } }"#;
+        let result: InitializeResult = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            result.files,
+            Some(Files {
+                extensions: vec!["py".into(), "pyi".into()]
+            })
+        );
+        let again: InitializeResult =
+            serde_json::from_value(serde_json::to_value(&result).unwrap()).unwrap();
+        assert_eq!(again.files, result.files);
+    }
 
     const TARGET: &str =
         r#"{ "file": "a.py", "qualname": "f", "occurrence": 1, "kind": "function", "id": null }"#;
