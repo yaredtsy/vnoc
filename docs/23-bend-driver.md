@@ -161,7 +161,7 @@ One prompt at a time; the next only after the last one reports.
   counts changed for it. Known flake seen once: the edit suite's "Save says gone" timed out in one full run.
 - Left for B4b: the extension's description and `python` keyword; the first-attach prompt says "docstring" (addDoc.ts ~30), which Bend has not.
 
-### As built in B4b (2f2b6a0 – …, reviewed 2026-11-22)
+### As built in B4b (2f2b6a0 – 188f43d, reviewed 2026-11-22)
 
 - `scripts/drivers.mjs` finds the drivers: every `drivers/<x>/` whose Cargo.toml package is `vnoc-driver-<x>`; any other folder there fails
   the script. `package.mjs` (build, `extension/bin/`, the CLI archive) and `notices.mjs` use it. `THIRD_PARTY_NOTICES.md` regenerated
@@ -172,6 +172,9 @@ One prompt at a time; the next only after the last one reports.
   list). Cost: a change to one driver's Cargo.lock invalidates the others' cache too; accepted (the locks move only on a re-pin).
   Dependabot: `directories: ["/drivers/*"]`.
 - `crates/vnoc/tests/release_version.rs` (new): every `drivers/*/Cargo.toml` and `extension/package.json` carry the core's version.
+- Texts: the extension's description names Python and Bend; the first attach says "an ID line in {name}'s code"; build and layout texts
+  (CONTRIBUTING, README build, docs 03, 06, 19, 21/07) say "every driver". **Left for B6:** README's product claims ("Python today", 8
+  places): they change when Bend is announced as supported.
 
 ## 5. Adding a language: the registry (B3, B4)
 
@@ -213,8 +216,10 @@ CI, packaging, the core, the CLI and the extension pick it up with no change.
 - **B4: the canvas's ID-line reader** (`shared/idLine.ts`) is a port of Python's docstring reader (quotes stripped around the words). A
   Bend `# ID: x` line reads as `ID` + `x` because `#` is its own word; `#ID: x` (legal for the analyzer: blanks are optional) does not.
   The reader must come from the language: B4 decides how (the driver reports each def's marker span in the outline, or a per-language rule).
-- **BOM.** The outline's positions count a leading byte-order mark when the driver reads the file from disk (`root` + `file`); the
-  editor's text has none. Line 0 only, both drivers. Fix in each driver's `Lines` with a conformance row (B4).
+- **BOM and non-UTF-8 (B4c).** The core reads a file with a leading byte-order mark dropped and bad bytes as U+FFFD (`source.rs`), and
+  strips the mark before it sends text for an ID plan (`identity/edits.rs`). A driver reading `root` + `file` for an outline used
+  `read_to_string`: a BOM file's line 0 was off by one column, and a non-UTF-8 file failed. Fix: each driver reads a file as the core does
+  (lossy, the mark dropped), checked by the conformance test.
 - **B4: colours.** `.bend` is plain text in the canvas first; a Monarch grammar is a later, separate step.
 - **Windows:** relative paths with `/`, `dunce` and not `std::fs::canonicalize`, test paths built piece by piece
   ([`19-ci-cd.md`](19-ci-cd.md)). Each step is pushed and CI runs on all three systems before the next one.
