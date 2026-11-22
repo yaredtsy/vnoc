@@ -47,10 +47,12 @@ jobs:
         run: |
           cargo fmt --all --check
           (cd drivers/python && cargo fmt --all --check)
+          (cd drivers/bend && cargo fmt --all --check)
       - name: clippy
         run: |
           cargo clippy --all-targets -- -D warnings
           (cd drivers/python && cargo clippy --all-targets -- -D warnings)
+          (cd drivers/bend && cargo clippy --all-targets -- -D warnings)
       - run: pnpm typecheck
 
   test:
@@ -88,6 +90,9 @@ jobs:
         run: cargo test --no-fail-fast -p vnoc-domain -p vnoc-driver-protocol -p vnoc-search
       - name: python driver (own workspace, own toolchain)
         working-directory: drivers/python
+        run: cargo build && cargo test --no-fail-fast
+      - name: bend driver (own workspace)
+        working-directory: drivers/bend
         run: cargo build && cargo test --no-fail-fast
       - name: core integration tests (need the driver built above; also leave target/debug/vnoc for the extension suite)
         run: cargo test --no-fail-fast -p vnoc
