@@ -19,10 +19,11 @@ suite("walking skeleton: extension host -> core -> Python driver -> structure ->
 
   test("the core reads the opened folder through the driver", async () => {
     const r = await api.structure();
-    assert.strictEqual(r.root.children[0].name, "nested.py");
-    assert.strictEqual(r.stats.files, 1);
+    // the folder holds nested.py and `bend/` (two files, four defs: runTest.ts copies it beside the Python fixture)
+    assert.deepStrictEqual(r.root.children.map((n: any) => n.name), ["bend", "nested.py"]);
+    assert.strictEqual(r.stats.files, 3);
     assert.strictEqual(r.stats.classes, 3);
-    assert.strictEqual(r.stats.functions, 12);
+    assert.strictEqual(r.stats.functions, 16);
     assert.deepStrictEqual(r.failed, []);
   });
 
@@ -34,9 +35,9 @@ suite("walking skeleton: extension host -> core -> Python driver -> structure ->
     assert.ok(findTab(), "a V-NOC canvas tab is open");
 
     // The webview asked the host for the structure (host -> core -> driver), laid it out and drew it, then reported back.
-    // Files start collapsed: the folder and nested.py are drawn, the 15 defs are hidden behind it.
+    // Files start collapsed: the folder, `bend/` and nested.py are drawn; the 15 defs of nested.py and the two Bend files with their four defs are hidden behind them.
     const drew = await api.waitRendered(30_000);
-    assert.deepStrictEqual(drew, { context: "main", visible: 2, hidden: 15, callCards: 0, chevrons: 0 });
+    assert.deepStrictEqual(drew, { context: "main", visible: 3, hidden: 21, callCards: 0, chevrons: 0 });
   });
 });
 

@@ -207,8 +207,10 @@ export function activate(ctx: vscode.ExtensionContext) {
 
   // The files whose menus carry the V-NOC submenu, and those whose drivers have call trees (Show Calls is offered only there): both come from the core,
   // which says them once it has read its drivers' handshakes, and again after a restart. No file is a V-NOC file until then.
+  let contexts = { extensions: [] as string[], callTreeExtensions: [] as string[] };
   const setExtensions = (languages: LanguageInfo[]) => {
     const { all, callTree } = languageExtensions(languages);
+    contexts = { extensions: all, callTreeExtensions: callTree };
     void vscode.commands.executeCommand("setContext", "vnoc.extensions", all);
     void vscode.commands.executeCommand("setContext", "vnoc.callTreeExtensions", callTree);
   };
@@ -242,6 +244,8 @@ export function activate(ctx: vscode.ExtensionContext) {
       resetOffer: () => cli.resetOffer(),
       offerAfterFirstAttach: () => cli.offerAfterFirstAttach(),
     },
+    /** the extensions the menus' context keys `vnoc.extensions` and `vnoc.callTreeExtensions` hold now */
+    languageContexts: () => contexts,
     /** the run of the core: one more after each restart */
     coreEpoch: () => c.epoch,
     /** an intent, as a click on a card would send it */

@@ -5,7 +5,7 @@ import * as path from "path";
 import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
 
 // Runs the suite inside a real VS Code extension host, with a throwaway profile (nothing of the user's is touched), on a copy
-// of the domain crate's Python fixture as the opened folder. Needs the core, the driver and the webview built first.
+// of the domain crate's Python fixture, and a small Bend project in `bend/`, as the opened folder. Needs the core, the driver and the webview built first.
 const LOCAL_VSCODE = "/Applications/Visual Studio Code.app/Contents/MacOS/Code";
 
 /**
@@ -41,6 +41,8 @@ async function main() {
   const workspace = path.join(tmp, "ws");
   fs.mkdirSync(workspace);
   fs.cpSync(path.join(repo, "crates/vnoc-domain/tests/fixtures"), workspace, { recursive: true });
+  // a small project in a second language, beside the first (its own folder: the domain crate's fixtures are golden-tested and must not change)
+  fs.cpSync(path.join(root, "src/test/fixtures/bend"), path.join(workspace, "bend"), { recursive: true });
   // on Windows git checks the fixtures out with CRLF (there is no .gitattributes, and the CRLF run of Save on a .py is wanted); VNOC_FIXTURE_EOL=crlf gives the suite that checkout anywhere
   if (process.env.VNOC_FIXTURE_EOL === "crlf") crlfAll(workspace);
   // a git repository, so the refactor suite can `git mv` (the runners have no git identity: it is given here)
