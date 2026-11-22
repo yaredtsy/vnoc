@@ -26,6 +26,44 @@ impl Request for Ping {
     const METHOD: &'static str = "vnoc/ping";
 }
 
+/// `vnoc/languages`: every language driver the core was given, and what each said about itself (docs/23 §5). Answers once the drivers have answered
+/// their handshakes (the first build starts them all). Takes no parameters (see `Ping`). The editor builds its file watcher and its menus from this and
+/// names no language itself.
+pub enum Languages {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LanguageInfo {
+    /// the driver's own name (`"python"`); for one that never answered, the name of its file without `vnoc-driver-`
+    pub name: String,
+    pub version: String,
+    /// where the driver is
+    pub path: String,
+    /// the file extensions it claimed, without the dot (`"py"`)
+    pub extensions: Vec<String>,
+    /// which optional methods it has (`"callTree"`, …)
+    pub capabilities: std::collections::BTreeMap<String, bool>,
+    /// `running`, or `failed` (it did not start, or it stopped: `error` says why; it is started again by the next request for one of its files)
+    pub state: LanguageState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// why part of what it said is not used (an extension an earlier driver, by name, owns)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguageState {
+    Running,
+    Failed,
+}
+
+impl Request for Languages {
+    type Params = serde_json::Value;
+    type Result = Vec<LanguageInfo>;
+    const METHOD: &'static str = "vnoc/languages";
+}
+
 /// `vnoc/structure`: the folders, files, classes and functions under the opened folder (the one named in `initializationOptions.root`).
 /// Answers once the first build is done. Takes no parameters (see `Ping`).
 pub enum Structure {}

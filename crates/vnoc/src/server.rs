@@ -25,18 +25,20 @@ use async_lsp::router::Router;
 use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 
 use crate::calls::{self, CallsError};
-use crate::driver_host::DriverHost;
+use crate::cli::project::discover;
+use crate::driver_host::{DriverHost, LanguageState};
 use crate::identity::{self, EditSink, Env};
 use crate::index::{self, Index, Touched, refresh};
 use crate::project::Project;
+use crate::protocol;
 use crate::protocol::{
     Attach, AttachParams, AttachResult, CallTree, CallTreeParams, CallTreeResult, DocInfo, Docs,
     DocsParams, FilesChanged, FilesChangedParams, HasCalls, HasCallsParams, HasCallsResult,
-    IndexChanged, IndexChangedParams, MovePlan, Ping, PingResult, ProjectInfo, ProjectInfoResult,
-    Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan, RestorePlanParams, Search,
-    SearchCards, SearchCardsParams, SearchCardsResult, SearchParams, SearchResult, Structure,
-    StructureResult, Trash, TrashInfo, TrashInfoResult, TrashItem, TrashList, TrashParams, WriteId,
-    WriteIdParams, WriteIdResult,
+    IndexChanged, IndexChangedParams, LanguageInfo, Languages, MovePlan, Ping, PingResult,
+    ProjectInfo, ProjectInfoResult, Rebuild, Relink, RelinkParams, RelinkResult, RestorePlan,
+    RestorePlanParams, Search, SearchCards, SearchCardsParams, SearchCardsResult, SearchParams,
+    SearchResult, Structure, StructureResult, Trash, TrashInfo, TrashInfoResult, TrashItem,
+    TrashList, TrashParams, WriteId, WriteIdParams, WriteIdResult,
 };
 use crate::protocol::{Locate, LocateParams, Located};
 use crate::search::{Prepared, answer, prepare};
@@ -207,6 +209,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
             })
         })
         .request::<Structure, _>(structure)
+        .request::<Languages, _>(languages)
         .request::<Search, _>(search)
         .request::<SearchCards, _>(search_cards)
         .request::<ProjectInfo, _>(project_info)
@@ -245,8 +248,9 @@ pub fn router(client: ClientSocket) -> Router<Core> {
 
 /// (`use<>`: the returned future captures nothing from `core`; async-lsp needs it independent of the `&mut` borrow.)
 ///
-/// `initialize` reads `initializationOptions`: `driverPath` (the extension resolves it, and ignores workspace settings in
-/// Restricted Mode; the `VNOC_DRIVER` environment variable is a fallback for tests and terminals) and `root`, the opened folder.
+/// `initialize` reads `initializationOptions`: the drivers, as `drivers` (a list of paths) or else `driverPath` (one; the extension resolves it,
+/// and ignores workspace settings in Restricted Mode), else the `VNOC_DRIVERS` environment variable (a list), else `VNOC_DRIVER`, else every
+/// driver beside the binary (`cli::project::discover`); and `root`, the opened folder.
 fn initialize(
     core: &mut Core,
     params: InitializeParams,
@@ -259,9 +263,26 @@ fn initialize(
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
     };
-    core.host.set_path(
-        option("driverPath").or_else(|| std::env::var_os("VNOC_DRIVER").map(PathBuf::from)),
-    );
+    let explicit: Vec<PathBuf> = match params
+        .initialization_options
+        .as_ref()
+        .and_then(|o| o.get("drivers"))
+        .and_then(|v| v.as_array())
+    {
+        Some(list) => list
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from)
+            .collect(),
+        None => option("driverPath").into_iter().collect(),
+    };
+    core.host.set_paths(discover(
+        &explicit,
+        std::env::var_os("VNOC_DRIVERS").as_deref(),
+        std::env::var_os("VNOC_DRIVER").as_deref(),
+        std::env::current_exe().ok().as_deref(),
+    ));
     match option("root").map(|root| Project::open(&root)) {
         Some(Ok(project)) => {
             let _ = core.state.project.set(project);
@@ -328,6 +349,44 @@ fn structure(
         let capabilities = host.capabilities().await;
         let index = state.index.read().unwrap();
         Ok(index::structure(&index, project, capabilities))
+    })
+}
+
+/// `vnoc/languages`: the drivers and what each said. Waits for the first build (it starts every driver), and answers whether or not it worked: a
+/// driver that failed is in the list with its reason, which is what the editor shows.
+fn languages(
+    core: &mut Core,
+    _ignored: serde_json::Value,
+) -> impl std::future::Future<Output = Result<Vec<LanguageInfo>, ResponseError>> + Send + use<> {
+    let (state, host) = (core.state.clone(), core.host.clone());
+    timed("languages", async move {
+        state
+            .status
+            .subscribe()
+            .wait_for(|s| !matches!(s, Status::Building))
+            .await
+            .map_err(internal)?;
+        Ok(host
+            .languages()
+            .await
+            .into_iter()
+            .map(|l| {
+                let (state, error) = match l.state {
+                    LanguageState::Running => (protocol::LanguageState::Running, None),
+                    LanguageState::Failed(why) => (protocol::LanguageState::Failed, Some(why)),
+                };
+                LanguageInfo {
+                    name: l.name,
+                    version: l.version,
+                    path: l.path.to_string_lossy().into_owned(),
+                    extensions: l.extensions,
+                    capabilities: l.capabilities,
+                    state,
+                    error,
+                    warnings: l.warnings,
+                }
+            })
+            .collect())
     })
 }
 

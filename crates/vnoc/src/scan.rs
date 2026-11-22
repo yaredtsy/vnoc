@@ -1,8 +1,10 @@
-//! Which files are in scope. Skeleton rule: every `.py` file under the opened folder, honouring `.gitignore`, skipping hidden
-//! folders (so `.git` and `.vnoc` are out). The real scope rule (`vnoc.toml` `include` / `exclude`) arrives with M1.
+//! Which files are in scope. Skeleton rule: every file under the opened folder with an extension some driver owns (`files.extensions` of its
+//! handshake: the caller gives the set), honouring `.gitignore`, skipping hidden folders (so `.git` and `.vnoc` are out). The real scope rule (`vnoc.toml` `include` / `exclude`) arrives with M1.
 //!
 //! The same walk finds the folders and their `.vnoc-id` markers (`05-identity/04-folders.md` §4). Hidden files are skipped by the
 //! walker, so a marker is looked for explicitly in each folder it yields.
+
+use std::collections::BTreeSet;
 
 use vnoc_domain::{NodeId, RepoPath};
 
@@ -25,8 +27,8 @@ pub struct Scan {
     pub truncated: bool,
 }
 
-/// Blocking: walks the disk. Call it through `spawn_blocking`.
-pub fn python_files(project: &Project, max: usize) -> Scan {
+/// Blocking: walks the disk. Call it through `spawn_blocking`. `extensions` are without the dot, compared exactly as written.
+pub fn files(project: &Project, extensions: &BTreeSet<String>, max: usize) -> Scan {
     let root = project.open_dir();
     let mut files = Vec::new();
     let mut folders = Vec::new();
@@ -58,7 +60,10 @@ pub fn python_files(project: &Project, max: usize) -> Scan {
             continue;
         }
         if !entry.file_type().is_some_and(|t| t.is_file())
-            || path.extension().and_then(|e| e.to_str()) != Some("py")
+            || !path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| extensions.contains(e))
         {
             continue;
         }
@@ -91,7 +96,11 @@ mod tests {
         d
     }
     fn scan(root: &Path, max: usize) -> Scan {
-        python_files(&Project::open(root).unwrap(), max)
+        scan_for(root, &["py"], max)
+    }
+    fn scan_for(root: &Path, extensions: &[&str], max: usize) -> Scan {
+        let extensions = extensions.iter().map(|e| e.to_string()).collect();
+        files(&Project::open(root).unwrap(), &extensions, max)
     }
     fn names(s: &Scan) -> Vec<&str> {
         s.files.iter().map(|p| p.as_str()).collect()
@@ -118,6 +127,36 @@ mod tests {
         let s = scan(&d, 100);
         assert_eq!(names(&s), ["a.py", "b/a.py", "b/z.py"]);
         assert!(!s.truncated);
+    }
+
+    #[test]
+    fn collects_every_extension_it_is_given_and_no_other() {
+        let d = fresh("two-languages");
+        for f in [
+            "a.py",
+            "b.bend",
+            "sub/c.bend",
+            "sub/d.pyi",
+            "e.txt",
+            "Nat.double.bend",
+            "noext",
+            "UPPER.PY",
+        ] {
+            put(&d, f);
+        }
+        assert_eq!(names(&scan_for(&d, &["py"], 100)), ["a.py"]);
+        assert_eq!(
+            names(&scan_for(&d, &["py", "bend"], 100)),
+            ["Nat.double.bend", "a.py", "b.bend", "sub/c.bend"]
+        );
+        assert_eq!(
+            names(&scan_for(&d, &["bend", "pyi"], 100)),
+            ["Nat.double.bend", "b.bend", "sub/c.bend", "sub/d.pyi"]
+        );
+        assert!(
+            scan_for(&d, &[], 100).files.is_empty(),
+            "no driver, no files"
+        );
     }
 
     #[test]

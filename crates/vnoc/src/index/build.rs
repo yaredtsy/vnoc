@@ -75,8 +75,10 @@ pub async fn refresh(
         return Err(BuildError::NoDriver(no_driver_reasons(host).await));
     }
     let walk_project = project.clone();
+    let extensions = host.extensions();
     let scan =
-        tokio::task::spawn_blocking(move || scan::python_files(&walk_project, MAX_FILES)).await?;
+        tokio::task::spawn_blocking(move || scan::files(&walk_project, &extensions, MAX_FILES))
+            .await?;
     let walked = started.elapsed();
     let in_scope: BTreeSet<RepoPath> = scan.files.iter().cloned().collect();
 
