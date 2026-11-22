@@ -161,6 +161,18 @@ One prompt at a time; the next only after the last one reports.
   counts changed for it. Known flake seen once: the edit suite's "Save says gone" timed out in one full run.
 - Left for B4b: the extension's description and `python` keyword; the first-attach prompt says "docstring" (addDoc.ts ~30), which Bend has not.
 
+### As built in B4b (2f2b6a0 – …, reviewed 2026-11-22)
+
+- `scripts/drivers.mjs` finds the drivers: every `drivers/<x>/` whose Cargo.toml package is `vnoc-driver-<x>`; any other folder there fails
+  the script. `package.mjs` (build, `extension/bin/`, the CLI archive) and `notices.mjs` use it. `THIRD_PARTY_NOTICES.md` regenerated
+  with the Bend driver's crates.
+- `install.sh` installs `vnoc` and every `vnoc-driver-*` the archive holds (listed with `tar -tzf`), each by `.new.$$` + rename; a driver
+  an earlier install left is kept and named (`left vnoc-driver-x from an earlier install`): it may be the user's own.
+- CI: the setup action, `ci.yml`, `package.yml` loop over `drivers/*/`; one rust-cache step for every driver workspace (a computed
+  list). Cost: a change to one driver's Cargo.lock invalidates the others' cache too; accepted (the locks move only on a re-pin).
+  Dependabot: `directories: ["/drivers/*"]`.
+- `crates/vnoc/tests/release_version.rs` (new): every `drivers/*/Cargo.toml` and `extension/package.json` carry the core's version.
+
 ## 5. Adding a language: the registry (B3, B4)
 
 TypeScript and Rust come after Bend (their analyzers are in `language_driver_rs` already). B3 and B4 are built so that a language is added

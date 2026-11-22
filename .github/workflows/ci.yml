@@ -88,11 +88,13 @@ jobs:
         run: cargo test --no-fail-fast -p vnoc-domain -p vnoc-driver-protocol -p vnoc-search
       - name: drivers (each its own workspace and toolchain)
         run: |
+          failed=""
           for d in drivers/*/; do
             echo "::group::$d"
-            (cd "$d" && cargo build && cargo test --no-fail-fast) || { echo "::error::$d failed"; exit 1; }
+            (cd "$d" && cargo build && cargo test --no-fail-fast) || { echo "::error::$d failed"; failed="$failed $d"; }
             echo "::endgroup::"
           done
+          [ -z "$failed" ] || { echo "::error::failed:$failed"; exit 1; }
       - name: core integration tests (need the drivers built above; also leave target/debug/vnoc for the extension suite)
         run: cargo test --no-fail-fast -p vnoc
       - name: build the webview and the extension (the extension suite loads them)

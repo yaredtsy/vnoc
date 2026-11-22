@@ -141,7 +141,9 @@ main() {
     count=$((count + 1))
     names="${names:+$names, }$name"
   done
-  say "installed vnoc and $count drivers ($names) in $dir"
+  noun="drivers"
+  if [ "$count" = 1 ]; then noun="driver"; fi
+  say "installed vnoc and $count $noun ($names) in $dir"
   # a driver from an earlier install that this archive does not have stays, and is said: it is the user's to remove
   for old in "$dir"/vnoc-driver-*; do
     [ -e "$old" ] || continue
