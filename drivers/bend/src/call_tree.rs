@@ -23,6 +23,7 @@ use vnoc_driver_protocol::{
 
 use crate::outline::{analyzer_occurrence, kind};
 use crate::positions::Lines;
+use crate::source;
 use crate::{Failure, invalid};
 
 /// The wire format versions of the analyzer (`analyzer_core::wire::WIRE_FORMAT_VERSION`, "bumped when a field is added that changes what a node
@@ -164,7 +165,7 @@ impl Callers {
         let texts = files
             .into_iter()
             .map(|file| {
-                std::fs::read_to_string(root.join(&file))
+                source::read_text(&root.join(&file))
                     .map(|text| (file.clone(), text))
                     .map_err(|e| internal(format!("cannot read {file}: {e}")))
             })
