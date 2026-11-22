@@ -583,7 +583,7 @@ fn run_once(o: &Options, phases: &mut Phases, counts: &mut Counts) -> Result<(),
     let probe = DriverHost::default();
     probe.set_path(Some(o.driver.clone()));
     let started = Instant::now();
-    rt.block_on(probe.outline_text("x = 1\n"))?;
+    rt.block_on(probe.outline_text("probe.py", "x = 1\n"))?;
     phases.add(
         "7  driver start + one empty outline (a probe)",
         ms(started.elapsed()),

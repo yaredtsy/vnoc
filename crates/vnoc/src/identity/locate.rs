@@ -72,7 +72,7 @@ pub async fn locate(
         .def_at(&key)
         .and_then(|d| d.id.as_deref().and_then(|t| NodeId::parse(t).ok()));
     let outline = host
-        .outline_text(&params.document.text)
+        .outline_text(key.path().as_str(), &params.document.text)
         .await
         .map_err(|e| LocateError::Driver(e.to_string()))?;
     Ok(locate_in(&outline.defs, &key, id.as_ref()).map(|range| Located { range }))

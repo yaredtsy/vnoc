@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use super::project::{Opened, open_from};
 use super::{Failure, Global, out, style};
+use crate::driver_host::LanguageState;
 use crate::index;
 use crate::protocol::{FailedFile, LostMarker, MissingNode, Problem, Stats};
 
@@ -66,18 +67,26 @@ async fn status_of(opened: &Opened) -> Status {
         host,
         index,
     } = opened;
-    let info = host.info().await;
+    let languages = host.languages().await;
     let index = index.read().unwrap();
     let docs = index.doc_counts();
     let answer = index::structure(&index, project, BTreeMap::new());
-    // there is one driver, and it outlined every file the tree has
-    let drivers = info
-        .map(|(name, version)| Driver {
-            name,
-            version,
-            files: answer.stats.files,
-        })
+    // one driver outlined every file the tree has; with several, a driver's files are the ones with an extension it owns (B3b lists them)
+    let several = languages.len() > 1;
+    let drivers = languages
         .into_iter()
+        .filter(|l| matches!(l.state, LanguageState::Running))
+        .map(|l| Driver {
+            files: if several {
+                index.files_with_extensions(&l.extensions)
+            } else {
+                answer.stats.files
+            },
+            name: l.name,
+            version: l.version,
+        })
+        // as before, a driver with no file to read is "not started": every driver is started now, so what says it is the count
+        .filter(|d| d.files > 0)
         .collect();
     Status {
         schema: 1,
