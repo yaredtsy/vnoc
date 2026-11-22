@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs the `vnoc` command-line program and the Python driver beside it, from a V-NOC release (docs/21-agent-cli/07-install.md §6):
+# Installs the `vnoc` command-line program and every language driver beside it, from a V-NOC release (docs/21-agent-cli/07-install.md §6):
 #
 #   curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.0/install.sh | sh
 #
@@ -10,7 +10,7 @@
 # What it reads from the environment:
 #   VNOC_VERSION      the release to install: 0.3.0 or v0.3.0. Default: the version stamped into this script when the release was made; run from a
 #                     checkout (not stamped), the newest release, pre-releases included
-#   VNOC_INSTALL_DIR  where the two programs go. Default: $HOME/.local/bin (made if it is not there)
+#   VNOC_INSTALL_DIR  where the programs go. Default: $HOME/.local/bin (made if it is not there)
 #   VNOC_BASE_URL     where the releases are, instead of https://github.com/yaredtsy/vnoc/releases/download: a mirror, or an offline machine's folder
 #                     (`file:///srv/vnoc` needs curl; the folder holds v<version>/ with the archive and SHA256SUMS in it)
 set -eu
@@ -37,7 +37,7 @@ main() {
   cleanup() {
     # the temporary folder, and any half-made file beside the programs (a program is moved into place only when it is whole)
     [ -z "$work" ] || rm -rf "$work"
-    [ -z "$dir" ] || rm -f "$dir/.vnoc.new.$$" "$dir/.vnoc-driver-python.new.$$"
+    [ -z "$dir" ] || rm -f "$dir"/.vnoc*.new.$$
   }
   trap cleanup EXIT
   trap 'exit 1' HUP INT TERM
@@ -110,8 +110,13 @@ main() {
   [ -n "$got" ] || fail "could not work out the sum of $archive: nothing was installed"
   [ "$got" = "$want" ] || fail "$archive does not match its line of SHA256SUMS (wanted $want, got $got): nothing was installed. Try again; if it keeps failing, the download is damaged or not the release's"
 
+  # the drivers are whatever the archive holds named vnoc-driver-*: this script names no language
   mkdir "$work/unpack"
-  tar -xzf "$work/$archive" -C "$work/unpack" vnoc vnoc-driver-python || fail "could not unpack $archive: it does not hold vnoc and vnoc-driver-python"
+  tar -tzf "$work/$archive" >"$work/listing" || fail "could not read $archive"
+  drivers=$(sed 's|^\./||' "$work/listing" | grep '^vnoc-driver-[A-Za-z0-9_-]*$' || true)
+  grep -qx 'vnoc' "$work/listing" && [ -n "$drivers" ] || fail "$archive does not hold vnoc and a driver (vnoc-driver-*): nothing was installed"
+  # shellcheck disable=SC2086 # one name per word: a driver's name has no space or glob character (the grep above)
+  tar -xzf "$work/$archive" -C "$work/unpack" vnoc $drivers || fail "could not unpack $archive"
 
   # ── the install: each program under a temporary name beside its place, then moved there ───────────────────────────────────
 
@@ -120,9 +125,9 @@ main() {
   # VS Code's *Install `vnoc` Command in PATH* makes `vnoc` a link into the extension: moving a program over a link replaces the link, not what it points to
   replaced_link=""
   if [ -L "$dir/vnoc" ]; then replaced_link=$(readlink "$dir/vnoc" 2>/dev/null || true); fi
-  for name in vnoc-driver-python vnoc; do
-    # the driver first: a vnoc that is moved in finds its driver beside it
-    case "$name" in vnoc) new="$dir/.vnoc.new.$$" ;; *) new="$dir/.vnoc-driver-python.new.$$" ;; esac
+  # the drivers first: a vnoc that is moved in finds its drivers beside it
+  for name in $drivers vnoc; do
+    new="$dir/.$name.new.$$"
     cp "$work/unpack/$name" "$new" || fail "could not write into $dir: pick another folder with VNOC_INSTALL_DIR=<folder>"
     chmod 755 "$new"
     mv -f "$new" "$dir/$name"
@@ -130,7 +135,22 @@ main() {
 
   installed=$("$dir/vnoc" --version) || fail "$dir/vnoc was installed but does not run on this system"
   say "$installed"
-  say "installed vnoc and vnoc-driver-python in $dir"
+  count=0
+  names=""
+  for name in $drivers; do
+    count=$((count + 1))
+    names="${names:+$names, }$name"
+  done
+  say "installed vnoc and $count drivers ($names) in $dir"
+  # a driver from an earlier install that this archive does not have stays, and is said: it is the user's to remove
+  for old in "$dir"/vnoc-driver-*; do
+    [ -e "$old" ] || continue
+    name=$(basename "$old")
+    case " $(printf '%s' "$drivers" | tr '\n' ' ') " in
+      *" $name "*) ;;
+      *) say "left $name from an earlier install" ;;
+    esac
+  done
   if [ -n "$replaced_link" ]; then
     say "replaced the link to $replaced_link (VS Code's *Install vnoc Command in PATH*): this copy is the one on the PATH now"
   fi

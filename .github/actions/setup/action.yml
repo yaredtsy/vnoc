@@ -23,28 +23,31 @@ runs:
       run: |
         git config --system core.longpaths true
         echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"
-    # two toolchains (rust-toolchain.toml: 1.94.1 in the root, 1.99.1 in drivers/python and drivers/bend): do not rely on rustup installing them by itself
+    # two toolchains (rust-toolchain.toml: 1.94.1 in the root, 1.99.1 in each drivers/*/): do not rely on rustup installing them by itself
     - name: rust toolchains
       shell: bash
       run: |
         rustup toolchain install
-        (cd drivers/python && rustup toolchain install)
-        (cd drivers/bend && rustup toolchain install)
+        for d in drivers/*/; do (cd "$d" && rustup toolchain install); done
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         key: ${{ inputs.cache-key }}
         save-if: ${{ inputs.save-cache }}
         cache-on-failure: true
+    # one cache for every driver's workspace: the folders of drivers/, named by no one
+    - name: driver workspaces
+      id: drivers
+      shell: bash
+      run: |
+        {
+          echo "workspaces<<EOF"
+          for d in drivers/*/; do echo "${d%/} -> target"; done
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
-        workspaces: "drivers/python -> target"
-        key: driver-${{ inputs.cache-key }}
-        save-if: ${{ inputs.save-cache }}
-        cache-on-failure: true
-    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      with:
-        workspaces: "drivers/bend -> target"
-        key: bend-driver-${{ inputs.cache-key }}
+        workspaces: ${{ steps.drivers.outputs.workspaces }}
+        key: drivers-${{ inputs.cache-key }}
         save-if: ${{ inputs.save-cache }}
         cache-on-failure: true
     - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

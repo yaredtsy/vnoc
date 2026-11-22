@@ -1,18 +1,20 @@
 // Build everything and write one platform-specific .vsix, and beside it the command-line archive (docs/21-agent-cli/07-install.md §6):
-//   vnoc-<target>.vsix                  the extension, with the two programs inside
-//   vnoc-cli-<target>.tar.gz            (win32-x64: .zip) the same two programs, flat, with LICENSE and THIRD_PARTY_NOTICES.md: what scripts/install.sh unpacks
+//   vnoc-<target>.vsix                  the extension, with vnoc and every driver inside
+//   vnoc-cli-<target>.tar.gz            (win32-x64: .zip) the same programs, flat, with LICENSE and THIRD_PARTY_NOTICES.md: what scripts/install.sh unpacks
+// The drivers are the folders of drivers/ (scripts/drivers.mjs): no language is named here.
 // Usage: node scripts/package.mjs [--target darwin-arm64|darwin-x64|linux-x64|win32-x64] [--pre-release]
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { findDrivers } from "./drivers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const argTarget = process.argv.indexOf("--target");
 const platform = { darwin: "darwin", linux: "linux", win32: "win32" }[process.platform];
 const target = argTarget > 0 ? process.argv[argTarget + 1] : `${platform}-${process.arch}`;
-// The VSIX target (what vsce and the Marketplace call it) and the Rust target triple the two programs are built for.
+// The VSIX target (what vsce and the Marketplace call it) and the Rust target triple the programs are built for.
 const triples = {
   "darwin-arm64": "aarch64-apple-darwin",
   "darwin-x64": "x86_64-apple-darwin",
@@ -26,6 +28,7 @@ if (!triple) {
 }
 // A VSIX is a pre-release because it was packaged as one: `vsce publish --pre-release` does nothing for a file given with `--packagePath`.
 const preRelease = process.argv.includes("--pre-release");
+const drivers = findDrivers();
 // the programs run on the VSIX's system, not on this one: a .exe is a matter of the target (a cross build has the target's names too)
 const exe = (name) => (target.startsWith("win32") ? `${name}.exe` : name);
 
@@ -41,7 +44,7 @@ const run = (cmd, args, cwd = root) => {
 };
 
 run("cargo", ["build", "--release", "--target", triple, "-p", "vnoc"]);
-run("cargo", ["build", "--release", "--target", triple], join(root, "drivers/python"));
+for (const d of drivers) run("cargo", ["build", "--release", "--target", triple], d.dir);
 run("pnpm", ["--filter", "vnoc-webview", "build"]);
 run("pnpm", ["--filter", "vnoc", "build"]);
 
@@ -49,7 +52,7 @@ const bin = join(root, "extension/bin");
 mkdirSync(bin, { recursive: true });
 for (const f of readdirSync(bin)) if (f !== ".gitkeep") rmSync(join(bin, f));
 copyFileSync(join(root, "target", triple, "release", exe("vnoc")), join(bin, exe("vnoc")));
-copyFileSync(join(root, "drivers/python/target", triple, "release", exe("vnoc-driver-python")), join(bin, exe("vnoc-driver-python")));
+for (const d of drivers) copyFileSync(join(d.dir, "target", triple, "release", exe(d.program)), join(bin, exe(d.program)));
 
 // the licence is one file, at the root of the repository: the VSIX gets a copy (extension/LICENSE is not in git)
 copyFileSync(join(root, "LICENSE"), join(root, "extension/LICENSE"));
@@ -57,10 +60,11 @@ copyFileSync(join(root, "LICENSE"), join(root, "extension/LICENSE"));
 // The command-line archive: the programs that were just copied into bin/ (nothing is compiled twice), flat, with the two files their licences ask for (the
 // programs hold other people's code, as the VSIX does: the check at the top holds here too). Beside the .vsix, at the root; a CI job uploads it as `cli-<target>`.
 const archive = join(root, target.startsWith("win32") ? `vnoc-cli-${target}.zip` : `vnoc-cli-${target}.tar.gz`);
-const names = [exe("vnoc"), exe("vnoc-driver-python"), "LICENSE", "THIRD_PARTY_NOTICES.md"];
+const programs = [exe("vnoc"), ...drivers.map((d) => exe(d.program))];
+const names = [...programs, "LICENSE", "THIRD_PARTY_NOTICES.md"];
 const stage = mkdtempSync(join(tmpdir(), "vnoc-cli-"));
 try {
-  for (const name of names.slice(0, 2)) {
+  for (const name of programs) {
     copyFileSync(join(bin, name), join(stage, name));
     chmodSync(join(stage, name), 0o755);
   }

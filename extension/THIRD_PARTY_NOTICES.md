@@ -2,7 +2,7 @@
 
 V-NOC is licensed under the Apache License 2.0 (see `LICENSE`). This extension also contains the third-party code listed below, under its own licences.
 
-- **The V-NOC core and the Python driver** (programs in `bin/`) are written in Rust. The driver includes the Python analysis of [ruff](https://github.com/astral-sh/ruff) and [ty](https://github.com/astral-sh/ty) (MIT) and [salsa](https://github.com/salsa-rs/salsa) (Apache-2.0 / MIT), through [language_driver_rs](https://github.com/yaredtsy/language_driver_rs).
+- **The V-NOC core and the language drivers** (programs in `bin/`) are written in Rust. The Python driver includes the Python analysis of [ruff](https://github.com/astral-sh/ruff) and [ty](https://github.com/astral-sh/ty) (MIT) and [salsa](https://github.com/salsa-rs/salsa) (Apache-2.0 / MIT), through [language_driver_rs](https://github.com/yaredtsy/language_driver_rs).
 - **The extension and its pages** (`dist/`, `media/webview/`) bundle the npm packages listed under *npm packages*.
 
 This file is written by `node scripts/notices.mjs`; do not edit it by hand.
@@ -24,6 +24,7 @@ Used by:
 - [cfg-if 1.0.4](https://github.com/rust-lang/cfg-if)
 - [cfg-if 1.0.5](https://github.com/rust-lang/cfg-if)
 - [crossbeam-channel 0.5.15](https://github.com/crossbeam-rs/crossbeam)
+- [crossbeam-channel 0.5.17](https://github.com/crossbeam-rs/crossbeam)
 - [crossbeam-deque 0.8.6](https://github.com/crossbeam-rs/crossbeam)
 - [crossbeam-deque 0.8.8](https://github.com/crossbeam-rs/crossbeam)
 - [crossbeam-epoch 0.9.18](https://github.com/crossbeam-rs/crossbeam)
@@ -64,7 +65,9 @@ Used by:
 - [rayon-core 1.13.0](https://github.com/rayon-rs/rayon)
 - [regex 1.13.1](https://github.com/rust-lang/regex)
 - [regex-automata 0.4.18](https://github.com/rust-lang/regex)
+- [regex-automata 0.4.19](https://github.com/rust-lang/regex)
 - [regex-syntax 0.8.11](https://github.com/rust-lang/regex)
+- [regex-syntax 0.8.12](https://github.com/rust-lang/regex)
 - [rustix 1.1.6](https://github.com/bytecodealliance/rustix)
 - [salsa 0.28.2](https://github.com/salsa-rs/salsa)
 - [salsa-macro-rules 0.28.2](https://github.com/salsa-rs/salsa)
@@ -75,6 +78,7 @@ Used by:
 - [similar 3.1.2](https://github.com/mitsuhiko/similar)
 - [smallvec 1.15.2](https://github.com/servo/rust-smallvec)
 - [smallvec 1.16.5](https://github.com/servo/rust-smallvec)
+- [smallvec 1.16.6](https://github.com/smallvec/smallvec)
 - [socket2 0.6.5](https://github.com/rust-lang/socket2)
 - [stable_deref_trait 1.2.0](https://github.com/storyyeller/stable_deref_trait)
 - [stable_deref_trait 1.2.1](https://github.com/storyyeller/stable_deref_trait)
@@ -298,6 +302,9 @@ Used by:
 - [allocator-api2 0.2.21](https://github.com/zakarumych/allocator-api2)
 - [analyzer-core 0.0.0](https://crates.io/crates/analyzer-core)
 - [anyhow 1.0.104](https://github.com/dtolnay/anyhow)
+- [bend-analysis 0.0.0](https://crates.io/crates/bend-analysis)
+- [bend-parser 0.0.0](https://crates.io/crates/bend-parser)
+- [bend-syntax 0.0.0](https://crates.io/crates/bend-syntax)
 - [blake3 1.8.7](https://github.com/BLAKE3-team/BLAKE3)
 - [constant_time_eq 0.4.2](https://github.com/cesarb/constant_time_eq)
 - [dirs 6.0.0](https://github.com/soc/dirs-rs)
@@ -317,6 +324,7 @@ Used by:
 - [pep440_rs 0.7.3](https://github.com/konstin/pep440-rs)
 - [pin-project-lite 0.2.16](https://github.com/taiki-e/pin-project-lite)
 - [pin-project-lite 0.2.17](https://github.com/taiki-e/pin-project-lite)
+- [pin-project-lite 0.2.18](https://github.com/taiki-e/pin-project-lite)
 - [portable-atomic 1.13.1](https://github.com/taiki-e/portable-atomic)
 - [proc-macro2 1.0.107](https://github.com/dtolnay/proc-macro2)
 - [python-analysis 0.0.0](https://crates.io/crates/python-analysis)
@@ -4543,6 +4551,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Used by:
 
 - [xxhash-rust 0.8.19](https://github.com/DoumanAsh/xxhash-rust)
+- [xxhash-rust 0.8.21](https://github.com/DoumanAsh/xxhash-rust)
 
 ```text
 Boost Software License - Version 1.0 - August 17th, 2003
