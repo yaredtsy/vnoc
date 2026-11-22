@@ -12,7 +12,7 @@ use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 ///
 /// EXPERIMENTAL until 1.0: command names and the text output can still change (the release notes say when). `--json` only ever gains fields.
 /// Every path printed is relative to the root, except the root itself. Exit codes: 0 done (also "found nothing"), 1 `check` found problems,
-/// 2 the request cannot be met (bad arguments, no such node), 3 the environment (no driver, a driver that failed).
+/// 2 the request cannot be met (bad arguments, no such node), 3 the environment (no driver found, no driver started).
 ///
 /// `vnoc guide` has a short how-to with examples; `vnoc <command> --help` has every flag.
 #[derive(Debug, Parser)]
@@ -174,7 +174,7 @@ pub enum Format {
 pub enum Command {
     /// Says whether V-NOC works in this project and what it knows. Run it first, or when anything seems off.
     ///
-    /// Tells you whether V-NOC works in this project and what it knows: its version, the root, the driver, how many folders, files,
+    /// Tells you whether V-NOC works in this project and what it knows: its version, the root, each driver and what it read, how many folders, files,
     /// classes, functions and docs there are, and what is Missing or broken. Run it first when anything seems off, or to see whether a
     /// project has docs at all.
     Status,

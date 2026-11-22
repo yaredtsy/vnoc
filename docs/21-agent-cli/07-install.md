@@ -181,8 +181,8 @@ system allows it.
   (install says so and stops). So a dev window and an installed V-NOC never fight over `~/.local/bin/vnoc`.
 - **Where:** `~/.local/bin` (macOS, Linux) or `%LOCALAPPDATA%\vnoc\bin` (Windows); `VNOC_CLI_DIR` overrides it, for the tests and for
   anyone who keeps tools elsewhere.
-- In a development window the driver is not next to `target/debug/vnoc` (it is in `drivers/python/target/debug/`), so the linked command
-  needs `VNOC_DRIVER` there; install says so in that mode only.
+- In a development window the drivers are not next to `target/debug/vnoc` (they are in `drivers/<language>/target/debug/`), so the linked
+  command needs `VNOC_DRIVERS` (or `VNOC_DRIVER` for one) there; install says so in that mode only.
 - *V-NOC: Uninstall `vnoc` Command from PATH* removes what the install made, and nothing else.
   *(Narrowed 2026-11-20, review of A12, built in A12b.)* "What the install made" is a link whose target is **a V-NOC extension folder's
   `bin/vnoc`** (any version, the same pattern the mover uses) or **exactly the binary this extension runs** (so a development window can undo
@@ -191,7 +191,7 @@ system allows it.
   `V-NOC left ~/.local/bin/vnoc alone: it points to /usr/bin/true, which V-NOC did not make. If you don't need it: rm ~/.local/bin/vnoc,
   then run this command again.` (Windows: `del "<path>"`.) The same sentence shape for a foreign file. Seen by the user, 2026-11-20. `vnoc.cliInstalled` keeps the wider test (any program named `vnoc`): it only says the
   command exists.
-- The driver comes along by C8: the binary looks next to its real path.
+- The drivers come along by C8: the binary runs every `vnoc-driver-*` it finds next to its real path.
 - Sets the context key `vnoc.cliInstalled` (a walkthrough step completes on it).
 
 **V-NOC: Set Up Coding Agents** (`vnoc.setUpAgents`): asks `vnoc agent list --json` for the names and which are detected, shows them as a

@@ -34,7 +34,7 @@ vnoc calls <node> [--depth N]
 vnoc missing
 vnoc check [--changed]
 vnoc changed [--since <ref>]                    (A15)
-global:  --root <dir> · --driver <path> · --json · --format id|path · --quiet · --help · --version
+global:  --root <dir> · --driver <path> (repeatable) · --json · --format id|path · --quiet · --help · --version
 ```
 
 ## 2. `status`
@@ -67,7 +67,7 @@ missing 1 · lost markers 1 · problems 0      → vnoc check
 ```
 
 - **Line 1:** the version of `vnoc`, the root (**the one absolute path any command prints**: it is the root itself; everything else is relative to
-  it, 02 §2), and the driver that ran. A folder with no Python file never starts a driver, and says `driver not started (no Python files to read)`.
+  it, 02 §2), and the driver that ran. *(Changed 2026-11-22, B3b: every driver is started, and a driver that read no file is not listed; with none listed the line still says `driver not started (no Python files to read)`.)*
 - **Line 2:** the counts of `index::structure` (folders *under* the root, files, classes, functions and methods together), then the docs and the
   nodes they are on (`Index::doc_counts`; a Missing node's docs are counted). `no docs` when there are none. Singular where the count is 1
   (`1 file`, `1 class`).
@@ -105,6 +105,16 @@ and line 1 says `drivers python 0.2.0 (12 files)`. Today there is one driver, so
 started (`driver not started …` stays the text). The reason is C5: JSON only grows, so a single `driver` object shipped now would have to stay
 next to a later list for ever. More languages (a driver saying which files it reads, the scan asking each driver) is not planned here: README §5.
 When it comes, a driver that fails is a row of the list with its error, not the whole command's exit `3`.
+
+*(Changed 2026-11-22, built in B3b, docs/23 §5: it came.)* One `driver` line per driver, by name: `driver   bend 0.3.0 · read 2 files`, then
+`driver   python 0.3.0 · read 12 files`. A driver that failed is `driver   ts · failed: <first line of the reason>`; an extension another driver
+won is a line `driver   bend · warning: <text>`. A driver that read no file and did not fail is not listed. With one driver the text is the
+line it always was. JSON: each row of `drivers` also has `extensions` (what it says it reads, without the dot), `state` (`running` or
+`failed`), `error` (the full reason; only when it failed) and `warnings` (a list, usually empty). Fields are only added, so `schema` stays `1`
+(C5); `tests/golden/status.json` gained the three fields on purpose. When **no** driver started the command is exit `3`:
+`no driver started:` and a line `<name> (<path>): <reason>` for each. A path given with `--driver` that does not exist is exit `3` at once and
+names the path, even when another driver would have worked (a typo is not a driver that failed); a path from `VNOC_DRIVERS` is not asked
+about, and shows as failed.
 
 `files` is how many files that driver outlined (the tree's files). `initialized` is whether `.vnoc/` is a folder at the git root. `missing`, `lost_markers`, `problems` and `failed` are the
 protocol's own types (`MissingNode`, `LostMarker`, `Problem`, `FailedFile`: snake_case), as `vnoc/structure` sends them.
@@ -650,7 +660,7 @@ terminal's theme applies:
 - **Counts have thousands separators** in every command that prints one (`1,805 files`, `… 1,203 more rows`, `docs 1,000`), and only counts: line numbers, IDs and
   `lines 1805-1900` do not. JSON is unchanged.
 - **`status`.** The new layout is in §2. `failed N` is written `failed 2` (the plan's form), after the three counts. With no `.vnoc/` and nothing wrong there is no
-  `health` line. The *docs* line of an initialised project with no docs says `no docs`. Several drivers would be one `driver` line, joined by commas.
+  `health` line. The *docs* line of an initialised project with no docs says `no docs`. Several drivers are one `driver` line each (changed in B3b, above).
   The text is asserted inline (there is no text golden for it), so it was rewritten with the change; `status.json` and every other golden are as they were.
   `tests/golden/status-color.txt` is `status --color always` on the sample, with the root and versions replaced, so the palette is pinned.
 - The global `--format` help now says *a location per line* (an ID only for a Missing node), which is what it prints.

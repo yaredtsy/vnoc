@@ -110,8 +110,8 @@ curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.0/install.sh 
 It runs on macOS (Apple silicon and Intel) and Linux x64. `VNOC_INSTALL_DIR=<folder>` installs somewhere else, and `VNOC_VERSION=0.3.0` names
 the release when you run the copy from a checkout. It needs `curl` or `wget`, and `tar`. It does not use `sudo`.
 
-**From a release file.** Each release has `vnoc-cli-<system>.tar.gz` (`vnoc-cli-win32-x64.zip` on Windows) with `vnoc`, the Python driver
-`vnoc-driver-python` (it must sit beside `vnoc`), the licence and the third-party notices. One `SHA256SUMS` lists every file of the release,
+**From a release file.** Each release has `vnoc-cli-<system>.tar.gz` (`vnoc-cli-win32-x64.zip` on Windows) with `vnoc`, the language drivers
+`vnoc-driver-*` (they must sit beside `vnoc`: it runs every one it finds there), the licence and the third-party notices. One `SHA256SUMS` lists every file of the release,
 and the extension files, the archives and `install.sh` each carry a build attestation:
 
 ```sh
@@ -347,12 +347,12 @@ with any tool. The layout is described in [docs/04-storage](docs/04-storage/READ
 | What you see | What to do |
 |---|---|
 | `vnoc: command not found` | The folder it was installed in is not on your `PATH`. The install prints the line to add (`export PATH="$HOME/.local/bin:$PATH"` in your shell's startup file), then open a new terminal. |
-| `error: no driver found` | The Python driver, `vnoc-driver-python`, must sit beside `vnoc`. Copy both together, or give one with `--driver <path>` or `VNOC_DRIVER`. |
+| `error: no driver found` | The language drivers, the `vnoc-driver-*` files, must sit beside `vnoc`: it runs every one it finds there. Copy them together, or name them: `--driver <path>` (repeat it for more), or `VNOC_DRIVERS` (paths separated as `PATH` is) or `VNOC_DRIVER` (one path). `error: no driver started` lists each driver and why it did not start; `vnoc status` shows a driver that failed on a line of its own. |
 | An **ID lost** warning, or `lost marker` in `vnoc check` | The `ID:` line of a function was deleted. **Write ID** in Needs Attention, or `vnoc repair`, puts it back. |
 | Bare `vnoc` prints help | That is what it does in a terminal. Pick a command from the list: `vnoc status` is the first one to run. |
 | The extension shows nothing | Open a folder that has Python files. **V-NOC: Show Log** says what the core is doing, and **V-NOC: Report Issue…** fills in your versions. |
 | The first `vnoc` after an install takes about a second | On macOS the system checks a program it has not run before: about 0.6 s, once for each new copy of `vnoc` and the driver. It is not V-NOC's index. |
-| `vnoc` came from both the install script and VS Code | The last one to run wins `~/.local/bin/vnoc`. **Uninstall `vnoc` Command from PATH** in VS Code refuses a copy the script made: remove `~/.local/bin/vnoc` and `~/.local/bin/vnoc-driver-python` by hand. |
+| `vnoc` came from both the install script and VS Code | The last one to run wins `~/.local/bin/vnoc`. **Uninstall `vnoc` Command from PATH** in VS Code refuses a copy the script made: remove `~/.local/bin/vnoc` and `~/.local/bin/vnoc-driver-*` by hand. |
 
 ## What's coming
 

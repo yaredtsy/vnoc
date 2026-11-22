@@ -46,4 +46,4 @@ error: this is a file, and the docs belong to a function
 
 ## Exit codes
 `0` done (also "found nothing") · `1` `check` found problems · `2` the request cannot be met (a bad flag, no such node) · `3` the
-environment (no driver, a driver that failed, a lock that could not be taken).
+environment (no driver found, no driver started, a lock that could not be taken).

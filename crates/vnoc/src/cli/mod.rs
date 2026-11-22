@@ -39,7 +39,7 @@ pub enum Failure {
     /// `check` found problems (not an error of the command: its answer)
     #[error("check found problems")]
     CheckFailed,
-    /// no driver, a driver that failed, a `vnoc.toml` that is too new, a lock that could not be taken
+    /// no driver found, no driver started, a `vnoc.toml` that is too new, a lock that could not be taken
     #[error("{0}")]
     Environment(String),
     /// the request could not be met for some of what it named, and each was **already** printed in its place (`show a.py b.py`: `b.py` is not
