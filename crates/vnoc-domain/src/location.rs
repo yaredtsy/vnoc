@@ -234,4 +234,31 @@ mod tests {
         assert_eq!(occurrences([]), Vec::<u32>::new());
         assert_eq!(occurrences(["a", "b", "a", "a", "b"]), vec![1, 1, 2, 3, 2]);
     }
+
+    #[test]
+    fn a_bend_name_is_one_qualname_whatever_it_holds() {
+        // a Bend name is a letter or `_`, then letters, digits, `_` and dots, each dot followed by a letter or `_`
+        // (`languages/bend/crates/bend-parser/src/parse.rs`, `lexeme`): never `/`, `#`, `::`, `-` or `?`
+        let p = RepoPath::new("src/my dir/lib.bend").unwrap();
+        for (qualname, n, shown) in [
+            ("Nat.double", 1, "src/my dir/lib.bend::Nat.double"),
+            ("Nat.double", 2, "src/my dir/lib.bend::Nat.double#2"),
+            ("_x1.y_2.Z", 1, "src/my dir/lib.bend::_x1.y_2.Z"),
+            (
+                "List.Cons.head9",
+                3,
+                "src/my dir/lib.bend::List.Cons.head9#3",
+            ),
+        ] {
+            let key = LocationKey::new(p.clone(), qualname, n).unwrap();
+            assert_eq!(key.to_string(), shown);
+            let back = shown.parse::<LocationKey>().unwrap();
+            assert_eq!(
+                (back.qualname(), back.occurrence()),
+                (qualname, n),
+                "{shown}"
+            );
+            assert_eq!(back, key);
+        }
+    }
 }

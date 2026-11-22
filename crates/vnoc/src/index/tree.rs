@@ -581,4 +581,42 @@ mod tests {
         assert!(pkg.find("pkg/a.py::Outer").is_some());
         assert!(pkg.find("b.py").is_none());
     }
+
+    /// A def as a Bend driver outlines it: the name is the qualname as written, and nothing has a parent.
+    fn bend_def(qualname: &str, kind: DefKind) -> Def {
+        Def {
+            name: qualname.to_string(),
+            ..def(qualname, "", kind)
+        }
+    }
+
+    #[test]
+    fn a_dotted_bend_name_is_one_node_at_the_top_of_its_file_and_not_under_its_prefix() {
+        // `type Nat` and `def Nat.double`: the dot is a character of the name, the tree nests by `parent` only
+        let defs = vec![
+            bend_def("Nat", DefKind::Class),
+            bend_def("Nat.double", DefKind::Function),
+            bend_def("Nat.double", DefKind::Function), // a law and its proof share a name
+            bend_def("main", DefKind::Function),
+        ];
+        let tree = build("repo", "", &files(&[("lib.bend", defs)]));
+        let file = &tree.children[0];
+        assert_eq!(names(file), vec!["Nat", "Nat.double", "Nat.double", "main"]);
+        assert!(file.children.iter().all(|c| c.children.is_empty()));
+        let ids: Vec<&str> = file.children.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "lib.bend::Nat",
+                "lib.bend::Nat.double",
+                "lib.bend::Nat.double#2",
+                "lib.bend::main"
+            ]
+        );
+        assert_eq!(
+            file.children[1].qualname.as_deref(),
+            Some("Nat.double"),
+            "the qualname is the driver's, whole"
+        );
+    }
 }

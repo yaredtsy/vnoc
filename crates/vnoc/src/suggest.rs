@@ -126,7 +126,9 @@ fn is_def(kind: Kind) -> bool {
     matches!(kind, Kind::Class | Kind::Function)
 }
 
-/// `parse_order` of `OrderService.parse_order`.
+/// `parse_order` of `OrderService.parse_order`. This is not a name to show (a node's shown name is its outline's `Def::name`): it is what a
+/// name is **looked up** by, on both sides, the typed one and each node's own. A Bend `Nat.double` is looked up as `double`, as a Python
+/// `C.double` is, and both find it.
 fn last_name(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }
@@ -444,5 +446,43 @@ mod tests {
             suggest(&corpus, &node_ref::parse("nothing_like_it").unwrap(), 5),
             Suggestion::Nothing
         );
+    }
+
+    /// A Bend file: its defs are named as written, dots included (`Nat.double`), and none is under another.
+    fn bend() -> Corpus {
+        let def = |qualname: &str, path: &str| NodeEntry {
+            id: format!("{path}::{qualname}"),
+            kind: Kind::Function,
+            name: qualname.to_string(),
+            qualname: Some(qualname.to_string()),
+            path: path.to_string(),
+            line: None,
+            in_class: false,
+            docs: 0,
+        };
+        Corpus::new(
+            vec![
+                def("Nat.double", "lib.bend"),
+                def("Nat.add", "lib.bend"),
+                def("main", "main.bend"),
+            ],
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn a_dotted_bend_name_is_found_when_it_is_misspelt_or_in_the_wrong_file() {
+        let corpus = bend();
+        // the name a user types is cut at its last dot to look it up, and a node's own name is cut the same way: the two agree
+        assert_eq!(
+            suggested(&corpus, "lib.bend::Nat.dubble"),
+            ["lib.bend::Nat.double"]
+        );
+        assert_eq!(
+            suggested(&corpus, "main.bend::Nat.double"),
+            ["lib.bend::Nat.double"],
+            "the right name in the wrong file"
+        );
+        assert_eq!(suggested(&corpus, "Nat.double"), ["lib.bend::Nat.double"]);
     }
 }
