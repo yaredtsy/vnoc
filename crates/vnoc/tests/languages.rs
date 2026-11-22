@@ -233,7 +233,7 @@ fn the_languages_are_listed_with_what_each_driver_said() {
     assert_eq!(names, ["bend", "python"], "by name");
     let (bend, python) = (&languages[0], &languages[1]);
     assert_eq!(bend["extensions"], json!(["bend"]));
-    assert_eq!(python["extensions"], json!(["py", "pyi"]));
+    assert_eq!(python["extensions"], json!(["py"]));
     for language in languages {
         assert_eq!(language["state"], "running", "{language}");
         assert!(language.get("error").is_none());

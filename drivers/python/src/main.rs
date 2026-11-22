@@ -205,7 +205,9 @@ fn handshake(conn: &Connection) -> anyhow::Result<()> {
         .map(|(k, v)| (k.to_string(), v))
         .collect(),
         files: Some(Files {
-            extensions: vec!["py".into(), "pyi".into()],
+            // `py` only: 0.3 never scanned stub files (`.pyi`), so announcing them would show files nobody saw before. Stubs are not read
+            // until that is a decision of its own (docs/23 "As built in B3a").
+            extensions: vec!["py".into()],
         }),
     };
     conn.initialize_finish(id, serde_json::to_value(reply)?)?;

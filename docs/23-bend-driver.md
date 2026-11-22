@@ -108,6 +108,25 @@ One prompt at a time; the next only after the last one reports.
   if continuation-passing code reads wrong in the by-hand check.
 - Call-site columns skip a leading byte-order mark (the analyzer's do; the editor never shows one). The outline's ranges do not: see §6.
 
+### As built in B3a (d7125f0 – e31aeed, reviewed 2026-11-22)
+
+- `DriverHost` is a list of slots; `start_all()` starts them in parallel, sorts the claims by driver name, the first claim of an extension
+  wins, a later one is a warning on that slot. Every index build runs `start_all()` again: a driver that never answered its handshake is
+  tried again then; one that answered and crashed later keeps its extensions and restarts on the next request for one of its files.
+- **A driver that never answered its handshake claims nothing**, so its files are not scanned (its extensions are unknown). Its reason is in
+  `vnoc/languages`. (§5 said "its files are shown without definitions": that holds only for a driver that crashed after its handshake.)
+- A driver that crashes mid-build fails only the files it was asked for, each with the reason; before, any such error failed the build.
+- Extensions compare exactly (`.PY` is not `.py`), as before. One line in `extension_of` if that is ever wanted.
+- `vnoc/languages` answers `[{ name, version, path, extensions, capabilities, state: "running" | "failed", error?, warnings }]`;
+  `warnings` (an extension another driver won) is kept.
+- `discover`: a file named `vnoc-driver-<a-z0-9_->` plus the OS suffix, executable on Unix (so `.d`, `.pdb` in `target/debug` are not drivers).
+- Start-up, server path, both drivers, two-language project: 53 ms cold, then 8 ms (Python alone 8–10 ms, Bend alone 7 ms). No cache needed.
+- Short names: call-tree nodes take `Def::name` from the index; a target the index lacks falls back to the last dot. `suggest.rs` and
+  `vnoc-search` `nearest.rs` cut at the last dot on purpose (both sides of a fuzzy match). The location key round-trips Bend names
+  (letters, digits, `_`, dots; never `/ ? - # ::`). Left for B4: `extension/src/saveDraft.ts:81`, `addDoc.ts:42` cut a key at its last dot.
+- **`.pyi`: reverted in B3b.** B1 made the Python driver announce `py` and `pyi`, so B3a's scan began reading stub files, which 0.3 never
+  showed. The Python driver announces `py` only until stubs are a decision of their own.
+
 ## 5. Adding a language: the registry (B3, B4)
 
 TypeScript and Rust come after Bend (their analyzers are in `language_driver_rs` already). B3 and B4 are built so that a language is added
