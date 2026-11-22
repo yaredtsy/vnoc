@@ -208,13 +208,19 @@ impl Drivers {
 
 Turn the checklist into a program, so a new driver is checked by running one command instead of by reading a document.
 
-- **Now:** a test in the core, `crates/vnoc/tests/driver_conformance.rs`, that takes a driver path from an environment variable and runs: handshake · a
-  wrong protocol number is refused · an unknown method gives `-32601` · any byte on stdout outside a frame fails the run · outline of a fixture with an
-  emoji in it (catches UTF-16 mistakes) · the round-trip rule. Run it against every driver in CI (built in B4c: docs/23 §5).
+- **Built (B4c, docs/23 §5):** `crates/vnoc/tests/driver_conformance.rs`. It finds every driver folder (`drivers/<x>/` with a package `vnoc-driver-<x>`, the
+  rule of `scripts/drivers.mjs`) and runs the real binary `drivers/<x>/target/debug/vnoc-driver-<x>` through: handshake (protocol 1, `name` = the folder's
+  name, `files.extensions` holding the input's extension) · a wrong protocol number is refused with a reason · an unknown notification is ignored and an
+  unknown request gives `-32601`, the driver answering after both · no byte on stdout outside a frame, for the whole run · outline by text, by
+  `root` + `file`, of a file with a byte-order mark, and with CRLF line ends · `ids.plan`, `ids.file` and `callTree` when announced (the round-trip rule: an
+  ID planned for every def without one, applied, outlined again, `text_hash` and `version` checked, planned a second time = skipped) · `shutdown` + `exit`
+  end the process with 0. One `#[test]` loops over the drivers and lists every failing check of every driver at the end. A driver must be built
+  first (`cd drivers/<x> && cargo build`); an unbuilt one fails the test and says so. CI builds them before `cargo test -p vnoc`.
 - **Later:** the same checks as a command, `vnoc driver check <path>`, for people who write drivers outside this repo.
 
-The parts that differ per language (the fixture file, the expected names) live in a small folder per driver:
-`drivers/<language>/conformance/{input.<ext>, expected-outline.json}`.
+**A new driver adds `drivers/<language>/conformance/`:** one `input.<ext>` and `expected-outline.json`, the `vnoc/outline` result for it, checked by hand
+against the input. The input has a character outside the BMP (an emoji) before a column the outline reports (catches UTF-16 mistakes), a def with an ID and
+some without, and the nested or same-name case the language has. A driver folder without `conformance/` fails the test.
 
 ## 7. pylspt: where it lives, and what belongs in it
 

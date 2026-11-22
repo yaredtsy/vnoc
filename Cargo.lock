@@ -1192,6 +1192,7 @@ dependencies = [
  "anstream",
  "anstyle",
  "async-lsp",
+ "blake3",
  "clap",
  "ctrlc",
  "dialoguer",
