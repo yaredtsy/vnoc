@@ -15,6 +15,7 @@ import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts"
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
+import { followsReveal } from "./revealFollow.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { useSearchDim } from "./useSearchDim.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
@@ -24,23 +25,34 @@ const nodeTypes = { card: NodeCard };
 // the size is known from the layout, so a card off screen can be left out of the page before it was ever measured (`onlyRenderVisibleElements`)
 const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p, width: CARD_W, height: cardHeight(p) }));
 
-/** Brings the requested node to the middle of the view once it is drawn. Inside `<ReactFlow>` so it can reach the view. */
+/**
+ * Brings the requested node to the middle of the view once it is drawn. Inside `<ReactFlow>` so it can reach the view. The pane can change size just after (a pick from the search opens the docs tab beside the
+ * canvas): the card is framed again then, for the new size, for a moment (`revealFollow.ts`).
+ */
 function CenterOn({ laid, context }: { laid: Layout; context: string }) {
   const { fitView } = useReactFlow();
   // the session's request to bring a node into view; done, it says so and the session clears it (a canvas opened later does not repeat it)
   const reveal = useSession((s) => s.reveal);
   // a canvas that shows another context leaves the request for that context's own canvas
   const target = useMemo(() => (reveal && reveal.context === context ? { id: reveal.id, n: reveal.n } : null), [reveal, context]);
+  const framed = useRef<{ id: string; at: number } | null>(null);
+  const width = useStore((s) => s.width);
+  const height = useStore((s) => s.height);
   useEffect(() => {
     if (!target || !laid.nodes.some((p) => p.id === target.id)) return;
     // the cards of a new layout are measured on the next frames; framing them before that frames nothing
     const timer = setTimeout(() => {
+      framed.current = { id: target.id, at: performance.now() };
       void fitView({ nodes: [{ id: target.id }], duration: motionMs(300, prefersReducedMotion()), maxZoom: 1.2 });
       dispatch({ type: "revealed", n: target.n });
       pulse(target.id); // the card pulses for a second so the eye finds it
     }, 60);
     return () => clearTimeout(timer);
   }, [fitView, target, laid]);
+  useEffect(() => {
+    const last = framed.current;
+    if (last && followsReveal(last.at, performance.now())) void fitView({ nodes: [{ id: last.id }], duration: motionMs(300, prefersReducedMotion()), maxZoom: 1.2 });
+  }, [fitView, width, height]);
   return null;
 }
 
@@ -102,6 +114,12 @@ function ViewCommands({ laid }: { laid: Layout }) {
   return null;
 }
 
+/**
+ * Module-level, so it is the same object on every render. React Flow copies `fitViewOptions` into its store whenever the prop is a new object, and a queued `fitView()` (a reveal's, on one card) runs with the options
+ * the store holds when the next frame resolves it: a literal in the JSX made the render that a reveal causes replace the card's options with these, and the whole drawing was fitted at once (a pick from the search).
+ */
+const FIT_OPTIONS = { maxZoom: 1 }; // a context of one card (a new EXPLORE) would otherwise open at React Flow's limit, 200 %
+
 // Module-level, so they are the same function on every render: React Flow re-renders every card when one of its props changes.
 const onNodeClick = (_: unknown, node: { id: string }) => dispatch({ type: "select", id: node.id });
 const onNodeDoubleClick = (_: unknown, node: { data: unknown }) => dispatch(doubleClickIntent(node.data as Placed));
@@ -157,7 +175,7 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
       zoomOnDoubleClick={false}
       nodesConnectable={false}
       fitView={saved === null}
-      fitViewOptions={{ maxZoom: 1 }} // a context of one card (a new EXPLORE) would otherwise open at React Flow's limit, 200 %
+      fitViewOptions={FIT_OPTIONS}
       defaultViewport={saved ?? undefined}
       onMoveEnd={(_, viewport) => rememberViewport(context, at, viewport)}
       className="min-w-0 flex-1"
