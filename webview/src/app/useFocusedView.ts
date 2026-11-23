@@ -31,7 +31,7 @@ export function useFocusedView(structure: StructureResult | null) {
   const top = root && focusId ? findNode(root, focusId) ?? null : null;
   // what a function, class or call card knows about its calls: its tree, what the host is doing, or a probe's count (05 §3.1)
   const callsFor = useMemo(() => (key: string) => callsOf({ trees, probes, states }, key), [trees, probes, states]);
-  const laid = useMemo<Layout | null>(() => (root ? layout(top ?? root, expanded, codeOpen, callsFor, sitesOpen) : null), [root, expanded, top, codeOpen, callsFor, sitesOpen]);
+  const laid = useMemo<Layout | null>(() => (root ? layout(top ?? root, expanded, codeOpen, callsFor, sitesOpen, root) : null), [root, expanded, top, codeOpen, callsFor, sitesOpen]);
   // the doc panel follows the active context's selection (a selected call: its callee, and who calls it), else its focused node
   const subject = useMemo(() => (root ? docSubject({ contexts, active }, root, (call) => callFacts(trees, call)) : { node: null, calledBy: null }), [root, contexts, active, trees]);
 
