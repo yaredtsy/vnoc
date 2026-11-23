@@ -195,6 +195,7 @@ in one place.
 **The rule: a language is a folder and a binary, and the driver says the rest about itself.** `drivers/<lang>/` builds `vnoc-driver-<lang>`;
 its `initialize` answer gives `name`, `files.extensions`, `capabilities`. No other file in the repo lists languages or extensions. The one
 exception is cosmetic and optional: the canvas colour table (a missing entry is plain text, never a bug).
+The other exception is `activationEvents` in `extension/package.json`: one `workspaceContains:**/*.<ext>` line per claimed extension, the one place a language is listed by hand, because VS Code reads activation events before any code runs and so cannot ask the core; `driver_conformance.rs` fails with the line to add when one is missing.
 
 | Part | How |
 |---|---|

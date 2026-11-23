@@ -454,6 +454,31 @@ fn refuses_a_wrong_protocol(program: &Path) -> Check {
     })
 }
 
+/// VS Code reads `activationEvents` before any code runs, so the extension cannot learn a language from the core: each extension a driver claims needs a
+/// `workspaceContains:**/*.<ext>` line in `extension/package.json`, or the menus (which wait for the context key the running extension sets) never appear in a
+/// folder of that language until the V-NOC view is opened. docs/23 §5.
+fn activates_the_extension(init: &Value) -> Check {
+    let text = std::fs::read_to_string(repo_root().join("extension/package.json"))
+        .map_err(|e| format!("extension/package.json: {e}"))?;
+    let package: Value = serde_json::from_str(&text).map_err(|e| format!("extension/package.json: {e}"))?;
+    let events: Vec<&str> = package["activationEvents"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let missing: Vec<String> = init["files"]["extensions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|ext| format!("workspaceContains:**/*.{ext}"))
+        .filter(|line| !events.contains(&line.as_str()))
+        .collect();
+    is(missing.is_empty(), || {
+        format!("extension/package.json activationEvents lacks {missing:?}: add each line there")
+    })
+}
+
 fn handshake(wire: &mut Wire, name: &str, ext: &str) -> Result<Value, String> {
     let init = wire.ask("initialize", json!({ "protocol": 1 }))?;
     wire.notify("initialized", json!({}));
@@ -752,6 +777,10 @@ fn run(driver: &Found) -> Vec<String> {
         }
         Ok(init) => {
             let can = |capability: &str| init["capabilities"][capability] == json!(true);
+            record(
+                "every extension it claims is an activation event of the extension",
+                activates_the_extension(&init),
+            );
             record(
                 "an unknown notification is ignored, an unknown request is -32601",
                 unknown_messages(&mut wire, &fixture),

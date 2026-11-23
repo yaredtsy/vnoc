@@ -42,7 +42,10 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onWebviewPanel:vnoc.canvas",
-    "onWebviewPanel:vnoc.docs"
+    "onWebviewPanel:vnoc.docs",
+    "workspaceContains:.vnoc",
+    "workspaceContains:**/*.bend",
+    "workspaceContains:**/*.py"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
