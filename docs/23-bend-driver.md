@@ -176,6 +176,17 @@ One prompt at a time; the next only after the last one reports.
   (CONTRIBUTING, README build, docs 03, 06, 19, 21/07) say "every driver". **Left for B6:** README's product claims ("Python today", 8
   places): they change when Bend is announced as supported.
 
+### As built in B4c (eebc304 – a08d8c2, reviewed 2026-11-22)
+
+- Each driver has `src/source.rs` (`read_text`: the core's rule, a copy per workspace) for outlines from disk and for call-site texts.
+  Bend's call-site columns are exact on a BOM file. Python's analyzer reads files itself and counts the mark: a call on line 0 of a BOM
+  file is one column late (pinned by a test in `drivers/python/tests/file_read.rs`, to change when the analyzer is fixed).
+- A non-UTF-8 file is now read (bad bytes as U+FFFD). Three core tests that needed "a file the driver cannot read" use a file with no read
+  permission instead: Unix only, skipped on Windows (the reporting code is the same on every system). If Windows coverage is wanted: a
+  `VNOC_TEST_HOOKS` switch in the drivers that refuses a marked file.
+- `crates/vnoc/tests/driver_conformance.rs`: one test over every driver folder, every failing check of every driver listed at the end;
+  each driver has `conformance/{input.<ext>, expected-outline.json}` (checked by hand, UTF-16 columns included).
+
 ## 5. Adding a language: the registry (B3, B4)
 
 TypeScript and Rust come after Bend (their analyzers are in `language_driver_rs` already). B3 and B4 are built so that a language is added
