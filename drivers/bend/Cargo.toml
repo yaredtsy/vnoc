@@ -15,11 +15,11 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# The analyzer comes from one pinned commit of language_driver_rs (`7f54b73`, branch `bend-plan`, the last one reviewed on the analyzer side), all three at the same rev: two revs
-# would build analyzer-core twice and the types would not match. Never a `path` into a checkout: another session edits that tree. Re-pinned to `bend-v0.1.0` once tagged.
-bend-syntax = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "7f54b73462faeb54c4d7051961715af98c2f5277" }
-bend-analysis = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "7f54b73462faeb54c4d7051961715af98c2f5277" }
-analyzer-core = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "7f54b73462faeb54c4d7051961715af98c2f5277" }
+# The analyzer comes from one pinned commit of language_driver_rs (this rev is the tag `bend-v0.1.0`), all three at the same rev: two revs
+# would build analyzer-core twice and the types would not match. Never a `path` into a checkout: another session edits that tree.
+bend-syntax = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17" }
+bend-analysis = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17" }
+analyzer-core = { git = "https://github.com/yaredtsy/language_driver_rs", rev = "cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17" }
 
 # The wire types are shared with the core (D1): a renamed field breaks the build on both sides, not at run time.
 vnoc-driver-protocol = { path = "../../crates/vnoc-driver-protocol" }

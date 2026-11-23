@@ -38,12 +38,12 @@ work (B3, B4) comes after.
 
 - The Bend crates come from one commit of `language_driver_rs`, by `git` + `rev`, as Python's do. All of them at the same rev
   (two revs build `analyzer-core` twice and the types do not match).
-- **First pin: `7f54b73`**, the last commit reviewed on the analyzer side. It must be on GitHub first: `bend-plan` was 41 commits ahead of its
-  remote (B0).
+- **Pin: the tag `bend-v0.1.0` (`cdc4f42`)**, 10 commits after the first pin `7f54b73` (the last commit reviewed on the analyzer side, pushed
+  first, B0). Those 10 are cost work only: the graphs are byte-identical and the API the driver uses is unchanged.
 - **Never build against the checkout by path.** A coding session edits that tree, with uncommitted changes between its commits. Read the
-  analyzer's code at the pin with `git -C ../language_driver_rs show 7f54b73:<path>`, not from the working tree.
-- At `7f54b73`, `analyzer_core::wire::WIRE_FORMAT_VERSION` is 2, and the toolchain is 1.99.1 (as `drivers/python`).
-- When the analyzer side tags `bend-v0.1.0` (the qualname and marker rules freeze there), re-pin to the tag (B7).
+  analyzer's code at the pin with `git -C ../language_driver_rs show cdc4f42:<path>`, not from the working tree.
+- At `cdc4f42`, `analyzer_core::wire::WIRE_FORMAT_VERSION` is 2, and the toolchain is 1.99.1 (as `drivers/python`).
+- The analyzer side tagged `bend-v0.1.0` (the qualname and marker rules freeze there); the driver is pinned to the tag (B7, done).
 
 The public API the driver uses (outline, markers, the session, the call graph, the wire) has not changed shape since the analyzer's layer 1.
 The value layer added three things: `Precision`, `Options::with_precision`, and `Session::graph_from`. The work still running there changes
@@ -83,7 +83,7 @@ One prompt at a time; the next only after the last one reports.
 | **B4c** | the conformance test on every driver (06 §6), each driver's `conformance/`; the byte-order-mark fix in both drivers' `Lines` | `crates/vnoc/tests`, `drivers/*` |
 | **B5** | continue a cut node from its context: an opaque `context` on `CallNode`, a `from` on `CallTreeParams` (both additive); the driver answers it with `Session::graph_from`; the core sends it when a cut node is expanded | protocol, `drivers/bend`, `crates/vnoc`, webview |
 | **B6** | by-hand check on a real Bend project in VS Code and with the CLI; README (languages), CHANGELOG; the release bump list gains `drivers/bend/Cargo.toml` | |
-| **B7** | re-pin to `bend-v0.1.0` once tagged; release | |
+| **B7** | re-pin to `bend-v0.1.0` once tagged; release | done: pinned to `bend-v0.1.0` (`cdc4f42`) |
 
 ### As built in B1 (dc38b01 – 355ac66, reviewed 2026-11-22)
 

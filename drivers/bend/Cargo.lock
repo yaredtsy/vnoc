@@ -14,7 +14,7 @@ dependencies = [
 [[package]]
 name = "analyzer-core"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=7f54b73462faeb54c4d7051961715af98c2f5277#7f54b73462faeb54c4d7051961715af98c2f5277"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17#cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17"
 dependencies = [
  "serde",
 ]
@@ -34,7 +34,7 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 [[package]]
 name = "bend-analysis"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=7f54b73462faeb54c4d7051961715af98c2f5277#7f54b73462faeb54c4d7051961715af98c2f5277"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17#cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17"
 dependencies = [
  "analyzer-core",
  "bend-parser",
@@ -47,7 +47,7 @@ dependencies = [
 [[package]]
 name = "bend-parser"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=7f54b73462faeb54c4d7051961715af98c2f5277#7f54b73462faeb54c4d7051961715af98c2f5277"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17#cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17"
 dependencies = [
  "analyzer-core",
 ]
@@ -55,7 +55,7 @@ dependencies = [
 [[package]]
 name = "bend-syntax"
 version = "0.0.0"
-source = "git+https://github.com/yaredtsy/language_driver_rs?rev=7f54b73462faeb54c4d7051961715af98c2f5277#7f54b73462faeb54c4d7051961715af98c2f5277"
+source = "git+https://github.com/yaredtsy/language_driver_rs?rev=cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17#cdc4f427ce48e28ec3e8b4bf948c1b374ce79f17"
 dependencies = [
  "analyzer-core",
  "bend-parser",
