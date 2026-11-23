@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FOLLOW_MS, MIN_READABLE_ZOOM, docsOpenedFor, followsReveal, needsFraming } from "./revealFollow.ts";
+import { FOLLOW_MS, MIN_READABLE_ZOOM, DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, selectedDrawn } from "./revealFollow.ts";
 
 const pane = { width: 900, height: 400 };
 const card = { x: 100, y: 96, width: 300, height: 80 };
@@ -63,12 +63,18 @@ test("the docs panel narrows a 1200 px pane by 380: a card the panel now covers 
   assert.equal(needsFraming(whole, narrow, { x: 0, y: 0, zoom: 0.4 }), true, "whole, but under the readable zoom: framed as a reveal frames it");
 });
 
-test("the panel's opening is followed for the selected, drawn card only", () => {
+test("the panel's opening is a change from closed to open; the card it opened for is the selected one, when drawn", () => {
   const drawn = (id: string) => id !== "gone";
-  assert.equal(docsOpenedFor(false, true, "run_safe", drawn), "run_safe");
-  assert.equal(docsOpenedFor(true, true, "run_safe", drawn), null, "already open: a later change of the pane is the person's");
-  assert.equal(docsOpenedFor(true, false, "run_safe", drawn), null, "closing");
-  assert.equal(docsOpenedFor(false, false, "run_safe", drawn), null);
-  assert.equal(docsOpenedFor(false, true, null, drawn), null, "nothing selected");
-  assert.equal(docsOpenedFor(false, true, "gone", drawn), null, "the selection is not a drawn card");
+  assert.equal(docsJustOpened(false, true), true);
+  assert.equal(docsJustOpened(true, true), false, "already open: a later change of the pane is the person's");
+  assert.equal(docsJustOpened(true, false), false, "closing");
+  assert.equal(docsJustOpened(false, false), false);
+  assert.equal(selectedDrawn("run_safe", drawn), "run_safe");
+  assert.equal(selectedDrawn(null, drawn), null, "nothing selected");
+  assert.equal(selectedDrawn("gone", drawn), null, "the selection is not a drawn card");
+});
+
+test("the card is judged after the selection has arrived, and inside the window a reveal's pane change is followed in", () => {
+  assert.ok(DOCS_SETTLE_MS > 0 && DOCS_SETTLE_MS < FOLLOW_MS);
+  assert.equal(followsReveal(1000, 1000 + DOCS_SETTLE_MS + 400), true, "a late change of the pane, after the card was judged");
 });

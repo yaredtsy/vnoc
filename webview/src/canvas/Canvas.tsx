@@ -15,7 +15,7 @@ import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts"
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
-import { docsOpenedFor, followsReveal, needsFraming } from "./revealFollow.ts";
+import { DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, selectedDrawn } from "./revealFollow.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { useSearchDim } from "./useSearchDim.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
@@ -81,15 +81,23 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
       stop();
     };
   }, [fitView, store, target, laid]);
-  // the docs panel opening (a card's 📄, the bar's ⓘ) narrows the pane: the selected card is judged again for it, as a reveal's card is, by the effect below
+  // the docs panel opening (a card's 📄, the bar's ⓘ) narrows the pane: once the selection and the width have settled, the selected card is judged as a reveal's card is, and framed if it has to be; the effect below follows a late change of the pane
   const docsOpen = useView((v) => v.docsOpen);
   const wasOpen = useRef(docsOpen);
   const drawn = useRef(laid);
   drawn.current = laid;
   useEffect(() => {
-    const card = docsOpenedFor(wasOpen.current, docsOpen, useSession.getState().contexts[context]?.selected ?? null, (id) => drawn.current.nodes.some((p) => p.id === id));
+    const opened = docsJustOpened(wasOpen.current, docsOpen);
     wasOpen.current = docsOpen;
-    if (card) judged.current = { id: card, at: performance.now(), moving: false };
+    if (!opened) return;
+    const timer = setTimeout(() => {
+      const id = selectedDrawn(useSession.getState().contexts[context]?.selected ?? null, (card) => drawn.current.nodes.some((p) => p.id === card));
+      if (id === null) return;
+      const now = { id, at: performance.now(), moving: false };
+      judged.current = now;
+      if (hasToMove(id)) frame(id, now);
+    }, DOCS_SETTLE_MS);
+    return () => clearTimeout(timer);
   }, [docsOpen, context]);
   useEffect(() => {
     const last = judged.current;
