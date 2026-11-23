@@ -4,15 +4,15 @@
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/J5nfPHqyBr)
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](https://github.com/yaredtsy/vnoc/blob/main/LICENSE)
 
-Browse Python code as a tree and a canvas, follow what a function calls, edit it on its card, search it, and attach docs that stay with the code when it is renamed or moved. Coding agents can read the same docs through a command line.
+Browse Python and Bend code as a tree and a canvas, follow what a function calls, edit it on its card, search it, and attach docs that stay with the code when it is renamed or moved. Coding agents can read the same docs through a command line.
 
-**This is a pre-release.** It works on Python code only, on macOS (Apple silicon and Intel), Linux (x64) and Windows (x64).
+**This is a pre-release.** It works on Python and Bend code, on macOS (Apple silicon and Intel), Linux (x64) and Windows (x64).
 
 ![Open a function, see what it calls, follow a call to its own file](https://raw.githubusercontent.com/yaredtsy/vnoc/v0.2.0/extension/media/screenshots/calls.gif)
 
 ## How to start
 
-1. Open a Python project.
+1. Open a Python or Bend project.
 2. Open the V-NOC view in the Activity Bar.
 3. Click a function in the **Structure** view to see it; double-click to open its code.
 4. Right-click a function, class, file or folder and choose **Add Doc…**.
@@ -54,7 +54,7 @@ Rows and cards are labelled for screen readers (*"function checkout, selected, 1
 
 ## What it does not do yet
 
-- Languages other than Python.
+- Languages other than Python and Bend (JavaScript/TypeScript and Rust are coming).
 - Linux and Windows on ARM.
 - Private docs that are not committed.
 

@@ -1,14 +1,14 @@
 #!/bin/sh
 # Installs the `vnoc` command-line program and every language driver beside it, from a V-NOC release (docs/21-agent-cli/07-install.md §6):
 #
-#   curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.0/install.sh | sh
+#   curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.1/install.sh | sh
 #
 # It picks the build for this system, downloads the release's archive and SHA256SUMS, checks the sum, and only then writes anything into the install
 # folder. POSIX sh; no bash, no sudo; it writes nowhere but the install folder (and a temporary folder it removes). No Windows script: the release's
 # .zip and the VS Code command *Install `vnoc` Command in PATH* cover Windows.
 #
 # What it reads from the environment:
-#   VNOC_VERSION      the release to install: 0.3.0 or v0.3.0. Default: the version stamped into this script when the release was made; run from a
+#   VNOC_VERSION      the release to install: 0.3.1 or v0.3.1. Default: the version stamped into this script when the release was made; run from a
 #                     checkout (not stamped), the newest release, pre-releases included
 #   VNOC_INSTALL_DIR  where the programs go. Default: $HOME/.local/bin (made if it is not there)
 #   VNOC_BASE_URL     where the releases are, instead of https://github.com/yaredtsy/vnoc/releases/download: a mirror, or an offline machine's folder
@@ -86,9 +86,9 @@ main() {
   if [ -z "$version" ]; then
     # run from a checkout: the newest release. Every V-NOC release so far is a pre-release, which `releases/latest` skips, so ask for the list
     api="https://api.github.com/repos/$REPO/releases?per_page=1"
-    listing=$(fetch "$api") || fail "could not ask $api for the newest release: check the network, or name one: VNOC_VERSION=0.3.0 sh install.sh"
+    listing=$(fetch "$api") || fail "could not ask $api for the newest release: check the network, or name one: VNOC_VERSION=0.3.1 sh install.sh"
     version=$(printf '%s\n' "$listing" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-    [ -n "$version" ] || fail "$api names no release: name one: VNOC_VERSION=0.3.0 sh install.sh"
+    [ -n "$version" ] || fail "$api names no release: name one: VNOC_VERSION=0.3.1 sh install.sh"
   fi
   version="${version#v}"
 
@@ -103,7 +103,7 @@ main() {
   fetch "$release/SHA256SUMS" >"$work/SHA256SUMS" ||
     fail "could not download $release/SHA256SUMS: is v$version a release? See https://github.com/$REPO/releases"
   want=$(awk -v n="$archive" '{ f = $2; sub(/^\*/, "", f); if (f == n) { print $1; exit } }' "$work/SHA256SUMS")
-  [ -n "$want" ] || fail "no vnoc-cli archive in release v$version: its SHA256SUMS has no $archive. Releases before 0.3.0 have none; try a newer one: VNOC_VERSION=0.3.0 sh install.sh"
+  [ -n "$want" ] || fail "no vnoc-cli archive in release v$version: its SHA256SUMS has no $archive. Releases before 0.3.0 have none; try a newer one: VNOC_VERSION=0.3.1 sh install.sh"
 
   fetch "$release/$archive" >"$work/$archive" || fail "could not download $release/$archive"
   got=$(sum_of "$work/$archive")

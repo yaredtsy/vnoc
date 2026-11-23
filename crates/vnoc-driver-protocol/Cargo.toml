@@ -1,6 +1,6 @@
 [package]
 name = "vnoc-driver-protocol"
-version = "0.3.0"
+version = "0.3.1"
 license = "Apache-2.0"
 edition = "2024"
 description = "Rust types for the core <-> driver wire (plan_vs/07-drivers/01-driver-protocol.md). The wire spec is the definition; these types follow it."
