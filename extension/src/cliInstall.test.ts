@@ -152,13 +152,13 @@ test("Windows: the user PATH entry is added unless it is there (case does not ma
   assert.ok(onPath(dir, `X;${dir}`, "win32") && !onPath(dir, "X;Y", "win32"));
 });
 
-test("development mode adds the VNOC_DRIVER note, production does not", () => {
-  const dev = planInstall(mac({ production: false, driver: "/repo/drivers/python/target/debug/vnoc-driver-python" }));
+test("development mode adds the VNOC_DRIVERS note, production does not", () => {
+  const dev = planInstall(mac({ production: false, drivers: ["/repo/drivers/bend/target/debug/vnoc-driver-bend", "/repo/drivers/python/target/debug/vnoc-driver-python"] }));
   assert.equal(dev.step.do, "create");
-  assert.ok(dev.driverNote?.includes("VNOC_DRIVER=/repo/drivers/python/target/debug/vnoc-driver-python"), dev.driverNote);
-  assert.ok(dev.message.includes("VNOC_DRIVER"));
+  assert.ok(dev.driverNote?.includes("VNOC_DRIVERS=/repo/drivers/bend/target/debug/vnoc-driver-bend:/repo/drivers/python/target/debug/vnoc-driver-python"), dev.driverNote);
+  assert.ok(dev.message.includes("VNOC_DRIVERS"));
   assert.equal(planInstall(mac()).driverNote, undefined);
-  assert.ok(planInstall(mac({ production: false })).driverNote?.includes("VNOC_DRIVER set to the driver"));
+  assert.ok(planInstall(mac({ production: false })).driverNote?.includes("VNOC_DRIVERS set to the drivers"));
 });
 
 test("uninstall takes back only what install made: a V-NOC folder's binary of any version, exactly the running binary, our wrapper", () => {

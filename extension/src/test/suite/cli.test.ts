@@ -74,8 +74,8 @@ suite("cli", () => {
       assert.strictEqual(real(link), real(api.cli.binaryPath()!), "the link runs the binary the extension runs");
       assert.ok(path.isAbsolute(fs.readlinkSync(link)), "the target is an absolute path");
       assert.strictEqual(api.cli.context("vnoc.cliInstalled"), true);
-      // a window that is not production says the driver is not beside the binary
-      assert.ok(made.message.includes("VNOC_DRIVER"), made.message);
+      // a window that is not production says the drivers are not beside the binary
+      assert.ok(made.message.includes("VNOC_DRIVERS"), made.message);
       // the command works from where it was made
       assert.ok(execFileSync(link, ["--version"], { encoding: "utf8" }).startsWith("vnoc "));
       // install again: nothing to do, and it says so

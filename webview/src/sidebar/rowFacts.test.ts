@@ -29,6 +29,7 @@ for (const k of kinds) {
         preventDefaultContextMenuItems: true,
         id: n.id,
         nodeKey: n.id,
+        fileExtname: "",
         role: "node",
         calleeKnown: true,
         sites: 0,

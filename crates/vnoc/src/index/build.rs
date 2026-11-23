@@ -12,7 +12,7 @@ use std::time::Instant;
 use vnoc_domain::RepoPath;
 
 use super::{Index, anchors_to_check};
-use crate::driver_host::{DriverHost, HostError};
+use crate::driver_host::{DriverHost, HostError, LanguageState};
 use crate::project::Project;
 use crate::scan;
 use crate::userdata::UserData;
@@ -37,6 +37,25 @@ pub enum BuildError {
     Driver(#[from] HostError),
     #[error("reading the folder failed: {0}")]
     Scan(#[from] tokio::task::JoinError),
+    /// Not one driver could be used: why each one could not (or that none was given).
+    #[error("{0}")]
+    NoDriver(String),
+}
+
+/// Why no driver is usable, in words for a person: the reason for each one given, or that none was.
+async fn no_driver_reasons(host: &DriverHost) -> String {
+    let languages = host.languages().await;
+    if languages.is_empty() {
+        return HostError::NotConfigured.to_string();
+    }
+    languages
+        .iter()
+        .map(|l| match &l.state {
+            LanguageState::Failed(why) => format!("`{}`: {why}", l.name),
+            LanguageState::Running => format!("`{}` says it owns no files", l.name),
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Brings `index` in line with the disk. Returns whether anything changed (the revision then went up by one).
@@ -50,9 +69,16 @@ pub async fn refresh(
     touched: Touched<'_>,
 ) -> Result<bool, BuildError> {
     let started = Instant::now();
+    // every driver starts now, all at once: their handshakes say which files there are to read
+    host.start_all().await;
+    if host.extensions().is_empty() {
+        return Err(BuildError::NoDriver(no_driver_reasons(host).await));
+    }
     let walk_project = project.clone();
+    let extensions = host.extensions();
     let scan =
-        tokio::task::spawn_blocking(move || scan::python_files(&walk_project, MAX_FILES)).await?;
+        tokio::task::spawn_blocking(move || scan::files(&walk_project, &extensions, MAX_FILES))
+            .await?;
     let walked = started.elapsed();
     let in_scope: BTreeSet<RepoPath> = scan.files.iter().cloned().collect();
 
@@ -82,7 +108,8 @@ pub async fn refresh(
             Ok(result) => Ok((result.defs, result.file_id)),
             // the driver answered with an error for THIS file: note it, carry on with the others
             Err(HostError::Remote { message, .. }) => Err(message),
-            Err(e) => return Err(e.into()),
+            // that file's driver broke (it is started again for the next file of its language): the file shows why, the other languages go on
+            Err(e) => Err(e.to_string()),
         };
         outlined.push((path, outcome));
     }

@@ -518,7 +518,8 @@ export class Commands {
 
   /** The modal of §7: Save Anyway, or Cancel (VS Code adds it). Dismissing it is Cancel. */
   private async askToDropId(key: string): Promise<boolean> {
-    return (await vscode.window.showWarningMessage(idQuestion(key), { modal: true }, SAVE_ANYWAY)) === SAVE_ANYWAY;
+    const node = this.core.tree ? findNode(this.core.tree, key) : undefined;
+    return (await vscode.window.showWarningMessage(idQuestion(key, node?.name), { modal: true }, SAVE_ANYWAY)) === SAVE_ANYWAY;
   }
 
   /** Where the core finds the function in this text, or null. */

@@ -1,0 +1,117 @@
+{
+  "defs": [
+    {
+      "id": "3RGJ87CMS6TK775XRJV8BW977Y",
+      "kind": "function",
+      "name": "add",
+      "params": [
+        "a",
+        "b"
+      ],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "add",
+      "range": {
+        "end": {
+          "character": 33,
+          "line": 4
+        },
+        "start": {
+          "character": 0,
+          "line": 0
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "function",
+      "name": "smile",
+      "params": [
+        "x"
+      ],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "smile",
+      "range": {
+        "end": {
+          "character": 38,
+          "line": 6
+        },
+        "start": {
+          "character": 0,
+          "line": 6
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "function",
+      "name": "add_zero",
+      "params": [
+        "n"
+      ],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "add_zero",
+      "range": {
+        "end": {
+          "character": 24,
+          "line": 10
+        },
+        "start": {
+          "character": 0,
+          "line": 8
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "function",
+      "name": "add_zero",
+      "params": [
+        "n"
+      ],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "add_zero",
+      "range": {
+        "end": {
+          "character": 22,
+          "line": 15
+        },
+        "start": {
+          "character": 0,
+          "line": 12
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "function",
+      "name": "Nat.double",
+      "params": [
+        "n"
+      ],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "Nat.double",
+      "range": {
+        "end": {
+          "character": 40,
+          "line": 17
+        },
+        "start": {
+          "character": 0,
+          "line": 17
+        }
+      },
+      "syntax_error": false
+    }
+  ],
+  "file_id": null,
+  "syntax_errors": []
+}

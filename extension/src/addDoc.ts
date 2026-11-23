@@ -3,6 +3,8 @@ import * as vscode from "vscode";
 
 import type { TreeNode } from "@vnoc/shared/messages";
 
+import { nodeName } from "./saveDraft";
+
 // "Add doc" (07-ui/02-design.md): ask for a title, ask the once-per-project question, let the core attach, open the new doc.
 // The core does the work (an ID line in the code, then `.vnoc/`); this file is only the conversation with the user.
 
@@ -25,8 +27,8 @@ const FIRST_BODY_LINE = 5;
 
 /** What the first-attach question says V-NOC will write, by kind of node. */
 const MARKER: Record<TreeNode["kind"], string> = {
-  function: "an ID line to {name}'s docstring",
-  class: "an ID line to {name}'s docstring",
+  function: "an ID line in {name}'s code",
+  class: "an ID line in {name}'s code",
   file: "a `# FileID:` comment at the top of {name}",
   folder: "a .vnoc-id file to the folder {name}",
 };
@@ -39,8 +41,9 @@ const MARKER: Record<TreeNode["kind"], string> = {
 export async function addDoc(request: Request, gitRoot: string, node: TreeNode, existingDocs: number): Promise<boolean> {
   try {
     const key = node.id;
-    const [file, qualname = ""] = key.split("::");
-    const name = qualname.replace(/#\d+$/, "").split(".").pop() || file.split("/").pop() || file;
+    const file = key.split("::")[0];
+    // the node's own name, from the core's outline; the key's last dot only when the node has none
+    const name = nodeName(key, node.name);
 
     const title = await vscode.window.showInputBox({ title: "Add doc", prompt: `Title of the new doc for ${name}`, value: existingDocs === 0 ? "Overview" : "", validateInput: (t) => (t.trim() ? undefined : "A doc needs a title") });
     if (title === undefined) return false; // Esc: nothing has been written

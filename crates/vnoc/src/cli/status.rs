@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use super::project::{Opened, open_from};
 use super::{Failure, Global, out, style};
+use crate::driver_host::LanguageState;
 use crate::index;
 use crate::protocol::{FailedFile, LostMarker, MissingNode, Problem, Stats};
 
@@ -16,7 +17,8 @@ struct Status {
     version: &'static str,
     root: String,
     initialized: bool,
-    /// the drivers that ran: one today, and none when no file had to be read (a folder with no Python files starts no driver)
+    /// every driver given, running or failed (a failed one is a row with its error, not the whole command's exit 3); `files` 0 for one with
+    /// nothing to read
     drivers: Vec<Driver>,
     stats: Stats,
     docs: Docs,
@@ -36,6 +38,14 @@ struct Driver {
     version: String,
     /// the files this driver outlined
     files: usize,
+    /// what it said it reads, without the dot (empty for a driver that never answered its handshake)
+    extensions: Vec<String>,
+    /// `running`, or `failed` (then `error` says why)
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    /// why part of what it said is not used (an extension another driver owns)
+    warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -66,18 +76,33 @@ async fn status_of(opened: &Opened) -> Status {
         host,
         index,
     } = opened;
-    let info = host.info().await;
+    let languages = host.languages().await;
     let index = index.read().unwrap();
     let docs = index.doc_counts();
     let answer = index::structure(&index, project, BTreeMap::new());
-    // there is one driver, and it outlined every file the tree has
-    let drivers = info
-        .map(|(name, version)| Driver {
-            name,
-            version,
-            files: answer.stats.files,
-        })
+    // one driver outlined every file the tree has; with several, a driver's files are the ones with an extension it owns
+    let several = languages.len() > 1;
+    let drivers = languages
         .into_iter()
+        .map(|l| {
+            let (state, error) = match l.state {
+                LanguageState::Running => ("running", None),
+                LanguageState::Failed(reason) => ("failed", Some(reason)),
+            };
+            Driver {
+                files: if several {
+                    index.files_with_extensions(&l.extensions)
+                } else {
+                    answer.stats.files
+                },
+                name: l.name,
+                version: l.version,
+                extensions: l.extensions,
+                state,
+                error,
+                warnings: l.warnings,
+            }
+        })
         .collect();
     Status {
         schema: 1,
@@ -193,23 +218,44 @@ fn text(s: &Status, quiet: bool) -> String {
         }
         out.push_str(&line("health", &rest));
     }
-    let driver = if s.drivers.is_empty() {
-        "not started (no Python files to read)".to_string()
-    } else {
-        s.drivers
-            .iter()
-            .map(|d| {
-                format!(
-                    "{} {} · read {}",
+    for d in &s.drivers {
+        let shown = match &d.error {
+            // the first line of the reason: the rest is in `--json`
+            Some(reason) => format!(
+                "{} · {} {}",
+                d.name,
+                style::paint(style::warn(), "failed:"),
+                reason.lines().next().unwrap_or_default()
+            ),
+            None if d.files == 0 => format!(
+                "{} {} · no {} files",
+                d.name,
+                d.version,
+                d.extensions
+                    .iter()
+                    .map(|e| format!(".{e}"))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ),
+            None => format!(
+                "{} {} · read {}",
+                d.name,
+                d.version,
+                count(d.files, "file", "files")
+            ),
+        };
+        out.push_str(&line("driver", &shown));
+        for warning in &d.warnings {
+            out.push_str(&line(
+                "driver",
+                &format!(
+                    "{} · {} {warning}",
                     d.name,
-                    d.version,
-                    count(d.files, "file", "files")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    out.push_str(&line("driver", &driver));
+                    style::paint(style::warn(), "warning:")
+                ),
+            ));
+        }
+    }
     out.push_str(&line("agents", &super::agent::summary(&s.agents)));
     out
 }
@@ -229,6 +275,10 @@ mod tests {
                 name: "python".into(),
                 version: "0.2.0".into(),
                 files: 10,
+                extensions: vec!["py".into()],
+                state: "running",
+                error: None,
+                warnings: vec![],
             }],
             stats: Stats {
                 folders: 3,
@@ -338,12 +388,60 @@ mod tests {
     }
 
     #[test]
-    fn no_driver_started_says_so() {
+    fn a_driver_with_nothing_to_read_names_its_extensions() {
         let mut s = status(true);
-        s.drivers.clear();
-        assert!(text(&s, false).contains("  driver   not started (no Python files to read)\n"));
+        s.drivers[0].files = 0;
+        s.drivers[0].extensions = vec!["py".into(), "pyi".into()];
+        assert!(text(&s, false).contains("  driver   python 0.2.0 · no .py · .pyi files\n"));
         // the agents line is the last one
         assert!(text(&s, false).ends_with("  agents   not set up (vnoc agent install)\n"));
+    }
+
+    #[test]
+    fn each_driver_has_its_own_line_a_failed_one_says_why_and_a_warning_is_a_line_of_its_own() {
+        let mut s = status(true);
+        s.drivers.insert(
+            0,
+            Driver {
+                name: "bend".into(),
+                version: "0.3.0".into(),
+                files: 2,
+                extensions: vec!["bend".into()],
+                state: "running",
+                error: None,
+                warnings: vec![
+                    "`.py` files go to `python`, which is first by name: `bend` claims them too and does not get them".into(),
+                ],
+            },
+        );
+        s.drivers.push(Driver {
+            name: "ts".into(),
+            version: String::new(),
+            files: 0,
+            extensions: vec![],
+            state: "failed",
+            error: Some("could not start /x/vnoc-driver-ts: not found\nsecond line".into()),
+            warnings: vec![],
+        });
+        let shown = text(&s, false);
+        assert!(
+            shown.contains(
+                "  health   all good\n\
+                 \x20 driver   bend 0.3.0 · read 2 files\n\
+                 \x20 driver   bend · warning: `.py` files go to `python`, which is first by name: `bend` claims them too and does not get them\n\
+                 \x20 driver   python 0.2.0 · read 10 files\n\
+                 \x20 driver   ts · failed: could not start /x/vnoc-driver-ts: not found\n\
+                 \x20 agents   "
+            ),
+            "{shown}"
+        );
+        // JSON: every field is there, `error` only when there is one
+        let json = serde_json::to_value(&s.drivers).unwrap();
+        assert_eq!(json[0]["state"], "running");
+        assert!(json[0].get("error").is_none());
+        assert_eq!(json[0]["extensions"], serde_json::json!(["bend"]));
+        assert_eq!(json[2]["state"], "failed");
+        assert!(json[2]["error"].as_str().unwrap().ends_with("second line"));
     }
 
     #[test]

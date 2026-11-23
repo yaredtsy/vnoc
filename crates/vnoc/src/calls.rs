@@ -187,7 +187,7 @@ pub async fn ask(
     };
     if !in_index {
         return Err(invalid(format!(
-            "`{key}` is not in the index (is the file saved, and is it Python?)"
+            "`{key}` is not in the index (is the file saved, and does a driver read it?)"
         )));
     }
 
@@ -242,7 +242,9 @@ pub async fn tree_for(
             target.occurrence,
         )
         .ok()?;
-        index.def_at(&location).map(|_| location.to_string())
+        index
+            .def_at(&location)
+            .map(|def| (location.to_string(), def.name))
     };
     let root = tree_node(&merged, &known);
     Ok(CallTreeResult {
@@ -251,17 +253,26 @@ pub async fn tree_for(
     })
 }
 
-/// A merged node as the editor gets it. `known`: the key of a target the index has.
-fn tree_node(node: &Merged, known: &dyn Fn(&CallTarget) -> Option<String>) -> CallTreeNode {
+/// The short name of a target the index does not have: the part of its qualname after the last dot, which is right for Python (`C.f` is `f`) and
+/// wrong for a language whose names hold dots (Bend's `Nat.double`). The index's own `Def::name`, the driver's word, is used whenever the target
+/// is there (nearly always: a node in the tree is a def of the project); only a def the scan did not read gets this.
+fn short_name_guess(qualname: &str) -> &str {
+    qualname.rsplit('.').next().unwrap_or(qualname)
+}
+
+/// A merged node as the editor gets it. `known`: the key and the name (the outline's) of a target the index has.
+fn tree_node(
+    node: &Merged,
+    known: &dyn Fn(&CallTarget) -> Option<(String, String)>,
+) -> CallTreeNode {
     let target = &node.target;
+    let (key, name) = match known(target) {
+        Some((key, name)) => (Some(key), name),
+        None => (None, short_name_guess(&target.qualname).to_string()),
+    };
     CallTreeNode {
-        key: known(target),
-        name: target
-            .qualname
-            .rsplit('.')
-            .next()
-            .unwrap_or(&target.qualname)
-            .to_string(),
+        key,
+        name,
         qualname: target.qualname.clone(),
         path: target.file.clone(), // already relative to the opened folder, `null` outside it
         kind: target.kind,
@@ -682,9 +693,53 @@ mod tests {
         match refused("src/orders.py::parse_order").await {
             CallsError::Invalid(text) => assert_eq!(
                 text,
-                "`src/orders.py::parse_order` is not in the index (is the file saved, and is it Python?)"
+                "`src/orders.py::parse_order` is not in the index (is the file saved, and does a driver read it?)"
             ),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A tree of one call, shown as the editor gets it, with `known` standing for the index.
+    fn shown(
+        qualname: &str,
+        known: impl Fn(&CallTarget) -> Option<(String, String)>,
+    ) -> CallTreeNode {
+        tree_node(&merge(&root(vec![call(qualname, 3, vec![])])), &known)
+    }
+
+    #[test]
+    fn a_node_is_named_by_the_outline_not_by_cutting_its_qualname() {
+        // Bend: the dot is a character of the name
+        let bend = shown("Nat.double", |t| {
+            Some((
+                format!("lib.bend::{}", t.qualname),
+                "Nat.double".to_string(),
+            ))
+        });
+        let node = &bend.children[0];
+        assert_eq!(
+            (
+                node.name.as_str(),
+                node.qualname.as_str(),
+                node.key.as_deref()
+            ),
+            ("Nat.double", "Nat.double", Some("lib.bend::Nat.double"))
+        );
+        // Python: a method is named `f`, its qualname is `C.f`
+        let python = shown("C.f", |t| {
+            Some((format!("m.py::{}", t.qualname), "f".to_string()))
+        });
+        assert_eq!(python.children[0].name, "f");
+        assert_eq!(python.children[0].qualname, "C.f");
+    }
+
+    #[test]
+    fn a_target_the_index_does_not_have_is_named_by_the_last_part_of_its_qualname() {
+        // the one place the qualname is cut: no outline to ask. Right for Python, a guess for a dotted name
+        let unknown = shown("Nat.double", |_| None);
+        assert_eq!(unknown.children[0].name, "double");
+        assert_eq!(unknown.children[0].key, None);
+        assert_eq!(shown("C.f", |_| None).children[0].name, "f");
+        assert_eq!(shown("plain", |_| None).children[0].name, "plain");
     }
 }

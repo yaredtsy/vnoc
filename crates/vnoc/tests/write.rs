@@ -119,7 +119,7 @@ async fn a_function_gets_its_id_line_in_the_file() {
     let root = sample_copy("function");
     let file = root.join("billing/tax.py");
     let before = std::fs::read(&file).unwrap();
-    let opened = open(&root, &driver_path()).await.unwrap();
+    let opened = open(&root, &[driver_path()]).await.unwrap();
 
     let result = attach_on_disk(&opened, "billing/tax.py::apply_tax", None)
         .await
@@ -143,7 +143,7 @@ async fn a_file_gets_its_file_id_comment() {
     let root = sample_copy("file");
     let file = root.join("orders/status.py");
     let before = std::fs::read(&file).unwrap();
-    let opened = open(&root, &driver_path()).await.unwrap();
+    let opened = open(&root, &[driver_path()]).await.unwrap();
 
     let result = attach_on_disk(&opened, "orders/status.py", None)
         .await
@@ -161,7 +161,7 @@ async fn a_file_gets_its_file_id_comment() {
 async fn a_file_that_is_not_utf8_is_attached_by_name_with_the_notice() {
     let root = sample_copy("latin1");
     let file = root.join("billing/tax.py");
-    let opened = open(&root, &driver_path()).await.unwrap(); // the index was built while the file was still text
+    let opened = open(&root, &[driver_path()]).await.unwrap(); // the index was built while the file was still text
     let latin1 = b"\"\"\"Sales tax, caf\xe9.\"\"\"\n\n\ndef rate_for(country):\n    return 0.0\n";
     std::fs::write(&file, latin1).unwrap();
 
@@ -198,7 +198,7 @@ async fn a_file_that_is_not_utf8_is_attached_by_name_with_the_notice() {
 async fn a_file_edited_between_the_plan_and_the_apply_is_attached_by_name_and_left_as_it_is() {
     let root = sample_copy("changed");
     let file = root.join("billing/tax.py");
-    let opened = open(&root, &driver_path()).await.unwrap();
+    let opened = open(&root, &[driver_path()]).await.unwrap();
     // the plan is made for this text...
     let planned_for = Document::from_disk(&file).unwrap();
     // ...and somebody saves the file before the edit is applied
@@ -231,7 +231,7 @@ async fn a_byte_order_mark_is_kept_for_a_function_and_for_a_file() {
         let file = root.join("bom.py");
         let before = [BOM, b"def with_mark(a):\n    return a\n".as_slice()].concat();
         std::fs::write(&file, &before).unwrap();
-        let opened = open(&root, &driver_path()).await.unwrap();
+        let opened = open(&root, &[driver_path()]).await.unwrap();
 
         let result = attach_on_disk(&opened, key, None).await.unwrap();
 
@@ -256,7 +256,7 @@ async fn a_byte_order_mark_is_kept_when_the_function_is_further_down() {
     ]
     .concat();
     std::fs::write(&file, &before).unwrap();
-    let opened = open(&root, &driver_path()).await.unwrap();
+    let opened = open(&root, &[driver_path()]).await.unwrap();
 
     let result = attach_on_disk(&opened, "bom.py::later", None)
         .await
@@ -276,7 +276,7 @@ async fn crlf_line_ends_are_kept_for_a_function_and_for_a_file() {
         let file = root.join("crlf.py");
         let before = b"def with_crlf(a):\r\n    b = a\r\n    return b\r\n";
         std::fs::write(&file, before).unwrap();
-        let opened = open(&root, &driver_path()).await.unwrap();
+        let opened = open(&root, &[driver_path()]).await.unwrap();
 
         let result = attach_on_disk(&opened, key, None).await.unwrap();
 

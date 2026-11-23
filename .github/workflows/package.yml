@@ -30,7 +30,7 @@ jobs:
       - if: matrix.cross
         run: |
           rustup target add ${{ matrix.cross }}
-          (cd drivers/python && rustup target add ${{ matrix.cross }})
+          for d in drivers/*/; do (cd "$d" && rustup target add ${{ matrix.cross }}); done
       - run: node scripts/package.mjs --target ${{ matrix.target }} ${{ inputs.pre-release && '--pre-release' || '' }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -38,7 +38,7 @@ jobs:
           path: vnoc-${{ matrix.target }}.vsix
           if-no-files-found: error
           retention-days: 30
-      # the same two programs without the extension (docs/21-agent-cli/07-install.md §6): `.tar.gz`, and on Windows `.zip`
+      # vnoc and every driver without the extension (docs/21-agent-cli/07-install.md §6): `.tar.gz`, and on Windows `.zip`
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-${{ matrix.target }}

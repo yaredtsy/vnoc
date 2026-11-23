@@ -46,11 +46,11 @@ jobs:
       - name: rustfmt
         run: |
           cargo fmt --all --check
-          (cd drivers/python && cargo fmt --all --check)
+          for d in drivers/*/; do (cd "$d" && cargo fmt --all --check); done
       - name: clippy
         run: |
           cargo clippy --all-targets -- -D warnings
-          (cd drivers/python && cargo clippy --all-targets -- -D warnings)
+          for d in drivers/*/; do (cd "$d" && cargo clippy --all-targets -- -D warnings); done
       - run: pnpm typecheck
 
   test:
@@ -86,10 +86,16 @@ jobs:
         run: pnpm --filter vnoc unit
       - name: core
         run: cargo test --no-fail-fast -p vnoc-domain -p vnoc-driver-protocol -p vnoc-search
-      - name: python driver (own workspace, own toolchain)
-        working-directory: drivers/python
-        run: cargo build && cargo test --no-fail-fast
-      - name: core integration tests (need the driver built above; also leave target/debug/vnoc for the extension suite)
+      - name: drivers (each its own workspace and toolchain)
+        run: |
+          failed=""
+          for d in drivers/*/; do
+            echo "::group::$d"
+            (cd "$d" && cargo build && cargo test --no-fail-fast) || { echo "::error::$d failed"; failed="$failed $d"; }
+            echo "::endgroup::"
+          done
+          [ -z "$failed" ] || { echo "::error::failed:$failed"; exit 1; }
+      - name: core integration tests (need the drivers built above; also leave target/debug/vnoc for the extension suite)
         run: cargo test --no-fail-fast -p vnoc
       - name: build the webview and the extension (the extension suite loads them)
         run: pnpm -r build

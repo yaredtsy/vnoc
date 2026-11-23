@@ -181,8 +181,8 @@ system allows it.
   (install says so and stops). So a dev window and an installed V-NOC never fight over `~/.local/bin/vnoc`.
 - **Where:** `~/.local/bin` (macOS, Linux) or `%LOCALAPPDATA%\vnoc\bin` (Windows); `VNOC_CLI_DIR` overrides it, for the tests and for
   anyone who keeps tools elsewhere.
-- In a development window the driver is not next to `target/debug/vnoc` (it is in `drivers/python/target/debug/`), so the linked command
-  needs `VNOC_DRIVER` there; install says so in that mode only.
+- In a development window the drivers are not next to `target/debug/vnoc` (they are in `drivers/<language>/target/debug/`), so the linked
+  command needs `VNOC_DRIVERS` (or `VNOC_DRIVER` for one) there; install says so in that mode only.
 - *V-NOC: Uninstall `vnoc` Command from PATH* removes what the install made, and nothing else.
   *(Narrowed 2026-11-20, review of A12, built in A12b.)* "What the install made" is a link whose target is **a V-NOC extension folder's
   `bin/vnoc`** (any version, the same pattern the mover uses) or **exactly the binary this extension runs** (so a development window can undo
@@ -191,7 +191,7 @@ system allows it.
   `V-NOC left ~/.local/bin/vnoc alone: it points to /usr/bin/true, which V-NOC did not make. If you don't need it: rm ~/.local/bin/vnoc,
   then run this command again.` (Windows: `del "<path>"`.) The same sentence shape for a foreign file. Seen by the user, 2026-11-20. `vnoc.cliInstalled` keeps the wider test (any program named `vnoc`): it only says the
   command exists.
-- The driver comes along by C8: the binary looks next to its real path.
+- The drivers come along by C8: the binary runs every `vnoc-driver-*` it finds next to its real path.
 - Sets the context key `vnoc.cliInstalled` (a walkthrough step completes on it).
 
 **V-NOC: Set Up Coding Agents** (`vnoc.setUpAgents`): asks `vnoc agent list --json` for the names and which are detected, shows them as a
@@ -327,7 +327,7 @@ is already the one it needs.
 
 For CI, cloud agents, and people without VS Code.
 
-- `publish.yml` also attaches, per target, `vnoc-<target>.tar.gz` (`.zip` on Windows) holding `vnoc` and `vnoc-driver-python` side by side
+- `publish.yml` also attaches, per target, `vnoc-<target>.tar.gz` (`.zip` on Windows) holding `vnoc` and every `vnoc-driver-*` (one per folder of `drivers/`) side by side
   (C8 then finds the driver), with their checksums in the existing `SHA256SUMS` (doc 19 §5). The binaries are the ones `scripts/package.mjs`
   already builds into `extension/bin/` for the VSIX, so nothing is compiled twice.
 - **An install script** (`install.sh`, attached to the release): picks the target from `uname`, downloads the archive and `SHA256SUMS`, checks
@@ -340,8 +340,8 @@ For CI, cloud agents, and people without VS Code.
 
 - **The archive** is made by `scripts/package.mjs`, right after it copies the two programs into `extension/bin/`, so a local run makes it too
   and it is tested before CI. Name `vnoc-cli-<target>.tar.gz` (`vnoc-cli-win32-x64.zip`), the VSIX's target names (`darwin-arm64`, `darwin-x64`,
-  `linux-x64`, `win32-x64`); the `-cli` keeps it apart from `vnoc-<target>.vsix` in one release. **Flat**, four files: `vnoc`,
-  `vnoc-driver-python` (mode 755), `LICENSE`, `THIRD_PARTY_NOTICES.md` (the programs hold other people's code; the VSIX check of package.mjs
+  `linux-x64`, `win32-x64`); the `-cli` keeps it apart from `vnoc-<target>.vsix` in one release. **Flat**: `vnoc`, every
+  `vnoc-driver-<language>` (mode 755), `LICENSE`, `THIRD_PARTY_NOTICES.md` (the programs hold other people's code; the VSIX check of package.mjs
   holds for the archive too).
 - **CI:** `package.yml` uploads it as the artifact `cli-<target>`; `publish` downloads `cli-*` beside `vsix-*`, checks there are four of
   each, puts **every file** (four VSIX, four archives, `install.sh`) in one `SHA256SUMS`, attests the archives as well, and uploads them all.

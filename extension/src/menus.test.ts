@@ -21,11 +21,11 @@ const callMenu = webviewMenu.filter((e) => e.command && whenOf(e).includes("webv
 
 // ── what a `when` clause says ───────────────────────────────────────────────────────────────────────────────────────────
 
-type Keys = { "vnoc.hasMissing": boolean; "vnoc.callTree": boolean; "vnoc.focused": boolean; "vnoc.hasSelection": boolean; "vnoc.activeIsExplore": boolean };
-const noKeys: Keys = { "vnoc.hasMissing": false, "vnoc.callTree": false, "vnoc.focused": false, "vnoc.hasSelection": false, "vnoc.activeIsExplore": false };
+type Keys = { "vnoc.hasMissing": boolean; "vnoc.callTreeExtensions": string[]; "vnoc.focused": boolean; "vnoc.hasSelection": boolean; "vnoc.activeIsExplore": boolean };
+const noKeys: Keys = { "vnoc.hasMissing": false, "vnoc.callTreeExtensions": [], "vnoc.focused": false, "vnoc.hasSelection": false, "vnoc.activeIsExplore": false };
 
 /**
- * The part of `when` clauses these menus use: `&&`, `||`, `!`, parentheses, `==`, `!=`, `=~` with a regular expression, `>` and `<` on numbers, and a bare key
+ * The part of `when` clauses these menus use: `&&`, `||`, `!`, parentheses, `==`, `!=`, `=~` with a regular expression, `>` and `<` on numbers, and `key in list` (a context key that holds a list), and a bare key
  * (true when set). A bare word on the right of `==` is a string.
  */
 function evalWhen(source: string, context: Record<string, unknown>): boolean {
@@ -58,6 +58,11 @@ function evalWhen(source: string, context: Record<string, unknown>): boolean {
       at++;
       const same = context[key] === literal(tokens[at++]);
       return op === "==" ? same : !same;
+    }
+    if (op === "in") {
+      at++;
+      const list = context[tokens[at++]];
+      return Array.isArray(list) && list.includes(context[key]);
     }
     if (op === "=~") {
       at++;
@@ -169,7 +174,7 @@ test("08 §1: a node has the same menu on a row and on its card, in every state,
             for (const isFocusRoot of [false, true]) {
               for (const codeOpen of [false, true]) {
                 const node = facts(kind, { link: linked ? "name" : null, docs: linked ? 1 : 0, childCount: kind === "function" ? 0 : 2, collapsed: !open, codeOpen });
-                const keys = { ...noKeys, "vnoc.hasMissing": hasMissing, "vnoc.callTree": callTree };
+                const keys = { ...noKeys, "vnoc.hasMissing": hasMissing, "vnoc.callTreeExtensions": callTree ? [".py"] : [] };
                 const row = shown(nodeMenu, context("sidebar", node, keys, isFocusRoot));
                 const card = shown(nodeMenu, context("canvas", node, keys, isFocusRoot));
                 const label = JSON.stringify({ kind, linked, hasMissing, callTree, open, isFocusRoot, codeOpen });
@@ -244,7 +249,7 @@ test("08 §4: the editor's and the Explorer's V-NOC submenus are the entries lis
   // the conditional ones
   const byCommand = (name: string) => menus["vnoc.editorMenu"].find((e) => e.command === name)!;
   assert.equal(byCommand("vnoc.attachMissingDocHere").when, "vnoc.hasMissing");
-  assert.equal(byCommand("vnoc.showCalls").when, "vnoc.callTree");
+  assert.equal(byCommand("vnoc.showCalls").when, "resourceExtname in vnoc.callTreeExtensions");
   // the editor and the tab share one submenu; the Explorer has its own, for files and folders
   assert.equal(menus["editor/context"][0].submenu, "vnoc.editorMenu");
   assert.equal(menus["editor/title/context"][0].submenu, "vnoc.editorMenu");
@@ -298,7 +303,7 @@ test("every key a card's, a row's, a pane's or a header's `when` clause tests is
 });
 
 test("the global keys a `when` tests are ones V-NOC sets", () => {
-  const known = new Set(["vnoc.extensions", "vnoc.callTree", "vnoc.hasMissing", "vnoc.canvasOpen", "vnoc.focused", "vnoc.hasSelection", "vnoc.activeIsExplore", "vnoc.hasAttention"]);
+  const known = new Set(["vnoc.extensions", "vnoc.callTreeExtensions", "vnoc.hasMissing", "vnoc.canvasOpen", "vnoc.focused", "vnoc.hasSelection", "vnoc.activeIsExplore", "vnoc.hasAttention"]);
   for (const e of Object.values(menus).flat()) for (const key of whenOf(e).match(/vnoc\.[A-Za-z]+/g) ?? []) assert.ok(known.has(key) || /^vnoc\.(canvas|structure|attention|editorMenu|explorerMenu)$/.test(key), `${e.command ?? e.submenu}: ${key}`);
 });
 
@@ -318,7 +323,7 @@ const FORMER: { command: string; group: string; old: (item: string, keys: Keys) 
   { command: "vnoc.attachMissingDocHere", group: "5_docs@3", old: (i, k) => /\bnode\b/.test(i) && k["vnoc.hasMissing"] },
   { command: "vnoc.writeId", group: "5_docs@4", old: (i) => /\bnode\b/.test(i) && /\bbyName\b/.test(i) },
   { command: "vnoc.copyPath", group: "9_copy@1", old: (i) => /\bnode\b/.test(i) },
-  { command: "vnoc.showCalls", group: "3_calls@1", old: (i, k) => /\b(class|function)\b/.test(i) && k["vnoc.callTree"] },
+  { command: "vnoc.showCalls", group: "3_calls@1", old: (i, k) => /\b(class|function)\b/.test(i) && k["vnoc.callTreeExtensions"].length > 0 },
   // the two that became one: both were shown on every node
   { command: "vnoc.openInCanvas", group: "1_nav@2", old: (i) => /\bnode\b/.test(i) },
 ];
@@ -333,7 +338,7 @@ test("every former `view/item/context` entry of the native tree is still on a ro
       for (const byName of [false, true]) {
         for (const hasMissing of [false, true]) {
           for (const callTree of [false, true]) {
-            const keys = { ...noKeys, "vnoc.hasMissing": hasMissing, "vnoc.callTree": callTree };
+            const keys = { ...noKeys, "vnoc.hasMissing": hasMissing, "vnoc.callTreeExtensions": callTree ? [".py"] : [] };
             const contextValue = ["node", kind, "docs", "hasCode", byName ? "byName" : ""].filter(Boolean).join(" ");
             const row = context("sidebar", facts(kind, byName ? { link: "name", docs: 1 } : {}), keys);
             assert.equal(evalWhen(whenOf(twin), row), former.old(contextValue, keys), `${former.command} on a ${kind} row (byName ${byName}, hasMissing ${hasMissing}, callTree ${callTree})`);
@@ -368,10 +373,22 @@ test("the view's title: Open Canvas and Collapse All are buttons; Refresh, Searc
 });
 
 test("the evaluator reads the clauses it is asked to (so a test above cannot pass by reading nothing)", () => {
-  const c = { webviewId: "vnoc.structure", webviewSection: "node", kind: "file", "vnoc.callTree": true, open: false };
+  const c = { webviewId: "vnoc.structure", webviewSection: "node", kind: "file", "vnoc.callTreeExtensions": [".py"], ext: ".py", open: false };
   assert.equal(evalWhen("webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node'", c), true);
   assert.equal(evalWhen("webviewId =~ /^vnoc\\.(canvas|structure)$/", { ...c, webviewId: "vnoc.docs" }), false);
   assert.equal(evalWhen("(kind == file || kind == folder) && !open", c), true);
   assert.equal(evalWhen("kind != file", c), false);
-  assert.equal(evalWhen("vnoc.callTree && open", c), false);
+  assert.equal(evalWhen("vnoc.callTreeExtensions && open", c), false);
+  assert.equal(evalWhen("ext in vnoc.callTreeExtensions", c), true);
+  assert.equal(evalWhen("ext in vnoc.callTreeExtensions", { ...c, ext: ".bend" }), false);
+  assert.equal(evalWhen("kind == file && ext in vnoc.callTreeExtensions", { ...c, "vnoc.callTreeExtensions": undefined }), false);
+});
+
+test("Show Calls on a node is offered by the extension of its file, whatever the language", () => {
+  const onKey = (key: string, extensions: string[]) => shown(nodeMenu, context("sidebar", facts("function", { key, id: key }), { ...noKeys, "vnoc.callTreeExtensions": extensions })).includes("showCalls");
+  assert.equal(onKey("lib.bend::Nat.double", [".bend"]), true);
+  assert.equal(onKey("lib.bend::Nat.double", [".py"]), false);
+  assert.equal(onKey("pkg/a.py::C.f", [".bend", ".py"]), true);
+  assert.equal(onKey("pkg.d/a::f", [".py"]), false, "a dot in a folder is not an extension");
+  assert.equal(onKey("a.py::f", []), false);
 });

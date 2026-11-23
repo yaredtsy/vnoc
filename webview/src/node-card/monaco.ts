@@ -12,7 +12,10 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 const LIGHT = "github-light";
 const DARK = "github-dark";
 
-/** File extension to the Monaco language id (the same ids Shiki registers). Anything else shows as plain text. */
+/**
+ * File extension to the Monaco language id (the same ids Shiki registers). Anything else shows as plain text, on purpose: a language the core reads and this table
+ * does not know is drawn without colours, never wrongly and never a bug. A line here is a choice of looks, not something a language needs (docs/23 §6).
+ */
 const LANGUAGES: Record<string, string> = {
   py: "python", pyi: "python",
   rs: "rust",

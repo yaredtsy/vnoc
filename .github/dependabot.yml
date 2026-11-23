@@ -19,7 +19,7 @@ updates:
       cargo-minor-patch:
         update-types: [minor, patch]
   - package-ecosystem: cargo
-    directory: /drivers/python
+    directories: ["/drivers/*"] # every driver, found by the glob
     schedule: { interval: monthly }
     groups:
       driver-minor-patch:

@@ -5,9 +5,15 @@
 // split on whitespace), so it reads `base` and the re-indented text alike. **One adaptation:** the core reads the docstring's content, and this reads the function's source, where
 // a docstring's quotes are glued to the words (`"""Summary. ID: X"""`): an opening quote (with its string prefix) is taken off the word before the colon and closing quotes off the
 // word after it. An ID never holds a quote (the core refuses to write one that does).
+//
+// **Any language:** the marker of a def can be a line comment (`# ID: x` above a Bend def, `// ID: x` in a language with those) as well as a line of a docstring. The word before the
+// colon loses a leading comment mark (`#`, `//`, `///`, `/*`, `*`), so `#ID: x` is `ID: x`; a mark that stands alone (`# ID: x`) is a word of its own and never touched the label. Python's
+// quote rule is unchanged. The reader stays loose on purpose: a def whose doc comment says "ID: x" in prose counts, as it does for Python and for the core.
 
 const LABEL = "ID";
 const SPACE = /\s/;
+/** A comment mark glued to the label: `#ID:`, `//ID:`, `///ID:`, `/*ID:`, `*ID:` count as `ID:`, so a line comment in any language is read as the label is. */
+const COMMENT_MARK = /^(?:\/\/\/|\/\/|\/\*|#|\*)+/;
 const OPENING = /^(?:[rRuUbBfF]{1,2})?["']+/;
 const CLOSING = /["']+$/;
 
@@ -33,7 +39,7 @@ function wordAfter(text: string, start: number): string {
 export function idValues(text: string): string[] {
   const found: string[] = [];
   for (let i = text.indexOf(":"); i !== -1; i = text.indexOf(":", i + 1)) {
-    const key = wordBefore(text, i).replace(OPENING, "");
+    const key = wordBefore(text, i).replace(OPENING, "").replace(COMMENT_MARK, "");
     const value = wordAfter(text, i + 1).replace(CLOSING, "");
     if (key === LABEL && value !== "" && !value.includes(":")) found.push(value);
   }

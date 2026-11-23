@@ -308,6 +308,16 @@ impl Index {
         self.files.keys()
     }
 
+    /// How many outlined files have one of these extensions (without the dot).
+    pub fn files_with_extensions(&self, extensions: &[String]) -> usize {
+        self.outlined_paths()
+            .filter(|p| {
+                crate::driver_host::extension_of(p.as_str())
+                    .is_some_and(|e| extensions.iter().any(|x| x == e))
+            })
+            .count()
+    }
+
     /// Whether this path is a file in scope (outlined or not).
     pub fn is_file(&self, path: &RepoPath) -> bool {
         self.knows(path)

@@ -1,0 +1,131 @@
+{
+  "defs": [
+    {
+      "id": "0Q8V5W4T2F7KX9M3B6D1RZ4H7K",
+      "kind": "function",
+      "name": "top",
+      "params": [],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "top",
+      "range": {
+        "end": {
+          "character": 12,
+          "line": 2
+        },
+        "start": {
+          "character": 0,
+          "line": 0
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "class",
+      "name": "Box",
+      "params": [],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "Box",
+      "range": {
+        "end": {
+          "character": 20,
+          "line": 10
+        },
+        "start": {
+          "character": 0,
+          "line": 5
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "function",
+      "name": "put",
+      "params": [
+        "self",
+        "item"
+      ],
+      "parent": "Box",
+      "parent_kind": "class",
+      "qualname": "Box.put",
+      "range": {
+        "end": {
+          "character": 20,
+          "line": 10
+        },
+        "start": {
+          "character": 4,
+          "line": 6
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "function",
+      "name": "inner",
+      "params": [],
+      "parent": "Box.put",
+      "parent_kind": "function",
+      "qualname": "Box.put.<locals>.inner",
+      "range": {
+        "end": {
+          "character": 23,
+          "line": 8
+        },
+        "start": {
+          "character": 8,
+          "line": 7
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "function",
+      "name": "smile",
+      "params": [
+        "label"
+      ],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "smile",
+      "range": {
+        "end": {
+          "character": 23,
+          "line": 14
+        },
+        "start": {
+          "character": 0,
+          "line": 13
+        }
+      },
+      "syntax_error": false
+    },
+    {
+      "id": null,
+      "kind": "function",
+      "name": "top",
+      "params": [],
+      "parent": "",
+      "parent_kind": null,
+      "qualname": "top",
+      "range": {
+        "end": {
+          "character": 12,
+          "line": 18
+        },
+        "start": {
+          "character": 0,
+          "line": 17
+        }
+      },
+      "syntax_error": false
+    }
+  ],
+  "file_id": null,
+  "syntax_errors": []
+}

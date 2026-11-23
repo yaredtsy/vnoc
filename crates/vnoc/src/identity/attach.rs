@@ -37,7 +37,7 @@ pub const MAX_BODY_BYTES: usize = 256 * 1024;
 pub enum AttachError {
     #[error(transparent)]
     BadKey(#[from] LocationKeyError),
-    #[error("`{0}` is not in the index (is the file saved, and is it Python?)")]
+    #[error("`{0}` is not in the index (is the file saved, and does a driver read it?)")]
     NotInIndex(String),
     #[error("the document is not the file of `{0}`")]
     WrongDocument(String),
@@ -383,7 +383,7 @@ pub(super) async fn write_marker(
             write_def_marker(env, location, id, document).await
         }
         (Target::File { .. }, MarkerDoc::Open(document)) => {
-            write_file_marker(env, id, document).await
+            write_file_marker(env, location, id, document).await
         }
         _ => write_folder_marker(env.project.git_root(), location.path(), id)
             .map(|()| MarkerWritten::FolderFile),
@@ -407,7 +407,11 @@ async fn write_def_marker(
             replace_existing: false,
         }],
     };
-    let plan = env.host.plan_ids(&ask).await.map_err(|e| e.to_string())?;
+    let plan = env
+        .host
+        .plan_ids(location.path().as_str(), &ask)
+        .await
+        .map_err(|e| e.to_string())?;
     if let Some(skipped) = plan.skipped.first() {
         return Err(skipped.reason.clone());
     }
@@ -429,6 +433,7 @@ fn line_of(written: Option<vnoc_driver_protocol::Position>, edits: &[TextEdit]) 
 /// Plans the `# FileID:` comment with the driver and has the sink apply it.
 async fn write_file_marker(
     env: &mut Env<'_>,
+    location: &LocationKey,
     id: &NodeId,
     document: &Document,
 ) -> Result<MarkerWritten, String> {
@@ -439,7 +444,7 @@ async fn write_file_marker(
     };
     let plan = env
         .host
-        .plan_file_id(&ask)
+        .plan_file_id(location.path().as_str(), &ask)
         .await
         .map_err(|e| e.to_string())?;
     if let Some(reason) = plan.skipped {

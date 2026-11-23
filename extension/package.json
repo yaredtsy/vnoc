@@ -1,7 +1,7 @@
 {
   "name": "vnoc",
   "displayName": "V-NOC",
-  "description": "Browse Python code as a tree and a canvas, and attach docs that stay with the code when it is renamed or moved.",
+  "description": "Browse code as a tree and a canvas, and attach docs that stay with the code when it is renamed or moved. Python and Bend.",
   "version": "0.3.0",
   "publisher": "vnoc",
   "license": "Apache-2.0",
@@ -14,6 +14,7 @@
     "docs",
     "graph",
     "python",
+    "bend",
     "documentation",
     "canvas",
     "call graph",
@@ -49,7 +50,8 @@
       "description": "In Restricted Mode V-NOC ignores the executable paths set in workspace settings.",
       "restrictedConfigurations": [
         "vnoc.server.path",
-        "vnoc.driver.path"
+        "vnoc.driver.path",
+        "vnoc.drivers"
       ]
     }
   },
@@ -547,7 +549,7 @@
         },
         {
           "command": "vnoc.showCalls",
-          "when": "vnoc.callTree",
+          "when": "resourceExtname in vnoc.callTreeExtensions",
           "group": "3_calls@1"
         },
         {
@@ -613,7 +615,7 @@
         },
         {
           "command": "vnoc.showCalls",
-          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && (kind == function || kind == class) && vnoc.callTree",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && (kind == function || kind == class) && fileExtname in vnoc.callTreeExtensions",
           "group": "3_calls@1"
         },
         {
@@ -822,10 +824,19 @@
           "default": "",
           "description": "Path to the vnoc core binary. Empty = the build folder of this repository (development). Ignored from workspace settings in Restricted Mode."
         },
+        "vnoc.drivers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Paths to the language driver binaries (vnoc-driver-*). Empty = every driver found by itself: the ones installed with V-NOC, or in development the ones built in drivers/*/target/debug. Ignored from workspace settings in Restricted Mode."
+        },
         "vnoc.driver.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the Python driver binary. Empty = the build folder of this repository (development). Ignored from workspace settings in Restricted Mode."
+          "deprecationMessage": "Deprecated: use vnoc.drivers.",
+          "description": "Deprecated: use vnoc.drivers. Path to one driver binary, read as a list of one. Ignored from workspace settings in Restricted Mode."
         },
         "vnoc.sidebar.click": {
           "type": "string",
@@ -865,7 +876,7 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts src/test/suite/edit.test.ts src/test/suite/bar.test.ts src/test/suite/search.test.ts src/test/suite/cli.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
+    "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts src/test/suite/edit.test.ts src/test/suite/bar.test.ts src/test/suite/search.test.ts src/test/suite/cli.test.ts src/test/suite/bend.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
     "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts src/dirtyFiles.test.ts src/saveDraft.test.ts src/sidebarSlot.test.ts src/cliInstall.test.ts src/agentsJson.test.ts"
   },
   "dependencies": {

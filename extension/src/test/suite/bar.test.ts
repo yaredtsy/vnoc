@@ -35,10 +35,13 @@ const openCanvas = async () => {
 suite("the canvas bar", () => {
   const file = () => path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, "unreadable.py");
 
-  test("a file that cannot be read shows the ⚠, and it goes when the file is fixed", async () => {
+  test("a file that cannot be read shows the ⚠, and it goes when the file is fixed", async function () {
+    if (process.platform === "win32") this.skip(); // mode 000 does not block reading on Windows
     await openCanvas();
+    fs.rmSync(file(), { force: true }); // a leftover of an earlier run
     try {
-      fs.writeFileSync(file(), Buffer.from([0x64, 0x65, 0x66, 0x20, 0xff, 0xfe, 0x0a])); // not UTF-8: the driver fails on it
+      // no read permission: a file that is not UTF-8 is read (bad bytes as U+FFFD) since cf73e9f; the mode applies at creation, so the watcher never sees it readable
+      fs.writeFileSync(file(), "def broken():\n    pass\n", { mode: 0o000 });
       const shown = await api.waitWarned((w) => w.level === "warning", 30_000);
       assert.match(shown.text, /1 file could not be read/);
 
@@ -46,6 +49,7 @@ suite("the canvas bar", () => {
       await until("the Not read row", () => api.attention().notRead.includes("unreadable.py"));
       assert.strictEqual(api.attention().hasAttention, true, "`vnoc.hasAttention` counts the Not read group");
 
+      fs.chmodSync(file(), 0o644); // a file with mode 000 cannot be written either
       fs.writeFileSync(file(), "def fine():\n    pass\n");
       await api.waitWarned((w) => w.level === "none", 30_000);
       await until("the Not read group to go", () => api.attention().notRead.length === 0);

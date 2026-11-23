@@ -37,7 +37,7 @@ library   Project · DriverHost · index::refresh · Index · UserData · identi
   goes to clap. `--stdio` is not a clap flag and does not show in `--help`. A later release of the extension passes `serve`; all four work
   from A2 on, and an old extension with a new core keeps working. `lifecycle.rs` starts the core with no arguments, the window suite with
   `--stdio`: A2 tests both.
-- The driver runs as the server runs it (`DriverHost`), and exits with the command (`DriverClient`'s `Drop`).
+- The drivers run as the server runs them (`DriverHost`: every one found, started together), and exit with the command (`DriverClient`'s `Drop`).
 
 ## 2. The root (C9)
 
@@ -60,7 +60,7 @@ as a **copy outside the repository**.
 
 ## 3. One shot (C4)
 
-Each run: open the project → start the driver → `refresh(…, Touched::All)` (walk, outline every file, read `.vnoc/`, resolve) → answer → exit.
+Each run: open the project → start every driver (`start_all`: the handshakes say which extensions the scan collects) → `refresh(…, Touched::All)` (walk, outline every file, read `.vnoc/`, resolve) → answer → exit.
 
 | Command | Needs the driver | Needs the whole index |
 |---|---|---|
@@ -178,7 +178,7 @@ only; `lib.rs` has none. From A2:
 | `0` | done | also: nothing found; `check` with no problems; a write that attached by name with a notice |
 | `1` | `check` found problems | only `check` |
 | `2` | the request cannot be met | unknown flag; no such node (02 §4); `doc new` with no `.vnoc/`; a refused relink; a title the node already has |
-| `3` | the environment | no driver found, the driver failed to start, `vnoc.toml` has a newer `format`, the lock could not be taken, `git` missing for `changed` |
+| `3` | the environment | no driver found, no driver started (each failure named), `vnoc.toml` has a newer `format`, the lock could not be taken, `git` missing for `changed` |
 
 One function maps a library error to a code (`cli::exit_code`), with a table test, so a new error cannot pick a code by accident.
 

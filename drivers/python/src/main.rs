@@ -9,6 +9,7 @@ mod file_id;
 mod outline;
 mod plan_ids;
 mod positions;
+mod source;
 mod worker;
 
 use std::collections::HashMap;
@@ -21,7 +22,7 @@ use lsp_server::{Connection, ErrorCode, Message, Request, RequestId, Response};
 use python_analysis::Cancel;
 use serde_json::Value;
 use vnoc_driver_protocol::{
-    InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanFileIdParams,
+    Files, InitializeParams, InitializeResult, OutlineParams, PROTOCOL_VERSION, PlanFileIdParams,
     PlanIdsParams, method,
 };
 
@@ -204,6 +205,11 @@ fn handshake(conn: &Connection) -> anyhow::Result<()> {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect(),
+        files: Some(Files {
+            // `py` only: 0.3 never scanned stub files (`.pyi`), so announcing them would show files nobody saw before. Stubs are not read
+            // until that is a decision of its own (docs/23 "As built in B3a").
+            extensions: vec!["py".into()],
+        }),
     };
     conn.initialize_finish(id, serde_json::to_value(reply)?)?;
     Ok(())
@@ -260,11 +266,9 @@ fn outline_request(params: &Value) -> Result<Value, Failure> {
     let text = match (p.text, p.root, p.file) {
         (Some(text), _, _) => text,
         (None, Some(root), Some(file)) => {
-            std::fs::read_to_string(std::path::Path::new(&root).join(&file)).map_err(|e| {
-                Failure {
-                    code: ErrorCode::InternalError,
-                    message: format!("cannot read {file}: {e}"),
-                }
+            source::read_text(&std::path::Path::new(&root).join(&file)).map_err(|e| Failure {
+                code: ErrorCode::InternalError,
+                message: format!("cannot read {file}: {e}"),
             })?
         }
         _ => return Err(invalid("give `text`, or `root` and `file`")),

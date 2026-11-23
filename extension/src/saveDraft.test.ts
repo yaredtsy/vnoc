@@ -62,6 +62,17 @@ const names: { key: string; name: string }[] = [
 ];
 for (const r of names) test(`the question names ${r.key} as ${r.name}`, () => assert.equal(nodeName(r.key), r.name));
 
+test("a node that is known gives its own name: a Bend `Nat.double` keeps its dot, a Python method is its short name; a key alone cuts at the last dot", () => {
+  assert.equal(nodeName("nat.bend::Nat.double", "Nat.double"), "Nat.double");
+  assert.equal(nodeName("a.py::C.f", "f"), "f");
+  assert.equal(nodeName("nat.bend::Nat.double"), "double", "no node: the last dot, as before");
+  assert.equal(nodeName("a.py::f#2", "f"), "f");
+  assert.equal(nodeName("pkg/a.py", "a.py"), "a.py");
+  assert.equal(nodeName("pkg/a.py"), "a.py", "a file with no node: its own name");
+  assert.equal(nodeName("pkg/sub"), "sub");
+  assert.equal(idQuestion("nat.bend::Nat.double", "Nat.double"), "This removes Nat.double's ID: its docs will be Missing.");
+});
+
 test("the question's text, and the button", () => {
   assert.equal(idQuestion("app/orders.py::Order.parse"), "This removes parse's ID: its docs will be Missing.");
   assert.equal(SAVE_ANYWAY, "Save Anyway");

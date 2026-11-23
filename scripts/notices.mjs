@@ -1,5 +1,5 @@
 // Writes extension/THIRD_PARTY_NOTICES.md: the licences of the code inside the VSIX that is not ours.
-//   - the Rust crates of both Cargo workspaces (the core, and the Python driver with ruff, ty and salsa), through `cargo about`
+//   - the Rust crates of both Cargo workspaces (the core, and every driver in drivers/: the Python one with ruff, ty and salsa), through `cargo about`
 //   - the npm packages the extension and the webview bundle (their production dependencies), through `pnpm licenses`
 // Usage: node scripts/notices.mjs [--check]     --check writes nothing and fails if the committed file is not what this would write.
 // Needs `cargo install cargo-about --locked --features cli`. The file is committed; scripts/package.mjs fails without it.
@@ -8,6 +8,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { findDrivers } from "./drivers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(root, "extension/THIRD_PARTY_NOTICES.md");
@@ -43,7 +44,7 @@ const ours = (name) => name.startsWith("vnoc");
 
 function rustSection() {
   const byText = new Map(); // licence text -> { id, name, crates: Map("name version" -> repository) }
-  for (const l of [...rustLicences("Cargo.toml", ["--workspace"]), ...rustLicences("drivers/python/Cargo.toml", [])]) {
+  for (const l of [...rustLicences("Cargo.toml", ["--workspace"]), ...findDrivers().flatMap((d) => rustLicences(d.manifest, []))]) {
     const key = clean(l.text);
     const entry = byText.get(key) ?? { id: l.id, name: l.name, crates: new Map() };
     for (const { crate } of l.used_by) if (!ours(crate.name)) entry.crates.set(`${crate.name} ${crate.version}`, crate.repository ?? `https://crates.io/crates/${crate.name}`);
@@ -89,7 +90,7 @@ function render() {
     "",
     "V-NOC is licensed under the Apache License 2.0 (see `LICENSE`). This extension also contains the third-party code listed below, under its own licences.",
     "",
-    "- **The V-NOC core and the Python driver** (programs in `bin/`) are written in Rust. The driver includes the Python analysis of [ruff](https://github.com/astral-sh/ruff) and [ty](https://github.com/astral-sh/ty) (MIT) and [salsa](https://github.com/salsa-rs/salsa) (Apache-2.0 / MIT), through [language_driver_rs](https://github.com/yaredtsy/language_driver_rs).",
+    "- **The V-NOC core and the language drivers** (programs in `bin/`) are written in Rust. The Python driver includes the Python analysis of [ruff](https://github.com/astral-sh/ruff) and [ty](https://github.com/astral-sh/ty) (MIT) and [salsa](https://github.com/salsa-rs/salsa) (Apache-2.0 / MIT), through [language_driver_rs](https://github.com/yaredtsy/language_driver_rs).",
     "- **The extension and its pages** (`dist/`, `media/webview/`) bundle the npm packages listed under *npm packages*.",
     "",
     "This file is written by `node scripts/notices.mjs`; do not edit it by hand.",

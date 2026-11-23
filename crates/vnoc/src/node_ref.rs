@@ -662,4 +662,26 @@ mod tests {
         assert_eq!(parse("a.py::f").unwrap().path(), Some("a.py"));
         assert_eq!(parse("a.py:3").unwrap().path(), Some("a.py"));
     }
+
+    #[test]
+    fn a_bend_location_is_a_path_and_the_name_as_written() {
+        for (text, path, rest) in [
+            ("lib.bend::Nat.double", "lib.bend", "Nat.double"),
+            ("src/lib.bend::Nat.double#2", "src/lib.bend", "Nat.double#2"),
+        ] {
+            assert_eq!(
+                parse(text),
+                Some(NodeRef::Location {
+                    path: path.to_string(),
+                    rest: rest.to_string()
+                }),
+                "{text}"
+            );
+        }
+        // a dotted name on its own is read as a path (as `OrderService.parse_order` is), and the index decides what it names
+        assert_eq!(
+            parse("Nat.double"),
+            Some(NodeRef::Path("Nat.double".to_string()))
+        );
+    }
 }

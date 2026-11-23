@@ -156,7 +156,7 @@ start (`startup_failure`).
 `.github/actions/setup/action.yml`, a composite action with two inputs. `cache-key` is `test`, `lint` or `release-<target>`. `save-cache` is
 a string `'true'`/`'false'` that the calling job computes from the rules below, and the action passes it to both rust-cache steps' `save-if`. It holds today's steps
 in this order: `pnpm/action-setup@v4` · `actions/setup-node@v4` (22, `cache: pnpm`) · the Windows long-paths step · `rustup toolchain install`
-in the root and in `drivers/python` · the two `Swatinem/rust-cache@v2` · the `.vscode-test` cache (`test` only, via an input or a
+in the root and in every `drivers/*/` · the `Swatinem/rust-cache@v2` · the `.vscode-test` cache (`test` only, via an input or a
 `hashFiles` guard) · `pnpm install --frozen-lockfile`. Every `run:` in a composite action needs `shell: bash`.
 
 | Cache rule | Why |
@@ -214,7 +214,7 @@ jobs:
       - if: matrix.cross
         run: |
           rustup target add ${{ matrix.cross }}
-          (cd drivers/python && rustup target add ${{ matrix.cross }})
+          for d in drivers/*/; do (cd "$d" && rustup target add ${{ matrix.cross }}); done
       - run: node scripts/package.mjs --target ${{ matrix.target }} ${{ inputs.pre-release && '--pre-release' || '' }}
       - uses: actions/upload-artifact@v4
         with: { name: "vsix-${{ matrix.target }}", path: "vnoc-${{ matrix.target }}.vsix", if-no-files-found: error, retention-days: 30 }
@@ -222,7 +222,7 @@ jobs:
 
 The artifact names stay `vsix-<target>`: `publish.yml` already downloads `vsix-*`. *(Changed in A13 of doc 21, 2026-11-20.)* `scripts/package.mjs`
 now also writes the **command-line archive** right after it copies the two programs into `extension/bin/` (nothing is compiled twice): `vnoc-cli-<target>.tar.gz`
-(`vnoc-cli-win32-x64.zip`), flat, four files (`vnoc`, `vnoc-driver-python`, `LICENSE`, `THIRD_PARTY_NOTICES.md`). `package.yml` uploads it as a second
+(`vnoc-cli-win32-x64.zip`), flat: `vnoc`, every `vnoc-driver-<language>` (one per folder of `drivers/`), `LICENSE`, `THIRD_PARTY_NOTICES.md`. `package.yml` uploads it as a second
 artifact, `cli-<target>`, after the `vsix-<target>` one:
 
 ```yaml
@@ -293,7 +293,7 @@ nothing. It does **not** reach the `publish` job, so it proves nothing about the
 | `github-actions` | `/` | all in one PR |
 | `npm` (reads `pnpm-lock.yaml`) | `/` | minor + patch in one PR; majors one each |
 | `cargo` | `/` | minor + patch in one PR |
-| `cargo` | `/drivers/python` | minor + patch in one PR. The `language_driver_rs` git rev is yours to move, not Dependabot's **[check]** whether it opens PRs for git deps; if so, `ignore` those three crates |
+| `cargo` | `/drivers/*` (`directories:` with a glob: every driver) | minor + patch in one PR. The `language_driver_rs` git rev is yours to move, not Dependabot's **[check]** whether it opens PRs for git deps; if so, `ignore` those three crates |
 
 **Pin every third-party action to a commit SHA** with the version in a comment (`uses: actions/checkout@<40-char sha> # v4.2.2`). A tag can be
 moved to other code; a commit can't. Dependabot updates the SHA and the comment together. Look each SHA up on the action's releases page,
@@ -347,7 +347,7 @@ A published tag can then not be moved or deleted by accident; a fix is the next 
 
 ```
 1  on a branch: the version "X.Y.Z" in four places: extension/package.json · the Rust workspace (Cargo.toml's [workspace.package], and the `version` line of
-   each crates/*/Cargo.toml, which do not inherit it: crates/vnoc's is the one the guide test reads) · drivers/python/Cargo.toml · skills/vnoc/SKILL.md
+   each crates/*/Cargo.toml, which do not inherit it: crates/vnoc's is the one the guide test reads) · every drivers/*/Cargo.toml (a test holds them to the release version) · skills/vnoc/SKILL.md
    (metadata.vnoc-version; the guide test fails when it differs from crates/vnoc's). Then `cargo build` in both workspaces refreshes the two Cargo.lock.
    extension/CHANGELOG.md "## Unreleased (…)" becomes "## X.Y.Z"
 2  PR → ci-ok green → merge. Optional: main's run leaves vsix-* and cli-* artifacts. Installing one catches a packaging problem before you tag,

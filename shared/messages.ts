@@ -70,6 +70,21 @@ export interface Problem {
   line: number | null;
 }
 
+/** One entry of `vnoc/languages`: a driver the core was given and what it said. The extension has no list of languages of its own: this is it. */
+export interface LanguageInfo {
+  /** the driver's own name; for one that never answered, the name of its file without `vnoc-driver-` */
+  name: string;
+  version: string;
+  path: string;
+  /** the file extensions it claimed, without the dot */
+  extensions: string[];
+  /** which optional methods it has (`callTree`, …) */
+  capabilities: Record<string, boolean>;
+  state: "running" | "failed";
+  error?: string;
+  warnings?: string[];
+}
+
 export interface StructureResult {
   /** which version of the index this answer is from. Compare two only when their `epoch` is the same: a restarted core counts from the start again */
   revision: number;

@@ -73,7 +73,7 @@ export class CliSetup {
     return {
       ...base,
       binary: this.core.binaryPath!,
-      driver: this.core.driverPath,
+      drivers: this.core.driverPaths,
       production: this.ctx.extensionMode === vscode.ExtensionMode.Production,
       extension: { publisher: pkg.publisher, name: pkg.name },
       place: "link" in where ? readPlace(where.link, win) : { kind: "nothing" },

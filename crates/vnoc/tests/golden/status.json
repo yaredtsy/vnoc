@@ -10,9 +10,14 @@
   },
   "drivers": [
     {
+      "extensions": [
+        "py"
+      ],
       "files": 12,
       "name": "python",
-      "version": "<version>"
+      "state": "running",
+      "version": "<version>",
+      "warnings": []
     }
   ],
   "failed": [],

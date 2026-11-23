@@ -21,6 +21,7 @@ use vnoc_driver_protocol::{
 
 use crate::outline::{analyzer_occurrence, protocol_occurrence};
 use crate::positions::Lines;
+use crate::source;
 use crate::{Failure, invalid};
 
 /// The wire format versions of the analyzer (`analyzer_core::wire::WIRE_FORMAT_VERSION`, "bumped when a field is added that changes what a node
@@ -92,7 +93,7 @@ pub fn call_tree(
     cancel: &Cancel,
 ) -> Result<CallTreeResult, Failure> {
     let root = Path::new(&params.root);
-    std::fs::read_to_string(root.join(&params.file))
+    source::read_text(&root.join(&params.file))
         .map_err(|e| internal(format!("cannot read {}: {e}", params.file)))?;
 
     let no_def = || {
@@ -169,7 +170,7 @@ impl Callers {
         let texts = files
             .into_iter()
             .map(|file| {
-                std::fs::read_to_string(root.join(&file))
+                source::read_text(&root.join(&file))
                     .map(|text| (file.clone(), text))
                     .map_err(|e| internal(format!("cannot read {file}: {e}")))
             })

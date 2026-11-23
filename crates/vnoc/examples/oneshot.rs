@@ -472,9 +472,11 @@ fn run_once(o: &Options, phases: &mut Phases, counts: &mut Counts) -> Result<(),
 
     // 2. the walk, on its own
     let started = Instant::now();
-    let walked = scan::python_files(&project, MAX_FILES);
+    // this probe measures Python: `.py` and `.pyi`
+    let extensions = ["py", "pyi"].map(String::from).into();
+    let walked = scan::files(&project, &extensions, MAX_FILES);
     let walk = ms(started.elapsed());
-    phases.add("2  walk (scan::python_files)", walk);
+    phases.add("2  walk (scan::files)", walk);
     counts.files = walked.files.len();
     counts.folders = walked.folders.len();
 
@@ -583,7 +585,7 @@ fn run_once(o: &Options, phases: &mut Phases, counts: &mut Counts) -> Result<(),
     let probe = DriverHost::default();
     probe.set_path(Some(o.driver.clone()));
     let started = Instant::now();
-    rt.block_on(probe.outline_text("x = 1\n"))?;
+    rt.block_on(probe.outline_text("probe.py", "x = 1\n"))?;
     phases.add(
         "7  driver start + one empty outline (a probe)",
         ms(started.elapsed()),
