@@ -356,13 +356,14 @@ with any tool. The layout is described in [docs/04-storage](docs/04-storage/READ
 
 ## What's coming
 
-V-NOC is early. Three releases are out.
+V-NOC is early. Four releases are out.
 
 | Version | Theme | Status |
 |---|---|---|
 | 0.1 | The docs loop | ✅ Released |
 | 0.2 | Calls | ✅ Released |
-| **0.3** | **Editing on the canvas, search, and the command line for agents** | ✅ **Released** |
+| 0.3 | Editing on the canvas, search, and the command line for agents | ✅ Released |
+| **0.3.1** | **Bend, and canvas fixes** | ✅ **Released** |
 | 0.4 | Docs that survive without markers | 💭 Planned |
 | 0.5 and on | Polish: more editor features from the core, doc freshness | 💭 Planned |
 | 1.0 | Hardening: big repositories, remote machines, the driver protocol frozen | 💭 Planned |
