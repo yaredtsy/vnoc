@@ -460,7 +460,8 @@ fn refuses_a_wrong_protocol(program: &Path) -> Check {
 fn activates_the_extension(init: &Value) -> Check {
     let text = std::fs::read_to_string(repo_root().join("extension/package.json"))
         .map_err(|e| format!("extension/package.json: {e}"))?;
-    let package: Value = serde_json::from_str(&text).map_err(|e| format!("extension/package.json: {e}"))?;
+    let package: Value =
+        serde_json::from_str(&text).map_err(|e| format!("extension/package.json: {e}"))?;
     let events: Vec<&str> = package["activationEvents"]
         .as_array()
         .map(|a| a.iter().filter_map(Value::as_str).collect())
