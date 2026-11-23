@@ -1,6 +1,6 @@
 // The graph view. It draws a layout; a click is an intent for the session. It knows nothing about the host or where the tree came from.
 
-import { Background, Controls, MiniMap, type Node, ReactFlow, useNodesState, useReactFlow, useStore } from "@xyflow/react";
+import { Background, Controls, MiniMap, type Node, ReactFlow, useNodesState, useReactFlow, useStore, useStoreApi } from "@xyflow/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { motionMs, prefersReducedMotion } from "../lib/motion.ts";
@@ -15,7 +15,7 @@ import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts"
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
-import { followsReveal } from "./revealFollow.ts";
+import { followsReveal, needsFraming } from "./revealFollow.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { useSearchDim } from "./useSearchDim.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
@@ -26,33 +26,67 @@ const nodeTypes = { card: NodeCard };
 const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p, width: CARD_W, height: cardHeight(p) }));
 
 /**
- * Brings the requested node to the middle of the view once it is drawn. Inside `<ReactFlow>` so it can reach the view. The pane can change size just after (a pick from the search opens the docs tab beside the
- * canvas): the card is framed again then, for the new size, for a moment (`revealFollow.ts`).
+ * Brings the requested node into view once it is drawn. Inside `<ReactFlow>` so it can reach the view. The camera moves only when it has to (`revealFollow.ts`): a card that is whole in the pane at a readable zoom is
+ * selected and pulses and nothing else; any other is framed (fitView on the one card, up to 120 %). The canvas's own first fit comes first: a reveal is judged once it is done, so that what a reveal sees is the drawing
+ * as the canvas framed it (Show Calls on a small drawing, and the cards that open under a card are then in view). The pane can change size just after (a pick from the search opens the docs tab beside the canvas):
+ * the same test is made then, and a card still on its way is framed again for the new size.
  */
 function CenterOn({ laid, context }: { laid: Layout; context: string }) {
   const { fitView } = useReactFlow();
+  const store = useStoreApi();
   // the session's request to bring a node into view; done, it says so and the session clears it (a canvas opened later does not repeat it)
   const reveal = useSession((s) => s.reveal);
   // a canvas that shows another context leaves the request for that context's own canvas
   const target = useMemo(() => (reveal && reveal.context === context ? { id: reveal.id, n: reveal.n } : null), [reveal, context]);
-  const framed = useRef<{ id: string; at: number } | null>(null);
+  /** the last reveal that was judged: which card, when, and whether the camera is still on its way to it */
+  const judged = useRef<{ id: string; at: number; moving: boolean } | null>(null);
   const width = useStore((s) => s.width);
   const height = useStore((s) => s.height);
+  /** the card, the pane and the viewport as they are now: does the camera have to move? A card that is not known is framed. */
+  const hasToMove = (id: string): boolean => {
+    const { nodeLookup, width, height, transform } = store.getState();
+    const node = nodeLookup.get(id);
+    if (!node) return true;
+    const box = { x: node.internals.positionAbsolute.x, y: node.internals.positionAbsolute.y, width: node.measured.width ?? node.width ?? CARD_W, height: node.measured.height ?? node.height ?? 0 };
+    return needsFraming(box, { width, height }, { x: transform[0], y: transform[1], zoom: transform[2] });
+  };
+  const frame = (id: string, now: { id: string; at: number; moving: boolean }) => {
+    now.moving = true;
+    void fitView({ nodes: [{ id }], duration: motionMs(300, prefersReducedMotion()), maxZoom: 1.2 }).finally(() => {
+      now.moving = false;
+    });
+  };
   useEffect(() => {
     if (!target || !laid.nodes.some((p) => p.id === target.id)) return;
-    // the cards of a new layout are measured on the next frames; framing them before that frames nothing
-    const timer = setTimeout(() => {
-      framed.current = { id: target.id, at: performance.now() };
-      void fitView({ nodes: [{ id: target.id }], duration: motionMs(300, prefersReducedMotion()), maxZoom: 1.2 });
+    let stop = () => {};
+    const done = () => {
+      const now = { id: target.id, at: performance.now(), moving: false };
+      judged.current = now;
+      if (hasToMove(target.id)) frame(target.id, now);
       dispatch({ type: "revealed", n: target.n });
       pulse(target.id); // the card pulses for a second so the eye finds it
+    };
+    // the cards of a new layout are measured on the next frames; judging them before that judges nothing
+    const timer = setTimeout(() => {
+      if (!store.getState().fitViewQueued) return done();
+      // the canvas's own first fit is still to come: the reveal is judged when it is done (a `fitView()` now would take its place)
+      stop = store.subscribe((s) => {
+        if (s.fitViewQueued) return;
+        stop();
+        done();
+      });
     }, 60);
-    return () => clearTimeout(timer);
-  }, [fitView, target, laid]);
+    return () => {
+      clearTimeout(timer);
+      stop();
+    };
+  }, [fitView, store, target, laid]);
   useEffect(() => {
-    const last = framed.current;
-    if (last && followsReveal(last.at, performance.now())) void fitView({ nodes: [{ id: last.id }], duration: motionMs(300, prefersReducedMotion()), maxZoom: 1.2 });
-  }, [fitView, width, height]);
+    const last = judged.current;
+    if (!last || !followsReveal(last.at, performance.now())) return;
+    // a camera that is still on its way has no viewport to judge by: the card is framed again for the new size; one that has stopped is judged as it stands
+    if (last.moving || hasToMove(last.id)) frame(last.id, last);
+  }, [fitView, store, width, height]);
   return null;
 }
 
