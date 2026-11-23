@@ -9,6 +9,8 @@ import { shikiToMonaco } from "@shikijs/monaco";
 import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
+import { bendGrammar } from "./bendGrammar.ts";
+
 const LIGHT = "github-light";
 const DARK = "github-dark";
 
@@ -28,6 +30,7 @@ export function loadMonaco(): Promise<typeof monaco> {
       themes: [import("@shikijs/themes/github-light"), import("@shikijs/themes/github-dark")],
       langs: [
         import("@shikijs/langs/python"),
+        import("@shikijs/langs/python").then((m) => bendGrammar(m.default[0])), // Bend's: Python's without its error marks
         import("@shikijs/langs/rust"),
         import("@shikijs/langs/typescript"),
         import("@shikijs/langs/tsx"),
