@@ -40,19 +40,21 @@ so agents use them for real (TR14) before any page depends on them.
 
 ### TR0 Seven checks (no product change)
 
-Small programs under `spikes/tours/`, and things done by hand. Each answer is written into the README §7.
+One example program, `crates/vnoc/examples/tours_checks.rs`, with a subcommand per check (as A0's `oneshot.rs`: it can use the
+library, the driver and the sample, and it is kept for measuring again), and three things looked at by hand. Each answer is written
+into the README §7. Nothing under `crates/vnoc/src/`, `extension/`, `webview/` or `shared/` changes.
 
 | # | Check | How |
 |---|---|---|
-| 1 | an older V-NOC and the new folders | the released 0.3.1 (VSIX and `vnoc`) on a copy of the sample with `.vnoc/tours/x.jsonl`, `.vnoc/local/tours/y.jsonl`, `.vnoc/local/tour-state/y.json`: open, browse, attach a doc. `git status` shows nothing new; `vnoc check` passes |
-| 2 | what a change under `.vnoc/local/` does today | in the running core, with logging: append a line to `.vnoc/local/tours/y.jsonl`. Is `vnoc/filesChanged` sent, is `.vnoc/` read again, does `vnoc/indexChanged` follow with a new revision |
-| 3 | appends under a lock file | a Rust program run twice at once: each takes `tours.lock` (the `try_lock` loop of `userdata/lock.rs`), appends one line to the same file, 200 times. 400 whole lines after. A third process reads the file in a loop meanwhile and never fails. macOS here; Windows in CI |
-| 4 | marker lines from `Def.id` | on the sample and on the Bend fixture: for every def with an ID, the lines of the def that contain its ID text. Exactly one line each, and it is the marker; a nested def's marker is found in its parent's lines by the nested def's own ID |
-| 5 | a node folder with no doc | by hand in a copy of the sample: delete a node's doc files, keep `node.toml` and the marker. The tree, the doc counts, `vnoc check`, `vnoc missing`, Needs Attention. Decides whether `vnoc tour ids` can leave exactly that |
-| 6 | git from Rust | **[measure]** `rev-parse HEAD`; `status --porcelain -z -- <12 paths>`; `show <commit>:<path>`. Then: in a worktree; no commit yet; no `git` on the PATH; a commit that is not in the repository; `commit --only -m x -- a b` with another file staged (it stays staged), with `b` untracked (needs `add` first), with a pre-commit hook that fails |
-| 7 | size and changed-time | on macOS, Linux and Windows: write a file, `stat`, write the same number of bytes again at once, `stat`. Does the time differ |
+| 1 | an older V-NOC and the new folders | **the command:** the released 0.3.1 `vnoc` (the release archive, unpacked into a temp folder) on a copy of the sample with `.vnoc/tours/x.jsonl`, `.vnoc/local/tours/y.jsonl`, `.vnoc/local/tour-state/y.json`: `status`, `tree`, `check`, `doc new`. A listing of the copy before and after differs only by the new doc; `check` passes. **By hand (yours):** the released VSIX on the same copy: open, browse, attach a doc; nothing listed, `git status` shows nothing new |
+| 2 | what a change under `.vnoc/local/` does today | read `server.rs` `files_changed` and `index/build.rs` and say, with file and line, whether `.vnoc/` is read again and whether the revision moves; then prove it with a probe in the style of `tests/lifecycle.rs` (the real core, a `vnoc/filesChanged` for `.vnoc/local/tours/y.jsonl`, wait for `vnoc/indexChanged`). The probe is not committed |
+| 3 | appends under a lock file | `tours_checks race <dir>`: starts two copies of itself; each takes `tours.lock` (the `try_lock` loop of `userdata/lock.rs`) and appends one line to the same file, 200 times, while a third reads the file in a loop. 400 whole lines after, no read failed. macOS here. **Windows:** TR3's race test runs in CI on Windows and is the answer there |
+| 4 | marker lines from `Def.id` | `tours_checks markers <root> <driver>…`: on the sample and on the Bend fixture, for every def with an ID, the lines of the def that contain its ID text. Exactly one line each, and it is the marker; a nested def's marker is found in its parent's lines by the nested def's own ID. The Bend half is skipped, loudly, when its driver is not built |
+| 5 | a node folder with no doc | on a copy of the sample: delete a node's doc files, keep `node.toml` and the marker. `vnoc tree`, `show`, `check`, `missing`, and (by reading `index/tree.rs` and `extension/src/attentionView.ts`) what the tree's counts and Needs Attention do with it. Decides whether `vnoc tour ids` can leave exactly that |
+| 6 | git from Rust | `tours_checks git`: makes its own repositories in a temp folder. **[measure]** `rev-parse HEAD`; `status --porcelain -z -- <12 paths>`; `show <commit>:<path>` (median of 9). Then what each of these gives: a worktree; no commit yet; no `git` on the `PATH`; a commit that is not in the repository; `commit --only -m x -- a b` with another file staged (does it stay staged and out of the commit), with `b` untracked (is `add` needed first), with a pre-commit hook that fails |
+| 7 | size and changed-time | `tours_checks stat <dir>`: write a file, `stat`, write the same number of bytes again at once, `stat`: does the time differ, and what is its resolution. macOS here. **Windows and Linux:** TR5's recorded-check tests run in CI on all three |
 
-Commit: `tours TR0: seven checks, answers in docs/26-tours/README.md`.
+Commits: `tours TR0: seven checks (crates/vnoc/examples/tours_checks.rs)`, then `docs: 26: TR0's answers`.
 
 ## 3. Phase 1: the file and the commands
 
