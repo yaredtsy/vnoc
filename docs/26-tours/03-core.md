@@ -120,7 +120,7 @@ Then, for a stop that was found, `tours::check`:
 
 **[check]** TR0 (open check 7): that a size and a changed-time are enough to say "this file did not change". If a platform's clock is
 too coarse for that, the record also keeps a hash of each file, compared only when the size and time are equal and the time is within
-one tick of the check.
+one tick of the check. **Answered for macOS (README §7, TR0 check 7): enough there (the time changed in 100 of 100 back-to-back rewrites of the same size, 44 µs apart or more). Linux and Windows: TR5's tests in CI.**
 
 ## 4. The place (D17)
 
@@ -346,7 +346,7 @@ export interface TourStep {
 | `.vnoc/local/tours.lock` | ignored |
 | anything else | as today; and the answers in memory (§3, rung 1) of the tours that name that path are dropped |
 
-A batch with only tour paths starts no update and moves no revision. **[check]** TR0 says what such a path does today.
+A batch with only tour paths starts no update and moves no revision. **[check]** TR0 says what such a path does today. **Answered (README §7, TR0 check 2): today it starts an update (a walk, a read of `.vnoc/nodes`) that changes nothing, moves no revision and sends no `indexChanged`.**
 
 **`.vnoc/` above the opened folder** (open check 11): VS Code's watcher does not see it. While a tour is open, the extension asks
 `vnoc/tour` again every 2 seconds in that setup only; the core answers from the two files' lengths and times, so a tour that did not

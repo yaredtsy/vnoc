@@ -128,7 +128,7 @@ Read from the code on 2026-11-23. Nothing about tours exists in `crates/`, `exte
 - **A node is found by ID or by name already:** `Index::resolve_ref` with `NodeRef::Id` and `NodeRef::Location`. D6 is those two calls.
 - **Writing an ID without a doc is not a flow today.** `identity::attach` ends in `create_doc`. `vnoc tour ids` needs "make sure this
   node has an ID" split out of it: the same split 22's PG2 planned (`ensure_node`). **[check]** TR0: what a node folder with a
-  `node.toml` and no doc looks like in the tree, in the counts and to `vnoc check`.
+  `node.toml` and no doc looks like in the tree, in the counts and to `vnoc check`. **Answered in §7 (TR0 check 5): quiet; `ensure_node` as it is.**
 - **`Def.id` carries the ID text found in the code.** That is how the hash leaves marker lines out, so that writing an ID into a
   function on a tour does not make the tour stale ([`01`](01-on-disk.md) §7).
 - **`.vnoc/local/` holds `write.lock` and `trash/` today.** `userdata/layout.rs` is the only file that knows the layout;
@@ -174,6 +174,161 @@ number.
 | 9 | An agent's permission prompts: with the allow rules of ask 4, does Claude Code run a heredoc `vnoc tour add … <<'EOF'` without asking? Codex? | TR13 | whether the text goes through standard input or a temp file |
 | 10 | Does a second skill trigger on "walk me through …" more often than a section in the `vnoc` skill? | TR14 | D13 |
 | 11 | `.vnoc/` above the opened folder: a tour written, or a place moved, by the command is not seen by the watcher | TR15 | a 2-second re-read of the open tour |
+
+### Answered in TR0 (2026-11-23, macOS, Rust 1.94.1)
+
+Run on macOS 14 (Darwin 23.6, arm64, git 2.41.0) with `crates/vnoc/examples/tours_checks.rs` (commit `tours TR0: seven checks`; re-run with
+`cargo build -p vnoc --examples`, then `target/debug/examples/tours_checks <race|markers|git|stat>`). **Nothing under `crates/vnoc/src/`,
+`extension/`, `webview/` or `shared/` changed.** **Windows and Linux are not answered here:** the race (3) is TR3's test and the recorded
+check (7) is TR5's tests, both in CI on the three systems; check 6's git cases were run on macOS only. Open the by-hand half of check 1
+yourself (below).
+
+**1. An older V-NOC and the new folders. Verdict: D2 and D3 are additions, for the 0.3.1 command line.** The release archive
+`vnoc-cli-darwin-arm64.tar.gz` (`vnoc 0.3.1`, unpacked into a temp folder) on a copy of `crates/vnoc/tests/sample`, `git init` and
+committed, then with `.vnoc/tours/x.jsonl`, `.vnoc/local/tours/y.jsonl` and `.vnoc/local/tour-state/y.json` (one JSON line each) added.
+`status`, `tree` and `check` print the same as on a copy without them (compared line by line; `tree` differs only in the root's name); none names tours.
+`doc new --title … api/health.py::ping` then differed from the listing taken before (31 files, with sizes) by exactly: the new node
+folder (`node.toml`, the doc), `.vnoc/local/write.lock` (the attach takes it), and `api/health.py` (63 → 104 bytes: the `ID:` line).
+The three new files are byte for byte as they were (`shasum -c`). **Not done: the VS Code half (the released VSIX on the same copy: open,
+browse, attach a doc; nothing listed, `git status` shows nothing new). That is yours.**
+**Contradicts:** `README.md` §7 row 1, `01-on-disk.md` §11 and `06-build-order.md` TR7's tests ("`vnoc check` passes after"): "`vnoc check` passes". The
+sample is a fixture with two problems on purpose (one Missing node, one lost marker): `check` exits `1` with and without the three
+files, and with the same two findings. What holds is "the same output and the same exit code as without them". A test that wants a
+passing `check` needs a project with no problem (not the sample as it is).
+**Contradicts:** `README.md` §7 row 1 and `06-build-order.md` §2 row 1, by-hand half: "`git status` shows nothing new". `.vnoc/tours/x.jsonl`
+is a file to commit, so `git status` shows `?? .vnoc/tours/` for as long as it is not committed (in my copy it did); `local/` is
+ignored (`.vnoc/.gitignore`) and shows nothing. Read it as "nothing beyond the files you put there".
+
+**2. What a change under `.vnoc/local/` does today. Verdict: it starts an update and moves nothing; D12 has to filter the work, not the revision.**
+By reading (all `crates/vnoc/src/`): `server.rs:227` registers `files_changed`; `server.rs:318-326` hands **every** path, unfiltered, to
+`spawn_update(Work::Files(paths))`; `server.rs:113-122` spawns it and `server.rs:124-147` runs `refresh(…, Touched::Files(paths))` (a full
+`Touched::All` only until the first build has worked, `server.rs:135`). In `index/build.rs`: the walk of the project runs again
+(`build.rs:77-81`, hidden folders skipped, so `.vnoc/` is not in it: `scan.rs:2`); the path is mapped to a repo path but only files of the
+walk are ever outlined (`build.rs:85-103`), so a `.jsonl` or `.json` under `.vnoc/` starts **no driver call**; **`.vnoc/` is read again,
+every time, whatever path was named** (`build.rs:117-127`: `load_all`, which reads `nodes/*/*/node.toml` and the tags, `userdata/read.rs:42-86`,
+then `refresh_doc_texts`, a `stat` per doc) and the anchors of the records are looked up on disk (`build.rs:134-158`); `tours/` and
+`local/` are never read. The revision moves only when something read is different (`build.rs:161-178`: `set_records`, `set_on_disk`,
+`set_folders`, `set_truncated`, `set_outline`, `retain_only` compare, `index/mod.rs:418-458,534-542`; `set_doc_texts` is
+"not part of `changed`", `build.rs:165-166`), and `next_revision` is called only then (`build.rs:175`); `vnoc/indexChanged` is sent only
+`if changed || first` (`server.rs:151-153`). A write under `local/` or `tours/` changes nothing read, so: **no revision move, no
+`indexChanged`**, but each one costs a walk of the project and a read of `.vnoc/nodes`. Proved with a probe (a test in the style of
+`lifecycle.rs`: the real core and the real Python driver on a copy of the sample, `VNOC_LOG=vnoc=info`; **not committed**, `lifecycle.rs`
+is unchanged): after the first build (revision 1, announced once), `vnoc/filesChanged` for each of `.vnoc/local/tours/y.jsonl`,
+`.vnoc/local/tour-state/y.json` and `.vnoc/tours/x.jsonl`, then 2 s and a `ping`:
+
+| `filesChanged` for | notifications in 2 s | revision after | the core's log |
+|---|---|---|---|
+| `.vnoc/local/tours/y.jsonl` | none | 1 | `index: walked 12 files in 1 ms, read 0 with the driver, 7 doc files looked at and 0 read, 7 ms in all (nothing changed)` |
+| `.vnoc/local/tour-state/y.json` | none | 1 | the same, `1 ms in all` |
+| `.vnoc/tours/x.jsonl` | none | 1 | the same, `1 ms in all` |
+| *(the control)* `api/health.py`, a def added | `vnoc/indexChanged` 2 | 2 | `read 1 with the driver, … 2 ms in all` (no "nothing changed") |
+
+**Contradicts:** `README.md` §3 D12, *Why* ("Today every path under `.vnoc/**` can move the revision, which marks call trees stale and
+makes every page ask for the structure again"). A path under `.vnoc/tours/` or `.vnoc/local/` does not move it. What is true is that
+every path starts an update (a walk, a read of `.vnoc/nodes`, a `stat` per doc: 1 to 7 ms on the sample; it grows with the project, not measured here) that is wasted for
+a tour write. `03-core.md` §8's split ("A batch with only tour paths starts no update") is still the right design, for that cost; it is
+not needed to protect the revision. A batch that mixes a tour path with a code path behaves as today for the code path.
+
+**3. Appends under a lock file. Verdict (macOS): D10 holds.** `tours_checks race <dir>`: two copies of the program as writers, 200 times each:
+the `try_lock` loop of `userdata/lock.rs` on `tours.lock` (every 50 ms, 5 s at most), one whole line `{"w":n,"i":i}\n` in one `write_all` to
+`t.jsonl` opened for append, the lock released; a third as reader, reading the whole file in a loop (~80 reads in a run) until the writers
+end. Twelve runs: **400 lines every time, 400 distinct `(w, i)` (checked in the first two runs, printed in full), 0 broken lines in any read, 0 read
+errors, and in the two runs printed in full 0 reads that ended on a half line; the longest wait for the lock 50 to 55 ms** (one retry: it is a lock held for
+microseconds, so a wait is one 50 ms sleep). **Windows (where a lock on a file stops other processes reading it, which is why the lock
+is on `tours.lock` and not on the tour file): not run; TR3's race test in CI on Windows is the answer.** One number for TR3: a
+writer that finds the lock held sleeps 50 ms before it tries again (no single wait was longer than 55 ms in twelve runs).
+
+**4. Marker lines from `Def.id`. Verdict: "a line of the def's range that contains the ID text" finds exactly the marker line: Python and Bend.**
+`tours_checks markers <root> <driver>…` (the driver's own outlines, `source::excerpt` for the lines of `start.line ..= end.line`):
+
+| Run on | Defs | With an ID | Exactly one line holds it | A def and a def nested in it (found by the nested one's ID) |
+|---|---|---|---|---|
+| a copy of `tests/sample` (Python) | 32 | 2 (`Invoice` line 9, `OrderService.parse_order` line 11: both the `ID:` line of a docstring) | 2 of 2 | 1 pair: `OrderService` holds `parse_order`'s ID on line 11, one line: 1 of 1. `billing/charge.py`'s `FileID` is on line 1 of the file, once |
+| a copy of `extension/src/test/fixtures/bend` | 4 | 1 (`lib.bend::inc`, line 2) | 1 of 1: the `# ID:` comment **above** `def inc` (line 3) is inside the def's range | no nested def in the fixture: 0 pairs |
+| *(extra)* the two drivers' conformance inputs, copied | 6 and 5 | 1 and 1 | 1 of 1 each | 0 pairs |
+| *(extra)* a scratch Python file of mine, outside the repository: `outer` with `inner`, `Box` with a decorated `get` and `put` with `deep` inside, all with IDs | 6 | 4 | 4 of 4 | 3 pairs (`outer`/`inner`, `Box`/`deep`, `put`/`deep`): 3 of 3, each on the one marker line |
+
+No def had zero or two lines. Limits: **the Bend fixture has no nested def, so the nested rule is shown on Python only**; and in the scratch file a
+`# ID:` comment inside a method (`Box.get`) was **not** reported as `Def.id` by the Python driver, only the docstring form was (so the hash leaves out what
+the driver reports, which is what `ensure_node` writes). Also: the Bend `# ID:` comment on line 2 is inside the range of `def inc` (line 3), so a Bend def's range starts at or above
+that comment; whether it also takes the comment on line 1 (`# Adds one.`) was not looked at, and it decides whether such comments are in a Bend stop's hash.
+
+**5. A node folder with no doc. Verdict: it is a quiet state, so `vnoc tour ids` can leave exactly it with `ensure_node` as it is. One later case reports it (below).**
+On a copy of the sample: `.vnoc/nodes/5H/31ZBQ9NKY1E881TZWC2CJCN35H/` (`orders/service.py::OrderService.parse_order`) with its
+`why-we-parse-twice.md` deleted; `node.toml` and the `ID:` line in the code kept. With `target/debug/vnoc` (0.3.1):
+
+| | before | after |
+|---|---|---|
+| `vnoc show <ID>` / `show <name>` | `docs (1)` | `docs (0)`; the ID is still printed in the header line and `--json` still has `"node_id":"31ZB…"` |
+| `vnoc tree` | `service.py  1 class · 4 functions · 1 doc inside` | `service.py  1 class · 4 functions` (the class's `docs` is 0) |
+| `vnoc status` | `docs 7 docs on 6 nodes` | `docs 6 docs on 5 nodes` |
+| `vnoc check`, `vnoc missing` | 2 problems (the sample's own) | **the same output, byte for byte**; no new finding |
+
+By reading: `load_all` makes a record for every folder with a parseable `node.toml` and lists its `.md` files, possibly none
+(`userdata/read.rs:62-72,112-124`); the node is found like any other (`index/mod.rs:482-503`) and `Attached { docs: record.docs.len() }` is
+`0` (`mod.rs:499`), so the tree node gets `node_id: Some(id)`, `docs: 0`, `link: Marker` (`mod.rs:38-47`, `index/tree.rs:295-298`; also
+`tree.rs:212,278` for folders and files). **The screen treats it as undocumented:** the doc chip and the `ID in the code` chip are drawn
+only when `docs > 0` (`webview/src/node-card/footerChips.ts:36-41`, `webview/src/sidebar/hover.ts:23`). **Needs Attention** builds from
+`missing`, `problems`, `lost_markers` and `failed` (`extension/src/attentionView.ts:44-47,80-85`); a found node with no doc is in none of
+them, so it shows nothing. `doc new` on that node reuses its ID, writes no second marker and adds the doc (checked). Two cases do report it, later, and
+both are correct by the rules as they are: if the function is **deleted**, it is a Missing node with `0 docs`
+(`mod.rs:504-516`; `vnoc missing` says `its code is not found (ID …); 0 docs`, and `attentionView.ts:108` shows `0 docs` with the tooltip
+"Its docs are kept." (`:110`), which is not true of a node with none); if its `ID:` line is **removed**, it is an *ID lost* row (`mod.rs:222-265`: no
+doc filter), and `vnoc check` lists both. Both checked on copies.
+**Question for you:** a tour's stops will make doc-less nodes. When the code of one is deleted (a refactor), Needs Attention and `check` will list a
+node that has no docs to keep, and `check` exits `1`. Do you want that (it is accurate: an ID with nothing found), or should a Missing node with no
+docs be left out of `check` and Needs Attention (a change to V-NOC's existing rules, not in this folder's plan)? TR7 does not depend on the answer.
+
+**6. Git from Rust. Verdict: every call D19 needs works, in about 3 to 5 ms each; two call shapes in the plan are wrong (the two *Contradicts* below).**
+`tours_checks git` (own repositories in a temp folder; no global or system git config; a process started per call; git 2.41.0). **[measure]** 9 runs
+each, 12 files, 4 of them modified:
+
+| call | median | min | max |
+|---|---|---|---|
+| `git rev-parse HEAD` | 2.8 ms | 2.7 | 2.9 |
+| `git status --porcelain -z -- <12 paths>` | 4.8 ms | 3.9 | 6.5 |
+| `git show <commit>:<path>` | 3.3 ms | 3.2 | 4.1 |
+
+A pin (`status` then `rev-parse`) is about 8 ms. What git gave (exit code; stdout; stderr):
+
+| case | result |
+|---|---|
+| `rev-parse HEAD` in a linked worktree (`git worktree add`) | exit 0, the 40 hex |
+| `rev-parse HEAD`, no commit yet | **exit 128, stdout `HEAD`**, `fatal: ambiguous argument 'HEAD'…`. `rev-parse --verify -q HEAD` gives exit 1 and nothing |
+| `rev-parse HEAD`, `PATH` without git | `Command::output` fails to start: `No such file or directory (os error 2)` (no exit code) |
+| `rev-parse HEAD`, outside any repository | exit 128, `fatal: not a git repository (or any of the parent directories): .git` |
+| `show <40 hex that is not a commit>:a.txt` | exit 128, `fatal: path 'a.txt' exists on disk, but not in '0123…4567'` (a misleading sentence: use the exit code only) |
+| `show <HEAD>:a.txt` / `show <HEAD>:nope.txt` | exit 0 and the file / exit 128 `path 'nope.txt' does not exist in '<hex>'` |
+| **`show -- <HEAD>:a.txt`** | **exit 0, stdout empty, stderr empty**: after `--` the argument is a path, not an object; git shows nothing and says nothing |
+| `show --end-of-options <HEAD>:a.txt` | exit 0 and the file (on git 2.41.0; the version that added the flag was not tested here) |
+| `commit --only -m x -- a b`, a third file staged (new, or tracked and modified) | exit 0; the commit holds only `a` and `b`; the third file is **still staged** (`A  d.txt` / `M  c.txt`) |
+| the same, `b` untracked | **exit 1, nothing committed**, `error: pathspec 'b.txt' did not match any file(s) known to git`; after `git add -- b.txt`, exit 0 and `a`, `b` are in the commit. So `add -- <untracked>` first is needed |
+| the same, a `pre-commit` hook that prints and exits 1 | exit 1, the hook's stderr passes through (`hook says no`), **HEAD did not move**, `a` and `b` still modified, `c` still staged |
+| `status --porcelain -z -- <path>`: a modified file | exit 0, ` M m.txt\0` |
+| a staged file / an untracked file | `M  s.txt\0` / `?? u.txt\0` |
+| **an ignored file / a path that does not exist / a clean file** | **all three: exit 0 and nothing** |
+
+**Contradicts:** `01-on-disk.md` §10, "`git show` is given `<commit>:<path>` after `--`": `git show -- <commit>:<path>` prints **nothing and succeeds**, which would read as an empty file. The argument has
+no `--` and cannot be an option when the commit is 40 hex (it starts with a hex digit); `--end-of-options` before it also works. The paths of `status`, `add` and
+`commit` do go after `--` (all tried that way).
+**Contradicts:** `03-core.md` §5 (making a pin: `git status --porcelain -z -- <paths>` "all clean") and `01-on-disk.md` §8 step 2 and its table
+("a file of the tour is ignored by git … can never be pinned"): `status` with a path says **nothing** for an ignored file, so an ignored file reads as clean and the
+tour would be pinned, with a commit that does not hold that file (`show` would fail on it). Not run in the example, but tried by hand in a throwaway repository
+(git 2.41.0): `git status --porcelain -z --ignored -- <paths>` answers `!! ign.txt\0` for an ignored file (and still nothing for a missing path), and
+`git check-ignore -q -- <path>` exits 0 for an ignored one, 1 for the others. TR9 must use one of them, and say which in `pin.rs`.
+**Questions:** (a) a path of a stop that is deleted from the working tree and untracked, or one that does not exist at all, also reads as clean; the check
+before it (all stops fresh, `03-core.md` §2) has said *gone* first, so it should never arrive here: is that the rule, written down? (b) The oldest git V-NOC
+supports is not stated anywhere I read; `--end-of-options` came with git 2.24, I believe (not looked up, and not tried on an older git). (c) Not run: a merge or rebase in
+progress (02 §8 says `--commit` refuses), a submodule, a repository where `git` prints a hint. TR9's tests own those.
+
+**7. Size and changed-time. Verdict (macOS, APFS): size and time are enough here; nothing says they are enough elsewhere.**
+`tours_checks stat <dir>`: write 4096 bytes, read the length and the modified time (ns), write 4096 **other** bytes at once, read again;
+100 times, twice. **The size never changed (as it must not). The time changed 100 times of 100, in both runs; the smallest difference was
+48.3 µs and 43.9 µs, the largest 261.7 µs and 293.2 µs;** the times are not all multiples of 1 µs (the file system keeps nanoseconds). So on
+macOS two writes of the same size in a row are told apart by the time, and the fallback of `03-core.md` §3 (a hash of each file, when the
+time is within one tick of the check) is not needed here. **Not answered: Linux and Windows.** TR5's recorded-check tests run on all
+three in CI and decide whether that fallback is built. I do not guess them; the same program gives the number on each machine
+(`tours_checks stat <dir>`).
 
 ## 8. What later work stands on
 

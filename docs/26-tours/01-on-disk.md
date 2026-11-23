@@ -260,7 +260,7 @@ Left out of every hash, so that V-NOC's own writing never makes a tour stale:
 |---|---|
 | the line end (`\r\n` or `\n`) | a checkout on Windows must not change every hash. Lines are split as `source.rs` splits them |
 | white space at the end of a line | a formatter's or an editor's doing, never a change of meaning |
-| **a line that holds an ID marker**: a line containing the ID text of the def itself or of a def inside its lines (`Def.id`), or the file's `FileID` | `vnoc tour ids`, or attaching a doc, adds an `ID:` line inside the function. Without this rule, giving a tour IDs would mark that tour as changed. **[check]** TR0: that "contains the ID text" finds exactly the marker line in Python and in Bend |
+| **a line that holds an ID marker**: a line containing the ID text of the def itself or of a def inside its lines (`Def.id`), or the file's `FileID` | `vnoc tour ids`, or attaching a doc, adds an `ID:` line inside the function. Without this rule, giving a tour IDs would mark that tour as changed. **[check]** TR0: that "contains the ID text" finds exactly the marker line in Python and in Bend. **Answered (README §7, TR0 check 4): yes, one line each, in both; the nested rule shown on Python only** |
 
 Everything else counts: a comment, a renamed variable, a changed indent. A tour is text **about** these lines; it is honest to say they
 are not the same lines any more, and to let the reader judge (or, when the tour is pinned, to show the lines it was about: §8).
@@ -394,10 +394,10 @@ All of it is addition (`04-storage/04-growth-path.md` §2 and §3).
 
 | Addition | An older V-NOC does |
 |---|---|
-| `.vnoc/tours/` | does not read it (it reads `vnoc.toml`, `tags.toml`, `nodes/`). **[check]** TR0 with the released 0.3.1: nothing listed, nothing changed, `vnoc check` passes |
+| `.vnoc/tours/` | does not read it (it reads `vnoc.toml`, `tags.toml`, `nodes/`). **[check]** TR0 with the released 0.3.1: nothing listed, nothing changed, `vnoc check` passes. **Answered (README §7, TR0 check 1): the command line, yes; `check` exits 1 on the sample with or without them, so the claim is "same output". The VS Code half is by hand** |
 | `.vnoc/local/tours/`, `.vnoc/local/tour-state/`, `.vnoc/local/tours.lock` | nothing: `local/` is ignored by git and unknown names in it are not read |
 | `[tours]` in `vnoc.toml` | keeps it when it rewrites the file (`toml_edit`), reads nothing from it |
-| a node folder with `node.toml` and no doc (after `vnoc tour ids`) | **[check]** TR0. It is what a node looks like after its last doc file was deleted by hand, so it should already be a state every version reads |
+| a node folder with `node.toml` and no doc (after `vnoc tour ids`) | **[check]** TR0. It is what a node looks like after its last doc file was deleted by hand, so it should already be a state every version reads. **Answered (README §7, TR0 check 5): a quiet state in 0.3.1; it is reported only if its code is deleted (Missing, `0 docs`) or its `ID:` line is removed (ID lost)** |
 
 No `format = 2`. The newest fixture of `04-growth-path.md` §5 gets one project tour and one private tour with its state file, so
 "opening it changes no byte" keeps being checked.
