@@ -208,11 +208,11 @@ export class Commands {
     const explorer = Array.isArray(selected);
     if (arg instanceof vscode.Uri && folder && (explorer || vscode.window.activeTextEditor?.document.uri.toString() !== arg.toString())) {
       const hit = nodeAtPath(tree, path.relative(folder.uri.fsPath, arg.fsPath).split(path.sep).join("/"));
-      if (!hit) throw new Error("V-NOC has not read that file or folder (it is not Python, or it is ignored).");
+      if (!hit) throw new Error("V-NOC has not read that file or folder (it is not a file V-NOC reads, or it is ignored).");
       return hit;
     }
     const chain = await this.chainAtCursor();
-    if (chain.length === 0) throw new Error("Put the cursor in a Python file that V-NOC has read.");
+    if (chain.length === 0) throw new Error("Put the cursor in a file V-NOC reads.");
     return chain[chain.length - 1];
   }
 
