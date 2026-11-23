@@ -41,3 +41,9 @@ export const FOLLOW_MS = 1500;
 
 /** `at`: when the last reveal was judged (null: none was); `now`: the same clock. */
 export const followsReveal = (at: number | null, now: number): boolean => at !== null && now - at >= 0 && now - at <= FOLLOW_MS;
+
+/**
+ * The card the docs panel just opened for: the panel went from closed to open and a card is selected and drawn. The panel narrows the pane, so the card is judged again once the pane has its new size (the same
+ * `needsFraming` and the same `FOLLOW_MS` as a reveal: the panel opening is the change that is followed, a person's own resize of the panel later is not). Null when the panel did not just open, or nothing drawn is selected.
+ */
+export const docsOpenedFor = (wasOpen: boolean, isOpen: boolean, selected: string | null, isDrawn: (id: string) => boolean): string | null => (!wasOpen && isOpen && selected !== null && isDrawn(selected) ? selected : null);

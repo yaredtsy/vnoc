@@ -15,7 +15,7 @@ import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts"
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
-import { followsReveal, needsFraming } from "./revealFollow.ts";
+import { docsOpenedFor, followsReveal, needsFraming } from "./revealFollow.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { useSearchDim } from "./useSearchDim.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
@@ -29,7 +29,7 @@ const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.
  * Brings the requested node into view once it is drawn. Inside `<ReactFlow>` so it can reach the view. The camera moves only when it has to (`revealFollow.ts`): a card that is whole in the pane at a readable zoom is
  * selected and pulses and nothing else; any other is framed (fitView on the one card, up to 120 %). The canvas's own first fit comes first: a reveal is judged once it is done, so that what a reveal sees is the drawing
  * as the canvas framed it (Show Calls on a small drawing, and the cards that open under a card are then in view). The pane can change size just after (a pick from the search opens the docs tab beside the canvas):
- * the same test is made then, and a card still on its way is framed again for the new size.
+ * the same test is made then, and a card still on its way is framed again for the new size. The docs panel opening is such a change too: the card it opened for (the selected one) is judged for the narrower pane.
  */
 function CenterOn({ laid, context }: { laid: Layout; context: string }) {
   const { fitView } = useReactFlow();
@@ -81,6 +81,16 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
       stop();
     };
   }, [fitView, store, target, laid]);
+  // the docs panel opening (a card's 📄, the bar's ⓘ) narrows the pane: the selected card is judged again for it, as a reveal's card is, by the effect below
+  const docsOpen = useView((v) => v.docsOpen);
+  const wasOpen = useRef(docsOpen);
+  const drawn = useRef(laid);
+  drawn.current = laid;
+  useEffect(() => {
+    const card = docsOpenedFor(wasOpen.current, docsOpen, useSession.getState().contexts[context]?.selected ?? null, (id) => drawn.current.nodes.some((p) => p.id === id));
+    wasOpen.current = docsOpen;
+    if (card) judged.current = { id: card, at: performance.now(), moving: false };
+  }, [docsOpen, context]);
   useEffect(() => {
     const last = judged.current;
     if (!last || !followsReveal(last.at, performance.now())) return;
