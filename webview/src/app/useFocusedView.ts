@@ -4,11 +4,18 @@ import type { StructureResult } from "@vnoc/shared/messages.ts";
 import { callFacts, callsOf } from "@vnoc/shared/calls.ts";
 import { docSubject } from "@vnoc/shared/docSubject.ts";
 import { findNode } from "@vnoc/shared/tree.ts";
-import { type Layout, layout } from "@/canvas/layout.ts";
+import { CARD_W, type Layout, codeCardWidth, layout } from "@/canvas/layout.ts";
+import { codeCharWidth } from "@/node-card/charWidth.ts";
 import { useCalls } from "@/state/calls.ts";
 import { openOf } from "@vnoc/shared/session.ts";
 import { useSession } from "@/state/session.ts";
 import { useView } from "@/state/view.ts";
+
+/** How wide a card with its code open wants to be: its columns (`state/view.ts`) at the code font's character width. */
+function codeWidthOf(columns: Readonly<Record<string, number>>): (id: string) => number {
+  let charW: number | null = null; // measured when the first card with code asks
+  return (id) => (columns[id] === undefined ? CARD_W : codeCardWidth(columns[id], (charW ??= codeCharWidth())));
+}
 
 /** What the canvas page draws, derived from the session, the call trees and the view: the active context, the layout, and what the docs panel is about. */
 export function useFocusedView(structure: StructureResult | null) {
@@ -19,6 +26,7 @@ export function useFocusedView(structure: StructureResult | null) {
   const openList = useSession((s) => openOf(s.contexts[s.active]));
   const codeOpen = useView((v) => v.codeOpen);
   const sitesOpen = useView((v) => v.sitesOpen);
+  const columns = useView((v) => v.codeColumns);
   const trees = useCalls((s) => s.trees);
   const probes = useCalls((s) => s.probes);
   const states = useCalls((s) => s.states);
@@ -31,7 +39,7 @@ export function useFocusedView(structure: StructureResult | null) {
   const top = root && focusId ? findNode(root, focusId) ?? null : null;
   // what a function, class or call card knows about its calls: its tree, what the host is doing, or a probe's count (05 §3.1)
   const callsFor = useMemo(() => (key: string) => callsOf({ trees, probes, states }, key), [trees, probes, states]);
-  const laid = useMemo<Layout | null>(() => (root ? layout(top ?? root, expanded, codeOpen, callsFor, sitesOpen, root) : null), [root, expanded, top, codeOpen, callsFor, sitesOpen]);
+  const laid = useMemo<Layout | null>(() => (root ? layout(top ?? root, expanded, codeOpen, callsFor, sitesOpen, root, codeWidthOf(columns)) : null), [root, expanded, top, codeOpen, callsFor, sitesOpen, columns]);
   // the doc panel follows the active context's selection (a selected call: its callee, and who calls it), else its focused node
   const subject = useMemo(() => (root ? docSubject({ contexts, active }, root, (call) => callFacts(trees, call)) : { node: null, calledBy: null }), [root, contexts, active, trees]);
 

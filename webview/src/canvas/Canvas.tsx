@@ -23,7 +23,7 @@ import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
 const nodeTypes = { card: NodeCard };
 
 // the size is known from the layout, so a card off screen can be left out of the page before it was ever measured (`onlyRenderVisibleElements`)
-const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p, width: CARD_W, height: cardHeight(p) }));
+const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p, width: p.width, height: cardHeight(p) }));
 
 /**
  * Brings the requested node into view once it is drawn. Inside `<ReactFlow>` so it can reach the view. The camera moves only when it has to (`revealFollow.ts`): a card that is whole in the pane at a readable zoom is
@@ -103,7 +103,7 @@ function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | n
   const last = useRef("");
   useEffect(() => {
     const timer = setTimeout(() => {
-      const visible = new Set(onScreenIds(laid.nodes.map((p) => ({ id: p.id, x: p.x, y: p.y, h: cardHeight(p) })), { x, y, zoom }, { width, height }));
+      const visible = new Set(onScreenIds(laid.nodes.map((p) => ({ id: p.id, x: p.x, y: p.y, w: p.width, h: cardHeight(p) })), { x, y, zoom }, { width, height }));
       const report = cardsReport(laid.nodes, visible, selected);
       const same = `${report.keys.join("\n")}\n\n${report.onScreen.join("\n")}`;
       if (same === last.current) return;

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { dedent } from "@vnoc/shared/indent.ts";
-import type { Placed } from "../canvas/layout.ts";
+import { type Placed, codeColumns } from "../canvas/layout.ts";
 import { post, request } from "../host.ts";
 import { useDirtyFiles } from "../state/dirty.ts";
 import { type CodeFacts, type DraftAction, baselineOf, codeMark, draftFor, editBlock, isWritable } from "../state/draftRules.ts";
 import { fileStateChanged, setBaseline, useDrafts } from "../state/drafts.ts";
 import { cardRef, copyDraft, openInEditor, reloadDraft, revealCard, saveDraft, saveFile, showDiff, typeIn } from "../state/edit.ts";
-import { clearCodeFocus, useView } from "../state/view.ts";
+import { clearCodeFocus, setCodeColumns, useView } from "../state/view.ts";
 import { CodeEditor } from "./CodeEditor.tsx";
 import { Elsewhere, SaveFirst, SaveNotice, StateLine, Waiting } from "./DraftLines.tsx";
 import { editStateOf } from "./editState.ts";
@@ -54,6 +54,13 @@ export function NodeCode({ node }: { node: Placed }) {
       live = false;
     };
   }, [node.id, node.key, node.path, node.range, dirty, hasDraft]); // a new range (the code above moved, or the index changed) reads the code again, and so does a save or a revert of the file, and a Discard
+  // the card is as wide as the code it read (not as the draft types: the width would follow each keystroke)
+  const read = state && "text" in state ? dedent(state.text, state.prefix) : undefined;
+  const first = node.line ?? 1;
+  useEffect(() => {
+    if (read !== undefined) setCodeColumns(node.id, codeColumns(read, first));
+  }, [node.id, read, first]);
+  useEffect(() => () => setCodeColumns(node.id, null), [node.id]);
   useEffect(() => () => setBaseline(node.id, null), [node.id]); // a card that hides its code (or leaves the page) has no baseline to start a draft from
   useEffect(() => {
     fileStateChanged(node.id, dirty); // a "written, not saved" line has nothing left to wait for once the file is saved or reverted

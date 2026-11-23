@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type Calls, callId } from "@vnoc/shared/calls.ts";
 import type { CallMark, CallSite, CallTreeNode, Kind, TreeNode } from "@vnoc/shared/messages.ts";
-import { CARD_H, CODE_H, COL_W, FOOTER_H, HEADER_H, LINE_H, MAX_CARDS, META_H, ROW_H, SITE_LIST_PAD, SITE_ROW_H, canOpen, cardHeight, layout, siteListHeight } from "./layout.ts";
+import { CARD_H, CARD_W, CODE_H, CODE_W_MAX, COL_W, GAP_W, FOOTER_H, HEADER_H, LINE_H, MAX_CARDS, META_H, ROW_H, SITE_LIST_PAD, SITE_ROW_H, canOpen, cardHeight, codeCardWidth, codeColumns, layout, siteListHeight } from "./layout.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, node_id: null, docs: 0, link: null, children });
 
@@ -399,4 +399,48 @@ test("the call cards of an open function are part of its family: they count agai
   const over = layout(project, new Set(["a.py", "f"]), new Set(), callsOf(198));
   assert.deepEqual([over.nodes.length, over.total], [3, 201], "f is drawn closed, with its +198");
   assert.deepEqual([over.nodes.at(-1)!.collapsed, over.nodes.at(-1)!.plus], [true, 198]);
+});
+
+// a card with its code open is as wide as its longest line (the user's decision for Bend's long lines), 300 to 560 px
+const CHAR_W = 6.6;
+const widthFor = (text: string, firstLine = 1): number => codeCardWidth(codeColumns(text, firstLine), CHAR_W);
+
+test("a short function keeps the plain card's width", () => {
+  assert.equal(widthFor("def f(x):\n    return x + 1"), CARD_W);
+});
+
+test("a 52-character line widens the card; a 200-character line stops at the most", () => {
+  const w52 = widthFor(`def f(x):\n${"x".repeat(52)}`);
+  assert.ok(w52 > CARD_W && w52 < CODE_W_MAX, `${w52}`);
+  assert.equal(widthFor(`def f(x):\n    ${"x".repeat(196)}`), CODE_W_MAX);
+});
+
+test("the line numbers count: a file's thousands of lines make the gutter wider, a tab is four characters", () => {
+  assert.equal(codeColumns("a", 1), 4 + 1);
+  assert.equal(codeColumns("a", 12_345), 5 + 1);
+  assert.equal(codeColumns("\ta", 1), 4 + 5);
+});
+
+test("a card draws as wide as its code wants only when its code is open; what hangs from it starts where it ends", () => {
+  const fn = (id: string): TreeNode => ({ ...n(id, "function"), range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } } });
+  const file = n("a.py", "file", [fn("f"), fn("g")]);
+  const wide = (id: string) => (id === "f" ? 480 : id === "a.py" ? 9999 : 20);
+  const closed = layout(file, new Set(), new Set(), undefined, undefined, file, wide);
+  assert.deepEqual(closed.nodes.map((p) => p.width), [CARD_W, CARD_W, CARD_W], "no code open: every card is plain");
+  const open = layout(file, new Set(), new Set(["f", "a.py"]), undefined, undefined, file, wide);
+  const [root, f, g] = open.nodes;
+  assert.deepEqual([root.width, f.width, g.width], [CODE_W_MAX, 480, CARD_W], "the file asks for too much (the limit), a function for 480, one with no code is plain");
+  assert.deepEqual([f.x, g.x], [CODE_W_MAX + GAP_W, CODE_W_MAX + GAP_W], "both start where the file card ends");
+  assert.equal(cardHeight(f), CARD_H + CODE_H);
+});
+
+test("a wide card moves its calls to the right as well", () => {
+  const caller: TreeNode = { ...n("f", "function"), range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } } };
+  const file = n("a.py", "file", [caller]);
+  const callsOf = (id: string): Calls => (id === "f" ? { state: "known", children: [{ key: null, kind: "function", name: "g", qualname: "g", path: null, marks: [], call_count: 1, call_sites: [], children: [] }] } : { state: "unknown" });
+  const l = layout(file, new Set(["a.py", "f"]), new Set(["f"]), callsOf, undefined, file, () => 450);
+  const [, f, g] = l.nodes;
+  assert.equal(f.width, 450);
+  assert.equal(g.role, "call");
+  assert.equal(g.x, f.x + 450 + GAP_W);
 });

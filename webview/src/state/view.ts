@@ -23,6 +23,8 @@ interface View {
   codeOpen: ReadonlySet<string>;
   /** call cards whose list of sites is open (`N more ▾`); not saved */
   sitesOpen: ReadonlySet<string>;
+  /** for each card that shows its code, how many characters wide the code view must be (`codeColumns`): the layout makes the card as wide; not saved */
+  codeColumns: Readonly<Record<string, number>>;
   /** the canvas's doc panel, and its width */
   docsOpen: boolean;
   docWidth: number;
@@ -51,6 +53,7 @@ const saved = vscode.getState<Saved>() ?? {};
 export const useView = create<View>(() => ({
   codeOpen: new Set(saved.codeOpen),
   sitesOpen: new Set(),
+  codeColumns: {},
   docsOpen: saved.docsOpen ?? false,
   docWidth: saved.docWidth ?? 380,
   minimap: saved.minimap ?? false,
@@ -92,6 +95,15 @@ export function setCodeOpen(id: string, open: boolean): void {
     if (open) next.add(id);
     else next.delete(id);
     return { codeOpen: next };
+  });
+}
+
+/** The code of this card was read: its view must be this many characters wide (null: it has none any more). Said only when it changed, so no layout is made for nothing. */
+export function setCodeColumns(id: string, columns: number | null): void {
+  useView.setState(({ codeColumns }) => {
+    if ((codeColumns[id] ?? null) === columns) return {};
+    const { [id]: _, ...rest } = codeColumns;
+    return { codeColumns: columns === null ? rest : { ...rest, [id]: columns } };
   });
 }
 

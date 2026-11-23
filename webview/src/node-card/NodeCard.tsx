@@ -4,7 +4,7 @@ import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { memo } from "react";
 
 import { cn } from "@/lib/utils.ts";
-import { CARD_W, type Placed, cardHeight, canOpen } from "../canvas/layout.ts";
+import { type Placed, cardHeight, canOpen } from "../canvas/layout.ts";
 import { dispatch } from "../state/session.ts";
 import { cardLabel } from "./labels.ts";
 import { KINDS } from "./kinds.ts";
@@ -25,7 +25,7 @@ export const NodeCard = memo(function NodeCard({ data }: NodeProps<Node<Placed>>
     <div
       className={cn("node-card", data.role === "call" && "call", data.call?.look.unknown && "opacity-60", data.syntaxError && "broken", selected && "selected", highlighted && "highlighted", cursor && "cursor", revealed && "revealed", searchedOut && "searched-out")}
       // the stripe says what the node IS, never a state
-      style={{ width: CARD_W, height: cardHeight(data), borderLeftColor: KINDS[data.kind].color }}
+      style={{ width: data.width, height: cardHeight(data), borderLeftColor: KINDS[data.kind].color }}
       aria-selected={selected}
       aria-label={cardLabel({ role: data.role, kind: data.kind, name: data.name, docs: data.docs, lines: data.call?.lines ?? [], unknown: data.call?.look.unknown === true, canOpen: canOpen(data), collapsed: data.collapsed, syntaxError: data.syntaxError }, { selected, cursor })}
       // a right-click selects the card first, so the ring shows what the menu is about (as in the Explorer); selecting never opens anything
