@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "vnoc-domain"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "serde",
@@ -2366,14 +2366,14 @@ dependencies = [
 
 [[package]]
 name = "vnoc-driver-protocol"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "vnoc-driver-python"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "analyzer-core",
  "anyhow",

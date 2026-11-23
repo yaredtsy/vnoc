@@ -25,6 +25,7 @@ interface Api {
   chips(): { id: string; label: string; active: boolean }[];
   renderedPosts(): { context: string; visible: number; hidden: number; callCards: number; chevrons: number }[];
   callProbes(): Record<string, { revision: number; count: number }>;
+  docsShown(): { pinned: string | null; node: string | null; doc: string | null }[];
 }
 let api: Api;
 
@@ -266,6 +267,33 @@ suite("show calls", () => {
     await vscode.commands.executeCommand("vnoc.showCalls", file);
     await sleep(500);
     assert.strictEqual(api.callTrees()[file.id], undefined);
+  });
+
+  test("Show Docs from the editor, with a call card selected on the canvas: the docs tab shows the function at the cursor, not nothing", async () => {
+    const docsTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith("vnoc.docs"));
+    try {
+      await vscode.commands.executeCommand("vnoc.showCalls", main);
+      await until("the canvas tab", () => canvasTabs().length === 1);
+      await until("main's tree", () => api.callTrees()[main.id] !== undefined, 30_000);
+      const [leaf] = callNodesIn(main.id, api.callTrees()[main.id].root);
+      api.dispatch({ type: "select", id: leaf.id });
+      await until("the call card selected", () => api.session().contexts.main.selected === leaf.id);
+
+      // the cursor in `twice`, in the editor; Show Docs from the editor's menu passes the editor's own file
+      const file = vscode.Uri.file(path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, "calls_lib.py"));
+      const editor = await vscode.window.showTextDocument(file);
+      editor.selection = new vscode.Selection(5, 4, 5, 4); // `leaf()` inside `twice`
+      await until("the session's cursor to be `twice`", () => api.session().cursor === twice.id);
+      const from = api.docsShown().length;
+      await vscode.commands.executeCommand("vnoc.showDocs", file);
+      await until("the docs tab", () => docsTabs().length === 1);
+      await until("the tab to show the function at the cursor", () => api.docsShown().slice(from).some((d) => d.node === twice.id), 20_000);
+      assert.deepStrictEqual(api.docsShown().at(-1), { pinned: null, node: twice.id, doc: api.docsShown().at(-1)!.doc }, "unpinned, on the function at the cursor");
+    } finally {
+      await vscode.window.tabGroups.close(docsTabs());
+      api.dispatch({ type: "select", id: null });
+      api.dispatch({ type: "collapseAll" });
+    }
   });
 
   test("no V-NOC page crashed", () => {

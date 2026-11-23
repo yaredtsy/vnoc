@@ -82,7 +82,7 @@ One prompt at a time; the next only after the last one reports.
 | **B4b** | packaging and CI with no language named: `package.mjs`, `install.sh`, the CLI archive, `publish.yml`, `package.yml`, `ci.yml`, dependabot loop over `drivers/*/`; third-party notices; the texts that still say one driver | `scripts`, `.github`, docs |
 | **B4c** | the conformance test on every driver (06 §6), each driver's `conformance/`; the byte-order-mark fix in both drivers' `Lines` | `crates/vnoc/tests`, `drivers/*` |
 | **B5** | continue a cut node from its context: an opaque `context` on `CallNode`, a `from` on `CallTreeParams` (both additive); the driver answers it with `Session::graph_from`; the core sends it when a cut node is expanded | protocol, `drivers/bend`, `crates/vnoc`, webview |
-| **B6** | by-hand check on a real Bend project in VS Code and with the CLI; README (languages), CHANGELOG; the release bump list gains `drivers/bend/Cargo.toml` | |
+| **B6** | by-hand check on a real Bend project in VS Code and with the CLI; README (languages), CHANGELOG; the release bump list gains `drivers/bend/Cargo.toml` | README and CHANGELOG done in 0.3.1 (`release: 0.3.1`); the by-hand check is not part of this commit |
 | **B7** | re-pin to `bend-v0.1.0` once tagged; release | done: pinned to `bend-v0.1.0` (`cdc4f42`) |
 
 ### As built in B1 (dc38b01 – 355ac66, reviewed 2026-11-22)
@@ -195,6 +195,7 @@ in one place.
 **The rule: a language is a folder and a binary, and the driver says the rest about itself.** `drivers/<lang>/` builds `vnoc-driver-<lang>`;
 its `initialize` answer gives `name`, `files.extensions`, `capabilities`. No other file in the repo lists languages or extensions. The one
 exception is cosmetic and optional: the canvas colour table (a missing entry is plain text, never a bug).
+The other exception is `activationEvents` in `extension/package.json`: one `workspaceContains:**/*.<ext>` line per claimed extension, the one place a language is listed by hand, because VS Code reads activation events before any code runs and so cannot ask the core; `driver_conformance.rs` fails with the line to add when one is missing.
 
 | Part | How |
 |---|---|

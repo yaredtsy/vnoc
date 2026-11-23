@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.1
+
+Bend, as a second language, and fixes to the canvas.
+
+### Bend
+
+- **V-NOC reads Bend (`.bend`) projects as well as Python**: the tree, the canvas, IDs and docs, and call trees.
+- A project can hold **several languages**. Each language is its own driver program, found beside `vnoc`, and `vnoc status` lists each driver.
+
+### Fixes
+
+- A call card finds its function in the whole project, not only in the code you are looking at.
+- A pick from the search ends on the picked card, every time.
+- A reveal moves the camera only when it has to.
+- Show Docs from the editor shows the function at the cursor, also when a call card is selected on the canvas.
+- The right-click menus are there as soon as a folder with Python or Bend files is opened; the V-NOC view does not have to be opened first.
+- Markdown tables in the docs panel have borders and padding.
+- A file that is not UTF-8 is read now (the bad bytes show as �), instead of failing.
+- The Marketplace badge on the README page is fixed.
+
 ## 0.3.0
 
 Editing on the canvas, search, and a command line for people and coding agents.

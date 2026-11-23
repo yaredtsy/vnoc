@@ -29,7 +29,7 @@ export function States({ body, message }: { body: Exclude<SidebarBody, "ready">;
     case "empty":
       return (
         <Centered>
-          <p className="text-muted-foreground">No Python files here yet.</p>
+          <p className="text-muted-foreground">No files V-NOC reads here yet.</p>
         </Centered>
       );
     case "error":

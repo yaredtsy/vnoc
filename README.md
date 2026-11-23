@@ -5,7 +5,7 @@
 <p align="center">
   <b>Browse your code as a graph in VS Code.</b><br />
   See what a function calls. Attach docs that survive renames.<br />
-  <sub>Python today · JavaScript/TypeScript, Rust and more on the way</sub>
+  <sub>Python and Bend today · JavaScript/TypeScript and Rust coming soon</sub>
 </p>
 
 <p align="center">
@@ -89,7 +89,13 @@ V-NOC is a **pre-release**. In VS Code's Extensions view, search **V-NOC** and c
 | Cursor, Windsurf, VSCodium | [Open VSX](https://open-vsx.org/extension/vnoc/vnoc) |
 | Offline / by hand | the `vnoc-<system>.vsix` files on the [releases page](https://github.com/yaredtsy/vnoc/releases) |
 
-**Languages:** Python is the first. JavaScript/TypeScript, Rust and more are coming: see [What's coming](#whats-coming).<br />
+| Language | |
+|---|---|
+| Python | ✅ Supported |
+| Bend | ✅ Supported |
+| JavaScript / TypeScript | Coming soon |
+| Rust | Coming soon |
+
 **Platforms:** macOS (Apple silicon and Intel), Linux x64 and Windows x64.
 
 ### The `vnoc` command
@@ -104,10 +110,10 @@ the copy inside the extension (the way VS Code installs `code`), and tells you i
 `~/.local/bin`:
 
 ```sh
-curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.0/install.sh | sh
+curl -fsSL https://github.com/yaredtsy/vnoc/releases/download/v0.3.1/install.sh | sh
 ```
 
-It runs on macOS (Apple silicon and Intel) and Linux x64. `VNOC_INSTALL_DIR=<folder>` installs somewhere else, and `VNOC_VERSION=0.3.0` names
+It runs on macOS (Apple silicon and Intel) and Linux x64. `VNOC_INSTALL_DIR=<folder>` installs somewhere else, and `VNOC_VERSION=0.3.1` names
 the release when you run the copy from a checkout. It needs `curl` or `wget`, and `tar`. It does not use `sudo`.
 
 **From a release file.** Each release has `vnoc-cli-<system>.tar.gz` (`vnoc-cli-win32-x64.zip` on Windows) with `vnoc`, the language drivers
@@ -123,13 +129,13 @@ gh attestation verify vnoc-cli-linux-x64.tar.gz -R yaredtsy/vnoc
 
 **In VS Code**
 
-1. Open a project (Python, for now).
+1. Open a project in a supported language (see Languages above).
 2. Click the **V-NOC** icon in the Activity Bar.
 3. Click a function to see it, then **Show Calls** to see what it calls.
 4. Right-click anything and choose **Add Doc…** to write a note about it.
 5. Press `⊞` in the view's title (or run **V-NOC: Open Canvas**) to see the code as a graph.
 
-**In a terminal**, in the folder of a Python project:
+**In a terminal**, in the folder of a project:
 
 ```
 vnoc status
@@ -350,19 +356,20 @@ with any tool. The layout is described in [docs/04-storage](docs/04-storage/READ
 | `error: no driver found` | The language drivers, the `vnoc-driver-*` files, must sit beside `vnoc`: it runs every one it finds there. Copy them together, or name them: `--driver <path>` (repeat it for more), or `VNOC_DRIVERS` (paths separated as `PATH` is) or `VNOC_DRIVER` (one path). `error: no driver started` lists each driver and why it did not start; `vnoc status` shows a driver that failed on a line of its own. |
 | An **ID lost** warning, or `lost marker` in `vnoc check` | The `ID:` line of a function was deleted. **Write ID** in Needs Attention, or `vnoc repair`, puts it back. |
 | Bare `vnoc` prints help | That is what it does in a terminal. Pick a command from the list: `vnoc status` is the first one to run. |
-| The extension shows nothing | Open a folder that has Python files. **V-NOC: Show Log** says what the core is doing, and **V-NOC: Report Issue…** fills in your versions. |
+| The extension shows nothing | Open a folder with files in a supported language. **V-NOC: Show Log** says what the core is doing, and **V-NOC: Report Issue…** fills in your versions. |
 | The first `vnoc` after an install takes about a second | On macOS the system checks a program it has not run before: about 0.6 s, once for each new copy of `vnoc` and the driver. It is not V-NOC's index. |
 | `vnoc` came from both the install script and VS Code | The last one to run wins `~/.local/bin/vnoc`. **Uninstall `vnoc` Command from PATH** in VS Code refuses a copy the script made: remove `~/.local/bin/vnoc` and `~/.local/bin/vnoc-driver-*` by hand. |
 
 ## What's coming
 
-V-NOC is early. Three releases are out.
+V-NOC is early. Four releases are out.
 
 | Version | Theme | Status |
 |---|---|---|
 | 0.1 | The docs loop | ✅ Released |
 | 0.2 | Calls | ✅ Released |
-| **0.3** | **Editing on the canvas, search, and the command line for agents** | ✅ **Released** |
+| 0.3 | Editing on the canvas, search, and the command line for agents | ✅ Released |
+| **0.3.1** | **Bend, and canvas fixes** | ✅ **Released** |
 | 0.4 | Docs that survive without markers | 💭 Planned |
 | 0.5 and on | Polish: more editor features from the core, doc freshness | 💭 Planned |
 | 1.0 | Hardening: big repositories, remote machines, the driver protocol frozen | 💭 Planned |
@@ -371,7 +378,7 @@ V-NOC is early. Three releases are out.
   <tr>
     <td width="50%" valign="top">
       <h3>🌐 More languages</h3>
-      Python is the first. JavaScript/TypeScript, Rust and more are next. Each language is one driver program, so adding one does not
+      Python and Bend work today. JavaScript/TypeScript and Rust are coming soon. Each language is one driver program, so adding one does not
       touch the rest of V-NOC.
     </td>
     <td width="50%" valign="top">
@@ -400,7 +407,7 @@ The plans are in [docs/02-mvp-and-releases.md](docs/02-mvp-and-releases.md) and 
 flowchart LR
     ext["<b>VS Code extension</b><br/>TypeScript<br/>side bar + canvas (React webviews)"]
     core["<b>core</b><br/>Rust<br/>the index, IDs, .vnoc/ files, search,<br/>and the vnoc command line"]
-    drv["<b>language driver</b><br/>Rust · Python today<br/>outline, IDs to write, call trees"]
+    drv["<b>language driver</b><br/>Rust · Python and Bend today<br/>outline, IDs to write, call trees"]
     ext -- "JSON-RPC over stdio" --> core
     core -- "JSON-RPC over stdio" --> drv
 ```

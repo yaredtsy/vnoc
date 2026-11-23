@@ -9,9 +9,12 @@ import { IconPin, IconPinFilled } from "@tabler/icons-react";
 
 import { Toggle } from "@/components/ui/toggle.tsx";
 import { TooltipProvider } from "@/components/ui/tooltip.tsx";
+import { callFacts } from "@vnoc/shared/calls.ts";
+import { docsNode, firstSource, followSource } from "@vnoc/shared/docsFollow.ts";
 import type { StructureResult } from "@vnoc/shared/messages.ts";
 import { MISSING_PIN, docTarget, findNode, missingAsNode, pathTo } from "@vnoc/shared/tree.ts";
 import { on, post, request } from "../host.ts";
+import { useCalls } from "../state/calls.ts"; // a selected call card is its callee: the tab needs the trees the host holds, as the canvas does
 import "../state/draftFeed.ts"; // the docs tab tells the host its drafts, and takes the host's copy when it starts with none (docs/17-edit-in-canvas.md §8, 9.6)
 import { useDrafts } from "../state/drafts.ts";
 import { useSession } from "../state/session.ts";
@@ -23,10 +26,13 @@ export function DocsApp() {
   const cursor = useSession((s) => s.cursor);
   const selected = useSession((s) => s.contexts[s.active].selected);
 
-  // Which of the two moved last. Kept by comparing during the render (React's way to derive state from changing values, no effect needed).
-  const [seen, setSeen] = useState({ cursor, selected, source: selected && !cursor ? ("selection" as const) : ("cursor" as const) });
+  const trees = useCalls((s) => s.trees);
+
+  // Which of the two moved last. Kept by comparing during the render (React's way to derive state from changing values, no effect needed). Both moving in one snapshot (a new tab's first):
+  // the cursor, when there is one.
+  const [seen, setSeen] = useState({ cursor, selected, source: firstSource({ cursor, selected }) });
   if (seen.cursor !== cursor || seen.selected !== selected) {
-    setSeen({ cursor, selected, source: seen.selected !== selected ? "selection" : "cursor" });
+    setSeen({ cursor, selected, source: followSource(seen, { cursor, selected }) });
   }
 
   // the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; saved with the tab by state/view.ts)
@@ -62,16 +68,15 @@ export function DocsApp() {
     return () => stops.forEach((stop) => stop());
   }, [refresh]);
 
-  // the pin; else what moved last. The cursor node is widened to what has docs (a folder is never the answer there: the tab follows the code).
-  const followed = useMemo(() => {
-    if (!structure) return null;
-    if (seen.source === "selection" && seen.selected) return findNode(structure.root, seen.selected) ?? null;
-    if (!seen.cursor) return null;
-    return docTarget((pathTo(structure.root, seen.cursor) ?? []).filter((n) => n.kind !== "folder")) ?? null;
-  }, [structure, seen]);
+  // the cursor node, widened to what has docs (a folder is never the answer there: the tab follows the code)
+  const cursorNode = useMemo(() => (structure && seen.cursor ? docTarget((pathTo(structure.root, seen.cursor) ?? []).filter((n) => n.kind !== "folder")) ?? null : null), [structure, seen.cursor]);
   // a Missing node is not in the tree: its pin carries the permanent ID, and the structure lists it
-  const pinnedNode = !structure || !pinned ? null : pinned.startsWith(MISSING_PIN) ? ((m) => (m ? missingAsNode(m) : null))(structure.missing.find((m) => MISSING_PIN + m.id === pinned)) : findNode(structure.root, pinned);
-  const node = pinnedNode ?? followed;
+  const pinnedNode = !structure || !pinned ? null : pinned.startsWith(MISSING_PIN) ? ((m) => (m ? missingAsNode(m) : null))(structure.missing.find((m) => MISSING_PIN + m.id === pinned)) : findNode(structure.root, pinned) ?? null;
+  // the pin; else what moved last (a selected call card is its callee; where that gives nothing, the cursor's node)
+  const node = useMemo(
+    () => (structure ? docsNode({ pinned: pinnedNode, source: seen.source, selected: seen.selected, cursorNode, root: structure.root, facts: (call) => callFacts(trees, call) }) : null),
+    [structure, pinnedNode, seen.source, seen.selected, cursorNode, trees],
+  );
   // what the tab shows, for the extension's test suite
   const [shownDoc, setShownDoc] = useState<string | null>(null);
   const nodeShown = node?.id ?? null;
