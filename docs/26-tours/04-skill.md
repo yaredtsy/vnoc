@@ -295,7 +295,7 @@ $1.17, 1086 s. 6 yes, 3 judged, 4 no, 1 capped (an API stall: `api_retry` waited
   refusal to fix, or Stop.` And: `For a tour across files, find the route first, then start with --plan <the nodes in reading order>
   and fill it with add, in that order` (so nobody reorders with `--replace`).
 - *no format change for order:* a tour has no "insert before s3"; `plan` covers it. If one is wanted later it is an addition (an
-  `after` key on `stop`, or a `move` record), not a change: older readers ignore an unknown key (01 §11).
+  `after` key on `stop`, or a `move` record), not a change: an unknown `type` is skipped (01 §10), and serde reads past an unknown key (TR14d checks that with a test before the freeze).
 - *the refusal text of Stop stays:* the agent obeyed it once it saw it.
 - *the harness:* an `add` counts against Stop only if it was sent after the agent saw the refusal (a later assistant message); t4 does
   not need "as it goes" for reading (a cross-file question reads first) but needs one `add` per call and no text between stops.
