@@ -133,7 +133,13 @@ If `vnoc` is not found, tell the user (VS Code: "V-NOC: Install `vnoc` Command i
 A test-only environment variable, `VNOC_TOUR_ID_SUFFIX`, makes `start` use the given suffix (only when it is a valid suffix; never
 documented outside the test code), and `tests/guide.rs` sets it. The guide's tour is then `orders-<suffix>` in its text and its run.
 
-About 3.4 KB. What it leaves to the guide: the budgets in numbers, `--detail`, `--plan`, `--to`, `--under`, `drop`, `resume`, the
+**As built (TR13):** `skills/vnoc-tour/SKILL.md` is 4778 bytes (not 3.4 KB: the text was about 4.2 KB before the changes); the trial
+measures what it costs. *Existing tours* says `--replace <stop> --body-file -` (add needs the text). `guide/tour.md` is 275 lines,
+15 KB: the one topic allowed 300 lines (the others keep 60), because every section has a run. `tests/guide.rs` learned heredocs
+(`<<'EOF'` … `EOF` belong to the command), typed placeholders (`<stop>` → `s1`, `<block>` → `s1.b1`, `<n>` → `1`) and bare group
+names (`vnoc tour`, parse only).
+
+About 3.4 KB (the estimate; see above). What it leaves to the guide: the budgets in numbers, `--detail`, `--plan`, `--to`, `--under`, `drop`, `resume`, the
 JSON document, `--json`.
 
 ## 4. `vnoc guide tour`
@@ -169,6 +175,13 @@ project, so each command below is real: the examples are a tour of `orders/` in 
 | `vnoc agent remove` | both |
 | `vnoc skill` prints the skill | `vnoc skill` the first, `vnoc skill tour` the second |
 
+**As built (TR13).** Claude Code: `Bash(vnoc tour <command> *)` for the twelve. Codex: `prefix_rule(pattern = ["vnoc", "tour",
+["start", "add", "finish", "plan", "drop", "resume", "list", "show", "check", "where", "route", "export"]], decision = "allow")`.
+The consent question says what it allows: *Let Claude Code run V-NOC's read commands, and the commands that write a tour, without
+asking? Other writes (doc new, doc tag, relink, repair, init, tour pin) still ask.* `status` has a part `tour_skill`; an install
+before tours says `vnoc-tour: not installed (vnoc agent install --skill-only)`. The rows `allowed V-NOC's read commands for …` are
+renamed in TR13b to say the tour commands too.
+
 **Why the writing loop may be allowed,** when `doc new` is not: those commands write only under the tours folders (02 §13). They
 cannot touch a source file or lose anything. And it matters more here than anywhere: a tour is twelve writes in a row, and a
 permission question on each is the "no news from the agent" state of the design (05 §1) on every stop. The commands that reach
@@ -198,6 +211,28 @@ for each run: did the skill load, the commands in order, every refusal and what 
 | 11 | a deliberately long explanation asked for ("explain `parse_order` in full detail") | the texts stay inside the budget after at most two refusals each; no text moved to the chat instead | the budgets; the refusals' wording |
 | 12 | read ten finished tours as a person would, `show --text` | steps say why; no step retells its lines. Count the ones that do | the writing rules; the guide's examples |
 | 13 | no `vnoc` on the PATH | the agent says so and explains in the chat | the last line of the skill |
+
+**How it is run** *(decided 2026-11-24, at TR13's review)*. The harness of A14, `tools/agent-trial/trial.py`, gains the tour
+scenarios; the six of A14 stay as they are.
+
+- **Builds:** the debug builds already in `target/` (disk is too short for release builds); the run records which.
+- **Agents and models:** as A14: Claude Code on Sonnet, Codex on `gpt-reserve` at effort low. **Permissions: exactly what `vnoc agent
+  install --permissions` writes**, plus reading, listing, `grep`, `git diff/status` as in A14. Not "all of `vnoc`" as A14 had: the
+  trial is also open check 9. In a headless run a command that would be asked about is refused, and the harness records each such
+  refusal: a heredoc `add` refused fails check 9; a `pin --commit`, `go`, `ids` refused is the rule working.
+- **Runs, cut as A14 was:** TR14a is Claude, one run per scenario (14: 1 – 11 with 10b, 10c, and 13; 12 is read by me from the
+  tours the others made), then stop. TR14b: Codex the same 14, and two more runs of each scenario that failed. The plan's "three times
+  per agent" is kept only for failures. One real project of the user's comes after, by hand, if the user wants it.
+- **Set-ups the harness makes:** 2 installs the `vnoc` skill only, with the tour skill's body appended as a section; 6 runs
+  `vnoc tour halt` when the third stop is in the file (it watches it); 7 starts a tour of `billing/` in the set-up, adds two stops and
+  stops there (no finish); 8 has a finished tour of `checkout`'s chain (or the sample's nearest), then two of its functions changed and
+  committed; 9 has a finished tour and `vnoc tour go <tour> s2` before the session; 10/10b/10c leave a change uncommitted, with
+  `[tours]` set; 13 leaves `vnoc` off the PATH. The sample's `billing/` may be too small for scenario 3's question: if `route` says 12
+  or fewer at depth 2, the run is recorded as *not a test of W13*, not a fail.
+- **Scored from the run where it can be:** the tour's file (stops, blocks, `from`, `same_as`), the order of calls (an `add` comes
+  before the last read: "as it goes"), the assistant's chat text (lines at the start and the end; anything between is counted), every
+  refusal and the call after it, the refused permissions, `git log` (scenario 10: no commit), `vnoc.toml` unchanged. Judged ones say
+  `judged` and quote the lines, as A14.
 
 The results go into this file, as 21.06 §8 has A14's, and the wording of the skill, the guide and the refusals is changed from them in
 the same step.

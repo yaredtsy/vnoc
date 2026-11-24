@@ -295,6 +295,10 @@ Commit: `tours TR13: the vnoc-tour skill, vnoc guide tour, installed beside the 
 
 ### TR14 The trial
 
+Split as A14 was (04 §6 "How it is run"): **TR13b** (one commit first: the `status`/`install` rows say the tour commands are allowed
+too), **TR14a** (the harness's tour scenarios, Claude's 14 runs, stop), **TR14b** (Codex's 14, two more of each failure), **TR14c**
+(the wording the results ask for, the results table, re-runs of what it touched).
+
 The scenarios of [`04`](04-skill.md) §6, on the sample and on one real project. No product code unless a scenario fails; then
 the fix is the wording of a refusal, of the skill, or of the guide, in this step. The results table goes into 04 §6.
 
