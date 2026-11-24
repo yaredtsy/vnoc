@@ -444,9 +444,18 @@ once, "stop 3 of 10", a stop you can open and read the code of before its text e
 | Command | Does |
 |---|---|
 | `start --plan a b c` | starts the tour with three planned stops |
-| `plan <tour> <node>… [--from <stop>]` | plans more; `--from` nests them under a stop |
+| `plan <tour> <node>… [--from <stop>] [--line <n>]` | plans more; `--from` nests them under a stop; `--line` needs `--from` and one node, and a `--from` stop that is written. A node written or planned already may be planned again. A stopped tour: exit `1` as `add`; a finished one: exit `2`, `this tour is finished: nothing more can be planned on it` |
 | `add` on a planned node | fills it (§4). A stop the agent adds that was never planned simply joins the route |
 | `finish` | removes what is still planned |
+
+**As built (TR11).** `plan` prints `planned 3 stops   · 2 of 6 stops written` and a row per stop (`s4  ◌ name   path  ← s1 line 16`);
+`start --plan` prints the same under `started …`. Every node is found first: one unknown node and nothing is written (`start --plan`
+makes no tour), exit `2`, `--json` `{schema, command, errors: […]}`. Past 40: `planning 3 more stops would give this tour 41 stops, the
+most one tour holds is 40. …`. `add` filling a planned stop: `s3 written (it was planned)`, `--json` `was_planned`. The plan's `line`
+is kept only when the call's `--from` is the plan's stop (or the call has none); a `--from` naming the planned stop being filled, or a
+stop inside it, is refused. **A plan's `same_as` is not taken by `add`**: only the call's `--same-as` counts (TR12's routes plan
+`same_as`; the skill, TR13, tells the agent to pass `--same-as` for those stops). `drop` of a planned stop: `dropped s2 (it was
+planned, not written)`. `finish`: one clause, `finished: 2 stops, 5 steps · 2 planned stops left the route`.
 
 **`route`** is the phase documents' idea, kept as a help: the core proposes a route from the call tree, and says how big it is.
 
@@ -469,6 +478,21 @@ and what those call                     10 stops   about 7 min      --depth 2
   already passed.
 - It is `calls` underneath (`calls::merge`), in reading order, cut at 40 stops. A call the index does not know (a library) is not a stop.
 - For a folder or a file, depth is containment: the folder, its files, their functions.
+
+**Decided for TR12 (at TR11's review).**
+
+| | |
+|---|---|
+| depth | `--depth` 0 to 6, default `1`; more is exit `2`. Depth 0 is the node alone. The size lines are printed for every depth from 0 to `max(--depth, 2)`; the outline is the one of `--depth`. Labels: `and what it calls` (1), `and what those call` (2), `and calls 3 deep` (3 and more). For containment: `and what is in it`, `and what is in those`, `and 3 deep` |
+| order | reading order = depth first, children in the order `calls::merge` gives (the order of their first call) |
+| `line` | the first call site's start line, when that site is in the parent stop's file; else no `line` |
+| a node already on the route (a second call, a recursive call) | a stop with `same_as` the first stop on that node, and its calls are not walked again |
+| a call the index does not know | not a stop, not walked |
+| a class at depth 1 | containment: its methods, as for a file |
+| cut | at 40 stops, in reading order; the outline ends `… cut at 40 stops` and `--json` has `"cut": true` |
+| no calls (a driver that gives none) | the node alone, and one line saying the driver gives no calls for it |
+| `start --route` | plans exactly the outline (one `plan` record: `from`, `line`, `same_as`); with `--plan` too: exit `2` |
+| `--json` | `{schema, command: "tour route", node, depth, sizes: [{depth, stops, minutes}], stops: [{n, node, name, kind, path, first, from, line, same_as}], cut}`; `from` and `same_as` are numbers of the outline |
 
 ## 12. What each prints
 
@@ -500,7 +524,7 @@ s1 written   stop 1   ƒ checkout_order   app/checkout.py:11-30   5 steps   · 1
 |---|---|
 | `0` | done. Also: listed nothing, checked and found stale stops, could not pin (it says why), finished a finished tour |
 | `1` | the tour was stopped by the reader (§5) |
-| `2` | bad arguments; no such node, tour, stop or block (with "did you mean"); a text or a document that was refused; `pin --commit` refused before git was asked (a stale stop, an ignored file, a merge in the middle): the reasons, then `nothing was committed` |
+| `2` | bad arguments; no such node, tour, stop or block (with "did you mean"); `plan` on a finished tour; a text or a document that was refused; `pin --commit` refused before git was asked (a stale stop, an ignored file, a merge in the middle): the reasons, then `nothing was committed` |
 | `3` | the environment: no driver, the lock could not be had in 5 seconds, `format` or `schema` too new; for `pin --commit`: git refused the commit |
 
 As 21's C6 and 22.08 §3: `1` is "the thing has something to tell you", `2` is the caller's mistake, `3` is the machine's.
