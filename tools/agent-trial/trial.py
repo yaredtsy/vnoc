@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""The agent trial of docs/21-agent-cli/06-skill.md §8 (A14): `setup`, `run`, `score`, `batch`, `rescore`. Standard library only; see README.md.
+"""The agent trial of docs/21-agent-cli/06-skill.md §8 (A14) and of docs/26-tours/04-skill.md §6 (TR14): `setup`, `run`, `score`, `batch`,
+`batch-tours`, `rescore`. Standard library only; see README.md. Debug builds of `vnoc` and the Python driver (`cargo build -p vnoc`).
 
-    trial.py setup <run-dir> [--agent claude] [--no-rules]
-    trial.py run   <agent> <scenario 1-6> <text|xml> [n] [--no-rules] [--model M]
+    trial.py setup <run-dir> [--agent claude] [--no-rules] [--scenario t1]
+    trial.py run   <agent> <scenario 1-6 | t1 .. t13> [text|xml] [n] [--no-rules] [--model M]    # a tour scenario has no arm
     trial.py score <run-dir>...
-    trial.py batch <agent> [--model M]    # the 14 runs of 06 §8, one results file under runs/ (codex: gpt-reserve, effort low)
-    trial.py rescore runs/batch-<time>.json   # the scorer changed: judge the saved runs again
+    trial.py batch <agent> [--model M]          # the 14 runs of A14 (refused since A14c)
+    trial.py batch-tours <agent> [--model M]    # the 14 tour runs of TR14: one results file under runs/
+    trial.py rescore runs/batch-<time>.json     # the scorer changed: judge the saved runs again
 """
 
 import argparse
@@ -22,11 +24,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 RUNS = Path(__file__).resolve().parent / "runs"
 SAMPLE = REPO / "crates/vnoc/tests/sample"
-VNOC = REPO / "target/release/vnoc"
-# the driver's release build: the plain one, else the one built for the target triple (the extension's)
-DRIVER = next((p for p in (REPO / "drivers/python/target/release/vnoc-driver-python",
-                           REPO / "drivers/python/target/aarch64-apple-darwin/release/vnoc-driver-python") if p.exists()),
-              REPO / "drivers/python/target/release/vnoc-driver-python")
+# the debug builds (TR14: the disk is too short for release builds); meta.json says which build ran
+BUILD = "debug"
+VNOC = REPO / "target/debug/vnoc"
+DRIVER = REPO / "drivers/python/target/debug/vnoc-driver-python"
 
 # What each scenario's user says (06 §8). Scenario 6 is scenario 1 with `vnoc` off the PATH.
 PROMPTS = {
@@ -37,6 +38,31 @@ PROMPTS = {
     "5": "Summarise the notes on `charge.py`.",
     "6": "What notes does `parse_order` have?",
 }
+
+# What each tour scenario's user says (docs/26-tours/04-skill.md §6, on the sample: orders/, billing/, api/; there is no checkout).
+# Every prompt is also written in README.md.
+TOUR_PROMPTS = {
+    "t1": "Walk me through `parse_order`.",
+    "t2": "Walk me through `parse_order`.",
+    "t3": "Give me a tour of `billing/`.",
+    "t4": "Explain step by step how an order is placed, charged and invoiced.",
+    "t5": "Walk me through `long_report` in `orders/report.py`.",
+    "t6": "Give me a tour of `orders/`.",
+    "t7": "Continue the tour of `billing/`.",
+    "t8": "Bring the tour of `OrderService.place` up to date.",
+    "t9": "explain this more",
+    "t10": "Walk me through what I just changed.",
+    "t10b": "Walk me through what I just changed.",
+    "t10c": "Walk me through what I just changed.",
+    "t11": "Explain `retry_charge` in full detail.",
+    "t13": "Walk me through `parse_order`.",
+}
+TOUR_BATCH = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t10b", "t10c", "t11", "t13"]  # 12 is read by a person
+# The tour set's permissions: what `vnoc agent install --permissions` writes (in .claude/settings.local.json; the run reads project and local
+# settings), plus reading, listing, grep and git diff/status as A14 had. NOT `vnoc *`: the trial is also open check 9 (04 §5).
+CLAUDE_TOOLS_TOUR = ["Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(git diff *)", "Bash(git status *)", "Read", "Glob", "Grep"]
+# [tours] ids and commit, per scenario that sets them
+TOUR_SETTINGS = {"t10": ("ask", "ask"), "t10b": ("always", "always"), "t10c": ("never", "never")}
 
 CLAUDE_TOOLS = [
     "Bash(vnoc *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(git diff *)", "Bash(git status *)",
@@ -109,6 +135,10 @@ def base_env(bin_dir, with_bin=True):
     return env
 
 
+def prompt_of(scenario):
+    return TOUR_PROMPTS.get(scenario) or PROMPTS[scenario]
+
+
 def sh(cmd, cwd, env, **kw):
     done = subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True, **kw)
     if done.returncode != 0:
@@ -116,13 +146,13 @@ def sh(cmd, cwd, env, **kw):
     return done.stdout
 
 
-def setup(run_dir, agent="claude", rules=True):
+def setup(run_dir, agent="claude", rules=True, scenario=None):
     run_dir = Path(run_dir).resolve()
     if run_dir.exists():
         sys.exit(f"{run_dir} exists: a run dir is always fresh")
     for tool in (VNOC, DRIVER):
         if not tool.exists():
-            sys.exit(f"{tool} is missing: cargo build --release -p vnoc, and cargo build --release in drivers/python")
+            sys.exit(f"{tool} is missing: cargo build -p vnoc, and cargo build in drivers/python (debug builds)")
     work, bin_dir = run_dir / "work", run_dir / "bin"
     bin_dir.mkdir(parents=True)
     for tool in (VNOC, DRIVER):
@@ -141,6 +171,8 @@ def setup(run_dir, agent="claude", rules=True):
     # Codex's permissions go to ~/.codex: not from a trial; A14b decides how Codex is let through
     install.append("--permissions" if agent == "claude" else "--no-permissions")
     sh(install, work, env)
+    if scenario == "t2":  # the `vnoc` skill only, with the tour skill's text as a section of it
+        fold_tour_skill(work, bin_dir, env, agent)
     if not rules:  # scenario 2 without layer 1 of 06 §2: the skill stays
         for name in ("CLAUDE.md", "AGENTS.md"):
             file = work / name
@@ -155,17 +187,122 @@ def setup(run_dir, agent="claude", rules=True):
     (run_dir / "baseline-check.txt").write_text(f"exit {done.returncode}\n{done.stdout}{done.stderr}")
     sh(["git", "add", "-A"], work, env)
     sh(["git", "commit", "-q", "-m", f"tests, vnoc agent install --agent {agent}"], work, env)
+    if scenario in TOUR_PROMPTS:
+        info = tour_setup(scenario, work, bin_dir, env)
+        info.update(scenario=scenario, head=git_out(work, "rev-parse", "HEAD").strip(),
+                    vnoc_toml=(work / ".vnoc/vnoc.toml").read_text(),
+                    tour_files={str(f.relative_to(work)): len(f.read_text().splitlines()) for f in tour_files(work)})
+        (run_dir / "setup.json").write_text(json.dumps(info, indent=2) + "\n")
     print(f"set up {run_dir}")
     return run_dir
 
 
-def agent_command(agent, prompt, work, model):
-    """The headless command of an agent, and the version string it reports."""
+# ------------------------------------------------------------------------------------------------------- tour scenarios' set-ups
+
+
+def skill_dir(work, agent):
+    return work / (".claude/skills" if agent == "claude" else ".agents/skills")
+
+
+def fold_tour_skill(work, bin_dir, env, agent):
+    """Scenario t2: no `vnoc-tour` folder; its text (below the front matter) is a section at the end of the `vnoc` skill."""
+    text = sh([str(bin_dir / "vnoc"), "skill", "tour"], work, env)
+    body = re.sub(r"\A---\n.*?\n---\n", "", text, count=1, flags=re.S).strip()
+    body = re.sub(r"^# V-NOC tours\n", "## Tours\n", body, count=1)
+    shutil.rmtree(skill_dir(work, agent) / "vnoc-tour")
+    file = skill_dir(work, agent) / "vnoc/SKILL.md"
+    file.write_text(file.read_text().rstrip("\n") + "\n\n" + body + "\n")
+
+
+def tour_cmd(work, bin_dir, env, *args, body=None):
+    return sh([str(bin_dir / "vnoc"), "tour", *args], work, env, input=body)
+
+
+def start_tour(work, bin_dir, env, title, question):
+    out = tour_cmd(work, bin_dir, env, "start", "--title", title, "--question", question, "--author", "trial-setup")
+    return re.search(r"^started (\S+)", out, re.M).group(1)
+
+
+def make_place_tour(work, bin_dir, env):
+    """A finished tour of OrderService.place: s1 place, s2 parse_order (from s1, line 16), s3 Order (from s2, line 13). Text valid."""
+    t = start_tour(work, bin_dir, env, "place", "walk me through OrderService.place")
+    add = lambda *a, body: tour_cmd(work, bin_dir, env, "add", t, *a, "--body-file", "-", body=body)
+    add("orders/service.py::OrderService.place", body="place is the one entry point for taking an order: it parses the raw input, saves the result and hands it back.\n")
+    add("orders/service.py::OrderService.parse_order", "--from", "s1", "--line", "16",
+        body="parse_order turns the raw request into an Order, so nothing past this point deals with raw dictionaries.\n")
+    add("orders/models.py::Order", "--from", "s2", "--line", "13",
+        body="An Order is a number and its lines; the total is worked out from the lines each time it is asked for.\n\n"
+             "## 15-17 Two fields and nothing else\nThe constructor only keeps what it is given.\n\n"
+             "## 19-21 The total is a sum\nAdding up the lines each time means a changed line can never leave the total wrong.\n")
+    tour_cmd(work, bin_dir, env, "finish", t)
+    return t
+
+
+def commit_all(work, env, message):
+    sh(["git", "add", "-A"], work, env)
+    sh(["git", "commit", "-q", "-m", message], work, env)
+
+
+def tour_setup(scenario, work, bin_dir, env):
+    """What a scenario needs before the agent starts (04 §6 'How it is run'). Returns what the scorer needs to know."""
+    info = {}
+    if scenario == "t3":  # the sizes of `billing/` at each depth: 12 stops or fewer at depth 2 is 'not a test of W13'
+        out = sh([str(bin_dir / "vnoc"), "tour", "route", "billing", "--depth", "2"], work, env)
+        sizes = {d: int(n) for n, d in re.findall(r"^[^\n]*?\s(\d+) stops?\s.*--depth (\d)", out, re.M)}
+        info.update(route_billing_depth2=out, route_sizes=sizes)
+    elif scenario == "t7":  # a tour of billing/ with two stops, not finished: the prompt is a new session
+        t = start_tour(work, bin_dir, env, "billing", "give me a tour of billing/")
+        tour_cmd(work, bin_dir, env, "add", t, "billing", "--body-file", "-",
+                 body="billing is where an order's money is dealt with: charging the card, working out the tax, and showing the customer an invoice.\n")
+        tour_cmd(work, bin_dir, env, "add", t, "billing/charge.py", "--from", "s1", "--body-file", "-",
+                 body="charge.py is the only file that talks to the payment gateway, so every retry rule lives here and nowhere else.\n")
+        info.update(tour=t, stops_in_setup=["s1", "s2"])
+    elif scenario in ("t8", "t9"):
+        t = make_place_tour(work, bin_dir, env)
+        info.update(tour=t)
+        if scenario == "t9":
+            tour_cmd(work, bin_dir, env, "go", t, "s2")
+            info.update(place="s2")
+        else:  # two of its functions change, and are committed: place and parse_order, not Order
+            file = work / "orders/service.py"
+            text = file.read_text()
+            new = text.replace('        lines = [Line(item["sku"], item["qty"], item["price"]) for item in raw["items"]]\n',
+                               '        items = raw.get("items", [])\n        lines = [Line(item["sku"], item["qty"], item["price"]) for item in items]\n')
+            new = new.replace("        order = self.parse_order(raw)\n",
+                              '        order = self.parse_order(raw)\n        if not order.lines:\n            raise ValueError("an order needs at least one line")\n')
+            assert new.count("raw.get") == 1 and new.count("ValueError") == 1, "the sample's service.py is not as the set-up expects"
+            file.write_text(new)
+            commit_all(work, env, "place and parse_order change")
+            checked = json.loads(tour_cmd(work, bin_dir, env, "check", "--json"))
+            stale = sorted(s["id"] for tour in checked["tours"] for s in tour["stops"] if s["state"] != "fresh")
+            assert stale == ["s1", "s2"], f"set-up wanted s1 and s2 stale, check says {stale}"
+            info.update(stale=stale, fresh=["s3"])
+    elif scenario in TOUR_SETTINGS:
+        ids, commit = TOUR_SETTINGS[scenario]
+        tour_cmd(work, bin_dir, env, "settings", "--ids", ids, "--commit", commit)
+        commit_all(work, env, f"[tours] ids = {ids}, commit = {commit}")
+        file = work / "billing/tax.py"  # a new function and a changed one, left uncommitted
+        text = file.read_text()
+        new = text.replace("def apply_tax(amount, country):\n    return round(amount * (1 + rate_for(country)), 2)\n",
+                           "def tax_amount(amount, country):\n    return round(amount * rate_for(country), 2)\n\n\n"
+                           "def apply_tax(amount, country):\n    return round(amount + tax_amount(amount, country), 2)\n")
+        assert new != text, "the sample's tax.py is not as the set-up expects"
+        file.write_text(new)
+        info.update(settings={"ids": ids, "commit": commit}, changed_files=["billing/tax.py"])
+    return info
+
+
+def tour_files(work):
+    return sorted((work / ".vnoc/local/tours").glob("*.jsonl")) + sorted((work / ".vnoc/tours").glob("*.jsonl"))
+
+
+def agent_command(agent, prompt, work, model, tools=None):
+    """The headless command of an agent, and the version string it reports. `tools`: Claude's --allowedTools (the tour set has its own)."""
     if agent == "claude":
         exe = shutil.which("claude")  # found with the user's PATH; the run's PATH is the clean one
         cmd = [exe, "-p", prompt, "--output-format", "stream-json", "--verbose",
                "--setting-sources", "project,local", "--no-session-persistence", "--max-turns", MAX_TURNS,
-               "--allowedTools", ",".join(CLAUDE_TOOLS)]
+               "--allowedTools", ",".join(tools or CLAUDE_TOOLS)]
         if model:
             cmd += ["--model", model]
     else:
@@ -180,42 +317,80 @@ def agent_command(agent, prompt, work, model):
     return cmd, version
 
 
-def run(agent, scenario, arm, n=1, rules=True, model=None):
+def watch_halt(work, bin_dir, env, started):
+    """Scenario t6: the reader presses Stop. When a tour file holds 3 written stops, `vnoc tour halt <tour>` runs, once. None until then."""
+    for file in tour_files(work):
+        stops = set()
+        for line in file.read_text().splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("type") == "stop":
+                stops.add(rec.get("id"))
+        if len(stops) >= 3:
+            done = subprocess.run([str(bin_dir / "vnoc"), "tour", "halt", file.stem], cwd=work, env=env, text=True, capture_output=True)
+            return {"tour": file.stem, "stops_in_file": len(stops), "after_seconds": round(time.time() - started, 1),
+                    "exit": done.returncode, "output": (done.stdout + done.stderr).strip()}
+    return None
+
+
+def build_record():
+    version = subprocess.run([str(VNOC), "--version"], text=True, capture_output=True).stdout.strip()
+    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, text=True, capture_output=True).stdout.strip()
+    return {"profile": BUILD, "vnoc": str(VNOC.relative_to(REPO)), "driver": str(DRIVER.relative_to(REPO)), "vnoc_version": version, "repo_head": head}
+
+
+def run(agent, scenario, arm="text", n=1, rules=True, model=None):
     if agent not in ("claude", "codex"):
         sys.exit("agents: claude, codex")
-    if arm == "xml":
+    tours = scenario in TOUR_PROMPTS
+    if tours:
+        arm = "tour"
+    elif arm == "xml":
         sys.exit(XML_GONE)
-    if scenario not in PROMPTS or arm != "text":
-        sys.exit("scenario is 1-6, arm is text")
+    elif scenario not in PROMPTS or arm != "text":
+        sys.exit("scenario is 1-6 (arm text) or t1 .. t13")
     if agent == "codex":
         model = model or CODEX_MODEL
-    name = f"{agent}-s{scenario}-{arm}-n{n}" + ("" if rules else "-norules")
+    name = f"{agent}-{scenario}-n{n}" if tours else f"{agent}-s{scenario}-{arm}-n{n}"
+    name += "" if rules else "-norules"
     run_dir = RUNS / name
     if run_dir.exists():
         name += time.strftime("-%H%M%S")
         run_dir = RUNS / name
     RUNS.mkdir(exist_ok=True)
-    setup(run_dir, agent, rules)
+    setup(run_dir, agent, rules, scenario if tours else None)
     work, bin_dir = run_dir / "work", run_dir / "bin"
-    env = base_env(bin_dir, with_bin=scenario != "6")
-    cmd, version = agent_command(agent, PROMPTS[scenario], work, model)
+    env = base_env(bin_dir, with_bin=scenario not in ("6", "t13"))
+    prompt = prompt_of(scenario)
+    cmd, version = agent_command(agent, prompt, work, model, CLAUDE_TOOLS_TOUR if tours else None)
     # which `vnoc` the run's shell finds: the same environment and shell Codex uses (`zsh -c`, not a login shell). The agent's own events do
     # not say, so this is the record; the XML arm's `<doc>` tags in a result are a second sign it is this branch's build.
     probe = subprocess.run(["/bin/zsh", "-c", "command -v vnoc"], cwd=work, env=env, text=True, capture_output=True)
     vnoc_resolved = probe.stdout.strip()
     start = time.time()
-    timed_out = False
+    timed_out, halt = False, None
     with open(run_dir / "transcript.jsonl", "w") as out, open(run_dir / "stderr.txt", "w") as err:
-        try:
-            done = subprocess.run(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err, timeout=TIMEOUT)
-            code = done.returncode
-        except subprocess.TimeoutExpired:
-            timed_out, code = True, None
+        proc = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+        while True:
+            try:
+                code = proc.wait(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                if time.time() - start > TIMEOUT:  # a run over ten minutes is "capped", not retried
+                    proc.kill()
+                    proc.wait()
+                    timed_out, code = True, None
+                    break
+                if scenario == "t6" and halt is None:
+                    halt = watch_halt(work, bin_dir, env, start)
     meta = {"agent": agent, "scenario": scenario, "arm": arm, "n": n, "rules": rules, "model_flag": model,
             "effort": CODEX_EFFORT if agent == "codex" else None,
-            "command": [c if c != PROMPTS[scenario] else "<prompt>" for c in cmd], "prompt": PROMPTS[scenario], "path": env["PATH"],
+            "command": [c if c != prompt else "<prompt>" for c in cmd], "prompt": prompt, "path": env["PATH"],
             "xml": arm == "xml", "exit": code, "timed_out": timed_out, "seconds": round(time.time() - start, 1),
-            "agent_version": version, "vnoc_resolved": vnoc_resolved}
+            "agent_version": version, "vnoc_resolved": vnoc_resolved, "build": build_record(),
+            "allowed_tools": CLAUDE_TOOLS_TOUR if tours and agent == "claude" else None, "halt": halt}
     (run_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"ran {run_dir} in {meta['seconds']} s, exit {code}" + (" TIMED OUT" if timed_out else ""))
     return run_dir
@@ -451,6 +626,426 @@ def judge(scenario, calls, results, texts, work, meta):
     return "no", notes
 
 
+# ----------------------------------------------------------------------------------------------------------- scoring the tour set
+
+HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n[ \t]*\1[ \t]*(?=\n|$)", re.S)
+TOUR_SUB = re.compile(r"(?:^|[;&|(\n]\s*)(?:\S+=\S+\s+)*vnoc\s+(?:--?\S+\s+)*tour\s+(\S+)([^;&|\n]*)")
+PERMISSION_TEXT = re.compile(r"requires approval|require approval|haven't granted|requested permissions|was blocked|not allowed to use", re.I)
+WRITE_LOOP = ("start", "add", "finish", "plan", "drop", "resume", "list", "show", "check", "where", "route", "export")  # allowed by install
+USER_COMMANDS = ("pin", "go", "ids", "settings", "edit", "share", "delete", "import", "halt")  # asked about, so refused in a headless run
+CHAT_LIMIT = 300  # characters of an opening or an end line before it is `judged`, not `held`
+
+
+def result_text(r):
+    content = (r or {}).get("content")
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
+    return content if isinstance(content, str) else json.dumps(content)
+
+
+def tour_subs(call_or_command):
+    """[(sub, args)] for each `vnoc tour <sub>` in a Bash call (or a command string); heredoc bodies are not looked into."""
+    command = call_or_command if isinstance(call_or_command, str) else command_of(call_or_command)
+    return [(sub, args.strip()) for sub, args in TOUR_SUB.findall(HEREDOC.sub("", command))]
+
+
+def tour_calls(calls):
+    return [{"i": i, "id": c["id"], "sub": sub, "args": args, "heredoc": bool(HEREDOC.search(command_of(c)))}
+            for i, c in enumerate(calls) if c["name"] == "Bash" for sub, args in tour_subs(c)]
+
+
+def ordered_items(run_dir):
+    """The run's text blocks and calls in the order they happened: [("text", s) | ("call", call)]."""
+    events = []
+    for line in (run_dir / "transcript.jsonl").read_text().splitlines():
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            pass
+    items = []
+    if any(e.get("type") == "thread.started" for e in events):
+        for e in events:
+            item = e.get("item") or {}
+            if e.get("type") == "item.completed" and item.get("type") == "agent_message":
+                items.append(("text", item.get("text", "")))
+            elif e.get("type") == "item.completed" and item.get("type") == "command_execution":
+                items.append(("call", {"id": item["id"], "name": "Bash", "input": {"command": unwrap(item.get("command", ""))}}))
+        return items
+    for e in events:
+        if e.get("type") == "assistant" and isinstance(e.get("message"), dict):
+            for b in e["message"].get("content") or []:
+                if b.get("type") == "text":
+                    items.append(("text", b["text"]))
+                elif b.get("type") == "tool_use":
+                    items.append(("call", {"id": b["id"], "name": b["name"], "input": b.get("input", {})}))
+    return items
+
+
+def chat_facts(items):
+    """What the assistant said in the chat: the opening (before the first `add`), the end (after `finish`, or the last text), and what came between."""
+    texts = [(k, t.strip()) for k, (kind, t) in enumerate(items) if kind == "text" and t.strip()]
+    has = lambda x, *subs: any(s in subs for s, _ in tour_subs(x))
+    adds = [k for k, (kind, x) in enumerate(items) if kind == "call" and has(x, "add")]
+    finishes = [k for k, (kind, x) in enumerate(items) if kind == "call" and has(x, "finish")]
+    if not adds:
+        opening, between, end = [], [t for _, t in texts[:-1]], [t for _, t in texts[-1:]]
+    else:
+        first, after = adds[0], [(k, t) for k, t in texts if k > adds[0]]
+        opening = [t for k, t in texts if k < first]
+        if finishes:  # text in the same turn as `finish`, just before it, is the end too
+            last_call_before = max([k for k, (kind, _) in enumerate(items[:finishes[-1]]) if kind == "call"] or [-1])
+            end = [t for k, t in texts if k > last_call_before and k > first]
+            between = [t for k, t in after if k < finishes[-1] and k <= last_call_before]
+        else:
+            end, between = [t for _, t in after[-1:]], [t for _, t in after[:-1]]
+    chars = lambda xs: sum(len(x) for x in xs)
+    return {"opening": opening, "between": between, "end": end, "opening_chars": chars(opening), "between_chars": chars(between),
+            "end_chars": chars(end), "total_chars": chars([t for _, t in texts])}
+
+
+def replay(records):
+    """The tour's final state from its records, enough to score it (the real replay is the core's)."""
+    stops, steps, order, state = {}, {}, [], {"finished": False, "halt_at": None}
+    for i, r in enumerate(records):
+        kind = r.get("type")
+        if kind == "stop":
+            if r["id"] not in stops:
+                order.append(r["id"])
+            stops[r["id"]] = r
+            steps = {k: v for k, v in steps.items() if v.get("stop") != r["id"]}
+        elif kind == "step":
+            steps[r["id"]] = r
+        elif kind == "drop":
+            gone = {r.get("id")}
+            for sid, st in list(stops.items()):
+                if st.get("from") in gone:
+                    gone.add(sid)
+            stops = {k: v for k, v in stops.items() if k not in gone}
+            steps = {k: v for k, v in steps.items() if k not in gone and v.get("stop") not in gone}
+        elif kind == "end":
+            state["finished"] = True
+        elif kind == "halt":
+            state["halt_at"] = i
+    return stops, steps, [s for s in order if s in stops], state
+
+
+def tour_facts(file, skip):
+    records = []
+    for line in file.read_text().splitlines():
+        try:
+            records.append(json.loads(line))
+        except ValueError:
+            pass
+    stops, steps, order, state = replay(records)
+    before = {r.get("id") for r in records[:skip] if r.get("type") == "stop"}
+    new_ids = [r["id"] for r in records[skip:] if r.get("type") == "stop"]
+    outline = []
+    for sid in order:
+        st = stops[sid]
+        mine = [b for b in steps.values() if b.get("stop") == sid]
+        outline.append({"id": sid, "name": st.get("qualname") or st.get("path"), "path": st.get("path"), "kind": st.get("kind"),
+                        "from": st.get("from"), "line": st.get("line"), "same_as": st.get("same_as"),
+                        "blocks": sum(1 for b in mine if not b.get("parent")), "details": sum(1 for b in mine if b.get("parent")),
+                        "intro_chars": len(st.get("text", ""))})
+    after_halt = [r.get("type") for r in records[state["halt_at"] + 1:]] if state["halt_at"] is not None else []
+    return {"id": file.stem, "file": str(file), "records_new": len(records) - skip, "finished": state["finished"], "stops": len(stops),
+            "blocks": sum(o["blocks"] for o in outline), "details": sum(o["details"] for o in outline),
+            "with_from": sum(1 for o in outline if o["from"]), "with_line": sum(1 for o in outline if o["line"]),
+            "same_as": sum(1 for o in outline if o["same_as"]), "folders": sum(1 for o in outline if o["kind"] == "folder"),
+            "new_stop_ids": new_ids, "replaced": sorted({i for i in new_ids if i in before}), "outline": outline,
+            "after_halt": {"stops_blocks_plans": sum(1 for t in after_halt if t in ("stop", "step", "plan", "drop")),
+                           "end": after_halt.count("end"), "halted_records": after_halt.count("halted")}}
+
+
+def allowed_prefixes(work):
+    """The Bash prefixes the run is allowed: the rules `vnoc agent install` wrote, and the tool list of the tour set."""
+    rules = list(CLAUDE_TOOLS_TOUR)
+    try:
+        rules += json.loads((work / ".claude/settings.local.json").read_text())["permissions"]["allow"]
+    except (OSError, ValueError, KeyError):
+        pass
+    return [r[len("Bash("):-len(" *)")] for r in rules if r.startswith("Bash(") and r.endswith(" *)")]
+
+
+def parts_not_allowed(command, prefixes):
+    """The simple commands of a Bash command that no rule covers (heredoc bodies and `2>&1` left out; `head`, `wc` and the like are benign)."""
+    text = re.sub(r"\d?>&\d|\d?>\s*/dev/null", " ", HEREDOC.sub("", command))
+    parts = [p.strip() for p in re.split(r"[;&|\n]+", text) if p.strip()]
+    return [p for p in parts if not re.match(r"(head|tail|wc|sort|uniq|echo)(\s|$)", p)
+            and not any(p == x or p.startswith(x + " ") for x in prefixes)]
+
+
+def permission_refusals(calls, results, result, prefixes=()):
+    """Every call the host refused for want of permission, with what it was and what the refusal means: a command on the allow list that was
+    refused alone is `check 9: FAILED`; a user's command (pin, go, ids, settings ...) is `the rule held`; anything else is another refusal."""
+    denied = {d.get("tool_use_id"): d for d in (result or {}).get("permission_denials", [])}
+    found = []
+    for c in calls:
+        text = result_text(results.get(c["id"]))
+        if c["id"] in denied or ((results.get(c["id"]) or {}).get("is_error") and PERMISSION_TEXT.search(text)):
+            command = command_of(c) or path_of(c)
+            subs = [s for s, _ in tour_subs(command)] if c["name"] == "Bash" else []
+            causes = parts_not_allowed(command, prefixes) if c["name"] == "Bash" else [command]
+            cause_subs = [s for cause in causes for s, _ in tour_subs(cause)]
+            if c["name"] == "Bash" and not causes and subs:
+                kind = "check 9: FAILED" + (" (a heredoc `vnoc tour add`)" if "add" in subs and HEREDOC.search(command) else f" (`vnoc tour {subs[0]}` is on the allow list)")
+            elif any(s in USER_COMMANDS for s in cause_subs):
+                kind = "the rule held"
+            else:
+                kind = "other refusal" + (f" (not on the list: {'; '.join(x[:60] for x in causes)})" if causes else "")
+            found.append({"id": c["id"], "tool": c["name"], "command": command.replace("\n", " ⏎ ")[:240], "kind": kind})
+    return found
+
+
+def vnoc_refusals(calls, results, perm):
+    """Every `vnoc tour` call that vnoc itself refused (not a permission), and the call that came next."""
+    perm_ids = {p["id"] for p in perm}
+    out = []
+    for t in tour_calls(calls):
+        r = results.get(t["id"]) or {}
+        if r.get("is_error") and t["id"] not in perm_ids and t["sub"] in WRITE_LOOP:
+            nxt = calls[t["i"] + 1] if t["i"] + 1 < len(calls) else None
+            out.append({"sub": t["sub"], "error": " | ".join(l.strip() for l in result_text(r).splitlines() if l.strip())[:300],
+                        "next": (command_of(nxt) or f"{nxt['name']} {path_of(nxt)}").replace("\n", " ⏎ ")[:140] if nxt else None,
+                        "same_text_again": bool(nxt) and command_of(nxt) == command_of(calls[t["i"]])})
+    return out
+
+
+def git_facts(work, setup):
+    new = git_out(work, "log", "--format=%H %s", f"{setup['head']}..HEAD").splitlines()
+    commits = [{"hash": c.split()[0][:7], "subject": c.split(" ", 1)[1], "files": git_out(work, "show", "--name-only", "--format=", c.split()[0]).split()}
+               for c in new]
+    return {"new_commits": commits, "dirty": git_out(work, "status", "--porcelain", "--untracked-files=all").splitlines(),
+            "toml_unchanged": (work / ".vnoc/vnoc.toml").read_text() == setup["vnoc_toml"]}
+
+
+def quote(lines, n=3, width=220):
+    return [("“" + " ".join(l.split())[:width] + "”") for l in lines[:n]]
+
+
+class Checks:
+    """The scenario's pass conditions, each with what was found. `no` if one fails; `judged` when the rest need a person's reading."""
+    def __init__(self):
+        self.items, self.judged = [], []
+
+    def need(self, name, ok, detail=""):
+        self.items.append({"check": name, "ok": bool(ok), "detail": detail})
+        return ok
+
+    def judge(self, name, lines):
+        self.judged.append({"check": name, "lines": lines})
+
+    def verdict(self):
+        if any(not i["ok"] for i in self.items):
+            return "no"
+        return "judged" if self.judged else "yes"
+
+    def notes(self):
+        return [f"FAILED {i['check']}" + (f": {i['detail']}" if i["detail"] else "") for i in self.items if not i["ok"]] + \
+               [f"judged {j['check']}: " + " / ".join(j["lines"]) for j in self.judged]
+
+
+def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
+    """(passed, notes, facts) for a tour scenario. `passed`: yes, no, judged, or n/a (t3 when the sample is too small to test W13)."""
+    setup = json.loads((run_dir / "setup.json").read_text())
+    items = ordered_items(run_dir)
+    tc = tour_calls(calls)
+    perm = permission_refusals(calls, results, result, allowed_prefixes(work))
+    refusals = vnoc_refusals(calls, results, perm)
+    chat = chat_facts(items)
+    git = git_facts(work, setup)
+    tours = []
+    for file in tour_files(work):
+        skip = setup["tour_files"].get(str(file.relative_to(work)), 0)
+        facts = tour_facts(file, skip)
+        if facts["records_new"] > 0:
+            tours.append(facts)
+    sub_list = [t["sub"] for t in tc]
+    perm_ids = {p["id"] for p in perm}
+    adds = [t for t in tc if t["sub"] == "add" and t["id"] not in perm_ids]  # tried, whether vnoc took them or refused them
+    written = [t for t in adds if not (results.get(t["id"]) or {}).get("is_error")]
+    final = chat["end"][-1] if chat["end"] else (texts[-1].strip() if texts else "")
+    reads = [i for i, c in enumerate(calls) if (is_vnoc(c) and any(s.startswith("code") for s in vnoc_subs(c)))
+             or (c["name"] == "Read" and ".vnoc" not in path_of(c) and ".claude" not in path_of(c))
+             or (c["name"] == "Bash" and re.match(r"\s*cat\s+\S+\.py", command_of(c)))]
+    per_call = max([sum(1 for s, _ in tour_subs(c) if s == "add") for c in calls if c["name"] == "Bash"] or [0])
+    first_add = adds[0]["i"] if adds else None
+    as_it_goes = None if len(written) < 2 else written[0]["i"] < max(reads or [-1])  # n/a for a tour of one stop
+    guide_read = any(is_vnoc(c) and re.search(r"vnoc\s+guide\s+tour|vnoc\s+skill\s+tour", command_of(c)) for c in calls)
+    one = Checks()
+    held = chat["between_chars"] == 0
+    chat_lines = quote(chat["opening"], 2) + quote(chat["end"], 2)
+
+    def chat_rule():
+        one.need("nothing said in the chat between the first stop and the end", held,
+                 f"{len(chat['between'])} text(s), {chat['between_chars']} chars: " + " / ".join(quote(chat["between"], 2, 120)))
+        if held and (chat["opening_chars"] > CHAT_LIMIT or chat["end_chars"] > CHAT_LIMIT):
+            one.judge("the opening and the end are one line each", chat_lines)
+
+    def tour_made(finished=True):
+        made = one.need("a tour was written", any(t["new_stop_ids"] for t in tours), f"{len(tours)} tour file(s) touched")
+        if made and finished:
+            one.need("it was finished", any(t["finished"] for t in tours if t["new_stop_ids"]))
+        return made
+
+    def per_stop_loop():
+        one.need("one stop per command", per_call <= 1, f"most `add`s in one command: {per_call}")
+        if as_it_goes is not None:
+            one.need("as it goes: an add comes before the last code read", as_it_goes, f"first stop written at call {written[0]['i']}, last code read at call {max(reads or [-1])}")
+
+    finish_out = next((result_text(results.get(c["id"])) for c in calls if "finish" in [s for s, _ in tour_subs(c)]), "")
+    ask_lines = [l for l in finish_out.splitlines() if l.startswith("ask the user")]
+    tried_user_commands = [t["sub"] for t in tc if t["sub"] in USER_COMMANDS and t["sub"] != "halt"] + \
+        [c for c in (command_of(c) for c in calls) if re.match(r"\s*git\s+(commit|add)\b", c)]
+    main = max(tours, key=lambda t: len(t["new_stop_ids"]), default=None)
+    verdict = None
+
+    if scenario in ("t1", "t2"):
+        if tour_made():
+            per_stop_loop()
+            chat_rule()
+        one.items.append({"check": "compare: the tour skill/guide read", "ok": True, "detail": f"guide read: {guide_read}"})
+    elif scenario == "t3":
+        sizes = setup.get("route_sizes", {})
+        asked = bool(re.search(r"\?", final)) and not any(t["finished"] for t in tours)
+        if sizes.get("2", 99) <= 12:
+            verdict = "n/a"
+            one.items.append({"check": "not a test of W13", "ok": True, "detail": f"`route billing --depth 2` is {sizes.get('2')} stops, 12 or fewer"})
+        else:
+            if one.need("one question with sizes first (a headless run cannot answer it)", asked or bool(re.search(r"\?", " ".join(chat["opening"] + chat["end"]))),
+                        "no question in the chat; a tour of " + str(main["stops"] if main else 0) + " stops"):
+                one.judge("the question", quote(chat["opening"] + chat["end"], 3, 320))
+            if main:
+                one.judge(f"a tour was written anyway: {main['stops']} stops, {main['with_from']} nested", chat_lines)
+        one.items.append({"check": "route used", "ok": True, "detail": f"route calls: {sub_list.count('route')}, plan calls: {sub_list.count('plan')}"})
+    elif scenario == "t4":
+        if tour_made():
+            per_stop_loop()
+            chat_rule()
+            out = main["outline"]
+            top = [o for o in out if not o["from"]]
+            paths = {o["path"] for o in out}
+            one.need("stops across files, at the top", len(out) >= 3 and len(paths) >= 2 and len(top) >= 2,
+                     f"{len(out)} stops, {len(paths)} files, {len(top)} at the top")
+            rank = lambda p: 0 if p.startswith(("api", "orders")) else (1 if "charge" in p else (2 if "invoice" in p else 1.5))
+            ranks = [rank(o["path"]) for o in top]
+            if ranks != sorted(ranks):
+                one.judge("the order of the top-level stops (not place, charge, invoice)", [f"{o['id']} {o['name']}" for o in top])
+    elif scenario == "t5":
+        if tour_made():
+            per_stop_loop()
+            chat_rule()
+            stop = next((o for o in main["outline"] if o["name"] and "long_report" in o["name"]), None)
+            if one.need("a stop on long_report", stop is not None, ", ".join(o["name"] or "" for o in main["outline"])):
+                top, det = stop["blocks"], stop["details"]
+                if top in (2, 3, 4) and det >= 1:
+                    one.need("two or three general blocks with details inside", True, f"{top} blocks, {det} details")
+                elif top in (2, 3, 4):
+                    one.need("two or three general blocks with details inside", True, f"{top} blocks, no details")
+                    one.judge("no details inside the blocks", [f"{top} blocks, {det} details"])
+                else:
+                    one.need("two or three general blocks with details inside", False, f"{top} blocks, {det} details ({'flat' if top > 4 else 'one block'})")
+    elif scenario == "t6":
+        halt = meta.get("halt")
+        if halt is None:
+            verdict = "n/a"
+            one.items.append({"check": "the halt did not fire", "ok": True, "detail": f"the tour never held 3 written stops ({main['stops'] if main else 0})"})
+        else:
+            after = main["after_halt"] if main else {}
+            one.items.append({"check": "halted", "ok": True, "detail": f"halt run after {halt['after_seconds']} s with {halt['stops_in_file']} stops in the file: {halt['output']!r}"})
+            one.need("no stop, block, plan or drop after the halt", not after.get("stops_blocks_plans"), f"after the halt record: {after}")
+            hit = next((r for r in refusals if re.search(r"stopp|halt", r["error"], re.I)), None)
+            if hit:
+                later = [t for t in adds if t["i"] > next((t2["i"] for t2 in tc if t2["sub"] == hit["sub"] and results.get(t2["id"], {}).get("is_error")), 10**9)]
+                one.need("no `add` tried after the refusal", not later, f"{len(later)} later add(s); refusal: {hit['error'][:160]}")
+            else:
+                one.items.append({"check": "no refusal said stopped", "ok": True, "detail": "the agent was not refused after the halt (it had finished, or stopped by itself)"})
+            one.need("no `resume`", "resume" not in sub_list)
+            one.judge("the one line at the end", quote(chat["end"] or [final], 2, 300))
+    elif scenario == "t7":
+        tid = setup["tour"]
+        one.need("the tour carries on in the same file (no `start`)", "start" not in sub_list, f"calls: {sub_list}")
+        before = [t for t in tc if t["sub"] in ("list", "show") and (first_add is None or t["i"] < first_add)]
+        one.need("`list` or `show` before the first `add`", bool(before), f"calls: {sub_list}")
+        one.need("stops were added to it", bool(main and main["id"] == tid and len(main["new_stop_ids"]) >= 1), f"{len(main['new_stop_ids']) if main else 0} new stop(s)")
+        if main:
+            one.need("it was finished", main["finished"])
+            one.need("the new stops are s3 and later", all(int(s[1:]) > 2 for s in main["new_stop_ids"]), f"new: {main['new_stop_ids']}")
+        one.items.append({"check": "resume", "ok": True, "detail": f"`resume` called: {'resume' in sub_list} (the set-up has no halt)"})
+    elif scenario == "t8":
+        checks_i = [t["i"] for t in tc if t["sub"] == "check"]
+        one.need("`check` before any `add`", bool(checks_i) and (first_add is None or checks_i[0] < first_add), f"calls: {sub_list}")
+        replaced = sorted(main["replaced"]) if main else []
+        one.need("`--replace` on exactly the stale stops", replaced == setup["stale"] and all("--replace" in t["args"] for t in adds) and bool(adds),
+                 f"stale {setup['stale']}; replaced {replaced}; adds: {[t['args'][:70] for t in adds]}")
+        one.need("no other stop added", bool(main) and set(main["new_stop_ids"]) <= set(replaced), f"new stop records: {main['new_stop_ids'] if main else None}")
+        code, text = vnoc_exit(work, "tour", "check", "--json")
+        fresh = code == 0 and not any(not t["fresh"] for t in json.loads(text)["tours"])
+        one.need("the tour is fresh by my `check` afterwards", fresh, text[:200] if not fresh else "")
+    elif scenario == "t9":
+        first_call = next((i for i, c in enumerate(calls) if c["name"] not in ("Skill", "ToolSearch")), None)
+        first_tour = next((t for t in tc if t["i"] == first_call), None)
+        if one.need("`vnoc tour where` before anything else", bool(first_tour and first_tour["sub"] == "where"),
+                    f"first call: {(command_of(calls[first_call]) or calls[first_call]['name'])[:90] if first_call is not None else 'none'}"):
+            one.need("the answer is about the place (parse_order)", "parse_order" in final, "the last text does not name parse_order")
+            one.judge("the answer", quote([final], 1, 400))
+        one.items.append({"check": "changes", "ok": True, "detail": f"`vnoc tour` calls: {sub_list}"})
+    elif scenario in ("t10", "t10b", "t10c"):
+        commits = git["new_commits"]
+        changed = setup["changed_files"]
+        one.need("vnoc.toml unchanged", git["toml_unchanged"], "the file changed during the run")
+        one.need("the tour was finished", bool(tours) and any(t["finished"] for t in tours))
+        one.need("no `pin`, `ids`, `settings` or `git commit` tried", not tried_user_commands, f"tried: {tried_user_commands}")
+        asks = re.search(r"\?", final) is not None
+        names_file = any(f in final or Path(f).name in final for f in changed)
+        if scenario == "t10":
+            one.need("`finish` printed `ask the user` lines", len(ask_lines) >= 1, f"{len(ask_lines)} line(s): " + " / ".join(quote(ask_lines, 3, 140)))
+            one.need("no new commit", not commits, f"commits: {commits}")
+            one.need("the agent names the files and asks", asks and names_file, f"asks: {asks}; names a changed file: {names_file}")
+            one.judge("the question", quote([final], 1, 400))
+        elif scenario == "t10b":
+            one.need("`finish` did both and asked nothing", not ask_lines and "pinned at" in finish_out, f"finish said: {finish_out.strip()[:200]!r}")
+            c = commits[0] if len(commits) == 1 else None
+            ok_files = bool(c) and set(changed) <= set(c["files"]) and all(f in changed or re.match(r"\.vnoc/nodes/.*node\.toml$", f) or f in [o["path"] for t in tours for o in t["outline"]] for f in c["files"])
+            one.need("one new commit: the changed files and their node.toml", ok_files, f"commits: {commits}")
+            one.need("one line, with the commit, and no question", not asks and "pinned" in final.lower() and len(final.splitlines()) <= 2, f"said: {final[:200]!r}")
+        else:
+            one.need("`finish` asked and did nothing", not ask_lines, f"finish said: {finish_out.strip()[:200]!r}")
+            one.need("no new commit", not commits, f"commits: {commits}")
+            one.need("it says the tour is not pinned", bool(re.search(r"not pinned|isn't pinned|unpinned|is not pinned", final, re.I)), f"said: {final[:200]!r}")
+            offers = re.search(r"\?|would you like|want me to|let me know|if you'd like|i can ", final, re.I)
+            one.need("it offers nothing", not offers, f"said: {final[:300]!r}")
+    elif scenario == "t11":
+        if tour_made():
+            per_stop_loop()
+            node_of = lambda t: (t["args"].split() + ["", ""])[1]  # `add <tour> <node> ...`
+            per = {}
+            for t in tc:
+                if t["sub"] == "add" and (results.get(t["id"]) or {}).get("is_error") and t["id"] not in perm_ids:
+                    per[node_of(t)] = per.get(node_of(t), 0) + 1
+            one.need("inside the budget after at most two refusals per stop", all(v <= 2 for v in per.values()), f"refusals per node: {per or 'none'}")
+            chat_rule()
+            one.need("no text moved to the chat instead", chat["end_chars"] <= CHAT_LIMIT, f"the end says {chat['end_chars']} chars")
+    elif scenario == "t13":
+        says = last_text(texts, r"vnoc.*(not found|not installed|missing|isn't|is not|not on|unavailable|can't|cannot)|command.*(not found|missing)|not (found|on the path)", 3)
+        one.need("no tour file written by hand", not any(t["new_stop_ids"] for t in tours) and not any(".vnoc/local/tours" in json.dumps(c["input"]) for c in calls),
+                 f"tours: {[t['id'] for t in tours]}")
+        one.need("it says `vnoc` is missing", bool(says), "no such line")
+        one.need("it explains in the chat", len(final) >= 200 and "parse_order" in final, f"the last text is {len(final)} chars")
+        one.judge("what it says", quote(says or [final], 3, 220))
+    verdict = verdict or one.verdict()
+    facts = {"tours": [{k: v for k, v in t.items() if k != "after_halt" or scenario == "t6"} for t in tours], "calls_tour": sub_list, "checks": one.items,
+             "judged": one.judged, "chat": chat, "max_adds_per_call": per_call, "as_it_goes": as_it_goes, "guide_read": guide_read,
+             "permission_refusals": perm, "vnoc_refusals": refusals, "git": git, "finish_ask_lines": ask_lines, "final_text": final[:600],
+             "setup": {k: v for k, v in setup.items() if k not in ("vnoc_toml", "route_billing_depth2")}}
+    notes = one.notes()
+    if scenario == "t3" and verdict == "n/a":
+        notes.insert(0, "not a test of W13: " + one.items[0]["detail"])
+    for p in perm:
+        notes.append(f"{p['kind']}: {p['command'][:100]}")
+    return verdict, notes, facts
+
+
 OUTSIDE_OK = ("/usr/", "/bin/", "/sbin/", "/dev/", "/opt/homebrew/")
 
 
@@ -514,7 +1109,11 @@ def score(run_dir):
     meta = json.loads((run_dir / "meta.json").read_text())
     init, result, calls, results, texts = load(run_dir)
     work = run_dir / "work"
-    passed, notes = judge(meta["scenario"], calls, results, texts, work, meta)
+    tour = None
+    if meta["scenario"] in TOUR_PROMPTS:
+        passed, notes, tour = judge_tour(meta["scenario"], calls, results, texts, work, meta, run_dir, result)
+    else:
+        passed, notes = judge(meta["scenario"], calls, results, texts, work, meta)
     capped = "10 minutes" if meta["timed_out"] else ("30 turns" if (result or {}).get("subtype") == "error_max_turns" else None)
     if capped:
         notes.insert(0, f"capped at {capped} (it would have been {passed})")
@@ -546,13 +1145,19 @@ def score(run_dir):
         "doc_tags_seen": any("<doc path=" in json.dumps(r.get("content")) for r in results.values()),
         "find_skills_read": any("find-skills" in json.dumps(c["input"]) for c in calls),
         "commands": [command_of(c) or f"{c['name']} {path_of(c)}" for c in calls],
+        "build": meta.get("build"), "tour": tour,
+        "skills_loaded": sorted({str(c["input"].get("skill")) for c in calls if c["name"] == "Skill"}),
     }
     (run_dir / "score.json").write_text(json.dumps(row, indent=2) + "\n")
     return row
 
 
+def scenario_label(scenario):
+    return scenario if scenario in TOUR_PROMPTS else f"s{scenario}"
+
+
 def show_row(row):
-    print(f"{row['run']}: s{row['scenario']} {row['arm']}{'' if row['rules'] else ' (no rules)'}  passed={row['passed']}  "
+    print(f"{row['run']}: {scenario_label(row['scenario'])} {row['arm']}{'' if row['rules'] else ' (no rules)'}  passed={row['passed']}  "
           f"calls {row['calls_all']}/{row['calls_vnoc']}  tokens {row['tokens_in']}/{row['tokens_out']}  "
           f"skill-unnamed={row['skill_loaded_unnamed']}  refused={len(row['refused'])}  {row['seconds']} s  model={row['model']}")
     for note in row["notes"]:
@@ -609,8 +1214,68 @@ def summary(rows):
     return "\n".join(lines)
 
 
-def write_batch(stem, agent, model, rows, total, stopped):
-    (RUNS / f"{stem}.json").write_text(json.dumps({"agent": agent, "model": model, "total": total, "stopped": stopped, "rows": rows}, indent=2) + "\n")
+def table_tours(rows):
+    lines = ["| run | scenario | passed | calls all/vnoc | stops/blocks/details | chat chars open/between/end | vnoc refused | permission refused | tokens in/out | $ | s | notes |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        t = r.get("tour") or {}
+        tours = t.get("tours") or []
+        shape = " + ".join(f"{x['stops']}/{x['blocks']}/{x['details']}" for x in tours) or "—"
+        chat = t.get("chat") or {}
+        chars = f"{chat.get('opening_chars', 0)}/{chat.get('between_chars', 0)}/{chat.get('end_chars', 0)}"
+        notes = " ; ".join(r["notes"])[:420].replace("|", "/").replace("\n", " ")
+        lines.append(f"| {r['run']} | {r['scenario']} | {r['passed']} | {r['calls_all']}/{r['calls_vnoc']} | {shape} | {chars} | {len(t.get('vnoc_refusals') or [])} | "
+                     f"{len(t.get('permission_refusals') or [])} | {r['tokens_in']:,}/{r['tokens_out']:,} | {'' if r['cost_usd'] is None else format(r['cost_usd'], '.3f')} | "
+                     f"{r['seconds']} | {notes}{outside_word(r)} |")
+    return "\n".join(lines)
+
+
+def summary_tours(rows):
+    count = lambda v: sum(1 for r in rows if r["passed"] == v)
+    return (f"| runs | yes | judged | no | n/a | capped |\n|---|---|---|---|---|---|\n"
+            f"| {len(rows)} | {count('yes')} | {count('judged')} | {count('no')} | {count('n/a')} | {count('capped')} |")
+
+
+def details_tours(rows):
+    out = ["## Permission refusals (every one: the command and the scenario)", ""]
+    perms = [(r["scenario"], p) for r in rows for p in ((r.get("tour") or {}).get("permission_refusals") or [])]
+    out += [f"- {sc}: {p['kind']}: `{p['tool']}` {p['command']}" for sc, p in perms] or ["- none"]
+    heredoc_add = [sc for sc, p in perms if p["kind"].startswith("check 9: FAILED")]
+    out += ["", "**check 9: FAILED**" + f" ({', '.join(heredoc_add)})" if heredoc_add else
+            "**check 9:** no `vnoc tour` command of the allow list was refused; every heredoc `vnoc tour add` that was tried ran"]
+    add_runs = [r["scenario"] for r in rows if "add" in ((r.get("tour") or {}).get("calls_tour") or [])]
+    out.append(f"(heredoc `add`s were run in: {', '.join(add_runs) or 'none'})")
+    out += ["", "## `vnoc tour` refusals, and the call that followed", ""]
+    refs = [(r["scenario"], x) for r in rows for x in ((r.get("tour") or {}).get("vnoc_refusals") or [])]
+    out += [f"- {sc}: `{x['sub']}`: {x['error'][:200]} → next: `{x['next']}`" + (" (the same text again)" if x["same_text_again"] else "") for sc, x in refs] or ["- none"]
+    out += ["", "## The tours the runs made", ""]
+    for r in rows:
+        for t in (r.get("tour") or {}).get("tours") or []:
+            out.append(f"- {r['scenario']}: `{t['file']}` ({t['stops']} stops, {t['blocks']} blocks, {t['details']} details, {'finished' if t['finished'] else 'not finished'})")
+    out += ["", "## Per run: checks that failed, and what is judged", ""]
+    for r in rows:
+        t = r.get("tour") or {}
+        out.append(f"### {r['run']}: {r['passed']}")
+        for c in t.get("checks") or []:
+            out.append(f"- {'ok' if c['ok'] else 'FAILED'} {c['check']}" + (f": {c['detail']}" if c["detail"] else ""))
+        for j in t.get("judged") or []:
+            out.append(f"- judged {j['check']}: " + " / ".join(j["lines"]))
+        out.append("")
+    return "\n".join(out)
+
+
+def write_batch(stem, agent, model, rows, total, stopped, planned=None):
+    tours = stem.startswith("batch-tours")
+    (RUNS / f"{stem}.json").write_text(json.dumps({"agent": agent, "model": model, "total": total, "stopped": stopped, "tours": tours, "rows": rows}, indent=2) + "\n")
+    if tours:
+        build = (rows[0].get("build") if rows else None) or {}
+        (RUNS / f"{stem}.md").write_text(
+            f"# {agent} on {model}: the tour scenarios, {len(rows)} of {len(TOUR_BATCH)} runs\n\n"
+            f"build: {build.get('profile')} (`{build.get('vnoc')}`, driver `{build.get('driver')}`), {build.get('vnoc_version')}, repo at {build.get('repo_head')}\n\n"
+            f"{table_tours(rows)}\n\n{summary_tours(rows)}\n\n"
+            f"total: {total['seconds']} s, {'' if agent == 'codex' else '$' + str(total['cost_usd']) + ', '}{total['tokens_in']:,} in / {total['tokens_out']:,} out"
+            + (f"\n\nSTOPPED: {stopped}\n" if stopped else "\n") + "\n" + details_tours(rows) + "\n")
+        return
     (RUNS / f"{stem}.md").write_text(
         f"# {agent} on {model}: {len(rows)} of {len(BATCH)} runs\n\n{table(rows)}\n\n{summary(rows)}\n\n"
         f"total: {total['seconds']} s, {'' if agent == 'codex' else '$' + str(total['cost_usd']) + ', '}{total['tokens_in']:,} in / {total['tokens_out']:,} out"
@@ -661,6 +1326,44 @@ def batch(agent, model):
     print(f"\n{len(rows)} runs, {round(time.time() - started)} s, ${sum(r['cost_usd'] or 0 for r in rows):.3f}; results: runs/batch-{stamp}.md" + (f"\nSTOPPED: {stopped}" if stopped else ""))
 
 
+def batch_tours(agent, model):
+    """The 14 tour runs (TR14): one fresh run dir each, one results file under runs/, rewritten after every run. Stops at the first run that
+    reached outside its run dir (or left the repo dirty), and starts no run after 45 minutes."""
+    if repo_dirty():
+        sys.exit("the repo is not clean before the batch:\n" + repo_dirty())
+    RUNS.mkdir(exist_ok=True)
+    stamp = f"tours-{agent}-" + time.strftime("%Y%m%d-%H%M%S")
+    started, rows, stopped = time.time(), [], None
+
+    def write():
+        total = {"seconds": round(time.time() - started, 1), "cost_usd": round(sum(r["cost_usd"] or 0 for r in rows), 4),
+                 "tokens_in": sum(r["tokens_in"] for r in rows), "tokens_out": sum(r["tokens_out"] for r in rows)}
+        write_batch(f"batch-{stamp}", agent, model, rows, total, stopped)
+
+    for scenario in TOUR_BATCH:
+        if time.time() - started > BATCH_LIMIT:
+            stopped = "the batch passed 45 minutes; no new run was started"
+            break
+        dir_ = run(agent, scenario, "tour", 1, True, model)
+        try:
+            row = score(dir_)
+        except Exception as error:  # a scorer bug must not cost the runs after it: the transcript is kept, `rescore` judges it again
+            import traceback
+            traceback.print_exc()
+            row = {"run": dir_.name, "scenario": scenario, "arm": "tour", "rules": True, "passed": "scorer error", "calls_all": 0, "calls_vnoc": 0,
+                   "tokens_in": 0, "tokens_out": 0, "cost_usd": None, "seconds": 0, "notes": [f"scorer error: {error!r}"], "refused": [],
+                   "outside": [], "outside_recorded": [], "model": model, "tour": None, "build": None, "skill_loaded_unnamed": False}
+        rows.append(row)
+        write()
+        show_row(row)
+        dirty = repo_dirty()
+        if row["outside"] or dirty:
+            stopped = f"{row['run']}: " + ("it reached outside its run dir; " if row["outside"] else "") + (f"the repo is dirty: {dirty}" if dirty else "")
+            break
+    write()
+    print(f"\n{len(rows)} runs, {round(time.time() - started)} s, ${sum(r['cost_usd'] or 0 for r in rows):.3f}; results: runs/batch-{stamp}.md" + (f"\nSTOPPED: {stopped}" if stopped else ""))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -668,31 +1371,36 @@ def main():
     s.add_argument("run_dir")
     s.add_argument("--agent", default="claude")
     s.add_argument("--no-rules", action="store_true")
+    s.add_argument("--scenario")
     r = sub.add_parser("run")
     r.add_argument("agent")
     r.add_argument("scenario")
-    r.add_argument("arm")
-    r.add_argument("n", nargs="?", default="1")
+    r.add_argument("rest", nargs="*", help="[text|xml] [n]: the arm (A14 scenarios only) and the run's number")
     r.add_argument("--no-rules", action="store_true")
     r.add_argument("--model")
     b = sub.add_parser("batch")
     b.add_argument("agent")
     b.add_argument("--model")
+    bt = sub.add_parser("batch-tours")
+    bt.add_argument("agent")
+    bt.add_argument("--model")
     k = sub.add_parser("rescore")
     k.add_argument("batch_json")
     c = sub.add_parser("score")
     c.add_argument("run", nargs="+")
     a = p.parse_args()
     if a.cmd == "setup":
-        setup(a.run_dir, a.agent, not a.no_rules)
+        setup(a.run_dir, a.agent, not a.no_rules, a.scenario)
     elif a.cmd == "run":
-        run(a.agent, a.scenario, a.arm, a.n, not a.no_rules, a.model)
+        arm = next((x for x in a.rest if x in ("text", "xml")), "text")
+        number = next((x for x in a.rest if x.isdigit()), "1")
+        run(a.agent, a.scenario, arm, number, not a.no_rules, a.model)
     elif a.cmd == "rescore":
         rescore(a.batch_json)
-    elif a.cmd == "batch":
+    elif a.cmd in ("batch", "batch-tours"):
         if a.agent == "claude" and not a.model:
             sys.exit("claude needs --model (sonnet)")
-        batch(a.agent, a.model or CODEX_MODEL)
+        (batch if a.cmd == "batch" else batch_tours)(a.agent, a.model or CODEX_MODEL)
     else:
         for d in a.run:
             show_row(score(d))
