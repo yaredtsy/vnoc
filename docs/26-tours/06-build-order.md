@@ -114,7 +114,7 @@ Commit: `tours TR3: tours live in .vnoc/tours and .vnoc/local/tours; start, appe
 |---|---|
 | `cli/args.rs`, `cli/mod.rs` | `Command::Tour(TourCommand)` |
 | `cli/tour.rs` | the five handlers: parse, call, print ([`02`](02-commands.md) §3 – §6, §12); `--json`. `finish` does not pin yet |
-| `tours/add.rs` | `plan_stop` ([`03`](03-core.md) §7): the node from `Lookup::resolve`, its lines from `source.rs`, the marker IDs, the rules, the hashes, the records |
+| `tours/add.rs` | the records keep `hash` as the `Hash` type of TR2, not a string (`record.rs`); `plan_stop` ([`03`](03-core.md) §7): the node from `Lookup::resolve`, its lines from `source.rs`, the marker IDs, the rules, the hashes, the records |
 | `tours/view.rs` | the outline `show` prints, without a check |
 | `crates/vnoc/tests/cli.rs`, `tests/golden/tour-*.{txt,json}` | below |
 
@@ -151,7 +151,7 @@ Commit: `tours TR5: a tour knows which steps no longer match, and remembers; tou
 
 | Files | What |
 |---|---|
-| `tours/add.rs`, `cli/tour.rs` | `--replace <stop>`, `--to <stop> [--under <block>]`; `tour drop`; `tour resume`; `tour edit` |
+| `tours/add.rs`, `cli/tour.rs` | `--replace <stop>`, `--to <stop> [--under <block>]` (`body::read` gets an option for a text with no intro: TR2 requires one); `tour drop`; `tour resume`; `tour edit` |
 | `tours/store.rs`, `cli/tour.rs` | `share` both ways; `delete` (the tour and its state to `local/trash/`), `restore`; `halt(id)` (for the core, TR15; a hidden `vnoc tour halt` for tests and the trial); a write on a halted tour writes `halted` once and is refused, exit `1`, with 02 §5's text |
 
 Tests: replace keeps the number and the id, and block ids go on from the highest used; `--to` adds blocks and checks overlap against
