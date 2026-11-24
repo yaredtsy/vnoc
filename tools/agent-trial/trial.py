@@ -417,24 +417,28 @@ def load_codex(events):
     nor any other event names the model or the effort: they are the flags' (meta.json)."""
     calls, results, texts = [], {}, []
     usage, failed, completed = {}, None, 0
-    for e in events:
+    started = {}  # item id -> the event index of its `item.started`
+    for pos, e in enumerate(events):
         kind = e.get("type")
         item = e.get("item") or {}
-        if kind == "item.completed":
+        if kind == "item.started" and item.get("id") is not None:
+            started.setdefault(item["id"], pos)
+        elif kind == "item.completed":
             t = item.get("type")
+            sent = started.get(item.get("id"), pos)  # `pos` of a call: where it was sent (its `item.started`, else its `item.completed`); of a result: where it came back
             if t == "command_execution":
-                calls.append({"id": item["id"], "name": "Bash", "input": {"command": unwrap(item.get("command", ""))}})
+                calls.append({"id": item["id"], "name": "Bash", "input": {"command": unwrap(item.get("command", ""))}, "pos": sent, "msg": None})
                 failed_cmd = item.get("exit_code") not in (0, None)
-                results[item["id"]] = {"tool_use_id": item["id"], "is_error": failed_cmd, "content": item.get("aggregated_output", "")}
+                results[item["id"]] = {"tool_use_id": item["id"], "is_error": failed_cmd, "content": item.get("aggregated_output", ""), "pos": pos}
             elif t == "file_change":
                 for i, change in enumerate(item.get("changes", [])):
                     verb = {"add": "Write", "delete": "Delete"}.get(change.get("kind"), "Edit")
-                    calls.append({"id": f"{item['id']}.{i}", "name": verb, "input": {"file_path": change.get("path", "")}})
-                    results[f"{item['id']}.{i}"] = {"is_error": item.get("status") == "failed", "content": item.get("status", "")}
+                    calls.append({"id": f"{item['id']}.{i}", "name": verb, "input": {"file_path": change.get("path", "")}, "pos": sent, "msg": None})
+                    results[f"{item['id']}.{i}"] = {"is_error": item.get("status") == "failed", "content": item.get("status", ""), "pos": pos}
             elif t == "agent_message":
                 texts.append(item.get("text", ""))
             elif t == "mcp_tool_call":
-                calls.append({"id": item["id"], "name": "mcp", "input": {"tool": item.get("tool"), "server": item.get("server")}})
+                calls.append({"id": item["id"], "name": "mcp", "input": {"tool": item.get("tool"), "server": item.get("server")}, "pos": sent, "msg": None})
         elif kind == "turn.completed":
             completed += 1
             for k, v in (e.get("usage") or {}).items():
@@ -460,9 +464,9 @@ def load(run_dir):
     init = next((e for e in events if e.get("type") == "system" and e.get("subtype") == "init"), None)
     result = next((e for e in reversed(events) if e.get("type") == "result"), None)
     calls, results = [], {}
-    for e in events:
+    for pos, e in enumerate(events):
         if e.get("type") == "system" and e.get("subtype") == "permission_denied":  # Claude Code's own record of a refused call
-            results[e.get("tool_use_id")] = {"tool_use_id": e.get("tool_use_id"), "is_error": True, "content": e.get("message")}
+            results[e.get("tool_use_id")] = {"tool_use_id": e.get("tool_use_id"), "is_error": True, "content": e.get("message"), "pos": pos}
             continue
         message = e.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -470,9 +474,10 @@ def load(run_dir):
             continue
         for block in content:
             if block.get("type") == "tool_use":
-                calls.append({"id": block["id"], "name": block["name"], "input": block.get("input", {})})
+                # pos: the event that holds the call; msg: the assistant message (one API answer) it was sent in: parallel calls share it
+                calls.append({"id": block["id"], "name": block["name"], "input": block.get("input", {}), "pos": pos, "msg": message.get("id")})
             elif block.get("type") == "tool_result":
-                results.setdefault(block["tool_use_id"], block)
+                results.setdefault(block["tool_use_id"], dict(block, pos=pos))  # pos: the event that delivered it to the agent
     texts = [b["text"] for e in events if e.get("type") == "assistant" and isinstance(e.get("message"), dict)
              for b in (e["message"].get("content") or []) if isinstance(b, dict) and b.get("type") == "text"]
     return init, result, calls, results, texts
@@ -654,8 +659,23 @@ def tour_subs(call_or_command):
 
 
 def tour_calls(calls):
-    return [{"i": i, "id": c["id"], "sub": sub, "args": args, "heredoc": bool(HEREDOC.search(command_of(c)))}
+    return [{"i": i, "id": c["id"], "sub": sub, "args": args, "heredoc": bool(HEREDOC.search(command_of(c))), "pos": c.get("pos"), "msg": c.get("msg")}
             for i, c in enumerate(calls) if c["name"] == "Bash" for sub, args in tour_subs(c)]
+
+
+def max_adds_at_once(tc, results):
+    """The most `add`s sent in one assistant message. Claude: calls with the same message id (and the `add`s of a chained command). Codex has no message ids:
+    an `add` started before the previous one's result came back is at once with it."""
+    adds = [t for t in tc if t["sub"] == "add"]
+    if not adds:
+        return 0
+    if all(t["msg"] is not None for t in adds):
+        by = {}
+        for t in adds:
+            by[t["msg"]] = by.get(t["msg"], 0) + 1
+        return max(by.values())
+    done = lambda t: (results.get(t["id"]) or {}).get("pos")
+    return max(sum(1 for u in adds if u["pos"] <= t["pos"] < (done(u) if done(u) is not None else float("inf")) or u is t) for t in adds)
 
 
 def ordered_items(run_dir):
@@ -733,7 +753,32 @@ def replay(records):
     return stops, steps, [s for s in order if s in stops], state
 
 
-def tour_facts(file, skip):
+def core_outline(run_dir, tour_id):
+    """(outline, None) as the core says it (`vnoc tour show <id> --json`, run in the run's work dir with the run's env and bin): a plan and a move
+    change the order, and the python `replay` knows neither. (None, why) when the command fails; the caller falls back to `replay`."""
+    run_dir = Path(run_dir)
+    bin_dir = run_dir / "bin"
+    try:
+        done = subprocess.run([str(bin_dir / "vnoc"), "tour", "show", tour_id, "--json"], cwd=run_dir / "work", env=base_env(bin_dir),
+                              text=True, capture_output=True, timeout=60)
+        if done.returncode != 0:
+            return None, f"exit {done.returncode}: {(done.stderr or done.stdout).strip()[:160]}"
+        shown = json.loads(done.stdout)
+        outline = []
+        for st in shown["stops"]:
+            if st.get("planned"):  # planned and never written: `finish` removes it, the reader does not get it
+                continue
+            blocks = st.get("blocks") or []
+            outline.append({"id": st["id"], "name": st.get("qualname") or st.get("path"), "path": st.get("path"), "kind": st.get("kind"),
+                            "from": st.get("from"), "line": st.get("line"), "same_as": st.get("same_as"),
+                            "blocks": sum(1 for b in blocks if not b.get("depth")), "details": sum(1 for b in blocks if b.get("depth")),
+                            "intro_chars": len(st.get("text", ""))})
+        return outline, None
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        return None, repr(error)[:160]
+
+
+def tour_facts(file, skip, run_dir=None):
     records = []
     for line in file.read_text().splitlines():
         try:
@@ -751,8 +796,15 @@ def tour_facts(file, skip):
                         "from": st.get("from"), "line": st.get("line"), "same_as": st.get("same_as"),
                         "blocks": sum(1 for b in mine if not b.get("parent")), "details": sum(1 for b in mine if b.get("parent")),
                         "intro_chars": len(st.get("text", ""))})
+    source = "replay (not asked)"
+    if run_dir is not None:
+        core, why = core_outline(run_dir, file.stem)
+        if core is not None:
+            outline, source = core, "core (`tour show --json`)"
+        else:
+            source = f"replay (`tour show --json` failed: {why})"
     after_halt = [r.get("type") for r in records[state["halt_at"] + 1:]] if state["halt_at"] is not None else []
-    return {"id": file.stem, "file": str(file), "records_new": len(records) - skip, "finished": state["finished"], "stops": len(stops),
+    return {"id": file.stem, "outline_source": source, "file": str(file), "records_new": len(records) - skip, "finished": state["finished"], "stops": len(stops),
             "blocks": sum(o["blocks"] for o in outline), "details": sum(o["details"] for o in outline),
             "with_from": sum(1 for o in outline if o["from"]), "with_line": sum(1 for o in outline if o["line"]),
             "same_as": sum(1 for o in outline if o["same_as"]), "folders": sum(1 for o in outline if o["kind"] == "folder"),
@@ -877,7 +929,7 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
     tours = []
     for file in tour_files(work):
         skip = setup["tour_files"].get(str(file.relative_to(work)), 0)
-        facts = tour_facts(file, skip)
+        facts = tour_facts(file, skip, run_dir)
         if facts["records_new"] > 0:
             tours.append(facts)
     sub_list = [t["sub"] for t in tc]
@@ -890,6 +942,7 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
              or (c["name"] == "Read" and ".vnoc" not in path_of(c) and ".claude" not in path_of(c))
              or (c["name"] == "Bash" and re.match(r"\s*cat\s+\S+\.py", command_of(c)))]
     per_call = max([sum(1 for s, _ in tour_subs(c) if s == "add") for c in calls if c["name"] == "Bash"] or [0])
+    per_message = max_adds_at_once(tc, results)  # TR14c: recorded for every tour scenario; TR14d decides whether it becomes a need
     first_add = adds[0]["i"] if adds else None
     as_it_goes = None if stops_written < 2 else written[0]["i"] < max(reads or [-1])  # n/a for a tour of one stop
     guide_read = any(is_vnoc(c) and re.search(r"vnoc\s+guide\s+tour|vnoc\s+skill\s+tour", command_of(c)) for c in calls)
@@ -909,12 +962,16 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
             one.need("it was finished", any(t["finished"] for t in tours if t["new_stop_ids"]))
         return made
 
-    def per_stop_loop():
+    def per_stop_loop(as_it_goes_needed=True):
         one.need("one stop per command", per_call <= 1, f"most `add`s in one command: {per_call}")
         if chained:
             one.items.append({"check": "`finish` chained to an `add` in one command", "ok": True, "detail": f"{len(chained)} command(s): finish runs even when the add before it was refused"})
         if as_it_goes is not None:
-            one.need("as it goes: an add comes before the last code read", as_it_goes, f"first stop written at call {written[0]['i']}, last code read at call {max(reads or [-1])}")
+            detail = f"first stop written at call {written[0]['i']}, last code read at call {max(reads or [-1])}"
+            if as_it_goes_needed:
+                one.need("as it goes: an add comes before the last code read", as_it_goes, detail)
+            else:  # t4 (TR14c): a question across files reads everything first, so this is recorded and not needed
+                one.items.append({"check": "as it goes: an add comes before the last code read (recorded, not needed for t4)", "ok": True, "detail": f"{as_it_goes}: {detail}"})
 
     finish_out = next((result_text(results.get(c["id"])) for c in reversed(calls) if "finish" in [s for s, _ in tour_subs(c)]
                        and c["id"] not in perm_ids and re.search(r"^finished:", result_text(results.get(c["id"])), re.M)), "")  # the one that ran
@@ -949,8 +1006,21 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
         one.items.append({"check": "route used", "ok": True, "detail": f"route calls: {sub_list.count('route')}, plan calls: {sub_list.count('plan')}"})
     elif scenario == "t4":
         if tour_made():
-            per_stop_loop()
+            per_stop_loop(as_it_goes_needed=False)
             chat_rule()
+            starts = [t for t in tc if t["sub"] == "start"]
+            start_plan = [t for t in starts if "--plan" in t["args"]]
+            start_route = [t for t in starts if "--route" in t["args"]]
+            planned = bool(start_plan or start_route or "plan" in sub_list)
+            replaced_calls = [t for t in {t["id"]: t for t in adds}.values() if "--replace" in t["args"]]
+            filled = [i for t in {t["id"]: t for t in adds}.values() for i in re.findall(r"^(s\d+) written", result_text(results.get(t["id"])), re.M)]
+            where = {o["id"]: k for k, o in enumerate(main["outline"])}
+            in_order = [where[i] for i in filled if i in where]
+            order_word = "n/a (no plan)" if not planned else str(in_order == sorted(in_order))
+            one.items.append({"check": "plan (recorded, not needed)", "ok": True,
+                              "detail": f"`start --plan`: {bool(start_plan)}; `start --route`: {bool(start_route)}; `plan` calls: {sub_list.count('plan')}; `route` calls: {sub_list.count('route')}; "
+                                        f"`--replace` calls: {len(replaced_calls)}; stops filled in the plan's order (the core's outline): {order_word}; stops written in this order: {filled}; "
+                                        f"outline: {[o['id'] for o in main['outline']]}"})
             out = main["outline"]
             top = [o for o in out if not o["from"]]
             paths = {o["path"] for o in out}
@@ -985,8 +1055,15 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
             one.need("no stop, block, plan or drop after the halt", not after.get("stops_blocks_plans"), f"after the halt record: {after}")
             hit = next((r for r in refusals if re.search(r"stopp|halt", r["error"], re.I)), None)
             if hit:
-                later = [t for t in adds if t["i"] > hit["i"]]
-                one.need("no `add` tried after the refusal", not later, f"{len(later)} later add(s); refusal: {hit['error'][:160]}")
+                # TR14c: an add counts against Stop only if the agent had seen the refusal when it sent it: sent after the refusing call's result came
+                # back, and not in the assistant message that held the refused call (parallel calls are sent together, before any answer)
+                refused_call, seen_at = calls[hit["i"]], (results.get(calls[hit["i"]]["id"]) or {}).get("pos")
+                after_seen = lambda t: t["pos"] is not None and seen_at is not None and t["pos"] > seen_at and (t["msg"] is None or t["msg"] != refused_call.get("msg"))
+                later = [t for t in adds if t["i"] > hit["i"] and after_seen(t)]
+                early = [t for t in adds if t["i"] > hit["i"] and not after_seen(t)]  # sent with or just after the refused one, before its answer
+                one.need("no `add` tried after the refusal was seen", not later, f"{len(later)} later add(s); refusal: {hit['error'][:160]}")
+                one.items.append({"check": "adds sent before the refusal was seen (recorded, not needed)", "ok": True,
+                                  "detail": f"{len(early)}; {sum(1 for t in early if t['msg'] is not None and t['msg'] == refused_call.get('msg'))} of them in the refused call's message"})
             else:
                 one.items.append({"check": "no refusal said stopped", "ok": True, "detail": "the agent was not refused after the halt (it had finished, or stopped by itself)"})
             one.need("no `resume`", "resume" not in sub_list)
@@ -1064,10 +1141,14 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
         one.need("it says `vnoc` is missing", bool(says), "no such line")
         one.need("it explains in the chat", len(final) >= 200 and "parse_order" in final, f"the last text is {len(final)} chars")
         one.judge("what it says", quote(says or [final], 3, 220))
+    one.items.append({"check": "most `add`s in one assistant message (recorded, not needed)", "ok": True, "detail": str(per_message)})
+    if tried_user_commands and not scenario.startswith("t10"):  # a need in t10*; elsewhere recorded (Codex has no layer that would refuse it)
+        one.items.append({"check": "a user-only command was tried unasked (recorded)", "ok": True, "detail": f"tried: {tried_user_commands}"})
     verdict = verdict or one.verdict()
     facts = {"tours": [{k: v for k, v in t.items() if k != "after_halt" or scenario == "t6"} for t in tours], "calls_tour": sub_list, "checks": one.items,
-             "judged": one.judged, "chat": chat, "max_adds_per_call": per_call, "as_it_goes": as_it_goes, "guide_read": guide_read,
-             "permission_refusals": perm, "vnoc_refusals": refusals, "git": git, "finish_ask_lines": ask_lines, "final_text": final[:600],
+             "judged": one.judged, "chat": chat, "max_adds_per_call": per_call, "max_adds_per_message": per_message, "as_it_goes": as_it_goes, "guide_read": guide_read,
+             "permission_refusals": perm, "check_9": "n/a (codex never asks)" if meta.get("agent") == "codex" else "see permission_refusals",
+             "tried_user_commands": tried_user_commands, "vnoc_refusals": refusals, "git": git, "finish_ask_lines": ask_lines, "final_text": final[:600],
              "setup": {k: v for k, v in setup.items() if k not in ("vnoc_toml", "route_billing_depth2")}}
     notes = one.notes()
     if scenario == "t3" and verdict == "n/a":
@@ -1256,7 +1337,7 @@ def table_tours(rows):
         chars = f"{chat.get('opening_chars', 0)}/{chat.get('between_chars', 0)}/{chat.get('end_chars', 0)}"
         notes = " ; ".join(r["notes"])[:420].replace("|", "/").replace("\n", " ")
         lines.append(f"| {r['run']} | {r['scenario']} | {r['passed']} | {r['calls_all']}/{r['calls_vnoc']} | {shape} | {chars} | {len(t.get('vnoc_refusals') or [])} | "
-                     f"{len(t.get('permission_refusals') or [])} | {r['tokens_in']:,}/{r['tokens_out']:,} | {'' if r['cost_usd'] is None else format(r['cost_usd'], '.3f')} | "
+                     f"{'n/a' if r.get('agent') == 'codex' else len(t.get('permission_refusals') or [])} | {r['tokens_in']:,}/{r['tokens_out']:,} | {'' if r['cost_usd'] is None else format(r['cost_usd'], '.3f')} | "
                      f"{r['seconds']} | {notes}{outside_word(r)} |")
     return "\n".join(lines)
 
@@ -1282,7 +1363,9 @@ def details_tours(rows):
     out += [f"- {sc}: {p['kind']}: `{p['tool']}` {p['command']}" for sc, p in perms] or ["- none"]
     heredoc_add = [sc for sc, p in perms if p["kind"].startswith("check 9: FAILED")]
     variable = [sc for sc, p in perms if p["kind"] == SHELL_VARIABLE]
-    out += ["", ("**check 9: FAILED**" + f" ({', '.join(heredoc_add)})") if heredoc_add else
+    codex = bool(rows) and all(r.get("agent") == "codex" for r in rows)
+    out += ["", "**check 9:** n/a (codex never asks): its sandbox refuses, but no permission layer asks; a refusal above is a sandbox block, not a host refusal" if codex else
+            ("**check 9: FAILED**" + f" ({', '.join(heredoc_add)})") if heredoc_add else
             "**check 9:** no `vnoc tour` command of the allow list was refused for being what it is; every heredoc `vnoc tour add` that was tried alone ran",
             f"**shell variable or loop** (counted apart, not check 9): {len(variable)} refused" + (f" ({', '.join(variable)})" if variable else "")]
     add_runs = [r["scenario"] for r in rows if "add" in ((r.get("tour") or {}).get("calls_tour") or [])]
