@@ -1301,6 +1301,7 @@ mod tests {
         fn new(label: &str) -> Fixture {
             let dir = std::env::temp_dir().join(format!("vnoc-add-{label}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
+            crate::testdir::remove_at_end(&dir);
             std::fs::create_dir_all(dir.join("sub")).unwrap();
             std::fs::write(dir.join("a.py"), A_PY).unwrap();
             std::fs::write(dir.join("sub/z.py"), "def z():\n    return 1\n").unwrap();
@@ -1360,12 +1361,6 @@ mod tests {
         fn hash_of(&self, path: &str, first: u32, last: u32, markers: &[&str]) -> String {
             let text = std::fs::read_to_string(self.dir.join(path)).unwrap();
             hash::of(&hash::lines_of(&text, first, last), markers).to_string()
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
 
@@ -1561,6 +1556,7 @@ mod tests {
     fn the_second_def_of_a_name_keeps_its_occurrence() {
         let dir = std::env::temp_dir().join(format!("vnoc-add-twice-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("t.py"),

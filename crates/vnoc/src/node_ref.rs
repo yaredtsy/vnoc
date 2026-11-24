@@ -490,6 +490,7 @@ mod tests {
     fn fixture(label: &str) -> (Project, Index) {
         let root = std::env::temp_dir().join(format!("vnoc-whynot-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
+        crate::testdir::remove_at_end(&root);
         for (file, text) in [
             ("src/orders.py", "def parse_order():\n    pass\n"),
             ("src/a.py", "1\n2\n3\n4\n5\n"),
@@ -625,6 +626,7 @@ mod tests {
     fn a_path_is_shown_relative_to_the_opened_folder() {
         let root = std::env::temp_dir().join(format!("vnoc-whynot-sub-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
+        crate::testdir::remove_at_end(&root);
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::create_dir_all(root.join("services/api")).unwrap();
         std::fs::write(root.join("services/api/a.py"), "1\n2\n").unwrap();

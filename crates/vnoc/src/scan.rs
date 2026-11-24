@@ -92,6 +92,7 @@ mod tests {
     fn fresh(label: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("vnoc-scan-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
+        crate::testdir::remove_at_end(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
     }

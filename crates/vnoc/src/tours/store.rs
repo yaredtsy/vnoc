@@ -1090,6 +1090,7 @@ mod tests {
     fn project(label: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("vnoc-tours-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
+        crate::testdir::remove_at_end(&d);
         fs::create_dir_all(&d).unwrap();
         d
     }

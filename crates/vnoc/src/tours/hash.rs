@@ -243,6 +243,7 @@ mod tests {
         assert_eq!(lines_of(text, 3, 3), ["three"]);
         // the same lines `source::excerpt` gives for the same range (0-based there)
         let dir = std::env::temp_dir().join(format!("vnoc-tours-hash-{}", std::process::id()));
+        crate::testdir::remove_at_end(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("a.py");
         let bytes = b"\xef\xbb\xbfone\r\ntwo\xff\nthree\r\n";

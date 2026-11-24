@@ -3,6 +3,9 @@
 //!
 //! VS-D67 condition 3: unknown notifications and unknown requests plus a full lifecycle, and the core is still alive.
 
+#[path = "common/testdir.rs"]
+mod testdir;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -31,6 +34,7 @@ fn driver_path() -> PathBuf {
 fn fixtures(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vnoc-lifecycle-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    testdir::remove_at_end(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     for entry in std::fs::read_dir(repo_root().join("crates/vnoc-domain/tests/fixtures")).unwrap() {
         let entry = entry.unwrap();
@@ -965,6 +969,7 @@ const ORDERS: &str = "class OrderService:\n    def parse_order(self, raw):\n    
 fn orders_project(label: &str, vnoc_toml: Option<&str>) -> (Core, PathBuf) {
     let root = std::env::temp_dir().join(format!("vnoc-attach-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     std::fs::create_dir_all(root.join(".vnoc")).unwrap();
     std::fs::write(root.join("orders.py"), ORDERS).unwrap();
     match vnoc_toml {
@@ -1614,6 +1619,7 @@ fn write_record(root: &std::path::Path, id: &str, path: &str, qualname: &str) {
 fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() {
     let root = std::env::temp_dir().join(format!("vnoc-missing-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     std::fs::create_dir_all(root.join("ignored")).unwrap();
     std::fs::write(root.join("orders.py"), ORDERS).unwrap();
     std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
@@ -2389,6 +2395,7 @@ fn sites(node: &Value) -> Vec<(u64, u64, u64)> {
 fn a_call_tree_comes_back_merged_and_mapped_to_the_structure() {
     let root = std::env::temp_dir().join(format!("vnoc-calltree-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     let mut core = calls_project(&root, &root);
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
     assert_eq!(
@@ -2479,6 +2486,7 @@ fn a_call_tree_comes_back_merged_and_mapped_to_the_structure() {
 fn a_class_is_the_root_with_what_its_init_calls_and_a_bad_key_is_refused() {
     let root = std::env::temp_dir().join(format!("vnoc-calltree-class-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     let mut core = calls_project(&root, &root);
 
     let result = core
@@ -2525,6 +2533,7 @@ fn a_class_is_the_root_with_what_its_init_calls_and_a_bad_key_is_refused() {
 fn a_call_tree_of_a_subfolder_has_keys_from_the_git_root_and_paths_from_the_folder() {
     let repo = std::env::temp_dir().join(format!("vnoc-calltree-sub-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&repo);
+    testdir::remove_at_end(&repo);
     std::fs::create_dir_all(repo.join(".git")).unwrap();
     let sub = repo.join("services/api");
     let mut core = calls_project(&sub, &sub);
@@ -2568,6 +2577,7 @@ fn a_call_site_in_an_inherited_constructor_names_the_base_file() {
     // `class Child(Base)` is in pkg/child.py and has no `__init__`; `Base.__init__` in pkg/base.py calls `a()` from pkg/calc.py
     let folder = std::env::temp_dir().join(format!("vnoc-calltree-inherit-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
+    testdir::remove_at_end(&folder);
     copy_tree(
         &repo_root().join("drivers/python/tests/fixtures/call_tree"),
         &folder,
@@ -2604,6 +2614,7 @@ fn a_call_site_in_an_inherited_constructor_names_the_base_file() {
 fn files_project(name: &str, files: &[(&str, String)]) -> Core {
     let folder = std::env::temp_dir().join(format!("vnoc-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
+    testdir::remove_at_end(&folder);
     std::fs::create_dir_all(&folder).unwrap();
     for (file, text) in files {
         std::fs::write(folder.join(file), text).unwrap();
@@ -2640,6 +2651,7 @@ fn spine(root: &Value) -> Vec<&Value> {
 fn has_calls_counts_what_opening_would_show_and_nothing_else_leaves_the_core() {
     let root = std::env::temp_dir().join(format!("vnoc-hascalls-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     let mut core = calls_project(&root, &root);
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
 
@@ -2962,6 +2974,7 @@ fn structure_carries_the_lost_marker_of_the_sample_and_only_it() {
     // `tests/sample/` (a copy of it, outside this repository): `rate_for`'s record says its ID is in the code, and the code has none
     let root = std::env::temp_dir().join(format!("vnoc-lifecycle-lost-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     copy_tree(&repo_root().join("crates/vnoc/tests/sample"), &root);
     let mut core = Core::start(Some(driver_path()), &root);
     let s = core.request("vnoc/structure", Value::Null).unwrap();

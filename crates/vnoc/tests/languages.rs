@@ -1,6 +1,9 @@
 //! The core with two real drivers behind it (docs/23 §5): Python's and Bend's, each in its own build.
 //! Needs both built first: `cd drivers/python && cargo build` and `cd drivers/bend && cargo build`.
 
+#[path = "common/testdir.rs"]
+mod testdir;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -37,6 +40,7 @@ fn driver(language: &str) -> PathBuf {
 fn project(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("vnoc-languages-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(
         root.join("a.py"),

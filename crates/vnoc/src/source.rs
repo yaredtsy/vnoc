@@ -85,6 +85,7 @@ mod tests {
     fn file(label: &str, bytes: &[u8]) -> std::path::PathBuf {
         let path =
             std::env::temp_dir().join(format!("vnoc-source-{label}-{}.py", std::process::id()));
+        crate::testdir::remove_at_end(&path);
         std::fs::write(&path, bytes).unwrap();
         path
     }

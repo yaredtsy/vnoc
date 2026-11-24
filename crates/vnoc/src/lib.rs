@@ -23,3 +23,8 @@ pub mod suggest;
 pub mod tours;
 pub mod userdata;
 pub mod watchdog;
+
+/// The temp folders the unit tests make go away when the test ends (`tests/common/testdir.rs`, shared with the integration tests).
+#[cfg(test)]
+#[path = "../tests/common/testdir.rs"]
+mod testdir;

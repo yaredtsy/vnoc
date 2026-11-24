@@ -942,6 +942,7 @@ mod tests {
             let dir =
                 std::env::temp_dir().join(format!("vnoc-check-{label}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
+            crate::testdir::remove_at_end(&dir);
             fs::create_dir_all(dir.join(".vnoc/local/tours")).unwrap();
             fs::write(dir.join("a.py"), ORIGINAL).unwrap();
             fs::write(dir.join("b.py"), "def other():\n    return 1\n").unwrap();
@@ -1027,12 +1028,6 @@ mod tests {
             let len = fs::metadata(path).unwrap().len();
             let answer = fresh(&code, &mut read, &self.vnoc_root, tour, path, len, mode).unwrap();
             (answer, reads.get())
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.dir);
         }
     }
 

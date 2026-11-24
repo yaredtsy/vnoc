@@ -17,6 +17,9 @@
 //! help text and no guide), so the ids a guide shows are the ones its run prints.
 #![cfg(unix)]
 
+#[path = "common/testdir.rs"]
+mod testdir;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -379,6 +382,7 @@ fn bin_dir() -> &'static Path {
     DIR.get_or_init(|| {
         let dir = std::env::temp_dir().join(format!("vnoc-guide-bin-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        testdir::remove_at_exit(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_vnoc"), dir.join("vnoc")).unwrap();
         dir
@@ -402,6 +406,7 @@ fn copy_dir(from: &Path, to: &Path) {
 fn fresh_sample(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vnoc-guide-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    testdir::remove_at_end(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let dir = dunce::canonicalize(dir).unwrap();
     copy_dir(&crate_dir().join("tests/sample"), &dir);

@@ -1599,6 +1599,7 @@ mod tests {
     fn fresh(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("vnoc-agents-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
         fs::create_dir_all(&dir).unwrap();
         dunce::canonicalize(dir).unwrap()
     }

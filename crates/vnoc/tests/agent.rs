@@ -4,6 +4,9 @@
 //!
 //! `vnoc status` (which shows one line about all this) needs the driver built first, as `cli.rs` does.
 
+#[path = "common/testdir.rs"]
+mod testdir;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -29,6 +32,7 @@ fn driver_path() -> PathBuf {
 fn scratch(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vnoc-agent-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    testdir::remove_at_end(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dunce::canonicalize(dir).unwrap()
 }

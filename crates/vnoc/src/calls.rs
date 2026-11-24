@@ -670,7 +670,11 @@ mod tests {
 
     /// The two refusals that need no driver: `host` has no path, so reaching it would be an error of another kind.
     async fn refused(key: &str) -> CallsError {
-        let dir = std::env::temp_dir().join(format!("vnoc-calls-ask-{}", std::process::id()));
+        // one folder for each call: two tests use this, and each removes its own when it ends
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("vnoc-calls-ask-{}-{n}", std::process::id()));
+        crate::testdir::remove_at_end(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let project = Project::open(&dir).unwrap();
         let (index, host) = (RwLock::new(Index::default()), DriverHost::default());

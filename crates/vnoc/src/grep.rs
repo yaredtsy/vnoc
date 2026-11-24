@@ -269,6 +269,7 @@ mod tests {
     fn fixture(label: &str) -> (Project, Index) {
         let root = std::env::temp_dir().join(format!("vnoc-grep-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
+        crate::testdir::remove_at_end(&root);
         std::fs::create_dir_all(root.join("pkg")).unwrap();
         std::fs::write(
             root.join("a.py"),
@@ -359,6 +360,7 @@ mod tests {
     fn only_the_first_five_lines_are_kept_and_every_hit_is_counted() {
         let root = std::env::temp_dir().join(format!("vnoc-grep-cap-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
+        crate::testdir::remove_at_end(&root);
         std::fs::create_dir_all(&root).unwrap();
         let body: String = (0..12).map(|n| format!("    hit {n}\n")).collect();
         std::fs::write(root.join("c.py"), format!("def f():\n{body}")).unwrap();

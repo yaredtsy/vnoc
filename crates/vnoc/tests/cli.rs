@@ -4,6 +4,9 @@
 //! The sample has to be run **as a copy outside this repository**: its git root would be this repository (05 §2), and a `.git` is what
 //! decides the root. Every test copies it to a fresh temp folder.
 
+#[path = "common/testdir.rs"]
+mod testdir;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Output, Stdio};
@@ -39,6 +42,7 @@ fn driver_path() -> PathBuf {
 fn scratch(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vnoc-cli-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    testdir::remove_at_end(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dunce::canonicalize(dir).unwrap()
 }

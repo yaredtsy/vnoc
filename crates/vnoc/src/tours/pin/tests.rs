@@ -14,6 +14,7 @@ use crate::tours::record::{Lines, StepId, WhereAt};
 fn repo(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vnoc-pin-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    crate::testdir::remove_at_end(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let dir = dunce::canonicalize(dir).unwrap();
     git(&dir, &["init", "-q"]);
@@ -132,6 +133,7 @@ fn what_needs_no_code_is_asked_first_and_each_answer_has_its_reason() {
     // not a repository: a folder with no `.git` anywhere above it
     let plain = std::env::temp_dir().join(format!("vnoc-pin-plain-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&plain);
+    crate::testdir::remove_at_end(&plain);
     std::fs::create_dir_all(&plain).unwrap();
     let plain = dunce::canonicalize(plain).unwrap();
     assert_eq!(

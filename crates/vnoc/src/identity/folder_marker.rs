@@ -65,6 +65,7 @@ mod tests {
     fn an_existing_file_is_not_overwritten() {
         let dir = std::env::temp_dir().join(format!("vnoc-folder-marker-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let id = NodeId::parse(ID).unwrap();
         write(&dir, &id).unwrap();

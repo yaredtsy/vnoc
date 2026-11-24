@@ -269,6 +269,7 @@ mod tests {
         ));
         let dir = std::env::temp_dir().join(format!("vnoc-tours-settings-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(read(&dir).unwrap().ids, ASK);
         assert!(matches!(
@@ -281,6 +282,7 @@ mod tests {
     fn set_changes_one_key_and_keeps_the_rest_of_the_file_byte_for_byte() {
         let dir = std::env::temp_dir().join(format!("vnoc-tours-set-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = layout::project_file(&dir);
         let cases: [(&str, &str); 4] = [
