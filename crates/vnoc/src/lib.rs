@@ -20,5 +20,6 @@ pub mod search;
 pub mod server;
 pub mod source;
 pub mod suggest;
+pub mod tours;
 pub mod userdata;
 pub mod watchdog;
