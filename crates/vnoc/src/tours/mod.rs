@@ -21,6 +21,7 @@ pub mod pin;
 pub mod place;
 pub mod rebase;
 pub mod record;
+pub mod route;
 pub mod rules;
 pub mod settings;
 pub mod store;

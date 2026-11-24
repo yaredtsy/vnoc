@@ -13,14 +13,15 @@ use serde::Serialize;
 use super::args::{
     DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourDeleteArgs, TourDropArgs, TourEditArgs,
     TourExportArgs, TourFinishArgs, TourGoArgs, TourIdsArgs, TourImportArgs, TourListArgs,
-    TourPinArgs, TourPlanArgs, TourResumeArgs, TourSettingsArgs, TourShareArgs, TourShowArgs,
-    TourStartArgs, TourWhereArgs,
+    TourPinArgs, TourPlanArgs, TourResumeArgs, TourRouteArgs, TourSettingsArgs, TourShareArgs,
+    TourShowArgs, TourStartArgs, TourWhereArgs,
 };
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
 use super::project::{Opened, open_from, open_without_driver};
 use super::write::{attach_failure, marker_words, take_lock as take_write_lock};
 use super::{Failure, Global};
+use crate::calls::{self, CallsError};
 use crate::source;
 use crate::tours::add::{
     AddOptions, MAX_STOPS, block_of, did_you_mean_stops, nested_in, plan_more, plan_route,
@@ -36,6 +37,7 @@ use crate::tours::place::{self, At, By, Move, Place};
 use crate::tours::record::{
     Bare, Commit, Detail, DropRecord, EndRecord, MetaRecord, Record, StepId, StopId,
 };
+use crate::tours::route;
 use crate::tours::rules::Refusal;
 use crate::tours::settings::{self, Choice, Key, Origin};
 use crate::tours::store::{self, Located, Pick, Row, StartParams, StoreError, Where};
@@ -50,6 +52,7 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
         TourCommand::Start(args) => start(global, args).await,
         TourCommand::Add(args) => add(global, args).await,
         TourCommand::Plan(args) => plan(global, args).await,
+        TourCommand::Route(args) => route(global, args).await,
         TourCommand::Finish(args) => finish(global, args).await,
         TourCommand::Pin(args) => pin_command(global, args).await,
         TourCommand::List(args) => list(global, args).await,
@@ -280,11 +283,17 @@ fn plan_rows(tour: &Tour, ids: &[StopId]) -> String {
         .iter()
         .filter_map(|id| tour.stop(*id))
         .map(|stop| {
-            let tail = match (stop.from, stop.line) {
+            let mut tail = match (stop.from, stop.line) {
                 (Some(from), Some(line)) => format!("← {from} line {line}"),
                 (Some(from), None) => format!("← {from}"),
                 _ => String::new(),
             };
+            if let Some(same) = stop.same_as {
+                if !tail.is_empty() {
+                    tail.push_str("   ");
+                }
+                tail.push_str(&format!("= {same}"));
+            }
             (stop.id.to_string(), view::stop_headline(stop), tail)
         })
         .collect();
@@ -317,7 +326,7 @@ async fn start(global: &Global, args: &TourStartArgs) -> Result<(), Failure> {
         )));
     }
     // a bare `start` starts no driver; `--plan` finds every node first, before the tour is made (one unknown node: nothing is written)
-    let opened = if args.plan.is_empty() {
+    let opened = if args.plan.is_empty() && args.route.is_none() {
         None
     } else {
         Some(open_from(global).await?)
@@ -331,6 +340,52 @@ async fn start(global: &Global, args: &TourStartArgs) -> Result<(), Failure> {
         }
     };
     let plan = match &opened {
+        // `--route`: exactly the outline of `vnoc tour route`, one `plan` record
+        Some(opened) if args.route.is_some() => {
+            let lookup = Lookup::new(opened, 1);
+            let text = args.route.as_deref().unwrap_or_default();
+            let built = build_route(
+                global,
+                "tour start",
+                opened,
+                &lookup,
+                text,
+                args.depth.unwrap_or(1),
+            )
+            .await?;
+            let nodes: Vec<&crate::index::Node> = built
+                .route
+                .stops
+                .iter()
+                .filter_map(|e| lookup.tree.find(&e.known.id))
+                .collect();
+            match planned_stops(&nodes, 0, None, None) {
+                Ok(mut stops) if stops.len() == built.route.stops.len() => {
+                    // ids s1… are the outline's numbers: `from` and `same_as` map to them, and so does `line`
+                    let id = |n: usize| u32::try_from(n).ok().and_then(StopId::new);
+                    for (stop, entry) in stops.iter_mut().zip(&built.route.stops) {
+                        stop.from = entry.from.and_then(id);
+                        stop.line = entry.line;
+                        stop.same_as = entry.same_as.and_then(id);
+                    }
+                    stops
+                }
+                Ok(_) => {
+                    return Err(Failure::Environment(
+                        "a stop of the route is not in the index any more".to_string(),
+                    ));
+                }
+                Err(refusals) => {
+                    return refused_with_hint(
+                        global,
+                        "tour start",
+                        None,
+                        &refusals,
+                        "nothing was written",
+                    );
+                }
+            }
+        }
         Some(opened) => {
             let lookup = Lookup::new(opened, args.plan.len());
             let nodes = find_all(global, "tour start", &lookup, &args.plan)?;
@@ -790,6 +845,157 @@ async fn add(global: &Global, args: &TourAddArgs) -> Result<(), Failure> {
             added_to: args.to.map(|to| to.to_string()),
             under: args.under.map(|u| u.to_string()),
             headline: view::stop_headline(stop),
+        },
+        global,
+    )
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------- route
+
+/// A route and what the driver said when it was asked for it.
+struct Built {
+    route: route::Route,
+    /// the driver has no call trees: the route is the node alone
+    no_calls: bool,
+}
+
+/// The route of a node (02 §11): a function's from the driver's call tree (`calls::ask`, merged), a class's, a file's and a folder's from the index. The
+/// tree is asked for `max(depth, 2)` levels, so the sizes of depths 1 and 2 are there whatever the depth. Reads only.
+async fn build_route(
+    global: &Global,
+    command: &'static str,
+    opened: &Opened,
+    lookup: &Lookup<'_>,
+    text: &str,
+    depth: u32,
+) -> Result<Built, Failure> {
+    let node = match lookup.resolve(text) {
+        Ok(Target::Node(node)) => node,
+        Ok(Target::Missing(missing)) => {
+            refused_with(global, command, missing_error(&missing.was, &missing.id))?;
+            unreachable!("a refusal is a failure")
+        }
+        Err(error) => {
+            refused_with(global, command, error)?;
+            unreachable!("a refusal is a failure")
+        }
+    };
+    let Some(root) = route::known_of(node) else {
+        refused_with(
+            global,
+            command,
+            NodeError::new(
+                "root",
+                "the project's root folder is not a stop: name a folder in it",
+            ),
+        )?;
+        unreachable!("a refusal is a failure")
+    };
+    let levels = depth.max(2);
+    let mut no_calls = false;
+    let (item, how) = if node.kind == crate::index::Kind::Function {
+        let tree = match calls::ask(
+            &opened.project,
+            &opened.index,
+            &opened.host,
+            &node.id,
+            Some(levels),
+        )
+        .await
+        {
+            Ok(answer) => Some(calls::merge(&answer.root)),
+            // a driver with no call trees: the node alone, and a line that says so
+            Err(CallsError::MissingCapability(_)) => {
+                no_calls = true;
+                None
+            }
+            Err(CallsError::Invalid(message)) => return Err(Failure::NoSuchNode(message)),
+            Err(CallsError::Internal(message)) => return Err(Failure::Environment(message)),
+        };
+        let known = |target: &vnoc_driver_protocol::CallTarget| {
+            let location = vnoc_domain::LocationKey::new(
+                opened.project.repo_path(target.file.as_deref()?).ok()?,
+                target.qualname.clone(),
+                target.occurrence,
+            )
+            .ok()?;
+            lookup
+                .tree
+                .find(&location.to_string())
+                .and_then(route::known_of)
+        };
+        let item = match &tree {
+            Some(merged) => route::from_calls(merged, root, levels, &known),
+            None => route::Item {
+                known: root,
+                line: None,
+                children: Vec::new(),
+            },
+        };
+        (item, route::How::Calls)
+    } else {
+        let item = route::from_tree(node, levels).ok_or_else(|| {
+            Failure::Environment("the node is not a stop: name a folder in the project".to_string())
+        })?;
+        (item, route::How::Contents)
+    };
+    Ok(Built {
+        route: route::propose(&item, how, depth),
+        no_calls,
+    })
+}
+
+/// What `route` prints: the route as data, and its text.
+#[derive(Serialize)]
+struct Routed {
+    schema: u32,
+    command: &'static str,
+    node: String,
+    depth: u32,
+    sizes: Vec<route::Size>,
+    stops: Vec<route::Entry>,
+    cut: bool,
+    /// the driver has no call trees for this node: the route is the node alone
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    no_calls: bool,
+    #[serde(skip)]
+    text: String,
+}
+
+impl Render for Routed {
+    fn text(&self, _quiet: bool) -> String {
+        self.text.clone()
+    }
+}
+
+async fn route(global: &Global, args: &TourRouteArgs) -> Result<(), Failure> {
+    let opened = open_from(global).await?;
+    let lookup = Lookup::new(&opened, 1);
+    let built = build_route(
+        global,
+        "tour route",
+        &opened,
+        &lookup,
+        &args.node,
+        args.depth,
+    )
+    .await?;
+    let mut text = built.route.text();
+    if built.no_calls {
+        text.push_str("the driver gives no calls for this node: the route is the node alone\n");
+    }
+    let route = built.route;
+    out::render(
+        &Routed {
+            schema: 1,
+            command: "tour route",
+            node: route.node,
+            depth: route.depth,
+            sizes: route.sizes,
+            stops: route.stops,
+            cut: route.cut,
+            no_calls: built.no_calls,
+            text,
         },
         global,
     )

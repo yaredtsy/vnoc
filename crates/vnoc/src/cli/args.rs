@@ -119,7 +119,7 @@ fn starts_driver(path: &[String]) -> bool {
         // `add` reads the code; `check`, `list --on`, `show --check` and `where` may (a tour whose record holds needs none)
         Some("tour") => matches!(
             path.get(1).map(String::as_str),
-            Some("add" | "check" | "list" | "plan" | "show" | "start" | "where")
+            Some("add" | "check" | "list" | "plan" | "route" | "show" | "start" | "where")
         ),
         Some("tags" | "tag" | "guide" | "skill" | "agent" | "init") => false,
         _ => true,
@@ -334,6 +334,14 @@ pub enum TourCommand {
     /// what is left, and says how many. `--line` goes with `--from` and one node. A tour the reader stopped answers as `add` does (exit 1); a finished one
     /// is refused (exit 2).
     Plan(TourPlanArgs),
+    /// Proposes a route for a tour from the call tree, with how big each depth of it is: `vnoc tour route app/checkout.py::checkout_order --depth 2`.
+    ///
+    /// Reads only: it needs no tour. For a function it is `vnoc calls` underneath, in reading order (depth first, a function's calls in the order of its
+    /// first call), cut at 40 stops; for a class, a file or a folder, depth is containment: its methods, its functions, its files. The first lines say
+    /// what each depth adds, in stops and minutes (two steps a stop, twenty seconds a step, rounded up): offer them to the person, then plan the one they pick
+    /// with `vnoc tour start --route <node> --depth N`. A node already on the route is a stop with `= k` (the first stop on it) and is not walked again, so
+    /// a recursive call ends the walk there. A call the index does not know (a library) is not a stop. `--depth 0` to `6`, default `1`.
+    Route(TourRouteArgs),
     /// Ends the tour: it is finished, and the person's canvas shows it as complete. Run it when the last stop is written.
     ///
     /// Writes the end of the tour. Planned stops that were never written leave the route, and the answer says how many. Finishing a tour that is
@@ -478,6 +486,25 @@ pub struct TourStartArgs {
     /// refuses the whole call (nothing is made). `vnoc tour add` on one of them fills it.
     #[arg(long, value_name = "NODE", num_args = 1..)]
     pub plan: Vec<String>,
+    /// Start with the route `vnoc tour route` proposes for this node, planned: each stop with its `from` and `line`, and `same_as` on a node already passed.
+    /// Not with `--plan`.
+    #[arg(long, value_name = "NODE", conflicts_with = "plan")]
+    pub route: Option<String>,
+    /// With `--route`: how far the route goes (0 is the node alone; 1 to 6; the default is 1).
+    #[arg(long, value_name = "N", requires = "route", value_parser = clap::value_parser!(u32).range(0..=6))]
+    pub depth: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourRouteArgs {
+    #[arg(
+        value_name = "NODE",
+        help = "the node the route starts at: path::Name, path:line, an ID, or a path"
+    )]
+    pub node: String,
+    /// How far the route goes: 0 is the node alone. 1 is what it calls (or holds), 2 what those call.
+    #[arg(long, value_name = "N", default_value_t = 1, value_parser = clap::value_parser!(u32).range(0..=6))]
+    pub depth: u32,
 }
 
 #[derive(Debug, Args)]

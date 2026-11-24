@@ -106,7 +106,7 @@ fn read_file(project: &Project, node: &Node) -> Result<String, String> {
         .map_err(|e| format!("{} could not be read: {e}", node.path))
 }
 
-fn node_kind(kind: Kind) -> NodeKind {
+pub(crate) fn node_kind(kind: Kind) -> NodeKind {
     match kind {
         Kind::Folder => NodeKind::Folder,
         Kind::File => NodeKind::File,

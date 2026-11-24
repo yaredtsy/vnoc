@@ -12511,3 +12511,440 @@ fn tour_plan_on_a_stopped_tour_exits_1_and_on_a_finished_tour_exits_2() {
         "{err}"
     );
 }
+
+// ------------------------------------------------------------------------------------------------------------------------ tours (TR12)
+//
+// A route from the call tree: `vnoc tour route` and `start --route`. The sample's deepest call chain is `OrderService.place` (orders/service.py:15)
+// -> `parse_order` (line 16) -> `Line` (line 12 of parse_order) and `Order` (line 13): three levels. `retry_charge` calls `one_try` and `ChargeError`.
+
+const PLACE_NODE: &str = "orders/service.py::OrderService.place";
+
+/// A folder of one file, `a.py`, for the cases the sample does not have.
+fn route_project(label: &str, source: &str) -> PathBuf {
+    let root = scratch(label);
+    std::fs::write(root.join("a.py"), source).unwrap();
+    root
+}
+
+/// `vnoc tour route <node> --depth <n> --json`'s stops as `n:name<from=same_as@line`.
+fn route_stops(json: &Value) -> Vec<String> {
+    json["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            format!(
+                "{}:{}{}{}{}",
+                s["n"],
+                s["name"].as_str().unwrap(),
+                s["from"]
+                    .as_u64()
+                    .map_or(String::new(), |f| format!("<{f}")),
+                s["same_as"]
+                    .as_u64()
+                    .map_or(String::new(), |f| format!("={f}")),
+                s["line"]
+                    .as_u64()
+                    .map_or(String::new(), |l| format!("@{l}")),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn tour_route_on_the_samples_deepest_chain_at_depth_0_1_and_2() {
+    let root = sample_copy("tour-route-chain");
+    for depth in ["0", "1", "2"] {
+        let out = run(vnoc(
+            &root,
+            &["tour", "route", PLACE_NODE, "--depth", depth],
+        ));
+        assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+        golden_text(&format!("tour-route-{depth}.txt"), &text(&out.stdout));
+    }
+    let said = tour_ok(&root, &["route", PLACE_NODE, "--depth", "2"]);
+    assert!(
+        said.contains("\nand what those call   4 stops   about 3 min      --depth 2\n"),
+        "{said}"
+    );
+    // the default is depth 1: the same sizes, two rows
+    let one = tour_ok(&root, &["route", PLACE_NODE]);
+    assert_eq!(one, tour_ok(&root, &["route", PLACE_NODE, "--depth", "1"]));
+    assert_eq!(
+        one.lines().filter(|l| l.starts_with(" ")).count(),
+        2,
+        "{one}"
+    );
+    // as data
+    let json = tour_json(&root, &["route", PLACE_NODE, "--depth", "2"]);
+    golden("tour-route.json", &json);
+    assert_eq!(json["command"], "tour route");
+    assert_eq!(json["node"], PLACE_NODE);
+    assert_eq!(json["cut"], false);
+    assert_eq!(
+        json["sizes"],
+        json!([
+            {"depth": 0, "stops": 1, "minutes": 1},
+            {"depth": 1, "stops": 2, "minutes": 2},
+            {"depth": 2, "stops": 4, "minutes": 3},
+        ])
+    );
+    assert_eq!(
+        route_stops(&json),
+        [
+            "1:OrderService.place".replace("OrderService.", ""),
+            "2:parse_order<1@16".into(),
+            "3:Line<2@12".into(),
+            "4:Order<2@13".into()
+        ]
+    );
+    assert_eq!(json["stops"][1]["path"], "orders/service.py");
+    assert_eq!(json["stops"][1]["first"], 10);
+    assert_eq!(json["stops"][1]["kind"], "function");
+    // it reads only: no tour, nothing written
+    assert!(!root.join(".vnoc/local/tours").exists());
+}
+
+#[test]
+fn tour_route_a_function_called_twice_is_one_stop_with_the_first_line_and_a_library_call_is_none() {
+    let root = route_project(
+        "tour-route-twice",
+        "import json\n\ndef leaf():\n    return 1\n\ndef helper():\n    leaf()\n    return 2\n\ndef main():\n    helper()\n    json.dumps({})\n    return helper()\n",
+    );
+    let json = tour_json(&root, &["route", "a.py::main", "--depth", "2"]);
+    // helper is called on lines 11 and 13: one stop, the first line; json.dumps is not in the index: no stop
+    assert_eq!(
+        route_stops(&json),
+        ["1:main", "2:helper<1@11", "3:leaf<2@7"],
+        "{json}"
+    );
+    assert_eq!(json["sizes"][1]["stops"], 2);
+}
+
+#[test]
+fn tour_route_a_recursive_call_is_a_same_as_stop_that_is_not_walked_again() {
+    let root = route_project(
+        "tour-route-recursive",
+        "def mul(a, b):\n    return a * b\n\ndef fact(n):\n    if n <= 1:\n        return 1\n    return mul(n, fact(n - 1))\n\ndef main():\n    return fact(5)\n",
+    );
+    let json = tour_json(&root, &["route", "a.py::main", "--depth", "4"]);
+    let stops = route_stops(&json);
+    // main -> fact -> mul and fact again (`= 2`): its calls are not walked a second time
+    assert_eq!(
+        stops,
+        ["1:main", "2:fact<1@10", "3:mul<2@7", "4:fact<2=2@7"],
+        "{json}"
+    );
+    let said = tour_ok(&root, &["route", "a.py::main", "--depth", "4"]);
+    assert!(said.contains("line 7   = 2\n"), "{said}");
+}
+
+#[test]
+fn tour_route_a_second_call_from_another_branch_is_a_same_as_stop_too() {
+    let root = route_project(
+        "tour-route-second-visit",
+        "def leaf():\n    return 1\n\ndef left():\n    return leaf()\n\ndef right():\n    return leaf()\n\ndef main():\n    left()\n    right()\n",
+    );
+    let json = tour_json(&root, &["route", "a.py::main", "--depth", "2"]);
+    assert_eq!(
+        route_stops(&json),
+        [
+            "1:main",
+            "2:left<1@11",
+            "3:leaf<2@5",
+            "4:right<1@12",
+            "5:leaf<4=3@8"
+        ],
+        "{json}"
+    );
+}
+
+#[test]
+fn tour_route_a_folder_a_file_and_a_class_are_routes_by_containment() {
+    let root = sample_copy("tour-route-contents");
+    // a folder: its files, then their functions
+    let json = tour_json(&root, &["route", "billing", "--depth", "1"]);
+    let stops = route_stops(&json);
+    assert_eq!(stops[0], "1:billing", "{json}");
+    assert!(
+        stops[1..]
+            .iter()
+            .all(|s| s.ends_with("<1") && s.contains(".py")),
+        "{stops:?}"
+    );
+    assert!(
+        json["stops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["line"].is_null())
+    );
+    let said = tour_ok(&root, &["route", "billing", "--depth", "2"]);
+    assert!(said.contains("and what is in it"), "{said}");
+    assert!(said.contains("and what is in those"), "{said}");
+    assert!(
+        said.contains("ƒ retry_charge"),
+        "depth 2 reaches the functions: {said}"
+    );
+    let d1 = tour_ok(&root, &["route", "billing", "--depth", "1"]);
+    assert!(!d1.contains("ƒ retry_charge"), "{d1}");
+    let depth_two = tour_json(&root, &["route", "billing", "--depth", "2"]);
+    assert!(depth_two["stops"].as_array().unwrap().len() > json["stops"].as_array().unwrap().len());
+    // a file at depth 1: its classes and functions
+    let json = tour_json(&root, &["route", "billing/charge.py", "--depth", "1"]);
+    assert_eq!(
+        route_stops(&json),
+        [
+            "1:charge.py",
+            "2:ChargeError<1",
+            "3:retry_charge<1",
+            "4:refund<1"
+        ],
+        "{json}"
+    );
+    assert_eq!(json["stops"][0]["kind"], "file");
+    assert_eq!(json["stops"][0]["first"], Value::Null);
+    // a class at depth 1: its methods, as for a file
+    let json = tour_json(&root, &["route", "orders/models.py::Order", "--depth", "1"]);
+    assert_eq!(
+        route_stops(&json),
+        ["1:Order", "2:__init__<1", "3:total<1"],
+        "{json}"
+    );
+    assert!(tour_ok(&root, &["route", "orders/models.py::Order"]).contains("and what is in it"));
+}
+
+#[test]
+fn tour_route_a_route_that_passes_forty_is_cut_and_says_so_and_the_minutes_round_up() {
+    let mut source = String::new();
+    for i in 0..45 {
+        source.push_str(&format!("def f{i}():\n    return {i}\n\n"));
+    }
+    let calls = |name: &str, n: usize| {
+        let body: String = (0..n).map(|i| format!("    f{i}()\n")).collect();
+        format!("def {name}():\n{body}    return 0\n\n")
+    };
+    source.push_str(&calls("six", 5));
+    source.push_str(&calls("ten", 9));
+    source.push_str(&calls("big", 45));
+    let root = route_project("tour-route-forty", &source);
+    // 6 stops are 4 minutes, 10 are 7, 1 is 1
+    let json = tour_json(&root, &["route", "a.py::six"]);
+    assert_eq!(
+        json["sizes"],
+        json!([
+            {"depth": 0, "stops": 1, "minutes": 1},
+            {"depth": 1, "stops": 6, "minutes": 4},
+            {"depth": 2, "stops": 6, "minutes": 4},
+        ])
+    );
+    let json = tour_json(&root, &["route", "a.py::ten"]);
+    assert_eq!(
+        json["sizes"][1],
+        json!({"depth": 1, "stops": 10, "minutes": 7})
+    );
+    assert!(tour_ok(&root, &["route", "a.py::ten"]).contains("10 stops   about 7 min"));
+    // 46 would be reached: cut at 40, in reading order
+    let json = tour_json(&root, &["route", "a.py::big"]);
+    assert_eq!(json["cut"], true);
+    assert_eq!(json["stops"].as_array().unwrap().len(), 40);
+    assert_eq!(json["stops"][39]["name"], "f38");
+    assert_eq!(
+        json["sizes"][1],
+        json!({"depth": 1, "stops": 40, "minutes": 27, "cut": true})
+    );
+    assert_eq!(json["sizes"][0].get("cut"), None);
+    let said = tour_ok(&root, &["route", "a.py::big"]);
+    assert!(said.contains("40 stops (cut)"), "{said}");
+    assert!(said.ends_with("… cut at 40 stops\n"), "{said}");
+    // depth 0 is one stop and is not cut
+    let json = tour_json(&root, &["route", "a.py::big", "--depth", "0"]);
+    assert_eq!(
+        (json["cut"].clone(), json["stops"].as_array().unwrap().len()),
+        (json!(false), 1)
+    );
+    // `start --route` plans the forty
+    let json = tour_json(&root, &["start", "--title", "big", "--route", "a.py::big"]);
+    assert_eq!(json["planned"].as_array().unwrap().len(), 40);
+}
+
+#[test]
+fn tour_route_start_route_plans_exactly_the_outline_and_show_lists_the_same_stops_in_the_same_order()
+ {
+    let root = sample_copy("tour-route-start");
+    let routed = tour_json(&root, &["route", PLACE_NODE, "--depth", "2"]);
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour", "start", "--title", "place", "--route", PLACE_NODE, "--depth", "2",
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let said = text(&out.stdout);
+    let tour = said
+        .strip_prefix("started ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap()
+        .to_string();
+    golden_text(
+        "tour-start-route.txt",
+        &tour_unrooted(&out.stdout, &root, &tour),
+    );
+    // one `plan` record after the `tour` record
+    let lines = tour_lines(&root, &tour);
+    assert_eq!(
+        lines
+            .iter()
+            .map(|l| l["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["tour", "plan"]
+    );
+    let plan = lines[1]["stops"].as_array().unwrap();
+    let ids: Vec<&str> = plan.iter().map(|s| s["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["s1", "s2", "s3", "s4"]);
+    let froms: Vec<Option<&str>> = plan.iter().map(|s| s["from"].as_str()).collect();
+    assert_eq!(froms, [None, Some("s1"), Some("s2"), Some("s2")]);
+    let plan_lines: Vec<Option<u64>> = plan.iter().map(|s| s["line"].as_u64()).collect();
+    assert_eq!(plan_lines, [None, Some(16), Some(12), Some(13)]);
+    // `show` lists the route's nodes, in order, nested as it is
+    let shown = tour_json(&root, &["show", &tour]);
+    let stops = shown["stops"].as_array().unwrap();
+    assert_eq!(stops.len(), routed["stops"].as_array().unwrap().len());
+    for (shown, routed) in stops.iter().zip(routed["stops"].as_array().unwrap()) {
+        assert_eq!(shown["path"], routed["path"]);
+        assert_eq!(
+            shown["qualname"].as_str().unwrap().rsplit('.').next(),
+            routed["name"].as_str()
+        );
+        assert_eq!(shown["planned"], true);
+    }
+    assert_eq!(
+        shown["stops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["depth"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [0, 1, 2, 2]
+    );
+    // `add` on the first fills s1 at its place
+    let said = add_ok(
+        &root,
+        &tour,
+        PLACE_NODE,
+        &[],
+        "place takes an order and parses it first.\n",
+    );
+    assert!(said.starts_with("s1 written (it was planned)"), "{said}");
+}
+
+#[test]
+fn tour_route_start_route_maps_same_as_and_line_to_the_ids_of_the_plan() {
+    let root = route_project(
+        "tour-route-start-same",
+        "def leaf():\n    return 1\n\ndef left():\n    return leaf()\n\ndef right():\n    return leaf()\n\ndef main():\n    left()\n    right()\n",
+    );
+    let tour = {
+        let json = tour_json(
+            &root,
+            &[
+                "start",
+                "--title",
+                "m",
+                "--route",
+                "a.py::main",
+                "--depth",
+                "2",
+            ],
+        );
+        json["tour"].as_str().unwrap().to_string()
+    };
+    let plan = tour_lines(&root, &tour)[1]["stops"].clone();
+    let plan = plan.as_array().unwrap();
+    assert_eq!(plan.len(), 5);
+    // s5 is leaf again, under right (s4): the same as s3
+    assert_eq!(plan[4]["same_as"], "s3");
+    assert_eq!(plan[4]["from"], "s4");
+    assert_eq!(plan[4]["line"], 8);
+    assert_eq!(plan[2]["same_as"], Value::Null);
+    let said = tour_ok(&root, &["show", &tour]);
+    assert!(said.contains("= s3"), "{said}");
+    let started = tour_ok(
+        &root,
+        &[
+            "start",
+            "--title",
+            "again",
+            "--route",
+            "a.py::main",
+            "--depth",
+            "2",
+        ],
+    );
+    assert!(started.contains("← s4 line 8   = s3"), "{started}");
+}
+
+#[test]
+fn tour_route_refuses_what_it_cannot_do_and_writes_no_tour() {
+    let root = sample_copy("tour-route-refused");
+    // more than 6 deep
+    let (status, _, err) = tour_fails(&root, &["route", PLACE_NODE, "--depth", "7"], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("--depth"), "{err}");
+    let (status, _, err) = tour_fails(
+        &root,
+        &[
+            "start", "--title", "x", "--route", PLACE_NODE, "--depth", "9",
+        ],
+        "",
+    );
+    assert_eq!(status, 2, "{err}");
+    // `--route` and `--plan` together
+    let (status, _, err) = tour_fails(
+        &root,
+        &[
+            "start",
+            "--title",
+            "x",
+            "--route",
+            PLACE_NODE,
+            "--plan",
+            "billing/charge.py::refund",
+        ],
+        "",
+    );
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("--route") && err.contains("--plan"), "{err}");
+    // `--depth` is for `--route`
+    let (status, _, err) = tour_fails(&root, &["start", "--title", "x", "--depth", "2"], "");
+    assert_eq!(status, 2, "{err}");
+    // a node that is not there, with "did you mean"; and no tour is made
+    let (status, _, err) = tour_fails(
+        &root,
+        &["route", "orders/service.py::OrderService.plac"],
+        "",
+    );
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("did you mean"), "{err}");
+    let (status, _, err) = tour_fails(
+        &root,
+        &[
+            "start",
+            "--title",
+            "x",
+            "--route",
+            "orders/service.py::OrderService.plac",
+        ],
+        "",
+    );
+    assert_eq!(status, 2, "{err}");
+    assert!(!root.join(".vnoc/local/tours").exists(), "no tour was made");
+    // a driver that cannot be started is the environment's (exit 3)
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.current_dir(&root)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .args(["--driver", "/no/such/driver", "tour", "route", PLACE_NODE])
+        .stdin(Stdio::null());
+    assert_eq!(code(&run(cmd)), 3);
+}
