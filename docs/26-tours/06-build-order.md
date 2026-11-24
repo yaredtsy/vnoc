@@ -98,8 +98,10 @@ Commit: `tours TR2: the text of a stop, the rules, the hash`.
 |---|---|
 | `userdata/layout.rs` | `tours_dir`, `local_tours_dir`, `tour_state_dir`, `tours_lock_file` |
 | `userdata/lock.rs` | the wait loop taken out as a function both locks use, with the time between tries as a parameter. `WriteLock` unchanged in behaviour (50 ms, 5 s). The tours lock tries every **5 ms**, 5 s at most: it is held for microseconds, and a reader's Next waits on it (TR0, check 3: a 50 ms sleep was every wait) |
+| `tours/fold.rs` | `Tour` keeps the highest stop number and each stop's highest block number **ever used** (in any `plan`, `stop`, `step`, `drop`, and the `tour` record's `next`): what new ids count from (01 §5) |
+| `tours/time.rs` | `now()`: UTC as `2026-11-23T18:40:02Z`, from `SystemTime`, no new crate |
 | `tours/store.rs` | `new_id(title)`; `start` (`create_new`; D16's creation of `.vnoc/` by the function `init` uses); `append` (the lock; a file that does not end in `\n` gets one first; one `write_all`); `read`; `list` (both folders, the rules of [`01`](01-on-disk.md) §10); `next_stop_id`, `next_step_id`; the state file: `read_state`, `write_part` (read under the lock, replace one part, `write_atomic`) |
-| the newest format fixture | one project tour, one private tour with its state file; "opening it changes no byte" still passes |
+| `crates/vnoc/tests/cli.rs` | the "opens unchanged" fixture test of `04-storage/04-growth-path.md` §5 is designed, not built, so instead: the sample with one project tour, one private tour and its state file: `vnoc status`, `tree`, `check` print the same and exit the same as without them, and the three files are byte for byte as they were (TR0 check 1, as a test) |
 
 Tests: ids for five titles (a long one, one that is all punctuation, two equal titles give two ids); `start` twice; `append` to a torn
 file; the race of TR0 as a test (two threads, 100 appends each); `list` with a file of a wrong name, an empty file, an unreadable
