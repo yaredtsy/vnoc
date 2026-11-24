@@ -12,7 +12,9 @@ use super::doc::{Flat, FlatBlock, FlatStop};
 use super::find::{find, place_of};
 use super::fold::{Tour, TourBlock, TourStop, steps_in_order};
 use super::hash;
-use super::record::{Lines, Next, Record, StepId, StepRecord, StopId, StopRecord, TourRecord};
+use super::record::{
+    Lines, Next, PlanRecord, PlanStop, Record, StepId, StepRecord, StopId, StopRecord, TourRecord,
+};
 use super::rules::{self, NodeLines, Refusal};
 use super::store;
 use crate::index::{Index, Kind, Node};
@@ -305,8 +307,24 @@ pub fn plan_stop(
             Some(_) => {}
         }
     }
-    // a replacement is no new stop: it takes the id and the place of the one it replaces
-    if options.replace.is_none() && tour.stops.len() >= MAX_STOPS {
+    // a planned stop on this node, not written: this call fills it (02 §4). Not with `--replace`, which is a stop already written
+    let filling = match options.replace {
+        None => planned_for(tour, index, project, tree, node),
+        Some(_) => None,
+    };
+    if let (Some(id), Some(filled)) = (options.from, filling)
+        && (id == filled.id || nested_in(tour, id, filled.id))
+    {
+        refusals.push(refusal(
+            "--from",
+            format!(
+                "--from {id}: {} is the planned stop this call fills, and {id} is {} or inside it",
+                filled.id, filled.id
+            ),
+        ));
+    }
+    // a replacement and a planned stop that is filled are no new stops: they take the id and the place of the one they replace
+    if options.replace.is_none() && filling.is_none() && tour.stops.len() >= MAX_STOPS {
         refusals.push(refusal(
             "tour",
             format!(
@@ -315,9 +333,10 @@ pub fn plan_stop(
             ),
         ));
     }
-    let stop_id = match options.replace {
-        Some(id) => replaced.map(|_| id),
-        None => store::next_stop_id(tour),
+    let stop_id = match (options.replace, filling) {
+        (Some(id), _) => replaced.map(|_| id),
+        (None, Some(filled)) => Some(filled.id),
+        (None, None) => store::next_stop_id(tour),
     };
     if stop_id.is_none() && options.replace.is_none() {
         refusals.push(refusal(
@@ -337,8 +356,17 @@ pub fn plan_stop(
         |first: u32, last: u32| hash::of(&hash::lines_of(text, first, last), &marker_refs);
 
     // the call's `--from` and `--line`, else the stop's own
-    let (from, line) = match (options.replace, options.from, replaced) {
-        (Some(_), None, Some(old)) => (old.from, old.line),
+    let (from, line) = match (options.replace, options.from, replaced, filling) {
+        (Some(_), None, Some(old), _) => (old.from, old.line),
+        // a planned stop: the call's `--from` wins (the fold moves the stop when it is another than the plan's), and so does its `--line`; what the
+        // call does not say is the plan's. The plan's line was a line of the plan's `--from`: it does not carry over to another stop
+        (None, Some(call), _, Some(plan)) => (
+            Some(call),
+            options
+                .line
+                .or_else(|| (plan.from == Some(call)).then_some(plan.line).flatten()),
+        ),
+        (None, None, _, Some(plan)) => (plan.from, plan.line),
         _ => (options.from, options.line),
     };
     let has_hash = matches!(node.kind, Kind::Function | Kind::Class);
@@ -365,6 +393,120 @@ pub fn plan_stop(
         &hash_of,
     )?);
     Ok(records)
+}
+
+/// The first planned stop on the route, in route order, whose name found now by [`find`] is `node`: what an `add` on that node fills (02 §4). `None`
+/// when no planned stop is on it; a planned stop whose name no longer resolves is never the one.
+pub fn planned_for<'t>(
+    tour: &'t Tour,
+    index: &Index,
+    project: &Project,
+    tree: &Node,
+    node: &Node,
+) -> Option<&'t TourStop> {
+    tour.stops
+        .iter()
+        .filter(|s| !s.written)
+        .find(|s| find(index, project, tree, s).is_some_and(|found| found.id == node.id))
+}
+
+/// One `plan` record: `nodes` planned in the order given, with the next ids, each `from` the stop `from` (and at `line` of its node: one node then), placed
+/// as `add` places new stops (02 §11). Every refusal of the call together, and nothing written. `from` may be a planned stop: a plan can be a tree. A
+/// node already written or planned in this tour may be planned again (a second visit). The 40-stop limit counts planned stops, and a call that would
+/// pass it is refused whole.
+pub fn plan_route(
+    tour: &Tour,
+    index: &Index,
+    project: &Project,
+    tree: &Node,
+    nodes: &[&Node],
+    from: Option<StopId>,
+    line: Option<u32>,
+) -> Result<Vec<Record>, Vec<Refusal>> {
+    let mut refusals = Vec::new();
+    let from_stop = from.and_then(|id| tour.stop(id));
+    if let Some(id) = from
+        && from_stop.is_none()
+    {
+        refusals.push(no_such_stop(tour, "--from", id));
+    }
+    if let (Some(stop), Some(line)) = (from_stop, line) {
+        if stop.written {
+            check_line(&mut refusals, index, project, tree, stop, line);
+        } else {
+            refusals.push(refusal(
+                "--line",
+                format!(
+                    "{} is planned, not written: --line needs a stop that is written",
+                    stop.id
+                ),
+            ));
+        }
+    }
+    let total = tour.stops.len() + nodes.len();
+    if total > MAX_STOPS {
+        refusals.push(refusal(
+            "tour",
+            if tour.stops.len() >= MAX_STOPS {
+                format!(
+                    "this tour has {} stops, the most one tour holds. Finish it and start a second tour",
+                    tour.stops.len()
+                )
+            } else {
+                format!(
+                    "planning {} more stops would give this tour {total} stops, the most one tour holds is {MAX_STOPS}. Finish it and start a second tour",
+                    nodes.len()
+                )
+            },
+        ));
+    }
+    let planned = planned_stops(nodes, tour.highest_stop(), from, line);
+    match (planned, refusals.is_empty()) {
+        (Ok(stops), true) => Ok(vec![Record::Plan(PlanRecord { stops })]),
+        (Ok(_), false) => Err(refusals),
+        (Err(more), _) => {
+            refusals.extend(more);
+            Err(refusals)
+        }
+    }
+}
+
+/// The `plan` entries for `nodes`: ids from `highest + 1` in order, each with the node's name as `find` will look for it again.
+pub fn planned_stops(
+    nodes: &[&Node],
+    highest: u32,
+    from: Option<StopId>,
+    line: Option<u32>,
+) -> Result<Vec<PlanStop>, Vec<Refusal>> {
+    let mut stops = Vec::new();
+    for (i, node) in nodes.iter().enumerate() {
+        let Some((path, qualname, occurrence)) = place_of(node) else {
+            return Err(vec![refusal(
+                "node",
+                "the project's root folder is not a stop: name a folder in it",
+            )]);
+        };
+        let id = highest
+            .checked_add(i as u32 + 1)
+            .and_then(StopId::new)
+            .ok_or_else(|| {
+                vec![refusal(
+                    "tour",
+                    "this tour has no stop ids left: start a second tour",
+                )]
+            })?;
+        stops.push(PlanStop {
+            id,
+            path,
+            qualname,
+            occurrence: std::num::NonZeroU32::new(occurrence)
+                .expect("an occurrence is counted from 1"),
+            from,
+            line,
+            same_as: None,
+        });
+    }
+    Ok(stops)
 }
 
 /// One step record for each block of the text, in reading order (a block, then its details): ids from the first block number the stop has not
@@ -1678,15 +1820,16 @@ mod tests {
             r#"{"type":"plan","stops":[{"id":"s40","path":"a.py","qualname":"helper"}]}"#
                 .to_string(),
         );
+        let full = tour_of(&lines);
         let refused = f
-            .plan(
-                &tour_of(&lines),
-                "a.py::helper",
-                "Intro.\n",
-                AddOptions::default(),
-            )
+            .plan(&full, "a.py::alpha", "Intro.\n", AddOptions::default())
             .unwrap_err();
         assert_eq!(refused.len(), 1);
+        // a call on the planned node fills the planned stop: it takes the id s40 and adds no stop
+        let records = f
+            .plan(&full, "a.py::helper", "Intro.\n", AddOptions::default())
+            .unwrap();
+        assert!(matches!(&records[0], Record::Stop(s) if s.id == StopId::new(40).unwrap()));
         // 39 in all still has room
         let lines: Vec<String> = (1..=39).map(|n| stop_line(n, "alpha", "")).collect();
         assert!(

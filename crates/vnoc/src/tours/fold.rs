@@ -495,6 +495,27 @@ impl Replay {
             blocks: Vec::new(),
         };
         match self.tour.stops.iter().position(|s| s.id == record.id) {
+            // a stop that was planned and is written with another `from` moves, with the stops nested in it, to where a new stop with that `from`
+            // goes (01 §3); with the plan's own `from` it keeps its place. A stop already written, replaced, stays where it stands
+            Some(i) if !self.tour.stops[i].written && self.tour.stops[i].from != from => {
+                let family = self.subtree(record.id);
+                let (moving, staying): (Vec<TourStop>, Vec<TourStop>) =
+                    std::mem::take(&mut self.tour.stops)
+                        .into_iter()
+                        .partition(|s| family.contains(&s.id));
+                self.tour.stops = staying;
+                let id = stop.id;
+                self.place(stop);
+                let at = self
+                    .tour
+                    .stops
+                    .iter()
+                    .position(|s| s.id == id)
+                    .map_or(self.tour.stops.len(), |i| i + 1);
+                // the planned stops nested in it come after it, in the order they had
+                let children = moving.into_iter().filter(|s| s.id != id);
+                self.tour.stops.splice(at..at, children);
+            }
             Some(i) => self.tour.stops[i] = stop,
             None => self.place(stop),
         }
@@ -1038,6 +1059,65 @@ mod tests {
         ]);
         assert_eq!(route(&t), ["s1:0", "s2:0"]);
         assert!(t.stops[0].written && !t.stops[1].written);
+    }
+
+    #[test]
+    fn a_planned_stop_written_with_the_same_from_stays_where_it_is() {
+        // from the plan's own `from`, or none where the plan had none
+        let t = tour(&[
+            plan(&[(1, None), (2, Some(1)), (3, None), (4, Some(3))]),
+            stop(2, Some(1)),
+            stop(4, Some(3)),
+            stop(3, None),
+        ]);
+        assert_eq!(route(&t), ["s1:0", "s2:1", "s3:0", "s4:1"]);
+        assert_eq!(
+            t.stops.iter().map(|s| s.written).collect::<Vec<_>>(),
+            [false, true, true, true]
+        );
+    }
+
+    #[test]
+    fn a_planned_stop_written_with_another_from_moves_with_the_stops_nested_in_it() {
+        // another stop than the plan's
+        let t = tour(&[
+            plan(&[(1, None), (2, None), (3, Some(2)), (4, None), (5, Some(2))]),
+            stop(2, Some(4)),
+        ]);
+        assert_eq!(route(&t), ["s1:0", "s4:0", "s2:1", "s3:2", "s5:2"]);
+        assert!(t.stops.iter().find(|s| s.id.number() == 2).unwrap().written);
+        // a `from` where the plan had none
+        let t = tour(&[plan(&[(1, None), (2, None), (3, None)]), stop(1, Some(3))]);
+        assert_eq!(route(&t), ["s2:0", "s3:0", "s1:1"]);
+        // none where the plan had one: to the end, at the top
+        let t = tour(&[
+            plan(&[(1, None), (2, Some(1)), (3, None), (4, Some(2))]),
+            stop(2, None),
+        ]);
+        assert_eq!(route(&t), ["s1:0", "s3:0", "s2:0", "s4:1"]);
+        // a `from` that is not on the route is no `from`: the same as none
+        let t = tour(&[plan(&[(1, None), (2, None)]), stop(1, Some(9))]);
+        assert_eq!(route(&t), ["s1:0", "s2:0"]);
+        // a `from` inside the stop's own family is refused as a loop (parent_for): it is at the top, which is where the plan had it
+        let t = tour(&[plan(&[(1, None), (2, Some(1))]), stop(1, Some(2))]);
+        assert_eq!(route(&t), ["s1:0", "s2:1"]);
+    }
+
+    #[test]
+    fn a_written_stop_that_is_replaced_with_another_from_stays_where_it_stands() {
+        let t = tour(&[
+            stop(1, None),
+            stop(2, None),
+            stop(3, None),
+            stop(1, Some(3)),
+        ]);
+        assert_eq!(route(&t), ["s1:1", "s2:0", "s3:0"]);
+        let t = tour(&[
+            plan(&[(1, None), (2, None)]),
+            stop(1, None),
+            stop(1, Some(2)),
+        ]);
+        assert_eq!(route(&t), ["s1:1", "s2:0"]);
     }
 
     #[test]

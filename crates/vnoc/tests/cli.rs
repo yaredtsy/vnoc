@@ -11839,3 +11839,675 @@ fn tour_where_lights_the_lines_a_stop_that_was_pushed_down_has_now() {
     let json = tour_json(&root, &["where", &tour]);
     assert_eq!(json["step"]["lines"], json!([13, 24]), "{json}");
 }
+
+// ------------------------------------------------------------------------------------------------------------------------ tours (TR11)
+//
+// A planned route: `start --plan`, `plan`, `add` filling a planned stop, `finish` removing what is left. `billing/charge.py` has `retry_charge` (11-22), its
+// `one_try` (14-15), `ChargeError` (7-8) and `refund`.
+
+const CHARGE_ERROR: &str = "billing/charge.py::ChargeError";
+const REFUND: &str = "billing/charge.py::refund";
+
+/// `vnoc tour start --title <title> --plan <nodes>` that must succeed: the tour's id.
+fn start_plan(root: &Path, title: &str, nodes: &[&str]) -> String {
+    let mut args = vec!["start", "--title", title, "--plan"];
+    args.extend_from_slice(nodes);
+    args.push("--json");
+    let json: Value = serde_json::from_str(&tour_ok(root, &args)).unwrap();
+    json["tour"].as_str().unwrap().to_string()
+}
+
+/// The route of a tour as `show` has it: `id:depth:planned|written` for each stop.
+fn route_of(root: &Path, tour: &str) -> Vec<String> {
+    let json = tour_json(root, &["show", tour]);
+    json["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            format!(
+                "{}:{}:{}",
+                s["id"].as_str().unwrap(),
+                s["depth"],
+                if s["planned"] == true {
+                    "planned"
+                } else {
+                    "written"
+                }
+            )
+        })
+        .collect()
+}
+
+fn add_ok(root: &Path, tour: &str, node: &str, flags: &[&str], body: &str) -> String {
+    let out = tour_add(root, tour, node, flags, body);
+    assert_eq!(code(&out), 0, "{node}: {}", text(&out.stderr));
+    text(&out.stdout)
+}
+
+#[test]
+fn tour_plan_start_plan_writes_the_tour_and_the_plan_and_says_each_stop_and_a_plan_of_four_is_filled_out_of_order()
+ {
+    let root = sample_copy("tour-plan-four");
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "start",
+            "--title",
+            "retry",
+            "--question",
+            "q",
+            "--plan",
+            RETRY,
+            ONE_TRY,
+            CHARGE_ERROR,
+            REFUND,
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let said = text(&out.stdout);
+    let tour = said
+        .strip_prefix("started ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap()
+        .to_string();
+    golden_text(
+        "tour-start-plan.txt",
+        &tour_unrooted(&out.stdout, &root, &tour),
+    );
+    assert!(said.contains("planned 4 stops\n"), "{said}");
+    assert_eq!(
+        route_of(&root, &tour),
+        [
+            "s1:0:planned",
+            "s2:0:planned",
+            "s3:0:planned",
+            "s4:0:planned"
+        ]
+    );
+    // the file: the `tour` record, then one `plan` record with the four
+    let lines = tour_lines(&root, &tour);
+    assert_eq!(
+        lines
+            .iter()
+            .map(|l| l["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["tour", "plan"]
+    );
+    assert_eq!(lines[1]["stops"].as_array().unwrap().len(), 4);
+    // `show` marks them planned
+    let shown = tour_ok(&root, &["show", &tour]);
+    assert!(shown.contains("0 of 4 stops"), "{shown}");
+    assert_eq!(shown.matches("planned").count(), 4, "{shown}");
+    assert!(shown.contains("◌ ChargeError"), "{shown}");
+
+    // filled out of order: each says it was planned, and keeps its id and its place
+    let said = add_ok(
+        &root,
+        &tour,
+        CHARGE_ERROR,
+        &[],
+        "ChargeError is what the caller sees when every attempt dropped.\n",
+    );
+    assert!(
+        said.starts_with("s3 written (it was planned)   stop 3   ◆ ChargeError"),
+        "{said}"
+    );
+    assert!(said.contains("· 1 of 4 stops written"), "{said}");
+    add_ok(&root, &tour, REFUND, &[], "refund gives the money back.\n");
+    add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(
+        route_of(&root, &tour),
+        [
+            "s1:0:written",
+            "s2:0:planned",
+            "s3:0:written",
+            "s4:0:written"
+        ]
+    );
+    let said = add_ok(&root, &tour, ONE_TRY, &[], "one_try makes the one call.\n");
+    assert!(said.starts_with("s2 written (it was planned)"), "{said}");
+    assert!(said.contains("· 4 stops written"), "{said}");
+    let json = tour_json(&root, &["show", &tour]);
+    assert!(
+        json["stops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["planned"] != true)
+    );
+    // nothing is left to remove
+    let said = finish_ok(&root, &tour, &["--no-ids"]);
+    assert!(said.starts_with("finished: 4 stops, 7 steps\n"), "{said}");
+}
+
+#[test]
+fn tour_plan_start_plan_with_one_unknown_node_writes_nothing_and_says_did_you_mean_for_each() {
+    let root = sample_copy("tour-plan-unknown");
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "start",
+            "--title",
+            "retry",
+            "--plan",
+            RETRY,
+            "billing/charge.py::nope",
+            "orders/service.py::OrderService.parse_ordr",
+        ],
+    ));
+    assert_eq!(code(&out), 2);
+    let err = text(&out.stderr);
+    assert!(err.contains("no node at billing/charge.py::nope"), "{err}");
+    assert!(
+        err.contains("orders/service.py::OrderService.parse_order\n"),
+        "{err}"
+    );
+    assert!(err.contains("did you mean"), "{err}");
+    assert!(err.ends_with("error: nothing was written\n"), "{err}");
+    assert!(!root.join(".vnoc/local/tours").exists(), "no tour was made");
+    // as data: both errors
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "start",
+            "--title",
+            "retry",
+            "--plan",
+            RETRY,
+            "billing/charge.py::nope",
+            "--json",
+        ],
+    ));
+    assert_eq!(code(&out), 2);
+    let json: Value = serde_json::from_str(&text(&out.stdout)).unwrap();
+    assert_eq!(json["command"], "tour start");
+    assert_eq!(json["errors"].as_array().unwrap().len(), 1, "{json}");
+}
+
+#[test]
+fn tour_plan_plans_more_where_add_would_put_them_and_says_each_with_a_count() {
+    let root = sample_copy("tour-plan-more");
+    let tour = start_plan(&root, "retry", &[RETRY, REFUND]);
+    let out = run(vnoc(
+        &root,
+        &["tour", "plan", &tour, ONE_TRY, CHARGE_ERROR, "--from", "s1"],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    golden_text("tour-plan.txt", &tour_unrooted(&out.stdout, &root, &tour));
+    let said = text(&out.stdout);
+    assert!(
+        said.starts_with("planned 2 stops   · 0 of 4 stops written\n"),
+        "{said}"
+    );
+    // nested under s1, after the last stop nested in it, in the order given
+    assert_eq!(
+        route_of(&root, &tour),
+        [
+            "s1:0:planned",
+            "s3:1:planned",
+            "s4:1:planned",
+            "s2:0:planned"
+        ]
+    );
+    let json = tour_json(&root, &["plan", &tour, REFUND]);
+    assert_eq!(json["command"], "tour plan");
+    assert_eq!(json["planned"], json!(["s5"]));
+    assert_eq!(
+        (json["written"].as_u64(), json["stops"].as_u64()),
+        (Some(0), Some(5))
+    );
+    // one record per call
+    let plans = tour_lines(&root, &tour)
+        .into_iter()
+        .filter(|l| l["type"] == "plan")
+        .count();
+    assert_eq!(plans, 3);
+    // a plan can be a tree: `--from` a planned stop
+    let out = run(vnoc(
+        &root,
+        &["tour", "plan", &tour, GET_ORDER, "--from", "s3"],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert_eq!(
+        route_of(&root, &tour),
+        [
+            "s1:0:planned",
+            "s3:1:planned",
+            "s6:2:planned",
+            "s4:1:planned",
+            "s2:0:planned",
+            "s5:0:planned"
+        ]
+    );
+}
+
+#[test]
+fn tour_plan_refuses_what_it_cannot_plan_and_writes_nothing() {
+    let root = sample_copy("tour-plan-refused");
+    let tour = start_plan(&root, "retry", &[RETRY, ONE_TRY]);
+    add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
+    let before = std::fs::read(tour_file(&root, &tour)).unwrap();
+    let refuses = |args: &[&str]| {
+        let mut all = vec!["plan", tour.as_str()];
+        all.extend_from_slice(args);
+        let (status, _, err) = tour_fails(&root, &all, "");
+        assert_eq!(status, 2, "{args:?}: {err}");
+        err
+    };
+    // `--line` goes with `--from` and one node
+    for args in [
+        vec![CHARGE_ERROR, "--line", "19"],
+        vec![CHARGE_ERROR, REFUND, "--from", "s1", "--line", "19"],
+    ] {
+        assert!(refuses(&args).contains("--line goes with --from and one node"));
+    }
+    // a planned `--from` has no lines
+    let err = refuses(&[CHARGE_ERROR, "--from", "s2", "--line", "3"]);
+    assert!(
+        err.contains("s2 is planned, not written: --line needs a stop that is written"),
+        "{err}"
+    );
+    // `--line` is inside the `--from` stop's node, as `add` checks it
+    let err = refuses(&[CHARGE_ERROR, "--from", "s1", "--line", "99"]);
+    assert!(
+        err.contains("--line 99 is outside retry_charge (11-22)"),
+        "{err}"
+    );
+    // a stop the tour does not have, and a node that is not there
+    let err = refuses(&[CHARGE_ERROR, "--from", "s9"]);
+    assert!(err.contains("--from s9"), "{err}");
+    let err = refuses(&["billing/charge.py::nope"]);
+    assert!(err.contains("no node at billing/charge.py::nope"), "{err}");
+    assert_eq!(
+        std::fs::read(tour_file(&root, &tour)).unwrap(),
+        before,
+        "nothing was written"
+    );
+    // `--line` with a written `--from` is taken
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "plan",
+            &tour,
+            CHARGE_ERROR,
+            "--from",
+            "s1",
+            "--line",
+            "22",
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("← s1 line 22"),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
+fn tour_plan_a_node_planned_twice_is_filled_in_route_order_and_an_unplanned_add_joins_the_route() {
+    let root = sample_copy("tour-plan-twice");
+    let tour = start_plan(&root, "retry", &[ONE_TRY, CHARGE_ERROR, ONE_TRY]);
+    // the first call fills the first planned stop on the node, the second the next
+    let said = add_ok(
+        &root,
+        &tour,
+        ONE_TRY,
+        &[],
+        "one_try makes the one call, the first time.\n",
+    );
+    assert!(said.starts_with("s1 written (it was planned)"), "{said}");
+    let said = add_ok(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--same-as", "s1"],
+        "The same single call, a second time.\n",
+    );
+    assert!(said.starts_with("s3 written (it was planned)"), "{said}");
+    assert_eq!(
+        route_of(&root, &tour),
+        ["s1:0:written", "s2:0:planned", "s3:0:written"]
+    );
+    // a node nobody planned: a new stop at the end, not "it was planned"
+    let said = add_ok(&root, &tour, REFUND, &[], "refund gives the money back.\n");
+    assert!(said.starts_with("s4 written   stop 4"), "{said}");
+    assert!(!said.contains("it was planned"), "{said}");
+    assert_eq!(
+        route_of(&root, &tour),
+        [
+            "s1:0:written",
+            "s2:0:planned",
+            "s3:0:written",
+            "s4:0:written"
+        ]
+    );
+    // `--replace` is a stop already written: it never fills a plan. Planned again, the node has no planned stop left once s1 and s3 are written
+    let said = add_ok(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--replace", "s1"],
+        "one_try, written again.\n",
+    );
+    assert!(said.starts_with("s1 replaced"), "{said}");
+    assert!(!said.contains("it was planned"), "{said}");
+    // `--to` adds blocks and fills nothing
+    let out = tour_add(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).starts_with("s5 written   stop 5"),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
+fn tour_plan_add_with_a_line_and_a_from_wins_over_the_plan_and_moves_the_stop() {
+    // flat plan `a b c`, then `add b --from a --line 19`: b is nested under a, and the route reads a, b, c
+    let root = sample_copy("tour-plan-move");
+    let tour = start_plan(&root, "retry", &[RETRY, ONE_TRY, CHARGE_ERROR]);
+    add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
+    let said = add_ok(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--from", "s1", "--line", "19"],
+        "one_try makes the one call.\n",
+    );
+    assert!(said.starts_with("s2 written (it was planned)"), "{said}");
+    assert_eq!(
+        route_of(&root, &tour),
+        ["s1:0:written", "s2:1:written", "s3:0:planned"]
+    );
+    let json = tour_json(&root, &["show", &tour]);
+    assert_eq!(json["stops"][1]["from"], "s1");
+    assert_eq!(json["stops"][1]["line"], 19);
+
+    // a plan of `a c b`: b moves up under a, with the stop planned under it
+    let root = sample_copy("tour-plan-move-2");
+    let tour = start_plan(&root, "retry", &[RETRY, CHARGE_ERROR, ONE_TRY]);
+    let out = run(vnoc(
+        &root,
+        &["tour", "plan", &tour, REFUND, "--from", "s3"],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(
+        route_of(&root, &tour),
+        [
+            "s1:0:written",
+            "s2:0:planned",
+            "s3:0:planned",
+            "s4:1:planned"
+        ]
+    );
+    add_ok(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--from", "s1", "--line", "19"],
+        "one_try makes the one call.\n",
+    );
+    assert_eq!(
+        route_of(&root, &tour),
+        [
+            "s1:0:written",
+            "s3:1:written",
+            "s4:2:planned",
+            "s2:0:planned"
+        ]
+    );
+    // the plan's line is not carried to another `--from`: without the call's own `--line` there is none
+    let root = sample_copy("tour-plan-line");
+    let tour = start_plan(&root, "retry", &[RETRY, ONE_TRY]);
+    add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
+    // a planned stop with a `from` and a line: a call with no `--from` keeps both
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "plan",
+            &tour,
+            CHARGE_ERROR,
+            "--from",
+            "s1",
+            "--line",
+            "22",
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    add_ok(
+        &root,
+        &tour,
+        CHARGE_ERROR,
+        &[],
+        "ChargeError is what the caller sees.\n",
+    );
+    let json = tour_json(&root, &["show", &tour]);
+    let s3 = json["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "s3")
+        .unwrap();
+    assert_eq!(
+        (s3["from"].as_str(), s3["line"].as_u64()),
+        (Some("s1"), Some(22))
+    );
+    // the call's own `--line` wins over the plan's, with the same `--from`
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour", "plan", &tour, REFUND, "--from", "s1", "--line", "22",
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    add_ok(
+        &root,
+        &tour,
+        REFUND,
+        &["--from", "s1", "--line", "19"],
+        "refund gives the money back.\n",
+    );
+    let json = tour_json(&root, &["show", &tour]);
+    let s4 = json["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "s4")
+        .unwrap();
+    assert_eq!(s4["line"], 19);
+    // a `--from` that is the planned stop itself is refused
+    let (status, _, err) = tour_fails(
+        &root,
+        &["add", &tour, ONE_TRY, "--body-file", "-", "--from", "s2"],
+        "x.\n",
+    );
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("is the planned stop this call fills"), "{err}");
+}
+
+#[test]
+fn tour_plan_finish_removes_what_is_left_and_says_how_many_on_its_first_line() {
+    let root = sample_copy("tour-plan-finish");
+    let tour = start_plan(&root, "retry", &[RETRY, ONE_TRY, CHARGE_ERROR]);
+    add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
+    // a written stop nested in a planned one moves up: s2 is planned, s4 is written under it
+    let out = run(vnoc(
+        &root,
+        &["tour", "plan", &tour, REFUND, "--from", "s2"],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    add_ok(
+        &root,
+        &tour,
+        REFUND,
+        &["--from", "s2"],
+        "refund gives the money back.\n",
+    );
+    let out = run(vnoc(&root, &["tour", "finish", &tour, "--no-ids"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    golden_text(
+        "tour-finish-planned.txt",
+        &tour_unrooted(&out.stdout, &root, &tour),
+    );
+    let said = text(&out.stdout);
+    assert!(
+        said.starts_with("finished: 2 stops, 5 steps · 2 planned stops left the route\n"),
+        "{said}"
+    );
+    assert_eq!(route_of(&root, &tour), ["s1:0:written", "s4:0:written"]);
+    // as data
+    let other = start_plan(&root, "other", &[RETRY, REFUND]);
+    add_ok(&root, &other, RETRY, &[], RETRY_BODY);
+    let json = tour_json(&root, &["finish", &other, "--no-ids"]);
+    assert_eq!(json["left_the_route"], 1);
+    let said = tour_ok(&root, &["finish", &other]);
+    assert!(
+        said.starts_with("already finished: 1 stop, 4 steps\n"),
+        "{said}"
+    );
+    // one stop left: the clause is singular
+    let third = start_plan(&root, "third", &[RETRY, REFUND]);
+    add_ok(&root, &third, RETRY, &[], RETRY_BODY);
+    assert!(
+        tour_ok(&root, &["finish", &third, "--no-ids"])
+            .contains(" · 1 planned stop left the route\n")
+    );
+}
+
+#[test]
+fn tour_plan_the_limit_of_forty_counts_planned_stops_and_filling_one_is_not_a_new_stop() {
+    let root = sample_copy("tour-plan-forty");
+    let forty = vec![ONE_TRY; 40];
+    let tour = start_plan(&root, "forty", &forty);
+    assert_eq!(route_of(&root, &tour).len(), 40);
+    // `plan` and an unplanned `add` are refused with add's sentence
+    let (status, _, err) = tour_fails(&root, &["plan", &tour, REFUND], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(
+        err.contains(
+            "this tour has 40 stops, the most one tour holds. Finish it and start a second tour"
+        ),
+        "{err}"
+    );
+    let (status, _, err) = tour_fails(
+        &root,
+        &["add", &tour, REFUND, "--body-file", "-"],
+        "refund.\n",
+    );
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("this tour has 40 stops"), "{err}");
+    // filling a planned stop adds none
+    let said = add_ok(&root, &tour, ONE_TRY, &[], "one_try makes the one call.\n");
+    assert!(said.starts_with("s1 written (it was planned)"), "{said}");
+    assert!(said.contains("· 1 of 40 stops written"), "{said}");
+    // a call that would pass 40 is refused whole
+    let root2 = sample_copy("tour-plan-thirty-eight");
+    let tour2 = start_plan(&root2, "thirty-eight", &vec![ONE_TRY; 38]);
+    let before = std::fs::read(tour_file(&root2, &tour2)).unwrap();
+    let (status, _, err) = tour_fails(&root2, &["plan", &tour2, REFUND, REFUND, REFUND], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(
+        err.contains("planning 3 more stops would give this tour 41 stops"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(tour_file(&root2, &tour2)).unwrap(), before);
+    assert_eq!(
+        code(&run(vnoc(
+            &root2,
+            &["tour", "plan", &tour2, REFUND, REFUND]
+        ))),
+        0
+    );
+    // `start --plan` with 41 nodes: no tour
+    let root3 = sample_copy("tour-plan-forty-one");
+    let mut args = vec!["tour", "start", "--title", "x", "--plan"];
+    args.extend(vec![ONE_TRY; 41]);
+    let out = run(vnoc(&root3, &args));
+    assert_eq!(code(&out), 2);
+    assert!(text(&out.stderr).contains("41 stops planned, the most one tour holds is 40"));
+    assert!(!root3.join(".vnoc/local/tours").exists());
+}
+
+#[test]
+fn tour_plan_go_onto_a_planned_stop_and_drop_it_and_export_leaves_it_out() {
+    let root = sample_copy("tour-plan-go-drop");
+    let tour = start_plan(&root, "retry", &[RETRY, ONE_TRY, CHARGE_ERROR]);
+    add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
+    // `go` onto a planned stop: its step is its intro, with no text
+    let said = tour_ok(&root, &["go", &tour, "s2"]);
+    assert!(
+        said.contains("stop 2 of 3 · step 1 of 1 · planned     s2"),
+        "{said}"
+    );
+    assert!(said.contains("planned: not written yet"), "{said}");
+    let json = tour_json(&root, &["where", &tour]);
+    assert_eq!(json["stop"]["planned"], true);
+    assert!(
+        json["step"].get("text").is_none() && json.get("code").is_none(),
+        "{json}"
+    );
+    // `next` walks onto it and past it
+    tour_ok(&root, &["go", &tour, "s1.b3"]);
+    assert_eq!(tour_json(&root, &["go", &tour, "next"])["at"], "s2");
+    assert_eq!(tour_json(&root, &["go", &tour, "next"])["at"], "s3");
+    // `check`, `pin` and `export` ignore what is planned
+    let doc = export_doc(&root, &tour);
+    assert_eq!(doc["stops"].as_array().unwrap().len(), 1, "{doc}");
+    let flat: Value = serde_json::from_str(&export_text(&root, &tour, true)).unwrap();
+    assert_eq!(flat["stops"].as_array().unwrap().len(), 1, "{flat}");
+    let checked = tour_json(&root, &["check", &tour]);
+    assert_eq!(checked["tours"][0]["fresh"], true, "{checked}");
+    // `drop` works on a planned stop and says so
+    let said = tour_ok(&root, &["drop", &tour, "s2"]);
+    assert_eq!(said, "dropped s2 (it was planned, not written)\n");
+    assert_eq!(route_of(&root, &tour), ["s1:0:written", "s3:0:planned"]);
+    let json = tour_json(&root, &["drop", &tour, "s3"]);
+    assert_eq!(json["was_planned"], true);
+    // a stop that is written says nothing of it
+    assert_eq!(tour_ok(&root, &["drop", &tour, "s1.b3"]), "dropped s1.b3\n");
+    // the id is not used again
+    let json = tour_json(&root, &["plan", &tour, REFUND]);
+    assert_eq!(json["planned"], json!(["s4"]));
+}
+
+#[test]
+fn tour_plan_on_a_stopped_tour_exits_1_and_on_a_finished_tour_exits_2() {
+    let root = sample_copy("tour-plan-states");
+    let tour = start_plan(&root, "retry", &[RETRY]);
+    tour_ok(&root, &["halt", &tour]);
+    let halted = |root: &Path| {
+        tour_lines(root, &tour)
+            .iter()
+            .filter(|l| l["type"] == "halted")
+            .count()
+    };
+    assert_eq!(halted(&root), 0);
+    let (status, out, err) = tour_fails(&root, &["plan", &tour, ONE_TRY], "");
+    assert_eq!(status, 1, "{out}{err}");
+    assert!(
+        out.starts_with(
+            "stopped: the reader stopped this tour (0 stops written). Add nothing more.\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(halted(&root), 1, "`halted` is written, as `add` does");
+    assert_eq!(route_of(&root, &tour), ["s1:0:planned"]);
+    // finished
+    tour_ok(&root, &["resume", &tour]);
+    add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let (status, _, err) = tour_fails(&root, &["plan", &tour, ONE_TRY], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(
+        err.contains("this tour is finished: nothing more can be planned on it"),
+        "{err}"
+    );
+}

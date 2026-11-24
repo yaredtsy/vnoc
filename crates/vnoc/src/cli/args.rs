@@ -119,7 +119,7 @@ fn starts_driver(path: &[String]) -> bool {
         // `add` reads the code; `check`, `list --on`, `show --check` and `where` may (a tour whose record holds needs none)
         Some("tour") => matches!(
             path.get(1).map(String::as_str),
-            Some("add" | "check" | "list" | "show" | "where")
+            Some("add" | "check" | "list" | "plan" | "show" | "start" | "where")
         ),
         Some("tags" | "tag" | "guide" | "skill" | "agent" | "init") => false,
         _ => true,
@@ -325,6 +325,15 @@ pub enum TourCommand {
     /// Every problem of the call is listed, nothing is written, and exit is 2: fix the text and send the whole stop again. A node that
     /// is not in the index is the usual "no such node", with "did you mean".
     Add(TourAddArgs),
+    /// Puts stops on the route before they are written: `vnoc tour plan <tour> <node>… [--from <stop>] [--line <n>]`.
+    ///
+    /// Writes one `plan` record: the nodes in the order given, with the next stop ids, placed as `add` places new stops (`--from` nests them under a stop,
+    /// which may itself be planned: a plan can be a tree). Every node is found first; one that is not there refuses the call and nothing is written
+    /// (exit 2, with "did you mean" for each). A node may be planned again (a second visit). Planned stops count towards the 40 a tour holds. The reader
+    /// sees the whole outline at once and can open a planned stop's code before its text exists. `vnoc tour add` on a planned node fills it; `finish` removes
+    /// what is left, and says how many. `--line` goes with `--from` and one node. A tour the reader stopped answers as `add` does (exit 1); a finished one
+    /// is refused (exit 2).
+    Plan(TourPlanArgs),
     /// Ends the tour: it is finished, and the person's canvas shows it as complete. Run it when the last stop is written.
     ///
     /// Writes the end of the tour. Planned stops that were never written leave the route, and the answer says how many. Finishing a tour that is
@@ -465,6 +474,28 @@ pub struct TourStartArgs {
     /// How much each step may say: `quick`, `normal` (the default) or `detailed`. It sets the text budgets of `add`.
     #[arg(long, value_enum, value_name = "DETAIL", default_value_t = DetailArg::Normal)]
     pub detail: DetailArg,
+    /// Start with these stops planned, in this order: `--plan a.py::f b.py::g`. Every node is found before anything is written; one that is not there
+    /// refuses the whole call (nothing is made). `vnoc tour add` on one of them fills it.
+    #[arg(long, value_name = "NODE", num_args = 1..)]
+    pub plan: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourPlanArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(
+        value_name = "NODE",
+        required = true,
+        help = "the nodes to plan, in the order they will be read: path::Name, path:line, an ID, or a path"
+    )]
+    pub nodes: Vec<String>,
+    /// Nest them under this stop (written or planned), as `add --from` does.
+    #[arg(long, value_name = "STOP")]
+    pub from: Option<crate::tours::StopId>,
+    /// The line of the `--from` stop's node where the call is. Needs `--from`, one node, and a `--from` stop that is written.
+    #[arg(long, value_name = "N")]
+    pub line: Option<u32>,
 }
 
 #[derive(Debug, Args)]

@@ -20,7 +20,9 @@ use serde_json::Value;
 
 use super::fold::{Problem, State, Tour, Unreadable, fold};
 use super::place::Place;
-use super::record::{Bare, Detail, Record, StepId, StopId, TourId, TourRecord, print_line};
+use super::record::{
+    Bare, Detail, PlanRecord, PlanStop, Record, StepId, StopId, TourId, TourRecord, print_line,
+};
 use super::time;
 use crate::userdata::layout;
 use crate::userdata::{ToursLock, ToursLockError, UserData, UserDataError};
@@ -698,6 +700,16 @@ pub struct Started {
 /// Starts a tour: its first line, in a new file in `.vnoc/local/tours/`. In a project with no `.vnoc/vnoc.toml` it makes `.vnoc/` first, as the
 /// first attach does (`UserData::initialize`). The id is new in both folders; a taken one (a clash of four characters) is tried again, ten times.
 pub fn start(project_root: &Path, params: StartParams) -> Result<Started, StoreError> {
+    start_planned(project_root, params, Vec::new())
+}
+
+/// [`start`] with stops planned: the `plan` record is the file's second line, written in the **same** `create_new` as the first, so a tour is never seen
+/// with half its start (`vnoc tour start --plan a b c`; the nodes were all found before this is called).
+pub fn start_planned(
+    project_root: &Path,
+    params: StartParams,
+    plan: Vec<PlanStop>,
+) -> Result<Started, StoreError> {
     let vnoc_root = project_root.join(layout::FOLDER);
     let created_vnoc = !layout::project_file(&vnoc_root).exists();
     UserData::new(project_root).initialize(true)?;
@@ -718,7 +730,13 @@ pub fn start(project_root: &Path, params: StartParams) -> Result<Started, StoreE
             next: None,
         });
         let path = file_in(&layout::local_tours_dir(&vnoc_root), &id);
-        match crate::userdata::atomic::create_new(&path, print_line(&first).as_bytes()) {
+        let mut text = print_line(&first);
+        if !plan.is_empty() {
+            text.push_str(&print_line(&Record::Plan(PlanRecord {
+                stops: plan.clone(),
+            })));
+        }
+        match crate::userdata::atomic::create_new(&path, text.as_bytes()) {
             Ok(()) => {
                 return Ok(Started {
                     id,
