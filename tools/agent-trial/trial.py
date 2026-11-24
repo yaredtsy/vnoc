@@ -1093,7 +1093,7 @@ def outside(calls, results, run_dir):
     for c in calls:
         failed = bool((results.get(c["id"]) or {}).get("is_error"))
         if c["name"] == "Bash":
-            text = command_of(c)
+            text = HEREDOC.sub("", command_of(c))  # a tour's text is not a command: "POST /orders" in it is not a path
             paths = re.findall(r"(?<![\w.~$/-])(/[\w.@+\-/]*)", text)
             bad = [p for p in paths if p != "/" and not p.startswith(root) and not p.startswith(OUTSIDE_OK)
                    and len(p) > 1 and re.match(r"/[A-Za-z]", p)]
