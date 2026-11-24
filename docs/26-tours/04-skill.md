@@ -271,7 +271,7 @@ asked was not reached: no agent tried it unasked (t10's rule held).
   pointer line moves from *More* to just under the title; the topics list gains `tour`; the same "one command per call, no variables
   or loops" line (A14 allowed all of `vnoc`, so it never showed).
 - *the harness:* t11's prompt; t3 passes a tour of 12 or fewer stops with no question; a heredoc refused only for a shell variable is counted as the variable rule, not check 9.
-- **Asked of the user:** a plain "explain X" does not make a tour (t11's reading). The description stays on "walk me through", "a
+- **Decided by the user (2026-11-24):** a plain "explain X" does not make a tour (t11's reading). The description stays on "walk me through", "a
   tour", "step by step".
 
 ### Results, TR14b (Claude Code on Sonnet, re-runs after the fixes, 2026-11-24)
