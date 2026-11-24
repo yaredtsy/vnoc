@@ -18,6 +18,7 @@ pub mod hash;
 pub mod ids;
 pub mod on;
 pub mod pin;
+pub mod place;
 pub mod rebase;
 pub mod record;
 pub mod rules;

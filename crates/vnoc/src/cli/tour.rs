@@ -12,8 +12,9 @@ use serde::Serialize;
 
 use super::args::{
     DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourDeleteArgs, TourDropArgs, TourEditArgs,
-    TourExportArgs, TourFinishArgs, TourIdsArgs, TourImportArgs, TourListArgs, TourPinArgs,
-    TourResumeArgs, TourSettingsArgs, TourShareArgs, TourShowArgs, TourStartArgs,
+    TourExportArgs, TourFinishArgs, TourGoArgs, TourIdsArgs, TourImportArgs, TourListArgs,
+    TourPinArgs, TourResumeArgs, TourSettingsArgs, TourShareArgs, TourShowArgs, TourStartArgs,
+    TourWhereArgs,
 };
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
@@ -24,12 +25,13 @@ use crate::source;
 use crate::tours::add::{
     AddOptions, block_of, did_you_mean_stops, nested_in, plan_more, plan_stop,
 };
-use crate::tours::check::{self, Answer, Code, Mode, Recorded, Source};
+use crate::tours::check::{self, Answer, Code, Mode, Recorded, Source, StopState};
 use crate::tours::doc;
 use crate::tours::find::find;
 use crate::tours::finish::{self as finishing, Step};
 use crate::tours::on::{self, Map, Query};
 use crate::tours::pin::{self, Changed, Pinnable, Reason};
+use crate::tours::place::{self, At, By, Move, Place};
 use crate::tours::record::{
     Bare, Commit, Detail, DropRecord, EndRecord, MetaRecord, Record, StepId, StopId,
 };
@@ -50,6 +52,8 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
         TourCommand::Pin(args) => pin_command(global, args).await,
         TourCommand::List(args) => list(global, args).await,
         TourCommand::Show(args) => show(global, args).await,
+        TourCommand::Where(args) => where_command(global, args).await,
+        TourCommand::Go(args) => go_command(global, args).await,
         TourCommand::Check(args) => check(global, args).await,
         TourCommand::Drop(args) => drop_id(global, args).await,
         TourCommand::Resume(args) => resume(global, args).await,
@@ -3063,4 +3067,422 @@ async fn show(global: &Global, args: &TourShowArgs) -> Result<(), Failure> {
             global,
         ),
     }
+}
+
+// --------------------------------------------------------------------------------------------------------------- where and go
+
+/// The lines `first..=last` (1-based) of a file of the project as it is now, split as everything here splits source. `None` when it cannot be read
+/// or has no such lines.
+fn lines_now(
+    project: &crate::project::Project,
+    path: &str,
+    first: u32,
+    last: u32,
+) -> Option<Vec<String>> {
+    let text = source::read_text(&project.git_root().join(path)).ok()?;
+    let all = source::split_lines(&text);
+    let from = (first.max(1) - 1) as usize;
+    if from >= all.len() || last < first {
+        return None;
+    }
+    let to = (last as usize).min(all.len());
+    Some(all[from..to].iter().map(|l| (*l).to_string()).collect())
+}
+
+/// The code under a step, as `where` shows it (02 §7): fresh or moved, the lines now; changed or gone in a pinned tour whose commit gives the lines,
+/// those, with the line that says so; otherwise the lines now, if there are any, and `the lines may not match`. At most [`view::WHERE_CODE_LINES`].
+fn where_code(
+    project: &crate::project::Project,
+    tour: &Tour,
+    step: StepId,
+    state: &str,
+    path: &str,
+    lines: Option<[u32; 2]>,
+) -> Option<view::WhereCode> {
+    let code = |source, commit, path: &str, first: u32, mut text: Vec<String>, note| {
+        let more = text.len().saturating_sub(view::WHERE_CODE_LINES);
+        text.truncate(view::WHERE_CODE_LINES);
+        view::WhereCode {
+            source,
+            commit,
+            path: path.to_string(),
+            first,
+            lines: text,
+            more,
+            note,
+        }
+    };
+    let pinned = tour.pin.as_ref().filter(|_| tour.pinned());
+    if matches!(state, "changed" | "gone")
+        && let Some(pin) = pinned
+        && let Some((_, written)) = pin.places.0.iter().find(|(id, _)| *id == step)
+        && let Some(text) = pin::as_written(
+            project,
+            pin.commit.as_str(),
+            written.path.as_str(),
+            written.lines.first,
+            written.lines.last,
+        )
+    {
+        let short = short_commit(&pin.commit);
+        return Some(code(
+            "as_written",
+            Some(short.clone()),
+            written.path.as_str(),
+            written.lines.first,
+            text,
+            Some(format!("as written at {short}: the code changed since")),
+        ));
+    }
+    let [first, last] = lines?;
+    let text = lines_now(project, path, first, last)?;
+    let note = matches!(state, "changed" | "gone").then(|| "the lines may not match".to_string());
+    Some(code("now", None, path, first, text, note))
+}
+
+/// The view of the tour's place: `place` is one the tour has ([`place::settle`]); `recorded` is a check of the tour that holds.
+fn where_view(
+    project: &crate::project::Project,
+    tour: &Tour,
+    place: &Place,
+    recorded: &Recorded,
+) -> view::WhereView {
+    let (before, after) = place::around(tour, place.at);
+    let neighbour = |at: At| -> view::Neighbour {
+        let title = match at {
+            At::Step(step) if !step.is_intro() => tour
+                .stop(step.stop())
+                .and_then(|s| block_of(s, step))
+                .map(|(b, _)| b.title.clone()),
+            _ => None,
+        };
+        view::Neighbour {
+            at: at.to_string(),
+            title,
+        }
+    };
+    let moved = (!place.moved.is_empty()).then(|| place.moved.clone());
+    let moved_ago = moved
+        .as_deref()
+        .and_then(time::parse)
+        .map(|then| time::parse(&time::now()).unwrap_or(then) - then);
+    let mut view = view::WhereView {
+        tour: tour.id.to_string(),
+        title: tour.title.clone(),
+        question: tour.question.clone(),
+        state: view::state_word(tour.state),
+        open: place.open,
+        by: moved.as_ref().map(|_| place.by),
+        moved,
+        moved_ago,
+        at: place.at.to_string(),
+        here: match place.at {
+            At::Cover => "cover",
+            At::End => "end",
+            At::Step(step) if step.is_intro() => "intro",
+            At::Step(_) => "block",
+        },
+        stops: tour.stops.len(),
+        steps: place::steps(tour).len(),
+        stop: None,
+        step: None,
+        check: None,
+        code: None,
+        // the cover has nothing before it and the end nothing after: `prev` and `next` stay
+        before: (place.at != At::Cover).then(|| neighbour(before)),
+        after: (place.at != At::End).then(|| neighbour(after)),
+        seen: place.seen.iter().map(ToString::to_string).collect(),
+        back: place.back.iter().map(ToString::to_string).collect(),
+    };
+    let At::Step(step) = place.at else {
+        return view;
+    };
+    let (Some(stop), Some(position)) = (tour.stop(step.stop()), place::position(tour, place.at))
+    else {
+        return view;
+    };
+    view.stop = Some(view::WhereStop {
+        id: stop.id.to_string(),
+        number: position.stop,
+        of: position.stops,
+        name: if stop.qualname.is_empty() {
+            stop.path.to_string()
+        } else {
+            stop.qualname.clone()
+        },
+        kind: stop.kind.as_ref().map(|k| format!("{k:?}").to_lowercase()),
+        path: stop.path.to_string(),
+        planned: !stop.written,
+    });
+    let block = (!step.is_intro())
+        .then(|| block_of(stop, step).map(|(b, _)| b))
+        .flatten();
+    let mut shown = view::WhereStep {
+        id: step.to_string(),
+        kind: if step.is_intro() { "intro" } else { "block" },
+        number: position.step,
+        of: position.steps,
+        title: block.map(|b| b.title.clone()),
+        text: match block {
+            Some(b) => Some(b.text.clone()),
+            None => stop.text.clone(),
+        },
+        lines: None,
+    };
+    if stop.written {
+        // what a check says of this step, and where its lines are now: a stop that changed has `now`, one that only moved has `displaced`, a block
+        // that moved has its new lines; else the lines it was written with
+        let stop_state = recorded.stop(stop.id);
+        let state = match (stop_state, block) {
+            (StopState::Gone, _) => "gone",
+            (StopState::Changed, None) => "changed",
+            (_, None) => "fresh",
+            (_, Some(b)) => match recorded.block(b.id) {
+                check::BlockState::Fresh => "fresh",
+                check::BlockState::Moved(_) => "moved",
+                check::BlockState::Changed => "changed",
+            },
+        };
+        let found = recorded
+            .now
+            .get(&stop.id)
+            .or(recorded.displaced.get(&stop.id));
+        let path = found.map_or_else(|| stop.path.to_string(), |n| n.path.clone());
+        // how far the node is from where it was written: a block that is not `moved` is where it was **counted from the node's first line**
+        // (check.rs `walk`), cut to the node's end
+        let (delta, node_last) = match (found.and_then(|n| n.lines), stop.lines) {
+            (Some([first, last]), Some(written)) => {
+                (i64::from(first) - i64::from(written.first), last)
+            }
+            (Some([_, last]), None) => (0, last),
+            (None, _) => (0, u32::MAX),
+        };
+        let shifted = |line: u32| u32::try_from((i64::from(line) + delta).max(1)).unwrap_or(line);
+        let lines = match (block, stop_state) {
+            (_, StopState::Gone) => None,
+            (Some(b), _) => Some(match recorded.block(b.id) {
+                check::BlockState::Moved(l) => [l.first, l.last],
+                check::BlockState::Fresh => [shifted(b.lines.first), shifted(b.lines.last)],
+                check::BlockState::Changed => {
+                    [shifted(b.lines.first), shifted(b.lines.last).min(node_last)]
+                }
+            }),
+            (None, _) => found
+                .and_then(|n| n.lines)
+                .or_else(|| stop.lines.map(|l| [l.first, l.last])),
+        };
+        shown.lines = lines;
+        view.check = Some(state);
+        view.code = where_code(project, tour, step, state, &path, lines);
+    }
+    view.step = Some(shown);
+    view
+}
+
+/// What `where` and `go` print: the view, and the text made from it.
+#[derive(Serialize)]
+struct WhereOut {
+    schema: u32,
+    command: &'static str,
+    /// `go`: the move as it was typed
+    #[serde(rename = "move", skip_serializing_if = "Option::is_none")]
+    moved_by: Option<String>,
+    /// `go back` with nothing to go back to: the place stays
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    nothing_to_go_back_to: bool,
+    #[serde(flatten)]
+    view: view::WhereView,
+    #[serde(skip)]
+    text: String,
+}
+
+impl Render for WhereOut {
+    fn text(&self, _quiet: bool) -> String {
+        if self.nothing_to_go_back_to {
+            format!("nothing to go back to\n{}", self.text)
+        } else {
+            self.text.clone()
+        }
+    }
+}
+
+/// Nothing to say a place of: no tour was named and none has been opened or moved.
+#[derive(Serialize)]
+struct NoPlaceYet {
+    schema: u32,
+    command: &'static str,
+    tour: Option<String>,
+    message: &'static str,
+}
+
+impl Render for NoPlaceYet {
+    fn text(&self, _quiet: bool) -> String {
+        format!("{}\nname one: vnoc tour where <tour>\n", self.message)
+    }
+}
+
+/// The tour whose place moved last: the greatest `moved` of the places that are written, the id breaking a tie. `None` when no tour has a place.
+fn last_moved(vnoc_root: &Path) -> Option<TourId> {
+    let mut best: Option<(String, TourId)> = None;
+    for row in store::list(vnoc_root).tours {
+        let Some(found) = store::read_place(vnoc_root, &row.id) else {
+            continue;
+        };
+        let key = (found.moved, row.id);
+        if best.as_ref().is_none_or(|b| key > *b) {
+            best = Some(key);
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+/// A tour as `where` and `go` need it: readable (a tour that is not is the request's mistake, exit 2; one of a newer schema the environment's).
+fn readable(measured: &store::Measured, id: &TourId) -> Result<Tour, Failure> {
+    match &measured.tour {
+        Ok(tour) => Ok(tour.clone()),
+        Err(e) => {
+            let said = format!("the tour {id} cannot be read: {e}");
+            Err(if e.too_new {
+                Failure::Environment(said)
+            } else {
+                Failure::Usage(said)
+            })
+        }
+    }
+}
+
+/// The view of a tour's place: its recorded check when it holds, else a check (recorded), then [`where_view`] and its text.
+async fn place_answer(
+    global: &Global,
+    project: &crate::project::Project,
+    vnoc_root: &Path,
+    id: &TourId,
+    place: &Place,
+) -> Result<(view::WhereView, String), Failure> {
+    let measured = store::read_measured(vnoc_root, id).map_err(store_failure)?;
+    let tour = readable(&measured, id)?;
+    // the place as the tour is now: a step that is gone is read as the nearest that is there, and this is not written back
+    let settled = place::settle(&tour, place);
+    let subjects = [Subject {
+        id,
+        path: &measured.path,
+        len: measured.len,
+        tour: &tour,
+    }];
+    let mut lazy = Lazy::default();
+    let done = answers(
+        global,
+        &mut lazy,
+        project,
+        vnoc_root,
+        &subjects,
+        Mode::default(),
+    )
+    .await?;
+    let recorded = done
+        .get(id)
+        .map_or_else(|| Recorded::empty(measured.len), |a| a.recorded.clone());
+    let view = where_view(project, &tour, &settled, &recorded);
+    let stop = match settled.at {
+        At::Step(step) => tour.stop(step.stop()),
+        _ => None,
+    };
+    let text = view::where_text(&view, stop);
+    Ok((view, text))
+}
+
+async fn where_command(global: &Global, args: &TourWhereArgs) -> Result<(), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let id = match &args.tour {
+        Some(text) => resolve(global, "tour where", &vnoc_root, text)?,
+        None => match last_moved(&vnoc_root) {
+            Some(id) => id,
+            None => {
+                return out::render(
+                    &NoPlaceYet {
+                        schema: 1,
+                        command: "tour where",
+                        tour: None,
+                        message: "no tour has been opened or moved yet",
+                    },
+                    global,
+                );
+            }
+        },
+    };
+    // a tour nobody has moved is on its cover
+    let place = store::read_place(&vnoc_root, &id).unwrap_or_default();
+    let (view, text) = place_answer(global, &project, &vnoc_root, &id, &place).await?;
+    out::render(
+        &WhereOut {
+            schema: 1,
+            command: "tour where",
+            moved_by: None,
+            nothing_to_go_back_to: false,
+            view,
+            text,
+        },
+        global,
+    )
+}
+
+async fn go_command(global: &Global, args: &TourGoArgs) -> Result<(), Failure> {
+    let wanted = Move::parse(&args.r#move).map_err(Failure::Usage)?;
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let id = resolve(global, "tour go", &vnoc_root, &args.tour)?;
+    // the tours lock holds from reading the tour and the place to writing the place: two moves made together each apply to the place as it is then
+    let lock = take_lock(vnoc_root.clone()).await?;
+    let measured = store::read_measured(&vnoc_root, &id).map_err(store_failure)?;
+    let tour = readable(&measured, &id)?;
+    if let Move::Jump(At::Step(step)) = wanted
+        && !place::has_step(&tour, step)
+    {
+        drop(lock);
+        let said = match tour.stop(step.stop()) {
+            None => {
+                let near = did_you_mean_stops(&tour, step.stop());
+                (
+                    "no_stop",
+                    format!("no stop {} in this tour", step.stop()),
+                    near.iter().map(ToString::to_string).collect(),
+                )
+            }
+            Some(stop) => (
+                "no_block",
+                format!("no block {step} in this tour"),
+                steps_in_order(stop)
+                    .iter()
+                    .skip(1)
+                    .map(ToString::to_string)
+                    .collect(),
+            ),
+        };
+        return no_such(global, "tour go", said.0, said.1, said.2);
+    }
+    let was = store::read_place(&vnoc_root, &id).unwrap_or_default();
+    let settled = place::settle(&tour, &was);
+    let nothing_to_go_back_to = wanted == Move::Back && settled.back.is_empty();
+    let now = if nothing_to_go_back_to {
+        settled
+    } else {
+        let mut moved = place::go(&tour, &settled, wanted);
+        moved.by = By::Command;
+        store::write_place_locked(&lock, &vnoc_root, &id, &moved).map_err(store_failure)?;
+        moved
+    };
+    drop(lock);
+    let (view, text) = place_answer(global, &project, &vnoc_root, &id, &now).await?;
+    out::render(
+        &WhereOut {
+            schema: 1,
+            command: "tour go",
+            moved_by: Some(args.r#move.clone()),
+            nothing_to_go_back_to,
+            view,
+            text,
+        },
+        global,
+    )
 }

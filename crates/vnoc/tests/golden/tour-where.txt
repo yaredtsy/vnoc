@@ -1,0 +1,8 @@
+<tour>   "retry_charge"   not open · moved <ago>
+stop 1 of 4 · step 3 of 4     s1.b2
+ƒ retry_charge   billing/charge.py:15
+  The call itself
+  This is the only line that talks to the gateway, so it is the only place a dropped connection can
+  come from.
+  > 15          return gateway.charge(order.total)
+before: s1.b1 "One attempt, as a function" · after: s1.b3 "Try, and try again"

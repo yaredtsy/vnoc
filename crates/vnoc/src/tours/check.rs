@@ -22,7 +22,7 @@ use super::find::{find, place_of};
 use super::fold::{Tour, TourBlock, TourStop};
 use super::hash;
 use super::record::{Lines, Ordered, StepId, StopId, TourId, WhereAt};
-use super::store::{self, Part, StoreError};
+use super::store::{self, StoreError};
 use super::time;
 use crate::index::{Index, Kind, Node};
 use crate::project::Project;
@@ -264,6 +264,11 @@ pub struct Recorded {
     /// (found by its ID after a rename or a move), and its lines. An addition to 01 §9's record, read as empty when it is not there.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub now: BTreeMap<StopId, Now>,
+    /// where a stop that is **fresh** is now when that is not where it was written (lines pushed down by an edit above it, a file that moved): its
+    /// name, path and lines. An addition to 01 §9's record (TR10), read as empty when it is not there: `where` lights the lines the reader sees, and a
+    /// recorded check holds no source to find them again.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub displaced: BTreeMap<StopId, Now>,
 }
 
 /// A changed stop's node as it is now.
@@ -288,6 +293,7 @@ impl Recorded {
             blocks: BTreeMap::new(),
             moved: BTreeMap::new(),
             now: BTreeMap::new(),
+            displaced: BTreeMap::new(),
         }
     }
 
@@ -505,6 +511,21 @@ pub fn check_placed(code: &Code, read: Reader, tour: &Tour, tour_len: u64) -> (R
         if result.state != StopState::Fresh {
             recorded.stops.insert(stop.id, result.state);
         }
+        if result.state == StopState::Fresh
+            && let Some((_, at)) = placed.stops.iter().find(|(id, _)| *id == stop.id)
+            && (at.path != stop.path || Some(at.lines) != stop.lines)
+            && let Some(node) = find(code.index, code.project, code.tree, stop)
+            && let Some((path, qualname, _)) = place_of(node)
+        {
+            recorded.displaced.insert(
+                stop.id,
+                Now {
+                    qualname,
+                    path: path.to_string(),
+                    lines: Some([at.lines.first, at.lines.last]),
+                },
+            );
+        }
         if result.state == StopState::Changed
             && let Some(node) = find(code.index, code.project, code.tree, stop)
             && let Some((path, qualname, _)) = place_of(node)
@@ -572,7 +593,7 @@ pub struct Answer {
 }
 
 /// The tour's freshness for a caller that has the code: the record when it is valid and `again` is not asked, else a check, recorded
-/// (`write_state_part`, which keeps the place). A caller that has not built the code yet asks [`recall`] first.
+/// (`store::write_check`, which keeps the place). A caller that has not built the code yet asks [`recall`] first.
 pub fn fresh(
     code: &Code,
     read: Reader,
@@ -601,7 +622,7 @@ pub fn fresh(
 /// Writes the answer as the `check` part of the tour's state file.
 pub fn record(vnoc_root: &Path, id: &TourId, recorded: &Recorded) -> Result<(), StoreError> {
     let value = serde_json::to_value(recorded).expect("a record is JSON");
-    store::write_state_part(vnoc_root, id, Part::Check, value)
+    store::write_check(vnoc_root, id, value)
 }
 
 #[cfg(test)]
@@ -1198,21 +1219,15 @@ mod tests {
     fn writing_the_check_keeps_the_place_and_a_record_that_does_not_parse_is_no_record() {
         let f = Fixture::new("state");
         let (tour, path) = f.tour_f();
-        store::write_state_part(
-            &f.vnoc_root,
-            &tour.id,
-            Part::Place,
-            serde_json::json!({"at": "cover"}),
-        )
-        .unwrap();
+        let place = crate::tours::place::Place::cover();
+        store::write_place(&f.vnoc_root, &tour.id, &place).unwrap();
         f.fresh(&tour, &path, NOW);
         let state = store::read_state(&f.vnoc_root, &tour.id);
-        assert_eq!(state.place, Some(serde_json::json!({"at": "cover"})));
+        assert_eq!(state.place, Some(place));
         assert!(state.check.is_some());
-        store::write_state_part(
+        store::write_check(
             &f.vnoc_root,
             &tour.id,
-            Part::Check,
             serde_json::json!({"nonsense": true}),
         )
         .unwrap();

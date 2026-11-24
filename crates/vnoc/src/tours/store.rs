@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::fold::{Problem, State, Tour, Unreadable, fold};
+use super::place::Place;
 use super::record::{Bare, Detail, Record, StepId, StopId, TourId, TourRecord, print_line};
 use super::time;
 use crate::userdata::layout;
@@ -952,15 +953,25 @@ pub fn list(vnoc_root: &Path) -> Listed {
 
 // ------------------------------------------------------------------------------------------------------------ the state file
 
-/// This machine's state of one tour (01 §9): where the reader is, and what the last check found. The two parts are typed later (the check in
-/// TR5, the place in TR10); here they are the JSON they are written as.
+/// This machine's state of one tour (01 §9): where the reader is, and what the last check found. The place is typed (TR10); the check is still the
+/// JSON it is written as (`check.rs` types it).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TourState {
     pub schema: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub place: Option<Value>,
+    /// a place that does not parse is read as none: it is this machine's, the reader starts at the cover, and the check beside it is kept
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_place"
+    )]
+    pub place: Option<Place>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<Value>,
+}
+
+fn lenient_place<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Place>, D::Error> {
+    let value = Option::<Value>::deserialize(d)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 impl Default for TourState {
@@ -971,12 +982,6 @@ impl Default for TourState {
             check: None,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Part {
-    Place,
-    Check,
 }
 
 fn state_file(vnoc_root: &Path, id: &TourId) -> PathBuf {
@@ -993,25 +998,51 @@ pub fn read_state(vnoc_root: &Path, id: &TourId) -> TourState {
         .unwrap_or_default()
 }
 
-/// Replaces one part of the state and keeps the other: under the tours lock, reads the file, sets the part, and writes the whole file again
-/// (`write_atomic`). A file that did not parse is replaced.
-pub fn write_state_part(
+/// The reader's place in a tour, as it was written: `None` when nobody has opened or moved it here. Not settled against the tour (`place::settle`).
+pub fn read_place(vnoc_root: &Path, id: &TourId) -> Option<Place> {
+    read_state(vnoc_root, id).place
+}
+
+/// Writes the state file again with `change` applied to what is in it now: **the caller holds the tours lock**, so what it read is what it replaces.
+/// A new file is made and renamed over the old (`write_atomic`); a file that did not parse is replaced.
+fn rewrite_state(
+    _lock: &ToursLock,
     vnoc_root: &Path,
     id: &TourId,
-    part: Part,
-    value: Value,
+    change: impl FnOnce(&mut TourState),
 ) -> Result<(), StoreError> {
-    let _lock = ToursLock::take(vnoc_root)?;
     let mut state = read_state(vnoc_root, id);
-    match part {
-        Part::Place => state.place = Some(value),
-        Part::Check => state.check = Some(value),
-    }
+    change(&mut state);
     let mut bytes = serde_json::to_vec(&state).expect("JSON is JSON");
     bytes.push(b'\n');
     let path = state_file(vnoc_root, id);
     crate::userdata::atomic::write_atomic(&path, &bytes)
         .map_err(io_error(format!("could not write {}", path.display())))
+}
+
+/// Replaces the `place` and keeps the `check`, under the tours lock the caller already holds (`go` reads the place and the tour under it, so two
+/// moves made together each apply to the place as it is then).
+pub fn write_place_locked(
+    lock: &ToursLock,
+    vnoc_root: &Path,
+    id: &TourId,
+    place: &Place,
+) -> Result<(), StoreError> {
+    rewrite_state(lock, vnoc_root, id, |state| {
+        state.place = Some(place.clone())
+    })
+}
+
+/// [`write_place_locked`], taking the tours lock for the one write.
+pub fn write_place(vnoc_root: &Path, id: &TourId, place: &Place) -> Result<(), StoreError> {
+    let lock = ToursLock::take(vnoc_root)?;
+    write_place_locked(&lock, vnoc_root, id, place)
+}
+
+/// Replaces the `check` and keeps the `place`, under the tours lock.
+pub fn write_check(vnoc_root: &Path, id: &TourId, check: Value) -> Result<(), StoreError> {
+    let lock = ToursLock::take(vnoc_root)?;
+    rewrite_state(&lock, vnoc_root, id, |state| state.check = Some(check))
 }
 
 #[cfg(test)]
@@ -1760,6 +1791,13 @@ mod tests {
 
     // ---- the state file
 
+    fn place_at(at: &str) -> Place {
+        Place {
+            at: crate::tours::place::At::parse(at).unwrap(),
+            ..Place::cover()
+        }
+    }
+
     #[test]
     fn writing_the_place_keeps_the_check_and_the_other_way_round() {
         let root = project("state");
@@ -1770,30 +1808,35 @@ mod tests {
             TourState::default(),
             "no file: empty"
         );
+        assert_eq!(read_place(&vnoc_root, &tour), None);
         assert!(!vnoc_root.exists(), "reading makes nothing");
 
-        let place = json!({"at": "s3.b2", "seen": ["s1"], "open": true});
+        let mut place = place_at("s3.b2");
+        place.seen = vec![crate::tours::StopId::new(1).unwrap()];
+        place.open = true;
         let check = json!({"tour_len": 4182, "stops": {"s3": "changed"}});
-        write_state_part(&vnoc_root, &tour, Part::Place, place.clone()).unwrap();
+        write_place(&vnoc_root, &tour, &place).unwrap();
         let state = read_state(&vnoc_root, &tour);
         assert_eq!(
             (state.schema, state.place.as_ref(), state.check.as_ref()),
             (1, Some(&place), None)
         );
-        write_state_part(&vnoc_root, &tour, Part::Check, check.clone()).unwrap();
+        write_check(&vnoc_root, &tour, check.clone()).unwrap();
         let state = read_state(&vnoc_root, &tour);
         assert_eq!(
             (state.place.as_ref(), state.check.as_ref()),
             (Some(&place), Some(&check)),
             "both"
         );
+        assert_eq!(read_place(&vnoc_root, &tour), Some(place));
 
-        let place2 = json!({"at": "end"});
-        write_state_part(&vnoc_root, &tour, Part::Place, place2.clone()).unwrap();
+        let place2 = place_at("end");
+        write_place(&vnoc_root, &tour, &place2).unwrap();
         let state = read_state(&vnoc_root, &tour);
         assert_eq!(
             (state.place.as_ref(), state.check.as_ref()),
-            (Some(&place2), Some(&check))
+            (Some(&place2), Some(&check)),
+            "the check is kept as it was, byte for byte"
         );
 
         // another tour has its own file
@@ -1805,6 +1848,23 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, ["t-0000.json"], "no temporary file is left");
+    }
+
+    #[test]
+    fn a_place_that_does_not_parse_is_read_as_none_and_keeps_the_check_beside_it() {
+        let root = project("state-bad-place");
+        let vnoc_root = vnoc_of(&root);
+        let tour = id("t-0000");
+        let dir = layout::tour_state_dir(&vnoc_root);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("t-0000.json"),
+            r#"{"schema":1,"place":{"at":"s0"},"check":{"tour_len":9}}"#,
+        )
+        .unwrap();
+        let state = read_state(&vnoc_root, &tour);
+        assert_eq!(state.place, None);
+        assert_eq!(state.check, Some(json!({"tour_len": 9})));
     }
 
     #[test]
@@ -1831,7 +1891,7 @@ mod tests {
             );
         }
         fs::write(&file, "{ not json").unwrap();
-        write_state_part(&vnoc_root, &tour, Part::Check, json!({"tour_len": 1})).unwrap();
+        write_check(&vnoc_root, &tour, json!({"tour_len": 1})).unwrap();
         let state = read_state(&vnoc_root, &tour);
         assert_eq!(state.check, Some(json!({"tour_len": 1})));
         assert_eq!(state.place, None);
@@ -1844,7 +1904,7 @@ mod tests {
         let root = project("state-move");
         let vnoc_root = vnoc_of(&root);
         let started = start(&root, params("T")).unwrap();
-        write_state_part(&vnoc_root, &started.id, Part::Place, json!({"at": "cover"})).unwrap();
+        write_place(&vnoc_root, &started.id, &place_at("cover")).unwrap();
         fs::create_dir_all(layout::tours_dir(&vnoc_root)).unwrap();
         fs::rename(
             &started.path,
@@ -1854,7 +1914,7 @@ mod tests {
         assert_eq!(read(&vnoc_root, &started.id).unwrap().0, Where::Project);
         assert_eq!(
             read_state(&vnoc_root, &started.id).place,
-            Some(json!({"at": "cover"}))
+            Some(place_at("cover"))
         );
     }
 
@@ -1990,7 +2050,7 @@ mod tests {
             &[parse_line(&stop_line(1)).unwrap()],
         )
         .unwrap();
-        write_state_part(&vnoc_root, &started.id, Part::Place, json!({"at": "cover"})).unwrap();
+        write_place(&vnoc_root, &started.id, &place_at("cover")).unwrap();
         started.id
     }
 

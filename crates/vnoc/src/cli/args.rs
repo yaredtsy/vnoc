@@ -116,10 +116,10 @@ impl Cli {
 /// Whether the command at `path` (its names from the first, none for `vnoc` itself) starts the driver. Of `tour`, only `add` reads the code.
 fn starts_driver(path: &[String]) -> bool {
     match path.first().map(String::as_str) {
-        // `add` reads the code; `check`, `list --on` and `show --check` may (a tour whose record holds needs none)
+        // `add` reads the code; `check`, `list --on`, `show --check` and `where` may (a tour whose record holds needs none)
         Some("tour") => matches!(
             path.get(1).map(String::as_str),
-            Some("add" | "check" | "list" | "show")
+            Some("add" | "check" | "list" | "show" | "where")
         ),
         Some("tags" | "tag" | "guide" | "skill" | "agent" | "init") => false,
         _ => true,
@@ -424,6 +424,23 @@ pub enum TourCommand {
     /// `--text` every intro, block title and text is printed under its row, with each block's id and lines. This is how a tour is carried on in
     /// a new session: the ids in it are what `add --from` takes. It reads the tour as written and does not look at the code. It needs no driver.
     Show(TourShowArgs),
+    /// Where the reader is in a tour: the stop, the step, the code it lights, and how long ago they moved. With no tour: the tour whose place moved last.
+    ///
+    /// Prints the place of the tour (the tour whose place moved last when none is named): its first line says whether the tour is open on a canvas and how
+    /// long ago the reader moved; then the stop's number and the step's, the node and the lines the step lights with their code (`>` marks a lit
+    /// line), the step's title and text, and the steps before and after. Use it to know what "this" is when the reader says "explain this more". The code is
+    /// as it is now when the step is fresh or moved; for a step of a pinned tour that changed it is the code as written, with a line that says so; else the
+    /// lines now and `the lines may not match`. A tour nobody has moved is on its cover. It checks the tour against the code when no recorded check
+    /// holds, and moves nothing. `--json` gives the place and the step as one object. With no place anywhere it says `no tour has been opened or moved
+    /// yet` (exit 0).
+    Where(TourWhereArgs),
+    /// Moves the reader's place in a tour: `next`, `prev`, `next-stop`, `prev-stop`, `back`, `cover`, `end`, `s4`, `s3.b2`. The user's command.
+    ///
+    /// `vnoc tour go <tour> <move>` moves the place the way the canvas's buttons do and prints the new place as `where` does. `next`, `prev`, `next-stop` and
+    /// `prev-stop` walk the steps in reading order; `s4`, `s3.b2`, `cover` and `end` are jumps: they remember where the reader was (20 jumps), and
+    /// `back` takes the reader to the last of them (`nothing to go back to` when there is none). A canvas that shows the tour follows; one that does not is
+    /// not opened. It works on a tour being written, a stopped one and a finished one. An id the tour does not have is refused with the nearest.
+    Go(TourGoArgs),
 }
 
 /// `quick`, `normal` or `detailed`: how much each step may say.
@@ -560,6 +577,26 @@ pub struct TourShowArgs {
     /// marked with `>`. Checks as `--check` does. A tour that is not pinned is refused.
     #[arg(long)]
     pub as_written: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourWhereArgs {
+    #[arg(
+        value_name = "TOUR",
+        help = "the tour's id, or the start of it (default: the tour whose place moved last)"
+    )]
+    pub tour: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourGoArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(
+        value_name = "MOVE",
+        help = "next, prev, next-stop, prev-stop, back, cover, end, a stop (s4) or a block (s3.b2)"
+    )]
+    pub r#move: String,
 }
 
 #[derive(Debug, Args)]

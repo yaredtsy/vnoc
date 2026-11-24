@@ -951,6 +951,252 @@ fn cells_width(cells: &[[String; 6]], i: usize) -> usize {
         .unwrap_or(0)
 }
 
+// ----------------------------------------------------------------------------------------------------------------------------------- where
+
+/// The most lines of code `where` prints under a step: more are counted, not printed.
+pub const WHERE_CODE_LINES: usize = 40;
+
+/// A step next to the place: where `prev` and `next` would go.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Neighbour {
+    /// `s3`, `s3.b2`, `cover` or `end`
+    pub at: String,
+    /// a block's title; none for an intro, the cover and the end
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl Neighbour {
+    /// `s3 (intro)`, `s3.b2 "Take the units"`, `cover`.
+    fn words(&self) -> String {
+        match &self.title {
+            Some(title) => format!("{} \"{title}\"", self.at),
+            None if self.at.starts_with('s') && !self.at.contains('.') => {
+                format!("{} (intro)", self.at)
+            }
+            None => self.at.clone(),
+        }
+    }
+}
+
+/// The stop the place is in.
+#[derive(Debug, Clone, Serialize)]
+pub struct WhereStop {
+    pub id: String,
+    /// its place on the route, from 1
+    pub number: usize,
+    /// how many stops the route has
+    pub of: usize,
+    pub name: String,
+    pub kind: Option<String>,
+    pub path: String,
+    /// not written yet: its step is its intro with no text
+    pub planned: bool,
+}
+
+/// The step the place is on.
+#[derive(Debug, Clone, Serialize)]
+pub struct WhereStep {
+    pub id: String,
+    /// `intro` or `block`
+    pub kind: &'static str,
+    /// the step's place in its stop, from 1
+    pub number: usize,
+    /// how many steps the stop has
+    pub of: usize,
+    /// a block's title; an intro has none
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// the intro's text or the block's; none for a planned stop
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// the lines the step lights, now (or as written, when `code` says so)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines: Option<[u32; 2]>,
+}
+
+/// The code under the step, and which code it is.
+#[derive(Debug, Clone, Serialize)]
+pub struct WhereCode {
+    /// `now`: the file as it is; `as_written`: the pinned commit's
+    pub source: &'static str,
+    /// the first 7 characters of the commit, for `as_written`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    pub path: String,
+    /// the file line of the first line printed
+    pub first: u32,
+    /// the lines, at most [`WHERE_CODE_LINES`]; every one is lit
+    pub lines: Vec<String>,
+    /// how many lines more there were
+    #[serde(skip_serializing_if = "is_zero")]
+    pub more: usize,
+    /// `as written at 8a1c2e4: the code changed since`, `the lines may not match`: said when the code is not simply what the step is about
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// What `vnoc tour where` says: the place and the step as one object (02 §12). `at` is `cover`, `end` or a step; `stop` and `step` are there on a step.
+#[derive(Debug, Clone, Serialize)]
+pub struct WhereView {
+    pub tour: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+    /// `writing`, `stopping`, `stopped` or `finished`
+    pub state: &'static str,
+    /// a window is showing this tour
+    pub open: bool,
+    /// when the place last moved; none for a tour nobody has moved
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moved: Option<String>,
+    /// how long ago, in seconds
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moved_ago: Option<i64>,
+    /// `reader` or `command`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by: Option<super::place::By>,
+    pub at: String,
+    /// `cover`, `intro`, `block` or `end`
+    pub here: &'static str,
+    /// how many stops and steps the tour has now
+    pub stops: usize,
+    pub steps: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<WhereStop>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<WhereStep>,
+    /// what a check says of this step: `fresh`, `moved`, `changed` or `gone`; none for the cover, the end and a planned stop
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<WhereCode>,
+    /// where `prev` goes; none on the cover, which has nothing before it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<Neighbour>,
+    /// where `next` goes; none on the end
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<Neighbour>,
+    /// the stops read to their last step
+    pub seen: Vec<String>,
+    /// where each jump came from, the latest last
+    pub back: Vec<String>,
+}
+
+/// `ƒ reserve_stock   app/inventory.py:21-22`: the stop's icon and name, then where its lit lines are (`lines`, as found now or as written), or only its path
+/// for a stop with none.
+pub fn step_headline(stop: &TourStop, path: &str, lines: Option<[u32; 2]>) -> String {
+    let (icon, label) = (icon(stop.kind.as_ref()), stop_label(stop));
+    let place = match lines {
+        Some([a, b]) if a == b => format!("{path}:{a}"),
+        Some([a, b]) => format!("{path}:{a}-{b}"),
+        None => path.to_string(),
+    };
+    if label == place {
+        format!("{icon} {label}")
+    } else {
+        format!("{icon} {label}   {place}")
+    }
+}
+
+/// The text of `where`, from the same values as its `--json`:
+///
+/// ```text
+/// checkout-order-7k2q   "checkout_order"   open on the canvas · moved 12 s ago
+/// stop 3 of 10 · step 2 of 3     s3.b1
+/// ƒ reserve_stock   app/inventory.py:21-22
+///   Refuse what is not there
+///   It checks the stock again by itself. …
+///   > 21  if not check_stock(sku, quantity):
+///   > 22      raise ValueError(f"Not enough stock for {sku}")
+/// before: s3 (intro) · after: s3.b2 "Take the units, warn when few are left"
+/// ```
+pub fn where_text(view: &WhereView, stop: Option<&TourStop>) -> String {
+    let moved = match (&view.moved, view.moved_ago) {
+        (Some(_), Some(ago)) => format!("moved {}", super::time::ago(ago)),
+        _ => "never moved".to_string(),
+    };
+    let open = if view.open {
+        "open on the canvas"
+    } else {
+        "not open"
+    };
+    let mut text = format!("{}   \"{}\"   {open} · {moved}\n", view.tour, view.title);
+    match (&view.stop, &view.step) {
+        (Some(s), Some(step)) => {
+            let planned = if s.planned { " · planned" } else { "" };
+            text.push_str(&format!(
+                "stop {} of {} · step {} of {}{planned}     {}\n",
+                s.number, s.of, step.number, step.of, step.id
+            ));
+            let headline = match stop {
+                Some(stop) => {
+                    let path = view.code.as_ref().map_or(s.path.as_str(), |c| &c.path);
+                    let lines = step.lines;
+                    step_headline(stop, path, lines)
+                }
+                None => format!("{}   {}", s.name, s.path),
+            };
+            let mark = match view.check {
+                Some("fresh") | None => String::new(),
+                Some(word) => format!("   {word}"),
+            };
+            text.push_str(&format!("{headline}{mark}\n"));
+            if let Some(title) = &step.title {
+                text.push_str(&format!("  {title}\n"));
+            }
+            if let Some(body) = &step.text {
+                text.push_str(&wrapped(body, 2));
+            }
+            if s.planned {
+                text.push_str("  planned: not written yet\n");
+            }
+            if let Some(code) = &view.code {
+                if let Some(note) = &code.note {
+                    text.push_str(&format!("  {note}\n"));
+                }
+                let last = code.first + code.lines.len().saturating_sub(1) as u32;
+                let width = last.to_string().len();
+                for (n, line) in code.lines.iter().enumerate() {
+                    let row = format!("  > {:>width$}  {line}", code.first + n as u32);
+                    text.push_str(row.trim_end());
+                    text.push('\n');
+                }
+                if code.more > 0 {
+                    text.push_str(&format!("  … {} more\n", count(code.more, "line", "lines")));
+                }
+            }
+        }
+        _ => {
+            let counts = format!(
+                "{} · {}",
+                count(view.stops, "stop", "stops"),
+                count(view.steps, "step", "steps")
+            );
+            text.push_str(&format!("{} · {counts}\n", view.at));
+            if let Some(question) = &view.question {
+                text.push_str(&format!("  \"{question}\"\n"));
+            }
+        }
+    }
+    let mut around = Vec::new();
+    if let Some(before) = &view.before {
+        around.push(format!("before: {}", before.words()));
+    }
+    if let Some(after) = &view.after {
+        around.push(format!("after: {}", after.words()));
+    }
+    if !around.is_empty() {
+        text.push_str(&around.join(" · "));
+        text.push('\n');
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

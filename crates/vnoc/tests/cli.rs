@@ -6292,8 +6292,9 @@ fn an_empty_project_names_each_drivers_extensions() {
 /// three files a tour leaves (the project's tour, the private one, a state file) are byte for byte as they were.
 #[test]
 fn tours_on_disk_change_nothing_the_older_commands_print_and_are_not_touched() {
+    use vnoc::tours::place::Place;
     use vnoc::tours::record::{Detail, EndRecord, Record};
-    use vnoc::tours::store::{Located, Part, StartParams, append, locate, start, write_state_part};
+    use vnoc::tours::store::{Located, StartParams, append, locate, start, write_place};
 
     let plain = sample_copy("tours-plain");
     let with = sample_copy("tours-with");
@@ -6325,13 +6326,7 @@ fn tours_on_disk_change_nothing_the_older_commands_print_and_are_not_touched() {
         Located::Project(shared_path.clone())
     );
     // the state file of one of them
-    write_state_part(
-        &vnoc_root,
-        &shared.id,
-        Part::Place,
-        json!({"at": "cover", "by": "reader"}),
-    )
-    .unwrap();
+    write_place(&vnoc_root, &shared.id, &Place::cover()).unwrap();
     let state_path = vnoc_root
         .join("local/tour-state")
         .join(format!("{}.json", shared.id));
@@ -10038,15 +10033,16 @@ fn export_then_import_replace_with_nothing_edited_keeps_every_id_and_every_hash(
     let doc = export_doc(&root, &tour);
     // where the reader is: a place on a step, in this machine's state file
     {
-        use vnoc::tours::store::{Part, write_state_part};
+        use vnoc::tours::place::{At, Place};
+        use vnoc::tours::store::write_place;
         let id: vnoc::tours::TourId = tour.parse().unwrap();
-        write_state_part(
-            &root.join(".vnoc"),
-            &id,
-            Part::Place,
-            json!({"at": "s1.b2", "seen": ["s1"], "moved": "x", "by": "reader", "open": false}),
-        )
-        .unwrap();
+        let place = Place {
+            at: At::parse("s1.b2").unwrap(),
+            seen: vec!["s1".parse().unwrap()],
+            moved: "2026-11-23T18:52:10Z".to_string(),
+            ..Place::cover()
+        };
+        write_place(&root.join(".vnoc"), &id, &place).unwrap();
     }
     let state_before =
         std::fs::read(root.join(format!(".vnoc/local/tour-state/{tour}.json"))).unwrap();
@@ -11347,4 +11343,499 @@ fn tour_pin_a_stop_that_is_gone_shows_as_written_too_and_one_that_is_fresh_shows
     assert_eq!(said.matches("as written at").count(), 1, "{said}");
     // `list` still says pinned at the commit: a pin holds until the tour is edited
     assert!(tour_ok(&root, &["list"]).contains(&format!("pinned at {}", &pin[..7])));
+}
+
+// ------------------------------------------------------------------------------------------------------------------------ tours (TR10)
+//
+// The reader's place: `vnoc tour where` and `go`. The loop tour (`loop_tour`) has seven steps in reading order: s1 (the intro of `retry_charge`), s1.b1
+// (14-15), its detail s1.b2 (15), s1.b3 (17-22), then the intros of s2, s3 and s4 (`s4` repeats `s2`).
+
+/// `where`'s text with what changes from run to run taken out: the tour's id, and how long ago the reader moved.
+fn where_unrooted(said: &str, root: &Path, tour: &str) -> String {
+    let said = without_root(said, root).replace(tour, "<tour>");
+    said.lines()
+        .map(|line| match line.find(" · moved ") {
+            Some(at) if line.ends_with(" ago") => format!("{} · moved <ago>", &line[..at]),
+            _ => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+/// The state file of a tour, as JSON.
+fn state_of(root: &Path, tour: &str) -> Value {
+    let path = root.join(format!(".vnoc/local/tour-state/{tour}.json"));
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn write_state(root: &Path, tour: &str, state: &Value) {
+    let dir = root.join(".vnoc/local/tour-state");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{tour}.json")), state.to_string()).unwrap();
+}
+
+fn go_json(root: &Path, tour: &str, wanted: &str) -> Value {
+    tour_json(root, &["go", tour, wanted])
+}
+
+#[test]
+fn tour_where_on_a_tour_nobody_opened_is_the_cover_and_says_never_moved() {
+    let root = sample_copy("tour-where-cover");
+    let tour = loop_tour(&root);
+    let said = tour_ok(&root, &["where", &tour]);
+    let lines: Vec<&str> = said.lines().collect();
+    assert_eq!(
+        lines[0],
+        format!("{tour}   \"retry_charge\"   not open · never moved")
+    );
+    assert_eq!(lines[1], "cover · 4 stops · 7 steps");
+    assert_eq!(
+        lines[2],
+        "  \"what happens when the gateway drops the call\""
+    );
+    assert_eq!(lines[3], "after: s1 (intro)");
+    assert_eq!(lines.len(), 4, "{said}");
+    let json = tour_json(&root, &["where", &tour]);
+    assert_eq!(
+        (json["at"].as_str(), json["here"].as_str()),
+        (Some("cover"), Some("cover"))
+    );
+    assert_eq!(
+        (json["stops"].as_u64(), json["steps"].as_u64()),
+        (Some(4), Some(7))
+    );
+    assert!(
+        json.get("moved").is_none() && json.get("stop").is_none(),
+        "{json}"
+    );
+    assert_eq!(json["open"], false);
+    // `where` moves nothing and writes no place: only the check it made
+    let state = state_of(&root, &tour);
+    assert!(
+        state.get("place").is_none() && state.get("check").is_some(),
+        "{state}"
+    );
+}
+
+#[test]
+fn tour_go_next_three_times_then_where_prints_the_step_the_node_the_lit_lines_and_its_neighbours() {
+    let root = sample_copy("tour-where-next");
+    let tour = loop_tour(&root);
+    for (wanted, at) in [("next", "s1"), ("next", "s1.b1"), ("next", "s1.b2")] {
+        let json = go_json(&root, &tour, wanted);
+        assert_eq!(json["at"], at, "{json}");
+        assert_eq!(json["move"], wanted);
+        assert_eq!(json["command"], "tour go");
+    }
+    let out = run(vnoc(&root, &["tour", "where", &tour]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let said = where_unrooted(&text(&out.stdout), &root, &tour);
+    golden_text("tour-where.txt", &said);
+    assert!(said.contains("not open · moved <ago>"), "{said}");
+    assert!(
+        said.contains("stop 1 of 4 · step 3 of 4     s1.b2"),
+        "{said}"
+    );
+    assert!(said.contains("  > 15  "), "the lit line: {said}");
+    assert!(
+        said.contains(
+            "before: s1.b1 \"One attempt, as a function\" · after: s1.b3 \"Try, and try again\""
+        ),
+        "{said}"
+    );
+    // the place is in the state file, and moves by `next` pushed nothing
+    let place = &state_of(&root, &tour)["place"];
+    assert_eq!(place["at"], "s1.b2");
+    assert_eq!(place["by"], "command");
+    assert_eq!(place["back"], json!([]));
+    assert_eq!(place["open"], false, "`go` never changes `open`");
+    // the ends: prev from the first step is the cover, next from the cover the first step, past the end stays
+    assert_eq!(go_json(&root, &tour, "end")["at"], "end");
+    assert_eq!(go_json(&root, &tour, "next")["at"], "end");
+    assert_eq!(go_json(&root, &tour, "prev")["at"], "s4");
+    assert_eq!(go_json(&root, &tour, "cover")["at"], "cover");
+    assert_eq!(go_json(&root, &tour, "prev")["at"], "cover");
+    assert_eq!(go_json(&root, &tour, "next")["at"], "s1");
+    assert_eq!(go_json(&root, &tour, "prev")["at"], "cover");
+}
+
+#[test]
+fn tour_where_json_is_the_place_and_the_step_as_one_object() {
+    let root = sample_copy("tour-where-json");
+    let tour = loop_tour(&root);
+    go_json(&root, &tour, "s1.b3");
+    let out = run(vnoc(&root, &["tour", "where", &tour, "--json"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let mut json: Value = serde_json::from_str(&tour_unrooted(&out.stdout, &root, &tour)).unwrap();
+    // the time changes from run to run
+    assert!(json["moved"].as_str().unwrap().ends_with('Z'));
+    assert!(json["moved_ago"].as_i64().unwrap() >= 0);
+    json["moved"] = json!("<time>");
+    json["moved_ago"] = json!(0);
+    golden("tour-where.json", &json);
+    assert_eq!(json["schema"], 1);
+    assert_eq!(json["command"], "tour where");
+}
+
+#[test]
+fn tour_go_a_jump_pushes_back_and_back_takes_it_and_with_nothing_says_so() {
+    let root = sample_copy("tour-go-back");
+    let tour = loop_tour(&root);
+    for _ in 0..3 {
+        go_json(&root, &tour, "next");
+    }
+    let json = go_json(&root, &tour, "s4");
+    assert_eq!(
+        (json["at"].as_str(), json["back"].clone()),
+        (Some("s4"), json!(["s1.b2"]))
+    );
+    // s4 is one step: a jump to it is reading it
+    assert_eq!(json["seen"], json!(["s4"]));
+    // a jump to where the reader is pushes nothing
+    let json = go_json(&root, &tour, "s4");
+    assert_eq!(json["back"], json!(["s1.b2"]));
+    // a jump to a block
+    let json = go_json(&root, &tour, "s1.b3");
+    assert_eq!(json["back"], json!(["s1.b2", "s4"]));
+    // back takes the last, and pushes nothing
+    let json = go_json(&root, &tour, "back");
+    assert_eq!(
+        (json["at"].as_str(), json["back"].clone()),
+        (Some("s4"), json!(["s1.b2"]))
+    );
+    let said = tour_ok(&root, &["go", &tour, "back"]);
+    assert!(
+        said.contains("stop 1 of 4 · step 3 of 4     s1.b2"),
+        "{said}"
+    );
+    assert!(!said.contains("nothing to go back to"), "{said}");
+    // nothing left: the place stays, it says so, exit 0, and nothing is written
+    let before = state_of(&root, &tour);
+    let said = tour_ok(&root, &["go", &tour, "back"]);
+    assert!(said.starts_with("nothing to go back to\n"), "{said}");
+    assert!(said.contains("s1.b2"), "{said}");
+    assert_eq!(state_of(&root, &tour), before);
+    let json = go_json(&root, &tour, "back");
+    assert_eq!(json["nothing_to_go_back_to"], true);
+    assert_eq!(json["at"], "s1.b2");
+}
+
+#[test]
+fn tour_go_marks_a_stop_seen_when_its_last_step_becomes_the_place() {
+    let root = sample_copy("tour-go-seen");
+    let tour = loop_tour(&root);
+    for _ in 0..4 {
+        go_json(&root, &tour, "next");
+    }
+    // at s1.b3: the last step of s1
+    assert_eq!(state_of(&root, &tour)["place"]["seen"], json!(["s1"]));
+    // s2 is one step: arriving is reading it
+    go_json(&root, &tour, "next");
+    assert_eq!(state_of(&root, &tour)["place"]["seen"], json!(["s1", "s2"]));
+    // a jump to a stop of one step sees it, and a stop is not seen twice
+    go_json(&root, &tour, "s4");
+    go_json(&root, &tour, "s4");
+    assert_eq!(
+        state_of(&root, &tour)["place"]["seen"],
+        json!(["s1", "s2", "s4"])
+    );
+}
+
+#[test]
+fn tour_go_to_an_id_the_tour_does_not_have_is_refused_with_the_nearest() {
+    let root = sample_copy("tour-go-missing");
+    let tour = loop_tour(&root);
+    let (status, _, err) = tour_fails(&root, &["go", &tour, "s9"], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("no stop s9 in this tour"), "{err}");
+    assert!(
+        err.contains("did you mean\n    s4\n    s3\n    s2\n"),
+        "{err}"
+    );
+    let (status, _, err) = tour_fails(&root, &["go", &tour, "s1.b9"], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("no block s1.b9 in this tour"), "{err}");
+    assert!(
+        err.contains("did you mean\n    s1.b1\n    s1.b2\n    s1.b3\n"),
+        "{err}"
+    );
+    let (status, _, err) = tour_fails(&root, &["go", &tour, "forward"], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("`forward` is not a move"), "{err}");
+    // nothing was written by any of them
+    assert!(
+        !root
+            .join(format!(".vnoc/local/tour-state/{tour}.json"))
+            .exists()
+    );
+    // as data
+    let out = run(vnoc(&root, &["tour", "go", &tour, "s9", "--json"]));
+    assert_eq!(code(&out), 2);
+    let json: Value = serde_json::from_str(&text(&out.stdout)).unwrap();
+    assert_eq!(json["error"]["why"], "no_stop", "{json}");
+    // a tour that is not there
+    let (status, _, err) = tour_fails(&root, &["go", "nothing-here", "next"], "");
+    assert_eq!(status, 2, "{err}");
+}
+
+#[test]
+fn tour_where_with_no_tour_named_is_the_tour_that_moved_last_and_with_none_moved_says_so() {
+    let root = sample_copy("tour-where-last");
+    // no tour at all, then a tour nobody has opened
+    let said = tour_ok(&root, &["where"]);
+    assert_eq!(
+        said,
+        "no tour has been opened or moved yet\nname one: vnoc tour where <tour>\n"
+    );
+    let first = loop_tour(&root);
+    let said = tour_ok(&root, &["where"]);
+    assert!(
+        said.starts_with("no tour has been opened or moved yet\n"),
+        "{said}"
+    );
+    assert!(said.contains("vnoc tour where <tour>"), "{said}");
+    let json = tour_json(&root, &["where"]);
+    assert_eq!(json["tour"], Value::Null, "{json}");
+    assert_eq!(json["message"], "no tour has been opened or moved yet");
+    // two tours with a place each: the one moved later
+    let second = tour_start(&root, "second");
+    let out = tour_add(
+        &root,
+        &second,
+        RETRY,
+        &[],
+        "retry_charge, in a few words.\n",
+    );
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    write_state(
+        &root,
+        &first,
+        &json!({"schema": 1, "place": {"at": "s2", "moved": "2026-11-20T10:00:00Z", "by": "reader"}}),
+    );
+    write_state(
+        &root,
+        &second,
+        &json!({"schema": 1, "place": {"at": "s1", "moved": "2026-11-21T09:00:00Z", "open": true}}),
+    );
+    let said = tour_ok(&root, &["where"]);
+    assert!(
+        said.starts_with(&format!(
+            "{second}   \"second\"   open on the canvas · moved "
+        )),
+        "{said}"
+    );
+    assert!(said.contains(" days ago\n"), "{said}");
+    // the other way round
+    write_state(
+        &root,
+        &first,
+        &json!({"schema": 1, "place": {"at": "s2", "moved": "2026-11-22T10:00:00Z"}}),
+    );
+    let said = tour_ok(&root, &["where"]);
+    assert!(
+        said.starts_with(&format!("{first}   \"retry_charge\"   not open · moved ")),
+        "{said}"
+    );
+    assert!(said.contains("stop 2 of 4 · step 1 of 1     s2"), "{said}");
+}
+
+#[test]
+fn tour_where_reads_a_place_whose_step_is_gone_as_the_nearest_and_does_not_write_it_back() {
+    let root = sample_copy("tour-where-gone");
+    let tour = loop_tour(&root);
+    // s3 has no blocks: s3.b4 is not a step. s9 is not a stop (and none is above it): the cover
+    let state = json!({"schema": 1, "place": {"at": "s3.b4", "seen": ["s7"], "back": ["s9.b1", "s2"],
+        "moved": "2026-11-23T18:52:10Z", "by": "reader", "open": true}});
+    write_state(&root, &tour, &state);
+    let json = tour_json(&root, &["where", &tour]);
+    assert_eq!(json["at"], "s3", "{json}");
+    assert_eq!(json["back"], json!(["s2"]));
+    assert_eq!(json["seen"], json!([]));
+    assert_eq!(json["open"], true);
+    let state_after = state_of(&root, &tour);
+    assert_eq!(
+        state_after["place"], state["place"],
+        "`where` writes no place"
+    );
+    write_state(
+        &root,
+        &tour,
+        &json!({"schema": 1, "place": {"at": "s9", "moved": "2026-11-23T18:52:10Z"}}),
+    );
+    assert_eq!(tour_json(&root, &["where", &tour])["at"], "cover");
+    // `go` applies it before it moves: from the settled place, and writes that
+    write_state(&root, &tour, &state);
+    let json = go_json(&root, &tour, "next");
+    assert_eq!(json["at"], "s4", "{json}");
+    let place = &state_of(&root, &tour)["place"];
+    assert_eq!(place["back"], json!(["s2"]));
+    assert_eq!(place["open"], true, "kept");
+}
+
+#[test]
+fn tour_go_keeps_a_recorded_check_in_the_state_file_and_a_check_keeps_the_place() {
+    let root = sample_copy("tour-go-keeps");
+    let tour = loop_tour(&root);
+    tour_ok(&root, &["check", &tour]);
+    let check = state_of(&root, &tour)["check"].clone();
+    assert!(check.is_object(), "{check}");
+    go_json(&root, &tour, "s3");
+    let state = state_of(&root, &tour);
+    assert_eq!(state["place"]["at"], "s3");
+    assert_eq!(
+        state["check"], check,
+        "a `go` leaves the recorded check as it was"
+    );
+    // and a check, made again, leaves the place
+    tour_ok(&root, &["check", &tour, "--again"]);
+    let state = state_of(&root, &tour);
+    assert_eq!(state["place"]["at"], "s3");
+    assert_eq!(state["place"]["by"], "command");
+    assert!(state["check"].is_object());
+    // `where` on a tour with a valid record starts no driver
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.current_dir(&root)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .args(["--driver", "/no/such/driver", "tour", "where", &tour])
+        .stdin(Stdio::null());
+    let out = run(cmd);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+}
+
+#[test]
+fn tour_where_and_go_work_on_a_tour_being_written_and_a_stopped_one_and_fail_on_one_that_cannot_be_read()
+ {
+    let root = sample_copy("tour-where-states");
+    let tour = loop_tour(&root);
+    // being written
+    assert_eq!(go_json(&root, &tour, "s2")["state"], "writing");
+    // stopped by the reader (the tour says `stopping` until the agent's next command finds it)
+    tour_ok(&root, &["halt", &tour]);
+    let json = go_json(&root, &tour, "next");
+    assert_eq!(
+        (json["state"].as_str(), json["at"].as_str()),
+        (Some("stopping"), Some("s3"))
+    );
+    // finished
+    tour_ok(&root, &["resume", &tour]);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let json = go_json(&root, &tour, "prev");
+    assert_eq!(
+        (json["state"].as_str(), json["at"].as_str()),
+        (Some("finished"), Some("s2"))
+    );
+    // a planned stop is a step: its intro, with no text
+    let plan = tour_start(&root, "planned");
+    let out = tour_add(&root, &plan, RETRY, &[], "retry_charge, in a few words.\n");
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let planned =
+        r#"{"type":"plan","stops":[{"id":"s2","path":"billing/charge.py","qualname":"one_try"}]}"#;
+    let file = tour_file(&root, &plan);
+    let mut now = std::fs::read_to_string(&file).unwrap();
+    now.push_str(planned);
+    now.push('\n');
+    std::fs::write(&file, now).unwrap();
+    let said = tour_ok(&root, &["go", &plan, "s2"]);
+    assert!(
+        said.contains("stop 2 of 2 · step 1 of 1 · planned     s2"),
+        "{said}"
+    );
+    assert!(said.contains("planned: not written yet"), "{said}");
+    assert!(
+        said.contains("billing/charge.py::one_try") || said.contains("one_try"),
+        "{said}"
+    );
+    // a file that is not a tour
+    let dir = root.join(".vnoc/local/tours");
+    std::fs::write(dir.join("broken-0000.jsonl"), "{}\n").unwrap();
+    let (status, _, err) = tour_fails(&root, &["where", "broken-0000"], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(err.contains("cannot be read"), "{err}");
+    let (status, _, err) = tour_fails(&root, &["go", "broken-0000", "next"], "");
+    assert_eq!(status, 2, "{err}");
+}
+
+#[test]
+fn tour_where_on_a_pinned_tour_with_a_changed_stop_prints_the_lines_as_written() {
+    let root = pin_project("tour-where-pinned");
+    let tour = loop_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let first = head_hash(&root);
+    go_json(&root, &tour, "s1.b3");
+    // fresh: the code as it is, nothing said under it
+    let said = tour_ok(&root, &["where", &tour]);
+    assert!(
+        said.contains("  > 17      for _ in range(attempts):"),
+        "{said}"
+    );
+    assert!(!said.contains("as written at"), "{said}");
+    // the loop changes and is committed
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "    for _ in range(attempts):",
+        "    for _ in range(attempts + 1):",
+    );
+    git(&root, &["commit", "-qam", "one more attempt"]);
+    let said = tour_ok(&root, &["where", &tour]);
+    let short = &first[..7];
+    assert!(said.contains("   changed\n"), "{said}");
+    assert!(
+        said.contains(&format!(
+            "  as written at {short}: the code changed since\n"
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains("  > 17      for _ in range(attempts):"),
+        "the old line: {said}"
+    );
+    assert!(!said.contains("attempts + 1"), "{said}");
+    let json = tour_json(&root, &["where", &tour]);
+    assert_eq!(json["code"]["source"], "as_written");
+    assert_eq!(json["code"]["commit"], short);
+    assert_eq!(json["check"], "changed");
+    assert_eq!(json["code"]["first"], 17);
+    // a tour that is not pinned: the lines now, and a warning that they may not match
+    let plain = sample_copy("tour-where-unpinned");
+    let t = loop_tour(&plain);
+    finish_ok(&plain, &t, &["--no-ids"]);
+    go_json(&plain, &t, "s1.b3");
+    edit_file(
+        &plain,
+        "billing/charge.py",
+        "    for _ in range(attempts):",
+        "    for _ in range(attempts + 1):",
+    );
+    let said = tour_ok(&plain, &["where", &t]);
+    assert!(said.contains("  the lines may not match\n"), "{said}");
+    assert!(said.contains("attempts + 1"), "{said}");
+    assert!(!said.contains("as written at"), "{said}");
+}
+
+#[test]
+fn tour_where_lights_the_lines_a_stop_that_was_pushed_down_has_now() {
+    let root = sample_copy("tour-where-moved");
+    let tour = loop_tour(&root);
+    go_json(&root, &tour, "s1.b3");
+    // two lines added above the function: every line of it moves down by two, and nothing in it changed
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "def retry_charge",
+        "# one\n# two\ndef retry_charge",
+    );
+    let json = tour_json(&root, &["where", &tour]);
+    // the block is where it was counted from the function's first line, so the check calls it fresh: its lines are what moved
+    assert_eq!(json["check"], "fresh", "{json}");
+    assert_eq!(json["step"]["lines"], json!([19, 24]));
+    assert_eq!(json["code"]["first"], 19);
+    assert_eq!(json["code"]["source"], "now");
+    assert!(json["code"].get("note").is_none(), "{json}");
+    // the intro of a stop that moved lights the stop where it is now
+    go_json(&root, &tour, "s1");
+    let json = tour_json(&root, &["where", &tour]);
+    assert_eq!(json["step"]["lines"], json!([13, 24]), "{json}");
 }
