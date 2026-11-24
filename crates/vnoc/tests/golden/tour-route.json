@@ -28,7 +28,7 @@
       "kind": "function",
       "line": null,
       "n": 1,
-      "name": "place",
+      "name": "OrderService.place",
       "node": "orders/service.py::OrderService.place",
       "path": "orders/service.py",
       "same_as": null
@@ -39,7 +39,7 @@
       "kind": "function",
       "line": 16,
       "n": 2,
-      "name": "parse_order",
+      "name": "OrderService.parse_order",
       "node": "orders/service.py::OrderService.parse_order",
       "path": "orders/service.py",
       "same_as": null

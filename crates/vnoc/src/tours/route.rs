@@ -22,7 +22,7 @@ use vnoc_driver_protocol::CallTarget;
 use super::add::{MAX_STOPS, node_kind};
 use super::find::place_of;
 use crate::calls::Merged;
-use crate::index::Node;
+use crate::index::{Kind, Node};
 
 /// The guess of 02 §11: two steps for a stop (its intro and one block), twenty seconds a step.
 pub const STEPS_PER_STOP: usize = 2;
@@ -56,11 +56,20 @@ pub struct Known {
 
 /// What a tree node is as a stop, or `None` for the opened folder itself (it is not a stop).
 pub fn known_of(node: &Node) -> Option<Known> {
-    let (path, _, _) = place_of(node)?;
+    let (path, qualname, _) = place_of(node)?;
+    // named as `show` names a stop: a def's qualname, a file's name, a folder's name with a `/`
+    let last = path.as_str().rsplit('/').next().unwrap_or(path.as_str());
+    let name = if !qualname.is_empty() {
+        qualname
+    } else if node.kind == Kind::Folder {
+        format!("{last}/")
+    } else {
+        last.to_string()
+    };
     Some(Known {
         id: node.id.clone(),
         node: node.location(),
-        name: node.name.clone(),
+        name,
         kind: node_kind(node.kind),
         path: path.to_string(),
         first: node.range.map(|r| r.start.line + 1),
@@ -336,12 +345,12 @@ impl Route {
             .stops
             .iter()
             .map(|e| {
-                let name = if e.known.kind == NodeKind::Folder {
-                    format!("{}/", e.known.name)
-                } else {
-                    e.known.name.clone()
-                };
-                format!("{}{} {name}", "  ".repeat(depth_of(e)), icon(&e.known.kind))
+                format!(
+                    "{}{} {}",
+                    "  ".repeat(depth_of(e)),
+                    icon(&e.known.kind),
+                    e.known.name
+                )
             })
             .collect();
         let places: Vec<String> = self
@@ -350,7 +359,9 @@ impl Route {
             .map(|e| match e.known.first {
                 Some(first) => format!("{}:{first}", e.known.path),
                 // a folder at the top says its name once
-                None if e.known.kind == NodeKind::Folder && e.known.path == e.known.name => {
+                None if e.known.kind == NodeKind::Folder
+                    && format!("{}/", e.known.path) == e.known.name =>
+                {
                     String::new()
                 }
                 None if e.known.kind == NodeKind::Folder => format!("{}/", e.known.path),
@@ -583,7 +594,7 @@ and what those call   4 stops   about 3 min      --depth 2
             known: Known {
                 id: "app".into(),
                 node: "app".into(),
-                name: "app".into(),
+                name: "app/".into(),
                 kind: NodeKind::Folder,
                 path: "app".into(),
                 first: None,

@@ -12592,10 +12592,10 @@ fn tour_route_on_the_samples_deepest_chain_at_depth_0_1_and_2() {
     assert_eq!(
         route_stops(&json),
         [
-            "1:OrderService.place".replace("OrderService.", ""),
-            "2:parse_order<1@16".into(),
-            "3:Line<2@12".into(),
-            "4:Order<2@13".into()
+            "1:OrderService.place",
+            "2:OrderService.parse_order<1@16",
+            "3:Line<2@12",
+            "4:Order<2@13"
         ]
     );
     assert_eq!(json["stops"][1]["path"], "orders/service.py");
@@ -12665,7 +12665,7 @@ fn tour_route_a_folder_a_file_and_a_class_are_routes_by_containment() {
     // a folder: its files, then their functions
     let json = tour_json(&root, &["route", "billing", "--depth", "1"]);
     let stops = route_stops(&json);
-    assert_eq!(stops[0], "1:billing", "{json}");
+    assert_eq!(stops[0], "1:billing/", "{json}");
     assert!(
         stops[1..]
             .iter()
@@ -12708,7 +12708,7 @@ fn tour_route_a_folder_a_file_and_a_class_are_routes_by_containment() {
     let json = tour_json(&root, &["route", "orders/models.py::Order", "--depth", "1"]);
     assert_eq!(
         route_stops(&json),
-        ["1:Order", "2:__init__<1", "3:total<1"],
+        ["1:Order", "2:Order.__init__<1", "3:Order.total<1"],
         "{json}"
     );
     assert!(tour_ok(&root, &["route", "orders/models.py::Order"]).contains("and what is in it"));
@@ -12812,10 +12812,8 @@ fn tour_route_start_route_plans_exactly_the_outline_and_show_lists_the_same_stop
     assert_eq!(stops.len(), routed["stops"].as_array().unwrap().len());
     for (shown, routed) in stops.iter().zip(routed["stops"].as_array().unwrap()) {
         assert_eq!(shown["path"], routed["path"]);
-        assert_eq!(
-            shown["qualname"].as_str().unwrap().rsplit('.').next(),
-            routed["name"].as_str()
-        );
+        // the same name, as `show` names a stop
+        assert_eq!(shown["name"], routed["name"]);
         assert_eq!(shown["planned"], true);
     }
     assert_eq!(
