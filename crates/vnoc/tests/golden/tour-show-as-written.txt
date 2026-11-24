@@ -1,0 +1,34 @@
+retry_charge   "what happens when the gateway drops the call"
+private · finished · 4 stops · 7 steps · by claude-code · pinned at <commit>
+1 stop changed (checked now)
+ 1  s1  ƒ retry_charge                     billing/charge.py:11-22  4 steps  changed
+      as written at <commit>: billing/charge.py:11-22
+        11  def retry_charge(gateway, order, attempts=MAX_ATTEMPTS):
+        12      """Charge the order, trying again when the gateway drops the call."""
+        13
+      > 14      def one_try():
+      > 15          return gateway.charge(order.total)
+        16
+      > 17      for _ in range(attempts):
+      > 18          try:
+      > 19              return one_try()
+      > 20          except ConnectionError:
+      > 21              continue
+      > 22      raise ChargeError(f"order {order.number}: the gateway kept dropping the call")
+      retry_charge calls the gateway and tries again when the call drops, up to a fixed number of
+      attempts, then gives up with an error that names the order.
+    s1.b1  14-15  One attempt, as a function
+      one_try is the single charge call; keeping it in a function lets the loop below treat "charge"
+      as one thing that either returns or raises.
+      s1.b2  15  The call itself
+        This is the only line that talks to the gateway, so it is the only place a dropped
+        connection can come from.
+    s1.b3  17-22  Try, and try again  · changed
+      Only a dropped connection is retried: any other error leaves the loop at once. When every
+      attempt drops, the function raises ChargeError.
+ 2  s2    ƒ retry_charge.<locals>.one_try  billing/charge.py:14-15  1 step   ← s1 line 19
+      one_try makes the one call to the gateway and returns what it answers.
+ 3  s3    ◆ ChargeError                    billing/charge.py:7-8    1 step   ← s1 line 22
+      ChargeError is what the caller sees when every attempt dropped.
+ 4  s4  ƒ retry_charge.<locals>.one_try    billing/charge.py:14-15  1 step   = s2
+      The same single call as before: nothing in it is new here.

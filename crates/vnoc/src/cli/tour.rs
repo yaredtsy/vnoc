@@ -12,8 +12,8 @@ use serde::Serialize;
 
 use super::args::{
     DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourDeleteArgs, TourDropArgs, TourEditArgs,
-    TourExportArgs, TourFinishArgs, TourIdsArgs, TourImportArgs, TourListArgs, TourResumeArgs,
-    TourSettingsArgs, TourShareArgs, TourShowArgs, TourStartArgs,
+    TourExportArgs, TourFinishArgs, TourIdsArgs, TourImportArgs, TourListArgs, TourPinArgs,
+    TourResumeArgs, TourSettingsArgs, TourShareArgs, TourShowArgs, TourStartArgs,
 };
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
@@ -29,7 +29,10 @@ use crate::tours::doc;
 use crate::tours::find::find;
 use crate::tours::finish::{self as finishing, Step};
 use crate::tours::on::{self, Map, Query};
-use crate::tours::record::{Bare, Detail, DropRecord, EndRecord, MetaRecord, Record};
+use crate::tours::pin::{self, Pinnable, Reason};
+use crate::tours::record::{
+    Bare, Commit, Detail, DropRecord, EndRecord, MetaRecord, Record, StepId, StopId,
+};
 use crate::tours::rules::Refusal;
 use crate::tours::settings::{self, Choice, Key, Origin};
 use crate::tours::store::{self, Located, Pick, Row, StartParams, StoreError, Where};
@@ -44,6 +47,7 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
         TourCommand::Start(args) => start(global, args).await,
         TourCommand::Add(args) => add(global, args).await,
         TourCommand::Finish(args) => finish(global, args).await,
+        TourCommand::Pin(args) => pin_command(global, args).await,
         TourCommand::List(args) => list(global, args).await,
         TourCommand::Show(args) => show(global, args).await,
         TourCommand::Check(args) => check(global, args).await,
@@ -688,9 +692,18 @@ struct Finished {
     /// what was read as `ask` because it is not a value (`[tours]` in `vnoc.toml`), once
     #[serde(skip_serializing_if = "Vec::is_empty")]
     notes: Vec<String>,
+    /// step 2: what became of the pin
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pin: Option<PinOut>,
     /// the text of the IDs step: the line to ask the user, or what was written
     #[serde(skip)]
     ids_text: String,
+    /// the text of the pin step: what was committed, the line to ask the user, or why it is not pinned
+    #[serde(skip)]
+    pin_text: String,
+    /// `8a1c2e4`, when the tour is pinned now
+    #[serde(skip)]
+    pinned_at: Option<String>,
 }
 
 impl Render for Finished {
@@ -705,7 +718,11 @@ impl Render for Finished {
         } else {
             "finished"
         };
-        let mut text = format!("{head}: {stops}, {}\n", steps_words(self.steps));
+        let mut text = format!("{head}: {stops}, {}", steps_words(self.steps));
+        if let Some(at) = &self.pinned_at {
+            text.push_str(&format!(" · pinned at {at}"));
+        }
+        text.push('\n');
         if self.left_the_route > 0 {
             text.push_str(&format!(
                 "{} planned {} never written and left the route\n",
@@ -718,6 +735,7 @@ impl Render for Finished {
             ));
         }
         text.push_str(&self.ids_text);
+        text.push_str(&self.pin_text);
         for note in &self.notes {
             text.push_str(&format!("note: {note}\n"));
         }
@@ -756,6 +774,31 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
         None,
     )
     .await?;
+
+    // step 2 of 02 §5: the pin, always tried. A finished tour is not offered a commit again by the setting; the flag asks whatever
+    let pinned = if !already || args.commit {
+        let read = settings::read(&vnoc_root).map_err(settings_failure)?;
+        let commit = finishing::effective(read.commit.value, args.commit, args.no_commit);
+        let ask = Ask::Finish {
+            commit,
+            message: args.message.as_deref(),
+        };
+        // the code is read again when the IDs step wrote into it: an index built before that is a moment old
+        let mut lazy = Lazy::default();
+        Some(pin_tour(global, &mut lazy, &project, &vnoc_root, &tour_id, &ask).await?)
+    } else {
+        None
+    };
+    let (pin_out, pin_text, pinned_at) = match pinned {
+        Some(p) => {
+            let mut text = p.lines.join("\n");
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            (Some(p.out), text, p.at)
+        }
+        None => (None, String::new(), None),
+    };
     out::render(
         &Finished {
             schema: 1,
@@ -767,7 +810,10 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
             left_the_route: if already { 0 } else { shown.planned },
             ids: step.ids,
             notes: step.notes,
+            pin: pin_out,
             ids_text: step.text,
+            pin_text,
+            pinned_at,
         },
         global,
     )
@@ -848,6 +894,400 @@ async fn ids_after_end(
         }
     }
     Ok(done)
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------- the pin
+
+/// How a pin is asked for.
+enum Ask<'a> {
+    /// `finish` and `import` (02 §5): files that are not committed are dealt with by `[tours] commit`, or by the flags of this call
+    Finish {
+        commit: Choice,
+        message: Option<&'a str>,
+    },
+    /// `vnoc tour pin` (02 §8): files are committed only with `--commit`
+    Pin {
+        commit: bool,
+        message: Option<&'a str>,
+    },
+}
+
+/// What a commit made to pin did.
+#[derive(Serialize)]
+struct CommittedOut {
+    commit: String,
+    message: String,
+    files: Vec<String>,
+}
+
+/// What became of the pin of one tour, for `--json`.
+#[derive(Serialize)]
+struct PinOut {
+    /// `pinned`, `ask` (the user is to be asked: `[tours] commit` is `ask`) or `not_pinned`
+    state: &'static str,
+    /// the pinned commit, all 40 characters
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    committed: Option<CommittedOut>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    reasons: Vec<Reason>,
+    /// for `ask`: the command that would do it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    /// `--commit` was asked and was refused: nothing was committed
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    refused: bool,
+}
+
+/// What [`pin_tour`] did: the answer, the lines to print under it (no end of line), and the 7 characters of the commit when the tour is pinned now.
+struct Pinned {
+    out: PinOut,
+    lines: Vec<String>,
+    at: Option<String>,
+}
+
+fn short_commit(commit: &Commit) -> String {
+    commit.as_str()[..7].to_string()
+}
+
+/// Not pinned, and why, worded for the way it was asked.
+fn not_pinned(
+    ask: &Ask<'_>,
+    id: &TourId,
+    pinnable: &Pinnable,
+    committed: Option<CommittedOut>,
+) -> Pinned {
+    let Pinnable::No(reasons) = pinnable else {
+        unreachable!("not_pinned is for a pin that cannot be made")
+    };
+    let of_this_tour = matches!(ask, Ask::Pin { .. });
+    let mut lines: Vec<String> = Vec::new();
+    for reason in reasons {
+        lines.extend(reason.lines(of_this_tour));
+    }
+    let mut out = PinOut {
+        state: "not_pinned",
+        commit: None,
+        committed,
+        reasons: reasons.clone(),
+        command: None,
+        refused: false,
+    };
+    match ask {
+        Ask::Finish { commit, .. } => {
+            if let (Choice::Ask, Some(files)) = (commit, pinnable.only_uncommitted()) {
+                let why = reasons[0].words();
+                lines = crate::tours::finish::ask_commit_lines(id, &why, files);
+                out.state = "ask";
+                out.command = Some(format!("vnoc tour pin {id} --commit"));
+            }
+        }
+        Ask::Pin { commit, .. } => {
+            if *commit {
+                // `--commit` is for files that are the one thing in the way
+                out.refused = pinnable.only_uncommitted().is_none();
+                if out.refused {
+                    lines.push("nothing was committed: --commit is for files that are the one thing in the way".to_string());
+                }
+            } else if pinnable.only_uncommitted().is_some() {
+                lines.push(format!(
+                    "commit them, then run this again. Or: vnoc tour pin {id} --commit"
+                ));
+            }
+        }
+    }
+    Pinned {
+        out,
+        lines,
+        at: None,
+    }
+}
+
+/// The pin of one tour (01 §8, 02 §5 and §8): finished, then what git says, then the check against the code as it is now, then HEAD or the reasons;
+/// files that are not committed are committed first when `ask` says so. The tour is read here, after whatever the caller wrote before.
+async fn pin_tour(
+    global: &Global,
+    lazy: &mut Lazy,
+    project: &crate::project::Project,
+    vnoc_root: &Path,
+    id: &TourId,
+    ask: &Ask<'_>,
+) -> Result<Pinned, Failure> {
+    let measured = store::read_measured(vnoc_root, id).map_err(store_failure)?;
+    let tour = match &measured.tour {
+        Ok(tour) => tour,
+        Err(e) => return Err(Failure::Usage(format!("the tour {id} cannot be read: {e}"))),
+    };
+    let no = |reasons: Vec<Reason>| Pinnable::No(reasons);
+    // what needs no look at the code
+    let head = match pin::head(project, tour) {
+        Ok(head) => head,
+        Err(reasons) => return Ok(not_pinned(ask, id, &no(reasons), None)),
+    };
+    let opened = match lazy.get(global).await {
+        Ok(opened) => opened,
+        Err(Failure::Environment(why)) => {
+            return Ok(not_pinned(
+                ask,
+                id,
+                &no(vec![Reason::NotChecked { why }]),
+                None,
+            ));
+        }
+        Err(e) => return Err(e),
+    };
+    let (recorded, placed) = placed_check(opened, tour, measured.len);
+    // what was just found is the record of this tour: the next look costs `stat`s
+    check::record(vnoc_root, id, &recorded).map_err(store_failure)?;
+
+    let mut pinnable = pin::can_pin(project, tour, head, &recorded, &placed);
+    let wants_commit = match ask {
+        Ask::Finish { commit, .. } => *commit == Choice::Always,
+        Ask::Pin { commit, .. } => *commit,
+    };
+    let mut committed = None;
+    if wants_commit && let Some(files) = pinnable.only_uncommitted() {
+        let message = match ask {
+            Ask::Finish { message, .. } | Ask::Pin { message, .. } => message.map(String::from),
+        }
+        .unwrap_or_else(|| crate::tours::finish::default_message(&tour.title));
+        let done = pin::commit_files(project, files, &message)
+            .map_err(|e| Failure::Environment(e.to_string()))?;
+        committed = Some(CommittedOut {
+            commit: done.commit.as_str().to_string(),
+            message,
+            files: done.files.iter().map(ToString::to_string).collect(),
+        });
+        // what is on disk is what HEAD holds now: asked again, with the new HEAD
+        pinnable = pin::can_pin(project, tour, done.commit, &recorded, &placed);
+    }
+    match pinnable {
+        Pinnable::No(_) => Ok(not_pinned(ask, id, &pinnable, committed)),
+        Pinnable::Yes { head } => {
+            // the tour is as it was when it was read: a write in between would be a stop the pin never saw
+            let lock = take_lock(vnoc_root.to_path_buf()).await?;
+            let len = std::fs::metadata(&measured.path).map(|m| m.len()).ok();
+            if len != Some(measured.len) {
+                return Err(store_failure(StoreError::Refused(format!(
+                    "the tour {id} changed while it was being pinned: run the command again"
+                ))));
+            }
+            let record = pin::make(head.clone(), &placed);
+            store::append_locked(&lock, vnoc_root, id, &[Record::Pin(record)])
+                .map_err(store_failure)?;
+            drop(lock);
+            let at = short_commit(&head);
+            let mut lines = Vec::new();
+            if let Some(done) = &committed {
+                lines.push(format!(
+                    "committed {} as {}   {}",
+                    count_files(done.files.len()),
+                    &done.commit[..7],
+                    done.message
+                ));
+                lines.extend(done.files.iter().map(|f| format!("  {f}")));
+            }
+            if matches!(ask, Ask::Pin { .. }) {
+                lines.push(format!("pinned {id} at {at}"));
+            }
+            Ok(Pinned {
+                out: PinOut {
+                    state: "pinned",
+                    commit: Some(head.as_str().to_string()),
+                    committed,
+                    reasons: Vec::new(),
+                    command: None,
+                    refused: false,
+                },
+                lines,
+                at: Some(at),
+            })
+        }
+    }
+}
+
+/// A real check of the tour against the code as it is now, and where its stops and blocks are (what a pin records).
+fn placed_check(opened: &Opened, tour: &Tour, len: u64) -> (Recorded, check::Placed) {
+    let index = opened.index.read().expect("the index lock is not poisoned");
+    let tree = index.tree(&opened.project.name(), opened.project.prefix());
+    let code = Code {
+        index: &index,
+        project: &opened.project,
+        tree: &tree,
+    };
+    let mut read = |path: &Path| source::read_text(path);
+    check::check_placed(&code, &mut read, tour, len)
+}
+
+/// `can be pinned` for a finished, fresh tour that is not pinned and whose files are all committed; `can be pinned again` for one that is pinned
+/// at a commit HEAD does not have behind it (01 §8). The code is read only when git says the rest holds.
+async fn can_pin_words(
+    global: &Global,
+    lazy: &mut Lazy,
+    project: &crate::project::Project,
+    row: &Row,
+    tour: &Tour,
+) -> Option<&'static str> {
+    let holds = tour.pin.as_ref().filter(|_| tour.pinned());
+    if holds.is_some_and(|pin| pin::reachable(project, &pin.commit)) {
+        return None;
+    }
+    let head = pin::head(project, tour).ok()?;
+    let opened = lazy.get(global).await.ok()?;
+    let (recorded, placed) = placed_check(opened, tour, row.len);
+    match pin::can_pin(project, tour, head, &recorded, &placed) {
+        Pinnable::Yes { .. } if holds.is_some() => Some("can be pinned again"),
+        Pinnable::Yes { .. } => Some("can be pinned"),
+        Pinnable::No(_) => None,
+    }
+}
+
+fn count_files(n: usize) -> String {
+    format!("{n} {}", if n == 1 { "file" } else { "files" })
+}
+
+/// One tour of `vnoc tour pin`.
+#[derive(Serialize)]
+struct PinnedTour {
+    tour: String,
+    /// it was pinned, and its commit is reachable from HEAD: nothing was done
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    already: bool,
+    #[serde(flatten)]
+    out: PinOut,
+    #[serde(skip)]
+    lines: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct PinAnswer {
+    schema: u32,
+    command: &'static str,
+    tours: Vec<PinnedTour>,
+    /// how many tours were pinned by this call
+    pinned: usize,
+}
+
+impl Render for PinAnswer {
+    fn text(&self, _quiet: bool) -> String {
+        if self.tours.is_empty() {
+            return "nothing to pin: every finished tour is pinned\n".to_string();
+        }
+        let headed = self.tours.len() > 1;
+        let mut text = String::new();
+        for tour in &self.tours {
+            for (i, line) in tour.lines.iter().enumerate() {
+                // with several tours each block says whose it is, on its first line
+                if headed
+                    && i == 0
+                    && !line.starts_with("pinned ")
+                    && !line.starts_with("committed ")
+                {
+                    text.push_str(&format!("{}  ", tour.tour));
+                }
+                text.push_str(line);
+                text.push('\n');
+            }
+        }
+        text
+    }
+}
+
+async fn pin_command(global: &Global, args: &TourPinArgs) -> Result<(), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let mut wanted = Vec::new();
+    for text in &args.tours {
+        let id = resolve(global, "tour pin", &vnoc_root, text)?;
+        if !wanted.contains(&id) {
+            wanted.push(id);
+        }
+    }
+    let named = !wanted.is_empty();
+    let rows = chosen(store::list(&vnoc_root).tours, &wanted);
+    let mut lazy = Lazy::default();
+    let mut tours = Vec::new();
+    for row in &rows {
+        let tour = match &row.tour {
+            Ok(tour) => tour,
+            Err(e) if named => {
+                return Err(Failure::Usage(format!(
+                    "the tour {} cannot be read: {e}",
+                    row.id
+                )));
+            }
+            Err(_) => continue,
+        };
+        if let Located::Both { .. } = store::locate(&vnoc_root, &row.id) {
+            if named {
+                return Err(store_failure(StoreError::InBoth(row.id.clone())));
+            }
+            continue;
+        }
+        let holds = tour
+            .pin
+            .as_ref()
+            .filter(|_| tour.pinned())
+            .map(|pin| (pin.commit.clone(), pin::reachable(&project, &pin.commit)));
+        // pinned, and the commit is behind HEAD: nothing to do
+        if let Some((commit, true)) = holds {
+            if named {
+                tours.push(PinnedTour {
+                    tour: row.id.to_string(),
+                    already: true,
+                    lines: vec![format!(
+                        "{} is pinned at {} already",
+                        row.id,
+                        short_commit(&commit)
+                    )],
+                    out: PinOut {
+                        state: "pinned",
+                        commit: Some(commit.as_str().to_string()),
+                        committed: None,
+                        reasons: Vec::new(),
+                        command: None,
+                        refused: false,
+                    },
+                });
+            }
+            continue;
+        }
+        // with no tour named: the finished ones that are not pinned, or whose pin cannot be reached
+        if !named && tour.state != State::Finished {
+            continue;
+        }
+        let ask = Ask::Pin {
+            commit: args.commit,
+            message: args.message.as_deref(),
+        };
+        let done = pin_tour(global, &mut lazy, &project, &vnoc_root, &row.id, &ask).await?;
+        tours.push(PinnedTour {
+            tour: row.id.to_string(),
+            already: false,
+            lines: done.lines,
+            out: done.out,
+        });
+    }
+    let refused = tours.iter().any(|t| t.out.refused);
+    let pinned = tours
+        .iter()
+        .filter(|t| t.out.state == "pinned" && !t.already)
+        .count();
+    out::render(
+        &PinAnswer {
+            schema: 1,
+            command: "tour pin",
+            tours,
+            pinned,
+        },
+        global,
+    )?;
+    if refused {
+        Err(Failure::Reported)
+    } else {
+        Ok(())
+    }
 }
 
 // -------------------------------------------------------------------------------------------- drop, resume, edit, halt
@@ -1628,8 +2068,14 @@ struct Imported {
     ids: Option<IdsStep>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     notes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pin: Option<PinOut>,
     #[serde(skip)]
     ids_text: String,
+    #[serde(skip)]
+    pin_text: String,
+    #[serde(skip)]
+    pinned_at: Option<String>,
 }
 
 impl Render for Imported {
@@ -1654,7 +2100,12 @@ impl Render for Imported {
                 steps_words(self.steps)
             )
         };
+        if let Some(at) = &self.pinned_at {
+            text.pop();
+            text.push_str(&format!(" · pinned at {at}\n"));
+        }
         text.push_str(&self.ids_text);
+        text.push_str(&self.pin_text);
         for note in &self.notes {
             text.push_str(&format!("note: {note}\n"));
         }
@@ -1792,6 +2243,24 @@ async fn import(global: &Global, args: &TourImportArgs) -> Result<(), Failure> {
         Some(&opened),
     )
     .await?;
+    // step 2, as `finish` does it: the code is read again when the IDs step wrote into it
+    let wrote = matches!(&step.ids, Some(IdsStep::Written { changed, .. }) if !changed.is_empty());
+    let mut lazy = if wrote {
+        drop(opened);
+        Lazy::default()
+    } else {
+        Lazy(Some(opened))
+    };
+    let read = settings::read(&vnoc_root).map_err(settings_failure)?;
+    let ask = Ask::Finish {
+        commit: read.commit.value,
+        message: None,
+    };
+    let pinned = pin_tour(global, &mut lazy, &project, &vnoc_root, &tour_id, &ask).await?;
+    let mut pin_text = pinned.lines.join("\n");
+    if !pin_text.is_empty() {
+        pin_text.push('\n');
+    }
     let stops = size.written;
     out::render(
         &Imported {
@@ -1806,7 +2275,10 @@ async fn import(global: &Global, args: &TourImportArgs) -> Result<(), Failure> {
             gone: kept.map(|(_, g)| g),
             ids: step.ids,
             notes: step.notes,
+            pin: Some(pinned.out),
             ids_text: step.text,
+            pin_text,
+            pinned_at: pinned.at,
         },
         global,
     )
@@ -2035,6 +2507,9 @@ struct CheckedTour {
     changed: usize,
     gone: usize,
     stops: Vec<CheckedStop>,
+    /// `can be pinned` or `can be pinned again`: a finished, fresh tour that a pin can be made of now (nothing is written)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    can_pin: Option<&'static str>,
     #[serde(skip)]
     lines: Vec<String>,
     #[serde(skip)]
@@ -2192,6 +2667,7 @@ async fn check(global: &Global, args: &TourCheckArgs) -> Result<(), Failure> {
                 changed: 0,
                 gone: 0,
                 stops: vec![],
+                can_pin: None,
                 problem,
             });
             continue;
@@ -2204,6 +2680,15 @@ async fn check(global: &Global, args: &TourCheckArgs) -> Result<(), Failure> {
             &today,
         )];
         lines.extend(view::stale_lines(tour, &answer.recorded));
+        let can_pin = if answer.recorded.fresh() && tour.state == State::Finished {
+            can_pin_words(global, &mut lazy, &project, row, tour).await
+        } else {
+            None
+        };
+        let mut word = view::check_word(changed, gone);
+        if let Some(says) = can_pin {
+            word.push_str(&format!(" · {says}"));
+        }
         tours.push(CheckedTour {
             id,
             readable: true,
@@ -2214,8 +2699,9 @@ async fn check(global: &Global, args: &TourCheckArgs) -> Result<(), Failure> {
             changed,
             gone,
             stops: checked_stops(tour, &answer.recorded),
+            can_pin,
             lines,
-            word: view::check_word(changed, gone),
+            word,
         });
     }
     let stale = tours.iter().filter(|t| t.fresh == Some(false)).count();
@@ -2323,7 +2809,9 @@ async fn list(global: &Global, args: &TourListArgs) -> Result<(), Failure> {
             })
             .collect()
     };
-    let mut rows = view::list_rows(&listed.tours, &known, args.check);
+    let mut rows = view::list_rows(&listed.tours, &known, args.check, &|commit| {
+        pin::has_commit(&project, commit)
+    });
 
     if let Some((_, query)) = &on_node {
         // by what the tours wrote: no check, no code read
@@ -2367,6 +2855,58 @@ async fn list(global: &Global, args: &TourListArgs) -> Result<(), Failure> {
 }
 
 // --------------------------------------------------------------------------------------------------------------------- show
+
+/// Puts the code of the pinned commit on each stop that a check found changed or gone (`show --as-written`, 03 §5): the stop's lines as the pin's
+/// `where` has them, and the lines its blocks light there, exactly (a stop with no blocks lights all of it). A stop the commit cannot give (it is not
+/// in this repository, or has no such file) is shown as one that is not pinned is.
+fn written_code(
+    project: &crate::project::Project,
+    pin: &crate::tours::record::PinRecord,
+    view: &mut view::TourView,
+) {
+    let at = |step: StepId| {
+        pin.places
+            .0
+            .iter()
+            .find(|(id, _)| *id == step)
+            .map(|(_, w)| w)
+    };
+    for stop in &mut view.stops {
+        if !matches!(stop.check, Some("changed" | "gone")) {
+            continue;
+        }
+        let Ok(id) = stop.id.parse::<StopId>() else {
+            continue;
+        };
+        let Some(place) = at(StepId::intro(id)) else {
+            continue;
+        };
+        let lit: Vec<[u32; 2]> = if stop.blocks.is_empty() {
+            vec![[place.lines.first, place.lines.last]]
+        } else {
+            stop.blocks
+                .iter()
+                .filter_map(|b| b.id.parse::<StepId>().ok().and_then(at))
+                .map(|w| [w.lines.first, w.lines.last])
+                .collect()
+        };
+        if let Some(code) = pin::as_written(
+            project,
+            pin.commit.as_str(),
+            place.path.as_str(),
+            place.lines.first,
+            place.lines.last,
+        ) {
+            stop.as_written = Some(view::AsWritten {
+                commit: short_commit(&pin.commit),
+                path: place.path.to_string(),
+                lines: [place.lines.first, place.lines.last],
+                code,
+                lit,
+            });
+        }
+    }
+}
 
 #[derive(Serialize)]
 struct Shown {
@@ -2414,7 +2954,16 @@ async fn show(global: &Global, args: &TourShowArgs) -> Result<(), Failure> {
     match &read.tour {
         Ok(tour) => {
             let mut tour_view = view::tour_view(tour, read.place);
-            if args.check {
+            let holds = tour.pin.as_ref().filter(|_| tour.pinned());
+            if let Some(pin) = holds {
+                tour_view.pin_in_repository = Some(pin::has_commit(&project, &pin.commit));
+            }
+            if args.as_written && holds.is_none() {
+                return Err(Failure::Usage(format!(
+                    "this tour is not pinned: there is no commit to read it as written from (vnoc tour pin {tour_id})"
+                )));
+            }
+            if args.check || args.as_written {
                 let subjects = [Subject {
                     id: &tour_id,
                     path: &read.path,
@@ -2434,6 +2983,9 @@ async fn show(global: &Global, args: &TourShowArgs) -> Result<(), Failure> {
                 if let Some(answer) = done.get(&tour_id) {
                     view::mark(&mut tour_view, answer);
                 }
+            }
+            if let Some(pin) = holds.filter(|_| args.as_written) {
+                written_code(&project, pin, &mut tour_view);
             }
             let text = view::outline_text(tour, &tour_view, args.text);
             out::render(

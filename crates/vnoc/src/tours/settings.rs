@@ -8,7 +8,7 @@
 //!
 //! Absent is `"ask"`. A value this version does not know is read as `"ask"` and reported once (in `problems`). The file is the project's, committed:
 //! [`set`] changes one key with `toml_edit` and leaves every comment, every other table and every other key as they were. `commit` is read and set here
-//! and does nothing until the pin (TR9).
+//! and says whether `finish` commits a tour's files so that it can be pinned (`finish.rs`, `pin.rs`).
 
 use std::fmt;
 use std::io;

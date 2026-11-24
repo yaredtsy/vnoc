@@ -9638,7 +9638,10 @@ fn finish_with_ids_never_says_nothing_and_the_flags_win_over_each_setting() {
     let tour = ids_tour(&never);
     let charge = std::fs::read(never.join("billing/charge.py")).unwrap();
     let said = finish_ok(&never, &tour, &[]);
-    assert_eq!(said, "finished: 4 stops, 5 steps\n");
+    assert_eq!(
+        said,
+        "finished: 4 stops, 5 steps\nnot pinned: this is not a git repository\n"
+    );
     assert_eq!(
         std::fs::read(never.join("billing/charge.py")).unwrap(),
         charge
@@ -9658,7 +9661,7 @@ fn finish_with_ids_never_says_nothing_and_the_flags_win_over_each_setting() {
     let charge = std::fs::read(off.join("billing/charge.py")).unwrap();
     assert_eq!(
         finish_ok(&off, &t, &["--no-ids"]),
-        "finished: 4 stops, 5 steps\n"
+        "finished: 4 stops, 5 steps\nnot pinned: this is not a git repository\n"
     );
     assert_eq!(
         std::fs::read(off.join("billing/charge.py")).unwrap(),
@@ -9670,7 +9673,7 @@ fn finish_with_ids_never_says_nothing_and_the_flags_win_over_each_setting() {
     let t = ids_tour(&ask);
     assert_eq!(
         finish_ok(&ask, &t, &["--no-ids"]),
-        "finished: 4 stops, 5 steps\n"
+        "finished: 4 stops, 5 steps\nnot pinned: this is not a git repository\n"
     );
     // both flags at once is clap's error
     let (exit, _, stderr) = tour_fails(&ask, &["finish", &t, "--ids", "--no-ids"], "");
@@ -9726,7 +9729,10 @@ fn a_project_that_writes_no_ids_gets_nothing_from_finish_and_the_always_says_it_
             &format!("format = 1\n\n[ids]\ndefault = \"none\"\n\n[tours]\nids = \"{word}\"\n"),
         );
         let t = ids_tour(&ask);
-        assert_eq!(finish_ok(&ask, &t, &[]), "finished: 4 stops, 5 steps\n");
+        assert_eq!(
+            finish_ok(&ask, &t, &[]),
+            "finished: 4 stops, 5 steps\nnot pinned: this is not a git repository\n"
+        );
     }
 }
 
@@ -10431,4 +10437,761 @@ fn a_document_over_the_limits_is_refused_forty_one_stops_and_thirteen_blocks() {
         "{}",
         text(&out.stderr)
     );
+}
+
+// ------------------------------------------------------------------------------------------------------------------------ tours (TR9)
+//
+// Pinned: a tour is pinned to a commit that holds it; `pin --commit`; the code as written. Every test makes its own git repository (the sample, in a temp
+// folder, committed): never this one.
+
+/// The sample as a git repository with everything committed: what a pin needs. Commits are made with no hook and no signing.
+fn pin_project(label: &str) -> PathBuf {
+    let root = sample_copy(label);
+    git(&root, &["init", "-q"]);
+    for (key, value) in [
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", ".git/hooks"),
+        ("user.name", "t"),
+        ("user.email", "t@t"),
+    ] {
+        git(&root, &["config", key, value]);
+    }
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-qm", "base"]);
+    root
+}
+
+/// What `git <args>` printed.
+fn git_text(root: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("git is installed");
+    assert!(out.status.success(), "git {args:?}: {}", text(&out.stderr));
+    text(&out.stdout)
+}
+
+fn head_hash(root: &Path) -> String {
+    git_text(root, &["rev-parse", "HEAD"]).trim().to_string()
+}
+
+/// A command's text with the root, the tour's id and a commit (all 40 characters, then its 7) as stand-ins.
+fn pin_unrooted(said: &str, root: &Path, tour: &str, commits: &[&str]) -> String {
+    let mut said = without_root(said, root).replace(tour, "<tour>");
+    for commit in commits {
+        said = said
+            .replace(commit, "<commit>")
+            .replace(&commit[..7], "<commit>");
+    }
+    said
+}
+
+/// `pin` records of the tour's file.
+fn pins_of(root: &Path, tour: &str) -> Vec<Value> {
+    records_of(root, tour, "pin")
+}
+
+/// A tour of uncommitted work: `retry_charge` (two lines added to the file after the function), and a stop on a file git has never seen.
+fn uncommitted_tour(root: &Path) -> String {
+    let tour = loop_tour(root);
+    std::fs::write(root.join("api/new.py"), "VALUE = 1\n").unwrap();
+    let out = tour_add(root, &tour, "api/new.py", &[], "new.py holds one value.\n");
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let charge = root.join("billing/charge.py");
+    let mut now = std::fs::read_to_string(&charge).unwrap();
+    now.push_str("\n# retried by the caller\n");
+    std::fs::write(charge, now).unwrap();
+    tour
+}
+
+#[test]
+fn tour_pin_finish_on_a_fully_committed_tour_pins_it_at_head() {
+    let root = pin_project("tour-pin-committed");
+    let tour = loop_tour(&root);
+    let head = head_hash(&root);
+    let said = finish_ok(&root, &tour, &[]);
+    assert!(
+        said.starts_with(&format!(
+            "finished: 4 stops, 7 steps · pinned at {}\n",
+            &head[..7]
+        )),
+        "{said}"
+    );
+    golden_text(
+        "tour-finish-pinned.txt",
+        &pin_unrooted(&said, &root, &tour, &[&head]),
+    );
+    let pins = pins_of(&root, &tour);
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0]["commit"], head.as_str());
+    // where every stop and block was: s1 (11-22) with its three blocks, then the stops it reached
+    assert_eq!(pins[0]["where"]["s1"], json!(["billing/charge.py", 11, 22]));
+    assert_eq!(
+        pins[0]["where"]["s1.b2"],
+        json!(["billing/charge.py", 15, 15])
+    );
+    assert_eq!(pins[0]["where"]["s3"], json!(["billing/charge.py", 7, 8]));
+    // the tour says so, and a check after it is fresh and has nothing to add
+    assert!(tour_ok(&root, &["show", &tour]).contains(&format!("pinned at {}", &head[..7])));
+    assert!(tour_ok(&root, &["list"]).contains(&format!("pinned at {}", &head[..7])));
+    let shown = tour_json(&root, &["show", &tour]);
+    assert_eq!(shown["pinned"], true);
+    assert_eq!(shown["pin"], head.as_str());
+    let (_, fresh, stale) = checked(&root, &[]);
+    assert!(fresh && stale.is_empty());
+    assert!(!tour_ok(&root, &["check"]).contains("can be pinned"));
+    // json says it as data
+    let json_root = pin_project("tour-pin-committed-json");
+    let t = loop_tour(&json_root);
+    let said = tour_json(&json_root, &["finish", &t]);
+    assert_eq!(said["pin"]["state"], "pinned");
+    assert_eq!(said["pin"]["commit"], head_hash(&json_root).as_str());
+    // finished twice: the second says so and does not pin again
+    let again = finish_ok(&root, &tour, &[]);
+    assert!(again.starts_with("already finished"), "{again}");
+    assert_eq!(pins_of(&root, &tour).len(), 1);
+}
+
+#[test]
+fn tour_pin_finish_on_uncommitted_work_with_commit_at_ask_commits_nothing_and_prints_the_files() {
+    let root = pin_project("tour-pin-ask");
+    let tour = uncommitted_tour(&root);
+    let head = head_hash(&root);
+    let said = finish_ok(&root, &tour, &[]);
+    golden_text(
+        "tour-finish-commit-ask.txt",
+        &pin_unrooted(&said, &root, &tour, &[&head]),
+    );
+    assert!(said.contains("ask the user  not pinned: 2 files have changes that are not committed"));
+    assert!(said.contains(&format!("vnoc tour pin {tour} --commit")));
+    assert!(said.contains(" M billing/charge.py") && said.contains("?? api/new.py"));
+    assert_eq!(head_hash(&root), head, "nothing was committed");
+    assert!(pins_of(&root, &tour).is_empty());
+    // as data
+    let json_root = pin_project("tour-pin-ask-json");
+    let t = uncommitted_tour(&json_root);
+    let said = tour_json(&json_root, &["finish", &t]);
+    assert_eq!(said["pin"]["state"], "ask");
+    assert_eq!(
+        said["pin"]["command"],
+        json!(format!("vnoc tour pin {t} --commit"))
+    );
+    assert_eq!(said["pin"]["reasons"][0]["code"], "uncommitted");
+    assert_eq!(
+        said["pin"]["reasons"][0]["files"],
+        json!([
+            {"status": " M", "path": "billing/charge.py"},
+            {"status": "??", "path": "api/new.py"}
+        ])
+    );
+}
+
+#[test]
+fn tour_pin_pin_names_both_files_and_commit_commits_exactly_those_two() {
+    let root = pin_project("tour-pin-commit");
+    let tour = uncommitted_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let head = head_hash(&root);
+    // `pin` alone: not pinned, both files named, and the way out
+    let said = tour_ok(&root, &["pin", &tour]);
+    assert_eq!(
+        pin_unrooted(&said, &root, &tour, &[&head]),
+        "not pinned: 2 files of this tour have changes that are not committed\n   M billing/charge.py\n  ?? api/new.py\ncommit them, then run this again. Or: vnoc tour pin <tour> --commit\n"
+    );
+    assert_eq!(head_hash(&root), head);
+    assert!(pins_of(&root, &tour).is_empty());
+    // another file, staged, that the tour has nothing to do with
+    std::fs::write(root.join("api/other.py"), "OTHER = 1\n").unwrap();
+    git(&root, &["add", "api/other.py"]);
+    let said = tour_ok(&root, &["pin", &tour, "--commit"]);
+    let now = head_hash(&root);
+    assert_ne!(now, head);
+    golden_text(
+        "tour-pin-commit.txt",
+        &pin_unrooted(&said, &root, &tour, &[&now]),
+    );
+    assert!(said.contains(&format!("pinned {tour} at {}", &now[..7])));
+    // exactly the tour's two files are in the commit, whole; the other one is still staged
+    let in_commit = git_text(&root, &["show", "--name-only", "--format=%s", "HEAD"]);
+    let in_commit: Vec<&str> = in_commit.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        in_commit,
+        [
+            "Code for the tour \"retry_charge\"",
+            "api/new.py",
+            "billing/charge.py"
+        ]
+    );
+    assert_eq!(
+        git_text(&root, &["status", "--porcelain"]).trim(),
+        "A  api/other.py"
+    );
+    let pins = pins_of(&root, &tour);
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0]["commit"], now.as_str());
+    assert_eq!(pins[0]["where"]["s5"], json!(["api/new.py", 1, 1]));
+    // pinned, fresh, and the second `pin` has nothing to do
+    assert!(tour_ok(&root, &["show", &tour]).contains(&format!("pinned at {}", &now[..7])));
+    assert!(tour_ok(&root, &["pin", &tour]).contains("is pinned at"));
+    assert_eq!(
+        tour_ok(&root, &["pin"]),
+        "nothing to pin: every finished tour is pinned\n"
+    );
+    assert_eq!(pins_of(&root, &tour).len(), 1);
+
+    // `-m`, and the json of the call
+    let second = pin_project("tour-pin-commit-m");
+    let t = uncommitted_tour(&second);
+    finish_ok(&second, &t, &["--no-ids"]);
+    let said = tour_json(&second, &["pin", &t, "--commit", "-m", "Stock: retried"]);
+    assert_eq!(said["tours"][0]["state"], "pinned");
+    assert_eq!(said["tours"][0]["committed"]["message"], "Stock: retried");
+    assert_eq!(
+        git_text(&second, &["log", "-1", "--format=%s"]).trim(),
+        "Stock: retried"
+    );
+}
+
+#[test]
+fn tour_pin_commit_is_refused_with_a_stale_stop_in_a_merge_and_for_a_file_git_will_not_hold() {
+    // a stale stop: the code changed after the tour was written
+    let root = pin_project("tour-pin-stale");
+    let tour = uncommitted_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "return one_try()",
+        "return one_try()  # retried",
+    );
+    let head = head_hash(&root);
+    let (status, said, err) = tour_fails(&root, &["pin", &tour, "--commit"], "");
+    assert_eq!(status, 2, "{said}{err}");
+    assert!(
+        said.contains("not pinned: s1 changed since it was written")
+            && said.contains("nothing was committed"),
+        "{said}"
+    );
+    assert_eq!(head_hash(&root), head, "nothing was committed");
+    assert!(pins_of(&root, &tour).is_empty());
+    // without `--commit` the same reason, said, and exit 0
+    let said = tour_ok(&root, &["pin", &tour]);
+    assert!(
+        said.contains("not pinned: s1 changed since it was written"),
+        "{said}"
+    );
+
+    // in the middle of a merge
+    let merging = pin_project("tour-pin-merge");
+    let t = uncommitted_tour(&merging);
+    finish_ok(&merging, &t, &["--no-ids"]);
+    std::fs::write(merging.join(".git/MERGE_HEAD"), head_hash(&merging)).unwrap();
+    let (status, said, _) = tour_fails(&merging, &["pin", &t, "--commit"], "");
+    assert_eq!(status, 2, "{said}");
+    assert!(
+        said.contains("not pinned: a merge is in progress"),
+        "{said}"
+    );
+    assert!(
+        git_text(&merging, &["status", "--porcelain"]).contains("?? api/new.py"),
+        "nothing was committed or staged"
+    );
+
+    // a file git ignores: the index does not walk it, so the stop is gone, and that is what is said first
+    let ignoring = pin_project("tour-pin-ignored");
+    let t = uncommitted_tour(&ignoring);
+    finish_ok(&ignoring, &t, &["--no-ids"]);
+    std::fs::write(ignoring.join(".gitignore"), "api/new.py\n").unwrap();
+    let (status, said, _) = tour_fails(&ignoring, &["pin", &t, "--commit"], "");
+    assert_eq!(status, 2, "{said}");
+    assert!(said.contains("s5 is gone"), "{said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn tour_pin_a_failing_hook_fails_the_command_with_its_output_and_nothing_is_pinned() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = pin_project("tour-pin-hook");
+    let tour = uncommitted_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let hook = root.join(".git/hooks/pre-commit");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let head = head_hash(&root);
+    let (status, said, err) = tour_fails(&root, &["pin", &tour, "--commit"], "");
+    assert_eq!(status, 3, "{said}{err}");
+    assert!(err.contains("hook says no"), "{err}");
+    assert_eq!(head_hash(&root), head);
+    assert!(pins_of(&root, &tour).is_empty());
+    assert!(
+        git_text(&root, &["status", "--porcelain"]).contains("?? api/new.py"),
+        "the new file was taken out of the index again"
+    );
+}
+
+#[test]
+fn tour_pin_no_git_no_repository_no_commit_yet_and_no_git_on_the_path() {
+    // not a repository: finish says so, and so does pin
+    let root = sample_copy("tour-pin-none");
+    let tour = loop_tour(&root);
+    let said = finish_ok(&root, &tour, &[]);
+    assert!(
+        said.contains("not pinned: this is not a git repository"),
+        "{said}"
+    );
+    assert!(tour_ok(&root, &["pin", &tour]).contains("not pinned: this is not a git repository"));
+    assert!(!tour_ok(&root, &["check"]).contains("can be pinned"));
+
+    // a repository with no commit yet
+    let fresh_repo = sample_copy("tour-pin-no-commit");
+    git(&fresh_repo, &["init", "-q"]);
+    let t = loop_tour(&fresh_repo);
+    let said = finish_ok(&fresh_repo, &t, &[]);
+    assert!(
+        said.contains("not pinned: this repository has no commit yet"),
+        "{said}"
+    );
+    assert!(pins_of(&fresh_repo, &t).is_empty());
+
+    // git is not on the PATH of the process
+    let lost = pin_project("tour-pin-no-git");
+    let t = loop_tour(&lost);
+    finish_ok(&lost, &t, &["--no-ids"]);
+    // pinned by the finish; so make one that is not: a second tour, finished before git is taken away is pinned, so only ask `pin` for one that is not
+    let u = uncommitted_tour(&lost);
+    finish_ok(&lost, &u, &["--no-ids"]);
+    let mut cmd = vnoc(&lost, &["tour", "pin", &u]);
+    cmd.env("PATH", "");
+    let out = run(cmd);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("not pinned: git was not found: pinning needs it"),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
+fn tour_pin_the_setting_always_commits_exactly_them_never_says_not_pinned_and_the_flags_win() {
+    // always
+    let root = pin_project("tour-pin-always");
+    write_vnoc_toml(&root, "format = 1\n\n[tours]\ncommit = \"always\"\n");
+    git(&root, &["commit", "-qam", "settings"]);
+    let tour = uncommitted_tour(&root);
+    let head = head_hash(&root);
+    let said = finish_ok(&root, &tour, &["--no-ids"]);
+    let now = head_hash(&root);
+    assert_ne!(now, head);
+    assert!(
+        said.starts_with(&format!(
+            "finished: 5 stops, 8 steps · pinned at {}\ncommitted 2 files as {}   Code for the tour \"retry_charge\"\n",
+            &now[..7],
+            &now[..7]
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains("  billing/charge.py\n  api/new.py\n"),
+        "{said}"
+    );
+    assert_eq!(pins_of(&root, &tour)[0]["commit"], now.as_str());
+    assert!(
+        git_text(&root, &["status", "--porcelain"])
+            .trim()
+            .is_empty()
+    );
+
+    // never: `not pinned` and the files, with no command
+    let never = pin_project("tour-pin-never");
+    write_vnoc_toml(&never, "format = 1\n\n[tours]\ncommit = \"never\"\n");
+    git(&never, &["commit", "-qam", "settings"]);
+    let t = uncommitted_tour(&never);
+    let head = head_hash(&never);
+    let said = finish_ok(&never, &t, &["--no-ids"]);
+    assert_eq!(
+        pin_unrooted(&said, &never, &t, &[&head]),
+        "finished: 5 stops, 8 steps\nnot pinned: 2 files have changes that are not committed\n   M billing/charge.py\n  ?? api/new.py\n"
+    );
+    assert_eq!(head_hash(&never), head);
+
+    // `--commit -m` over "never"; `--no-commit` over "always"
+    let flag = pin_project("tour-pin-flag-commit");
+    write_vnoc_toml(&flag, "format = 1\n\n[tours]\ncommit = \"never\"\n");
+    git(&flag, &["commit", "-qam", "settings"]);
+    let t = uncommitted_tour(&flag);
+    let said = finish_ok(
+        &flag,
+        &t,
+        &["--no-ids", "--commit", "-m", "Retry, written down"],
+    );
+    assert!(said.contains(" · pinned at "), "{said}");
+    assert_eq!(
+        git_text(&flag, &["log", "-1", "--format=%s"]).trim(),
+        "Retry, written down"
+    );
+    let off = pin_project("tour-pin-flag-no-commit");
+    write_vnoc_toml(&off, "format = 1\n\n[tours]\ncommit = \"always\"\n");
+    git(&off, &["commit", "-qam", "settings"]);
+    let t = uncommitted_tour(&off);
+    let head = head_hash(&off);
+    let said = finish_ok(&off, &t, &["--no-ids", "--no-commit"]);
+    assert!(
+        said.contains("not pinned: 2 files have changes that are not committed")
+            && !said.contains("ask the user")
+            && !said.contains("vnoc tour pin"),
+        "{said}"
+    );
+    assert_eq!(head_hash(&off), head);
+    // `-m` without `--commit` is clap's error, and so are both flags at once
+    let (status, _, _) = tour_fails(&off, &["finish", &t, "-m", "x"], "");
+    assert_eq!(status, 2);
+    let (status, _, _) = tour_fails(&off, &["finish", &t, "--commit", "--no-commit"], "");
+    assert_eq!(status, 2);
+}
+
+#[test]
+fn tour_pin_with_ids_always_and_commit_always_the_commit_holds_the_marker_lines_and_the_tour_is_pinned_and_fresh()
+ {
+    let root = pin_project("tour-pin-ids-commit");
+    write_vnoc_toml(
+        &root,
+        "format = 1\n\n[tours]\nids = \"always\"\ncommit = \"always\"\n",
+    );
+    git(&root, &["commit", "-qam", "settings"]);
+    let tour = ids_tour(&root);
+    let head = head_hash(&root);
+    let said = finish_ok(&root, &tour, &[]);
+    let now = head_hash(&root);
+    assert_ne!(now, head, "{said}");
+    assert!(said.contains("wrote IDs for 2 of 4 stops"), "{said}");
+    assert!(said.contains(" · pinned at "), "{said}");
+    // the commit holds the two files with their `ID:` lines
+    let shown = git_text(&root, &["show", "--format=", "HEAD"]);
+    assert!(shown.contains("+    ID: "), "{shown}");
+    let files = git_text(&root, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(
+        files.contains("billing/charge.py") && files.contains("api/routes.py"),
+        "{files}"
+    );
+    assert_eq!(pins_of(&root, &tour)[0]["commit"], now.as_str());
+    // what is left is the node folders `ids` made under .vnoc/nodes/: they are not files of the tour
+    for line in git_text(&root, &["status", "--porcelain", "--untracked-files=all"]).lines() {
+        assert!(line.starts_with("?? .vnoc/nodes/"), "{line}");
+    }
+    let (_, fresh, stale) = checked(&root, &["--again"]);
+    assert!(fresh && stale.is_empty(), "{stale:?}");
+}
+
+#[test]
+fn tour_pin_a_stop_that_changed_shows_the_pinned_lines_lit_where_the_pin_says_and_a_second_pin_follows_a_replace()
+ {
+    let root = pin_project("tour-pin-as-written");
+    let tour = loop_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let first = head_hash(&root);
+    // without a pin, `--as-written` is refused
+    let plain = sample_copy("tour-pin-as-written-plain");
+    let t = loop_tour(&plain);
+    let (status, _, err) = tour_fails(&plain, &["show", &t, "--as-written"], "");
+    assert_eq!(status, 2);
+    assert!(err.contains("this tour is not pinned"), "{err}");
+
+    // the function changes (and is committed): s1 and its blocks are not what the tour was about
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "    for _ in range(attempts):",
+        "    for _ in range(attempts + 1):",
+    );
+    git(&root, &["commit", "-qam", "one more attempt"]);
+    let said = tour_ok(&root, &["show", &tour, "--text", "--as-written"]);
+    golden_text(
+        "tour-show-as-written.txt",
+        &pin_unrooted(&said, &root, &tour, &[&first]),
+    );
+    assert!(said.contains("1 stop changed"), "{said}");
+    assert!(
+        said.contains("    > 17      for _ in range(attempts):"),
+        "the old line, lit: {said}"
+    );
+    assert!(!said.contains("attempts + 1"), "{said}");
+    // s1.b1 lights 14-15 and s1.b3 17-22: line 16 (the blank one) is shown and not lit
+    assert!(said.contains("\n        16\n"), "{said}");
+    assert!(said.contains(&format!("as written at {}", &first[..7])));
+    // as data
+    let json = tour_json(&root, &["show", &tour, "--as-written"]);
+    let written = &json["stops"][0]["as_written"];
+    assert_eq!(written["lines"], json!([11, 22]));
+    assert_eq!(written["lit"], json!([[14, 15], [15, 15], [17, 22]]));
+    assert_eq!(written["commit"], first[..7]);
+
+    // `add --replace` on the changed stop: not pinned. The code is committed already, so `pin` pins at the new HEAD
+    let body = "retry_charge, written again: one more attempt than the setting says.\n\n## 17-22 The loop\nIt runs one more time than `attempts`.\n";
+    let out = tour_add(&root, &tour, RETRY, &["--replace", "s1"], body);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("not pinned any more"));
+    assert!(tour_ok(&root, &["show", &tour]).contains("not pinned"));
+    assert!(tour_ok(&root, &["check"]).contains("can be pinned"));
+    let second = head_hash(&root);
+    assert_ne!(first, second);
+    let said = tour_ok(&root, &["pin", &tour]);
+    assert_eq!(said, format!("pinned {tour} at {}\n", &second[..7]));
+    let pins = pins_of(&root, &tour);
+    assert_eq!(pins.len(), 2);
+    assert_eq!(pins[0]["commit"], first.as_str());
+    assert_eq!(pins[1]["commit"], second.as_str());
+    assert!(!tour_ok(&root, &["check"]).contains("can be pinned"));
+}
+
+#[test]
+fn tour_pin_check_says_can_be_pinned_and_can_be_pinned_again_and_pin_with_no_tour_does_the_ones_that_can_be()
+ {
+    let root = pin_project("tour-pin-check");
+    let tour = uncommitted_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    // files not committed: not "can be pinned"
+    assert!(!tour_ok(&root, &["check"]).contains("can be pinned"));
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-qm", "the code"]);
+    let said = tour_ok(&root, &["check"]);
+    assert!(said.contains("fresh · can be pinned"), "{said}");
+    assert_eq!(
+        tour_json(&root, &["check"])["tours"][0]["can_pin"],
+        "can be pinned"
+    );
+    // a second tour, with a stale stop: listed with its reason by a `pin` with no tour, and not "can be pinned"
+    let other = loop_tour(&root);
+    finish_ok(&root, &other, &["--no-ids"]);
+    // (that one was pinned by its finish: the code is committed) make it stale and unpinned
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "return one_try()",
+        "return one_try()  # again",
+    );
+    let said = tour_ok(&root, &["pin"]);
+    // `tour` is not pinned and is stale now: said with its id. `other` is pinned (its finish did it) and a pin holds until the tour is edited: not touched
+    assert!(
+        said.contains("not pinned: s1 changed since it was written") && !said.contains(&other),
+        "{said}"
+    );
+    // put the code back: the tour pins
+    git(&root, &["checkout", "--", "billing/charge.py"]);
+    let said = tour_ok(&root, &["pin"]);
+    assert!(said.contains(&format!("pinned {tour} at ")), "{said}");
+
+    // a pin whose commit HEAD does not have behind it: "can be pinned again", and `pin` pins it again
+    let head = head_hash(&root);
+    git(&root, &["checkout", "-q", "--orphan", "rewritten"]);
+    git(&root, &["add", "-A"]);
+    git(
+        &root,
+        &["commit", "-qm", "the same code, rewritten history"],
+    );
+    let moved = head_hash(&root);
+    assert_ne!(moved, head);
+    let said = tour_ok(&root, &["check"]);
+    assert!(said.contains("fresh · can be pinned again"), "{said}");
+    let said = tour_ok(&root, &["pin"]);
+    assert!(said.contains(&format!("at {}", &moved[..7])), "{said}");
+    let pins = pins_of(&root, &tour);
+    assert_eq!(pins.last().unwrap()["commit"], moved.as_str());
+    assert!(!tour_ok(&root, &["check"]).contains("can be pinned"));
+}
+
+#[test]
+fn tour_pin_a_pin_with_a_commit_that_is_not_there_says_so_and_a_pin_that_may_not_be_read_is_not_a_pin()
+ {
+    let root = pin_project("tour-pin-lost");
+    let tour = loop_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let file = tour_file(&root, &tour);
+    let original = std::fs::read_to_string(&file).unwrap();
+    // the pin is replaced by one at a commit this repository has never had
+    let lines: Vec<&str> = original
+        .lines()
+        .filter(|l| !l.contains("\"pin\""))
+        .collect();
+    let lacking = "0123456789abcdef0123456789abcdef01234567";
+    let pin = json!({"type": "pin", "commit": lacking, "at": "2026-11-23T18:47:31Z",
+        "where": {"s1": ["billing/charge.py", 11, 22], "s1.b3": ["billing/charge.py", 17, 22]}});
+    std::fs::write(&file, format!("{}\n{pin}\n", lines.join("\n"))).unwrap();
+    let said = tour_ok(&root, &["list"]);
+    assert!(
+        said.contains("pinned at 0123456 (not in this repository)"),
+        "{said}"
+    );
+    assert!(
+        tour_ok(&root, &["show", &tour]).contains("pinned at 0123456 (not in this repository)")
+    );
+    assert_eq!(
+        tour_json(&root, &["list"])["tours"][0]["pin_in_repository"],
+        false
+    );
+    // a changed stop falls back to how a tour that is not pinned shows it: no code under the row, and the command still works
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "return one_try()",
+        "return one_try()  # x",
+    );
+    let said = tour_ok(&root, &["show", &tour, "--as-written"]);
+    assert!(
+        said.contains("1 stop changed") && !said.contains("as written at"),
+        "{said}"
+    );
+    // it can be pinned again once the code is committed and fresh... not here: a stop changed
+    assert!(!tour_ok(&root, &["check"]).contains("can be pinned"));
+
+    // a commit that is an option, and a path that goes up: the line is one problem, and the tour is not pinned
+    for (what, bad) in [
+        (
+            "an option",
+            json!({"type": "pin", "commit": "--help", "at": "x", "where": {}}),
+        ),
+        (
+            "a path with ..",
+            json!({"type": "pin", "commit": lacking, "at": "x", "where": {"s1": ["../x.py", 1, 2]}}),
+        ),
+    ] {
+        let mut text = lines.join("\n");
+        text.push_str(&format!("\n{bad}\n"));
+        std::fs::write(&file, text).unwrap();
+        let shown = tour_json(&root, &["show", &tour]);
+        assert_eq!(shown["pinned"], false, "{what}");
+        assert_eq!(shown["problems"].as_array().unwrap().len(), 1, "{what}");
+        assert!(
+            tour_ok(&root, &["show", &tour]).contains("not pinned"),
+            "{what}"
+        );
+    }
+}
+
+#[test]
+fn tour_pin_a_submodule_file_is_refused_with_its_reason() {
+    let outer = pin_project("tour-pin-sub-outer");
+    let inner = scratch("tour-pin-sub-inner");
+    git(&inner, &["init", "-q"]);
+    std::fs::write(
+        inner.join("m.py"),
+        "def f():\n    return 1\n\n\ndef g():\n    return 2\n",
+    )
+    .unwrap();
+    git(&inner, &["add", "-A"]);
+    git(&inner, &["commit", "-qm", "inner"]);
+    let added = Command::new("git")
+        .arg("-C")
+        .arg(&outer)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "-q"])
+        .arg(&inner)
+        .arg("vendor")
+        .output()
+        .unwrap();
+    if !added.status.success() {
+        eprintln!(
+            "SKIPPED: a submodule could not be made here: {}",
+            text(&added.stderr)
+        );
+        return;
+    }
+    git(&outer, &["commit", "-qm", "with a submodule"]);
+    let tour = tour_start(&outer, "a submodule");
+    let out = tour_add(&outer, &tour, "vendor/m.py::f", &[], "f returns one.\n");
+    if code(&out) != 0 {
+        eprintln!(
+            "SKIPPED: the index does not walk a submodule here: {}",
+            text(&out.stderr)
+        );
+        return;
+    }
+    let said = finish_ok(&outer, &tour, &["--no-ids"]);
+    assert!(
+        said.contains("not pinned: vendor/m.py is in the submodule vendor"),
+        "{said}"
+    );
+    assert!(pins_of(&outer, &tour).is_empty());
+}
+
+#[test]
+fn tour_pin_a_tour_document_and_a_tour_file_with_crlf_line_ends_import_and_replay_as_with_lf() {
+    // a document that ends its lines with \r\n imports, and gives the tour the LF document gives
+    let root = sample_copy("tour-crlf-doc");
+    let tour = finished_loop_tour(&root);
+    let doc = export_text(&root, &tour, false);
+    let lf = imported_id(&run_stdin(vnoc(&root, &["tour", "import", "-"]), &doc));
+    let crlf_doc = doc.replace('\n', "\r\n");
+    assert!(crlf_doc.contains("\r\n"));
+    let crlf = imported_id(&run_stdin(vnoc(&root, &["tour", "import", "-"]), &crlf_doc));
+    assert_ne!(lf, crlf);
+    assert_eq!(shown_text(&root, &lf), shown_text(&root, &crlf));
+    assert_eq!(
+        content_records(&root, &lf),
+        content_records(&root, &crlf),
+        "the same stops and steps, hashes and all"
+    );
+
+    // a tour's file that git checked out with \r\n replays as it does with \n, and an append after it is a whole line
+    let file = tour_file(&root, &tour);
+    let before = shown_text(&root, &tour);
+    let bytes = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, bytes.replace('\n', "\r\n")).unwrap();
+    assert_eq!(shown_text(&root, &tour), before);
+    let (_, fresh, stale) = checked(&root, &["--again"]);
+    assert!(fresh && stale.is_empty(), "{stale:?}");
+    // a block of a stop, the way `add --to` writes it, onto a file whose lines end in \r\n
+    let (status, _, err) = tour_fails(
+        &root,
+        &["add", &tour, "--to", "s1", "--body-file", "-"],
+        "## 11-12 The signature\nThe parameters, with the number of attempts a default.\n",
+    );
+    assert_eq!(status, 0, "{err}");
+    assert!(shown_text(&root, &tour).contains("The signature"));
+}
+
+#[test]
+fn tour_pin_import_runs_the_same_step_and_pins_a_committed_tour() {
+    let root = pin_project("tour-pin-import");
+    let source = finished_loop_tour(&root);
+    let doc = export_text(&root, &source, false);
+    let head = head_hash(&root);
+    let said = text(&run_stdin(vnoc(&root, &["tour", "import", "-"]), &doc).stdout);
+    assert!(
+        said.contains(&format!("stops, 7 steps · pinned at {}", &head[..7])),
+        "{said}"
+    );
+}
+
+#[test]
+fn tour_pin_a_stop_that_is_gone_shows_as_written_too_and_one_that_is_fresh_shows_nothing_under_it()
+{
+    let root = pin_project("tour-pin-gone");
+    let tour = loop_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let pin = head_hash(&root);
+    // `ChargeError` (7-8) is renamed: found by its name no more, so gone. The rest of the file is as written
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "class ChargeError",
+        "class ChargeFailure",
+    );
+    let said = tour_ok(&root, &["show", &tour, "--as-written"]);
+    assert!(said.contains("gone"), "{said}");
+    assert!(
+        said.contains(&format!(
+            "as written at {}: billing/charge.py:7-8",
+            &pin[..7]
+        )),
+        "{said}"
+    );
+    assert!(said.contains("class ChargeError"), "{said}");
+    // a stop with no blocks lights all of its lines
+    assert!(said.contains("    > 7  class ChargeError"), "{said}");
+    // the stops that are fresh have no code under their rows
+    assert_eq!(said.matches("as written at").count(), 1, "{said}");
+    // `list` still says pinned at the commit: a pin holds until the tour is edited
+    assert!(tour_ok(&root, &["list"]).contains(&format!("pinned at {}", &pin[..7])));
 }

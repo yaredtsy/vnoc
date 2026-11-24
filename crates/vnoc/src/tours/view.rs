@@ -9,7 +9,7 @@ use vnoc_domain::NodeKind;
 use super::check::{Answer, BlockState, Recorded, Source, StopState};
 use super::fold::{State, Tour, TourBlock, TourStop, Unreadable, steps_in_order};
 use super::on::{self, How};
-use super::record::{StepId, TourId};
+use super::record::{Commit, StepId, TourId};
 use super::store::{Row, Where};
 use std::collections::BTreeMap;
 
@@ -68,9 +68,14 @@ fn short(commit: &str) -> &str {
     &commit[..commit.len().min(7)]
 }
 
-/// What the tour says of being pinned. Pinning is written by `finish` and `pin` (later steps): a tour with no `pin` record is `not pinned`.
-fn pin_words(tour: &Tour) -> String {
+/// What the tour says of being pinned: `pinned at 8a1c2e4`, and `(not in this repository)` after it when git does not have the commit (a shallow
+/// clone, a teammate who has not fetched it: 01 §8); a tour with no `pin` record that still holds is `not pinned`.
+fn pin_words(tour: &Tour, in_repository: bool) -> String {
     match (&tour.pin, tour.pinned()) {
+        (Some(pin), true) if !in_repository => format!(
+            "pinned at {} (not in this repository)",
+            short(pin.commit.as_str())
+        ),
         (Some(pin), true) => format!("pinned at {}", short(pin.commit.as_str())),
         _ if matches!(
             tour.state,
@@ -165,7 +170,49 @@ pub struct StopView {
     /// with a check, for a stop that is changed: where its node is now (its name and path may not be what it was written with)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub now: Option<super::check::Now>,
+    /// with `--as-written`, for a stop of a pinned tour that is changed or gone: the code of the pinned commit
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub as_written: Option<AsWritten>,
     pub blocks: Vec<BlockView>,
+}
+
+/// A stop's code as the pinned commit has it (01 §8): the stop's lines there, and the lines its blocks light there (the whole of it for a stop with no
+/// blocks).
+#[derive(Debug, Clone, Serialize)]
+pub struct AsWritten {
+    /// the first 7 characters of the commit
+    pub commit: String,
+    pub path: String,
+    /// where the stop was at that commit
+    pub lines: [u32; 2],
+    pub code: Vec<String>,
+    /// the lit lines, as ranges of file lines
+    pub lit: Vec<[u32; 2]>,
+}
+
+impl AsWritten {
+    /// `as written at 8a1c2e4: app/inventory.py:12-15`, then every line with its number, the lit ones starting with `>`.
+    fn text(&self) -> String {
+        let [first, last] = self.lines;
+        let place = if first == last {
+            format!("{}:{first}", self.path)
+        } else {
+            format!("{}:{first}-{last}", self.path)
+        };
+        let mut text = format!("      as written at {}: {place}\n", self.commit);
+        let width = last.to_string().len();
+        for (n, line) in self.code.iter().enumerate() {
+            let number = first + n as u32;
+            let lit = self.lit.iter().any(|[a, b]| (*a..=*b).contains(&number));
+            let row = format!(
+                "      {} {number:>width$}  {line}",
+                if lit { '>' } else { ' ' }
+            );
+            text.push_str(row.trim_end());
+            text.push('\n');
+        }
+        text
+    }
 }
 
 /// What a check said of the whole tour, and where the answer came from.
@@ -200,6 +247,9 @@ pub struct TourView {
     pub pinned: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pin: Option<String>,
+    /// for a pinned tour, once git was asked: whether the pinned commit is in this repository
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pin_in_repository: Option<bool>,
     /// with `--check`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<CheckInfo>,
@@ -247,6 +297,7 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
         text: stop.text.clone(),
         check: None,
         now: None,
+        as_written: None,
         blocks,
     }
 }
@@ -281,6 +332,7 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
             .as_ref()
             .filter(|_| tour.pinned())
             .map(|p| p.commit.to_string()),
+        pin_in_repository: None,
         check: None,
         stops,
         problems: tour
@@ -480,7 +532,7 @@ fn facts(tour: &Tour, view: &TourView) -> String {
     if let Some(author) = &view.author {
         facts.push(format!("by {author}"));
     }
-    facts.push(pin_words(tour));
+    facts.push(pin_words(tour, view.pin_in_repository != Some(false)));
     facts.join(" · ")
 }
 
@@ -620,6 +672,9 @@ pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
         row.truncate(row.trim_end().len());
         text.push_str(&row);
         text.push('\n');
+        if let Some(written) = &stop.as_written {
+            text.push_str(&written.text());
+        }
         if with_text {
             text.push_str(&stop_text(stop));
         }
@@ -699,6 +754,9 @@ pub struct ListRowView {
     pub pinned: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pin: Option<String>,
+    /// for a pinned tour: whether git has the pinned commit
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pin_in_repository: Option<bool>,
     /// the lines of the file that were skipped
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped: Option<usize>,
@@ -750,10 +808,12 @@ impl OnView {
 /// The rows of `list`, in the order the store gives them (newest first, what cannot be read last). The same id in both folders: the project's row,
 /// then the private one marked `(private copy)`.
 /// `checks` are the answers known (recorded and valid, or just made); a fresh one is said in the row only with `say_fresh` (`list --check`).
+/// `in_repository` says whether git has a pinned commit (`pin::has_commit`), asked only for a tour whose pin still holds.
 pub fn list_rows(
     rows: &[Row],
     checks: &BTreeMap<TourId, Recorded>,
     say_fresh: bool,
+    in_repository: &dyn Fn(&Commit) -> bool,
 ) -> Vec<ListRowView> {
     rows.iter()
         .map(|row| {
@@ -765,7 +825,11 @@ pub fn list_rows(
                 Ok(tour) => {
                     let view = tour_view(tour, row.place);
                     let recorded = checks.get(&row.id);
-                    let mut pins = pin_words(tour);
+                    let held = match &tour.pin {
+                        Some(pin) if tour.pinned() => in_repository(&pin.commit),
+                        _ => true,
+                    };
+                    let mut pins = pin_words(tour, held);
                     match recorded {
                         Some(r) if !r.fresh() => pins.push_str(" · changed"),
                         Some(_) if say_fresh => pins.push_str(" · fresh"),
@@ -786,6 +850,7 @@ pub fn list_rows(
                         steps: Some(view.steps),
                         pinned: Some(view.pinned),
                         pin: view.pin.clone(),
+                        pin_in_repository: view.pin.as_ref().map(|_| held),
                         skipped: (!view.problems.is_empty()).then_some(view.problems.len()),
                         check: recorded.map(|r| if r.fresh() { "fresh" } else { "changed" }),
                         on: None,
@@ -807,6 +872,7 @@ pub fn list_rows(
                     steps: None,
                     pinned: None,
                     pin: None,
+                    pin_in_repository: None,
                     skipped: None,
                     check: None,
                     on: None,
@@ -1022,7 +1088,7 @@ mod tests {
                 }),
             ),
         ];
-        let views = list_rows(&rows, &BTreeMap::new(), false);
+        let views = list_rows(&rows, &BTreeMap::new(), false, &|_| true);
         assert_eq!(
             list_text(&views),
             "checkout-order-7k2q  writing         1 stop  project                 not pinned (being written)  checkout_order   \"what happens when the payment times out\"\n\

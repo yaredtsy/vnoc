@@ -5,7 +5,7 @@
 //! folders, the lock, start, append, read, list, the state file. [`find`], [`add`] and [`check`] are the ones that look at the code, through the index they are
 //! given: they start no driver, and a recorded check is answered before any index exists. [`rebase`] and [`ids`] are the two that write to the code's
 //! side: V-NOC's own edit of a file tells the tours in it where their lines went, and `vnoc tour ids` gives a tour's nodes an ID. [`settings`] and [`finish`] say when
-//! the second happens by itself. No git here yet (`06-build-order.md`).
+//! the second happens by itself. [`pin`] holds every call of git: whether a tour can be pinned, the commit of its files, and its code as written at the pinned commit.
 
 pub mod add;
 pub mod body;
@@ -17,6 +17,7 @@ pub mod fold;
 pub mod hash;
 pub mod ids;
 pub mod on;
+pub mod pin;
 pub mod rebase;
 pub mod record;
 pub mod rules;

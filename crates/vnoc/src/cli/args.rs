@@ -330,8 +330,10 @@ pub enum TourCommand {
     /// Writes the end of the tour. Planned stops that were never written leave the route, and the answer says how many. Finishing a tour that is
     /// finished already changes nothing and says so (exit 0). Then, for the stops whose node has no ID, by the project's `[tours] ids` (see `vnoc
     /// tour settings`) and `--ids` / `--no-ids`: `always` writes them as `vnoc tour ids` does and names the changed files, `ask` (the start) prints
-    /// a line that starts with `ask the user`: pass it on to the user as a question, do not run the command yourself; `never` says nothing. It pins
-    /// nothing yet.
+    /// a line that starts with `ask the user`: pass it on to the user as a question, do not run the command yourself; `never` says nothing. Then it
+    /// pins the tour when every stop is as written and every file of it is committed; files that are not committed are committed by `[tours] commit` and
+    /// `--commit [-m]` / `--no-commit` (`ask`, the start: an `ask the user` line with the files; `never`: `not pinned` and the files). Any other reason is
+    /// said as `not pinned: <reason>`.
     Finish(TourFinishArgs),
     /// Takes a stop (with its blocks, and the stops nested in it) or a block (with its details) off the tour: `vnoc tour drop <tour> s3`, `s3.b2`.
     ///
@@ -360,7 +362,7 @@ pub enum TourCommand {
     ///
     /// With no flag, prints both settings and where each value comes from (the file, or the default `ask`). `--ids <when>` and `--commit <when>`
     /// (`always`, `ask`, `never`) change that key and keep everything else in the file: its comments, its other tables, its order. A value in the
-    /// file that is not one of the three is read as `ask` and said. `commit` is stored and shown; it does nothing until tours can be pinned.
+    /// file that is not one of the three is read as `ask` and said.
     Settings(TourSettingsArgs),
     /// Prints a tour as one JSON document, nested the way you read it: a stop's `stops` are the stops nested in it, a block's `blocks` its details. `--flat` prints V-NOC's own shape.
     ///
@@ -375,6 +377,16 @@ pub enum TourCommand {
     /// (the IDs, by the setting). `--replace <tour>` writes the document over that tour: a stop or block whose `id` the tour has keeps it; the others get new ids; one that
     /// is missing is gone. The old file goes to `.vnoc/local/trash/`. The tour is not pinned after it, and is refused while it is being written. The text comes from a file or `-`.
     Import(TourImportArgs),
+    /// Pins tours to the commit that holds their code; `--commit` commits the files that are not committed first. The user's command.
+    ///
+    /// `vnoc tour pin [<tour>…] [--commit [-m "…"]]`. A tour is pinned when every stop is as it was written, and every file of it is committed and in
+    /// HEAD: the `pin` record then holds HEAD, and a stop that changes later is shown as written, from that commit (nothing is checked out). With no
+    /// tour: every finished tour that is not pinned, or whose pinned commit is not reachable from HEAD; the ones that can be are pinned, the others listed with
+    /// their reason. `--commit`, when the only thing in the way is files that are not committed: `git add` the untracked ones, `git commit --only` exactly
+    /// those files, then pin; other staged files stay staged. It is refused when a stop is stale, in the middle of a merge or a rebase, and for a file git
+    /// ignores; a hook that fails the commit fails the command (exit 3), with its output. `-m` is the message (default `Code for the tour "<title>"`).
+    /// An agent runs `--commit` only when the user said yes.
+    Pin(TourPinArgs),
     /// Moves a finished tour's file to `.vnoc/tours/`, where `git` shares it with the project; `--private` moves it back. The user's command.
     ///
     /// The file moves as it is, byte for byte, and its state (where the reader is) stays. Refused while the tour is being written, when it is there
@@ -489,6 +501,31 @@ pub struct TourFinishArgs {
     /// Do not write IDs and do not offer to, for this call, whatever `[tours] ids` says.
     #[arg(long)]
     pub no_ids: bool,
+    /// Commit the tour's files that are not committed (exactly those, the whole of each) so the tour can be pinned, for this call, whatever `[tours] commit` says.
+    #[arg(long, conflicts_with = "no_commit")]
+    pub commit: bool,
+    /// The message of that commit. Default: `Code for the tour "<title>"`.
+    #[arg(short = 'm', long, value_name = "MESSAGE", requires = "commit")]
+    pub message: Option<String>,
+    /// Do not commit, whatever `[tours] commit` says: say `not pinned` and the files, with no command.
+    #[arg(long)]
+    pub no_commit: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourPinArgs {
+    #[arg(
+        value_name = "TOUR",
+        help = "the tours to pin: each an id, or the start of one (default: every finished tour not pinned)",
+        long_help = "The tours to pin: each an id, or the start of one. With none: every finished tour that is not pinned, or whose pinned commit is not reachable from HEAD."
+    )]
+    pub tours: Vec<String>,
+    /// Commit the tour's files that are not committed (exactly those, the whole of each), then pin. Only when that is the one thing in the way.
+    #[arg(long)]
+    pub commit: bool,
+    /// The message of that commit. Default: `Code for the tour "<title>"`.
+    #[arg(short = 'm', long, value_name = "MESSAGE", requires = "commit")]
+    pub message: Option<String>,
 }
 
 /// `always`, `ask` or `never`: what happens by itself (`[tours]` in `vnoc.toml`).
@@ -504,7 +541,7 @@ pub struct TourSettingsArgs {
     /// Write IDs for a tour's stops when it is finished: `always`, `ask` (the start: say it could be done) or `never`.
     #[arg(long, value_enum, value_name = "WHEN")]
     pub ids: Option<ChoiceArg>,
-    /// Commit a tour's files so it can be pinned: `always`, `ask` (the start) or `never`. It does nothing until tours can be pinned.
+    /// Commit a tour's files so it can be pinned: `always`, `ask` (the start: say it could be done) or `never`.
     #[arg(long, value_enum, value_name = "WHEN")]
     pub commit: Option<ChoiceArg>,
 }
@@ -519,6 +556,10 @@ pub struct TourShowArgs {
     /// Mark each stop and block that no longer matches the code: `changed`, `moved` or `gone`. It checks if the recorded answer no longer holds.
     #[arg(long)]
     pub check: bool,
+    /// Under each stop of a pinned tour that is changed or gone, print the code of the pinned commit (read with `git show`, nothing is checked out), the lit lines
+    /// marked with `>`. Checks as `--check` does. A tour that is not pinned is refused.
+    #[arg(long)]
+    pub as_written: bool,
 }
 
 #[derive(Debug, Args)]

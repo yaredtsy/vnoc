@@ -21,7 +21,7 @@ use super::add::marker_ids;
 use super::find::{find, place_of};
 use super::fold::{Tour, TourBlock, TourStop};
 use super::hash;
-use super::record::{Lines, StepId, StopId, TourId};
+use super::record::{Lines, Ordered, StepId, StopId, TourId, WhereAt};
 use super::store::{self, Part, StoreError};
 use super::time;
 use crate::index::{Index, Kind, Node};
@@ -400,6 +400,55 @@ impl Files<'_> {
 /// A real check of a tour: finds every written stop, reads each file once, compares, and says what it found and what it was true of. Nothing is
 /// written (see [`fresh`], which records). `tour_len` is the tour file's length from **before** it was read.
 pub fn check(code: &Code, read: Reader, tour: &Tour, tour_len: u64) -> Recorded {
+    check_placed(code, read, tour, tour_len).0
+}
+
+/// Where the tour's stops and blocks are **now**, by the check that found them: what a pin records as `where` (01 §8) and what its files are
+/// (the stops' own, by the path they are found at, which a stop found by its ID may not have been written with). Meaningful for the stops and blocks
+/// the check found fresh: a changed one is where the check could put it, a gone one is not here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Placed {
+    /// every written stop that was found and is not a folder: its path and the lines it has now, in reading order of the route
+    pub stops: Vec<(StopId, WhereAt)>,
+    /// every block of the stops found, in reading order
+    pub blocks: Vec<(StepId, Lines, StopId)>,
+}
+
+impl Placed {
+    /// The files of the stops: each path once, in the order the route meets them.
+    pub fn files(&self) -> Vec<RepoPath> {
+        let mut seen = BTreeSet::new();
+        self.stops
+            .iter()
+            .filter(|(_, at)| seen.insert(at.path.clone()))
+            .map(|(_, at)| at.path.clone())
+            .collect()
+    }
+
+    /// The pin's `where`: every stop (by its own id, its intro) and every block, with the path of its stop and its lines now.
+    pub fn places(&self) -> Ordered<StepId, WhereAt> {
+        let mut out = Vec::new();
+        for (stop, at) in &self.stops {
+            out.push((StepId::intro(*stop), at.clone()));
+            for (id, lines, owner) in &self.blocks {
+                if owner == stop {
+                    out.push((
+                        *id,
+                        WhereAt {
+                            path: at.path.clone(),
+                            lines: *lines,
+                        },
+                    ));
+                }
+            }
+        }
+        Ordered(out)
+    }
+}
+
+/// [`check`], and where the stops and blocks are now.
+pub fn check_placed(code: &Code, read: Reader, tour: &Tour, tour_len: u64) -> (Recorded, Placed) {
+    let mut placed = Placed::default();
     let mut files = Files {
         root: code.project.git_root().to_path_buf(),
         read,
@@ -418,6 +467,17 @@ pub fn check(code: &Code, read: Reader, tour: &Tour, tour_len: u64) -> Recorded 
                         Some(text) => {
                             let ids = marker_ids(code.index, node);
                             let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+                            let total = file_lines(&text).len() as u32;
+                            let (first, last) = node_range(node, total);
+                            if let Some(lines) = Lines::new(first, last) {
+                                placed.stops.push((
+                                    stop.id,
+                                    WhereAt {
+                                        path: path.clone(),
+                                        lines,
+                                    },
+                                ));
+                            }
                             compare(stop, node, &text, &ids)
                         }
                         None => StopCheck::gone(),
@@ -451,6 +511,9 @@ pub fn check(code: &Code, read: Reader, tour: &Tour, tour_len: u64) -> Recorded 
             );
         }
         for block in result.blocks {
+            if let Some(lines) = Lines::new(block.now.0, block.now.1) {
+                placed.blocks.push((block.id, lines, stop.id));
+            }
             match block.state {
                 BlockState::Fresh => {}
                 BlockState::Moved(lines) => {
@@ -467,7 +530,7 @@ pub fn check(code: &Code, read: Reader, tour: &Tour, tour_len: u64) -> Recorded 
         .into_iter()
         .map(|(path, seen)| (path.to_string(), seen.stat))
         .collect();
-    recorded
+    (recorded, placed)
 }
 
 /// Where an answer came from.
