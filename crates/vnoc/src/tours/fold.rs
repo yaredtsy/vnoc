@@ -7,6 +7,7 @@
 //! Where a rule needs "what is there now" (a stop's `from`, a block's `parent`, the stop a block belongs to), the replay looks at the tour **as it
 //! is when that line is read**, the way a log is read: a name that points at nothing yet, or at something dropped, puts the stop or block at the top.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use vnoc_domain::{NodeId, NodeKind, RepoPath};
@@ -109,9 +110,23 @@ pub struct Tour {
     /// the lines of the last `pin`, and of the last `stop`, `step` or `drop` (0: none)
     pin_line: usize,
     edit_line: usize,
+    /// The highest stop number, and for each stop the highest block number, **ever used** in the file: in a `plan`, `stop`, `step` or `drop` line,
+    /// and in the first line's `next`, also for what was dropped or replaced since. New ids count from these (01 §5: an id is never reused).
+    highest_stop: u32,
+    highest_blocks: BTreeMap<StopId, u32>,
 }
 
 impl Tour {
+    /// The highest stop number ever used in this tour's file (0: none).
+    pub fn highest_stop(&self) -> u32 {
+        self.highest_stop
+    }
+
+    /// The highest block number ever used under this stop, at any depth (0: none).
+    pub fn highest_block(&self, stop: StopId) -> u32 {
+        self.highest_blocks.get(&stop).copied().unwrap_or(0)
+    }
+
     /// The last `pin` comes after every `stop`, `step` and `drop`.
     pub fn pinned(&self) -> bool {
         self.pin.is_some() && self.pin_line > self.edit_line
@@ -217,6 +232,9 @@ pub fn fold(text: &str) -> Result<Tour, Unreadable> {
         });
     };
     let first = head(first)?;
+    let (highest_stop, highest_blocks) = first.next.as_ref().map_or((0, BTreeMap::new()), |next| {
+        (next.stop, next.blocks.clone())
+    });
     let mut replay = Replay {
         tour: Tour {
             id: first.id,
@@ -232,6 +250,8 @@ pub fn fold(text: &str) -> Result<Tour, Unreadable> {
             problems: Vec::new(),
             pin_line: 0,
             edit_line: 0,
+            highest_stop,
+            highest_blocks,
         },
         flow: State::Writing,
         finished: false,
@@ -262,7 +282,29 @@ impl Replay {
         self.tour.problems.push(Problem { line, why });
     }
 
+    /// Remembers the numbers a line uses, whether or not the line then changes anything (a block of a stop that is not there is a problem, and its
+    /// number is still used).
+    fn note_used(&mut self, record: &Record) {
+        let tour = &mut self.tour;
+        let mut stop = |id: StopId| tour.highest_stop = tour.highest_stop.max(id.number());
+        match record {
+            Record::Plan(plan) => plan.stops.iter().for_each(|s| stop(s.id)),
+            Record::Stop(record) => stop(record.id),
+            Record::Step(record) => stop(record.id.stop()),
+            Record::Drop(record) => stop(record.id.stop()),
+            _ => {}
+        }
+        if let Record::Step(StepRecord { id, .. }) | Record::Drop(super::record::DropRecord { id }) =
+            record
+            && let Some(block) = id.block_number()
+        {
+            let highest = tour.highest_blocks.entry(id.stop()).or_insert(0);
+            *highest = (*highest).max(block);
+        }
+    }
+
     fn apply(&mut self, n: usize, record: Record) {
+        self.note_used(&record);
         match record {
             Record::Tour(_) => self.problem(n, "a `tour` record after the first line".to_string()),
             Record::Meta(meta) => {

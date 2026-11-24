@@ -5,7 +5,7 @@
 
 pub(crate) mod atomic;
 mod doc_text;
-mod layout;
+pub(crate) mod layout;
 mod lock;
 mod read;
 mod tags;
@@ -19,7 +19,7 @@ use toml_edit::{DocumentMut, value};
 use vnoc_domain::{LocationKey, NodeId, NodeToml};
 
 pub use doc_text::{DocStats, DocText, DocTexts};
-pub use lock::{DEFAULT_WAIT, LockError, WriteLock};
+pub use lock::{DEFAULT_WAIT, LockError, ToursLock, ToursLockError, WriteLock};
 pub(crate) use read::after_frontmatter;
 pub use read::{DocInfo, Frontmatter, LoadProblem, LoadReport, NodeRecord, frontmatter};
 pub use tags::{

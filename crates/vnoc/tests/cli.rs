@@ -6284,3 +6284,88 @@ fn an_empty_project_names_each_drivers_extensions() {
         assert_eq!(driver["state"], "running");
     }
 }
+
+// ------------------------------------------------------------------------------------------------------------------ tours (TR3)
+
+/// A project with tours in it prints what the same project prints without them: `status`, `tree` and `check` are the same and exit the same
+/// (TR0 check 1, as a test; the sample is a fixture with problems on purpose, so `check` exits `1` in both: what holds is "the same"), and the
+/// three files a tour leaves (the project's tour, the private one, a state file) are byte for byte as they were.
+#[test]
+fn tours_on_disk_change_nothing_the_older_commands_print_and_are_not_touched() {
+    use vnoc::tours::record::{Detail, EndRecord, Record};
+    use vnoc::tours::store::{Located, Part, StartParams, append, locate, start, write_state_part};
+
+    let plain = sample_copy("tours-plain");
+    let with = sample_copy("tours-with");
+    let vnoc_root = with.join(".vnoc");
+    let tour = |title: &str| StartParams {
+        title: title.to_string(),
+        question: Some("what happens here".to_string()),
+        author: Some("claude-code".to_string()),
+        detail: Detail::Normal,
+    };
+    let end = || {
+        Record::End(EndRecord {
+            at: "2026-11-23T18:47:31Z".to_string(),
+        })
+    };
+
+    // a private tour, as `start` leaves it
+    let private = start(&with, tour("a private tour")).unwrap();
+    assert!(!private.created_vnoc, "the sample has its .vnoc/");
+    append(&vnoc_root, &private.id, &[end()]).unwrap();
+    // a project tour: started, then moved to the project's folder with the same name (sharing it)
+    let shared = start(&with, tour("a shared tour")).unwrap();
+    append(&vnoc_root, &shared.id, &[end()]).unwrap();
+    std::fs::create_dir_all(vnoc_root.join("tours")).unwrap();
+    let shared_path = vnoc_root.join("tours").join(format!("{}.jsonl", shared.id));
+    std::fs::rename(&shared.path, &shared_path).unwrap();
+    assert_eq!(
+        locate(&vnoc_root, &shared.id),
+        Located::Project(shared_path.clone())
+    );
+    // the state file of one of them
+    write_state_part(
+        &vnoc_root,
+        &shared.id,
+        Part::Place,
+        json!({"at": "cover", "by": "reader"}),
+    )
+    .unwrap();
+    let state_path = vnoc_root
+        .join("local/tour-state")
+        .join(format!("{}.json", shared.id));
+    let files = [&private.path, &shared_path, &state_path];
+    for file in files {
+        assert!(file.is_file(), "{}", file.display());
+    }
+    let before: Vec<Vec<u8>> = files.iter().map(|f| std::fs::read(f).unwrap()).collect();
+
+    // what a command prints of the root: its path, and (`tree`) its folder's name
+    let unrooted = |bytes: &[u8], root: &Path| {
+        let name = root.file_name().unwrap().to_str().unwrap();
+        without_root(&text(bytes), root).replace(name, "<root>")
+    };
+    for args in [&["status"][..], &["tree"], &["check"]] {
+        let without = run(vnoc(&plain, args));
+        let within = run(vnoc(&with, args));
+        assert_eq!(code(&within), code(&without), "{args:?}: the exit code");
+        assert_eq!(
+            unrooted(&within.stdout, &with),
+            unrooted(&without.stdout, &plain),
+            "{args:?}: standard output"
+        );
+        assert_eq!(
+            unrooted(&within.stderr, &with),
+            unrooted(&without.stderr, &plain),
+            "{args:?}: standard error"
+        );
+        assert!(!within.stdout.is_empty(), "{args:?} printed something");
+    }
+
+    let after: Vec<Vec<u8>> = files.iter().map(|f| std::fs::read(f).unwrap()).collect();
+    assert_eq!(
+        before, after,
+        "the tours and the state file are byte for byte as they were"
+    );
+}
