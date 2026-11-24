@@ -1528,6 +1528,96 @@ mod tests {
         assert!(tour.unwrap_err().why.contains("first line"));
     }
 
+    /// A tour file by hand: the first line, then a stop and a block, with `extra` put into the stop and the block lines as they are written
+    /// (an unknown key), and `between` as a line of its own after the stop.
+    fn written_by_hand(id: &str, extra: &str, between: Option<&str>) -> String {
+        let mut text = format!(
+            r#"{{"type":"tour","schema":1,"id":"{id}","title":"T","at":"2026-11-23T18:40:02Z","detail":"normal"}}"#
+        );
+        text.push('\n');
+        text.push_str(&format!(
+            r#"{{"type":"stop","id":"s1","path":"a.py","qualname":"f","kind":"function","lines":[1,9],"hash":"0000000000000001"{extra},"text":"intro"}}"#
+        ));
+        text.push('\n');
+        if let Some(line) = between {
+            text.push_str(line);
+            text.push('\n');
+        }
+        text.push_str(&format!(
+            r#"{{"type":"step","id":"s1.b1","stop":"s1","lines":[2,5],"hash":"0000000000000002"{extra},"title":"b","text":"block"}}"#
+        ));
+        text.push('\n');
+        text
+    }
+
+    #[test]
+    fn a_record_with_a_key_this_version_does_not_know_reads_as_if_the_key_were_not_there() {
+        // 01 §10 (rule 1 of the storage plan): readers ignore what they do not know
+        let root = project("unknown-key");
+        let vnoc_root = vnoc_of(&root);
+        put(
+            &vnoc_root,
+            Where::Private,
+            "t-0000",
+            &written_by_hand("t-0000", "", None),
+        );
+        put(
+            &vnoc_root,
+            Where::Private,
+            "t-0001",
+            &written_by_hand(
+                "t-0001",
+                r#","from_the_future":{"a":[1,2]},"mood":"calm""#,
+                None,
+            ),
+        );
+        // the same tour but for its id
+        let mut plain = read(&vnoc_root, &id("t-0000")).unwrap().1.unwrap();
+        let extra = read(&vnoc_root, &id("t-0001")).unwrap().1.unwrap();
+        plain.id = extra.id.clone();
+        assert_eq!(extra, plain);
+        assert!(extra.problems.is_empty(), "{:?}", extra.problems);
+        assert_eq!(extra.stops.len(), 1);
+        assert_eq!(extra.stops[0].blocks.len(), 1);
+    }
+
+    #[test]
+    fn a_record_of_a_type_this_version_does_not_know_is_skipped_with_no_problem() {
+        // 01 §10: a `type` this version does not know → skipped, silently (a newer V-NOC, or another plan)
+        let root = project("unknown-type");
+        let vnoc_root = vnoc_of(&root);
+        put(
+            &vnoc_root,
+            Where::Private,
+            "t-0000",
+            &written_by_hand("t-0000", "", None),
+        );
+        put(
+            &vnoc_root,
+            Where::Private,
+            "t-0001",
+            &written_by_hand(
+                "t-0001",
+                "",
+                Some(r#"{"type":"reaction","id":"r1","stop":"s1","emoji":"+1"}"#),
+            ),
+        );
+        let plain = read(&vnoc_root, &id("t-0000")).unwrap().1.unwrap();
+        let skipped = read(&vnoc_root, &id("t-0001")).unwrap().1.unwrap();
+        // everything a reader shows is the same (the tour keeps one count of file lines, which the skipped line is one of)
+        assert_eq!(skipped.stops, plain.stops);
+        assert_eq!(skipped.state, plain.state);
+        assert_eq!(skipped.title, plain.title);
+        assert!(skipped.problems.is_empty(), "{:?}", skipped.problems);
+        // and an append after it keeps it where it is (a writer does not touch what it does not know)
+        append(&vnoc_root, &id("t-0001"), &[halt()]).unwrap();
+        let text =
+            fs::read_to_string(layout::local_tours_dir(&vnoc_root).join("t-0001.jsonl")).unwrap();
+        assert!(text.contains(r#""type":"reaction""#), "{text}");
+        let after = read(&vnoc_root, &id("t-0001")).unwrap().1.unwrap();
+        assert!(after.problems.is_empty(), "{:?}", after.problems);
+    }
+
     #[test]
     fn a_file_over_1_mb_reads_its_first_mb_and_says_so_once() {
         let root = project("big-read");
