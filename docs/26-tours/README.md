@@ -171,7 +171,7 @@ number.
 | 5 | A node folder with `node.toml` and no doc: the tree, the doc counts, `vnoc check`, Needs Attention | TR0 | D6: whether `vnoc tour ids` can use `ensure_node` as it is |
 | 6 | Git, from Rust: **[measure]** `rev-parse HEAD`, `status --porcelain -z -- <12 paths>`, `show <commit>:<path>`; in a worktree; with no commit; with no `git`; a commit that is not in the repository; `commit --only -- <paths>` with other files staged, with an untracked file among the paths, with a failing pre-commit hook | TR0 | D19 |
 | 7 | A file's size and changed-time as "it did not change": the time's resolution on macOS, Linux, Windows; a file changed twice within one tick | TR0 | D8: whether the size and time are enough, or a hash of the file is recorded too |
-| 8 | **[measure]** replaying and checking a tour of 40 stops and 100 blocks over 12 files; the same with a recorded answer (12 `stat`s) | TR5 | D8 |
+| 8 | replaying and checking a tour of 40 stops and 100 blocks over 12 files; the same with a recorded answer. **Measured in TR5** (macOS, release, median of 9): replay 348 µs; a real check 626 µs (+ 60 µs for the tree); a valid record 45 µs. Nothing about a check needs more than the state file | TR5 | D8 |
 | 9 | An agent's permission prompts: with the allow rules of ask 4, does Claude Code run a heredoc `vnoc tour add … <<'EOF'` without asking? Codex? | TR13 | whether the text goes through standard input or a temp file |
 | 10 | Does a second skill trigger on "walk me through …" more often than a section in the `vnoc` skill? | TR14 | D13 |
 | 11 | `.vnoc/` above the opened folder: a tour written, or a place moved, by the command is not seen by the watcher | TR15 | a 2-second re-read of the open tour |

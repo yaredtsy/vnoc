@@ -173,6 +173,7 @@ four.
 | **`step`** | `add`, `import` | `id` · `stop` · `parent`? · `lines` · `hash` · `title` · `text` | one **block** of a stop. `parent` is the block it is a detail of; absent at the top of the stop. An id the stop already has replaces that block **in place**; its details stay under it. A `step` whose stop is not written (planned, dropped, or never there) is a problem line |
 | **`drop`** | `drop` | `id` | a stop (with its blocks and the stops nested in it) or a block (with its details) is off the tour |
 | **`ids`** | `ids` | `nodes`: stop id → node ID | these stops' nodes now have an ID (§6). It becomes the stop's `node` |
+| **`rebase`** | V-NOC, when it edits a file itself (an ID line: `vnoc tour ids`, attach, write-ID, repair) | `steps`: stop or block id → `{ lines, hash }` | these stops and blocks were fresh just before V-NOC's own edit; this is where they are now and what they hash to (§7). Replay replaces their `lines` and `hash`. It does not undo a pin: the pin's `where` still names the code as it was |
 | **`pin`** | `finish`, `pin` | `commit` · `at` · `where`: stop or block id → `[path, first, last]` | the tour is pinned (§8): every stop's lines are in this commit, at these places. It holds until a later `stop`, `step` or `drop` |
 | **`halt`** | the core, for the Stop button | — | the reader asked the agent to stop |
 | **`halted`** | the core, when it refuses an agent's write because of a `halt` | — | the agent has been told. *stopping* becomes *stopped* |
@@ -265,6 +266,14 @@ Left out of every hash, so that V-NOC's own writing never makes a tour stale:
 | the line end (`\r\n` or `\n`) | a checkout on Windows must not change every hash. Lines are split as `source.rs` splits them |
 | white space at the end of a line | a formatter's or an editor's doing, never a change of meaning |
 | **a line that holds an ID marker**: a line containing the ID text of the def itself or of a def inside its lines (`Def.id`), or the file's `FileID` | `vnoc tour ids`, or attaching a doc, adds an `ID:` line inside the function. Without this rule, giving a tour IDs would mark that tour as changed. **[check]** TR0: that "contains the ID text" finds exactly the marker line in Python and in Bend. **Answered (README §7, TR0 check 4): yes, one line each, in both; the nested rule shown on Python only** |
+
+**V-NOC's own edits never make a fresh stop stale** (TR5's finding). Leaving the marker line out is not always enough: attaching to a
+Python function whose docstring is one line (`"""Charge once."""`) rewrites it into three (the text, a blank line, `ID: …`), so the
+first line itself changes. A rule about docstrings in the hash would be one language's rule in a language-free module. Instead, every
+V-NOC writer of a marker knows the file before and after its edit, and calls `tours::rebase(path, before, after)`: for each tour with a
+stop in that file, each stop and block **that was fresh against `before`** gets its lines and hash against `after`, in one `rebase`
+record. A stop that was already changed stays changed: a rebase never hides an edit someone else made. The writers hold the project's
+write lock and then take the tours lock, never the other way round.
 
 Everything else counts: a comment, a renamed variable, a changed indent. A tour is text **about** these lines; it is honest to say they
 are not the same lines any more, and to let the reader judge (or, when the tour is pinned, to show the lines it was about: §8).

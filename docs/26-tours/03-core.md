@@ -253,6 +253,7 @@ crates/vnoc/src/tours/
 ├── pin.rs        can_pin, make, commit_files, as_written; every call of git
 ├── settings.rs   [tours] in vnoc.toml: read (with the defaults), change one key (toml_edit)                 
 ├── finish.rs     end, then by the settings and the flags: the IDs, the pin (02 §5)
+├── rebase.rs     after V-NOC's own edit of a file: new lines and hashes for the stops and blocks that were fresh before (01 §7)
 ├── on.rs         the tours-on-a-node map
 ├── route.rs      a route from the call tree
 └── view.rs       Tour + check + place → what a command prints and a request answers

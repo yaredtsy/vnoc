@@ -142,7 +142,7 @@ Commit: `tours TR4: vnoc tour start, add, finish, list, show`.
 
 Tests: a tour, then each edit and the answer: a line changed inside a detail (that detail changed, its block changed, the other block
 fresh, the stop changed); a line added above a block (moved, fresh); the function moved down the file (fresh); the function renamed,
-with an ID (fresh, the new name) and without (gone); the file deleted (gone), then put back (fresh again: the record was not valid);
+with an ID (found under the new name, and changed: the `def` line is in the stop's hash; blocks that do not hold it stay fresh) and without (gone); the file deleted (gone), then put back (fresh again: the record was not valid);
 two equal runs of lines in one function (a block that cannot be placed is changed, not guessed). The record: `check` twice reads the
 source files once (a counter in the reader); touching a file of the tour reads again; touching another file does not; `--again` reads;
 a new stop added makes the record invalid. `--on` a function, a class, a file, a folder. **[measure]** replay, check, and the recorded
@@ -171,12 +171,13 @@ Commit: `tours TR6: replace, drop, edit, share, delete; a stopped tour refuses t
 |---|---|
 | `identity/attach.rs` | `ensure_node` split out of `attach` (the ID, the marker, `node.toml`); `attach` = `ensure_node` + `create_doc`. No behaviour change: the existing attach tests pass untouched. (22's PG2 plans the same split; whichever lands second builds on the first) |
 | `extension/src/attentionView.ts` | a Missing node with no docs: the tooltip *"It has no docs. Remove cleans it up."* instead of *"Its docs are kept."* (README §6 ask 7; only if the user keeps the pick) |
+| `tours/rebase.rs` | `rebase(vnoc_root, path, before, after)` ([`01`](01-on-disk.md) §7): every tour with a stop in `path`; the stops and blocks fresh against `before` get new lines and hashes against `after` (the slide of TR5's `compare`), one `rebase` record per tour; replay applies it (`fold.rs`). Called by `tour ids` and by every other writer of a marker: `identity::attach` (both sinks: `before` is the text the plan was made from, `after` that text with the planned edits applied, so the editor's sink needs no second read), `write_id`, `repair`. Lock order: the write lock, then the tours lock |
 | `tours/ids.rs`, `cli/tour.rs` | `tour ids <tour> [<stop>…]`: under the project's write lock, `ensure_node` for each stop's node with `EditSink::Disk`; one `ids` record; prints each changed file. Refused with `[ids] default = "none"` |
 | `tours/settings.rs`, `cli/tour.rs` | `[tours]` in `vnoc.toml` ([`01`](01-on-disk.md) §12): `read` with the defaults, an unknown value read as `"ask"` and reported once; `set` one key with `toml_edit`; `tour settings [--ids …] [--commit …]` |
 | `tours/finish.rs`, `cli/tour.rs` | `finish` after `end`, step 1 of [`02`](02-commands.md) §5: `ids` by the setting, `--ids`, `--no-ids`; the `ask the user` line |
 
 Tests: a tour of four stops, two with IDs already: two markers written, two files named, one `ids` record with four entries; the tour
-is still fresh after it (the marker line is left out of the hash, the blocks moved by one); rename one of the functions → found, fresh;
+is still fresh after it, on a function with no docstring (one line added) **and** on `retry_charge`, whose one-line docstring becomes three (the `rebase` record); `doc new` and `vnoc repair` on a function of the tour leave it fresh too; a stop that was changed before `ids` is still changed after it; rename one of the functions → found under its new name;
 `ids` twice writes nothing the second time; `[ids] default = "none"` → refused, nothing written; a folder stop gets a `.vnoc-id`; what
 TR0's check 5 found holds (`vnoc check` prints what it printed before, with the same exit code: the sample has two problems on purpose). The setting: `finish` with `ids` absent or `"ask"` writes nothing and prints the
 line (golden); `"always"` writes them; `"never"` prints nothing; `--ids` and `--no-ids` win over each; `ids = "sometimes"` is read as
