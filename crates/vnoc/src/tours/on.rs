@@ -8,8 +8,9 @@ use std::collections::BTreeMap;
 use vnoc_domain::{NodeId, NodeKind, RepoPath};
 
 use super::find::place_of;
-use super::fold::{Tour, TourStop};
+use super::fold::Tour;
 use super::record::{StopId, TourId};
+use super::store::Where;
 use crate::index::{Kind, Node};
 
 /// The node asked about: what a tree node says of itself.
@@ -60,8 +61,8 @@ pub enum How {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct On {
     pub tour: TourId,
-    /// the tour's place among the tours the map was made of
-    pub at: usize,
+    /// the folder of the tour's file: the same id can be in both (the private copy is its own row)
+    pub place: Where,
     pub how: How,
     /// stops inside the node besides the ones that are it (`starts here · 4 stops inside`)
     pub inside: usize,
@@ -71,54 +72,113 @@ pub struct On {
     pub of: usize,
 }
 
-type Hit = (usize, usize); // (tour index, stop index)
+/// What `list --on` says when the node is the root of the tree: every tour passes through it.
+pub const ROOT_IS_EVERY_TOURS: &str =
+    "the project's root folder is every tour's: name a folder in it";
 
-/// The three maps of §6, built from replayed tours.
-#[derive(Debug)]
-pub struct Map<'t> {
-    tours: Vec<&'t Tour>,
+/// A tour's file: its id and the folder it is in.
+pub type Key = (TourId, Where);
+
+/// What the map keeps of one stop: what the tour wrote, nothing of the code.
+#[derive(Debug, Clone)]
+struct Wrote {
+    id: StopId,
+    qualname: String,
+}
+
+/// One tour as the map has it: its stops in route order.
+#[derive(Debug, Clone)]
+struct Kept {
+    stops: Vec<Wrote>,
+}
+
+/// (tour, stop index in the tour)
+type Hit = (Key, usize);
+
+/// The three maps of §6, built from replayed tours. Owned, so the core can keep it: [`Map::set`] puts one tour in again when its file is replayed, and no
+/// other tour is touched.
+#[derive(Debug, Default)]
+pub struct Map {
+    tours: BTreeMap<Key, Kept>,
     by_id: BTreeMap<NodeId, Vec<Hit>>,
     /// `path::qualname#n`, for every stop
     by_name: BTreeMap<(String, String, u32), Vec<Hit>>,
     /// every stop by its path, sorted: a prefix walk finds "inside this file or folder"
     by_path: BTreeMap<String, Vec<Hit>>,
+    /// how many times a tour was put in: what the tests count
+    built: usize,
 }
 
-impl<'t> Map<'t> {
-    pub fn of(tours: &[&'t Tour]) -> Map<'t> {
-        let mut map = Map {
-            tours: tours.to_vec(),
-            by_id: BTreeMap::new(),
-            by_name: BTreeMap::new(),
-            by_path: BTreeMap::new(),
-        };
-        for (t, tour) in tours.iter().enumerate() {
-            for (s, stop) in tour.stops.iter().enumerate() {
-                if let Some(id) = stop.node {
-                    map.by_id.entry(id).or_default().push((t, s));
-                }
-                map.by_name
-                    .entry((
-                        stop.path.to_string(),
-                        stop.qualname.clone(),
-                        stop.occurrence,
-                    ))
-                    .or_default()
-                    .push((t, s));
-                map.by_path
-                    .entry(stop.path.to_string())
-                    .or_default()
-                    .push((t, s));
-            }
+impl Map {
+    /// The tours put in the order given.
+    pub fn of<'a>(tours: impl IntoIterator<Item = (Key, &'a Tour)>) -> Map {
+        let mut map = Map::default();
+        for (key, tour) in tours {
+            map.set(key, Some(tour));
         }
         map
     }
 
-    fn stop(&self, (t, s): Hit) -> &TourStop {
-        &self.tours[t].stops[s]
+    /// How many tours were put in since the map was made (`set` with a tour).
+    pub fn built(&self) -> usize {
+        self.built
     }
 
-    /// Every tour that passes through the node, in the order the tours were given.
+    /// Puts this tour in, or takes it out (`None`: it went, or cannot be read). What the tour had before is gone from all three maps.
+    pub fn set(&mut self, key: Key, tour: Option<&Tour>) {
+        if self.tours.remove(&key).is_some() {
+            for hits in self
+                .by_id
+                .values_mut()
+                .chain(self.by_name.values_mut())
+                .chain(self.by_path.values_mut())
+            {
+                hits.retain(|(k, _)| *k != key);
+            }
+            self.by_id.retain(|_, hits| !hits.is_empty());
+            self.by_name.retain(|_, hits| !hits.is_empty());
+            self.by_path.retain(|_, hits| !hits.is_empty());
+        }
+        let Some(tour) = tour else { return };
+        self.built += 1;
+        for (s, stop) in tour.stops.iter().enumerate() {
+            let hit = (key.clone(), s);
+            if let Some(id) = stop.node {
+                self.by_id.entry(id).or_default().push(hit.clone());
+            }
+            self.by_name
+                .entry((
+                    stop.path.to_string(),
+                    stop.qualname.clone(),
+                    stop.occurrence,
+                ))
+                .or_default()
+                .push(hit.clone());
+            self.by_path
+                .entry(stop.path.to_string())
+                .or_default()
+                .push(hit);
+        }
+        self.tours.insert(
+            key,
+            Kept {
+                stops: tour
+                    .stops
+                    .iter()
+                    .map(|s| Wrote {
+                        id: s.id,
+                        qualname: s.qualname.clone(),
+                    })
+                    .collect(),
+            },
+        );
+    }
+
+    fn stop(&self, (key, s): &Hit) -> &Wrote {
+        &self.tours[key].stops[*s]
+    }
+
+    /// Every tour that passes through the node, in the order of the tours' keys (the caller puts them in the order of its list).
     pub fn on(&self, query: &Query) -> Vec<On> {
         let mut direct: Vec<Hit> = Vec::new();
         let mut inside: Vec<Hit> = Vec::new();
@@ -127,21 +187,21 @@ impl<'t> Map<'t> {
                 let path = query.path.as_str();
                 for (key, hits) in &self.by_path {
                     for hit in hits {
-                        let stop = self.stop(*hit);
+                        let stop = self.stop(hit);
                         if key == path && stop.qualname.is_empty() {
-                            direct.push(*hit);
+                            direct.push(hit.clone());
                         } else if key == path || key.starts_with(&format!("{path}/")) {
-                            inside.push(*hit);
+                            inside.push(hit.clone());
                         }
                     }
                 }
             }
             NodeKind::File => {
                 for hit in self.by_path.get(query.path.as_str()).into_iter().flatten() {
-                    if self.stop(*hit).qualname.is_empty() {
-                        direct.push(*hit);
+                    if self.stop(hit).qualname.is_empty() {
+                        direct.push(hit.clone());
                     } else {
-                        inside.push(*hit);
+                        inside.push(hit.clone());
                     }
                 }
                 self.also_by_id(query, &mut direct);
@@ -152,14 +212,14 @@ impl<'t> Map<'t> {
                     query.qualname.clone(),
                     query.occurrence,
                 );
-                direct.extend(self.by_name.get(&name).into_iter().flatten());
+                direct.extend(self.by_name.get(&name).into_iter().flatten().cloned());
                 self.also_by_id(query, &mut direct);
                 // a class: the names inside it
                 if query.kind == NodeKind::Class {
                     let prefix = format!("{}.", query.qualname);
                     for hit in self.by_path.get(query.path.as_str()).into_iter().flatten() {
-                        if self.stop(*hit).qualname.starts_with(&prefix) {
-                            inside.push(*hit);
+                        if self.stop(hit).qualname.starts_with(&prefix) {
+                            inside.push(hit.clone());
                         }
                     }
                 }
@@ -171,28 +231,28 @@ impl<'t> Map<'t> {
         inside.dedup();
         inside.retain(|hit| !direct.contains(hit));
 
-        let mut tours: Vec<usize> = direct.iter().chain(&inside).map(|(t, _)| *t).collect();
-        tours.sort_unstable();
-        tours.dedup();
-        tours
-            .into_iter()
-            .map(|t| {
-                let mine: Vec<usize> = direct.iter().filter(|h| h.0 == t).map(|h| h.1).collect();
-                let within: Vec<usize> = inside.iter().filter(|h| h.0 == t).map(|h| h.1).collect();
-                let tour = self.tours[t];
-                let how = match (mine.first(), within.is_empty()) {
-                    (Some(0), _) => How::Starts,
-                    (Some(_), _) => How::Stops(mine.iter().map(|s| s + 1).collect()),
-                    (None, _) => How::Inside(within.len()),
+        let mut keys: Vec<&Key> = direct.iter().chain(&inside).map(|(k, _)| k).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys.into_iter()
+            .map(|key| {
+                let mine: Vec<usize> = direct.iter().filter(|h| h.0 == *key).map(|h| h.1).collect();
+                let within: Vec<usize> =
+                    inside.iter().filter(|h| h.0 == *key).map(|h| h.1).collect();
+                let kept = &self.tours[key];
+                let how = match mine.first() {
+                    Some(0) => How::Starts,
+                    Some(_) => How::Stops(mine.iter().map(|s| s + 1).collect()),
+                    None => How::Inside(within.len()),
                 };
                 let first = mine.first().or(within.first()).copied().unwrap_or(0);
                 On {
-                    tour: tour.id.clone(),
-                    at: t,
+                    tour: key.0.clone(),
+                    place: key.1,
                     how,
                     inside: if mine.is_empty() { 0 } else { within.len() },
-                    first: tour.stops[first].id,
-                    of: tour.stops.len(),
+                    first: kept.stops[first].id,
+                    of: kept.stops.len(),
                 }
             })
             .collect()
@@ -201,7 +261,31 @@ impl<'t> Map<'t> {
     /// The stops that carry the node's ID, whatever name they were written with.
     fn also_by_id(&self, query: &Query, direct: &mut Vec<Hit>) {
         if let Some(id) = query.id {
-            direct.extend(self.by_id.get(&id).into_iter().flatten());
+            direct.extend(self.by_id.get(&id).into_iter().flatten().cloned());
+        }
+    }
+
+    /// How many tours pass through each node of the tree that any does (`vnoc/tourCounts`): the key is the tree's own, `Node::id`, the one `vnoc/structure`
+    /// gives a node. A node is counted as `list --on` counts it, so a class, a file or a folder with stops inside counts too; a tour in both folders counts
+    /// once. The root of the tree is not counted.
+    pub fn counts(&self, tree: &Node) -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::new();
+        if !self.tours.is_empty() {
+            self.count_below(tree, &mut counts);
+        }
+        counts
+    }
+
+    fn count_below(&self, node: &Node, counts: &mut BTreeMap<String, usize>) {
+        if let Some(query) = Query::of(node) {
+            let mut tours: Vec<TourId> = self.on(&query).into_iter().map(|on| on.tour).collect();
+            tours.dedup(); // the keys are sorted by id
+            if !tours.is_empty() {
+                counts.insert(node.id.clone(), tours.len());
+            }
+        }
+        for child in &node.children {
+            self.count_below(child, counts);
         }
     }
 }
@@ -264,6 +348,10 @@ mod tests {
         }
     }
 
+    fn map_of(tours: &[&Tour]) -> Map {
+        Map::of(tours.iter().map(|t| ((t.id.clone(), Where::Private), *t)))
+    }
+
     fn said(map: &Map, q: &Query) -> Vec<(String, String)> {
         map.on(q)
             .iter()
@@ -302,7 +390,7 @@ mod tests {
                 stop(2, "x.py", "helper", "function", ""),
             ],
         );
-        let map = Map::of(&[&a, &b]);
+        let map = map_of(&[&a, &b]);
         assert_eq!(
             said(&map, &query("x.py", "run", NodeKind::Function, None)),
             pairs(&[("a-0000", "starts here")])
@@ -343,7 +431,7 @@ mod tests {
                 stop(2, "m.py", "Box.one", "function", ""),
             ],
         );
-        let map = Map::of(&[&a, &b]);
+        let map = map_of(&[&a, &b]);
         let class = query("m.py", "Box", NodeKind::Class, None);
         assert_eq!(
             said(&map, &class),
@@ -365,7 +453,7 @@ mod tests {
                 .map(|n| stop(n, "m.py", "f", "function", ""))
                 .collect::<Vec<_>>(),
         );
-        let map = Map::of(&[&many]);
+        let map = map_of(&[&many]);
         assert_eq!(
             said(&map, &query("m.py", "f", NodeKind::Function, None)),
             pairs(&[("c-0000", "starts here")])
@@ -379,7 +467,7 @@ mod tests {
                 stop(4, "m.py", "f", "function", ""),
             ],
         );
-        let map = Map::of(&[&spread]);
+        let map = map_of(&[&spread]);
         assert_eq!(
             said(&map, &query("m.py", "f", NodeKind::Function, None)),
             pairs(&[("d-0000", "stops 2, 3 and 4 of 4")])
@@ -399,7 +487,7 @@ mod tests {
             ],
         );
         let b = tour("b-0000", &[stop(1, "app/m.py", "run", "function", "")]);
-        let map = Map::of(&[&a, &b]);
+        let map = map_of(&[&a, &b]);
         assert_eq!(
             said(&map, &query("app/m.py", "", NodeKind::File, None)),
             pairs(&[
@@ -431,10 +519,32 @@ mod tests {
                     .to_string(),
             ],
         );
-        let map = Map::of(&[&a]);
+        let map = map_of(&[&a]);
         let mut q = query("x.py", "f", NodeKind::Function, None);
         assert!(map.on(&q).is_empty());
         q.occurrence = 2;
         assert_eq!(said(&map, &q), pairs(&[("a-0000", "starts here")]));
+    }
+
+    #[test]
+    fn putting_one_tour_in_again_replaces_that_tour_and_touches_no_other() {
+        let a = tour("a-0000", &[stop(1, "x.py", "run", "function", "")]);
+        let b = tour("b-0000", &[stop(1, "x.py", "run", "function", "")]);
+        let mut map = map_of(&[&a, &b]);
+        assert_eq!(map.built(), 2);
+        let run = query("x.py", "run", NodeKind::Function, None);
+        assert_eq!(map.on(&run).len(), 2);
+        // `b` is replayed and has another function now; `a` is not looked at again
+        let b2 = tour("b-0000", &[stop(1, "x.py", "other", "function", "")]);
+        map.set((b2.id.clone(), Where::Private), Some(&b2));
+        assert_eq!(map.built(), 3);
+        assert_eq!(said(&map, &run), pairs(&[("a-0000", "starts here")]));
+        let other = query("x.py", "other", NodeKind::Function, None);
+        assert_eq!(said(&map, &other), pairs(&[("b-0000", "starts here")]));
+        // it went: nothing of it is left in any of the three
+        map.set((b2.id.clone(), Where::Private), None);
+        assert!(map.on(&other).is_empty());
+        assert!(map.by_path.values().flatten().all(|(k, _)| k.0 != b2.id));
+        assert_eq!(map.built(), 3);
     }
 }

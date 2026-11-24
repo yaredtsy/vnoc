@@ -36,6 +36,23 @@ pub fn find<'t>(
     )
 }
 
+/// The node `text` names, in `tree`: the tree's own key (`Node::id`, what `vnoc/structure` gives a node), else any reference `node_ref` reads (`path::qualname`,
+/// a path, an ID). The page asks about the nodes it draws, so it sends their keys; a reference is for a caller that has only that. `None` when no node is named.
+pub fn node_named<'t>(
+    index: &Index,
+    project: &Project,
+    tree: &'t Node,
+    text: &str,
+) -> Option<&'t Node> {
+    if let Some(node) = tree.find(text) {
+        return Some(node);
+    }
+    match index.resolve_ref(project, &crate::node_ref::parse(text)?) {
+        Found::Node(id) => tree.find(&id),
+        _ => None,
+    }
+}
+
 /// `path` is a repo path; the index is asked in the opened folder's terms, and a path outside the opened folder is in no tree.
 fn by_name<'t>(
     index: &Index,

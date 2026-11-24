@@ -43,8 +43,10 @@ use crate::protocol::{
 use crate::protocol::{Locate, LocateParams, Located};
 use crate::search::{Prepared, answer, prepare};
 use crate::tours::check::{Answer, Mode};
+use crate::tours::find;
+use crate::tours::on::{self, Query};
 use crate::tours::place::Move;
-use crate::tours::record::TourId;
+use crate::tours::record::{StopId, TourId};
 use crate::tours::serve::{self, Cannot, GoError, Touch, Tours};
 use crate::tours::store::{self, Halt, StoreError};
 use crate::tours::view;
@@ -238,6 +240,8 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<protocol::TourGo, _>(tour_go)
         .request::<protocol::TourOpen, _>(tour_open)
         .request::<protocol::TourHalt, _>(tour_halt)
+        .request::<protocol::TourCode, _>(tour_code)
+        .request::<protocol::TourCounts, _>(tour_counts)
         .notification::<FilesChanged>(files_changed)
         .notification::<Rebuild>(|core, _| {
             core.spawn_update(Work::Everything);
@@ -997,6 +1001,17 @@ async fn answers_for(
     }
 }
 
+/// The node `text` names, as the question `list --on` asks of the map. Waits for the first build. The root of the tree is every tour's: refused in the
+/// command's words.
+async fn node_query(state: &Arc<State>, text: &str) -> Result<Query, ResponseError> {
+    let project = ready_project(state).await?;
+    let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+    let tree = index.tree(&project.name(), project.prefix());
+    let node = find::node_named(&index, project, &tree, text)
+        .ok_or_else(|| bad_params(format!("no node is named `{text}`")))?;
+    Query::of(node).ok_or_else(|| bad_params(on::ROOT_IS_EVERY_TOURS))
+}
+
 /// `vnoc/tours`: the rows of the list, newest first. The freshness of the rows named in `check` is asked for (and so, if need be, checked); the others say what the
 /// core remembers.
 fn tours(
@@ -1007,8 +1022,8 @@ fn tours(
     timed("tours", async move {
         let project = open_project(&state)?;
         let vnoc_root = store::vnoc_root(project.git_root());
+        let params = params.unwrap_or_default();
         let asked: Vec<TourId> = params
-            .unwrap_or_default()
             .check
             .iter()
             .map(|id| parse_tour(id))
@@ -1034,14 +1049,23 @@ fn tours(
                 known.insert(id, answer.recorded);
             }
         }
+        // the node, if one was asked for: the one thing here that needs the index; found by what the tree says of it
+        let query = match params.on {
+            Some(text) => Some(node_query(&state, &text).await?),
+            None => None,
+        };
         let shown = {
-            let state = state.clone();
+            let (state, rows) = (state.clone(), rows.clone());
             blocking(move || {
                 let project = state.project.get()?;
                 let root = store::vnoc_root(project.git_root());
-                Some(serve::list_rows(project, &rows, &known, true, &|id| {
+                let shown = serve::list_rows(project, &rows, &known, true, &|id| {
                     store::read_place(&root, id)
-                }))
+                });
+                Some(match &query {
+                    Some(query) => serve::rows_on(shown, &rows, &state.tours.on(query)),
+                    None => shown,
+                })
             })
             .await?
             .ok_or_else(|| internal("no folder is open"))?
@@ -1155,5 +1179,72 @@ fn tour_halt(
             .to_string(),
             state: view::state_word(tour.state).to_string(),
         })
+    })
+}
+
+/// `vnoc/tourCode`: one stop of a pinned tour as it was written; `null` when there is none to give (03 §5).
+fn tour_code(
+    core: &mut Core,
+    params: protocol::TourCodeParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourCode", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let stop = StopId::parse(&params.stop).map_err(bad_params)?;
+        let row = {
+            let (state, vnoc_root, id) = (state.clone(), vnoc_root.clone(), id.clone());
+            blocking(move || state.tours.row(&vnoc_root, &id)).await?
+        }
+        .ok_or_else(|| bad_params(StoreError::NotFound(id.clone())))?;
+        let tour = row.tour.as_ref().map_err(|e| {
+            bad_params(StoreError::Unreadable {
+                id: id.clone(),
+                why: e.why.clone(),
+                too_new: e.too_new,
+            })
+        })?;
+        let tour = tour.clone();
+        let code = blocking(move || {
+            let project = state.project.get()?;
+            Some(serve::stop_code(project, &tour, stop))
+        })
+        .await?
+        .ok_or_else(|| internal("no folder is open"))?
+        .map_err(bad_params)?;
+        serde_json::to_value(code).map_err(internal)
+    })
+}
+
+/// `vnoc/tourCounts`: how many tours pass through each node, by the tree's key. Waits for the first build; the map of nodes is the one `vnoc/tours { on }`
+/// asks, so nothing is replayed that was not.
+fn tour_counts(
+    core: &mut Core,
+    _ignored: serde_json::Value,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourCounts", async move {
+        let project = ready_project(&state).await?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        // the tours are looked at (`stat`s) before they are counted: one that was written by another process and not announced is counted too
+        {
+            let (state, vnoc_root) = (state.clone(), vnoc_root.clone());
+            blocking(move || state.tours.sync(&vnoc_root)).await?;
+        }
+        let counts = {
+            let state = state.clone();
+            blocking(move || {
+                let project = state.project.get()?;
+                let tree = {
+                    let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+                    index.tree(&project.name(), project.prefix())
+                };
+                Some(state.tours.counts(&tree))
+            })
+            .await?
+            .ok_or_else(|| internal("no folder is open"))?
+        };
+        Ok(serde_json::json!({ "counts": counts }))
     })
 }

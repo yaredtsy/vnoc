@@ -3252,10 +3252,7 @@ async fn list(global: &Global, args: &TourListArgs) -> Result<(), Failure> {
             Err(error) => return refused_with(global, "tour list", error),
         };
         let Some(query) = Query::of(node) else {
-            let error = NodeError::new(
-                "root",
-                "the project's root folder is every tour's: name a folder in it",
-            );
+            let error = NodeError::new("root", on::ROOT_IS_EVERY_TOURS);
             return refused_with(global, "tour list", error);
         };
         on_node = Some((node.location(), query));
@@ -3291,32 +3288,13 @@ async fn list(global: &Global, args: &TourListArgs) -> Result<(), Failure> {
 
     if let Some((_, query)) = &on_node {
         // by what the tours wrote: no check, no code read
-        let tours: Vec<&Tour> = listed
-            .tours
-            .iter()
-            .filter_map(|r| r.tour.as_ref().ok())
-            .collect();
-        let at_row: Vec<usize> = listed
-            .tours
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.tour.is_ok())
-            .map(|(i, _)| i)
-            .collect();
-        let found: BTreeMap<usize, on::On> = Map::of(&tours)
-            .on(query)
-            .into_iter()
-            .map(|on| (at_row[on.at], on))
-            .collect();
-        let kept: Vec<view::ListRowView> = rows
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, mut row)| {
-                row.on = Some(view::OnView::of(found.get(&i)?));
-                Some(row)
-            })
-            .collect();
-        rows = kept;
+        let map = Map::of(
+            listed
+                .tours
+                .iter()
+                .filter_map(|r| Some(((r.id.clone(), r.place), r.tour.as_ref().ok()?))),
+        );
+        rows = serve::rows_on(rows, &listed.tours, &map.on(query));
     }
     out::render(
         &Listed {

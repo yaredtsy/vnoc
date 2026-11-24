@@ -635,12 +635,18 @@ impl Request for CallTree {
 
 /// `vnoc/tours`: every tour, newest first, as the list draws it. `check` is the ids of the rows being drawn: each is asked for its freshness (the core's
 /// memory, the recorded check, a check: 03 §3), and a row not named says what the core already knows of it, or nothing.
+///
+/// `on` is a node: the tree's key for it (`Node::id`, what `vnoc/structure` gives), or any reference `vnoc tour list --on` takes that names it as plainly
+/// (`path::qualname`, a path, an ID; not relative to a current folder, a request has none). The answer is then only the tours that pass through that node, in the
+/// same order, each row with its `on` (`how`, `stops`, `inside`, `first`, `of`, `words`: line 2 of the row).
 pub enum Tours {}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ToursParams {
     #[serde(default)]
     pub check: Vec<String>,
+    #[serde(default)]
+    pub on: Option<String>,
 }
 
 impl Request for Tours {
@@ -694,6 +700,36 @@ impl Request for TourOpen {
     type Params = TourOpenParams;
     type Result = crate::tours::place::Place;
     const METHOD: &'static str = "vnoc/tourOpen";
+}
+
+/// `vnoc/tourCode`: one stop's code as it was written, for a pinned tour whose commit this repository has: `{ commit, path, lines, code, lit }` (what
+/// `vnoc tour show --as-written` gives a stop), for any stop of it, changed or not. `null` when the tour is not pinned, the commit is missing, or the stop
+/// is planned. A stop the tour does not have is an `INVALID_PARAMS` answer with the sentence `vnoc tour go` says.
+pub enum TourCode {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourCodeParams {
+    pub id: String,
+    /// `s3`
+    pub stop: String,
+}
+
+impl Request for TourCode {
+    type Params = TourCodeParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourCode";
+}
+
+/// `vnoc/tourCounts`: how many tours (not stops) pass through each node that any does: `{ "counts": { "<node key>": n } }`. The key is the tree's own, the
+/// `id` `vnoc/structure` gives the node, so a page looks a node up without computing anything. A class, a file or a folder with stops inside counts when
+/// `vnoc tour list --on` lists the tour for it. It is a request of its own and not a field of `Node`: a tour write must not need a new revision of the structure
+/// (D12). Waits for the first build. Asked again after `vnoc/toursChanged`.
+pub enum TourCounts {}
+
+impl Request for TourCounts {
+    type Params = serde_json::Value;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourCounts";
 }
 
 /// `vnoc/tourHalt`: the reader pressed Stop. Writes `halt` (what `vnoc tour halt` writes); the agent's next write is refused.

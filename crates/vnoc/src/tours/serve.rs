@@ -10,6 +10,7 @@ use std::time::SystemTime;
 
 use super::add::{block_of, did_you_mean_stops};
 use super::check::{self, Answer, Code, Mode, Recorded, Source, StopState};
+use super::on::{self, On, Query};
 use super::place::{self, At, By, Move, Place};
 use super::record::{Commit, StepId, StopId};
 use super::store::{self, Halt, Row, StoreError, Where};
@@ -109,14 +110,15 @@ pub fn short_commit(commit: &Commit) -> String {
     commit.as_str()[..7].to_string()
 }
 
-/// Puts the code of the pinned commit on each stop that a check found changed or gone (`show --as-written`, 03 §5): the stop's lines as the pin's
-/// `where` has them, and the lines its blocks light there, exactly (a stop with no blocks lights all of it). A stop the commit cannot give (it is not
-/// in this repository, or has no such file) is shown as one that is not pinned is.
-pub fn written_code(
+/// One stop's code as the pinned commit has it (03 §5): the stop's lines as the pin's `where` has them, and the lines its blocks light there, exactly
+/// (a stop with no blocks lights all of it). `None` when the pin has no place for the stop (a folder has none), or the commit cannot give the file: it is not
+/// in this repository, or has no such file.
+pub fn as_written_of(
     project: &Project,
     pin: &crate::tours::record::PinRecord,
-    view: &mut view::TourView,
-) {
+    stop: StopId,
+    blocks: &[StepId],
+) -> Option<view::AsWritten> {
     let at = |step: StepId| {
         pin.places
             .0
@@ -124,6 +126,46 @@ pub fn written_code(
             .find(|(id, _)| *id == step)
             .map(|(_, w)| w)
     };
+    let place = at(StepId::intro(stop))?;
+    let lit: Vec<[u32; 2]> = if blocks.is_empty() {
+        vec![[place.lines.first, place.lines.last]]
+    } else {
+        blocks
+            .iter()
+            .filter_map(|b| at(*b))
+            .map(|w| [w.lines.first, w.lines.last])
+            .collect()
+    };
+    let code = pin::as_written(
+        project,
+        pin.commit.as_str(),
+        place.path.as_str(),
+        place.lines.first,
+        place.lines.last,
+    )?;
+    Some(view::AsWritten {
+        commit: short_commit(&pin.commit),
+        path: place.path.to_string(),
+        lines: [place.lines.first, place.lines.last],
+        code,
+        lit,
+    })
+}
+
+fn block_ids(stop: &view::StopView) -> Vec<StepId> {
+    stop.blocks
+        .iter()
+        .filter_map(|b| b.id.parse::<StepId>().ok())
+        .collect()
+}
+
+/// Puts the code of the pinned commit on each stop that a check found changed or gone (`show --as-written`, 03 §5): [`as_written_of`] for each. A stop the commit
+/// cannot give is shown as one that is not pinned is.
+pub fn written_code(
+    project: &Project,
+    pin: &crate::tours::record::PinRecord,
+    view: &mut view::TourView,
+) {
     for stop in &mut view.stops {
         if !matches!(stop.check, Some("changed" | "gone")) {
             continue;
@@ -131,34 +173,34 @@ pub fn written_code(
         let Ok(id) = stop.id.parse::<StopId>() else {
             continue;
         };
-        let Some(place) = at(StepId::intro(id)) else {
-            continue;
-        };
-        let lit: Vec<[u32; 2]> = if stop.blocks.is_empty() {
-            vec![[place.lines.first, place.lines.last]]
-        } else {
-            stop.blocks
-                .iter()
-                .filter_map(|b| b.id.parse::<StepId>().ok().and_then(at))
-                .map(|w| [w.lines.first, w.lines.last])
-                .collect()
-        };
-        if let Some(code) = pin::as_written(
-            project,
-            pin.commit.as_str(),
-            place.path.as_str(),
-            place.lines.first,
-            place.lines.last,
-        ) {
-            stop.as_written = Some(view::AsWritten {
-                commit: short_commit(&pin.commit),
-                path: place.path.to_string(),
-                lines: [place.lines.first, place.lines.last],
-                code,
-                lit,
-            });
-        }
+        stop.as_written = as_written_of(project, pin, id, &block_ids(stop));
     }
+}
+
+/// `vnoc/tourCode`: one stop's code as written, for any stop of a pinned tour, changed or not. `None` when the tour is not pinned, the commit is not in this
+/// repository, or the stop is planned (it has no code yet). A stop the tour does not have is [`GoError::NoSuch`], in the words `go` uses.
+pub fn stop_code(
+    project: &Project,
+    tour: &Tour,
+    stop: StopId,
+) -> Result<Option<view::AsWritten>, GoError> {
+    let Some(found) = tour.stop(stop) else {
+        return Err(no_such_stop(tour, stop));
+    };
+    let Some(pin) = tour.pin.as_ref().filter(|_| tour.pinned()) else {
+        return Ok(None);
+    };
+    if !found.written {
+        return Ok(None);
+    }
+    let shown = view::tour_view(tour, Where::Private);
+    let blocks = shown
+        .stops
+        .iter()
+        .find(|s| s.id == stop.to_string())
+        .map(block_ids)
+        .unwrap_or_default();
+    Ok(as_written_of(project, pin, stop, &blocks))
 }
 
 /// The lines `first..=last` (1-based) of a file of the project as it is now, split as everything here splits source. `None` when it cannot be read
@@ -390,6 +432,26 @@ pub fn show_view(
     shown
 }
 
+/// The rows of `list --on` and of `vnoc/tours { on }`: only the tours that pass through the node, in the order of `rows`, each with how (`on`). `tours` are the
+/// rows' own tours, one for one, and `found` is what the map said.
+pub fn rows_on<R: Borrow<Row>>(
+    rows: Vec<view::ListRowView>,
+    tours: &[R],
+    found: &[On],
+) -> Vec<view::ListRowView> {
+    rows.into_iter()
+        .zip(tours)
+        .filter_map(|(mut shown, row)| {
+            let row: &Row = row.borrow();
+            let on = found
+                .iter()
+                .find(|on| on.tour == row.id && on.place == row.place)?;
+            shown.on = Some(view::OnView::of(on));
+            Some(shown)
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------------------------------------------------------------------------ a move
 
 /// Why a move was not made.
@@ -428,6 +490,18 @@ pub struct Gone {
     pub nothing_to_go_back_to: bool,
 }
 
+/// A stop the tour does not have: what `go` says, and the stops near the one asked for.
+pub fn no_such_stop(tour: &Tour, stop: StopId) -> GoError {
+    GoError::NoSuch {
+        code: "no_stop",
+        said: format!("no stop {stop} in this tour"),
+        near: did_you_mean_stops(tour, stop)
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+    }
+}
+
 /// The tour as it is, or why it cannot be moved in.
 fn readable_tour(measured: &store::Measured, id: &TourId) -> Result<Tour, StoreError> {
     match &measured.tour {
@@ -450,14 +524,7 @@ pub fn go(vnoc_root: &Path, id: &TourId, wanted: Move, by: By) -> Result<Gone, G
         && !place::has_step(&tour, step)
     {
         return Err(match tour.stop(step.stop()) {
-            None => GoError::NoSuch {
-                code: "no_stop",
-                said: format!("no stop {} in this tour", step.stop()),
-                near: did_you_mean_stops(&tour, step.stop())
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-            },
+            None => no_such_stop(&tour, step.stop()),
             Some(stop) => GoError::NoSuch {
                 code: "no_block",
                 said: format!("no block {step} in this tour"),
@@ -578,6 +645,22 @@ struct Held {
     placed: BTreeMap<TourId, Place>,
     /// the checks (rung 3) made, for the tests
     checks: usize,
+    /// which tours pass through which node (03 §6): from the tours replayed, and put in again for one tour when that tour is replayed
+    on: on::Map,
+}
+
+impl Held {
+    /// A tour replayed: kept, and put in the map of nodes in place of what it was.
+    fn keep(&mut self, key: (TourId, Where), row: Arc<Row>, stamp: Option<Stamp>) {
+        self.on.set(key.clone(), row.tour.as_ref().ok());
+        self.kept.insert(key, Kept { row, stamp });
+    }
+
+    /// A tour that is not there any more.
+    fn forget(&mut self, key: &(TourId, Where)) {
+        self.kept.remove(key);
+        self.on.set(key.clone(), None);
+    }
 }
 
 /// What a question about freshness is asked of: the project, and the index when there is one (it is built after the editor says it is ready).
@@ -613,6 +696,22 @@ impl Tours {
         self.held.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The tours that pass through the node (03 §6), from what they wrote: no check, no code. In the order of the tours' keys; [`rows_on`] puts them in the
+    /// order of a list.
+    pub fn on(&self, query: &Query) -> Vec<On> {
+        self.held().on.on(query)
+    }
+
+    /// How many tours pass through each node of the tree that any does (`vnoc/tourCounts`): [`on::Map::counts`].
+    pub fn counts(&self, tree: &crate::index::Node) -> BTreeMap<String, usize> {
+        self.held().on.counts(tree)
+    }
+
+    /// How many times a tour was put in the map of nodes: what the tests count.
+    pub fn on_builds(&self) -> usize {
+        self.held().on.built()
+    }
+
     /// How many checks (rung 3) were made: what the tests count.
     pub fn checks_made(&self) -> usize {
         self.held().checks
@@ -629,13 +728,16 @@ impl Tours {
             .iter()
             .map(|(id, place, _)| (id.clone(), *place))
             .collect();
-        held.kept.retain(|key, _| {
-            let stays = present.contains(key);
-            if !stays {
-                changed.insert(key.0.clone());
-            }
-            stays
-        });
+        let gone: Vec<(TourId, Where)> = held
+            .kept
+            .keys()
+            .filter(|key| !present.contains(*key))
+            .cloned()
+            .collect();
+        for key in gone {
+            changed.insert(key.0.clone());
+            held.forget(&key);
+        }
         for (id, place, path) in scanned.files {
             let stamp = stamp_of(&path);
             let current = held
@@ -645,7 +747,7 @@ impl Tours {
             if !current {
                 changed.insert(id.clone());
                 let row = Arc::new(store::row_at(id.clone(), place, path));
-                held.kept.insert((id, place), Kept { row, stamp });
+                held.keep((id, place), row, stamp);
             }
         }
         for id in &changed {
@@ -669,12 +771,14 @@ impl Tours {
             }
         }
         let mut held = self.held();
-        held.kept.retain(|(kept, _), _| kept != id);
+        for place in [Where::Private, Where::Project] {
+            held.forget(&(id.clone(), place));
+        }
         held.answers.remove(id);
         for (place, path) in found {
             let stamp = stamp_of(&path);
             let row = Arc::new(store::row_at(id.clone(), place, path));
-            held.kept.insert((id.clone(), place), Kept { row, stamp });
+            held.keep((id.clone(), place), row, stamp);
         }
     }
 
@@ -683,7 +787,9 @@ impl Tours {
         let (place, path) = match store::locate(vnoc_root, id) {
             store::Located::None => {
                 let mut held = self.held();
-                held.kept.retain(|(kept, _), _| kept != id);
+                for place in [Where::Private, Where::Project] {
+                    held.forget(&(id.clone(), place));
+                }
                 held.answers.remove(id);
                 return None;
             }
@@ -702,13 +808,7 @@ impl Tours {
         }
         let row = Arc::new(store::row_at(id.clone(), place, path));
         held.answers.remove(id);
-        held.kept.insert(
-            (id.clone(), place),
-            Kept {
-                row: row.clone(),
-                stamp,
-            },
-        );
+        held.keep((id.clone(), place), row.clone(), stamp);
         Some(row)
     }
 
@@ -866,6 +966,7 @@ impl Tours {
 mod tests {
     use super::*;
     use crate::tours::record::{Bare, Record};
+    use vnoc_domain::{NodeKind, RepoPath};
 
     fn id(text: &str) -> TourId {
         TourId::parse(text).unwrap()
@@ -1034,5 +1135,80 @@ mod tests {
         assert_eq!(tours.remembered(std::slice::from_ref(&tour)).len(), 1);
         tours.replay(&root, &tour);
         assert!(tours.remembered(&[tour]).is_empty());
+    }
+
+    // ---- the map of nodes (03 §6)
+
+    fn tour_text(id: &str, qualnames: &[&str]) -> String {
+        let mut text = format!(
+            r#"{{"type":"tour","schema":1,"id":"{id}","title":"T","at":"x","detail":"normal"}}"#
+        );
+        for (n, q) in qualnames.iter().enumerate() {
+            text.push_str(&format!(
+                r#"
+{{"type":"stop","id":"s{}","path":"x.py","qualname":"{q}","kind":"function","text":"t"}}"#,
+                n + 1
+            ));
+        }
+        text.push('\n');
+        text
+    }
+
+    fn query(qualname: &str) -> Query {
+        Query {
+            id: None,
+            path: RepoPath::new("x.py").unwrap(),
+            qualname: qualname.to_string(),
+            occurrence: 1,
+            kind: NodeKind::Function,
+        }
+    }
+
+    #[test]
+    fn the_map_of_nodes_is_built_for_a_tour_when_it_is_replayed_and_for_no_request_that_changed_nothing()
+     {
+        let dir = vnoc_root("on");
+        let tours = layout::local_tours_dir(&dir);
+        std::fs::create_dir_all(&tours).unwrap();
+        let file = |id: &str| tours.join(format!("{id}.jsonl"));
+        std::fs::write(file("a-0000"), tour_text("a-0000", &["run"])).unwrap();
+        std::fs::write(file("b-0000"), tour_text("b-0000", &["run", "help"])).unwrap();
+
+        let held = Tours::default();
+        let on = |q: &str| -> Vec<String> {
+            held.on(&query(q))
+                .iter()
+                .map(|o| o.tour.to_string())
+                .collect()
+        };
+        let (rows, changed) = held.sync(&dir);
+        assert_eq!((rows.len(), changed.len()), (2, 2));
+        assert_eq!(held.on_builds(), 2);
+        assert_eq!(on("run"), ["a-0000", "b-0000"]);
+
+        // requests that change nothing build nothing
+        for _ in 0..3 {
+            let (_, changed) = held.sync(&dir);
+            assert!(changed.is_empty());
+            held.row(&dir, &TourId::parse("a-0000").unwrap()).unwrap();
+            assert_eq!(on("help"), ["b-0000"]);
+        }
+        assert_eq!(held.on_builds(), 2);
+
+        // one tour's file changed and was replayed: that tour is put in again, the other is not
+        std::fs::write(file("a-0000"), tour_text("a-0000", &["run", "help"])).unwrap();
+        held.replay(&dir, &TourId::parse("a-0000").unwrap());
+        assert_eq!(held.on_builds(), 3);
+        assert_eq!(on("help"), ["a-0000", "b-0000"]);
+        let (_, changed) = held.sync(&dir);
+        assert!(changed.is_empty(), "replay kept the file's stamp");
+        assert_eq!(held.on_builds(), 3);
+
+        // a tour that went is in none of the maps
+        std::fs::remove_file(file("b-0000")).unwrap();
+        let (_, changed) = held.sync(&dir);
+        assert_eq!(changed.len(), 1);
+        assert_eq!(on("run"), ["a-0000"]);
+        assert_eq!(held.on_builds(), 3);
     }
 }
