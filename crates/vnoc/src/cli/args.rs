@@ -362,6 +362,19 @@ pub enum TourCommand {
     /// (`always`, `ask`, `never`) change that key and keep everything else in the file: its comments, its other tables, its order. A value in the
     /// file that is not one of the three is read as `ask` and said. `commit` is stored and shown; it does nothing until tours can be pinned.
     Settings(TourSettingsArgs),
+    /// Prints a tour as one JSON document, nested the way you read it: a stop's `stops` are the stops nested in it, a block's `blocks` its details. `--flat` prints V-NOC's own shape.
+    ///
+    /// The document of a tour as it is now: its title, question, author and detail, and every written stop with its `id`, `node` (the name it is found under now, else the one it was
+    /// written with), `line`, `same_as`, `text` and `blocks` (`id`, `lines`, `title`, `text`, `blocks`). A stop planned and never written is not in it. Edit it and give it back with
+    /// `vnoc tour import --replace`: a stop or block whose `id` is kept is the same one. `--flat` lists every stop and block at one level with `from` and `parent`, for a script.
+    Export(TourExportArgs),
+    /// Makes a tour from a JSON document (as `export` prints it), or replaces one with it: `vnoc tour import doc.json`, `vnoc tour import - --replace <tour>`. The user's command.
+    ///
+    /// Every stop is checked as `add` checks it (the node, the lines, the text, the limits), all the refusals of the whole document at once, each with its place in the
+    /// document (`stops[0].blocks[1].text: 412 of 280 characters`), exit 2, and nothing is written. A new tour is written finished, and what `finish` does after the end is done
+    /// (the IDs, by the setting). `--replace <tour>` writes the document over that tour: a stop or block whose `id` the tour has keeps it; the others get new ids; one that
+    /// is missing is gone. The old file goes to `.vnoc/local/trash/`. The tour is not pinned after it, and is refused while it is being written. The text comes from a file or `-`.
+    Import(TourImportArgs),
     /// Moves a finished tour's file to `.vnoc/tours/`, where `git` shares it with the project; `--private` moves it back. The user's command.
     ///
     /// The file moves as it is, byte for byte, and its state (where the reader is) stays. Refused while the tour is being written, when it is there
@@ -1180,6 +1193,27 @@ pub struct TourShareArgs {
     /// Move it back to `.vnoc/local/tours/`.
     #[arg(long)]
     pub private: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourExportArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// Print V-NOC's own shape: every stop and block at one level, with `from` and `parent`, instead of the nested document.
+    #[arg(long)]
+    pub flat: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourImportArgs {
+    #[arg(
+        value_name = "FILE",
+        help = "the document: a file, or - for standard input"
+    )]
+    pub file: String,
+    /// Replace this tour with the document, keeping the ids it gives that the tour has.
+    #[arg(long, value_name = "TOUR")]
+    pub replace: Option<String>,
 }
 
 #[derive(Debug, Args)]

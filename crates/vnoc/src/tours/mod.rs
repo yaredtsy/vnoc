@@ -10,6 +10,7 @@
 pub mod add;
 pub mod body;
 pub mod check;
+pub mod doc;
 pub mod find;
 pub mod finish;
 pub mod fold;

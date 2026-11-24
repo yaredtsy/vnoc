@@ -12,8 +12,8 @@ use serde::Serialize;
 
 use super::args::{
     DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourDeleteArgs, TourDropArgs, TourEditArgs,
-    TourFinishArgs, TourIdsArgs, TourListArgs, TourResumeArgs, TourSettingsArgs, TourShareArgs,
-    TourShowArgs, TourStartArgs,
+    TourExportArgs, TourFinishArgs, TourIdsArgs, TourImportArgs, TourListArgs, TourResumeArgs,
+    TourSettingsArgs, TourShareArgs, TourShowArgs, TourStartArgs,
 };
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
@@ -25,6 +25,8 @@ use crate::tours::add::{
     AddOptions, block_of, did_you_mean_stops, nested_in, plan_more, plan_stop,
 };
 use crate::tours::check::{self, Answer, Code, Mode, Recorded, Source};
+use crate::tours::doc;
+use crate::tours::find::find;
 use crate::tours::finish::{self as finishing, Step};
 use crate::tours::on::{self, Map, Query};
 use crate::tours::record::{Bare, Detail, DropRecord, EndRecord, MetaRecord, Record};
@@ -49,6 +51,8 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
         TourCommand::Resume(args) => resume(global, args).await,
         TourCommand::Edit(args) => edit(global, args).await,
         TourCommand::Ids(args) => ids(global, args).await,
+        TourCommand::Export(args) => export(global, args).await,
+        TourCommand::Import(args) => import(global, args).await,
         TourCommand::Settings(args) => settings(global, args).await,
         TourCommand::Share(args) => share(global, args).await,
         TourCommand::Delete(args) => delete(global, args).await,
@@ -401,7 +405,8 @@ struct RefusedProblem<'a> {
 struct Refused<'a> {
     schema: u32,
     command: &'static str,
-    tour: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tour: Option<String>,
     refused: Vec<RefusedProblem<'a>>,
 }
 
@@ -413,11 +418,27 @@ fn refused_stop(
     tour: &TourId,
     refusals: &[Refusal],
 ) -> Result<(), Failure> {
+    refused_with_hint(
+        global,
+        command,
+        Some(tour),
+        refusals,
+        "fix them, then send the whole stop again",
+    )
+}
+
+fn refused_with_hint(
+    global: &Global,
+    command: &'static str,
+    tour: Option<&TourId>,
+    refusals: &[Refusal],
+    hint: &str,
+) -> Result<(), Failure> {
     if global.json {
         out::json(&Refused {
             schema: 1,
             command,
-            tour: tour.to_string(),
+            tour: tour.map(ToString::to_string),
             refused: refusals
                 .iter()
                 .map(|r| RefusedProblem {
@@ -439,7 +460,7 @@ fn refused_stop(
             format!("{} problems", items.len())
         };
         out::error(&format!("not written: {problems}"));
-        out::hints("fix them, then send the whole stop again", &items, 0);
+        out::hints(hint, &items, 0);
     }
     Err(Failure::Reported)
 }
@@ -724,60 +745,17 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
     drop(lock);
 
     // step 1 of 02 §5: the IDs. A finished tour is not offered them again by the setting; a flag asks for them whatever
-    let read = settings::read(&vnoc_root).map_err(settings_failure)?;
-    let choice = finishing::effective(read.ids.value, args.ids, args.no_ids);
     let by_flag = args.ids || args.no_ids;
-    let mut ids = None;
-    let mut ids_text = String::new();
-    let mut notes = read.problems;
-    // a stop whose node had an ID when it was written has nothing to give: no index is built for a tour with no such stop
-    let could = tour.stops.iter().any(|s| s.written && s.node.is_none());
-    let writes_ids = project_writes_ids(&project)?;
-    if (!already || by_flag)
-        && let Some(sentence) = settings::does_nothing_here(choice, writes_ids)
-    {
-        // the setting asks for what the project forbids: said instead of written
-        notes.push(sentence);
-    }
-    if (!already || by_flag) && choice != Choice::Never && could && writes_ids {
-        // the tour is finished already: no driver to count with is a note, not a failure of `finish`
-        let opened = match open_from(global).await {
-            Ok(opened) => Some(opened),
-            Err(Failure::Environment(why)) => {
-                notes.push(format!(
-                    "could not tell which stops have no ID, so none were written or offered: {why}"
-                ));
-                None
-            }
-            Err(e) => return Err(e),
-        };
-        let missing = opened
-            .as_ref()
-            .map_or(0, |o| finishing::missing(&picks_of(o, &tour, &[])));
-        match finishing::step(choice, true, missing) {
-            Step::Nothing => {}
-            Step::Ask { missing } => {
-                let line = finishing::ask_line(&tour_id, missing);
-                ids_text = format!("{line}\n");
-                ids = Some(IdsStep::Ask {
-                    missing,
-                    command: format!("vnoc tour ids {tour_id}"),
-                });
-            }
-            Step::Write => {
-                let opened = opened
-                    .as_ref()
-                    .expect("a stop is missing an ID only when the index was built");
-                let written = write_ids(global, opened, &vnoc_root, &tour_id, &[]).await?;
-                ids_text = written.text(false);
-                ids = Some(IdsStep::Written {
-                    stops: written.stops,
-                    changed: written.changed,
-                    recorded: written.recorded,
-                });
-            }
-        }
-    }
+    let step = ids_after_end(
+        global,
+        &project,
+        &vnoc_root,
+        &tour,
+        (args.ids, args.no_ids),
+        !already || by_flag,
+        None,
+    )
+    .await?;
     out::render(
         &Finished {
             schema: 1,
@@ -787,12 +765,89 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
             stops: shown.written,
             steps: shown.steps,
             left_the_route: if already { 0 } else { shown.planned },
-            ids,
-            notes,
-            ids_text,
+            ids: step.ids,
+            notes: step.notes,
+            ids_text: step.text,
         },
         global,
     )
+}
+
+/// What the IDs step after `end` did: for the answer, as data and as text.
+struct IdsAfterEnd {
+    ids: Option<IdsStep>,
+    text: String,
+    notes: Vec<String>,
+}
+
+/// Step 1 of 02 §5, for `finish` and `import`: by `[tours] ids` and the two flags (`--ids`, `--no-ids`), the IDs are written, or the line for the agent to ask the
+/// user is said, or nothing. `run` is false for a tour that was finished already (the setting does not offer again). `opened` is the index when the caller has
+/// one; else it is built, and only for a tour with a stop that had no ID when it was written. No driver is a note, not a failure.
+async fn ids_after_end(
+    global: &Global,
+    project: &crate::project::Project,
+    vnoc_root: &Path,
+    tour: &Tour,
+    flags: (bool, bool),
+    run: bool,
+    opened: Option<&Opened>,
+) -> Result<IdsAfterEnd, Failure> {
+    let read = settings::read(vnoc_root).map_err(settings_failure)?;
+    let choice = finishing::effective(read.ids.value, flags.0, flags.1);
+    let mut done = IdsAfterEnd {
+        ids: None,
+        text: String::new(),
+        notes: read.problems,
+    };
+    let writes_ids = project_writes_ids(project)?;
+    if run && let Some(sentence) = settings::does_nothing_here(choice, writes_ids) {
+        // the setting asks for what the project forbids: said instead of written
+        done.notes.push(sentence);
+    }
+    // a stop whose node had an ID when it was written has nothing to give: no index is built for a tour with no such stop
+    let could = tour.stops.iter().any(|s| s.written && s.node.is_none());
+    if !(run && choice != Choice::Never && could && writes_ids) {
+        return Ok(done);
+    }
+    let built;
+    let opened = match opened {
+        Some(opened) => Some(opened),
+        None => match open_from(global).await {
+            Ok(o) => {
+                built = o;
+                Some(&built)
+            }
+            Err(Failure::Environment(why)) => {
+                done.notes.push(format!(
+                    "could not tell which stops have no ID, so none were written or offered: {why}"
+                ));
+                None
+            }
+            Err(e) => return Err(e),
+        },
+    };
+    let missing = opened.map_or(0, |o| finishing::missing(&picks_of(o, tour, &[])));
+    match finishing::step(choice, true, missing) {
+        Step::Nothing => {}
+        Step::Ask { missing } => {
+            done.text = format!("{}\n", finishing::ask_line(&tour.id, missing));
+            done.ids = Some(IdsStep::Ask {
+                missing,
+                command: format!("vnoc tour ids {}", tour.id),
+            });
+        }
+        Step::Write => {
+            let opened = opened.expect("a stop is missing an ID only when the index was built");
+            let written = write_ids(global, opened, vnoc_root, &tour.id, &[]).await?;
+            done.text = written.text(false);
+            done.ids = Some(IdsStep::Written {
+                stops: written.stops,
+                changed: written.changed,
+                recorded: written.recorded,
+            });
+        }
+    }
+    Ok(done)
 }
 
 // -------------------------------------------------------------------------------------------- drop, resume, edit, halt
@@ -1485,6 +1540,273 @@ async fn settings(global: &Global, args: &TourSettingsArgs) -> Result<(), Failur
                 read.ids.value,
                 project_writes_ids(&project)?,
             ),
+        },
+        global,
+    )
+}
+
+// -------------------------------------------------------------------------------------------------------------- export, import
+
+/// A stop's name as the document says it, for a stop that is not found now: the name it was written with, in the opened folder's terms (the path is the
+/// repo's; a project opened below its git root shows paths without the prefix).
+fn written_name(project: &crate::project::Project, stop: &crate::tours::TourStop) -> String {
+    let name = doc::node_name(stop);
+    match project.prefix() {
+        "" => name,
+        prefix => name
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .map(str::to_string)
+            .unwrap_or(name),
+    }
+}
+
+async fn export(global: &Global, args: &TourExportArgs) -> Result<(), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let id = resolve(global, "tour export", &vnoc_root, &args.tour)?;
+    if let Located::Both { .. } = store::locate(&vnoc_root, &id) {
+        return Err(store_failure(StoreError::InBoth(id)));
+    }
+    let tour = read_tour(&vnoc_root, &id)?;
+    // the name each stop has now where it is found (by its ID, else by its name); where it is not, or there is no driver, the name it was written with
+    let mut now: BTreeMap<crate::tours::StopId, String> = tour
+        .stops
+        .iter()
+        .filter(|s| s.written)
+        .map(|s| (s.id, written_name(&project, s)))
+        .collect();
+    match open_from(global).await {
+        Ok(opened) => {
+            let index = opened.index.read().expect("the index lock is not poisoned");
+            let tree = index.tree(&project.name(), project.prefix());
+            for stop in tour.stops.iter().filter(|s| s.written) {
+                if let Some(node) = find(&index, &project, &tree, stop) {
+                    now.insert(stop.id, node.location());
+                }
+            }
+        }
+        Err(Failure::Environment(_)) => {}
+        Err(e) => return Err(e),
+    }
+    out::raw(&doc::print(&doc::nest(&tour, &now, args.flat)))
+}
+
+/// The document's text from a file or standard input: at most one megabyte and a byte are read, and over a megabyte it is refused by `doc::parse`.
+fn read_document(source: &str) -> Result<String, Failure> {
+    let limit = doc::MAX_BYTES as u64 + 1;
+    let mut bytes = Vec::new();
+    let read = if source == "-" {
+        std::io::stdin().lock().take(limit).read_to_end(&mut bytes)
+    } else {
+        std::fs::File::open(source).and_then(|file| file.take(limit).read_to_end(&mut bytes))
+    };
+    read.map_err(|e| Failure::Usage(format!("could not read the document from {source}: {e}")))?;
+    if bytes.len() > doc::MAX_BYTES {
+        // too big to be a document: `parse` says so, from the length, without reading it
+        return Ok("x".repeat(bytes.len()));
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| Failure::Usage(format!("the document in {source} is not UTF-8")))
+}
+
+#[derive(Serialize)]
+struct Imported {
+    schema: u32,
+    command: &'static str,
+    tour: String,
+    replaced: bool,
+    stops: usize,
+    steps: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kept: Option<usize>,
+    #[serde(rename = "new", skip_serializing_if = "Option::is_none")]
+    added: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gone: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ids: Option<IdsStep>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notes: Vec<String>,
+    #[serde(skip)]
+    ids_text: String,
+}
+
+impl Render for Imported {
+    fn text(&self, _quiet: bool) -> String {
+        let stops = format!(
+            "{} {}",
+            self.stops,
+            if self.stops == 1 { "stop" } else { "stops" }
+        );
+        let mut text = if self.replaced {
+            format!(
+                "replaced {}  {stops} ({} kept, {} new, {} gone)\n",
+                self.tour,
+                self.kept.unwrap_or(0),
+                self.added.unwrap_or(0),
+                self.gone.unwrap_or(0)
+            )
+        } else {
+            format!(
+                "imported {}  {stops}, {}\n",
+                self.tour,
+                steps_words(self.steps)
+            )
+        };
+        text.push_str(&self.ids_text);
+        for note in &self.notes {
+            text.push_str(&format!("note: {note}\n"));
+        }
+        text
+    }
+}
+
+async fn import(global: &Global, args: &TourImportArgs) -> Result<(), Failure> {
+    let hint = "fix them, then import the whole document again";
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    // what needs no index: the document, its shape, and the tour it replaces
+    let text = read_document(&args.file)?;
+    let flat = match doc::parse(&text).and_then(|d| doc::flatten(&d)) {
+        Ok(flat) => flat,
+        Err(refusals) => return refused_with_hint(global, "tour import", None, &refusals, hint),
+    };
+    let replace_id = match &args.replace {
+        Some(text) => {
+            let id = resolve(global, "tour import", &vnoc_root, text)?;
+            if let Located::Both { .. } = store::locate(&vnoc_root, &id) {
+                return Err(store_failure(StoreError::InBoth(id)));
+            }
+            Some(id)
+        }
+        None => None,
+    };
+
+    // the code as it is now: every `node` of the document read as a command reads it, before the index is held
+    let opened = open_from(global).await?;
+    let lookup = Lookup::new(&opened, flat.stops.len());
+    let mut nodes: BTreeMap<&str, Result<&crate::index::Node, String>> = BTreeMap::new();
+    for stop in &flat.stops {
+        nodes
+            .entry(stop.node.as_str())
+            .or_insert_with(|| match lookup.resolve(&stop.node) {
+                Ok(Target::Node(node)) => Ok(node),
+                Ok(Target::Missing(missing)) => Err(format!(
+                    "{} is Missing: its code is gone. A stop is about code that is there",
+                    missing.was
+                )),
+                Err(error) => Err(error.message),
+            });
+    }
+    let resolve_node = |text: &str| {
+        nodes
+            .get(text)
+            .cloned()
+            .unwrap_or_else(|| Err(format!("{text} was not looked up")))
+    };
+
+    let (tour_id, kept, replaced) = match replace_id {
+        Some(id) => {
+            // the lock for the rest: the ids come from the file read under it, and the new file is written under the same lock (01 §5)
+            let lock = take_lock(vnoc_root.clone()).await?;
+            let old = read_tour(&vnoc_root, &id)?;
+            if matches!(old.state, State::Writing | State::Stopping) {
+                return Err(store_failure(StoreError::Refused(format!(
+                    "the tour {id} is being written ({}): stop it or finish it first",
+                    old.state
+                ))));
+            }
+            let planned = {
+                let index = opened.index.read().expect("the index lock is not poisoned");
+                crate::tours::add::plan_tour(
+                    &index,
+                    &opened.project,
+                    &resolve_node,
+                    &flat,
+                    Some(&old),
+                )
+            };
+            let mut records = match planned {
+                Ok(records) => records,
+                Err(refusals) => {
+                    return refused_with_hint(global, "tour import", Some(&id), &refusals, hint);
+                }
+            };
+            records.push(Record::End(EndRecord { at: time::now() }));
+            store::replace_locked(&lock, &vnoc_root, &id, &records).map_err(store_failure)?;
+            drop(lock);
+            let kept_ids: Vec<crate::tours::StopId> = records
+                .iter()
+                .filter_map(|r| match r {
+                    Record::Stop(stop) if old.stop(stop.id).is_some_and(|o| o.written) => {
+                        Some(stop.id)
+                    }
+                    _ => None,
+                })
+                .collect();
+            let gone = old
+                .stops
+                .iter()
+                .filter(|s| s.written && !kept_ids.contains(&s.id))
+                .count();
+            (id, Some((kept_ids.len(), gone)), true)
+        }
+        None => {
+            let planned = {
+                let index = opened.index.read().expect("the index lock is not poisoned");
+                crate::tours::add::plan_tour(&index, &opened.project, &resolve_node, &flat, None)
+            };
+            let mut records = match planned {
+                Ok(records) => records,
+                Err(refusals) => {
+                    return refused_with_hint(global, "tour import", None, &refusals, hint);
+                }
+            };
+            records.push(Record::End(EndRecord { at: time::now() }));
+            let started = store::start(
+                project.git_root(),
+                StartParams {
+                    title: flat.title.trim().to_string(),
+                    question: flat.question.as_ref().map(|q| q.trim().to_string()),
+                    author: flat.author.clone(),
+                    detail: flat.detail.unwrap_or(Detail::Normal),
+                },
+            )
+            .map_err(store_failure)?;
+            store::append(&vnoc_root, &started.id, &records).map_err(store_failure)?;
+            (started.id, None, false)
+        }
+    };
+
+    // what was written, as the replay has it, and then what `finish` does after the end (02 §5)
+    let tour = read_tour(&vnoc_root, &tour_id)?;
+    let size = view::tour_view(&tour, Where::Private);
+    let step = ids_after_end(
+        global,
+        &project,
+        &vnoc_root,
+        &tour,
+        (false, false),
+        true,
+        Some(&opened),
+    )
+    .await?;
+    let stops = size.written;
+    out::render(
+        &Imported {
+            schema: 1,
+            command: "tour import",
+            tour: tour_id.to_string(),
+            replaced,
+            stops,
+            steps: size.steps,
+            kept: kept.map(|(k, _)| k),
+            added: kept.map(|(k, _)| stops.saturating_sub(k)),
+            gone: kept.map(|(_, g)| g),
+            ids: step.ids,
+            notes: step.notes,
+            ids_text: step.text,
         },
         global,
     )

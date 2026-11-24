@@ -215,6 +215,17 @@ pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
     (body, refusals)
 }
 
+/// A text of a document (not read from a file of headings) as a paragraph: the lines joined by one space, and the lines. A blank line inside it is a
+/// second paragraph and is refused once, with `place`.
+pub fn paragraph_text(
+    place: &str,
+    text: &str,
+    refusals: &mut Vec<Refusal>,
+) -> (String, Vec<String>) {
+    let lines: Vec<&str> = text.lines().collect();
+    paragraph(place, &lines, refusals)
+}
+
 struct Heading<'a> {
     number: usize,
     hashes: usize,

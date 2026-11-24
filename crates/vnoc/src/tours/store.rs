@@ -400,22 +400,26 @@ fn trash_files(vnoc_root: &Path, entry: &str) -> (PathBuf, PathBuf, PathBuf) {
     )
 }
 
-/// Moves a tour's file and its state file to the trash, under the lock; nothing is erased. Refused while the tour is being written (stop it first), and
-/// when its id is in both folders (which copy?). A project tour is also in git's history, if it was committed.
-pub fn delete(vnoc_root: &Path, id: &TourId) -> Result<Trashed, StoreError> {
-    let _lock = ToursLock::take(vnoc_root)?;
-    let (path, was) = match locate(vnoc_root, id) {
-        Located::None => return Err(StoreError::NotFound(id.clone())),
-        Located::Both { .. } => return Err(StoreError::InBoth(id.clone())),
-        Located::Private(path) => (path, Where::Private),
-        Located::Project(path) => (path, Where::Project),
-    };
-    if let Ok(tour) = readable(vnoc_root, id) {
-        refuse_if_being_written(&tour, "stop it first")?;
-    }
+/// What goes to the trash with a tour's file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Take {
+    /// the file and its state file move: `delete`
+    Move,
+    /// the file is copied and stays where it is, the state file is not touched: `replace`, which writes the new file over it
+    Copy,
+}
+
+/// Puts a tour's file in the trash as an entry (`<stamp>_<id>`), under the lock the caller holds. A free name: two of one id in a second take the
+/// next second's name.
+fn put_in_trash(
+    vnoc_root: &Path,
+    id: &TourId,
+    path: &Path,
+    was: Where,
+    take: Take,
+) -> Result<Trashed, StoreError> {
     let trash = layout::trash_dir(vnoc_root);
     fs::create_dir_all(&trash).map_err(io_error(format!("could not make {}", trash.display())))?;
-    // a free entry: two deletes of one id in a second take the next second's name
     let now = time::now();
     let stamp = now.replace(['-', ':'], "");
     let stamp = stamp.trim_end_matches('Z');
@@ -431,7 +435,7 @@ pub fn delete(vnoc_root: &Path, id: &TourId) -> Result<Trashed, StoreError> {
         .expect("a free name");
     let (manifest, tour_to, state_to) = trash_files(vnoc_root, &entry);
     let state_from = state_file(vnoc_root, id);
-    let with_state = state_from.is_file();
+    let with_state = take == Take::Move && state_from.is_file();
     let text = format!(
         "id = \"{id}\"\ndeleted_at = \"{now}\"\nwas = \"{}\"\nstate = {with_state}\n",
         match was {
@@ -441,13 +445,16 @@ pub fn delete(vnoc_root: &Path, id: &TourId) -> Result<Trashed, StoreError> {
     );
     crate::userdata::atomic::write_atomic(&manifest, text.as_bytes())
         .map_err(io_error(format!("could not write {}", manifest.display())))?;
-    let moved = fs::rename(&path, &tour_to).and_then(|()| {
-        if with_state {
-            fs::rename(&state_from, &state_to)
-        } else {
-            Ok(())
-        }
-    });
+    let moved = match take {
+        Take::Move => fs::rename(path, &tour_to).and_then(|()| {
+            if with_state {
+                fs::rename(&state_from, &state_to)
+            } else {
+                Ok(())
+            }
+        }),
+        Take::Copy => fs::copy(path, &tour_to).map(|_| ()),
+    };
     if let Err(e) = moved {
         let _ = fs::remove_file(&manifest);
         return Err(io_error(format!(
@@ -462,6 +469,66 @@ pub fn delete(vnoc_root: &Path, id: &TourId) -> Result<Trashed, StoreError> {
         deleted_at: now,
         with_state,
     })
+}
+
+/// Moves a tour's file and its state file to the trash, under the lock; nothing is erased. Refused while the tour is being written (stop it first), and
+/// when its id is in both folders (which copy?). A project tour is also in git's history, if it was committed.
+pub fn delete(vnoc_root: &Path, id: &TourId) -> Result<Trashed, StoreError> {
+    let _lock = ToursLock::take(vnoc_root)?;
+    let (path, was) = match locate(vnoc_root, id) {
+        Located::None => return Err(StoreError::NotFound(id.clone())),
+        Located::Both { .. } => return Err(StoreError::InBoth(id.clone())),
+        Located::Private(path) => (path, Where::Private),
+        Located::Project(path) => (path, Where::Project),
+    };
+    if let Ok(tour) = readable(vnoc_root, id) {
+        refuse_if_being_written(&tour, "stop it first")?;
+    }
+    put_in_trash(vnoc_root, id, &path, was, Take::Move)
+}
+
+/// Replaces a tour's whole file with `records` (`import --replace`, D20): under the lock, the old file goes to the trash as `delete` puts it there (a
+/// copy, with no state file: the state stays where it is, so the reader's place keeps pointing at the ids the new file keeps), and the new one is written
+/// whole with `write_atomic` over it, in the folder the tour is in. `records` start with the `tour` line. Refused while the tour is being written, and when
+/// the new file would pass 1 MB. A tour that cannot be read is replaced all the same: that is a way out of a broken file.
+pub fn replace(vnoc_root: &Path, id: &TourId, records: &[Record]) -> Result<Trashed, StoreError> {
+    let lock = ToursLock::take(vnoc_root)?;
+    replace_locked(&lock, vnoc_root, id, records)
+}
+
+/// [`replace`] for a caller that holds the lock: one that reads the old tour, makes the new ids from it ([`super::add::plan_tour`]) and writes under the
+/// same lock, as 01 §5 says ids are made.
+pub fn replace_locked(
+    _lock: &ToursLock,
+    vnoc_root: &Path,
+    id: &TourId,
+    records: &[Record],
+) -> Result<Trashed, StoreError> {
+    let (path, was) = match locate(vnoc_root, id) {
+        Located::None => return Err(StoreError::NotFound(id.clone())),
+        Located::Both { .. } => return Err(StoreError::InBoth(id.clone())),
+        Located::Private(path) => (path, Where::Private),
+        Located::Project(path) => (path, Where::Project),
+    };
+    if let Ok(tour) = readable(vnoc_root, id) {
+        refuse_if_being_written(&tour, "stop it or finish it first")?;
+    }
+    if !matches!(records.first(), Some(Record::Tour(first)) if first.id == *id) {
+        return Err(StoreError::Refused(
+            "a replacement starts with the tour's own first line".to_string(),
+        ));
+    }
+    let bytes: Vec<u8> = records
+        .iter()
+        .flat_map(|r| print_line(r).into_bytes())
+        .collect();
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(StoreError::TooBig(id.clone()));
+    }
+    let trashed = put_in_trash(vnoc_root, id, &path, was, Take::Copy)?;
+    crate::userdata::atomic::write_atomic(&path, &bytes)
+        .map_err(io_error(format!("could not write {}", path.display())))?;
+    Ok(trashed)
 }
 
 /// Where a deleted tour's file is, by its trash entry.

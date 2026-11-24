@@ -9887,3 +9887,548 @@ fn a_function_with_no_docstring_is_fresh_on_its_code_before_the_marker_too() {
     .unwrap();
     assert!(!checked(&root, &[]).1);
 }
+
+// ------------------------------------------------------------------------------------------------------------------ tours (TR8)
+//
+// A tour as one document: `export` (nested, or `--flat`) and `import` (a new tour, or `--replace`).
+
+/// The loop tour of TR4, finished with no IDs offered: what `export` is run on.
+fn finished_loop_tour(root: &Path) -> String {
+    let tour = loop_tour(root);
+    finish_ok(root, &tour, &["--no-ids"]);
+    tour
+}
+
+fn export_text(root: &Path, tour: &str, flat: bool) -> String {
+    let mut args = vec!["export", tour];
+    if flat {
+        args.push("--flat");
+    }
+    tour_ok(root, &args)
+}
+
+fn export_doc(root: &Path, tour: &str) -> Value {
+    serde_json::from_str(&export_text(root, tour, false)).unwrap()
+}
+
+/// `vnoc tour import - …` with the document on standard input.
+fn import_doc(root: &Path, doc: &Value, flags: &[&str]) -> Output {
+    let mut args = vec!["tour", "import", "-"];
+    args.extend_from_slice(flags);
+    run_stdin(vnoc(root, &args), &doc.to_string())
+}
+
+fn imported_id(out: &Output) -> String {
+    assert_eq!(code(out), 0, "{}", text(&out.stderr));
+    text(&out.stdout)
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_string()
+}
+
+/// `show --text` of a tour with its id taken out.
+fn shown_text(root: &Path, tour: &str) -> String {
+    tour_ok(root, &["show", tour, "--text"]).replace(tour, "<tour>")
+}
+
+/// The `stop` and `step` records of a tour's file: what a replace must keep.
+fn content_records(root: &Path, tour: &str) -> Vec<Value> {
+    tour_lines(root, tour)
+        .into_iter()
+        .filter(|l| l["type"] == "stop" || l["type"] == "step")
+        .collect()
+}
+
+#[test]
+fn export_of_the_loop_tour_is_the_nested_document_and_flat_is_the_other_shape() {
+    let root = sample_copy("tour-export");
+    let tour = finished_loop_tour(&root);
+    let nested = export_text(&root, &tour, false);
+    golden_text("tour-export.json", &nested);
+    let flat = export_text(&root, &tour, true);
+    golden_text("tour-export-flat.json", &flat);
+    // both are JSON, with the same tour in them
+    let n: Value = serde_json::from_str(&nested).unwrap();
+    let f: Value = serde_json::from_str(&flat).unwrap();
+    assert_eq!(
+        n["stops"].as_array().unwrap().len(),
+        2,
+        "s2 and s3 are nested in s1; s4 is at the top"
+    );
+    assert_eq!(f["stops"].as_array().unwrap().len(), 4);
+    assert_eq!(f["stops"][1]["from"], "s1");
+    // the stdout is the document and nothing else; `--json` changes nothing
+    let json = run(vnoc(&root, &["--json", "tour", "export", &tour]));
+    assert_eq!(text(&json.stdout), nested);
+}
+
+#[test]
+fn export_then_import_gives_a_tour_that_shows_the_same_but_for_its_id() {
+    let root = sample_copy("tour-roundtrip");
+    let tour = finished_loop_tour(&root);
+    let out = run_stdin(
+        vnoc(&root, &["tour", "import", "-"]),
+        &export_text(&root, &tour, false),
+    );
+    let said = text(&out.stdout);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert!(said.starts_with("imported "), "{said}");
+    let copy = imported_id(&out);
+    assert_ne!(copy, tour);
+    assert!(said.contains("4 stops, 7 steps"), "{said}");
+    assert_eq!(shown_text(&root, &copy), shown_text(&root, &tour));
+    // the copy is finished, private, and not pinned; its stops have their own hashes, and it is fresh
+    let listed = tour_json(&root, &["list"]);
+    let row = listed["tours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == json!(copy))
+        .unwrap()
+        .clone();
+    assert_eq!(row["state"], "finished");
+    assert_eq!(row["folder"], "private");
+    assert_eq!(row["pinned"], json!(false));
+    assert!(checked(&root, &[&copy]).1);
+    // the same records but for the ids' labels: the hashes are the code's
+    let strip = |v: Vec<Value>| -> Vec<Value> {
+        v.into_iter()
+            .map(|mut r| {
+                r.as_object_mut().unwrap().remove("text");
+                r
+            })
+            .collect()
+    };
+    assert_eq!(
+        strip(content_records(&root, &copy)),
+        strip(content_records(&root, &tour))
+    );
+    // the flat export of the copy is the flat export of the original
+    assert_eq!(
+        export_text(&root, &copy, true),
+        export_text(&root, &tour, true)
+    );
+    // the stop's `from` and `same_as` and the blocks' `parent` are the same
+    assert_eq!(export_doc(&root, &copy), export_doc(&root, &tour));
+    // the second export of a flat document: the flat one imports to the same tour as the nested one
+    let flat = run_stdin(
+        vnoc(&root, &["tour", "import", "-"]),
+        &export_text(&root, &tour, true),
+    );
+    let flat_copy = imported_id(&flat);
+    assert_eq!(shown_text(&root, &flat_copy), shown_text(&root, &copy));
+    assert_eq!(
+        content_records(&root, &flat_copy),
+        content_records(&root, &copy)
+    );
+}
+
+#[test]
+fn export_then_import_replace_with_nothing_edited_keeps_every_id_and_every_hash() {
+    let root = sample_copy("tour-replace-same");
+    let tour = finished_loop_tour(&root);
+    let before = tour_lines(&root, &tour);
+    let doc = export_doc(&root, &tour);
+    // where the reader is: a place on a step, in this machine's state file
+    {
+        use vnoc::tours::store::{Part, write_state_part};
+        let id: vnoc::tours::TourId = tour.parse().unwrap();
+        write_state_part(
+            &root.join(".vnoc"),
+            &id,
+            Part::Place,
+            json!({"at": "s1.b2", "seen": ["s1"], "moved": "x", "by": "reader", "open": false}),
+        )
+        .unwrap();
+    }
+    let state_before =
+        std::fs::read(root.join(format!(".vnoc/local/tour-state/{tour}.json"))).unwrap();
+    let out = import_doc(&root, &doc, &["--replace", &tour]);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let said = text(&out.stdout);
+    assert!(
+        said.starts_with(&format!(
+            "replaced {tour}  4 stops (4 kept, 0 new, 0 gone)\n"
+        )),
+        "{said}"
+    );
+    let after = tour_lines(&root, &tour);
+    assert_eq!(
+        content_records(&root, &tour),
+        content_records(&root, &tour),
+        "sanity"
+    );
+    let strip = |records: &[Value]| -> Vec<Value> {
+        records
+            .iter()
+            .filter(|r| r["type"] == "stop" || r["type"] == "step")
+            .cloned()
+            .collect()
+    };
+    assert_eq!(
+        strip(&after),
+        strip(&before),
+        "every id, every hash, every text"
+    );
+    // the first line: the same id and `at`, the same author; `next` holds the highest numbers ever used
+    assert_eq!(after[0]["id"], before[0]["id"]);
+    assert_eq!(after[0]["at"], before[0]["at"]);
+    assert_eq!(after[0]["author"], before[0]["author"]);
+    assert_eq!(after[0]["next"], json!({"stop": 4, "blocks": {"s1": 3}}));
+    assert_eq!(after.last().unwrap()["type"], "end");
+    // the state is not touched, and the old file is in the trash
+    assert_eq!(
+        std::fs::read(root.join(format!(".vnoc/local/tour-state/{tour}.json"))).unwrap(),
+        state_before
+    );
+    let trash: Vec<String> = std::fs::read_dir(root.join(".vnoc/local/trash"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        trash.iter().any(|n| n.ends_with(&format!("_{tour}.jsonl"))),
+        "{trash:?}"
+    );
+    assert!(
+        !trash.iter().any(|n| n.ends_with(".state.json")),
+        "{trash:?}"
+    );
+    assert!(checked(&root, &[]).1);
+}
+
+#[test]
+fn replace_with_a_text_changed_a_stop_removed_and_one_added_keeps_the_ids_and_never_reuses_one() {
+    let root = sample_copy("tour-replace-edit");
+    let tour = finished_loop_tour(&root);
+    let mut doc = export_doc(&root, &tour);
+    // s2's text; s1's last block (s1.b3) is dropped and a new one added; s4 (the last stop) removed; a new stop with no id
+    doc["stops"][0]["stops"][0]["text"] = json!(
+        "one_try makes the one call to the gateway, and gives back what the gateway answers."
+    );
+    let s1 = &mut doc["stops"][0];
+    s1["blocks"].as_array_mut().unwrap().pop();
+    s1["blocks"].as_array_mut().unwrap().push(json!({"lines": [17, 22], "title": "The loop, again", "text": "Only a dropped connection is retried."}));
+    let removed = doc["stops"].as_array_mut().unwrap().remove(1);
+    assert_eq!(removed["id"], "s4");
+    doc["stops"].as_array_mut().unwrap().push(json!({"node": "billing/charge.py::refund", "text": "refund gives the money back in full, by one call to the gateway."}));
+    let out = import_doc(&root, &doc, &["--replace", &tour]);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let said = text(&out.stdout);
+    assert!(
+        said.starts_with(&format!(
+            "replaced {tour}  4 stops (3 kept, 1 new, 1 gone)\n"
+        )),
+        "{said}"
+    );
+    let shown = tour_json(&root, &["show", &tour]);
+    assert_eq!(
+        stop_ids(&shown),
+        ["s1", "s2", "s3", "s5"],
+        "s4 was used and is not used again"
+    );
+    assert_eq!(
+        block_ids(&shown, "s1"),
+        ["s1.b1", "s1.b2", "s1.b4"],
+        "s1.b3 was used and is not used again"
+    );
+    let records = tour_lines(&root, &tour);
+    assert_eq!(records[0]["next"], json!({"stop": 5, "blocks": {"s1": 4}}));
+    let s2_text = records.iter().find(|r| r["id"] == "s2").unwrap()["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(s2_text.contains("gives back what the gateway answers"));
+    assert!(checked(&root, &[]).1);
+    // a second replace from the new export keeps `next`: the dropped numbers stay used
+    let again = import_doc(&root, &export_doc(&root, &tour), &["--replace", &tour]);
+    assert_eq!(code(&again), 0, "{}", text(&again.stderr));
+    assert_eq!(
+        tour_lines(&root, &tour)[0]["next"],
+        json!({"stop": 5, "blocks": {"s1": 4}})
+    );
+    let mut with_new = export_doc(&root, &tour);
+    with_new["stops"].as_array_mut().unwrap().push(json!({"node": "billing/charge.py::refund", "same_as": "s5", "text": "Again, for the second call."}));
+    let more = import_doc(&root, &with_new, &["--replace", &tour]);
+    assert_eq!(code(&more), 0, "{}", text(&more.stderr));
+    assert_eq!(
+        stop_ids(&tour_json(&root, &["show", &tour])),
+        ["s1", "s2", "s3", "s5", "s6"]
+    );
+}
+
+#[test]
+fn a_document_with_three_bad_stops_lists_all_three_with_their_places_and_writes_nothing() {
+    let root = sample_copy("tour-import-refused");
+    let before = list_tree(&root.join(".vnoc"));
+    let long = "x".repeat(400);
+    let doc = json!({"title": "bad", "stops": [
+        {"node": "billing/charge.py::nope", "text": "There is no such function."},
+        {"node": "billing/charge.py::refund", "text": long},
+        {"node": "billing/charge.py::retry_charge", "text": "Fine.", "blocks": [
+            {"lines": [40, 50], "title": "Outside", "text": "Past the end of the function."}]}]});
+    let out = import_doc(&root, &doc, &[]);
+    assert_eq!(code(&out), 2, "{}", text(&out.stderr));
+    let said = text(&out.stderr);
+    assert!(
+        said.starts_with("error: not written: 3 problems\n"),
+        "{said}"
+    );
+    for place in [
+        "stops[0].node: ",
+        "stops[1].text: 400 of 280 characters",
+        "stops[2].blocks[0]: ",
+    ] {
+        assert!(said.contains(place), "{place} in {said}");
+    }
+    assert_eq!(list_tree(&root.join(".vnoc")), before, "nothing written");
+    let json = run_stdin(
+        vnoc(&root, &["--json", "tour", "import", "-"]),
+        &doc.to_string(),
+    );
+    let value: Value = serde_json::from_str(&text(&json.stdout)).unwrap();
+    assert_eq!(value["command"], "tour import");
+    let places: Vec<&str> = value["refused"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["where"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        places,
+        ["stops[0].node", "stops[1].text", "stops[2].blocks[0]"]
+    );
+    golden_text("tour-import-refused.txt", &without_root(&said, &root));
+}
+
+#[test]
+fn a_typo_key_a_later_same_as_and_a_nesting_that_disagrees_are_refused_with_their_places() {
+    let root = sample_copy("tour-import-shape");
+    let before = list_tree(&root.join(".vnoc"));
+    let typo = r#"{"title":"t","stops":[{"node":"billing/charge.py::refund","text":"refund gives the money back.","blokcs":[]}]}"#;
+    let out = run_stdin(vnoc(&root, &["tour", "import", "-"]), typo);
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("stops[0].blokcs: `blokcs` is not a key of a stop"),
+        "{}",
+        text(&out.stderr)
+    );
+    let later = json!({"title": "t", "stops": [
+        {"id": "a", "node": "billing/charge.py::refund", "same_as": "b", "text": "Later."},
+        {"id": "b", "node": "billing/charge.py::refund", "text": "Earlier."}]});
+    let out = import_doc(&root, &later, &[]);
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("stops[0].same_as: `b` is this stop or comes after it"),
+        "{}",
+        text(&out.stderr)
+    );
+    let disagree = json!({"title": "t", "stops": [
+        {"id": "a", "node": "billing/charge.py::retry_charge", "text": "A.", "stops": [
+            {"from": "b", "line": 19, "node": "billing/charge.py::refund", "text": "B."}]},
+        {"id": "b", "node": "billing/charge.py::refund", "text": "C."}]});
+    let out = import_doc(&root, &disagree, &[]);
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("stops[0].stops[0].from: `b` "),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(list_tree(&root.join(".vnoc")), before);
+}
+
+#[test]
+fn a_new_tour_with_labels_of_the_authors_own_gets_real_ids_in_order() {
+    let root = sample_copy("tour-import-labels");
+    let doc = json!({"title": "labels", "question": "what does retry do", "detail": "normal", "stops": [
+        {"id": "start", "node": "billing/charge.py::retry_charge", "text": "retry_charge calls the gateway and tries again.",
+         "blocks": [
+            {"id": "loop", "lines": [17, 22], "title": "Try, and try again", "text": "Only a dropped connection is retried.", "blocks": [
+                {"lines": [18, 19], "title": "One try", "text": "The call is made once per turn."}]},
+            {"lines": [14, 15], "title": "The call", "text": "One attempt, as a function."}],
+         "stops": [
+            {"id": "one", "line": 19, "node": "billing/charge.py::retry_charge.<locals>.one_try", "text": "one_try makes the one call."}]},
+        {"node": "billing/charge.py::refund", "text": "refund gives the money back."},
+        {"node": "billing/charge.py::retry_charge.<locals>.one_try", "same_as": "one", "text": "The same call again."}]});
+    let out = import_doc(&root, &doc, &[]);
+    let id = imported_id(&out);
+    let shown = tour_json(&root, &["show", &id]);
+    assert_eq!(stop_ids(&shown), ["s1", "s2", "s3", "s4"]);
+    assert_eq!(block_ids(&shown, "s1"), ["s1.b1", "s1.b2", "s1.b3"]);
+    let records = tour_lines(&root, &id);
+    let s2 = records.iter().find(|r| r["id"] == "s2").unwrap();
+    assert_eq!(
+        (s2["from"].as_str(), s2["line"].as_u64()),
+        (Some("s1"), Some(19))
+    );
+    let s4 = records.iter().find(|r| r["id"] == "s4").unwrap();
+    assert_eq!(s4["same_as"], "s2");
+    let b2 = records.iter().find(|r| r["id"] == "s1.b2").unwrap();
+    assert_eq!(b2["parent"], "s1.b1");
+    assert_eq!(records[0]["question"], "what does retry do");
+    assert!(checked(&root, &[]).1);
+}
+
+#[test]
+fn a_document_over_one_megabyte_is_refused_before_it_is_parsed_and_import_dash_reads_standard_input()
+ {
+    let root = sample_copy("tour-import-big");
+    let file = root.join("big.json");
+    std::fs::write(
+        &file,
+        format!("{{\"title\": \"{}\"", "x".repeat(1024 * 1024)),
+    )
+    .unwrap();
+    let out = run(vnoc(&root, &["tour", "import", file.to_str().unwrap()]));
+    assert_eq!(code(&out), 2);
+    let said = text(&out.stderr);
+    assert!(said.contains("document: the document is "), "{said}");
+    assert!(!said.contains("not JSON"), "not parsed: {said}");
+    // standard input reads the same
+    let from_stdin = run_stdin(
+        vnoc(&root, &["tour", "import", "-"]),
+        r#"{"title":"t","stops":[{"node":"billing/charge.py::refund","text":"refund gives the money back in full."}]}"#,
+    );
+    let id = imported_id(&from_stdin);
+    assert!(tour_ok(&root, &["show", &id]).contains("refund"));
+    // a file that is not there, and one that is not JSON
+    let (exit, _, stderr) = tour_fails(&root, &["import", "nowhere.json"], "");
+    assert_eq!(exit, 2, "{stderr}");
+    assert!(stderr.contains("could not read the document"), "{stderr}");
+    let (exit, _, stderr) = tour_fails(&root, &["import", "-"], "not json");
+    assert_eq!(exit, 2);
+    assert!(stderr.contains("document: this is not JSON"), "{stderr}");
+}
+
+#[test]
+fn replace_is_refused_while_the_tour_is_written_and_a_pinned_tour_is_not_pinned_after_it() {
+    let root = sample_copy("tour-replace-refused");
+    let tour = loop_tour(&root); // writing
+    let doc = export_doc(&root, &tour);
+    let bytes = std::fs::read(tour_file(&root, &tour)).unwrap();
+    let (exit, _, stderr) = {
+        let out = import_doc(&root, &doc, &["--replace", &tour]);
+        (code(&out), text(&out.stdout), text(&out.stderr))
+    };
+    assert_eq!(exit, 2, "{stderr}");
+    assert!(stderr.contains("is being written (writing)"), "{stderr}");
+    assert_eq!(std::fs::read(tour_file(&root, &tour)).unwrap(), bytes);
+    assert!(
+        !root.join(".vnoc/local/trash").exists()
+            || std::fs::read_dir(root.join(".vnoc/local/trash"))
+                .unwrap()
+                .next()
+                .is_none()
+    );
+    // finished, then pinned (as `pin` will write it): replaced, it is not pinned
+    finish_ok(&root, &tour, &["--no-ids"]);
+    {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(tour_file(&root, &tour))
+            .unwrap();
+        writeln!(file, r#"{{"type":"pin","commit":"f4d6e15c0a9be1d2f7a8a1b0c3d4e5f60718293a","at":"x","where":{{"s1":["billing/charge.py",11,22]}}}}"#).unwrap();
+    }
+    let pinned = |root: &Path| tour_json(root, &["list"])["tours"][0]["pinned"].clone();
+    assert_eq!(pinned(&root), json!(true));
+    let out = import_doc(&root, &export_doc(&root, &tour), &["--replace", &tour]);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert_eq!(pinned(&root), json!(false));
+    // a tour that is not there
+    let (exit, _, stderr) = {
+        let out = import_doc(&root, &doc, &["--replace", "nothing-0000"]);
+        (code(&out), text(&out.stdout), text(&out.stderr))
+    };
+    assert_eq!(exit, 2, "{stderr}");
+}
+
+#[test]
+fn export_names_a_function_as_it_is_now_and_import_does_the_step_finish_does_after_the_end() {
+    let root = sample_copy("tour-export-now");
+    let tour = ids_tour(&root);
+    tour_ok(&root, &["ids", &tour]);
+    finish_ok(&root, &tour, &[]);
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "def retry_charge(",
+        "def retry_again(",
+    );
+    let doc = export_doc(&root, &tour);
+    let nodes: Vec<&str> = doc["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["node"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        nodes,
+        [
+            PARSE_ORDER,
+            INVOICE,
+            "billing/charge.py::retry_again",
+            GET_ORDER
+        ],
+        "found by its ID, named as it is now"
+    );
+    // import with `ids = "always"`: the markers are written, and the tour is fresh
+    let fresh = sample_copy("tour-import-ids");
+    write_vnoc_toml(&fresh, "format = 1\n\n[tours]\nids = \"always\"\n");
+    let doc = json!({"title": "ids", "stops": [
+        {"node": RETRY, "text": "retry_charge calls the gateway and tries again when the call drops."},
+        {"node": GET_ORDER, "text": "get_order asks the store for the order with this number and returns it."}]});
+    let out = import_doc(&fresh, &doc, &[]);
+    let id = imported_id(&out);
+    let said = text(&out.stdout);
+    assert!(said.contains("wrote IDs for 2 of 2 stops"), "{said}");
+    assert!(
+        std::fs::read_to_string(fresh.join("billing/charge.py"))
+            .unwrap()
+            .contains("\n    ID: ")
+    );
+    let _ = id;
+    assert!(checked(&fresh, &[]).1);
+    // the default, `ask`: the line, and nothing written
+    let asked = sample_copy("tour-import-ask");
+    let charge = std::fs::read(asked.join("billing/charge.py")).unwrap();
+    let out = import_doc(&asked, &doc, &[]);
+    imported_id(&out);
+    assert!(
+        text(&out.stdout).contains("ask the user  2 stops have no ID"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(
+        std::fs::read(asked.join("billing/charge.py")).unwrap(),
+        charge
+    );
+}
+
+#[test]
+fn a_document_over_the_limits_is_refused_forty_one_stops_and_thirteen_blocks() {
+    let root = sample_copy("tour-import-limits");
+    let stop = json!({"node": "billing/charge.py::refund", "text": "refund gives the money back in full."});
+    let doc = json!({"title": "many", "stops": vec![stop; 41]});
+    let out = import_doc(&root, &doc, &[]);
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr)
+            .contains("stops: this document has 41 stops, the most one tour holds is 40"),
+        "{}",
+        text(&out.stderr)
+    );
+    let blocks: Vec<Value> = (0..13)
+        .map(|i| json!({"lines": [14 + i, 14 + i], "title": format!("b{i}"), "text": "A line."}))
+        .collect();
+    let doc = json!({"title": "blocks", "stops": [{"node": "billing/charge.py::retry_charge", "text": "retry_charge.", "blocks": blocks}]});
+    let out = import_doc(&root, &doc, &[]);
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains(
+            "stops[0].blocks[12]: this stop has 13 blocks, the most one stop holds is 12"
+        ),
+        "{}",
+        text(&out.stderr)
+    );
+}

@@ -7,11 +7,12 @@
 
 use vnoc_domain::{LocationKey, NodeId, NodeKind};
 
-use super::body::{self, BodyBlock};
+use super::body::{self, Body, BodyBlock};
+use super::doc::{Flat, FlatBlock, FlatStop};
 use super::find::{find, place_of};
 use super::fold::{Tour, TourBlock, TourStop, steps_in_order};
 use super::hash;
-use super::record::{Lines, Record, StepId, StepRecord, StopId, StopRecord};
+use super::record::{Lines, Next, Record, StepId, StepRecord, StopId, StopRecord, TourRecord};
 use super::rules::{self, NodeLines, Refusal};
 use super::store;
 use crate::index::{Index, Kind, Node};
@@ -596,6 +597,509 @@ pub fn plan_more(
     let hash_of =
         |first: u32, last: u32| hash::of(&hash::lines_of(&text, first, last), &marker_refs);
     steps_of(&body, stop_id, tour.highest_block(stop_id), under, &hash_of)
+}
+
+// ------------------------------------------------------------------------------------------------------------------------ a whole tour
+
+/// Where a refusal of `rules::check` or `body` is, in the document: `intro` is the stop's `text`, `block 3` the third block in reading order, with its
+/// `title` or `text`; and the sentence says it in the document's words too (`block 3` becomes `stops[0].blocks[1]`).
+fn relabel(refusal: Refusal, stop_place: &str, blocks: &[String]) -> Refusal {
+    let place = if refusal.place == "intro" {
+        format!("{stop_place}.text")
+    } else if let Some(rest) = refusal.place.strip_prefix("block ") {
+        let (number, tail) = rest.split_once(' ').unwrap_or((rest, ""));
+        match number
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| blocks.get(n.checked_sub(1)?))
+        {
+            Some(base) if tail.is_empty() => base.clone(),
+            Some(base) => format!("{base}.{tail}"),
+            None => stop_place.to_string(),
+        }
+    } else {
+        stop_place.to_string()
+    };
+    let said = refusal
+        .problem
+        .strip_prefix(&format!("{}: ", refusal.place))
+        .unwrap_or(&refusal.problem);
+    // `block 3` inside the sentence is the block of the document too
+    let mut text = String::new();
+    let mut rest = said;
+    while let Some(at) = rest.find("block ") {
+        text.push_str(&rest[..at]);
+        let after = &rest[at + 6..];
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        match digits
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| blocks.get(n.checked_sub(1)?))
+        {
+            Some(base) => {
+                text.push_str(base);
+                rest = &after[digits.len()..];
+            }
+            None => {
+                text.push_str("block ");
+                rest = after;
+            }
+        }
+    }
+    text.push_str(rest);
+    Refusal {
+        problem: format!("{place}: {text}"),
+        place,
+    }
+}
+
+/// The text of a stop of a document as a [`Body`] (the blocks in reading order: a top block, then its details), with the refusals of its shape. A
+/// block is numbered by its place in that order, so `block 3` of a refusal is `blocks[2]` of the list this returns.
+fn body_of(stop: &FlatStop, out: &mut Vec<Refusal>) -> (Body, Vec<String>) {
+    let mut local = Vec::new();
+    let (intro, intro_lines) = body::paragraph_text("intro", &stop.text, &mut local);
+    if intro_lines.is_empty() {
+        local.push(refusal(
+            "intro",
+            "intro: there is none. Start with one paragraph on what this is for",
+        ));
+    }
+    let mut body = Body {
+        intro,
+        intro_lines,
+        blocks: Vec::new(),
+    };
+    // for each flat block, its index in `body.blocks` when it is a top block
+    let mut tops: Vec<Option<usize>> = Vec::new();
+    let mut places = Vec::new();
+    for (i, flat) in stop.blocks.iter().enumerate() {
+        let n = i + 1;
+        places.push(flat.place.clone());
+        if flat.title.trim().is_empty() || flat.title.contains(['\n', '\r']) {
+            local.push(refusal(
+                format!("block {n} title"),
+                format!(
+                    "block {n} title: {}",
+                    if flat.title.trim().is_empty() {
+                        "there is none"
+                    } else {
+                        "a title is one line"
+                    }
+                ),
+            ));
+        }
+        let (text, text_lines) =
+            body::paragraph_text(&format!("block {n} text"), &flat.text, &mut local);
+        if text_lines.is_empty() {
+            local.push(refusal(
+                format!("block {n} text"),
+                format!("block {n} text: there is none. Every block is one paragraph on why those lines are there"),
+            ));
+        }
+        let block = BodyBlock {
+            number: n,
+            lines: flat.lines,
+            title: flat.title.trim().to_string(),
+            text,
+            text_lines,
+            details: Vec::new(),
+        };
+        match flat.parent {
+            Some(parent) => {
+                match tops.get(parent).copied().flatten() {
+                    Some(top) => body.blocks[top].details.push(block),
+                    None => body.blocks.push(block),
+                }
+                tops.push(None);
+            }
+            None => {
+                body.blocks.push(block);
+                tops.push(Some(body.blocks.len() - 1));
+            }
+        }
+    }
+    out.extend(local.into_iter().map(|r| relabel(r, &stop.place, &places)));
+    (body, places)
+}
+
+/// A new tour's ids, or a replaced tour's: the number a stop or a block has, kept when `old` has it, else counted up from the highest ever used.
+struct Numbers {
+    next: u32,
+}
+
+impl Numbers {
+    fn take(&mut self) -> Option<u32> {
+        self.next = self.next.checked_add(1)?;
+        Some(self.next)
+    }
+}
+
+/// Every record of a whole tour from its document, or every refusal of the document, each with its place as written (`stops[0].stops[1].blocks[0].text:
+/// 412 of 280 characters`); nothing is half-checked. The stops are in the route's order ([`super::doc::flatten`]).
+///
+/// With no `old` (a new tour) the ids are made in order, `s1`, `s2`, …, `s1.b1`, …: an `id` of the document is the author's label and counts only where a
+/// `same_as`, `from` or `parent` names it. With `old` (`import --replace`) a stop or block whose id the tour has keeps it, the others get numbers above
+/// the highest **ever used** in `old` (01 §5), and every hash is taken anew against the code now. The first record is then the new `tour` line: `old`'s
+/// id and `at`, and its author unless the document gives one, `next` holding the highest numbers ever used.
+///
+/// `resolve` is the command's own way of reading a `node` (`file::Name`, `file:line`, an ID, a path): the sentence it gives is the refusal.
+pub fn plan_tour<'t>(
+    index: &Index,
+    project: &Project,
+    resolve: &dyn Fn(&str) -> Result<&'t Node, String>,
+    flat: &Flat,
+    old: Option<&Tour>,
+) -> Result<Vec<Record>, Vec<Refusal>> {
+    let mut refusals: Vec<Refusal> = Vec::new();
+    let detail = flat
+        .detail
+        .or(old.map(|t| t.detail))
+        .unwrap_or(super::record::Detail::Normal);
+
+    // the tour's own words, as `start` checks them
+    for problem in store::check_start(&store::StartParams {
+        title: flat.title.clone(),
+        question: flat.question.clone(),
+        author: flat.author.clone(),
+        detail,
+    }) {
+        let key = problem
+            .strip_prefix("--")
+            .and_then(|rest| rest.split(' ').next())
+            .unwrap_or("title")
+            .to_string();
+        let said = problem
+            .strip_prefix(&format!("--{key} "))
+            .unwrap_or(&problem)
+            .to_string();
+        refusals.push(refusal(key.clone(), format!("{key}: {said}")));
+    }
+    if flat.stops.len() > MAX_STOPS {
+        refusals.push(refusal(
+            "stops",
+            format!(
+                "stops: this document has {} stops, the most one tour holds is {MAX_STOPS}. Make it two tours",
+                flat.stops.len()
+            ),
+        ));
+    }
+
+    // the ids of the stops
+    let kept: Vec<Option<StopId>> = flat
+        .stops
+        .iter()
+        .map(|s| {
+            let id = s.id.as_deref().and_then(|l| StopId::parse(l).ok())?;
+            old?.stop(id).filter(|o| o.written).map(|_| id)
+        })
+        .collect();
+    let mut numbers = Numbers {
+        next: old.map_or(0, Tour::highest_stop).max(
+            kept.iter()
+                .flatten()
+                .map(|id| id.number())
+                .max()
+                .unwrap_or(0),
+        ),
+    };
+    let mut stop_ids: Vec<StopId> = Vec::new();
+    for (stop, keep) in flat.stops.iter().zip(&kept) {
+        let id = match keep {
+            Some(id) => Some(*id),
+            None => numbers.take().and_then(StopId::new),
+        };
+        let Some(id) = id else {
+            refusals.push(refusal(
+                &stop.place,
+                format!("{}: this tour has no stop ids left", stop.place),
+            ));
+            continue;
+        };
+        stop_ids.push(id);
+    }
+
+    // each stop against the code
+    let mut nodes: Vec<Option<&'t Node>> = Vec::new();
+    let mut records: Vec<Record> = Vec::new();
+    // the highest block number used in each stop of this tour, new or kept
+    let mut blocks_used: std::collections::BTreeMap<StopId, u32> =
+        std::collections::BTreeMap::new();
+    for (i, stop) in flat.stops.iter().enumerate() {
+        let Some(&id) = stop_ids.get(i) else {
+            nodes.push(None);
+            continue;
+        };
+        let (body, _) = {
+            let mut shape = Vec::new();
+            let made = body_of(stop, &mut shape);
+            refusals.extend(shape);
+            made
+        };
+        let node = match resolve(&stop.node) {
+            Ok(node) => Some(node),
+            Err(sentence) => {
+                refusals.push(refusal(
+                    at_key(&stop.place, "node"),
+                    format!("{}.node: {sentence}", stop.place),
+                ));
+                None
+            }
+        };
+        nodes.push(node);
+        let Some(node) = node else { continue };
+        let Some((path, qualname, occurrence)) = place_of(node) else {
+            refusals.push(refusal(
+                at_key(&stop.place, "node"),
+                format!(
+                    "{}.node: the project's root folder is not a stop: name a folder in it",
+                    stop.place
+                ),
+            ));
+            continue;
+        };
+        let kind = node_kind(node.kind);
+        let file_text = if node.kind == Kind::Folder {
+            None
+        } else {
+            match read_file(project, node) {
+                Ok(text) => Some(text),
+                Err(problem) => {
+                    refusals.push(refusal(
+                        at_key(&stop.place, "node"),
+                        format!("{}.node: {problem}", stop.place),
+                    ));
+                    continue;
+                }
+            }
+        };
+        let lines = match lines_now(project, node) {
+            Ok(lines) => lines,
+            Err(problem) => {
+                refusals.push(refusal(
+                    at_key(&stop.place, "node"),
+                    format!("{}.node: {problem}", stop.place),
+                ));
+                continue;
+            }
+        };
+        let (first, last) = lines.unwrap_or((1, 1));
+        let places: Vec<String> = stop.blocks.iter().map(|b| b.place.clone()).collect();
+        refusals.extend(
+            rules::check(
+                &body,
+                &NodeLines {
+                    name: name_of(node),
+                    first,
+                    last,
+                    kind: kind.clone(),
+                },
+                detail,
+                rules::Options {
+                    same_as: stop.same_as.is_some(),
+                },
+            )
+            .into_iter()
+            .map(|r| relabel(r, &stop.place, &places)),
+        );
+
+        // how the stop was reached
+        if let (Some(from), Some(line)) = (stop.from, stop.line)
+            && let Some(Some(above)) = nodes.get(from)
+        {
+            match lines_now(project, above) {
+                Ok(None) => refusals.push(refusal(
+                    at_key(&stop.place, "line"),
+                    format!(
+                        "{}.line: {} is a folder: it has no lines",
+                        stop.place,
+                        name_of(above)
+                    ),
+                )),
+                Ok(Some((a, b))) if line < a || line > b => refusals.push(refusal(
+                    at_key(&stop.place, "line"),
+                    format!(
+                        "{}.line: {line} is outside {} ({a}-{b})",
+                        stop.place,
+                        name_of(above)
+                    ),
+                )),
+                Ok(Some(_)) => {}
+                Err(problem) => refusals.push(refusal(
+                    at_key(&stop.place, "line"),
+                    format!("{}.line: {problem}", stop.place),
+                )),
+            }
+        }
+        if let Some(same) = stop.same_as
+            && let Some(Some(other)) = nodes.get(same)
+            && other.id != node.id
+        {
+            refusals.push(refusal(
+                at_key(&stop.place, "same_as"),
+                format!(
+                    "{}.same_as: {} is {}, not {}",
+                    stop.place,
+                    flat.stops[same].id.as_deref().unwrap_or("that stop"),
+                    name_of(other),
+                    name_of(node)
+                ),
+            ));
+        }
+        if !refusals.is_empty() {
+            continue; // nothing is written: the records are only made once everything checked
+        }
+
+        // the records
+        let text = file_text.as_deref().unwrap_or("");
+        let markers = marker_ids(index, node);
+        let marker_refs: Vec<&str> = markers.iter().map(String::as_str).collect();
+        let hash_of =
+            |first: u32, last: u32| hash::of(&hash::lines_of(text, first, last), &marker_refs);
+        let has_hash = matches!(node.kind, Kind::Function | Kind::Class);
+        records.push(Record::Stop(StopRecord {
+            id,
+            path,
+            qualname,
+            occurrence: std::num::NonZeroU32::new(occurrence)
+                .expect("an occurrence is counted from 1"),
+            kind,
+            node: node_id_of(node),
+            lines: lines.and_then(|(a, b)| Lines::new(a, b)),
+            hash: has_hash.then(|| hash_of(first, last)),
+            from: stop.from.and_then(|f| stop_ids.get(f).copied()),
+            line: stop.line,
+            same_as: stop.same_as.and_then(|s| stop_ids.get(s).copied()),
+            text: body.intro.clone(),
+        }));
+        match block_records(stop, id, old, &hash_of) {
+            Ok((steps, used)) => {
+                blocks_used.insert(id, used);
+                records.extend(steps);
+            }
+            Err(more) => refusals.extend(more),
+        }
+    }
+    if !refusals.is_empty() {
+        return Err(refusals);
+    }
+
+    // a replacement is a whole new file: its first line
+    if let Some(old) = old {
+        let stop_number = old
+            .highest_stop()
+            .max(stop_ids.iter().map(|s| s.number()).max().unwrap_or(0));
+        let mut blocks = std::collections::BTreeMap::new();
+        let all: std::collections::BTreeSet<StopId> = stop_ids
+            .iter()
+            .copied()
+            .chain(old.stops.iter().map(|s| s.id))
+            .collect();
+        for id in all {
+            let used = old
+                .highest_block(id)
+                .max(blocks_used.get(&id).copied().unwrap_or(0));
+            if used > 0 {
+                blocks.insert(id, used);
+            }
+        }
+        records.insert(
+            0,
+            Record::Tour(TourRecord {
+                schema: 1,
+                id: old.id.clone(),
+                title: flat.title.trim().to_string(),
+                question: flat.question.as_ref().map(|q| q.trim().to_string()),
+                author: flat.author.clone().or_else(|| old.author.clone()),
+                at: old.at.clone(),
+                detail,
+                next: Some(Next {
+                    stop: stop_number,
+                    blocks,
+                }),
+            }),
+        );
+    }
+    Ok(records)
+}
+
+fn at_key(place: &str, key: &str) -> String {
+    format!("{place}.{key}")
+}
+
+/// The `step` records of one stop of a document, with the highest block number used under it. A block whose id the old stop has keeps it; the others
+/// are counted up from the highest ever used under that stop.
+fn block_records(
+    stop: &FlatStop,
+    id: StopId,
+    old: Option<&Tour>,
+    hash_of: &dyn Fn(u32, u32) -> hash::Hash,
+) -> Result<(Vec<Record>, u32), Vec<Refusal>> {
+    let old_stop = old.and_then(|t| t.stop(id)).filter(|s| s.written);
+    let kept: Vec<Option<StepId>> = stop
+        .blocks
+        .iter()
+        .map(|b| {
+            let step = b.id.as_deref().and_then(|l| StepId::parse(l).ok())?;
+            let old_stop = old_stop?;
+            (step.stop() == id && !step.is_intro() && block_of(old_stop, step).is_some())
+                .then_some(step)
+        })
+        .collect();
+    let mut numbers = Numbers {
+        next: old.map_or(0, |t| t.highest_block(id)).max(
+            kept.iter()
+                .flatten()
+                .filter_map(|s| s.block_number())
+                .max()
+                .unwrap_or(0),
+        ),
+    };
+    let mut ids: Vec<StepId> = Vec::new();
+    for (block, keep) in stop.blocks.iter().zip(&kept) {
+        let step = match keep {
+            Some(step) => Some(*step),
+            None => numbers.take().and_then(|n| StepId::block(id, n)),
+        };
+        let Some(step) = step else {
+            return Err(vec![refusal(
+                &block.place,
+                format!("{}: this stop has no block ids left", block.place),
+            )]);
+        };
+        ids.push(step);
+    }
+    let mut records = Vec::new();
+    for (i, block) in stop.blocks.iter().enumerate() {
+        let FlatBlock {
+            lines, title, text, ..
+        } = block;
+        records.push(Record::Step(StepRecord {
+            id: ids[i],
+            stop: id,
+            parent: block.parent.map(|p| ids[p]),
+            lines: Lines::new(lines.0, lines.1).ok_or_else(|| {
+                vec![refusal(
+                    at_key(&block.place, "lines"),
+                    format!(
+                        "{}.lines: {}-{} are not lines",
+                        block.place, lines.0, lines.1
+                    ),
+                )]
+            })?,
+            hash: hash_of(lines.0, lines.1),
+            title: title.trim().to_string(),
+            text: {
+                let mut local = Vec::new();
+                body::paragraph_text("text", text, &mut local).0
+            },
+        }));
+    }
+    let used = ids
+        .iter()
+        .filter_map(|s| s.block_number())
+        .max()
+        .unwrap_or(0);
+    Ok((records, used.max(numbers.next)))
 }
 
 #[cfg(test)]
