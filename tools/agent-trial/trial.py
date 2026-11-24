@@ -6,7 +6,7 @@
     trial.py run   <agent> <scenario 1-6 | t1 .. t13> [text|xml] [n] [--no-rules] [--model M]    # a tour scenario has no arm
     trial.py score <run-dir>...
     trial.py batch <agent> [--model M]          # the 14 runs of A14 (refused since A14c)
-    trial.py batch-tours <agent> [--model M]    # the 14 tour runs of TR14: one results file under runs/
+    trial.py batch-tours <agent> [--model M] [--runs t1:3,t4:3,t5] [--count N]   # the 14 tour runs of TR14, or the ones named: one results file under runs/
     trial.py rescore runs/batch-<time>.json     # the scorer changed: judge the saved runs again
 """
 
@@ -54,7 +54,7 @@ TOUR_PROMPTS = {
     "t10": "Walk me through what I just changed.",
     "t10b": "Walk me through what I just changed.",
     "t10c": "Walk me through what I just changed.",
-    "t11": "Explain `retry_charge` in full detail.",
+    "t11": "Walk me through `retry_charge` in full detail.",
     "t13": "Walk me through `parse_order`.",
 }
 TOUR_BATCH = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t10b", "t10c", "t11", "t13"]  # 12 is read by a person
@@ -211,7 +211,10 @@ def fold_tour_skill(work, bin_dir, env, agent):
     body = re.sub(r"^# V-NOC tours\n", "## Tours\n", body, count=1)
     shutil.rmtree(skill_dir(work, agent) / "vnoc-tour")
     file = skill_dir(work, agent) / "vnoc/SKILL.md"
-    file.write_text(file.read_text().rstrip("\n") + "\n\n" + body + "\n")
+    # no pointer to a skill that is not there: the line under the title, and the description's last sentence (TR14b)
+    skill = re.sub(r"\nAsked to walk someone through code, or for a tour: use the vnoc-tour skill[^\n]*\n", "", file.read_text())
+    skill = re.sub(r" For a step-by-step walk-through or a tour of code, use the vnoc-tour skill\.", "", skill)
+    file.write_text(skill.rstrip("\n") + "\n\n" + body + "\n")
 
 
 def tour_cmd(work, bin_dir, env, *args, body=None):
@@ -631,6 +634,7 @@ def judge(scenario, calls, results, texts, work, meta):
 HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n[ \t]*\1[ \t]*(?=\n|$)", re.S)
 TOUR_SUB = re.compile(r"(?:^|[;&|(\n]\s*)(?:\S+=\S+\s+)*vnoc\s+(?:--?\S+\s+)*tour\s+([\w-]+)([^;&|\n]*)")
 PERMISSION_TEXT = re.compile(r"requires approval|require approval|haven't granted|requested permissions|was blocked|not allowed to use", re.I)
+SHELL_VARIABLE = "shell variable or loop"  # a command refused because the host cannot check `T=<id>` … `$T` or a `for` loop; not check 9
 WRITE_LOOP = ("start", "add", "finish", "plan", "drop", "resume", "list", "show", "check", "where", "route", "export")  # allowed by install
 USER_COMMANDS = ("pin", "go", "ids", "settings", "edit", "share", "delete", "import", "halt")  # asked about, so refused in a headless run
 CHAT_LIMIT = 300  # characters of an opening or an end line before it is `judged`, not `held`
@@ -788,7 +792,7 @@ def permission_refusals(calls, results, result, prefixes=()):
             causes = parts_not_allowed(command, prefixes) if c["name"] == "Bash" else [command]
             cause_subs = [s for cause in causes for s, _ in tour_subs(cause)]
             if c["name"] == "Bash" and re.search(r"variable", text, re.I):
-                kind = "other refusal: a shell variable in the command (`T=<id>` … `$T`, or a `for` loop); the host cannot check it before it runs"
+                kind = SHELL_VARIABLE
             elif c["name"] == "Bash" and not causes and subs:
                 kind = "check 9: FAILED" + (" (a heredoc `vnoc tour add`)" if "add" in subs and HEREDOC.search(command) else f" (`vnoc tour {subs[0]}` is on the allow list)")
             elif any(s in USER_COMMANDS for s in cause_subs):
@@ -936,8 +940,9 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
         else:
             if asked:
                 one.judge("the question with sizes (a headless run cannot answer it)", quote([l for l in said.splitlines() if "?" in l], 3, 320))
-            elif main and main["stops"] <= 12:  # it kept itself under the skill's 12 without asking
-                one.judge(f"no question; it wrote {main['stops']} stops ({main['with_from']} nested, depth chosen by itself)", chat_lines)
+            elif main and main["stops"] <= 12:  # TR14b: a tour of 12 or fewer needs no question (the skill: up to about 12, just write it)
+                one.need("a tour of 12 or fewer stops, no question needed", True, f"{main['stops']} stops, {main['with_from']} nested", keep=True)
+                one.need("it was finished", main["finished"])
             else:
                 one.need("one question with sizes first (a headless run cannot answer it)", False,
                          f"no question; a tour of {main['stops'] if main else 0} stops")
@@ -1262,13 +1267,24 @@ def summary_tours(rows):
             f"| {len(rows)} | {count('yes')} | {count('judged')} | {count('no')} | {count('n/a')} | {count('capped')} |")
 
 
+def summary_by_scenario(rows):
+    lines = ["| scenario | runs | yes | judged | no | n/a | capped |", "|---|---|---|---|---|---|---|"]
+    for sc in dict.fromkeys(r["scenario"] for r in rows):
+        mine = [r for r in rows if r["scenario"] == sc]
+        count = lambda v: sum(1 for r in mine if r["passed"] == v)
+        lines.append(f"| {sc} | {len(mine)} | {count('yes')} | {count('judged')} | {count('no')} | {count('n/a')} | {count('capped')} |")
+    return "\n".join(lines)
+
+
 def details_tours(rows):
     out = ["## Permission refusals (every one: the command and the scenario)", ""]
     perms = [(r["scenario"], p) for r in rows for p in ((r.get("tour") or {}).get("permission_refusals") or [])]
     out += [f"- {sc}: {p['kind']}: `{p['tool']}` {p['command']}" for sc, p in perms] or ["- none"]
     heredoc_add = [sc for sc, p in perms if p["kind"].startswith("check 9: FAILED")]
-    out += ["", "**check 9: FAILED**" + f" ({', '.join(heredoc_add)})" if heredoc_add else
-            "**check 9:** no `vnoc tour` command of the allow list was refused; every heredoc `vnoc tour add` that was tried ran"]
+    variable = [sc for sc, p in perms if p["kind"] == SHELL_VARIABLE]
+    out += ["", ("**check 9: FAILED**" + f" ({', '.join(heredoc_add)})") if heredoc_add else
+            "**check 9:** no `vnoc tour` command of the allow list was refused for being what it is; every heredoc `vnoc tour add` that was tried alone ran",
+            f"**shell variable or loop** (counted apart, not check 9): {len(variable)} refused" + (f" ({', '.join(variable)})" if variable else "")]
     add_runs = [r["scenario"] for r in rows if "add" in ((r.get("tour") or {}).get("calls_tour") or [])]
     out.append(f"(heredoc `add`s were run in: {', '.join(add_runs) or 'none'})")
     out += ["", "## `vnoc tour` refusals, and the call that followed", ""]
@@ -1292,13 +1308,14 @@ def details_tours(rows):
 
 def write_batch(stem, agent, model, rows, total, stopped, planned=None):
     tours = stem.startswith("batch-tours")
-    (RUNS / f"{stem}.json").write_text(json.dumps({"agent": agent, "model": model, "total": total, "stopped": stopped, "tours": tours, "rows": rows}, indent=2) + "\n")
+    (RUNS / f"{stem}.json").write_text(json.dumps({"agent": agent, "model": model, "total": total, "stopped": stopped, "tours": tours, "planned": planned,
+                                                   "rows": rows}, indent=2) + "\n")
     if tours:
         build = (rows[0].get("build") if rows else None) or {}
         (RUNS / f"{stem}.md").write_text(
-            f"# {agent} on {model}: the tour scenarios, {len(rows)} of {len(TOUR_BATCH)} runs\n\n"
+            f"# {agent} on {model}: the tour scenarios, {len(rows)} of {planned or len(TOUR_BATCH)} runs\n\n"
             f"build: {build.get('profile')} (`{build.get('vnoc')}`, driver `{build.get('driver')}`), {build.get('vnoc_version')}, repo at {build.get('repo_head')}\n\n"
-            f"{table_tours(rows)}\n\n{summary_tours(rows)}\n\n"
+            f"{table_tours(rows)}\n\n{summary_tours(rows)}\n\n{summary_by_scenario(rows)}\n\n"
             f"total: {total['seconds']} s, {'' if agent == 'codex' else '$' + str(total['cost_usd']) + ', '}{total['tokens_in']:,} in / {total['tokens_out']:,} out"
             + (f"\n\nSTOPPED: {stopped}\n" if stopped else "\n") + "\n" + details_tours(rows) + "\n")
         return
@@ -1315,7 +1332,7 @@ def rescore(path):
     rows = [score(RUNS / r["run"]) for r in old["rows"]]
     total = dict(old["total"], cost_usd=round(sum(r["cost_usd"] or 0 for r in rows), 4),
                  tokens_in=sum(r["tokens_in"] for r in rows), tokens_out=sum(r["tokens_out"] for r in rows))
-    write_batch(path.stem, old["agent"], old["model"], rows, total, old["stopped"])
+    write_batch(path.stem, old["agent"], old["model"], rows, total, old["stopped"], old.get("planned"))
     for row in rows:
         show_row(row)
 
@@ -1352,11 +1369,24 @@ def batch(agent, model):
     print(f"\n{len(rows)} runs, {round(time.time() - started)} s, ${sum(r['cost_usd'] or 0 for r in rows):.3f}; results: runs/batch-{stamp}.md" + (f"\nSTOPPED: {stopped}" if stopped else ""))
 
 
-def batch_tours(agent, model):
+def parse_runs(spec, count):
+    """`t1:3,t4:3,t5` -> [t1, t1, t1, t4, t4, t4, t5]: a scenario, and after a colon how many runs of it (`count` when there is none)."""
+    runs = []
+    for item in spec.split(","):
+        name, _, n = item.strip().partition(":")
+        if name not in TOUR_PROMPTS:
+            sys.exit(f"no tour scenario {name!r}: t1 .. t11, t10b, t10c, t13")
+        runs += [name] * (int(n) if n else count)
+    return runs
+
+
+def batch_tours(agent, model, runs=None):
     """The 14 tour runs (TR14): one fresh run dir each, one results file under runs/, rewritten after every run. Stops at the first run that
-    reached outside its run dir (or left the repo dirty), and starts no run after 45 minutes."""
+    reached outside its run dir (or left the repo dirty), and starts no run after 45 minutes. `runs`: the scenarios to run, one entry a run
+    (`--runs t1:3,t5`); none: the 14 of TR14a."""
     if repo_dirty():
         sys.exit("the repo is not clean before the batch:\n" + repo_dirty())
+    runs = runs or TOUR_BATCH
     RUNS.mkdir(exist_ok=True)
     stamp = f"tours-{agent}-" + time.strftime("%Y%m%d-%H%M%S")
     started, rows, stopped = time.time(), [], None
@@ -1364,13 +1394,15 @@ def batch_tours(agent, model):
     def write():
         total = {"seconds": round(time.time() - started, 1), "cost_usd": round(sum(r["cost_usd"] or 0 for r in rows), 4),
                  "tokens_in": sum(r["tokens_in"] for r in rows), "tokens_out": sum(r["tokens_out"] for r in rows)}
-        write_batch(f"batch-{stamp}", agent, model, rows, total, stopped)
+        write_batch(f"batch-{stamp}", agent, model, rows, total, stopped, len(runs))
 
-    for scenario in TOUR_BATCH:
+    seen = {}
+    for scenario in runs:
         if time.time() - started > BATCH_LIMIT:
             stopped = "the batch passed 45 minutes; no new run was started"
             break
-        dir_ = run(agent, scenario, "tour", 1, True, model)
+        seen[scenario] = seen.get(scenario, 0) + 1
+        dir_ = run(agent, scenario, "tour", seen[scenario], True, model)
         try:
             row = score(dir_)
         except Exception as error:  # a scorer bug must not cost the runs after it: the transcript is kept, `rescore` judges it again
@@ -1410,6 +1442,8 @@ def main():
     bt = sub.add_parser("batch-tours")
     bt.add_argument("agent")
     bt.add_argument("--model")
+    bt.add_argument("--runs", help="scenarios to run, `t1:3,t4:3,t5`: a name and, after a colon, how many runs (--count when none)")
+    bt.add_argument("--count", type=int, default=1)
     k = sub.add_parser("rescore")
     k.add_argument("batch_json")
     c = sub.add_parser("score")
@@ -1426,7 +1460,10 @@ def main():
     elif a.cmd in ("batch", "batch-tours"):
         if a.agent == "claude" and not a.model:
             sys.exit("claude needs --model (sonnet)")
-        (batch if a.cmd == "batch" else batch_tours)(a.agent, a.model or CODEX_MODEL)
+        if a.cmd == "batch":
+            batch(a.agent, a.model or CODEX_MODEL)
+        else:
+            batch_tours(a.agent, a.model or CODEX_MODEL, parse_runs(a.runs, a.count) if a.runs else None)
     else:
         for d in a.run:
             show_row(score(d))
