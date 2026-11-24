@@ -116,7 +116,11 @@ impl Cli {
 /// Whether the command at `path` (its names from the first, none for `vnoc` itself) starts the driver. Of `tour`, only `add` reads the code.
 fn starts_driver(path: &[String]) -> bool {
     match path.first().map(String::as_str) {
-        Some("tour") => path.get(1).map(String::as_str) == Some("add"),
+        // `add` reads the code; `check`, `list --on` and `show --check` may (a tour whose record holds needs none)
+        Some("tour") => matches!(
+            path.get(1).map(String::as_str),
+            Some("add" | "check" | "list" | "show")
+        ),
         Some("tags" | "tag" | "guide" | "skill" | "agent" | "init") => false,
         _ => true,
     }
@@ -330,8 +334,19 @@ pub enum TourCommand {
     ///
     /// Lists every tour in `.vnoc/tours/` (the project's) and `.vnoc/local/tours/` (private), newest first, one row each: the id, whether it is
     /// writing, stopping, stopped or finished, how many stops, which folder, whether it is pinned, the title and the question. A tour that cannot
-    /// be read says why. Prints `no tours` when there are none (exit 0). It needs no driver.
-    List,
+    /// be read says why. Prints `no tours` when there are none (exit 0). The last word of a row is `changed` when a check that still holds says
+    /// some stop no longer matches the code; `list` itself checks nothing and starts no driver. `--check` checks every tour first, as `vnoc tour
+    /// check` does. `--on <node>` keeps the tours that pass through that node and says how: `starts here`, `stop 3 of 10`, `stops 2 and 4 of 10`,
+    /// `4 stops inside` (for a class, a file or a folder); it needs the driver only to find the node.
+    List(TourListArgs),
+    /// Says which tours no longer match the code, and which stops: run it before you rely on a tour, or to bring one up to date.
+    ///
+    /// Checks the tours named (every tour with none): for each, whether it is fresh, or how many stops changed or are gone, with a line for each
+    /// stop that is not and the blocks of it that no longer match. A stop is changed when the lines it was written about are not the same any more
+    /// (a block that only moved down is still fresh); gone when its function is not found by its ID or its exact name. The answer is recorded,
+    /// and the next run costs a `stat` of each file the tour names and starts no driver, until one of them changes; `--again` checks anew. Always
+    /// exit 0: a stale tour is not a failed command. To mend one: read the code again, then `vnoc tour add` the stop again.
+    Check(TourCheckArgs),
     /// Prints a tour's route: a row a stop, with its id, its node and lines, its steps, and where it came from. `--text` adds every sentence.
     ///
     /// Prints the tour: its title, question and state, then one row per stop (number, id, kind, name, `path:first-last`, how many steps, and
@@ -406,6 +421,31 @@ pub struct TourShowArgs {
     /// Print every intro, block title and text under its stop.
     #[arg(long)]
     pub text: bool,
+    /// Mark each stop and block that no longer matches the code: `changed`, `moved` or `gone`. It checks if the recorded answer no longer holds.
+    #[arg(long)]
+    pub check: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourListArgs {
+    /// Keep the tours that pass through this node, and say how: path::Name, path:line, an ID, or a path.
+    #[arg(long, value_name = "NODE")]
+    pub on: Option<String>,
+    /// Check every tour first (the recorded answer where it still holds), so each row says whether it is changed.
+    #[arg(long)]
+    pub check: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourCheckArgs {
+    #[arg(
+        value_name = "TOUR",
+        help = "the tours to check: each an id, or the start of one (default: every tour)"
+    )]
+    pub tours: Vec<String>,
+    /// Check anew, whatever is recorded.
+    #[arg(long)]
+    pub again: bool,
 }
 
 #[derive(Debug, Subcommand)]

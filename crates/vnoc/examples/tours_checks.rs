@@ -5,6 +5,7 @@
 //!   tours_checks markers <root> <driver>...     check 4: the lines of each def that hold its ID text, and a nested def's, from `Def.id` alone
 //!   tours_checks git                            check 6: how long git takes from Rust, and what it does in the cases the plan names
 //!   tours_checks stat <dir>                     check 7: does a rewrite of the same size change the file's changed-time, and by how much
+//!   tours_checks measure-check <dir> [driver]   TR5 [measure]: a generated tour (40 stops, 100 blocks, 12 files): replay, a real check, a recorded one
 //!
 //! Every subcommand prints a short report to paste into a doc. `git` makes its own repositories in a temp folder and never touches this one.
 //! `markers` wants the drivers built (`cargo build` in `drivers/python`, and in `drivers/bend`); a driver path that is not there is skipped, loudly.
@@ -25,7 +26,7 @@ use vnoc_driver_protocol::Def;
 
 type Fail = Box<dyn std::error::Error>;
 
-const USAGE: &str = "usage:\n  tours_checks race <dir>\n  tours_checks markers <root> <driver>...\n  tours_checks git\n  tours_checks stat <dir>";
+const USAGE: &str = "usage:\n  tours_checks race <dir>\n  tours_checks markers <root> <driver>...\n  tours_checks git\n  tours_checks stat <dir>\n  tours_checks measure-check <dir> [driver]";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -36,6 +37,9 @@ fn main() {
         Some("markers") if args.len() >= 3 => markers(Path::new(&args[1]), &args[2..]),
         Some("git") if args.len() == 1 => git_checks(),
         Some("stat") if args.len() == 2 => stat(Path::new(&args[1])),
+        Some("measure-check") if (2..=3).contains(&args.len()) => {
+            measure_check(Path::new(&args[1]), args.get(2).map(String::as_str))
+        }
         _ => Err(USAGE.into()),
     };
     if let Err(message) = result {
@@ -901,5 +905,192 @@ fn stat(dir: &Path) -> Result<(), Fail> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     println!("  (the clock now: {now} ns since 1970)");
     let _ = fs::remove_file(&file);
+    Ok(())
+}
+
+// ------------------------------------------------------------------------------------------ TR5: measure-check
+
+/// A function of 12 lines: its lines 3 to 11 are what the blocks light.
+fn generated_function(n: usize) -> String {
+    format!(
+        "def f_{n}(x):\n    \"\"\"Function {n}.\"\"\"\n    a = x + 1\n    b = a * 2\n    c = b - 1\n    d = c + a\n    e = d * 2\n    f = e - b\n    g = f + c\n    h = g - d\n    i = h + 1\n    return i\n\n\n"
+    )
+}
+
+/// Times `work` nine times and says its median, smallest and largest in microseconds.
+fn nine(label: &str, mut work: impl FnMut()) -> f64 {
+    let mut samples: Vec<f64> = (0..9)
+        .map(|_| {
+            let started = Instant::now();
+            work();
+            started.elapsed().as_secs_f64() * 1_000_000.0
+        })
+        .collect();
+    let (median, min, max) = median_min_max(&mut samples);
+    println!("  {label:<42} median {median:>9.0} µs   (min {min:.0}, max {max:.0})");
+    median
+}
+
+/// TR5's [measure] (03 §1, §3): a tour of 40 stops and 100 blocks over 12 files, made by the real `plan_stop` and `append`, then
+///   - replay: `store::read` (read the file, fold it);
+///   - a real check: `check::check` (find every stop, read each of the 12 files once, hash every stop and block);
+///   - a recorded one: `check::recall` (the state file, one `stat` for each file and the tour's);
+///
+/// Each is timed nine times, and the median is the number. The driver builds the index once, which is not what is timed; building the tree (`Index::tree`) is shown apart.
+fn measure_check(dir: &Path, driver: Option<&str>) -> Result<(), Fail> {
+    use vnoc::cli::project::open;
+    use vnoc::tours::add::{AddOptions, plan_stop};
+    use vnoc::tours::check::{self, Code};
+    use vnoc::tours::record::Detail;
+    use vnoc::tours::store::{self, StartParams};
+
+    let driver = driver
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("VNOC_DRIVER").map(PathBuf::from))
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../drivers/python/target/debug")
+                .join(format!(
+                    "vnoc-driver-python{}",
+                    std::env::consts::EXE_SUFFIX
+                ))
+        });
+    if !driver.is_file() {
+        return Err(format!(
+            "no Python driver at {} (build it, or give its path)",
+            driver.display()
+        )
+        .into());
+    }
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(dir)?;
+    let root = dunce::canonicalize(dir)?;
+
+    // 12 files: four of them with four functions, eight with three
+    let mut layout: Vec<(String, Vec<usize>)> = Vec::new();
+    let mut next = 0;
+    for file in 0..12 {
+        let count = if file < 4 { 4 } else { 3 };
+        let ids: Vec<usize> = (next..next + count).collect();
+        next += count;
+        let text: String = ids.iter().map(|n| generated_function(*n)).collect();
+        fs::write(root.join(format!("m{file:02}.py")), text)?;
+        layout.push((format!("m{file:02}.py"), ids));
+    }
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let opened = rt
+        .block_on(open(&root, &[driver]))
+        .map_err(|e| format!("{e}"))?;
+    let tree = opened
+        .index
+        .read()
+        .map_err(|e| e.to_string())?
+        .tree(&opened.project.name(), opened.project.prefix());
+
+    let started = store::start(
+        &root,
+        StartParams {
+            title: "measured".to_string(),
+            question: None,
+            author: None,
+            detail: Detail::Normal,
+        },
+    )?;
+    let vnoc_root = store::vnoc_root(&root);
+    let mut blocks = 0;
+    let mut stops = 0;
+    for (file, ids) in &layout {
+        for (place, n) in ids.iter().enumerate() {
+            // each function is 14 lines with the two blank ones after it
+            let at = 1 + 14 * place;
+            let l = |from: usize, to: usize| format!("{}-{}", at + from, at + to);
+            // 20 stops with three blocks and 20 with two: 100 blocks
+            let body = if stops % 2 == 0 {
+                format!(
+                    "Function {n} adds and doubles.\n\n## {} First\nIt starts.\n\n## {} Second\nIt goes on.\n\n## {} Third\nIt ends.\n",
+                    l(2, 4),
+                    l(5, 7),
+                    l(8, 10)
+                )
+            } else {
+                format!(
+                    "Function {n} adds and doubles.\n\n## {} First\nIt starts.\n\n## {} Second\nIt ends.\n",
+                    l(2, 5),
+                    l(6, 10)
+                )
+            };
+            blocks += if stops % 2 == 0 { 3 } else { 2 };
+            stops += 1;
+            let loaded = store::read(&vnoc_root, &started.id)?;
+            let tour = loaded.1.map_err(|e| e.to_string())?;
+            let node = tree
+                .find(&format!("{file}::f_{n}"))
+                .ok_or("a generated function is not in the index")?;
+            let records = {
+                let index = opened.index.read().map_err(|e| e.to_string())?;
+                plan_stop(
+                    &tour,
+                    &index,
+                    &opened.project,
+                    &tree,
+                    node,
+                    &body,
+                    AddOptions::default(),
+                )
+                .map_err(|r| format!("{r:?}"))?
+            };
+            store::append(&vnoc_root, &started.id, &records)?;
+        }
+    }
+    let path = started.path.clone();
+    let len = fs::metadata(&path)?.len();
+    println!(
+        "a tour of {stops} stops and {blocks} blocks over {} files; its file is {len} bytes\n",
+        layout.len()
+    );
+
+    let index = opened.index.read().map_err(|e| e.to_string())?;
+    let mut tour = None;
+    let replay = nine("replay: read the file and fold it", || {
+        tour = store::read(&vnoc_root, &started.id)
+            .ok()
+            .and_then(|l| l.1.ok());
+    });
+    let tour = tour.ok_or("the tour does not fold")?;
+    assert_eq!(tour.stops.len(), 40);
+    let project_name = opened.project.name();
+    nine("Index::tree (not part of the check)", || {
+        let _ = index.tree(&project_name, opened.project.prefix());
+    });
+    let mut recorded = None;
+    let real = nine("a real check: find, read 12 files, compare", || {
+        let code = Code {
+            index: &index,
+            project: &opened.project,
+            tree: &tree,
+        };
+        let mut read = |p: &Path| source::read_text(p);
+        recorded = Some(check::check(&code, &mut read, &tour, len));
+    });
+    let recorded = recorded.ok_or("no check")?;
+    println!(
+        "    (fresh: {}, files looked at: {})",
+        recorded.fresh(),
+        recorded.files.len()
+    );
+    check::record(&vnoc_root, &started.id, &recorded)?;
+    let mut held = false;
+    let valid = nine("a valid record: the state file and 13 stats", || {
+        held = check::recall(&vnoc_root, &root, &started.id, &path).is_some();
+    });
+    if !held {
+        return Err("the record did not hold".into());
+    }
+    println!(
+        "\nreplay {replay:.0} µs · real check {real:.0} µs · valid record {valid:.0} µs  (medians of 9)"
+    );
     Ok(())
 }

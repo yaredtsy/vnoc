@@ -6,9 +6,12 @@
 use serde::Serialize;
 use vnoc_domain::NodeKind;
 
+use super::check::{Answer, BlockState, Recorded, Source, StopState};
 use super::fold::{State, Tour, TourBlock, TourStop, Unreadable, steps_in_order};
-use super::record::StepId;
+use super::on::{self, How};
+use super::record::{StepId, TourId};
 use super::store::{Row, Where};
+use std::collections::BTreeMap;
 
 /// Text under a row is wrapped at this many columns.
 const WRAP: usize = 100;
@@ -36,7 +39,7 @@ fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// The icon of a kind in the outline: `ƒ` a function, `◆` a class, `▪` a file, `▸` a folder; `◌` for a planned stop (no kind yet), `?` for a kind
+/// The icon of a kind in the outline: `ƒ` a function, `◆` a class, `▪` a file, `□` a folder (the design's tour list); `◌` for a planned stop (no kind yet), `?` for a kind
 /// this version does not know.
 fn icon(kind: Option<&NodeKind>) -> &'static str {
     match kind {
@@ -44,7 +47,7 @@ fn icon(kind: Option<&NodeKind>) -> &'static str {
         Some(NodeKind::Function) => "ƒ",
         Some(NodeKind::Class) => "◆",
         Some(NodeKind::File) => "▪",
-        Some(NodeKind::Folder) => "▸",
+        Some(NodeKind::Folder) => "□",
         _ => "?",
     }
 }
@@ -120,6 +123,12 @@ pub struct BlockView {
     pub lines: [u32; 2],
     pub title: String,
     pub text: String,
+    /// with a check: `changed` or `moved`; a fresh block says nothing
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<&'static str>,
+    /// a moved block's lines now
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moved_to: Option<[u32; 2]>,
 }
 
 /// One stop of the route.
@@ -150,7 +159,22 @@ pub struct StopView {
     pub same_as: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// with a check: `changed`, `gone`, or `moved` (fresh, with a block at other lines); a fresh stop says nothing
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<&'static str>,
     pub blocks: Vec<BlockView>,
+}
+
+/// What a check said of the whole tour, and where the answer came from.
+#[derive(Debug, Clone, Serialize)]
+pub struct CheckInfo {
+    pub fresh: bool,
+    /// `record` or `check`
+    pub from: Source,
+    /// when the check was made
+    pub at: String,
+    pub changed: usize,
+    pub gone: usize,
 }
 
 /// A tour as `show` has it.
@@ -173,6 +197,9 @@ pub struct TourView {
     pub pinned: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pin: Option<String>,
+    /// with `--check`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<CheckInfo>,
     pub stops: Vec<StopView>,
     /// the lines of the file that could not be read, `line 7: why`
     pub problems: Vec<String>,
@@ -187,6 +214,8 @@ fn blocks_of(blocks: &[TourBlock], parent: Option<StepId>, depth: usize, out: &m
             lines: [block.lines.first, block.lines.last],
             title: block.title.clone(),
             text: block.text.clone(),
+            check: None,
+            moved_to: None,
         });
         blocks_of(&block.details, Some(block.id), depth + 1, out);
     }
@@ -213,6 +242,7 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
         line: stop.line,
         same_as: stop.same_as.map(|s| s.to_string()),
         text: stop.text.clone(),
+        check: None,
         blocks,
     }
 }
@@ -247,6 +277,7 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
             .as_ref()
             .filter(|_| tour.pinned())
             .map(|p| p.commit.to_string()),
+        check: None,
         stops,
         problems: tour
             .problems
@@ -254,6 +285,130 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
             .map(|p| format!("line {}: {}", p.line, p.why))
             .collect(),
     }
+}
+
+/// Puts a check's answer on the view: the mark of every stop and block that is not fresh, and what the whole said.
+pub fn mark(view: &mut TourView, answer: &Answer) {
+    let recorded = &answer.recorded;
+    let (changed, gone) = recorded.counts();
+    view.check = Some(CheckInfo {
+        fresh: recorded.fresh(),
+        from: answer.from,
+        at: recorded.at.clone(),
+        changed,
+        gone,
+    });
+    for stop in &mut view.stops {
+        let Ok(id) = stop.id.parse() else { continue };
+        let mut any_moved = false;
+        for block in &mut stop.blocks {
+            let Ok(step) = block.id.parse::<StepId>() else {
+                continue;
+            };
+            match recorded.block(step) {
+                BlockState::Fresh => {}
+                BlockState::Changed => block.check = Some("changed"),
+                BlockState::Moved(lines) => {
+                    any_moved = true;
+                    block.check = Some("moved");
+                    block.moved_to = Some([lines.first, lines.last]);
+                }
+            }
+        }
+        stop.check = match recorded.stop(id) {
+            StopState::Gone => Some("gone"),
+            StopState::Changed => Some("changed"),
+            StopState::Fresh if any_moved => Some("moved"),
+            StopState::Fresh => None,
+        };
+    }
+}
+
+/// `fresh`, `1 stop changed`, `2 stops gone`, `1 changed, 1 gone`: the tour's word.
+pub fn check_word(changed: usize, gone: usize) -> String {
+    let stops = |n: usize| count(n, "stop", "stops");
+    match (changed, gone) {
+        (0, 0) => "fresh".to_string(),
+        (c, 0) => format!("{} changed", stops(c)),
+        (0, g) => format!("{} gone", stops(g)),
+        (c, g) => format!("{c} changed, {g} gone"),
+    }
+}
+
+/// `(checked now)`; for a record that holds, `(nothing changed since 08:20 UTC)` when it is from today and `(nothing changed since 2026-11-23)` when it is
+/// older, or `(as checked at 08:20 UTC)` when it says some stop is not fresh.
+pub fn when_words(from: Source, fresh: bool, at: &str, today: &str) -> String {
+    match from {
+        Source::Check => "(checked now)".to_string(),
+        Source::Record if !fresh => {
+            let (day, time) = at.split_once('T').unwrap_or((at, ""));
+            let when = if day == today.split('T').next().unwrap_or("") && time.len() >= 5 {
+                format!("{} UTC", &time[..5])
+            } else {
+                day.to_string()
+            };
+            format!("(as checked at {when})")
+        }
+        Source::Record => {
+            let (day, time) = at.split_once('T').unwrap_or((at, ""));
+            let since = if day == today.split('T').next().unwrap_or("") && time.len() >= 5 {
+                format!("{} UTC", &time[..5])
+            } else {
+                day.to_string()
+            };
+            format!("(nothing changed since {since})")
+        }
+    }
+}
+
+fn lines_words(first: u32, last: u32) -> String {
+    if first == last {
+        format!("line {first} is")
+    } else {
+        format!("lines {first}-{last} are")
+    }
+}
+
+/// One line for each stop that is not fresh, as `check` prints them (02 §6):
+/// `s1 changed: retry_charge billing/charge.py:11-22 · s1.b2 line 15 is no longer there`, `s3 gone: ChargeError billing/charge.py is not in the code`.
+/// The place is the stop's own record, as it was written; a block is named by the lines it was written about.
+pub fn stale_lines(tour: &Tour, recorded: &Recorded) -> Vec<String> {
+    let mut out = Vec::new();
+    for stop in tour.stops.iter().filter(|s| s.written) {
+        match recorded.stop(stop.id) {
+            StopState::Fresh => {}
+            StopState::Gone => {
+                let mut line = format!("{} gone: {}", stop.id, stop_label(stop));
+                let place = stop.path.to_string();
+                if stop_label(stop) != place {
+                    line.push_str(&format!(" {place}"));
+                }
+                line.push_str(" is not in the code");
+                out.push(line);
+            }
+            StopState::Changed => {
+                let mut line = format!(
+                    "{} changed: {} {}",
+                    stop.id,
+                    stop_label(stop),
+                    stop_place(stop)
+                );
+                let mut stack: Vec<&TourBlock> = stop.blocks.iter().rev().collect();
+                while let Some(block) = stack.pop() {
+                    if recorded.block(block.id) == BlockState::Changed {
+                        line.push_str(&format!(
+                            " · {} {} no longer there",
+                            block.id,
+                            lines_words(block.lines.first, block.lines.last)
+                        ));
+                    }
+                    stack.extend(block.details.iter().rev());
+                }
+                out.push(line);
+            }
+        }
+    }
+    out
 }
 
 /// `6 of 10 stops` while some are planned, `9 stops` after.
@@ -303,6 +458,12 @@ fn tail(stop: &StopView) -> String {
         }
         tail.push_str(&format!("= {same}"));
     }
+    if let Some(mark) = stop.check {
+        if !tail.is_empty() {
+            tail.push_str("   ");
+        }
+        tail.push_str(mark);
+    }
     tail
 }
 
@@ -342,6 +503,13 @@ pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
         head(&view.title, view.question.as_deref()),
         facts(tour, view)
     );
+    if let Some(check) = &view.check {
+        text.push_str(&format!(
+            "{} {}\n",
+            check_word(check.changed, check.gone),
+            when_words(check.from, check.fresh, &check.at, &super::time::now())
+        ));
+    }
     let id_width = view.stops.iter().map(|s| s.id.len()).max().unwrap_or(2);
     let rows: Vec<(String, String, String)> = view
         .stops
@@ -419,8 +587,14 @@ fn stop_text(stop: &StopView) -> String {
         } else {
             format!("{}-{}", block.lines[0], block.lines[1])
         };
+        let mark = match (block.check, block.moved_to) {
+            (Some("moved"), Some([a, b])) if a == b => format!("  · moved to {a}"),
+            (Some("moved"), Some([a, b])) => format!("  · moved to {a}-{b}"),
+            (Some(word), _) => format!("  · {word}"),
+            (None, _) => String::new(),
+        };
         text.push_str(&format!(
-            "{}{}  {lines}  {}\n",
+            "{}{}  {lines}  {}{mark}\n",
             " ".repeat(indent - 2),
             block.id,
             block.title
@@ -466,13 +640,59 @@ pub struct ListRowView {
     /// the lines of the file that were skipped
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped: Option<usize>,
+    /// the recorded (or just made) check: `fresh` or `changed`; absent when there is none that holds
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<&'static str>,
+    /// with `--on`: how the tour is on the node
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on: Option<OnView>,
     #[serde(skip)]
     pins: String,
 }
 
+/// How a tour is on a node (`list --on`).
+#[derive(Debug, Clone, Serialize)]
+pub struct OnView {
+    /// `starts`, `stops` or `inside`
+    pub how: &'static str,
+    /// the numbers on screen of the stops that are the node
+    pub stops: Vec<usize>,
+    /// stops inside the node
+    pub inside: usize,
+    /// where a click opens
+    pub first: String,
+    /// the stops of the route
+    pub of: usize,
+    /// line 2 of the row
+    pub words: String,
+}
+
+impl OnView {
+    pub fn of(on: &on::On) -> OnView {
+        let (how, stops, inside) = match &on.how {
+            How::Starts => ("starts", vec![1], on.inside),
+            How::Stops(numbers) => ("stops", numbers.clone(), on.inside),
+            How::Inside(n) => ("inside", Vec::new(), *n),
+        };
+        OnView {
+            how,
+            stops,
+            inside,
+            first: on.first.to_string(),
+            of: on.of,
+            words: on::words(on),
+        }
+    }
+}
+
 /// The rows of `list`, in the order the store gives them (newest first, what cannot be read last). The same id in both folders: the project's row,
 /// then the private one marked `(private copy)`.
-pub fn list_rows(rows: &[Row]) -> Vec<ListRowView> {
+/// `checks` are the answers known (recorded and valid, or just made); a fresh one is said in the row only with `say_fresh` (`list --check`).
+pub fn list_rows(
+    rows: &[Row],
+    checks: &BTreeMap<TourId, Recorded>,
+    say_fresh: bool,
+) -> Vec<ListRowView> {
     rows.iter()
         .map(|row| {
             let copy = row.place == Where::Private
@@ -482,6 +702,13 @@ pub fn list_rows(rows: &[Row]) -> Vec<ListRowView> {
             match &row.tour {
                 Ok(tour) => {
                     let view = tour_view(tour, row.place);
+                    let recorded = checks.get(&row.id);
+                    let mut pins = pin_words(tour);
+                    match recorded {
+                        Some(r) if !r.fresh() => pins.push_str(" · changed"),
+                        Some(_) if say_fresh => pins.push_str(" · fresh"),
+                        _ => {}
+                    }
                     ListRowView {
                         id: view.id.clone(),
                         folder: view.folder,
@@ -498,10 +725,12 @@ pub fn list_rows(rows: &[Row]) -> Vec<ListRowView> {
                         pinned: Some(view.pinned),
                         pin: view.pin.clone(),
                         skipped: (!view.problems.is_empty()).then_some(view.problems.len()),
-                        pins: pin_words(tour),
+                        check: recorded.map(|r| if r.fresh() { "fresh" } else { "changed" }),
+                        on: None,
+                        pins,
                     }
                 }
-                Err(Unreadable { why }) => ListRowView {
+                Err(Unreadable { why, .. }) => ListRowView {
                     id: row.id.to_string(),
                     folder: place_word(row.place),
                     private_copy: copy,
@@ -517,6 +746,8 @@ pub fn list_rows(rows: &[Row]) -> Vec<ListRowView> {
                     pinned: None,
                     pin: None,
                     skipped: None,
+                    check: None,
+                    on: None,
                     pins: String::new(),
                 },
             }
@@ -561,7 +792,7 @@ pub fn list_text(rows: &[ListRowView]) -> String {
     let width = |i: usize| cells_width(&cells, i);
     let widths: Vec<usize> = (0..5).map(width).collect();
     let mut text = String::new();
-    for cell in &cells {
+    for (at, cell) in cells.iter().enumerate() {
         let mut row = String::new();
         for (i, w) in widths.iter().enumerate() {
             row.push_str(&format!("{:<w$}  ", cell[i], w = *w));
@@ -569,6 +800,9 @@ pub fn list_text(rows: &[ListRowView]) -> String {
         row.push_str(&cell[5]);
         text.push_str(row.trim_end());
         text.push('\n');
+        if let Some(on) = &rows[at].on {
+            text.push_str(&format!("  {}\n", on.words));
+        }
     }
     text
 }
@@ -667,7 +901,7 @@ mod tests {
             r#"{"type":"stop","id":"s1","path":"app","qualname":"","kind":"folder","text":"t"}"#;
         let t = tour(&[folder.to_string()]);
         let text = outline_text(&t, &tour_view(&t, Where::Project), false);
-        assert_eq!(text.lines().nth(2).unwrap(), " 1  s1  ▸ app/  1 step");
+        assert_eq!(text.lines().nth(2).unwrap(), " 1  s1  □ app/  1 step");
         assert_eq!(
             text.lines().nth(1).unwrap(),
             "project · writing · 1 stop · 1 step · by claude-code · not pinned (being written)"
@@ -705,6 +939,7 @@ mod tests {
             place,
             path: std::path::PathBuf::new(),
             tour,
+            len: 0,
         }
     }
     use crate::tours::record::TourId;
@@ -721,10 +956,11 @@ mod tests {
                 Where::Private,
                 Err(Unreadable {
                     why: "the first line is not JSON".to_string(),
+                    too_new: false,
                 }),
             ),
         ];
-        let views = list_rows(&rows);
+        let views = list_rows(&rows, &BTreeMap::new(), false);
         assert_eq!(
             list_text(&views),
             "checkout-order-7k2q  writing         1 stop  project                 not pinned (being written)  checkout_order   \"what happens when the payment times out\"\n\

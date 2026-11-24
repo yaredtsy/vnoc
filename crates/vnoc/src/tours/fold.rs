@@ -30,6 +30,8 @@ pub struct Problem {
 #[error("{why}")]
 pub struct Unreadable {
     pub why: String,
+    /// the tour is a schema newer than this version reads: the environment's problem (update V-NOC), not a broken file (02 §12, exit `3`)
+    pub too_new: bool,
 }
 
 /// Who is writing, from `halt`, `halted`, `resume` and `end` (01 §4).
@@ -194,7 +196,10 @@ fn complete_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
 
 /// The first line: a `tour` record of schema 1.
 fn head(first: &str) -> Result<TourRecord, Unreadable> {
-    let unreadable = |why: String| Unreadable { why };
+    let unreadable = |why: String| Unreadable {
+        why,
+        too_new: false,
+    };
     let value: serde_json::Value = serde_json::from_str(first)
         .map_err(|e| unreadable(format!("the first line is not JSON: {e}")))?;
     if value.get("type").and_then(|t| t.as_str()) != Some("tour") {
@@ -205,9 +210,10 @@ fn head(first: &str) -> Result<TourRecord, Unreadable> {
     match value.get("schema").and_then(|s| s.as_u64()) {
         Some(1) => {}
         Some(n) => {
-            return Err(unreadable(format!(
-                "this tour is schema {n}; this version of V-NOC reads schema 1"
-            )));
+            return Err(Unreadable {
+                why: format!("this tour is schema {n}; this version of V-NOC reads schema 1"),
+                too_new: n > 1,
+            });
         }
         None => {
             return Err(unreadable(
@@ -230,6 +236,7 @@ pub fn fold(text: &str) -> Result<Tour, Unreadable> {
     let Some((_, first)) = lines.next() else {
         return Err(Unreadable {
             why: "the file has no complete first line".to_string(),
+            too_new: false,
         });
     };
     let first = head(first)?;
@@ -785,6 +792,9 @@ mod tests {
         assert!(fold(&format!("{}\n", tour_line(r#""schema":1,"#))).is_ok());
         let two = fold(&format!("{}\n", tour_line(r#""schema":2,"#))).unwrap_err();
         assert!(two.why.contains("schema 2"), "{}", two.why);
+        assert!(two.too_new, "a newer schema says so");
+        let zero = fold(&format!("{}\n", tour_line(r#""schema":0,"#))).unwrap_err();
+        assert!(!zero.too_new, "schema 0 is not a newer one");
     }
 
     // ---- the lines after it

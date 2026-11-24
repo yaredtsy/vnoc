@@ -1,27 +1,31 @@
-//! `vnoc tour start | add | finish | list | show` (`docs/26-tours/02-commands.md` §2 – §6, §12): parse, call `tours/`, print.
+//! `vnoc tour start | add | finish | check | list | show` (`docs/26-tours/02-commands.md` §2 – §6, §12): parse, call `tours/`, print.
 //!
-//! Every command here is a thin handler: the files, the rules and the text of a tour are `crates/vnoc/src/tours/`. Only `add` reads the code, so
-//! only `add` starts a driver. Exit codes as `02` §12: a refusal and a tour, stop or node that is not there are `2`, the lock and the
+//! Every command here is a thin handler: the files, the rules and the text of a tour are `crates/vnoc/src/tours/`. Only `add` always reads the code; `check`, `list --on` and
+//! `show --check` start a driver only when a tour's recorded check no longer holds, or a node is to be found. Exit codes as `02` §12: a refusal and a tour, stop or node that is not there are `2`, the lock and the
 //! environment `3`.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use super::args::{
-    DetailArg, TourAddArgs, TourCommand, TourFinishArgs, TourShowArgs, TourStartArgs,
+    DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourFinishArgs, TourListArgs, TourShowArgs,
+    TourStartArgs,
 };
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
-use super::project::{open_from, open_without_driver};
+use super::project::{Opened, open_from, open_without_driver};
 use super::{Failure, Global};
 use crate::source;
 use crate::tours::add::{AddOptions, plan_stop};
+use crate::tours::check::{self, Answer, Code, Mode, Recorded, Source};
+use crate::tours::on::{self, Map, Query};
 use crate::tours::record::{Detail, EndRecord, Record};
 use crate::tours::rules::Refusal;
-use crate::tours::store::{self, Located, Pick, StartParams, StoreError, Where};
-use crate::tours::{TourId, hash, steps_in_order, time, view};
+use crate::tours::store::{self, Located, Pick, Row, StartParams, StoreError, Where};
+use crate::tours::{Tour, TourId, hash, steps_in_order, time, view};
 use crate::userdata::ToursLock;
 
 /// The most of a stop's text that is read before it is called too big: `body::read` says the size, and refuses anything over 64 KB.
@@ -32,8 +36,9 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
         TourCommand::Start(args) => start(global, args).await,
         TourCommand::Add(args) => add(global, args).await,
         TourCommand::Finish(args) => finish(global, args).await,
-        TourCommand::List => list(global),
-        TourCommand::Show(args) => show(global, args),
+        TourCommand::List(args) => list(global, args).await,
+        TourCommand::Show(args) => show(global, args).await,
+        TourCommand::Check(args) => check(global, args).await,
     }
 }
 
@@ -125,7 +130,15 @@ async fn take_lock(vnoc_root: PathBuf) -> Result<ToursLock, Failure> {
 /// The tour as it is now, under the lock the caller holds. A tour that cannot be read cannot be written to.
 fn read_tour(vnoc_root: &Path, id: &TourId) -> Result<crate::tours::Tour, Failure> {
     let (_, folded) = store::read(vnoc_root, id).map_err(store_failure)?;
-    folded.map_err(|e| Failure::Usage(format!("the tour {id} cannot be read: {e}")))
+    folded.map_err(|e| {
+        let said = format!("the tour {id} cannot be read: {e}");
+        // a tour of a newer schema is for a newer V-NOC (the environment); a broken one is the request's
+        if e.too_new {
+            Failure::Environment(said)
+        } else {
+            Failure::Usage(said)
+        }
+    })
 }
 
 /// `1 step`, `5 steps`.
@@ -576,12 +589,339 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
     )
 }
 
+// ------------------------------------------------------------------------------------------------------------- checking
+
+/// The index and the drivers, opened the first time a command needs them: a tour whose record holds needs neither (03 §3).
+#[derive(Default)]
+struct Lazy(Option<Opened>);
+
+impl Lazy {
+    async fn get(&mut self, global: &Global) -> Result<&Opened, Failure> {
+        if self.0.is_none() {
+            self.0 = Some(open_from(global).await?);
+        }
+        Ok(self.0.as_ref().expect("opened just now"))
+    }
+}
+
+/// A tour to find the freshness of: what the check is made true of is the file as it was **before** it was read.
+struct Subject<'a> {
+    id: &'a TourId,
+    path: &'a Path,
+    len: u64,
+    tour: &'a Tour,
+}
+
+fn subject(row: &Row) -> Option<Subject<'_>> {
+    row.tour.as_ref().ok().map(|tour| Subject {
+        id: &row.id,
+        path: &row.path,
+        len: row.len,
+        tour,
+    })
+}
+
+/// The answer for each tour, by id, in three rungs (03 §3): the recorded check when it still holds (`stat`s, no index), else a check. The index
+/// is built (once, by `lazy`) only if some tour needs the check, and a tour with no written stop needs no code at all.
+async fn answers(
+    global: &Global,
+    lazy: &mut Lazy,
+    project: &crate::project::Project,
+    vnoc_root: &Path,
+    subjects: &[Subject<'_>],
+    mode: Mode,
+) -> Result<BTreeMap<TourId, Answer>, Failure> {
+    let mut done = BTreeMap::new();
+    let mut need = Vec::new();
+    for s in subjects {
+        if done.contains_key(s.id) {
+            continue;
+        }
+        if !mode.again
+            && let Some(recorded) = check::recall(vnoc_root, project.git_root(), s.id, s.path)
+        {
+            done.insert(
+                s.id.clone(),
+                Answer {
+                    from: Source::Record,
+                    recorded,
+                },
+            );
+        } else if s.tour.stops.iter().any(|stop| stop.written) {
+            need.push(s);
+        } else {
+            let recorded = Recorded::empty(s.len);
+            check::record(vnoc_root, s.id, &recorded).map_err(store_failure)?;
+            done.insert(
+                s.id.clone(),
+                Answer {
+                    from: Source::Check,
+                    recorded,
+                },
+            );
+        }
+    }
+    if need.is_empty() {
+        return Ok(done);
+    }
+    let opened = lazy.get(global).await?;
+    let index = opened.index.read().expect("the index lock is not poisoned");
+    let tree = index.tree(&opened.project.name(), opened.project.prefix());
+    let code = Code {
+        index: &index,
+        project: &opened.project,
+        tree: &tree,
+    };
+    for s in need {
+        let mut read = |path: &Path| source::read_text(path);
+        let recorded = check::check(&code, &mut read, s.tour, s.len);
+        check::record(vnoc_root, s.id, &recorded).map_err(store_failure)?;
+        done.insert(
+            s.id.clone(),
+            Answer {
+                from: Source::Check,
+                recorded,
+            },
+        );
+    }
+    Ok(done)
+}
+
+/// One block of a stop that a check did not find as it was written.
+#[derive(Serialize)]
+struct CheckedBlock {
+    id: String,
+    /// `changed` or `moved`
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    moved_to: Option<[u32; 2]>,
+}
+
+/// One stop that is changed or gone, or fresh with a block at other lines.
+#[derive(Serialize)]
+struct CheckedStop {
+    id: String,
+    /// `changed`, `gone`, or `fresh` for a stop that only has a moved block
+    state: &'static str,
+    name: String,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lines: Option<[u32; 2]>,
+    blocks: Vec<CheckedBlock>,
+}
+
+#[derive(Serialize)]
+struct CheckedTour {
+    id: String,
+    readable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    problem: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fresh: Option<bool>,
+    /// `record` or `check`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from: Option<Source>,
+    /// when the answer was made
+    #[serde(skip_serializing_if = "Option::is_none")]
+    at: Option<String>,
+    changed: usize,
+    gone: usize,
+    stops: Vec<CheckedStop>,
+    #[serde(skip)]
+    lines: Vec<String>,
+    #[serde(skip)]
+    word: String,
+}
+
+fn checked_stops(tour: &Tour, recorded: &Recorded) -> Vec<CheckedStop> {
+    let mut out = Vec::new();
+    for stop in tour.stops.iter().filter(|s| s.written) {
+        let mut blocks = Vec::new();
+        let mut stack: Vec<&crate::tours::TourBlock> = stop.blocks.iter().rev().collect();
+        while let Some(block) = stack.pop() {
+            match recorded.block(block.id) {
+                check::BlockState::Fresh => {}
+                check::BlockState::Changed => blocks.push(CheckedBlock {
+                    id: block.id.to_string(),
+                    state: "changed",
+                    moved_to: None,
+                }),
+                check::BlockState::Moved(lines) => blocks.push(CheckedBlock {
+                    id: block.id.to_string(),
+                    state: "moved",
+                    moved_to: Some([lines.first, lines.last]),
+                }),
+            }
+            stack.extend(block.details.iter().rev());
+        }
+        let state = recorded.stop(stop.id);
+        if state == check::StopState::Fresh && blocks.is_empty() {
+            continue;
+        }
+        let view = view::tour_view(tour, Where::Private);
+        let shown = &view.stops[tour.number(stop.id).unwrap_or(1) - 1];
+        out.push(CheckedStop {
+            id: stop.id.to_string(),
+            state: match state {
+                check::StopState::Fresh => "fresh",
+                check::StopState::Changed => "changed",
+                check::StopState::Gone => "gone",
+            },
+            name: shown.name.clone(),
+            path: shown.path.clone(),
+            lines: shown.lines,
+            blocks,
+        });
+    }
+    out
+}
+
+#[derive(Serialize)]
+struct Checked {
+    schema: u32,
+    command: &'static str,
+    tours: Vec<CheckedTour>,
+    /// tours with a stop that is changed or gone
+    stale: usize,
+    /// tours that cannot be read
+    unreadable: usize,
+}
+
+impl Render for Checked {
+    fn text(&self, quiet: bool) -> String {
+        if self.tours.is_empty() {
+            return "no tours\n".to_string();
+        }
+        let id_width = self.tours.iter().map(|t| t.id.len()).max().unwrap_or(0);
+        let word_width = self
+            .tours
+            .iter()
+            .filter(|t| t.readable)
+            .map(|t| t.word.len())
+            .max()
+            .unwrap_or(0);
+        let mut text = String::new();
+        for tour in &self.tours {
+            let row = if tour.readable {
+                format!(
+                    "{:<id_width$}  {:<word_width$}  {}",
+                    tour.id, tour.word, tour.lines[0]
+                )
+            } else {
+                format!("{:<id_width$}  {}", tour.id, tour.word)
+            };
+            text.push_str(row.trim_end());
+            text.push('\n');
+            for line in tour.lines.iter().skip(usize::from(tour.readable)) {
+                text.push_str(&format!("  {line}\n"));
+            }
+        }
+        if !quiet {
+            let n = self.tours.len();
+            let mut said = format!("{n} {}", if n == 1 { "tour" } else { "tours" });
+            said.push_str(&match self.stale {
+                0 => " · all fresh".to_string(),
+                s => format!(" · {s} with stale stops"),
+            });
+            if self.unreadable > 0 {
+                said.push_str(&format!(" · {} cannot be read", self.unreadable));
+            }
+            text.push_str(&said);
+            text.push('\n');
+        }
+        text
+    }
+}
+
+/// The tours a command names (an id, or the start of one), or every tour; one row for each id (the project's copy of a tour that is in both folders).
+fn chosen(rows: Vec<Row>, wanted: &[TourId]) -> Vec<Row> {
+    let mut seen = std::collections::BTreeSet::new();
+    rows.into_iter()
+        .filter(|r| (wanted.is_empty() || wanted.contains(&r.id)) && seen.insert(r.id.clone()))
+        .collect()
+}
+
+async fn check(global: &Global, args: &TourCheckArgs) -> Result<(), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let mut wanted = Vec::new();
+    for text in &args.tours {
+        let id = resolve(global, "tour check", &vnoc_root, text)?;
+        if !wanted.contains(&id) {
+            wanted.push(id);
+        }
+    }
+    let rows = chosen(store::list(&vnoc_root).tours, &wanted);
+    let subjects: Vec<Subject> = rows.iter().filter_map(subject).collect();
+    let mut lazy = Lazy::default();
+    let mode = Mode { again: args.again };
+    let done = answers(global, &mut lazy, &project, &vnoc_root, &subjects, mode).await?;
+    let today = time::now();
+    let mut tours = Vec::new();
+    for row in &rows {
+        let id = row.id.to_string();
+        let (Ok(tour), Some(answer)) = (&row.tour, done.get(&row.id)) else {
+            let problem = row.tour.as_ref().err().map(|e| e.why.clone());
+            tours.push(CheckedTour {
+                id,
+                readable: false,
+                word: format!("cannot be read: {}", problem.as_deref().unwrap_or("")),
+                lines: vec![],
+                fresh: None,
+                from: None,
+                at: None,
+                changed: 0,
+                gone: 0,
+                stops: vec![],
+                problem,
+            });
+            continue;
+        };
+        let (changed, gone) = answer.recorded.counts();
+        let mut lines = vec![view::when_words(
+            answer.from,
+            answer.recorded.fresh(),
+            &answer.recorded.at,
+            &today,
+        )];
+        lines.extend(view::stale_lines(tour, &answer.recorded));
+        tours.push(CheckedTour {
+            id,
+            readable: true,
+            problem: None,
+            fresh: Some(answer.recorded.fresh()),
+            from: Some(answer.from),
+            at: Some(answer.recorded.at.clone()),
+            changed,
+            gone,
+            stops: checked_stops(tour, &answer.recorded),
+            lines,
+            word: view::check_word(changed, gone),
+        });
+    }
+    let stale = tours.iter().filter(|t| t.fresh == Some(false)).count();
+    let unreadable = tours.iter().filter(|t| !t.readable).count();
+    out::render(
+        &Checked {
+            schema: 1,
+            command: "tour check",
+            tours,
+            stale,
+            unreadable,
+        },
+        global,
+    )
+}
+
 // --------------------------------------------------------------------------------------------------------------------- list
 
 #[derive(Serialize)]
 struct Listed {
     schema: u32,
     command: &'static str,
+    /// `list --on`: the node the tours are on, as the index names it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    on: Option<String>,
     tours: Vec<view::ListRowView>,
     /// what was wrong with the folders: a file that is not a tour's
     problems: Vec<String>,
@@ -590,6 +930,9 @@ struct Listed {
 impl Render for Listed {
     fn text(&self, quiet: bool) -> String {
         if self.tours.is_empty() {
+            if let Some(on) = &self.on {
+                return format!("no tours on {on}\n");
+            }
             let mut text = "no tours\n".to_string();
             if !quiet {
                 text.push_str("start one with: vnoc tour start --title \"…\"\n");
@@ -600,19 +943,104 @@ impl Render for Listed {
     }
 }
 
-fn list(global: &Global) -> Result<(), Failure> {
+async fn list(global: &Global, args: &TourListArgs) -> Result<(), Failure> {
     let project = open_without_driver(global)?;
-    let listed = store::list(&store::vnoc_root(project.git_root()));
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let listed = store::list(&vnoc_root);
     if !global.json {
         for problem in &listed.problems {
             out::note(problem);
         }
     }
+    let mut lazy = Lazy::default();
+
+    // the node, if one was asked for: the one thing here that needs the index
+    let mut on_node: Option<(String, Query)> = None;
+    if let Some(text) = &args.on {
+        let opened = lazy.get(global).await?;
+        let lookup = Lookup::new(opened, 1);
+        let node = match lookup.resolve(text) {
+            Ok(Target::Node(node)) => node,
+            Ok(Target::Missing(missing)) => {
+                return refused_with(
+                    global,
+                    "tour list",
+                    missing_error(&missing.was, &missing.id),
+                );
+            }
+            Err(error) => return refused_with(global, "tour list", error),
+        };
+        let Some(query) = Query::of(node) else {
+            let error = NodeError::new(
+                "root",
+                "the project's root folder is every tour's: name a folder in it",
+            );
+            return refused_with(global, "tour list", error);
+        };
+        on_node = Some((node.location(), query));
+    }
+
+    // what is known of each tour: a check made now (`--check`), else the record where it still holds, by `stat`s alone
+    let subjects: Vec<Subject> = listed.tours.iter().filter_map(subject).collect();
+    let known: BTreeMap<TourId, Recorded> = if args.check {
+        answers(
+            global,
+            &mut lazy,
+            &project,
+            &vnoc_root,
+            &subjects,
+            Mode::default(),
+        )
+        .await?
+        .into_iter()
+        .map(|(id, answer)| (id, answer.recorded))
+        .collect()
+    } else {
+        subjects
+            .iter()
+            .filter_map(|s| {
+                check::recall(&vnoc_root, project.git_root(), s.id, s.path)
+                    .map(|recorded| (s.id.clone(), recorded))
+            })
+            .collect()
+    };
+    let mut rows = view::list_rows(&listed.tours, &known, args.check);
+
+    if let Some((_, query)) = &on_node {
+        // by what the tours wrote: no check, no code read
+        let tours: Vec<&Tour> = listed
+            .tours
+            .iter()
+            .filter_map(|r| r.tour.as_ref().ok())
+            .collect();
+        let at_row: Vec<usize> = listed
+            .tours
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.tour.is_ok())
+            .map(|(i, _)| i)
+            .collect();
+        let found: BTreeMap<usize, on::On> = Map::of(&tours)
+            .on(query)
+            .into_iter()
+            .map(|on| (at_row[on.at], on))
+            .collect();
+        let kept: Vec<view::ListRowView> = rows
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, mut row)| {
+                row.on = Some(view::OnView::of(found.get(&i)?));
+                Some(row)
+            })
+            .collect();
+        rows = kept;
+    }
     out::render(
         &Listed {
             schema: 1,
             command: "tour list",
-            tours: view::list_rows(&listed.tours),
+            on: on_node.map(|(location, _)| location),
+            tours: rows,
             problems: listed.problems,
         },
         global,
@@ -659,15 +1087,36 @@ impl Render for ShownUnreadable {
     }
 }
 
-fn show(global: &Global, args: &TourShowArgs) -> Result<(), Failure> {
+async fn show(global: &Global, args: &TourShowArgs) -> Result<(), Failure> {
     let project = open_without_driver(global)?;
     let vnoc_root = store::vnoc_root(project.git_root());
     let tour_id = resolve(global, "tour show", &vnoc_root, &args.tour)?;
-    let (place, folded) = store::read(&vnoc_root, &tour_id).map_err(store_failure)?;
-    match folded {
+    let read = store::read_measured(&vnoc_root, &tour_id).map_err(store_failure)?;
+    match &read.tour {
         Ok(tour) => {
-            let tour_view = view::tour_view(&tour, place);
-            let text = view::outline_text(&tour, &tour_view, args.text);
+            let mut tour_view = view::tour_view(tour, read.place);
+            if args.check {
+                let subjects = [Subject {
+                    id: &tour_id,
+                    path: &read.path,
+                    len: read.len,
+                    tour,
+                }];
+                let mut lazy = Lazy::default();
+                let done = answers(
+                    global,
+                    &mut lazy,
+                    &project,
+                    &vnoc_root,
+                    &subjects,
+                    Mode::default(),
+                )
+                .await?;
+                if let Some(answer) = done.get(&tour_id) {
+                    view::mark(&mut tour_view, answer);
+                }
+            }
+            let text = view::outline_text(tour, &tour_view, args.text);
             out::render(
                 &Shown {
                     schema: 1,
@@ -685,8 +1134,8 @@ fn show(global: &Global, args: &TourShowArgs) -> Result<(), Failure> {
                 command: "tour show",
                 tour: tour_id.to_string(),
                 readable: false,
-                folder: view::place_word(place),
-                problem: unreadable.why,
+                folder: view::place_word(read.place),
+                problem: unreadable.why.clone(),
             },
             global,
         ),

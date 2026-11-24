@@ -2,13 +2,16 @@
 //!
 //! A tour is a log: one file, one JSON record per line, and reading it is replaying its lines (`01-on-disk.md` §2, `03-core.md` §1).
 //! [`record`] (the lines: parse one, print one) and [`fold`] (lines in, a tour out) touch nothing; [`store`] is the first that writes to disk: the
-//! folders, the lock, start, append, read, list, the state file. No index, no driver and no git here yet (`06-build-order.md`).
+//! folders, the lock, start, append, read, list, the state file. [`find`], [`add`] and [`check`] are the ones that look at the code, through the index they are
+//! given: they start no driver, and a recorded check is answered before any index exists. No git here yet (`06-build-order.md`).
 
 pub mod add;
 pub mod body;
+pub mod check;
 pub mod find;
 pub mod fold;
 pub mod hash;
+pub mod on;
 pub mod record;
 pub mod rules;
 pub mod store;

@@ -1,0 +1,5 @@
+<tour>  3 stops changed  (checked now)
+  s1 changed: retry_charge billing/charge.py:11-22 · s1.b1 lines 14-15 are no longer there · s1.b2 line 15 is no longer there
+  s2 changed: retry_charge.<locals>.one_try billing/charge.py:14-15
+  s4 changed: retry_charge.<locals>.one_try billing/charge.py:14-15
+1 tour · 1 with stale stops

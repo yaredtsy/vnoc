@@ -442,6 +442,34 @@ fn load(path: &Path) -> io::Result<Folded> {
     Ok(folded)
 }
 
+/// A tour read, with the file's length from **before** it was read, and where the file is: what a recorded check is made true of (a file that
+/// grows while it is read makes the record not valid, never wrong).
+#[derive(Debug)]
+pub struct Measured {
+    pub place: Where,
+    pub tour: Folded,
+    pub len: u64,
+    pub path: PathBuf,
+}
+
+/// [`read`], with the length and the path.
+pub fn read_measured(vnoc_root: &Path, id: &TourId) -> Result<Measured, StoreError> {
+    let (place, path) = match locate(vnoc_root, id) {
+        Located::None => return Err(StoreError::NotFound(id.clone())),
+        Located::Private(path) => (Where::Private, path),
+        Located::Project(path) | Located::Both { project: path, .. } => (Where::Project, path),
+    };
+    let what = format!("could not read {}", path.display());
+    let len = fs::metadata(&path).map_err(io_error(what.clone()))?.len();
+    let tour = load(&path).map_err(io_error(what))?;
+    Ok(Measured {
+        place,
+        tour,
+        len,
+        path,
+    })
+}
+
 /// Reads a tour: the fold of its file, and the folder it is in (the project's one when the id is in both). A tour that cannot be read comes
 /// back as `Err(Unreadable)` inside `Ok`, not as an error of this function. Never takes the lock and never writes.
 pub fn read(vnoc_root: &Path, id: &TourId) -> Result<Loaded, StoreError> {
@@ -463,6 +491,8 @@ pub struct Row {
     pub place: Where,
     pub path: PathBuf,
     pub tour: Folded,
+    /// the file's length from before it was read
+    pub len: u64,
 }
 
 #[derive(Debug, Default)]
@@ -511,9 +541,11 @@ pub fn list(vnoc_root: &Path) -> Listed {
                 continue;
             };
             let path = entry.path();
+            let len = fs::metadata(&path).map_or(0, |m| m.len());
             let tour = load(&path).unwrap_or_else(|e| {
                 Err(Unreadable {
                     why: format!("could not read the file: {e}"),
+                    too_new: false,
                 })
             });
             listed.tours.push(Row {
@@ -521,6 +553,7 @@ pub fn list(vnoc_root: &Path) -> Listed {
                 place,
                 path,
                 tour,
+                len,
             });
         }
     }

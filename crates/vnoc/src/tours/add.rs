@@ -112,7 +112,7 @@ fn node_kind(kind: Kind) -> NodeKind {
 
 /// The ID texts a line of this node's code may be a marker by (01 §7): the `ID:` text of the node itself and of every def inside it, as the driver
 /// reported them (`Def.id`), and for a file its `FileID`. The tree is the nesting: the defs inside a def's lines are its descendants.
-fn marker_ids(index: &Index, node: &Node) -> Vec<String> {
+pub(super) fn marker_ids(index: &Index, node: &Node) -> Vec<String> {
     fn walk(index: &Index, node: &Node, ids: &mut Vec<String>) {
         if node.qualname.is_some()
             && let Some((path, qualname, occurrence)) = place_of(node)
