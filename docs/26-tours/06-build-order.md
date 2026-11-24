@@ -298,7 +298,11 @@ Commit: `tours TR13: the vnoc-tour skill, vnoc guide tour, installed beside the 
 Split as A14 was (04 §6 "How it is run"): **TR13b** (one commit first: the `status`/`install` rows say the tour commands are allowed
 too), **TR14a** (the harness's tour scenarios, Claude's 14 runs, stop: done, 04 §6 "Results, TR14a"). Re-cut after it: **TR14b** (the
 fixes TR14a decided, then Claude re-runs: done, 04 §6 "Results, TR14b"), **TR14c** (two skill lines and the scorer from TR14b, Claude t4 and t6 three
-times each, then Codex's 14 on the fixed wording, two more of each failure), **TR14d** (the results table, last wording, the formats frozen).
+times each, then Codex's 14 on the fixed wording: done, 04 §6 "Results, TR14c"; the re-runs of the failures moved into TR14d), **TR14d** (the wording
+of 04 §6 "Decided from it" under TR14c, the re-runs, the results table, the formats frozen). **TR14d comes after TR15a – c** (the user,
+2026-11-24: finish the logic first; a trial batch and a coding session cannot share the tree, and the trial found no format problem).
+The two format tests of the freeze (a record with an unknown key reads; an unknown `type` is skipped) are built in TR15a, so a format
+finding still comes before the screen.
 
 The scenarios of [`04`](04-skill.md) §6, on the sample and on one real project. No product code unless a scenario fails; then
 the fix is the wording of a refusal, of the skill, or of the guide, in this step. The results table goes into 04 §6.
@@ -311,6 +315,17 @@ Commit: `tours TR14: the trial's results; wording from it` (and `docs:` for the 
 ## 5. Phase 3: the screen, playable
 
 ### TR15 The core answers the extension
+
+**Re-cut (the user, 2026-11-24: the logic first).** The Rust side of every request of [`03`](03-core.md) §8 is built before any page,
+and TR15's TypeScript rows move into TR16:
+- **TR15a:** the test temp folders removed; the two format tests; the check's rungs and the view builders move from `cli/tour.rs` into
+  `tours/` (a pure move: the goldens stay); `vnoc/tours`, `vnoc/tour`, `vnoc/tourGo`, `vnoc/tourOpen`, `vnoc/tourHalt`,
+  `toursChanged`, `tourPlaceChanged`, the `files_changed` split, the answers in memory. The answers are the commands' `--json` types,
+  extended with what a page cannot compute; `shared/tours.ts` is written from them in TR16.
+- **TR15b:** `vnoc/tours { on }`, `vnoc/tourCode`, `vnoc/tourCounts` (03 §6's check) — TR21's Rust rows.
+- **TR15c:** `vnoc/tourPin`, `tourIds`, `tourEdit`, `tourShare`, `tourDelete`, `tourRestore`, `tourSettings`, `TourRow.offers` — TR22's
+  Rust rows.
+- then TR14d; then TR16 with the TypeScript rows below (`shared/tours.ts`, `shared/messages.ts`, `extension/src/tours.ts`, `relay.ts`).
 
 | Files | What |
 |---|---|
