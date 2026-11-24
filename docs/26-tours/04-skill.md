@@ -119,6 +119,20 @@ only after a yes. A project can set this to happen by itself; then `finish` did 
 If `vnoc` is not found, tell the user (VS Code: "V-NOC: Install `vnoc` Command in PATH") and explain in the chat instead.
 ```
 
+**Changes to the text above, decided at TR12's review (for TR13):**
+- in *The text of a stop*, after the `--same-as` line: `A stop planned as a second visit (shown as `= s2` by `show` and `route`)
+  takes `--same-as s2` too: the plan does not do it for you.`
+- in *After finish*, at the end: `A line that says not pinned with no command after it is for you: put "not pinned" in your last
+  line, and offer nothing.`
+- in *When the user talks about the tour*: `If where says no tour has been opened, ask which tour.`
+- in *The loop*, step 2: the text on standard input is a heredoc, `vnoc tour add <id> <node> --body-file - <<'EOF'` … `EOF`, as the
+  allow rules are checked for (§5).
+- `start`'s `next:` line now ends `(vnoc guide tour)` (02 §12; held back in TR4 until the topic existed).
+
+**Ids in the guide's examples.** A tour's id ends in a random suffix, and `tests/guide.rs` runs every block and compares its output.
+A test-only environment variable, `VNOC_TOUR_ID_SUFFIX`, makes `start` use the given suffix (only when it is a valid suffix; never
+documented outside the test code), and `tests/guide.rs` sets it. The guide's tour is then `orders-<suffix>` in its text and its run.
+
 About 3.4 KB. What it leaves to the guide: the budgets in numbers, `--detail`, `--plan`, `--to`, `--under`, `drop`, `resume`, the
 JSON document, `--json`.
 

@@ -276,6 +276,10 @@ Commit: `tours TR12: vnoc tour route proposes a route from the call tree`.
 
 ### TR13 The guide, the skill, the install
 
+First, a small commit **TR12b**: `route`'s outline names a stop as `show` names a planned stop (the qualname, `OrderService.place`),
+in text and in `--json` `name`; the `start --route` test compares `show` and `route` exactly. Commit: `tours TR12b: a route names its
+stops as show does`.
+
 | Files | What |
 |---|---|
 | `crates/vnoc/guide/tour.md`, `cli/guide.rs` | the sixth topic ([`04`](04-skill.md) §4); `vnoc skill tour` |

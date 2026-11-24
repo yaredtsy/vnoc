@@ -494,6 +494,15 @@ and what those call                     10 stops   about 7 min      --depth 2
 | `start --route` | plans exactly the outline (one `plan` record: `from`, `line`, `same_as`); with `--plan` too: exit `2` |
 | `--json` | `{schema, command: "tour route", node, depth, sizes: [{depth, stops, minutes}], stops: [{n, node, name, kind, path, first, from, line, same_as}], cut}`; `from` and `same_as` are numbers of the outline |
 
+**As built (TR12).** `route::from_calls(merged, root, levels, known)` and `route::from_tree(node, levels)` make the items, `propose`
+is pure over them. The driver is asked for `max(depth, 2)` levels. `line` is the first call site in the parent's file (merged sites
+are sorted by file). A `same_as` stop keeps its own call line. The no-calls note (`the driver gives no calls for this node: the route
+is the node alone`, `no_calls: true`) is only for a driver without `callTree`; a function that calls nothing has no note. `--json`
+keys are always there (`null` when absent); a size has `cut: true` when cut. Only a function is routed by calls; the project's root
+folder is refused (`the project's root folder is not a stop: name a folder in it`). `plan` rows print `= s3` for a planned
+`same_as`. **Names (fixed in TR12b):** the outline names a stop as `show` names it (`OrderService.place`, not `place`), so `start
+--route` then `show` lists exactly what `route` listed.
+
 ## 12. What each prints
 
 Plain text by default, short; `--json` on every command, with `"schema": 1` and `"command": "tour add"` (C5).
