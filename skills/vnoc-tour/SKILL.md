@@ -7,15 +7,16 @@ metadata:
 # V-NOC tours
 
 A tour is your explanation, cut into steps the user reads beside the code. You write it with `vnoc tour`; each stop shows on the
-user's canvas the moment you add it. **The tour is the answer.** Do not also explain in the chat.
+user's canvas the moment you add it. **The tour is the answer.**
 
 ## The loop
 1. `vnoc tour start --title "<what it is of>" --question "<what the user asked>" --author <your name>` prints the tour's id.
    Then say one line: `Tour started: <title>. It is on the V-NOC canvas.`
 2. For each stop: read the code (a function with `vnoc code <node>`, a file or a folder with `vnoc show <node>`), then add the stop
    with its text as a heredoc: `vnoc tour add <id> <node> --body-file - <<'EOF'`, the text, and `EOF` on a line of its own.
-   Search and read between stops as you need. Say nothing in the chat while you write.
+   Search and read between stops as you need. Say nothing in the chat from start to finish, not even a short line beside an add.
 3. Run `finish` on its own, after the last `add` printed "written": `vnoc tour finish <id>`. Then one line: `Tour finished: <title> · <n> stops.`
+   After it, at most one more line, and only for what the user must know that the tour cannot say.
 
 Add one stop per command, in the order the user should read them. Send one `add` at a time and read its answer before the next: never several in one message. The answer may be a refusal to fix, or Stop.
 For a tour across files (a question, not one function's call tree), find the route first, then start with `--plan <the nodes in reading order>` and fill it with `add`, in that order:
@@ -39,8 +40,7 @@ newline: the host allows only a command it can read, and asks the user about any
 - A block's title says what the part does ("Retry only a dropped connection"), not the function's name.
 - No block for a line that only starts or returns.
 - A function under 8 lines is one step: the first paragraph only.
-- A stop reached by a call from an earlier stop: add `--from <that stop> --line <the call's line>`. A file of a folder you
-  explained, a method of a class: `--from <that stop>`.
+- A stop reached by a call from an earlier stop: add `--from <that stop> --line <the call's line>`. A file of a folder, a method of a class: `--from <that stop>` alone, only for containment, never to chain stops that do not contain each other.
 - A function the tour already explained: `--same-as <that stop>`, with one sentence on why it is called again.
   A stop planned as a second visit (shown as `= s2` by `show` and `route`) takes `--same-as s2` too: the plan does not do it for you.
 
@@ -62,8 +62,7 @@ fix a stop with `vnoc tour add <id> <node> --replace <stop> --body-file -` and t
 
 ## After finish
 `finish` may print lines that start with `ask the user`: the tour's stops have no IDs, or files are not committed so it is not
-pinned. Do not act on them. Ask the user that question in one line each, with the files named, and run the command on the line
-only after a yes. A project can set this to happen by itself; then `finish` did it and says so, and there is nothing to ask.
+pinned. Do not act on them. Ask the user as a question in your last message, ending in `?`, with the files named; run the command on the line only after a yes. A project can set this to happen by itself; then `finish` did it and says so, and there is nothing to ask.
 A line that says not pinned with no command after it is for you: put "not pinned" in your last line, and offer nothing.
 When `finish` wrote the IDs and pinned by itself, your last line is the one it printed (`… · pinned at <hash>`).
 
@@ -73,6 +72,6 @@ When `finish` wrote the IDs and pinned by itself, your last line is the one it p
   Never commit for a tour unasked, and never change `[tours]` in `.vnoc/vnoc.toml` yourself.
 
 ## More
-`vnoc guide tour` has the full rules, the sizes and examples. Naming a node: `file.py:12` · `file.py::Class.method` · a path.
+`vnoc guide tour` has the full rules, the sizes and examples. Naming a node: `file.py:12` · `file.py::Class.method` · a path; quote one with `<` or `>` in it (`'…<locals>…'`).
 To find a node by name: `vnoc find <name>`.
 If `vnoc` is not found, tell the user (VS Code: "V-NOC: Install `vnoc` Command in PATH") and explain in the chat instead.

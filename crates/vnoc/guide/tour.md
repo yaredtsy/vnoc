@@ -1,13 +1,14 @@
 # tour: explain code as a tour the user plays
 
 A tour is your explanation, cut into stops. A stop is one function, class, file or folder, with the lines that matter lit and a short text.
-The user plays it on the V-NOC canvas: each stop appears the moment you add it. The tour is the answer; do not also explain in the chat.
+The user plays it on the V-NOC canvas: each stop appears the moment you add it. The tour is the answer.
+Say nothing in the chat from start to finish, not even a short line beside an add. After the finish line, at most one more line, and only for what the user must know that the tour cannot say.
 
 ## A whole tour, start to finish
 Four commands. Each prints what it did. The text goes in on standard input, as a heredoc.
 One `vnoc tour` command per call, with the tour's id written out: no `T=…` or `$T`, no `for` loops, no two commands joined with `;` or a newline.
 The host allows only a command it can read, and asks the user about anything else. Run `finish` on its own, after the last `add` printed `written`.
-Read a function with `vnoc code <node>`, a file or a folder with `vnoc show <node>`.
+Read a function with `vnoc code <node>`, a file or a folder with `vnoc show <node>`. Quote a node with `<` or `>` in it: `'a.py::f.<locals>.g'`.
 Send one `add` at a time and read its answer before the next: never several in one message. The answer may be a refusal to fix, or Stop.
 ```
 vnoc tour start --title "orders" --question "how does an order get parsed" --author claude-code
@@ -121,7 +122,7 @@ the plan does not do it for you.
 
 ## The route
 - `--from <stop>` says the tour got here from that stop. With `--line <n>` it is a call on line n of that stop's node (the stage says
-  "called on line 13"). Without, it is containment: a method of a class, a file of a folder.
+  "called on line 13"). Without, it is containment: a method of a class, a file of a folder; never use it to chain stops that do not contain each other.
 - `--same-as <stop>` is for a node already explained: one sentence, no blocks.
 - A tour need not be a tree. Stops with no `--from` are at the top, in the order you add them.
 - **Planning** puts stops on the route before they are written: the user sees the outline at once, and "stop 3 of 10". It is optional.
@@ -264,7 +265,7 @@ commit ask     the default
 ```
 - `ids`: give the tours' nodes an ID, so the tour follows a rename (`ID:` lines in the code, so it edits source files).
 - `commit`: commit the tour's files that are not committed, so the tour can be pinned.
-- `ask`: `finish` prints a line that starts with `ask the user`. Ask the user that question, one line each, naming the files; run the command on
+- `ask`: `finish` prints a line that starts with `ask the user`. Ask the user as a question in your last message, ending in `?`, naming the files; run the command on
   the line only after a yes. `always`: `finish` did it and says so; ask nothing. `never`: it says `not pinned` with no command after it; put "not pinned"
   in your last line and offer nothing.
 - **Pinned** means one commit holds every stop's code as the tour was written. A pinned tour shows the old code when the code later changes.

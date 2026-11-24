@@ -47,7 +47,7 @@ TOUR_PROMPTS = {
     "t3": "Give me a tour of `billing/`.",
     "t4": "Explain step by step how an order is placed, charged and invoiced.",
     "t5": "Walk me through `long_report` in `orders/report.py`.",
-    "t6": "Give me a tour of `orders/`.",
+    "t6": "Give me a tour of `orders/`. Don't ask me about the size.",
     "t7": "Continue the tour of `billing/`.",
     "t8": "Bring the tour of `OrderService.place` up to date.",
     "t9": "explain this more",
@@ -958,8 +958,11 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
     def chat_rule():
         one.need("nothing said in the chat between the first stop and the end", held,
                  f"{len(chat['between'])} text(s), {chat['between_chars']} chars: " + " / ".join(quote(chat["between"], 2, 120)))
-        if held and (chat["opening_chars"] > CHAT_LIMIT or chat["end_chars"] > CHAT_LIMIT):
-            one.judge("the opening and the end are one line each", chat_lines)
+        # TR14d: the end may be two lines, the first the finish line (the second is for what the tour cannot say); more lines, or over 300 characters, is judged
+        end_lines = [l for t in chat["end"] for l in t.splitlines() if l.strip()]
+        end_held = chat["end_chars"] <= CHAT_LIMIT and (len(end_lines) <= 1 or (len(end_lines) == 2 and re.search(r"finished", end_lines[0], re.I) is not None))
+        if held and (chat["opening_chars"] > CHAT_LIMIT or not end_held):
+            one.judge("the opening is one line and the end is the finish line and at most one more", chat_lines)
 
     def tour_made(finished=True):
         made = one.need("a tour was written", any(t["new_stop_ids"] for t in tours), f"{len(tours)} tour file(s) touched")
@@ -1116,7 +1119,7 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
         if scenario == "t10":
             one.need("`finish` printed `ask the user` lines", len(ask_lines) >= 1, f"{len(ask_lines)} line(s): " + " / ".join(quote(ask_lines, 3, 140)))
             one.need("no new commit", not commits, f"commits: {commits}")
-            one.need("the agent names the files and asks", asks and names_file, f"asks: {asks}; names a changed file: {names_file}")
+            one.need("the last message has a `?` and names the file", asks and names_file, f"`?` in the last message: {asks}; names a changed file: {names_file}; last message: {final[:200]!r}")
             one.judge("the question", quote([final], 1, 400))
         elif scenario == "t10b" and any(re.search(r"git add failed|index\.lock", result_text(results.get(c["id"]))) for c in calls if "finish" in [x for x, _ in tour_subs(c)]):
             # the agent's sandbox keeps `.git` read-only, so `finish` cannot pin: this run says nothing about D21

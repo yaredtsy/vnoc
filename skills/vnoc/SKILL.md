@@ -7,6 +7,7 @@ metadata:
 # V-NOC
 
 Asked to walk someone through code, or for a tour: use the vnoc-tour skill (vnoc guide tour).
+"Explain this", "here", "that" with nothing named: run vnoc tour where first.
 
 This project attaches notes to code (the commands and their output call them docs). A note says WHY: a constraint, a decision, some
 history, a trap, a plan. Not what the code does.
