@@ -1065,6 +1065,89 @@ fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
     core.finish();
 }
 
+/// `vnoc tour …` in the project (the command line, as another process: an agent writing a tour while the core is open), with `stdin` for its body.
+fn tour_command(root: &std::path::Path, args: &[&str], stdin: &str) -> (bool, String) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc"))
+        .current_dir(root)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .arg("--driver")
+        .arg(driver_path())
+        .arg("tour")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
+    let out = child.wait_with_output().unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), said)
+}
+
+#[test]
+fn an_attach_through_the_editor_tells_the_tours_of_the_file_where_their_lines_went() {
+    // The editor's sink: the core asks the editor to apply the edit (here a stand-in that writes the file), and after it the tours with a stop in
+    // that file get a `rebase` record, so the ID line the core just wrote does not make them stale. (`tests/cli.rs` covers the disk's sink.)
+    let (mut core, root) = orders_project("rebase", Some("format = 1\n"));
+    let (ok, said) = tour_command(
+        &root,
+        &[
+            "start",
+            "--title",
+            "orders",
+            "--question",
+            "what do orders do",
+            "--json",
+        ],
+        "",
+    );
+    assert!(ok, "{said}");
+    let started: Value = serde_json::from_str(&said).unwrap();
+    let tour = started["tour"].as_str().unwrap().to_string();
+    for (node, text) in [
+        (
+            "orders.py::OrderService.parse_order",
+            "parse_order hands back the raw request unchanged, for now.\n",
+        ),
+        (
+            "orders.py::OrderService.other",
+            "other does nothing yet, and is here so there is a second stop after the first.\n",
+        ),
+    ] {
+        let (ok, said) = tour_command(&root, &["add", &tour, node, "--body-file", "-"], text);
+        assert!(ok, "{node}: {said}");
+    }
+    assert!(tour_command(&root, &["check"], "").1.contains("all fresh"));
+
+    let key = "orders.py::OrderService.parse_order";
+    core.request("vnoc/attach", attach_params(&root, key, "Why", Some(true)))
+        .expect("attach answers");
+    assert_eq!(core.edit_requests.len(), 1, "the editor applied the edit");
+    let code = std::fs::read_to_string(root.join("orders.py")).unwrap();
+    assert_eq!(code.lines().count(), ORDERS.lines().count() + 1, "{code}");
+
+    let file =
+        std::fs::read_to_string(root.join(format!(".vnoc/local/tours/{tour}.jsonl"))).unwrap();
+    let rebase: Value = serde_json::from_str(
+        file.lines()
+            .find(|l| l.contains(r#""type":"rebase""#))
+            .expect("a rebase record"),
+    )
+    .unwrap();
+    // `parse_order` 2-3 is 2-4 now; `other` moved down by one: 5-6 is 6-7
+    assert_eq!(rebase["steps"]["s1"]["lines"], json!([2, 4]));
+    assert_eq!(rebase["steps"]["s2"]["lines"], json!([6, 7]));
+    let (ok, said) = tour_command(&root, &["check", "--again"], "");
+    assert!(ok && said.contains("all fresh"), "{said}");
+    core.finish();
+}
+
 #[test]
 fn a_marker_that_cannot_be_written_does_not_stop_the_attach() {
     let (mut core, root) = orders_project("refused", None);

@@ -345,6 +345,14 @@ pub enum TourCommand {
     /// `vnoc tour edit <tour> --title "…" --question "…" --detail quick|normal|detailed`: at least one. The same rules as `start` (a title of at most 60
     /// characters on one line, a question of at most 200). The text of a stop is changed by `vnoc tour add --replace`, not here.
     Edit(TourEditArgs),
+    /// Gives the nodes of a tour's stops an ID (an `ID:` line in the code), so the tour follows them through renames and moves. The user's command.
+    ///
+    /// `vnoc tour ids <tour> [<stop>…]`: for every written stop whose node has no ID (or the stops named): the ID, its marker in the code and
+    /// `node.toml`, as attaching a doc does, with no doc. A function or class gets an `ID:` line in its docstring, a file a `# FileID:` comment, a
+    /// folder a `.vnoc-id` file. The tour stays up to date through it. Prints each file it changed, and the files must be read again before they are
+    /// edited: lines moved down. Refused in a project whose `vnoc.toml` says `[ids] default = "none"`. Doing it twice writes nothing the second
+    /// time. An agent runs it only when asked.
+    Ids(TourIdsArgs),
     /// Moves a finished tour's file to `.vnoc/tours/`, where `git` shares it with the project; `--private` moves it back. The user's command.
     ///
     /// The file moves as it is, byte for byte, and its state (where the reader is) stays. Refused while the tour is being written, when it is there
@@ -445,7 +453,7 @@ pub struct TourAddArgs {
     #[arg(long, value_name = "STOP")]
     pub to: Option<crate::tours::StopId>,
     /// With `--to`: the blocks of the text are details of this block (`s1.b2`), written as `##`; a `###` is refused, details nest one level.
-    #[arg(long, value_name = "BLOCK", requires = "to")]
+    #[arg(long, value_name = "BLOCK")]
     pub under: Option<crate::tours::StepId>,
 }
 
@@ -1139,6 +1147,17 @@ pub struct TourShareArgs {
     /// Move it back to `.vnoc/local/tours/`.
     #[arg(long)]
     pub private: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourIdsArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(
+        value_name = "STOP",
+        help = "only these stops (`s2 s4`); with none, every written stop"
+    )]
+    pub stops: Vec<crate::tours::StopId>,
 }
 
 #[derive(Debug, Args)]

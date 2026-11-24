@@ -12,11 +12,13 @@ use serde::Serialize;
 
 use super::args::{
     DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourDeleteArgs, TourDropArgs, TourEditArgs,
-    TourFinishArgs, TourListArgs, TourResumeArgs, TourShareArgs, TourShowArgs, TourStartArgs,
+    TourFinishArgs, TourIdsArgs, TourListArgs, TourResumeArgs, TourShareArgs, TourShowArgs,
+    TourStartArgs,
 };
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
 use super::project::{Opened, open_from, open_without_driver};
+use super::write::{attach_failure, marker_words, take_lock as take_write_lock};
 use super::{Failure, Global};
 use crate::source;
 use crate::tours::add::{
@@ -44,6 +46,7 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
         TourCommand::Drop(args) => drop_id(global, args).await,
         TourCommand::Resume(args) => resume(global, args).await,
         TourCommand::Edit(args) => edit(global, args).await,
+        TourCommand::Ids(args) => ids(global, args).await,
         TourCommand::Share(args) => share(global, args).await,
         TourCommand::Delete(args) => delete(global, args).await,
         TourCommand::Halt(args) => halt(global, args).await,
@@ -1059,6 +1062,212 @@ async fn share(global: &Global, args: &TourShareArgs) -> Result<(), Failure> {
             tour: id.to_string(),
             folder: view::place_word(to),
             path: doc_path(&project, &moved),
+        },
+        global,
+    )
+}
+
+// ----------------------------------------------------------------------------------------------------------------------- ids
+
+/// What `ids` says went with a stop.
+#[derive(Serialize)]
+struct IdStop {
+    stop: String,
+    /// `written`, `had`, `by_name` or `gone`
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    /// the file the ID line is in, or the `.vnoc-id` file of the folder
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    said: Option<String>,
+}
+
+#[derive(Serialize)]
+struct IdsWritten {
+    schema: u32,
+    command: &'static str,
+    tour: String,
+    stops: Vec<IdStop>,
+    /// every file written or made, once, in the order they were
+    changed: Vec<String>,
+    /// an `ids` record was written
+    recorded: bool,
+    /// the ID lines are in the code and the tour was told where they put its lines: the tours that follow the files' changes need no check
+    #[serde(skip)]
+    words: Vec<String>,
+}
+
+impl Render for IdsWritten {
+    fn text(&self, _quiet: bool) -> String {
+        let written = self.stops.iter().filter(|s| s.state == "written").count();
+        let mut text = if self.stops.is_empty() {
+            format!("{}: no written stop to give an ID\n", self.tour)
+        } else if written == 0 {
+            format!(
+                "{}: nothing to write; every stop's node has an ID\n",
+                self.tour
+            )
+        } else {
+            let had = self.stops.iter().filter(|s| s.state == "had").count();
+            format!(
+                "{}: wrote {} for {} of {} stops{}\n",
+                self.tour,
+                if written == 1 { "an ID" } else { "IDs" },
+                written,
+                self.stops.len(),
+                match had {
+                    0 => String::new(),
+                    n => format!("; {n} already had one"),
+                }
+            )
+        };
+        for (stop, word) in self.stops.iter().zip(&self.words) {
+            if !word.is_empty() {
+                text.push_str(&format!("  {:<4} {word}\n", stop.stop));
+            }
+        }
+        if !self.changed.is_empty() {
+            text.push_str("changed\n");
+            for file in &self.changed {
+                text.push_str(&format!("  {file}\n"));
+            }
+            text.push_str("read these files again before you edit them\n");
+        }
+        text
+    }
+}
+
+async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failure> {
+    use crate::tours::ids::{self, Outcome};
+    let opened = open_from(global).await?;
+    let project = &opened.project;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let id = resolve(global, "tour ids", &vnoc_root, &args.tour)?;
+    if let Located::Both { .. } = store::locate(&vnoc_root, &id) {
+        return Err(store_failure(StoreError::InBoth(id)));
+    }
+    let settings = crate::userdata::UserData::new(project.git_root())
+        .settings()
+        .map_err(super::write::settings_failure)?;
+    if !settings.markers {
+        return Err(Failure::Usage(
+            "this project writes no ID lines ([ids] default = \"none\" in .vnoc/vnoc.toml)".into(),
+        ));
+    }
+    // the project's write lock first, then (inside each marker's edit, and at the end) the tours lock: never the other way round
+    let _one_writer = take_write_lock(project).await?;
+    let tour = read_tour(&vnoc_root, &id)?;
+    for named in &args.stops {
+        if !tour.stop(*named).is_some_and(|s| s.written) {
+            let near = did_you_mean_stops(&tour, *named);
+            return no_such(
+                global,
+                "tour ids",
+                "no_stop",
+                format!("no written stop {named} in this tour"),
+                near.iter().map(ToString::to_string).collect(),
+            );
+        }
+    }
+    let picks = {
+        let index = opened.index.read().expect("the index lock is not poisoned");
+        let tree = index.tree(&project.name(), project.prefix());
+        let code = Code {
+            index: &index,
+            project,
+            tree: &tree,
+        };
+        ids::pick(&code, &tour, &args.stops)
+    };
+    let mut env = crate::identity::Env {
+        project,
+        index: &opened.index,
+        host: &opened.host,
+        edits: crate::identity::EditSink::Disk,
+    };
+    let done = ids::write(&mut env, &picks)
+        .await
+        .map_err(|e| attach_failure(e, project))?;
+
+    // the tour as the edits left it (each marker's edit wrote a `rebase`), then the `ids` record, under the tours lock
+    let lock = take_lock(vnoc_root.clone()).await?;
+    let tour = read_tour(&vnoc_root, &id)?;
+    let record = ids::record(&tour, &done);
+    let recorded = record.is_some();
+    if let Some(record) = record {
+        store::append_locked(&lock, &vnoc_root, &id, &[Record::Ids(record)])
+            .map_err(store_failure)?;
+    }
+    drop(lock);
+
+    let mut stops = Vec::new();
+    let mut words = Vec::new();
+    let mut changed: Vec<String> = Vec::new();
+    for ((stop, outcome), (_, pick)) in done.iter().zip(&picks) {
+        let (state, id, file, said) = match outcome {
+            Outcome::Had(id) => ("had", Some(id.to_string()), None, String::new()),
+            Outcome::Written {
+                id,
+                path,
+                kind,
+                marker,
+            } => {
+                let said = match marker {
+                    crate::identity::MarkerWritten::Line(line) => marker_words(*kind, *line),
+                    crate::identity::MarkerWritten::FolderFile => {
+                        "a .vnoc-id file was made".to_string()
+                    }
+                };
+                ("written", Some(id.to_string()), Some(path.clone()), said)
+            }
+            Outcome::ByName { id, notice } => (
+                "by_name",
+                Some(id.to_string()),
+                None,
+                notice.clone().unwrap_or_else(|| {
+                    "the ID is known but is not written in the code".to_string()
+                }),
+            ),
+            Outcome::Gone => (
+                "gone",
+                None,
+                None,
+                "its node is not found in the code now: skipped".to_string(),
+            ),
+        };
+        let what = match pick {
+            ids::Pick::Needs { path, .. } => path.clone(),
+            _ => String::new(),
+        };
+        if let Some(file) = &file
+            && !changed.contains(file)
+        {
+            changed.push(file.clone());
+        }
+        words.push(match (state, what.is_empty()) {
+            ("written", false) => format!("{what}   {said}"),
+            ("had", _) => String::new(),
+            _ => said.clone(),
+        });
+        stops.push(IdStop {
+            stop: stop.to_string(),
+            state,
+            id,
+            changed: file,
+            said: (!said.is_empty()).then_some(said),
+        });
+    }
+    out::render(
+        &IdsWritten {
+            schema: 1,
+            command: "tour ids",
+            tour: id.to_string(),
+            stops,
+            changed,
+            recorded,
+            words,
         },
         global,
     )

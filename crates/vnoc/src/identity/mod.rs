@@ -9,8 +9,8 @@ mod resolve;
 mod write_id;
 
 pub use attach::{
-    AttachError, AttachOptions, Attached, Done, Env, MAX_BODY_BYTES, MarkerWritten, attach,
-    check_note,
+    AttachError, AttachOptions, Attached, Done, Ensured, Env, MAX_BODY_BYTES, MarkerWritten,
+    attach, check_note, ensure_node,
 };
 pub use edits::EditSink;
 pub use locate::{LocateError, locate, locate_in};

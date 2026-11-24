@@ -1,0 +1,7 @@
+<tour>: wrote IDs for 2 of 4 stops; 2 already had one
+  s3   billing/charge.py   an ID: line was added at line 12
+  s4   api/routes.py   an ID: line was added at line 5
+changed
+  billing/charge.py
+  api/routes.py
+read these files again before you edit them

@@ -355,6 +355,25 @@ impl Replay {
                     }
                 }
             }
+            Record::Rebase(rebase) => {
+                // not an edit: `edit_line` stays, so a pin still holds
+                for (id, to) in rebase.steps.0 {
+                    let Some(stop) = self.stop_mut(id.stop()) else {
+                        continue;
+                    };
+                    if id.is_intro() {
+                        stop.lines = Some(to.lines);
+                        if to.hash.is_some() {
+                            stop.hash = to.hash;
+                        }
+                    } else if let Some(block) = block_mut(&mut stop.blocks, id) {
+                        block.lines = to.lines;
+                        if let Some(hash) = to.hash {
+                            block.hash = hash;
+                        }
+                    }
+                }
+            }
             Record::Pin(pin) => {
                 self.tour.pin = Some(pin);
                 self.tour.pin_line = n;
@@ -581,6 +600,19 @@ fn find_block(blocks: &mut [TourBlock], id: StepId) -> Option<&mut TourBlock> {
             return Some(block);
         }
         if let Some(found) = find_block(&mut block.details, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The block with this id, at any depth of a stop's blocks.
+fn block_mut(blocks: &mut [TourBlock], id: StepId) -> Option<&mut TourBlock> {
+    for block in blocks {
+        if block.id == id {
+            return Some(block);
+        }
+        if let Some(found) = block_mut(&mut block.details, id) {
             return Some(found);
         }
     }
@@ -1446,6 +1478,45 @@ mod tests {
         assert_eq!(pin.places.0.len(), 1);
         assert_eq!(pin.places.0[0].0.to_string(), "s1");
         assert_eq!(pin.places.0[0].1.path.as_str(), "a.py");
+    }
+
+    #[test]
+    fn a_rebase_replaces_lines_and_hash_of_a_stop_and_a_block_and_keeps_a_pin() {
+        let rebase = |steps: &str| format!(r#"{{"type":"rebase","steps":{{{steps}}}}}"#);
+        let h = |n: u64| format!("{n:016x}");
+        let t = tour(&[
+            stop(1, None),
+            step(1, 1, None),
+            step(1, 2, Some("s1.b1")),
+            stop(2, None),
+            pin(),
+            rebase(&format!(
+                r#""s1":{{"lines":[1,21],"hash":"{}"}},"s1.b2":{{"lines":[4,6],"hash":"{}"}},"s2":{{"lines":[5,9]}},"s7":{{"lines":[1,2]}},"s1.b9":{{"lines":[1,2],"hash":"{}"}}"#,
+                h(0xaa),
+                h(0xbb),
+                h(0xcc)
+            )),
+        ]);
+        let s1 = &t.stops[0];
+        assert_eq!(s1.lines, Lines::new(1, 21));
+        assert_eq!(s1.hash.unwrap().to_string(), h(0xaa));
+        // the block the record did not name is as written; the detail it named has its new lines and hash
+        assert_eq!(s1.blocks[0].lines, Lines::new(2, 5).unwrap());
+        assert_eq!(s1.blocks[0].details[0].lines, Lines::new(4, 6).unwrap());
+        assert_eq!(s1.blocks[0].details[0].hash.to_string(), h(0xbb));
+        // a stop with no hash in the record keeps its hash
+        assert_eq!(t.stops[1].lines, Lines::new(5, 9));
+        assert_eq!(t.stops[1].hash.unwrap().to_string(), h(2));
+        // a stop or block that is not there is nothing, and it is not a problem; the pin holds
+        assert!(t.problems.is_empty(), "{:?}", t.problems);
+        assert!(t.pinned());
+        // a stop written again has what its own record says
+        let t = tour(&[
+            stop(1, None),
+            rebase(&format!(r#""s1":{{"lines":[1,21],"hash":"{}"}}"#, h(0xaa))),
+            stop(1, None),
+        ]);
+        assert_eq!(t.stops[0].lines, Lines::new(1, 20));
     }
 
     #[test]

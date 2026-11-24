@@ -498,6 +498,22 @@ pub struct IdsRecord {
     pub nodes: Ordered<StopId, NodeId>,
 }
 
+/// Where one stop or block is now, after V-NOC's own edit of its file: its lines and what they hash to (01 §7). A block always has a hash; a stop on
+/// a file has none, and its record gives lines only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rebased {
+    pub lines: Lines,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<Hash>,
+}
+
+/// These stops and blocks were fresh just before V-NOC edited their file (an ID line); this is where they are now. Replay replaces their `lines`
+/// and `hash`; it is not a `stop`, `step` or `drop`, so a pin still holds (the pin's `where` names the code as it was).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RebaseRecord {
+    pub steps: Ordered<StepId, Rebased>,
+}
+
 /// The tour is pinned: every stop's lines are in this commit, at these places.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PinRecord {
@@ -527,6 +543,7 @@ pub enum Record {
     Step(StepRecord),
     Drop(DropRecord),
     Ids(IdsRecord),
+    Rebase(RebaseRecord),
     Pin(PinRecord),
     /// the reader asked the agent to stop
     Halt(Bare),
@@ -602,6 +619,8 @@ mod tests {
             r#"{"type":"drop","id":"s3"}"#,
             r#"{"type":"drop","id":"s3.b1"}"#,
             r#"{"type":"ids","nodes":{"s2":"3M1X9C7B5N2V8K4J6H0G1F3D5S","s10":"0Q8V5W4T2F7KX9M3B6D1RZ4H7K"}}"#,
+            r#"{"type":"rebase","steps":{"s1":{"lines":[11,31],"hash":"9f2c61a07b3e4d15"},"s1.b2":{"lines":[12,17],"hash":"7be1a0c4d95f2233"},"s2":{"lines":[13,16]}}}"#,
+            r#"{"type":"rebase","steps":{}}"#,
             r#"{"type":"pin","commit":"f4d6e15c0a9be1d2f7a8a1b0c3d4e5f60718293a","at":"2026-11-23T18:47:31Z","where":{"s1":["app/checkout.py",11,30],"s1.b1":["app/checkout.py",11,24],"s2":["app/inventory.py",12,15]}}"#,
             r#"{"type":"pin","commit":"f4d6e15c0a9be1d2f7a8a1b0c3d4e5f60718293a","at":"x","where":{}}"#,
             r#"{"type":"halt"}"#,
