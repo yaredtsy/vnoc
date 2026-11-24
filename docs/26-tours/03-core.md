@@ -43,7 +43,7 @@ Layers, each cheaper than the next, and each done only when something asks for i
 | nesting | a stop's depth is its `from` stop's depth + 1; no `from`, or a `from` that was dropped: depth 0 |
 | the number on screen | the position on the route, from 1 |
 | a stop's blocks | a tree by `parent`; children in the order they were added. A block whose parent is missing is at the top ([`01`](01-on-disk.md) §10) |
-| **the steps of a stop, in reading order** | the intro; then each top block followed by its details, depth first ([`01`](01-on-disk.md) §3). This list is what `Next` walks and what "step 2 of 5" counts. A `same_as` stop and a short stop have the intro only |
+| **the steps of a stop, in reading order** | the intro; then each top block followed by its details, depth first ([`01`](01-on-disk.md) §3). This list is what `Next` walks and what "step 2 of 5" counts. A planned stop has the intro only. A `same_as` stop and a short stop have the intro only because `add` refuses blocks on them; a file that has some anyway (a hand edit) shows them |
 | being written | with a plan: the first planned stop is the one "the agent is on". With no plan: none; the route's foot says the agent is adding |
 | the state, pinned | [`01`](01-on-disk.md) §4's table |
 | the size | stops written, stops planned, steps. Minutes = steps × 20 s (2 steps guessed for a planned stop), rounded up |

@@ -160,20 +160,24 @@ One JSON object per line, UTF-8, ended by `\n`. Every record has `type`. Minicar
 {"type":"ids","nodes":{"s2":"3M1X9C7B5N2V8K4J6H0G1F3D5S"}}
 ```
 
+Shortened: `s3`'s own `stop` and `step` lines and `s1.b3` are left out. As printed it replays to three stops (`s1`, `s2`, `s4`),
+because `s3` was planned, never written, and left the route at `end` ([`03`](03-core.md) §1); TR1's test adds `s3`'s line and gets
+four.
+
 | `type` | Written by | Keys | Means |
 |---|---|---|---|
-| **`tour`** | `start`, `import` | `schema` · `id` · `title` · `question`? · `author`? · `at` · `detail` (`quick` \| `normal` \| `detailed`) · `next`? (only after an `import --replace`: the highest stop and block numbers ever used, §5) | the first line, and only the first. `schema` is the one version gate of the file: a number this V-NOC does not know makes the tour *cannot be read* |
+| **`tour`** | `start`, `import` | `schema` · `id` · `title` · `question`? · `author`? · `at` · `detail` (`quick` \| `normal` \| `detailed`) · `next`? (only after an `import --replace`: the highest numbers ever used, §5, as `{"stop": 12, "blocks": {"s3": 4, "s7": 2}}`; a stop with no entry has used none) | the first line, and only the first. `schema` is the one version gate of the file: a number this V-NOC does not know makes the tour *cannot be read* |
 | **`meta`** | `edit` | any of `title` · `question` · `detail` | a later value replaces the first line's. The id does not change with the title |
 | **`plan`** | `start --plan`, `plan`, `start --route` | `stops`: a list of `{ id, path, qualname, occurrence?, from?, line?, same_as? }` | stops that are on the route and **not written yet** (`◌`) |
 | **`stop`** | `add`, `import` | `id` · `path` · `qualname` · `occurrence`? · `kind` · `node`? · `lines`? · `hash`? · `from`? · `line`? · `same_as`? · `text` | a written stop: its node (§6), where its lines were, what they hashed to (§7), how the tour got here, and the intro. An id that is already on the route (planned, or written before) **replaces** that stop where it stands and clears its blocks; a new id goes to the end |
-| **`step`** | `add`, `import` | `id` · `stop` · `parent`? · `lines` · `hash` · `title` · `text` | one **block** of a stop. `parent` is the block it is a detail of; absent at the top of the stop |
+| **`step`** | `add`, `import` | `id` · `stop` · `parent`? · `lines` · `hash` · `title` · `text` | one **block** of a stop. `parent` is the block it is a detail of; absent at the top of the stop. An id the stop already has replaces that block **in place**; its details stay under it. A `step` whose stop is not written (planned, dropped, or never there) is a problem line |
 | **`drop`** | `drop` | `id` | a stop (with its blocks and the stops nested in it) or a block (with its details) is off the tour |
 | **`ids`** | `ids` | `nodes`: stop id → node ID | these stops' nodes now have an ID (§6). It becomes the stop's `node` |
 | **`pin`** | `finish`, `pin` | `commit` · `at` · `where`: stop or block id → `[path, first, last]` | the tour is pinned (§8): every stop's lines are in this commit, at these places. It holds until a later `stop`, `step` or `drop` |
 | **`halt`** | the core, for the Stop button | — | the reader asked the agent to stop |
 | **`halted`** | the core, when it refuses an agent's write because of a `halt` | — | the agent has been told. *stopping* becomes *stopped* |
-| **`resume`** | `resume` | — | the agent may add again |
-| **`end`** | `finish`, `import` | `at` | the author is done. Planned stops still not written leave the route |
+| **`resume`** | `resume` | — | the agent may add again. After an `end` it changes nothing: the tour stays finished |
+| **`end`** | `finish`, `import` | `at` | the author is done. Planned stops still not written leave the route. A written stop nested in one of them moves up to that stop's own `from` (or the top), and its `line` is dropped: it was a line of the stop that left |
 
 The keys of a stop, one by one:
 
@@ -376,6 +380,8 @@ Everything in `.vnoc/tours/` arrives by `git pull` and is untrusted input (`04-s
 |---|---|
 | a file name that is not `<valid id>.jsonl` is ignored and reported once | folder names under `nodes/` have the same rule |
 | the first line is not a `tour` record, or its `schema` is higher than this version knows → the tour is listed as *cannot be read*, with only Delete | design 07 §8 |
+| a blank line (only white space) → skipped, no problem | a hand edit, a merge |
+| a second `tour` record → a problem line | the first line is the only one |
 | a later line that is not JSON, or lacks what its type needs → **that line** is one problem (the file and the line number) and is skipped. The rest of the tour loads | rule 3: a broken part breaks itself only |
 | a `type` this version does not know → skipped, silently | a newer V-NOC, or 27 |
 | the last line has no `\n` → not read, no problem | it is being written this moment, or a crash tore it. The next append starts with `\n`, which turns the torn piece into one broken line |
