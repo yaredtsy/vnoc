@@ -254,7 +254,10 @@ by path      path               → [(tour, stop)]         for "inside this file
 - The count for `▶ N` is the number of tours, not of stops. A tour being added or removed changes counts: the core sends
   `vnoc/toursChanged`, and the pages that draw counts ask for them again. It does **not** move the index's revision (D12): the counts
   travel in their own small answer (`vnoc/tourCounts`), not in the structure. **[check]** TR21: whether that second request is simpler
-  than a field on `Node`; the rule that decides is D12.
+  than a field on `Node`; the rule that decides is D12. **Answered (TR15b, `1a897c3`): a request.** A field on `Node` would put tour data in the structure, so a tour write would need a
+new revision or go stale. `vnoc/tourCounts` answers `{counts: {<Node.id>: n}}`, keyed by the `id` `vnoc/structure` gives a node (the
+path for a file or a folder, `path::qualname#n` for a function or a class), for every node `list --on` would list a tour for: a class,
+a file and a folder with stops inside count too; a tour with two stops on one function counts once.
 
 ## 7. The module
 
@@ -387,6 +390,21 @@ move only when the file's place differs; a check that records itself notes the p
 between `go`'s write and its note is an echo of the same place: harmless, accepted. Measured: a tour-only batch leaves a new `.py`
 file unseen by `vnoc/structure` (no walk); a mixed batch moves the revision by 1. The test temp folders are removed by a thread-local
 guard (`tests/common/testdir.rs`; `VNOC_KEEP_TEMP=1` keeps them).
+
+**As built (TR15b – c, `1a897c3`, `1524165`).** `vnoc/tours { on }` takes the tree key first, then any reference `node_ref` reads;
+`on::Map` is owned by the server's `Tours`, keyed by (tour, folder), rebuilt for one tour when it is replayed. `vnoc/tourCode` answers
+the `AsWritten` of `show --as-written` (commit, path, lines, code, lit) for any stop of a pinned tour whose commit is there, else
+`null`. The actions are `tours/act.rs`, shared with the commands (`cli/tour.rs` lost about 630 lines). Answers: `tourPin`
+`{tour, state, commit?, already?, reasons?}` (a reason has a `code`, e.g. `uncommitted` with its files and their status);
+`tourShare` `{tour, folder, path}`; `tourEdit` `{tour, title, question}`; `tourDelete` `{token}`; `tourRestore` `{tour, folder}`;
+`tourIds` and `tourSettings` their `--json` types. Locks: `tourPin {commit}` and `tourIds` take `attaching`, then the project write
+lock, then the tours lock, as `write_id`; `tourSettings` with a param takes the project write lock, as the command. **`tourIds` writes
+to disk, as the command does** (the editor sink needs an open document, and a stop's file usually is not open): **TR22** must save a
+dirty buffer of those files first, or ask, before it sends `tourIds`. `offers` on rows and the view: `{ids, commit}` or `null`;
+`ids` counts written stops with no node ID (only under `ids = "ask"` and a project that writes ID lines); `commit` is git status of
+the written stops' own paths (only under `commit = "ask"`, and not for a tour pinned at a commit HEAD has behind it), with no check:
+a stale stop is not weighed (the pin's answer says it), a stop found at another path is not looked at. **Cost:** as built, one
+`git status` per finished unpinned row per list call: TR14d makes it one per list call.
 
 **The watcher.** No new one. `extension/src/core.ts` already watches `.vnoc/**` and sends `vnoc/filesChanged { paths }`. In the core's
 `files_changed` (`server.rs`):
