@@ -94,14 +94,23 @@ pub fn pin_step(choice: Choice, pinnable: &Pinnable) -> PinStep {
 /// ask the user  not pinned: 2 files have changes that are not committed       vnoc tour pin <tour> --commit
 ///                 M  app/inventory.py
 ///                 ?? app/gateway.py
+///                 ?? .vnoc/nodes/9T/…9T/node.toml
 /// ```
-pub fn ask_commit_lines(tour: &TourId, why: &str, files: &[Changed]) -> Vec<String> {
+///
+/// The node files of the tour's IDs (`node_files`) go under the code files: the list is what `--commit` will commit.
+pub fn ask_commit_lines(
+    tour: &TourId,
+    why: &str,
+    files: &[Changed],
+    node_files: &[Changed],
+) -> Vec<String> {
     let mut lines = vec![format!(
         "ask the user  not pinned: {why}       vnoc tour pin {tour} --commit"
     )];
     lines.extend(
         files
             .iter()
+            .chain(node_files)
             .map(|f| format!("                {}", f.line())),
     );
     lines
@@ -242,12 +251,28 @@ mod tests {
             },
         ];
         assert_eq!(
-            ask_commit_lines(&tour, "2 files have changes that are not committed", &files),
+            ask_commit_lines(
+                &tour,
+                "2 files have changes that are not committed",
+                &files,
+                &[]
+            ),
             [
                 "ask the user  not pinned: 2 files have changes that are not committed       vnoc tour pin checkout-order-7k2q --commit",
                 "                M  app/inventory.py",
                 "                ?? app/gateway.py",
             ]
+        );
+        // the node files of the IDs go under the code files
+        let node = Changed {
+            status: "??".into(),
+            path: RepoPath::new(".vnoc/nodes/9T/0Q8V5W4T2F7KX9M3B6D1RZ4H7K/node.toml").unwrap(),
+        };
+        let lines = ask_commit_lines(&tour, "2 files have changes", &files, &[node]);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(
+            lines[3],
+            "                ?? .vnoc/nodes/9T/0Q8V5W4T2F7KX9M3B6D1RZ4H7K/node.toml"
         );
         assert_eq!(
             default_message("checkout_order"),

@@ -412,6 +412,9 @@ pub struct Placed {
     pub stops: Vec<(StopId, WhereAt)>,
     /// every block of the stops found, in reading order
     pub blocks: Vec<(StepId, Lines, StopId)>,
+    /// the blake3 (hex) of the text of each file the check read, by the path of its stop: what a pin's commit is compared with afterwards (a hook
+    /// that changes a file while committing it leaves a commit the check never saw, 01 §8)
+    pub read: BTreeMap<RepoPath, String>,
 }
 
 impl Placed {
@@ -444,6 +447,11 @@ impl Placed {
         }
         Ordered(out)
     }
+}
+
+/// The blake3 of a file's text, in hex: what [`Placed::read`] keeps of each file the check read.
+pub fn digest(text: &str) -> String {
+    blake3::hash(text.as_bytes()).to_hex().to_string()
 }
 
 /// [`check`], and where the stops and blocks are now.
@@ -525,6 +533,14 @@ pub fn check_placed(code: &Code, read: Reader, tour: &Tour, tour_len: u64) -> (R
             }
         }
     }
+    placed.read = files
+        .seen
+        .iter()
+        .filter_map(|(path, seen)| {
+            let text = seen.text.as_ref()?;
+            Some((path.clone(), digest(text)))
+        })
+        .collect();
     recorded.files = files
         .seen
         .into_iter()

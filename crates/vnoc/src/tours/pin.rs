@@ -30,9 +30,11 @@ use vnoc_domain::RepoPath;
 use super::check::{Placed, Recorded, StopState};
 use super::fold::{State, Tour};
 use super::record::{Commit, PinRecord, StopId};
+use super::store;
 use super::time;
 use crate::project::Project;
 use crate::source;
+use crate::userdata::layout;
 
 // ---------------------------------------------------------------------------------------------------------------------------------------- git
 
@@ -149,9 +151,16 @@ pub enum Reason {
     GitNotFound,
     /// `rev-parse --verify -q HEAD` says there is none
     NoCommit,
-    /// a merge or a rebase is in the middle: HEAD is not a state anyone chose
+    /// a merge, a rebase, a cherry-pick or a revert is in the middle: HEAD is not a state anyone chose
     InProgress {
         what: &'static str,
+    },
+    /// the commit was made, and a hook (a formatter, `lint-staged`) changed `path` while it did: the commit holds code the check never read, so the
+    /// tour is not pinned to it. `tour` is for the sentence: `pin` again checks the new code (01 §8)
+    HookChanged {
+        #[serde(serialize_with = "path_text")]
+        path: RepoPath,
+        tour: String,
     },
     /// a stop changed or is gone since it was written: replace it, then pin
     Stale {
@@ -206,6 +215,9 @@ impl Reason {
             Reason::GitNotFound => "git was not found: pinning needs it".to_string(),
             Reason::NoCommit => "this repository has no commit yet".to_string(),
             Reason::InProgress { what } => format!("{what} is in progress: finish it first"),
+            Reason::HookChanged { path, tour } => {
+                format!("a hook changed {path} while committing it: run vnoc tour pin {tour} again")
+            }
             Reason::Stale { changed, gone } => {
                 let mut parts = Vec::new();
                 match changed.as_slice() {
@@ -325,8 +337,8 @@ pub fn head(project: &Project, tour: &Tour) -> Result<Commit, Vec<Reason>> {
     Ok(head)
 }
 
-/// `a merge` or `a rebase`, when one is in the middle: `MERGE_HEAD`, `rebase-merge` or `rebase-apply` exist in the git folder (`--git-path` finds it for a
-/// worktree too).
+/// `a merge`, `a rebase`, `a cherry-pick` or `a revert`, when one is in the middle: `MERGE_HEAD`, `rebase-merge` or `rebase-apply`, `CHERRY_PICK_HEAD`,
+/// `REVERT_HEAD` exist in the git folder (`--git-path` finds it for a worktree too).
 fn in_progress(root: &Path) -> Option<&'static str> {
     let exists = |name: &str| {
         let said = git(root, false, &["rev-parse", "--git-path", name]).ok()?;
@@ -341,6 +353,12 @@ fn in_progress(root: &Path) -> Option<&'static str> {
     }
     if exists("rebase-merge") == Some(true) || exists("rebase-apply") == Some(true) {
         return Some("a rebase");
+    }
+    if exists("CHERRY_PICK_HEAD") == Some(true) {
+        return Some("a cherry-pick");
+    }
+    if exists("REVERT_HEAD") == Some(true) {
+        return Some("a revert");
     }
     None
 }
@@ -499,6 +517,80 @@ pub fn make(head: Commit, placed: &Placed) -> PinRecord {
         at: time::now(),
         places: placed.places(),
     }
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------ node files
+
+/// The `node.toml` of each stop's own ID that git shows as not committed (untracked or modified): what `ids` just wrote, and what `--commit` takes
+/// with the code so the ID lines and the node files they name go in one commit (01 §8). **Only `node.toml`**, never another file of that folder (a doc
+/// the user wrote there is theirs). The folder is found by [`layout::node_file`], the one place that knows the layout. They do not decide the pin: that
+/// is about code. An empty list when git cannot say.
+pub fn node_files(project: &Project, tour: &Tour) -> Vec<Changed> {
+    let root = project.git_root();
+    let vnoc_root = store::vnoc_root(root);
+    let mut paths: Vec<RepoPath> = Vec::new();
+    for stop in tour.stops.iter().filter(|s| s.written) {
+        let Some(node) = stop.node else { continue };
+        let file = layout::node_file(&vnoc_root, &node);
+        let Ok(relative) = file.strip_prefix(root) else {
+            continue;
+        };
+        let Ok(path) = RepoPath::new(relative.to_string_lossy().replace('\\', "/")) else {
+            continue;
+        };
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let Ok(status) = status_of(root, &paths) else {
+        return Vec::new();
+    };
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            status.get(path.as_str()).map(|status| Changed {
+                status: status.clone(),
+                path,
+            })
+        })
+        .collect()
+}
+
+/// After a commit: the files among `files` whose text now is not the text the check read (`read`, [`Placed::read`]). A hook that formats or adds to a
+/// file while the commit is made leaves a commit with code the check never saw: it must not be pinned (01 §8). A file the check did not read (a folder
+/// stop has none) is not compared. A file that cannot be read now counts as changed.
+pub fn changed_since_read(
+    project: &Project,
+    read: &BTreeMap<RepoPath, String>,
+    files: &[RepoPath],
+) -> Vec<RepoPath> {
+    let root = project.git_root();
+    files
+        .iter()
+        .filter(|path| {
+            read.get(*path).is_some_and(|was| {
+                source::read_text(&root.join(path.as_str()))
+                    .map_or(true, |now| &super::check::digest(&now) != was)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+/// Puts the index of these files back to HEAD's: `git reset -q -- <files>`. For files a hook changed while `commit --only` made the commit: the hook's
+/// `git add` goes into the commit, but git leaves the real index with the file as it was **before** the hook, so `git status` would say `MM` for a file
+/// the commit holds whole, and the next `pin` would refuse it as not committed (TR9b; seen with plain git, not a thing of ours). Only files the commit
+/// just took, so no other staged change is touched. A failure is not told: the next `pin` says what it sees.
+pub fn settle_index(project: &Project, files: &[RepoPath]) {
+    if files.is_empty() {
+        return;
+    }
+    let mut args = vec!["reset", "-q", "--"];
+    args.extend(names(files));
+    let _ = git(project.git_root(), true, &args);
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------- commit_files

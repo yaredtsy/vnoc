@@ -98,6 +98,7 @@ fn placed(files: &[&str]) -> Placed {
             })
             .collect(),
         blocks: Vec::new(),
+        read: Default::default(),
     }
 }
 

@@ -10732,6 +10732,153 @@ fn tour_pin_a_failing_hook_fails_the_command_with_its_output_and_nothing_is_pinn
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn tour_pin_a_hook_that_changes_a_file_while_committing_it_leaves_a_commit_and_no_pin_until_pin_again()
+ {
+    use std::os::unix::fs::PermissionsExt;
+    let root = pin_project("tour-pin-hook-changes");
+    let tour = uncommitted_tour(&root);
+    finish_ok(&root, &tour, &["--no-ids"]);
+    // a formatter that adds a line to the file and puts it in the commit
+    let hook = root.join(".git/hooks/pre-commit");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\necho '# formatted' >> billing/charge.py\ngit add billing/charge.py\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let head = head_hash(&root);
+    let said = tour_ok(&root, &["pin", &tour, "--commit"]);
+    let now = head_hash(&root);
+    assert_ne!(now, head, "the commit stays: {said}");
+    assert!(
+        said.starts_with(&format!(
+            "committed 2 files as {}   Code for the tour",
+            &now[..7]
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "not pinned: a hook changed billing/charge.py while committing it: run vnoc tour pin {tour} again"
+        )),
+        "{said}"
+    );
+    assert!(
+        !said.contains("nothing was committed"),
+        "a commit was made: {said}"
+    );
+    assert!(pins_of(&root, &tour).is_empty());
+    // the hook's line is in the commit
+    assert!(
+        git_text(&root, &["show", "--format=", "HEAD"]).contains("+# formatted"),
+        "the hook's change is in the commit"
+    );
+    // `pin` again: the files are committed and the check reads the new code (the stops are fresh: the line was added after them)
+    std::fs::remove_file(&hook).unwrap();
+    let said = tour_ok(&root, &["pin", &tour]);
+    assert!(
+        said.contains(&format!("pinned {tour} at {}", &now[..7])),
+        "{said}"
+    );
+    assert_eq!(pins_of(&root, &tour)[0]["commit"], now.as_str());
+}
+
+#[test]
+fn tour_pin_a_cherry_pick_or_a_revert_in_the_middle_refuses_a_pin() {
+    for (marker, words) in [
+        ("CHERRY_PICK_HEAD", "a cherry-pick"),
+        ("REVERT_HEAD", "a revert"),
+    ] {
+        let root = pin_project(&format!("tour-pin-{}", marker.to_lowercase()));
+        let tour = uncommitted_tour(&root);
+        finish_ok(&root, &tour, &["--no-ids"]);
+        std::fs::write(root.join(".git").join(marker), head_hash(&root)).unwrap();
+        let (status, said, _) = tour_fails(&root, &["pin", &tour, "--commit"], "");
+        assert_eq!(status, 2, "{said}");
+        assert!(
+            said.contains(&format!("not pinned: {words} is in progress")),
+            "{said}"
+        );
+        let said = tour_ok(&root, &["pin", &tour]);
+        assert!(said.contains(&format!("{words} is in progress")), "{said}");
+        assert!(
+            git_text(&root, &["status", "--porcelain"]).contains("?? api/new.py"),
+            "nothing was committed or staged"
+        );
+    }
+}
+
+#[test]
+fn tour_pin_commit_takes_the_node_toml_of_the_ids_and_never_another_file_of_the_folder() {
+    let root = pin_project("tour-pin-node-files");
+    // the IDs are written by hand, the commit is left to `ask`: the markers change the code, the node files are new
+    let tour = ids_tour(&root);
+    tour_ok(&root, &["ids", &tour]);
+    let untracked = || -> Vec<String> {
+        git_text(&root, &["status", "--porcelain", "--untracked-files=all"])
+            .lines()
+            .filter_map(|l| l.strip_prefix("?? ").map(String::from))
+            .collect()
+    };
+    let nodes: Vec<String> = untracked()
+        .into_iter()
+        .filter(|p| p.ends_with("/node.toml"))
+        .collect();
+    assert_eq!(nodes.len(), 2, "`ids` made two node files: {nodes:?}");
+    // a doc the user wrote next to one of them
+    let doc = Path::new(&nodes[0]).with_file_name("doc.md");
+    std::fs::write(root.join(&doc), "# mine\n").unwrap();
+    let doc = doc.to_string_lossy().replace('\\', "/");
+
+    // `finish` lists them under the code files: the list is what `--commit` will commit, and not the doc
+    let said = finish_ok(&root, &tour, &[]);
+    let lines: Vec<&str> = said.lines().collect();
+    let first = lines
+        .iter()
+        .position(|l| l.starts_with("ask the user  not pinned:"))
+        .unwrap_or_else(|| panic!("{said}"));
+    let listed: Vec<&str> = lines[first + 1..]
+        .iter()
+        .take_while(|l| l.starts_with("                "))
+        .map(|l| l.trim())
+        .collect();
+    assert_eq!(listed.len(), 4, "{said}");
+    assert!(
+        listed[0].ends_with(".py") && listed[1].ends_with(".py"),
+        "code files first: {listed:?}"
+    );
+    assert!(
+        listed[2..].iter().all(|l| l.ends_with("/node.toml")),
+        "{listed:?}"
+    );
+    assert!(!said.contains("doc.md"), "{said}");
+
+    // `pin --commit --json`: the code files in `files`, the node files in `node_files`
+    let json = tour_json(&root, &["pin", &tour, "--commit"]);
+    let committed = &json["tours"][0]["committed"];
+    assert_eq!(committed["files"].as_array().unwrap().len(), 2, "{json}");
+    assert_eq!(
+        committed["node_files"].as_array().unwrap().len(),
+        2,
+        "{json}"
+    );
+    assert_eq!(json["tours"][0]["state"], "pinned", "{json}");
+
+    let files = git_text(&root, &["show", "--name-only", "--format=", "HEAD"]);
+    for node in &nodes {
+        assert!(files.contains(node.as_str()), "{files}");
+    }
+    assert!(
+        !files.contains("doc.md"),
+        "a doc file is never taken: {files}"
+    );
+    // what is left is the doc, and nothing else
+    assert_eq!(untracked(), [doc], "the doc stays uncommitted");
+}
+
 #[test]
 fn tour_pin_no_git_no_repository_no_commit_yet_and_no_git_on_the_path() {
     // not a repository: finish says so, and so does pin
@@ -10877,10 +11024,16 @@ fn tour_pin_with_ids_always_and_commit_always_the_commit_holds_the_marker_lines_
         "{files}"
     );
     assert_eq!(pins_of(&root, &tour)[0]["commit"], now.as_str());
-    // what is left is the node folders `ids` made under .vnoc/nodes/: they are not files of the tour
-    for line in git_text(&root, &["status", "--porcelain", "--untracked-files=all"]).lines() {
-        assert!(line.starts_with("?? .vnoc/nodes/"), "{line}");
-    }
+    // the node files `ids` made are in the commit too (TR9b): the ID lines and the node files they name go in one commit, and none is left over
+    assert!(
+        files.contains(".vnoc/nodes/") && files.matches("/node.toml").count() == 2,
+        "{files}"
+    );
+    assert_eq!(
+        git_text(&root, &["status", "--porcelain", "--untracked-files=all"]),
+        "",
+        "nothing of the tour is left uncommitted"
+    );
     let (_, fresh, stale) = checked(&root, &["--again"]);
     assert!(fresh && stale.is_empty(), "{stale:?}");
 }

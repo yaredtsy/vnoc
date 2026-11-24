@@ -29,7 +29,7 @@ use crate::tours::doc;
 use crate::tours::find::find;
 use crate::tours::finish::{self as finishing, Step};
 use crate::tours::on::{self, Map, Query};
-use crate::tours::pin::{self, Pinnable, Reason};
+use crate::tours::pin::{self, Changed, Pinnable, Reason};
 use crate::tours::record::{
     Bare, Commit, Detail, DropRecord, EndRecord, MetaRecord, Record, StepId, StopId,
 };
@@ -917,7 +917,30 @@ enum Ask<'a> {
 struct CommittedOut {
     commit: String,
     message: String,
+    /// the tour's code files
     files: Vec<String>,
+    /// the `node.toml` of the tour's IDs that were committed with them (TR9b), under the code files in the text
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    node_files: Vec<String>,
+}
+
+impl CommittedOut {
+    /// `committed 2 files as 3c9e1f7   <message>` and the files under it, code first, then the node files of the IDs.
+    fn lines(&self) -> Vec<String> {
+        let mut lines = vec![format!(
+            "committed {} as {}   {}",
+            count_files(self.files.len() + self.node_files.len()),
+            &self.commit[..7],
+            self.message
+        )];
+        lines.extend(
+            self.files
+                .iter()
+                .chain(&self.node_files)
+                .map(|f| format!("  {f}")),
+        );
+        lines
+    }
 }
 
 /// What became of the pin of one tour, for `--json`.
@@ -935,6 +958,9 @@ struct PinOut {
     /// for `ask`: the command that would do it
     #[serde(skip_serializing_if = "Option::is_none")]
     command: Option<String>,
+    /// for `ask`: the `node.toml` files of the tour's IDs that `--commit` would commit with the code files (which are in `reasons`)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    node_files: Vec<String>,
     /// `--commit` was asked and was refused: nothing was committed
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     refused: bool,
@@ -957,12 +983,17 @@ fn not_pinned(
     id: &TourId,
     pinnable: &Pinnable,
     committed: Option<CommittedOut>,
+    node_files: &[Changed],
 ) -> Pinned {
     let Pinnable::No(reasons) = pinnable else {
         unreachable!("not_pinned is for a pin that cannot be made")
     };
     let of_this_tour = matches!(ask, Ask::Pin { .. });
-    let mut lines: Vec<String> = Vec::new();
+    // a commit that was made stays made: it is said first, and the reason under it
+    let mut lines: Vec<String> = committed
+        .as_ref()
+        .map(CommittedOut::lines)
+        .unwrap_or_default();
     for reason in reasons {
         lines.extend(reason.lines(of_this_tour));
     }
@@ -972,21 +1003,23 @@ fn not_pinned(
         committed,
         reasons: reasons.clone(),
         command: None,
+        node_files: Vec::new(),
         refused: false,
     };
     match ask {
         Ask::Finish { commit, .. } => {
             if let (Choice::Ask, Some(files)) = (commit, pinnable.only_uncommitted()) {
                 let why = reasons[0].words();
-                lines = crate::tours::finish::ask_commit_lines(id, &why, files);
+                lines = crate::tours::finish::ask_commit_lines(id, &why, files, node_files);
                 out.state = "ask";
                 out.command = Some(format!("vnoc tour pin {id} --commit"));
+                out.node_files = node_files.iter().map(|f| f.path.to_string()).collect();
             }
         }
         Ask::Pin { commit, .. } => {
             if *commit {
-                // `--commit` is for files that are the one thing in the way
-                out.refused = pinnable.only_uncommitted().is_none();
+                // `--commit` is for files that are the one thing in the way; nothing was committed unless a commit was made
+                out.refused = pinnable.only_uncommitted().is_none() && out.committed.is_none();
                 if out.refused {
                     lines.push("nothing was committed: --commit is for files that are the one thing in the way".to_string());
                 }
@@ -1023,7 +1056,7 @@ async fn pin_tour(
     // what needs no look at the code
     let head = match pin::head(project, tour) {
         Ok(head) => head,
-        Err(reasons) => return Ok(not_pinned(ask, id, &no(reasons), None)),
+        Err(reasons) => return Ok(not_pinned(ask, id, &no(reasons), None, &[])),
     };
     let opened = match lazy.get(global).await {
         Ok(opened) => opened,
@@ -1033,6 +1066,7 @@ async fn pin_tour(
                 id,
                 &no(vec![Reason::NotChecked { why }]),
                 None,
+                &[],
             ));
         }
         Err(e) => return Err(e),
@@ -1047,23 +1081,45 @@ async fn pin_tour(
         Ask::Pin { commit, .. } => *commit,
     };
     let mut committed = None;
+    // the node files of the tour's IDs go with the code files, and only when code is being committed: they do not decide the pin
+    let node_files = if pinnable.only_uncommitted().is_some() {
+        pin::node_files(project, tour)
+    } else {
+        Vec::new()
+    };
     if wants_commit && let Some(files) = pinnable.only_uncommitted() {
         let message = match ask {
             Ask::Finish { message, .. } | Ask::Pin { message, .. } => message.map(String::from),
         }
         .unwrap_or_else(|| crate::tours::finish::default_message(&tour.title));
-        let done = pin::commit_files(project, files, &message)
+        let code_files: Vec<Changed> = files.to_vec();
+        let all: Vec<Changed> = code_files.iter().chain(&node_files).cloned().collect();
+        let done = pin::commit_files(project, &all, &message)
             .map_err(|e| Failure::Environment(e.to_string()))?;
         committed = Some(CommittedOut {
             commit: done.commit.as_str().to_string(),
             message,
-            files: done.files.iter().map(ToString::to_string).collect(),
+            files: code_files.iter().map(|f| f.path.to_string()).collect(),
+            node_files: node_files.iter().map(|f| f.path.to_string()).collect(),
         });
-        // what is on disk is what HEAD holds now: asked again, with the new HEAD
-        pinnable = pin::can_pin(project, tour, done.commit, &recorded, &placed);
+        // a hook that changed a file while the commit was made: the commit holds code the check never read. It stays; it is not what was checked
+        let code_paths: Vec<_> = code_files.iter().map(|f| f.path.clone()).collect();
+        let hooked = pin::changed_since_read(project, &placed.read, &code_paths);
+        pinnable = match hooked.first() {
+            Some(path) => {
+                // git left the index with those files as they were before the hook: HEAD's, so the next `pin` finds them committed
+                pin::settle_index(project, &hooked);
+                Pinnable::No(vec![Reason::HookChanged {
+                    path: path.clone(),
+                    tour: id.to_string(),
+                }])
+            }
+            // what is on disk is what HEAD holds now: asked again, with the new HEAD
+            None => pin::can_pin(project, tour, done.commit, &recorded, &placed),
+        };
     }
     match pinnable {
-        Pinnable::No(_) => Ok(not_pinned(ask, id, &pinnable, committed)),
+        Pinnable::No(_) => Ok(not_pinned(ask, id, &pinnable, committed, &node_files)),
         Pinnable::Yes { head } => {
             // the tour is as it was when it was read: a write in between would be a stop the pin never saw
             let lock = take_lock(vnoc_root.to_path_buf()).await?;
@@ -1078,16 +1134,10 @@ async fn pin_tour(
                 .map_err(store_failure)?;
             drop(lock);
             let at = short_commit(&head);
-            let mut lines = Vec::new();
-            if let Some(done) = &committed {
-                lines.push(format!(
-                    "committed {} as {}   {}",
-                    count_files(done.files.len()),
-                    &done.commit[..7],
-                    done.message
-                ));
-                lines.extend(done.files.iter().map(|f| format!("  {f}")));
-            }
+            let mut lines = committed
+                .as_ref()
+                .map(CommittedOut::lines)
+                .unwrap_or_default();
             if matches!(ask, Ask::Pin { .. }) {
                 lines.push(format!("pinned {id} at {at}"));
             }
@@ -1098,6 +1148,7 @@ async fn pin_tour(
                     committed,
                     reasons: Vec::new(),
                     command: None,
+                    node_files: Vec::new(),
                     refused: false,
                 },
                 lines,
@@ -1247,6 +1298,7 @@ async fn pin_command(global: &Global, args: &TourPinArgs) -> Result<(), Failure>
                         committed: None,
                         reasons: Vec::new(),
                         command: None,
+                        node_files: Vec::new(),
                         refused: false,
                     },
                 });
