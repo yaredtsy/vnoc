@@ -6,6 +6,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+
 use crate::source;
 
 /// 16 hexadecimal characters: the first eight bytes of a BLAKE3 hash.
@@ -42,6 +44,20 @@ impl FromStr for Hash {
     type Err = HashError;
     fn from_str(text: &str) -> Result<Hash, HashError> {
         Hash::parse(text)
+    }
+}
+
+/// A JSON string of 16 hexadecimal characters; a line with any other `hash` is not a record (`record.rs`).
+impl Serialize for Hash {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Hash {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(d)?;
+        Hash::parse(&text).map_err(de::Error::custom)
     }
 }
 

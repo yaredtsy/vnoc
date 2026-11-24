@@ -12,6 +12,7 @@ use std::fmt;
 
 use vnoc_domain::{NodeId, NodeKind, RepoPath};
 
+use super::hash::Hash;
 use super::record::{
     Detail, Lines, PinRecord, PlanStop, Record, StepId, StepRecord, StopId, StopRecord, TourId,
     TourRecord, parse_line,
@@ -49,7 +50,7 @@ pub enum State {
 pub struct TourBlock {
     pub id: StepId,
     pub lines: Lines,
-    pub hash: String,
+    pub hash: Hash,
     pub title: String,
     pub text: String,
     pub details: Vec<TourBlock>,
@@ -66,7 +67,7 @@ pub struct TourStop {
     pub kind: Option<NodeKind>,
     pub node: Option<NodeId>,
     pub lines: Option<Lines>,
-    pub hash: Option<String>,
+    pub hash: Option<Hash>,
     /// The stop this one is nested in: its `from` when that stop is on the route, else `None` (the stop is at the top).
     pub from: Option<StopId>,
     pub line: Option<u32>,
@@ -611,7 +612,7 @@ mod tests {
     fn stop(n: u32, from: Option<u32>) -> String {
         let from = from.map_or(String::new(), |f| format!(r#","from":"s{f}","line":3"#));
         format!(
-            r#"{{"type":"stop","id":"s{n}","path":"a.py","qualname":"f{n}","kind":"function","lines":[1,20],"hash":"h{n}"{from},"text":"intro {n}"}}"#
+            r#"{{"type":"stop","id":"s{n}","path":"a.py","qualname":"f{n}","kind":"function","lines":[1,20],"hash":"{n:016x}"{from},"text":"intro {n}"}}"#
         )
     }
 
@@ -619,7 +620,7 @@ mod tests {
     fn step(n: u32, m: u32, parent: Option<&str>) -> String {
         let parent = parent.map_or(String::new(), |p| format!(r#","parent":"{p}""#));
         format!(
-            r#"{{"type":"step","id":"s{n}.b{m}","stop":"s{n}"{parent},"lines":[2,5],"hash":"k{m}","title":"b{m}","text":"block {m}"}}"#
+            r#"{{"type":"step","id":"s{n}.b{m}","stop":"s{n}"{parent},"lines":[2,5],"hash":"{m:016x}","title":"b{m}","text":"block {m}"}}"#
         )
     }
 
@@ -736,7 +737,7 @@ mod tests {
     #[test]
     fn the_minicart_example_with_the_stop_it_leaves_out_written() {
         // 01 §4 says the example is shortened: s3's own line is not in it. With it, s4 is nested in s3 and nothing leaves the route.
-        let s3 = r#"{"type":"stop","id":"s3","path":"app/inventory.py","qualname":"reserve_stock","kind":"function","lines":[18,30],"hash":"aa","from":"s1","line":16,"text":"reserve"}"#;
+        let s3 = r#"{"type":"stop","id":"s3","path":"app/inventory.py","qualname":"reserve_stock","kind":"function","lines":[18,30],"hash":"00000000000000aa","from":"s1","line":16,"text":"reserve"}"#;
         let marker = r#"{"type":"halt"}"#;
         let text = MINICART.replace(marker, &format!("{s3}\n{marker}"));
         let t = fold(&text).unwrap();
@@ -1190,7 +1191,7 @@ mod tests {
     fn a_block_written_again_is_replaced_in_place_and_keeps_its_details() {
         let again = step(1, 1, None)
             .replace("block 1", "new text")
-            .replace("\"k1\"", "\"new\"")
+            .replace("\"0000000000000001\"", "\"00000000000000ee\"")
             .replace("[2,5]", "[7,9]");
         let t = tour(&[
             stop(1, None),
@@ -1204,8 +1205,12 @@ mod tests {
         let b1 = &t.stops[0].blocks[0];
         assert_eq!(b1.id.to_string(), "s1.b1");
         assert_eq!(
-            (b1.text.as_str(), b1.hash.as_str(), b1.lines),
-            ("new text", "new", Lines::new(7, 9).unwrap())
+            (b1.text.as_str(), b1.hash.to_string(), b1.lines),
+            (
+                "new text",
+                "00000000000000ee".to_string(),
+                Lines::new(7, 9).unwrap()
+            )
         );
         assert_eq!(b1.details.len(), 1);
         assert_eq!(b1.details[0].text, "block 2");
@@ -1266,8 +1271,8 @@ mod tests {
             ["s1.b2", "s1.b3"]
         );
         assert_eq!(
-            (b1.title.as_str(), b1.text.as_str(), b1.hash.as_str()),
-            ("b1", "block 1", "k1")
+            (b1.title.as_str(), b1.text.as_str(), b1.hash.to_string()),
+            ("b1", "block 1", "0000000000000001".to_string())
         );
         assert_eq!(b1.lines, Lines::new(2, 5).unwrap());
         // a stop with no blocks, and a planned stop, have their intro only

@@ -6369,3 +6369,1093 @@ fn tours_on_disk_change_nothing_the_older_commands_print_and_are_not_touched() {
         "the tours and the state file are byte for byte as they were"
     );
 }
+
+// ------------------------------------------------------------------------------------------------------------------ tours (TR4)
+//
+// `vnoc tour start | add | finish | list | show`, the real binary and driver, on a copy of the sample. The loop of 02 §1 is written on
+// `billing/charge.py::retry_charge` (lines 11-22: 12 lines, a function inside it, and the call `one_try()` on line 19).
+
+/// `vnoc tour …` with `input` on standard input (`--body-file -`).
+fn run_stdin(mut cmd: Command, input: &str) -> Output {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    // the command may refuse before it reads (a tour that is not there): a closed pipe is no failure of the test
+    let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
+    let out = child.wait_with_output().unwrap();
+    for bytes in [&out.stdout, &out.stderr] {
+        assert!(!bytes.contains(&0x1b), "an escape code through a pipe");
+    }
+    out
+}
+
+/// The id `start` made.
+fn tour_start(root: &Path, title: &str) -> String {
+    let out = run(vnoc(
+        root,
+        &[
+            "tour",
+            "start",
+            "--title",
+            title,
+            "--question",
+            "what happens when the gateway drops the call",
+            "--author",
+            "claude-code",
+            "--json",
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let started: Value = serde_json::from_slice(&out.stdout).unwrap();
+    started["tour"].as_str().unwrap().to_string()
+}
+
+fn tour_add(root: &Path, tour: &str, node: &str, flags: &[&str], body: &str) -> Output {
+    let mut args = vec!["tour", "add", tour, node, "--body-file", "-"];
+    args.extend_from_slice(flags);
+    run_stdin(vnoc(root, &args), body)
+}
+
+fn tour_file(root: &Path, tour: &str) -> PathBuf {
+    root.join(format!(".vnoc/local/tours/{tour}.jsonl"))
+}
+
+fn tour_lines(root: &Path, tour: &str) -> Vec<Value> {
+    std::fs::read_to_string(tour_file(root, tour))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+/// What a command printed, with the tour's id and the root as stand-ins (the id has four random characters).
+fn tour_unrooted(bytes: &[u8], root: &Path, tour: &str) -> String {
+    without_root(&text(bytes), root).replace(tour, "<tour>")
+}
+
+/// `golden` for what a command printed as JSON.
+fn golden_of_output(name: &str, out: &Output, root: &Path, tour: &str) {
+    let value: Value = serde_json::from_str(&tour_unrooted(&out.stdout, root, tour)).unwrap();
+    golden(name, &value);
+}
+
+/// Every file under `root`, by path below it, with its bytes.
+fn listing(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(dir: &Path, root: &Path, into: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, root, into);
+            } else {
+                let name = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                into.insert(name, std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    let mut files = std::collections::BTreeMap::new();
+    walk(root, root, &mut files);
+    files
+}
+
+const RETRY: &str = "billing/charge.py::retry_charge";
+const ONE_TRY: &str = "billing/charge.py::retry_charge.<locals>.one_try";
+
+const RETRY_BODY: &str = "retry_charge calls the gateway and tries again when the call drops, up to a fixed number of attempts, then gives up with an error that names the order.
+
+## 14-15 One attempt, as a function
+one_try is the single charge call; keeping it in a function lets the loop below treat \"charge\" as one thing that either returns or raises.
+
+### 15 The call itself
+This is the only line that talks to the gateway, so it is the only place a dropped connection can come from.
+
+## 17-22 Try, and try again
+Only a dropped connection is retried: any other error leaves the loop at once. When every attempt drops, the function raises ChargeError.
+";
+
+/// The tour of 02 §1 on `retry_charge`: `start`, three `add`s (one with a nested block, two reached by a call), `finish`; then `show` and
+/// `show --text`. Goldens for the text of each and for their JSON.
+#[test]
+fn the_loop_of_the_guide_start_add_add_add_finish_then_show() {
+    let root = sample_copy("tour-loop");
+    let started = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "start",
+            "--title",
+            "retry_charge",
+            "--question",
+            "what happens when the gateway drops the call",
+            "--author",
+            "claude-code",
+        ],
+    ));
+    assert_eq!(code(&started), 0, "{}", text(&started.stderr));
+    assert!(started.stderr.is_empty());
+    let started_text = text(&started.stdout);
+    let tour = started_text.split_whitespace().nth(1).unwrap().to_string();
+    assert!(tour.starts_with("retry-charge-"), "{started_text}");
+    golden_text(
+        "tour-start.txt",
+        &tour_unrooted(&started.stdout, &root, &tour),
+    );
+    assert!(
+        !started_text.contains("created .vnoc/"),
+        "the sample has its .vnoc/"
+    );
+
+    // s1: a function with a nested block
+    let s1 = tour_add(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(code(&s1), 0, "{}", text(&s1.stderr));
+    assert!(s1.stderr.is_empty());
+    golden_text("tour-add.txt", &tour_unrooted(&s1.stdout, &root, &tour));
+    // s2: reached by the call on line 19; a 2-line function is one step
+    let s2 = tour_add(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--from", "s1", "--line", "19"],
+        "one_try makes the one call to the gateway and returns what it answers.\n",
+    );
+    assert_eq!(code(&s2), 0, "{}", text(&s2.stderr));
+    // s3: the error line 22 raises
+    let s3 = tour_add(
+        &root,
+        &tour,
+        "billing/charge.py::ChargeError",
+        &["--from", "s1", "--line", "22"],
+        "ChargeError is what the caller sees when every attempt dropped; it carries nothing but its message.\n",
+    );
+    assert_eq!(code(&s3), 0, "{}", text(&s3.stderr));
+    assert!(text(&s3.stdout).starts_with("s3 written   stop 3   ◆ ChargeError"));
+    // s4: one_try again, which the tour explained already
+    let s4 = tour_add(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--same-as", "s2"],
+        "The same single call as before: nothing in it is new here.\n",
+    );
+    assert_eq!(code(&s4), 0, "{}", text(&s4.stderr));
+
+    let finished = run(vnoc(&root, &["tour", "finish", &tour]));
+    assert_eq!(code(&finished), 0);
+    assert_eq!(text(&finished.stdout), "finished: 4 stops, 7 steps\n");
+    golden_text(
+        "tour-finish.txt",
+        &tour_unrooted(&finished.stdout, &root, &tour),
+    );
+
+    let shown = run(vnoc(&root, &["tour", "show", &tour]));
+    assert_eq!(code(&shown), 0, "{}", text(&shown.stderr));
+    assert!(shown.stderr.is_empty());
+    golden_text("tour-show.txt", &tour_unrooted(&shown.stdout, &root, &tour));
+    let with_text = run(vnoc(&root, &["tour", "show", &tour, "--text"]));
+    assert_eq!(code(&with_text), 0);
+    golden_text(
+        "tour-show-text.txt",
+        &tour_unrooted(&with_text.stdout, &root, &tour),
+    );
+    // the same, abbreviated: the start of the id is enough
+    let abbreviated = run(vnoc(&root, &["tour", "show", "retry"]));
+    assert_eq!(abbreviated.stdout, shown.stdout);
+
+    // the file: the stops and blocks in the order they were written, the nesting in `from` and `parent`
+    let lines = tour_lines(&root, &tour);
+    let types: Vec<&str> = lines.iter().map(|l| l["type"].as_str().unwrap()).collect();
+    assert_eq!(
+        types,
+        [
+            "tour", "stop", "step", "step", "step", "stop", "stop", "stop", "end"
+        ]
+    );
+    assert_eq!(lines[3]["parent"], "s1.b1");
+    assert_eq!(
+        (lines[5]["from"].as_str(), lines[5]["line"].as_u64()),
+        (Some("s1"), Some(19))
+    );
+    assert_eq!(lines[7]["same_as"], "s2");
+}
+
+/// The JSON of each command, as goldens.
+#[test]
+fn every_tour_command_has_its_json_golden() {
+    let root = sample_copy("tour-json");
+    let started = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "start",
+            "--title",
+            "retry_charge",
+            "--question",
+            "what happens when the gateway drops the call",
+            "--author",
+            "claude-code",
+            "--json",
+        ],
+    ));
+    assert_eq!(code(&started), 0);
+    let value: Value = serde_json::from_slice(&started.stdout).unwrap();
+    let tour = value["tour"].as_str().unwrap().to_string();
+    assert_eq!(
+        (value["schema"].as_u64(), value["command"].as_str()),
+        (Some(1), Some("tour start"))
+    );
+    golden_of_output("tour-start.json", &started, &root, &tour);
+
+    let added = tour_add(&root, &tour, RETRY, &["--json"], RETRY_BODY);
+    assert_eq!(code(&added), 0, "{}", text(&added.stderr));
+    let value: Value = serde_json::from_slice(&added.stdout).unwrap();
+    assert_eq!(value["command"], "tour add");
+    assert_eq!(value["steps"], json!(["s1", "s1.b1", "s1.b2", "s1.b3"]));
+    golden_of_output("tour-add.json", &added, &root, &tour);
+
+    // three problems at once, as JSON
+    let refused = tour_add(&root, &tour, RETRY, &["--json"], THREE_PROBLEMS);
+    assert_eq!(code(&refused), 2);
+    assert!(refused.stderr.is_empty(), "{}", text(&refused.stderr));
+    golden_of_output("tour-add-refused.json", &refused, &root, &tour);
+
+    let listed = run(vnoc(&root, &["tour", "list", "--json"]));
+    assert_eq!(code(&listed), 0);
+    golden_of_output("tour-list.json", &listed, &root, &tour);
+
+    let finished = run(vnoc(&root, &["tour", "finish", &tour, "--json"]));
+    assert_eq!(code(&finished), 0);
+    golden_of_output("tour-finish.json", &finished, &root, &tour);
+    let again = run(vnoc(&root, &["tour", "finish", &tour, "--json"]));
+    let again: Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(again["already"], true);
+
+    let shown = run(vnoc(&root, &["tour", "show", &tour, "--json"]));
+    assert_eq!(code(&shown), 0);
+    golden_of_output("tour-show.json", &shown, &root, &tour);
+
+    // a tour that is not there: one value, exit 2
+    let missing = run(vnoc(&root, &["tour", "show", "nope", "--json"]));
+    assert_eq!(code(&missing), 2);
+    let value: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(value["command"], "tour show");
+    assert_eq!(value["error"]["why"], "no_tour");
+}
+
+/// An intro over its budget, a block outside the node, and a list in a text: three problems in one text.
+const THREE_PROBLEMS: &str = "TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG.
+
+## 40-44 Outside the function
+It is not there.
+
+## 14-15 With a list
+- one
+- two
+";
+
+#[test]
+fn a_text_with_three_problems_prints_all_three_exits_2_and_writes_nothing() {
+    let root = sample_copy("tour-three");
+    let tour = tour_start(&root, "retry_charge");
+    let before = std::fs::read(tour_file(&root, &tour)).unwrap();
+    let out = tour_add(&root, &tour, RETRY, &[], THREE_PROBLEMS);
+    assert_eq!(code(&out), 2);
+    assert!(out.stdout.is_empty());
+    let err = text(&out.stderr);
+    assert!(err.contains("not written: 3 problems"), "{err}");
+    assert!(err.contains("intro: 299 of 280 characters"), "{err}");
+    assert!(
+        err.contains("block 1: lines 40-44 are outside retry_charge (11-22)"),
+        "{err}"
+    );
+    assert!(
+        err.contains("block 2 text: a list. A step is one paragraph"),
+        "{err}"
+    );
+    golden_text(
+        "tour-add-refused.txt",
+        &tour_unrooted(&out.stderr, &root, &tour),
+    );
+    assert_eq!(
+        std::fs::read(tour_file(&root, &tour)).unwrap(),
+        before,
+        "the tour file is byte for byte as it was"
+    );
+}
+
+#[test]
+fn each_refusal_exits_2_and_writes_nothing() {
+    let root = sample_copy("tour-refusals");
+    let tour = tour_start(&root, "retry_charge");
+    let first = tour_add(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(code(&first), 0, "{}", text(&first.stderr));
+    let snapshot = listing(&root);
+
+    // (node, flags, body, what standard error says)
+    let cases: Vec<(&str, Vec<&str>, &str, &str)> = vec![
+        (
+            RETRY,
+            vec![],
+            "## 14-15 A block\nText.\n",
+            "intro: there is none",
+        ),
+        (
+            RETRY,
+            vec![],
+            "Intro.\n\n## 14-15 A\nOne.\n\n## 15-16 B\nTwo.\n",
+            "blocks 1 and 2 both light",
+        ),
+        (
+            RETRY,
+            vec!["--from", "s9"],
+            "Intro.\n",
+            "--from s9: this tour has no stop s9 · did you mean: s1",
+        ),
+        (
+            RETRY,
+            vec!["--from", "s1", "--line", "99"],
+            "Intro.\n",
+            "--line 99 is outside retry_charge (11-22)",
+        ),
+        (
+            "billing/charge.py::refund",
+            vec!["--same-as", "s1"],
+            "Intro.\n",
+            "s1 is retry_charge, not refund",
+        ),
+        (
+            "billing/charge.py::refund",
+            vec![],
+            "Intro.\n\n## 26-27 A block\nText.\n",
+            "refund is 3 lines: a stop this short is one step",
+        ),
+        (
+            "billing/",
+            vec![],
+            "Intro.\n\n## 1-2 A block\nText.\n",
+            "billing/ is a folder: it has no lines to light",
+        ),
+        (
+            "billing/charge.py::nope",
+            vec![],
+            "Intro.\n",
+            "no node at billing/charge.py::nope",
+        ),
+        (
+            "nowhere/at/all.py",
+            vec![],
+            "Intro.\n",
+            "no file nowhere/at/all.py",
+        ),
+    ];
+    for (node, flags, body, said) in cases {
+        let out = tour_add(&root, &tour, node, &flags, body);
+        assert_eq!(code(&out), 2, "{node} {flags:?}: {}", text(&out.stderr));
+        assert!(out.stdout.is_empty(), "{node}: {}", text(&out.stdout));
+        assert!(
+            text(&out.stderr).contains(said),
+            "{node} {flags:?}: wanted {said:?} in {}",
+            text(&out.stderr)
+        );
+        assert_eq!(listing(&root), snapshot, "{node}: nothing was written");
+    }
+    // a tour that is not there is exit 2 too, with "did you mean"
+    let out = tour_add(&root, "retry-charg-zzzz", RETRY, &[], "Intro.\n");
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("no tour retry-charg-zzzz"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(
+        text(&out.stderr).contains(&tour),
+        "did you mean: {}",
+        text(&out.stderr)
+    );
+    // a body file that is not there is the request's mistake
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "add",
+            &tour,
+            RETRY,
+            "--body-file",
+            "no-such-body.md",
+        ],
+    ));
+    assert_eq!(code(&out), 2);
+    assert!(text(&out.stderr).contains("could not read the text from no-such-body.md"));
+    // `--line` with no `--from` is clap's own error
+    let out = tour_add(&root, &tour, RETRY, &["--line", "3"], "Intro.\n");
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("--from"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(listing(&root), snapshot);
+}
+
+#[test]
+fn the_limits_of_a_tour_refuse_the_stop_and_write_nothing() {
+    use vnoc::tours::record::parse_line;
+    use vnoc::tours::store::append;
+
+    let root = sample_copy("tour-limits");
+    let vnoc_root = root.join(".vnoc");
+    let stop = |n: u32| {
+        parse_line(&format!(
+            r#"{{"type":"stop","id":"s{n}","path":"billing/charge.py","qualname":"refund","kind":"function","lines":[25,27],"hash":"0000000000000001","text":"t"}}"#
+        ))
+        .unwrap()
+    };
+    // forty stops: the forty-first is refused
+    let full = tour_start(&root, "full");
+    let id: vnoc::tours::TourId = full.parse().unwrap();
+    append(&vnoc_root, &id, &(1..=40).map(stop).collect::<Vec<_>>()).unwrap();
+    let before = listing(&root);
+    let out = tour_add(&root, &full, RETRY, &[], "Intro.\n");
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains(
+            "this tour has 40 stops, the most one tour holds. Finish it and start a second tour"
+        ),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(listing(&root), before);
+
+    // stop ids used up: a dropped s4294967295 used the last number
+    let spent = tour_start(&root, "spent");
+    let id: vnoc::tours::TourId = spent.parse().unwrap();
+    append(
+        &vnoc_root,
+        &id,
+        &[parse_line(r#"{"type":"drop","id":"s4294967295"}"#).unwrap()],
+    )
+    .unwrap();
+    let before = listing(&root);
+    let out = tour_add(&root, &spent, RETRY, &[], "Intro.\n");
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("this tour has no stop ids left: start a second tour"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(listing(&root), before);
+}
+
+#[test]
+fn add_writes_the_tour_file_and_nothing_else_in_the_project() {
+    let root = sample_copy("tour-writes-only-the-tour");
+    let tour = tour_start(&root, "retry_charge");
+    let mut before = listing(&root);
+    let file = format!(".vnoc/local/tours/{tour}.jsonl");
+    assert!(before.remove(&file).is_some());
+
+    let out = tour_add(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let mut after = listing(&root);
+    assert!(!after.remove(&file).unwrap().is_empty());
+    assert_eq!(
+        after, before,
+        "no source file, no node folder, no doc, nothing but the tour changed"
+    );
+
+    let out = run(vnoc(&root, &["tour", "finish", &tour]));
+    assert_eq!(code(&out), 0);
+    let mut after = listing(&root);
+    after.remove(&file);
+    assert_eq!(after, before, "`finish` writes only the tour too");
+
+    // reading writes nothing at all
+    let snapshot = listing(&root);
+    for args in [
+        &["tour", "list"][..],
+        &["tour", "show", &tour],
+        &["tour", "show", &tour, "--text"],
+    ] {
+        assert_eq!(code(&run(vnoc(&root, args))), 0);
+    }
+    assert_eq!(listing(&root), snapshot);
+}
+
+#[test]
+fn a_node_with_an_id_is_written_with_it_and_a_node_without_one_is_not() {
+    let root = sample_copy("tour-node-id");
+    let tour = tour_start(&root, "ids");
+    // OrderService.parse_order has an `ID:` line in the sample; retry_charge does not
+    let with = tour_add(
+        &root,
+        &tour,
+        "orders/service.py::OrderService.parse_order",
+        &[],
+        "parse_order turns the raw request into an Order.\n",
+    );
+    assert_eq!(code(&with), 0, "{}", text(&with.stderr));
+    let without = tour_add(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(code(&without), 0, "{}", text(&without.stderr));
+    let lines = tour_lines(&root, &tour);
+    let stops: Vec<&Value> = lines.iter().filter(|l| l["type"] == "stop").collect();
+    assert_eq!(stops[0]["node"], "31ZBQ9NKY1E881TZWC2CJCN35H");
+    assert_eq!(stops[0]["qualname"], "OrderService.parse_order");
+    assert_eq!(stops[0]["path"], "orders/service.py");
+    assert!(
+        stops[1].get("node").is_none(),
+        "no ID, no `node`: {}",
+        stops[1]
+    );
+    // and the file: a FileID is the node's ID
+    let file = tour_add(&root, &tour, "billing/charge.py", &[], "The file.\n");
+    assert_eq!(code(&file), 0, "{}", text(&file.stderr));
+    let lines = tour_lines(&root, &tour);
+    let file_stop = lines.iter().rfind(|l| l["type"] == "stop").unwrap();
+    assert_eq!(file_stop["node"], "4Q57CGHF0HJ23TTYWXTZXQ8DPS");
+    assert_eq!(file_stop["kind"], "file");
+    assert!(
+        file_stop.get("hash").is_none(),
+        "a file's intro is not hashed"
+    );
+}
+
+#[test]
+fn the_hash_of_a_stop_leaves_the_id_line_out_end_to_end() {
+    // the same function with and without its `ID:` line hashes the same (01 §7): giving a tour IDs later must not make it stale
+    let with = sample_copy("tour-marker-with");
+    let without = sample_copy("tour-marker-without");
+    let service = without.join("orders/service.py");
+    let text_without: String = std::fs::read_to_string(&service)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.contains("31ZBQ9NKY1E881TZWC2CJCN35H"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&service, text_without).unwrap();
+    let hash_of = |root: &Path| {
+        let tour = tour_start(root, "marker");
+        let out = tour_add(
+            root,
+            &tour,
+            "orders/service.py::OrderService.parse_order",
+            &[],
+            "parse_order turns the raw request into an Order.\n",
+        );
+        assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+        let lines = tour_lines(root, &tour);
+        let stop = lines.iter().find(|l| l["type"] == "stop").unwrap();
+        (
+            stop["hash"].as_str().unwrap().to_string(),
+            stop["lines"].clone(),
+        )
+    };
+    let (hash_with, lines_with) = hash_of(&with);
+    let (hash_without, lines_without) = hash_of(&without);
+    assert_eq!(lines_with, json!([10, 13]));
+    assert_eq!(
+        lines_without,
+        json!([10, 12]),
+        "the function is one line shorter"
+    );
+    assert_eq!(hash_with, hash_without, "the ID line does not count");
+    // and a block of a file: the `# FileID:` line (line 1 of charge.py) does not count either
+    let file_hash = |root: &Path, lines: &str| {
+        let tour = tour_start(root, "file marker");
+        let body = format!("The file.\n\n## {lines} The top\nThe constants.\n");
+        let out = tour_add(root, &tour, "billing/charge.py", &[], &body);
+        assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+        tour_lines(root, &tour)
+            .into_iter()
+            .find(|l| l["type"] == "step")
+            .unwrap()["hash"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let charge = without.join("billing/charge.py");
+    let kept = file_hash(&with, "1-4");
+    let original = std::fs::read_to_string(&charge).unwrap();
+    std::fs::write(
+        &charge,
+        original
+            .lines()
+            .skip(1)
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    assert_eq!(
+        kept,
+        file_hash(&without, "1-3"),
+        "the FileID line does not count"
+    );
+}
+
+#[test]
+fn from_nests_a_stop_and_line_says_where_the_call_is_and_the_stop_is_found_by_its_id_after_a_rename()
+ {
+    let root = sample_copy("tour-from");
+    let tour = tour_start(&root, "from");
+    let s1 = tour_add(
+        &root,
+        &tour,
+        "orders/service.py::OrderService.parse_order",
+        &[],
+        "parse_order turns the raw request into an Order.\n",
+    );
+    assert_eq!(code(&s1), 0, "{}", text(&s1.stderr));
+    // `--from` alone is containment: a method of the class
+    let s2 = tour_add(
+        &root,
+        &tour,
+        "orders/service.py::OrderService",
+        &["--from", "s1"],
+        "The class that holds it.\n",
+    );
+    assert_eq!(code(&s2), 0, "{}", text(&s2.stderr));
+    // the function is renamed, ID line kept: `--line` is checked against the node as the ID finds it
+    let service = root.join("orders/service.py");
+    let renamed = std::fs::read_to_string(&service)
+        .unwrap()
+        .replace("def parse_order(self, raw)", "def read_order(self, raw)");
+    std::fs::write(&service, renamed).unwrap();
+    let s3 = tour_add(
+        &root,
+        &tour,
+        "orders/service.py::OrderService.place",
+        &["--from", "s1", "--line", "12"],
+        "place calls it.\n",
+    );
+    assert_eq!(
+        code(&s3),
+        0,
+        "found by its ID, not by its old name: {}",
+        text(&s3.stderr)
+    );
+    let s4 = tour_add(
+        &root,
+        &tour,
+        "orders/service.py::OrderService.place",
+        &["--from", "s1", "--line", "40"],
+        "place calls it.\n",
+    );
+    assert_eq!(code(&s4), 2);
+    assert!(
+        text(&s4.stderr).contains("--line 40 is outside OrderService.read_order (10-13)"),
+        "{}",
+        text(&s4.stderr)
+    );
+    let shown = run(vnoc(&root, &["tour", "show", &tour]));
+    let rows = tour_unrooted(&shown.stdout, &root, &tour);
+    assert!(rows.contains("← s1 line 12"), "{rows}");
+    assert!(
+        rows.contains("  2  s2") || rows.contains(" 2  s2"),
+        "{rows}"
+    );
+}
+
+#[test]
+fn a_same_as_stop_names_the_first_and_is_one_sentence() {
+    let root = sample_copy("tour-same-as");
+    let tour = tour_start(&root, "same");
+    for flags in [vec![], vec!["--same-as", "s1"]] {
+        let out = tour_add(&root, &tour, ONE_TRY, &flags, "The one call.\n");
+        assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    }
+    let shown = run(vnoc(&root, &["tour", "show", &tour]));
+    assert!(
+        text(&shown.stdout).contains("= s1"),
+        "{}",
+        text(&shown.stdout)
+    );
+    // a block on it is refused
+    let out = tour_add(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--same-as", "s1"],
+        "Again.\n\n## 14-15 A block\nText.\n",
+    );
+    assert_eq!(code(&out), 2);
+    assert!(text(&out.stderr).contains("a --same-as stop is one sentence: it has no blocks"));
+}
+
+#[test]
+fn a_short_function_is_one_step_a_folder_and_a_file_are_stops_too() {
+    let root = sample_copy("tour-kinds");
+    let tour = tour_start(&root, "kinds");
+    // 3 lines: a stop with an intro and no blocks
+    let short = tour_add(
+        &root,
+        &tour,
+        "billing/charge.py::refund",
+        &[],
+        "refund gives the money back.\n",
+    );
+    assert_eq!(code(&short), 0, "{}", text(&short.stderr));
+    assert!(
+        text(&short.stdout).contains("1 step"),
+        "{}",
+        text(&short.stdout)
+    );
+    // a folder: no lines, no hash
+    let folder = tour_add(&root, &tour, "billing/", &[], "The billing folder.\n");
+    assert_eq!(code(&folder), 0, "{}", text(&folder.stderr));
+    // a file with two blocks
+    let file = tour_add(
+        &root,
+        &tour,
+        "billing/tax.py",
+        &[],
+        "Sales tax by country.\n\n## 3-3 The rates\nA table.\n\n## 6-11 The two functions\nrate_for, then apply_tax.\n",
+    );
+    assert_eq!(code(&file), 0, "{}", text(&file.stderr));
+    assert!(
+        text(&file.stdout).contains("▪ tax.py"),
+        "{}",
+        text(&file.stdout)
+    );
+    let lines = tour_lines(&root, &tour);
+    let stops: Vec<&Value> = lines.iter().filter(|l| l["type"] == "stop").collect();
+    assert_eq!(stops[0]["lines"], json!([25, 27]));
+    assert!(stops[0]["hash"].is_string());
+    assert_eq!(
+        (stops[1]["kind"].as_str(), stops[1]["path"].as_str()),
+        (Some("folder"), Some("billing"))
+    );
+    assert!(stops[1].get("lines").is_none() && stops[1].get("hash").is_none());
+    assert_eq!(stops[2]["lines"], json!([1, 11]));
+    assert!(stops[2].get("hash").is_none());
+    assert_eq!(lines.iter().filter(|l| l["type"] == "step").count(), 2);
+}
+
+#[test]
+fn a_tour_named_wrong_gets_did_you_mean_and_the_start_of_an_id_is_enough() {
+    let root = sample_copy("tour-names");
+    let a = tour_start(&root, "retry_charge");
+    let b = tour_start(&root, "reserve stock");
+    // not a tour
+    let out = run(vnoc(&root, &["tour", "show", &a.replace("retry", "retri")]));
+    assert_eq!(code(&out), 2);
+    let err = text(&out.stderr);
+    assert!(err.starts_with("error: no tour retri"), "{err}");
+    assert!(err.contains("did you mean") && err.contains(&a), "{err}");
+    // two tours start with `re`
+    let out = run(vnoc(&root, &["tour", "show", "re"]));
+    assert_eq!(code(&out), 2);
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("\"re\" starts 2 tours") && err.contains(&a) && err.contains(&b),
+        "{err}"
+    );
+    // one starts with `retry`
+    let out = run(vnoc(&root, &["tour", "show", "retry"]));
+    assert_eq!(code(&out), 0);
+    // `finish` and `add` take the same names
+    let out = run(vnoc(&root, &["tour", "finish", "retri"]));
+    assert_eq!(code(&out), 2);
+}
+
+#[test]
+fn start_in_a_project_with_no_vnoc_makes_it_and_says_so_only_then() {
+    let root = scratch("tour-start-fresh");
+    let first = run(vnoc(&root, &["tour", "start", "--title", "First"]));
+    assert_eq!(code(&first), 0, "{}", text(&first.stderr));
+    let said = text(&first.stdout);
+    assert!(
+        said.contains("created .vnoc/ (vnoc.toml, .gitignore)\n"),
+        "{said}"
+    );
+    assert!(root.join(".vnoc/vnoc.toml").is_file() && root.join(".vnoc/.gitignore").is_file());
+    let second = run(vnoc(&root, &["tour", "start", "--title", "Second"]));
+    assert_eq!(code(&second), 0);
+    assert!(
+        !text(&second.stdout).contains("created"),
+        "{}",
+        text(&second.stdout)
+    );
+    let json = run(vnoc(
+        &root,
+        &["tour", "start", "--title", "Third", "--json"],
+    ));
+    let value: Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(value["created_vnoc"], false);
+    // `--quiet` leaves the hint out
+    let quiet = run(vnoc(
+        &root,
+        &["tour", "start", "--title", "Fourth", "--quiet"],
+    ));
+    assert!(
+        !text(&quiet.stdout).contains("next:"),
+        "{}",
+        text(&quiet.stdout)
+    );
+    assert!(text(&first.stdout).contains("next: vnoc tour add"));
+    // and nothing was started that reads code: no driver was needed (there is none for `--driver` to find in an empty project)
+}
+
+#[test]
+fn start_with_no_title_is_clap_s_error_and_a_title_too_long_is_refused() {
+    let root = sample_copy("tour-start-title");
+    let before = listing(&root);
+    let out = run(vnoc(&root, &["tour", "start"]));
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("--title"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(out.stdout.is_empty());
+    let out = run(vnoc(&root, &["tour", "start", "--title", &"x".repeat(61)]));
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("--title is 61 characters: the most it takes is 60"),
+        "{}",
+        text(&out.stderr)
+    );
+    let out = run(vnoc(
+        &root,
+        &["tour", "start", "--title", "t", "--detail", "huge"],
+    ));
+    assert_eq!(code(&out), 2);
+    assert_eq!(listing(&root), before, "nothing was started");
+}
+
+#[test]
+fn finish_twice_says_so_and_writes_once() {
+    let root = sample_copy("tour-finish-twice");
+    let tour = tour_start(&root, "twice");
+    assert_eq!(code(&tour_add(&root, &tour, RETRY, &[], RETRY_BODY)), 0);
+    let first = run(vnoc(&root, &["tour", "finish", &tour]));
+    assert_eq!(text(&first.stdout), "finished: 1 stop, 4 steps\n");
+    let after_first = std::fs::read(tour_file(&root, &tour)).unwrap();
+    let second = run(vnoc(&root, &["tour", "finish", &tour]));
+    assert_eq!(code(&second), 0);
+    assert_eq!(text(&second.stdout), "already finished: 1 stop, 4 steps\n");
+    assert_eq!(
+        std::fs::read(tour_file(&root, &tour)).unwrap(),
+        after_first,
+        "the second finish wrote nothing"
+    );
+    let ends = tour_lines(&root, &tour)
+        .iter()
+        .filter(|l| l["type"] == "end")
+        .count();
+    assert_eq!(ends, 1);
+    // a finished tour may still be added to (an edit of a finished tour): it stays finished
+    let more = tour_add(
+        &root,
+        &tour,
+        "billing/charge.py::refund",
+        &[],
+        "refund gives the money back.\n",
+    );
+    assert_eq!(code(&more), 0, "{}", text(&more.stderr));
+    let shown = run(vnoc(&root, &["tour", "show", &tour]));
+    assert!(
+        text(&shown.stdout).contains("· finished · 2 stops"),
+        "{}",
+        text(&shown.stdout)
+    );
+}
+
+#[test]
+fn list_with_none_says_so_and_with_two_lists_the_newer_first() {
+    let root = sample_copy("tour-list");
+    let none = run(vnoc(&root, &["tour", "list"]));
+    assert_eq!(code(&none), 0);
+    assert!(
+        text(&none.stdout).starts_with("no tours\n"),
+        "{}",
+        text(&none.stdout)
+    );
+    let quiet = run(vnoc(&root, &["tour", "list", "--quiet"]));
+    assert_eq!(text(&quiet.stdout), "no tours\n");
+    let json = run(vnoc(&root, &["tour", "list", "--json"]));
+    let value: Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(value["tours"], json!([]));
+
+    let a = tour_start(&root, "retry_charge");
+    assert_eq!(code(&tour_add(&root, &a, RETRY, &[], RETRY_BODY)), 0);
+    // the tours' times are whole seconds: wait out the second so "newest first" is not a tie
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let b = tour_start(&root, "refund");
+    assert_eq!(code(&run(vnoc(&root, &["tour", "finish", &a]))), 0);
+    let listed = run(vnoc(&root, &["tour", "list"]));
+    assert_eq!(code(&listed), 0);
+    let rows: Vec<String> = text(&listed.stdout).lines().map(String::from).collect();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(
+        rows[0].starts_with(&b) && rows[0].contains("writing") && rows[0].contains("0 stops"),
+        "{}",
+        rows[0]
+    );
+    assert!(
+        rows[1].starts_with(&a) && rows[1].contains("finished") && rows[1].contains("1 stop"),
+        "{}",
+        rows[1]
+    );
+    assert!(
+        rows[1].contains("private") && rows[1].contains("not pinned"),
+        "{}",
+        rows[1]
+    );
+    assert!(
+        rows[1].contains("retry_charge   \"what happens when the gateway drops the call\"")
+            || rows[1].ends_with("retry_charge"),
+        "{}",
+        rows[1]
+    );
+    // a file in the folder that is not a tour is said once, on standard error
+    std::fs::write(root.join(".vnoc/local/tours/notes.txt"), "x").unwrap();
+    let listed = run(vnoc(&root, &["tour", "list"]));
+    assert_eq!(code(&listed), 0);
+    assert!(
+        text(&listed.stderr).contains("notes.txt is not a tour"),
+        "{}",
+        text(&listed.stderr)
+    );
+}
+
+#[test]
+fn show_of_a_tour_that_cannot_be_read_says_so_and_exits_0() {
+    let root = sample_copy("tour-unreadable");
+    let dir = root.join(".vnoc/local/tours");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("broken-0000.jsonl"), "this is not a tour\n").unwrap();
+    std::fs::write(
+        dir.join("future-0000.jsonl"),
+        "{\"type\":\"tour\",\"schema\":2,\"id\":\"future-0000\",\"title\":\"t\",\"at\":\"x\",\"detail\":\"normal\"}\n",
+    )
+    .unwrap();
+    let out = run(vnoc(&root, &["tour", "show", "broken-0000"]));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let said = text(&out.stdout);
+    assert!(
+        said.contains("broken-0000") && said.contains("cannot be read: the first line is not JSON"),
+        "{said}"
+    );
+    let out = run(vnoc(&root, &["tour", "show", "future-0000", "--json"]));
+    assert_eq!(code(&out), 0);
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["readable"], false);
+    assert!(
+        value["problem"].as_str().unwrap().contains("schema 2"),
+        "{value}"
+    );
+    // it is listed, and last
+    let listed = run(vnoc(&root, &["tour", "list"]));
+    assert_eq!(code(&listed), 0);
+    assert!(
+        text(&listed.stdout).contains("cannot be read"),
+        "{}",
+        text(&listed.stdout)
+    );
+    // a write is refused: exit 2, and the file is as it was
+    let before = std::fs::read(dir.join("broken-0000.jsonl")).unwrap();
+    let out = run(vnoc(&root, &["tour", "finish", "broken-0000"]));
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("cannot be read"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read(dir.join("broken-0000.jsonl")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn a_tour_in_both_folders_is_listed_twice_and_refuses_a_write() {
+    let root = sample_copy("tour-both");
+    let tour = tour_start(&root, "both");
+    assert_eq!(code(&tour_add(&root, &tour, RETRY, &[], RETRY_BODY)), 0);
+    std::fs::create_dir_all(root.join(".vnoc/tours")).unwrap();
+    std::fs::copy(
+        tour_file(&root, &tour),
+        root.join(format!(".vnoc/tours/{tour}.jsonl")),
+    )
+    .unwrap();
+    let listed = run(vnoc(&root, &["tour", "list"]));
+    let rows = text(&listed.stdout);
+    assert_eq!(rows.lines().count(), 2, "{rows}");
+    assert!(rows.contains("(private copy)"), "{rows}");
+    let before = listing(&root);
+    let out = tour_add(&root, &tour, "billing/charge.py::refund", &[], "refund.\n");
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("is in .vnoc/tours/ and in .vnoc/local/tours/: keep one"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(code(&run(vnoc(&root, &["tour", "finish", &tour]))), 2);
+    assert_eq!(listing(&root), before);
+}
+
+#[test]
+fn the_text_can_come_from_a_file_and_a_missing_driver_is_the_environment() {
+    let root = sample_copy("tour-body-file");
+    let tour = tour_start(&root, "body file");
+    let body = root.join("body.md");
+    std::fs::write(&body, RETRY_BODY).unwrap();
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "add",
+            &tour,
+            RETRY,
+            "--body-file",
+            body.to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    // `add` needs the code: no driver is exit 3 (and `show` needs none)
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.current_dir(&root)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .args([
+            "--driver",
+            "/no/such/driver",
+            "tour",
+            "add",
+            &tour,
+            RETRY,
+            "--body-file",
+        ])
+        .arg(&body)
+        .stdin(Stdio::null());
+    let out = run(cmd);
+    assert_eq!(code(&out), 3);
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+    cmd.current_dir(&root)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .args(["--driver", "/no/such/driver", "tour", "show", &tour])
+        .stdin(Stdio::null());
+    assert_eq!(code(&run(cmd)), 0, "`show` starts no driver");
+    // a text that is not UTF-8
+    std::fs::write(&body, [0xff, 0xfe, 0x41]).unwrap();
+    let out = run(vnoc(
+        &root,
+        &[
+            "tour",
+            "add",
+            &tour,
+            RETRY,
+            "--body-file",
+            body.to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(code(&out), 2);
+    assert!(
+        text(&out.stderr).contains("is not UTF-8"),
+        "{}",
+        text(&out.stderr)
+    );
+}

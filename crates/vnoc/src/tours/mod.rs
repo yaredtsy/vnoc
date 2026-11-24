@@ -4,13 +4,16 @@
 //! [`record`] (the lines: parse one, print one) and [`fold`] (lines in, a tour out) touch nothing; [`store`] is the first that writes to disk: the
 //! folders, the lock, start, append, read, list, the state file. No index, no driver and no git here yet (`06-build-order.md`).
 
+pub mod add;
 pub mod body;
+pub mod find;
 pub mod fold;
 pub mod hash;
 pub mod record;
 pub mod rules;
 pub mod store;
 pub mod time;
+pub mod view;
 
 pub use fold::{Problem, Size, State, Tour, TourBlock, TourStop, Unreadable, fold, steps_in_order};
 pub use record::{

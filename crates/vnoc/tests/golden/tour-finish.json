@@ -1,0 +1,9 @@
+{
+  "already": false,
+  "command": "tour finish",
+  "left_the_route": 0,
+  "schema": 1,
+  "steps": 4,
+  "stops": 1,
+  "tour": "<tour>"
+}

@@ -20,6 +20,7 @@ mod show;
 mod status;
 pub mod style;
 mod tags;
+mod tour;
 mod tree;
 mod write;
 
@@ -194,6 +195,7 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Guide(args) => guide::guide(&cli.global, args),
         Command::Skill => guide::skill(&cli.global),
         Command::Agent(command) => agent::run(&cli.global, command),
+        Command::Tour(command) => tour::run(&cli.global, command).await,
     }
 }
 

@@ -150,16 +150,148 @@ pub fn new_id(title: &str) -> TourId {
     id_for(title, 0)
 }
 
-/// One more than the highest stop number ever used in the file, dropped ones too (01 §5). Called under the lock, after reading the file. At the
-/// largest number there is no more (a file edited by hand to say so): the same number again, never a panic.
-pub fn next_stop_id(tour: &Tour) -> StopId {
-    StopId::new(tour.highest_stop().saturating_add(1)).expect("one more than a number is not 0")
+/// One more than the highest stop number ever used in the file, dropped ones too (01 §5). Called under the lock, after reading the file. `None`
+/// when the numbers are used up (a file edited by hand to hold the largest one): an id is never reused, so the caller refuses.
+pub fn next_stop_id(tour: &Tour) -> Option<StopId> {
+    StopId::new(tour.highest_stop().checked_add(1)?)
 }
 
-/// One more than the highest block number ever used under the stop, at any depth (01 §5).
-pub fn next_block_id(tour: &Tour, stop: StopId) -> StepId {
-    StepId::block(stop, tour.highest_block(stop).saturating_add(1))
-        .expect("one more than a number is not 0")
+/// One more than the highest block number ever used under the stop, at any depth (01 §5). `None` when the numbers are used up.
+pub fn next_block_id(tour: &Tour, stop: StopId) -> Option<StepId> {
+    StepId::block(stop, tour.highest_block(stop).checked_add(1)?)
+}
+
+/// The `.vnoc/` folder of a project, given the project's root (the git root): where every function of this module that takes `vnoc_root` looks.
+pub fn vnoc_root(project_root: &Path) -> PathBuf {
+    project_root.join(layout::FOLDER)
+}
+
+// ------------------------------------------------------------------------------------------------------------------ pick
+
+/// What a typed tour id names (01 §5: an id, or the start of one when only one tour starts so).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pick {
+    One(TourId),
+    /// the text starts several ids
+    Several(Vec<TourId>),
+    /// no tour has it: the nearest ids, at most three, for a "did you mean"
+    Nothing {
+        near: Vec<TourId>,
+    },
+}
+
+/// Every id of a tour in either folder, once, sorted. Only the file names are read.
+fn every_id(vnoc_root: &Path) -> Vec<TourId> {
+    let mut ids: Vec<TourId> = [
+        layout::tours_dir(vnoc_root),
+        layout::local_tours_dir(vnoc_root),
+    ]
+    .iter()
+    .filter_map(|dir| fs::read_dir(dir).ok())
+    .flat_map(|entries| entries.flatten())
+    .filter(|entry| !entry.file_type().is_ok_and(|t| t.is_dir()))
+    .filter_map(|entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        name.strip_suffix(".jsonl")
+            .and_then(|stem| TourId::parse(stem).ok())
+    })
+    .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// The number of single-character edits between two texts.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = (diagonal + usize::from(ca != *cb))
+                .min(above + 1)
+                .min(row[j] + 1);
+            diagonal = above;
+        }
+    }
+    row[b.len()]
+}
+
+/// The tour a typed id names: an id as it is, else the one id that starts with the text. Several that start with it are `Several`; none is
+/// `Nothing`, with the ids nearest to the text (by edit distance to the id or to its slug, and only those not far off).
+pub fn pick(vnoc_root: &Path, text: &str) -> Pick {
+    let ids = every_id(vnoc_root);
+    let text = text.trim();
+    if let Some(exact) = ids.iter().find(|id| id.as_str() == text) {
+        return Pick::One(exact.clone());
+    }
+    if !text.is_empty() {
+        let mut starts: Vec<TourId> = ids
+            .iter()
+            .filter(|id| id.as_str().starts_with(text))
+            .cloned()
+            .collect();
+        match starts.len() {
+            0 => {}
+            1 => return Pick::One(starts.remove(0)),
+            _ => return Pick::Several(starts),
+        }
+    }
+    let far = (text.chars().count() / 3).max(3);
+    let mut near: Vec<(usize, TourId)> = ids
+        .into_iter()
+        .map(|id| {
+            let distance = edit_distance(text, id.as_str()).min(edit_distance(text, id.slug()));
+            (distance, id)
+        })
+        .filter(|(distance, _)| *distance <= far)
+        .collect();
+    near.sort();
+    near.truncate(3);
+    Pick::Nothing {
+        near: near.into_iter().map(|(_, id)| id).collect(),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------- start
+
+/// What is wrong with the arguments of `start`, one sentence each: a title is one line of 1 to 60 characters, a question one line of at most
+/// 200, an author one line (02 §3).
+pub fn check_start(params: &StartParams) -> Vec<String> {
+    fn one_line(text: &str) -> bool {
+        !text.contains(['\n', '\r'])
+    }
+    let mut problems = Vec::new();
+    let title = params.title.trim();
+    if title.is_empty() {
+        problems.push("--title is empty: say what the tour is of, in a few words".to_string());
+    } else if !one_line(title) {
+        problems.push("--title is not one line".to_string());
+    } else if title.chars().count() > 60 {
+        problems.push(format!(
+            "--title is {} characters: the most it takes is 60",
+            title.chars().count()
+        ));
+    }
+    if let Some(question) = &params.question {
+        let question = question.trim();
+        if !one_line(question) {
+            problems.push("--question is not one line".to_string());
+        } else if question.chars().count() > 200 {
+            problems.push(format!(
+                "--question is {} characters: the most it takes is 200",
+                question.chars().count()
+            ));
+        }
+    }
+    if let Some(author) = &params.author
+        && (!one_line(author) || author.trim().is_empty())
+    {
+        problems.push("--author is not one line of text".to_string());
+    }
+    problems
 }
 
 // ---------------------------------------------------------------------------------------------------------------- start
@@ -1081,7 +1213,7 @@ mod tests {
 
     fn step_line(n: u32, m: u32) -> String {
         format!(
-            r#"{{"type":"step","id":"s{n}.b{m}","stop":"s{n}","lines":[1,2],"hash":"h","title":"t","text":"t"}}"#
+            r#"{{"type":"step","id":"s{n}.b{m}","stop":"s{n}","lines":[1,2],"hash":"0000000000000000","title":"t","text":"t"}}"#
         )
     }
 
@@ -1108,20 +1240,23 @@ mod tests {
         // a plan of s1..s3, a write of s2, a drop of s3
         let tour = tour_of(&[plan.to_string(), stop_line(2), drop_line("s3")]);
         assert!(tour.stop(stop_id(3)).is_none(), "s3 is gone from the route");
-        assert_eq!(next_stop_id(&tour).to_string(), "s4");
+        assert_eq!(next_stop_id(&tour).unwrap().to_string(), "s4");
         // a drop of a stop that was never there still used its number
         let tour = tour_of(&[stop_line(1), drop_line("s7")]);
-        assert_eq!(next_stop_id(&tour).to_string(), "s8");
+        assert_eq!(next_stop_id(&tour).unwrap().to_string(), "s8");
         // a stop written twice is one number
         let tour = tour_of(&[stop_line(1), stop_line(1)]);
-        assert_eq!(next_stop_id(&tour).to_string(), "s2");
+        assert_eq!(next_stop_id(&tour).unwrap().to_string(), "s2");
         // nothing yet
-        assert_eq!(next_stop_id(&tour_of(&[])).to_string(), "s1");
+        assert_eq!(next_stop_id(&tour_of(&[])).unwrap().to_string(), "s1");
         // a block of a stop that is not there is a problem line, and the number is still used
         let tour = tour_of(&[step_line(5, 4)]);
         assert_eq!(tour.problems.len(), 1);
-        assert_eq!(next_stop_id(&tour).to_string(), "s6");
-        assert_eq!(next_block_id(&tour, stop_id(5)).to_string(), "s5.b5");
+        assert_eq!(next_stop_id(&tour).unwrap().to_string(), "s6");
+        assert_eq!(
+            next_block_id(&tour, stop_id(5)).unwrap().to_string(),
+            "s5.b5"
+        );
     }
 
     #[test]
@@ -1137,15 +1272,27 @@ mod tests {
             ["s1.b1"],
             "s1.b2 was dropped, and its number stays used"
         );
-        assert_eq!(next_block_id(&tour, stop_id(1)).to_string(), "s1.b3");
-        assert_eq!(next_block_id(&tour, stop_id(2)).to_string(), "s2.b1");
+        assert_eq!(
+            next_block_id(&tour, stop_id(1)).unwrap().to_string(),
+            "s1.b3"
+        );
+        assert_eq!(
+            next_block_id(&tour, stop_id(2)).unwrap().to_string(),
+            "s2.b1"
+        );
         // a block replaced is one number
         let tour = tour_of(&[stop_line(1), step_line(1, 1), step_line(1, 1)]);
-        assert_eq!(next_block_id(&tour, stop_id(1)).to_string(), "s1.b2");
+        assert_eq!(
+            next_block_id(&tour, stop_id(1)).unwrap().to_string(),
+            "s1.b2"
+        );
         // a stop written again clears its blocks, and the numbers they used stay used
         let tour = tour_of(&[stop_line(1), step_line(1, 3), stop_line(1)]);
         assert_eq!(steps_of(&tour), Vec::<String>::new());
-        assert_eq!(next_block_id(&tour, stop_id(1)).to_string(), "s1.b4");
+        assert_eq!(
+            next_block_id(&tour, stop_id(1)).unwrap().to_string(),
+            "s1.b4"
+        );
     }
 
     fn steps_of(tour: &Tour) -> Vec<String> {
@@ -1159,9 +1306,15 @@ mod tests {
     fn the_next_numbers_start_above_what_an_import_recorded() {
         let first = r#"{"type":"tour","schema":1,"id":"t-0000","title":"T","at":"x","detail":"quick","next":{"stop":9,"blocks":{"s1":5}}}"#;
         let tour = fold(&format!("{first}\n{}\n", stop_line(2))).unwrap();
-        assert_eq!(next_stop_id(&tour).to_string(), "s10");
-        assert_eq!(next_block_id(&tour, stop_id(1)).to_string(), "s1.b6");
-        assert_eq!(next_block_id(&tour, stop_id(2)).to_string(), "s2.b1");
+        assert_eq!(next_stop_id(&tour).unwrap().to_string(), "s10");
+        assert_eq!(
+            next_block_id(&tour, stop_id(1)).unwrap().to_string(),
+            "s1.b6"
+        );
+        assert_eq!(
+            next_block_id(&tour, stop_id(2)).unwrap().to_string(),
+            "s2.b1"
+        );
         // a line above `next` wins over it
         let tour = fold(&format!(
             "{first}\n{}\n{}\n",
@@ -1169,16 +1322,23 @@ mod tests {
             step_line(1, 8)
         ))
         .unwrap();
-        assert_eq!(next_stop_id(&tour).to_string(), "s13");
-        assert_eq!(next_block_id(&tour, stop_id(1)).to_string(), "s1.b9");
+        assert_eq!(next_stop_id(&tour).unwrap().to_string(), "s13");
+        assert_eq!(
+            next_block_id(&tour, stop_id(1)).unwrap().to_string(),
+            "s1.b9"
+        );
     }
 
     #[test]
     fn the_highest_number_does_not_wrap_or_panic() {
         let tour = tour_of(&[drop_line("s4294967295"), drop_line("s1.b4294967295")]);
-        assert_eq!(next_stop_id(&tour).number(), u32::MAX);
+        assert_eq!(next_stop_id(&tour), None, "used up: no number is reused");
+        assert_eq!(next_block_id(&tour, stop_id(1)), None);
+        // one below the largest still has the largest to give
+        let tour = tour_of(&[drop_line("s4294967294"), drop_line("s1.b4294967294")]);
+        assert_eq!(next_stop_id(&tour).unwrap().number(), u32::MAX);
         assert_eq!(
-            next_block_id(&tour, stop_id(1)).block_number(),
+            next_block_id(&tour, stop_id(1)).unwrap().block_number(),
             Some(u32::MAX)
         );
     }
@@ -1281,6 +1441,117 @@ mod tests {
             read_state(&vnoc_root, &started.id).place,
             Some(json!({"at": "cover"}))
         );
+    }
+
+    // ---- picking a tour by what was typed
+
+    /// A tour file named `id` in `.vnoc/local/tours/`, with only its first line.
+    fn tour_named(vnoc_root: &Path, id: &str) {
+        let dir = layout::local_tours_dir(vnoc_root);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{id}.jsonl")), "{}\n").unwrap();
+    }
+
+    fn ids(list: &[TourId]) -> Vec<&str> {
+        list.iter().map(TourId::as_str).collect()
+    }
+
+    #[test]
+    fn a_typed_id_is_the_id_or_the_one_id_that_starts_with_it() {
+        let root = project("pick");
+        let vnoc_root = vnoc_of(&root);
+        for id in [
+            "checkout-order-7k2q",
+            "reserve-stock-m3xd",
+            "reserve-tax-0aaa",
+        ] {
+            tour_named(&vnoc_root, id);
+        }
+        let one = |text: &str| match pick(&vnoc_root, text) {
+            Pick::One(id) => id.to_string(),
+            other => panic!("{text}: {other:?}"),
+        };
+        assert_eq!(one("checkout-order-7k2q"), "checkout-order-7k2q");
+        assert_eq!(
+            one("check"),
+            "checkout-order-7k2q",
+            "the start of the only one that starts so"
+        );
+        assert_eq!(one("reserve-s"), "reserve-stock-m3xd");
+        match pick(&vnoc_root, "reserve") {
+            Pick::Several(found) => {
+                assert_eq!(ids(&found), ["reserve-stock-m3xd", "reserve-tax-0aaa"])
+            }
+            other => panic!("{other:?}"),
+        }
+        // the same id in both folders is one tour to name
+        let shared = layout::tours_dir(&vnoc_root);
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(shared.join("checkout-order-7k2q.jsonl"), "{}\n").unwrap();
+        assert_eq!(one("checkout"), "checkout-order-7k2q");
+    }
+
+    #[test]
+    fn an_id_that_starts_nothing_gets_the_nearest_ids_and_no_folder_means_none() {
+        let root = project("pick-near");
+        let vnoc_root = vnoc_of(&root);
+        // no folder at all
+        assert_eq!(pick(&vnoc_root, "anything"), Pick::Nothing { near: vec![] });
+        for id in ["checkout-order-7k2q", "reserve-stock-m3xd", "zebra-0000"] {
+            tour_named(&vnoc_root, id);
+        }
+        fs::write(layout::local_tours_dir(&vnoc_root).join("notes.txt"), "x").unwrap();
+        match pick(&vnoc_root, "chekout-order-7k2q") {
+            Pick::Nothing { near } => assert_eq!(ids(&near), ["checkout-order-7k2q"]),
+            other => panic!("{other:?}"),
+        }
+        // a slug typed with a slip is near its id too
+        match pick(&vnoc_root, "reserv-stock") {
+            Pick::Nothing { near } => assert_eq!(ids(&near), ["reserve-stock-m3xd"]),
+            other => panic!("{other:?}"),
+        }
+        // nothing like it
+        assert_eq!(
+            pick(&vnoc_root, "qqqqqqqqqqqqqqqq"),
+            Pick::Nothing { near: vec![] }
+        );
+        // an empty text starts every id and names none
+        match pick(&vnoc_root, "") {
+            Pick::Nothing { .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_arguments_of_start_are_one_line_of_the_right_size() {
+        let ok = |title: &str| check_start(&params(title));
+        assert!(ok("checkout_order").is_empty());
+        assert!(
+            ok(&"é".repeat(60)).is_empty(),
+            "60 characters, not 60 bytes"
+        );
+        assert_eq!(
+            ok(&"x".repeat(61)),
+            ["--title is 61 characters: the most it takes is 60"]
+        );
+        assert_eq!(
+            ok("  \t "),
+            ["--title is empty: say what the tour is of, in a few words"]
+        );
+        assert_eq!(ok("two\nlines"), ["--title is not one line"]);
+        let mut p = params("t");
+        p.question = Some("q".repeat(201));
+        p.author = Some("a\nb".to_string());
+        assert_eq!(
+            check_start(&p),
+            [
+                "--question is 201 characters: the most it takes is 200",
+                "--author is not one line of text"
+            ]
+        );
+        p.question = Some("q".repeat(200));
+        p.author = Some("  ".to_string());
+        assert_eq!(check_start(&p), ["--author is not one line of text"]);
     }
 
     #[test]

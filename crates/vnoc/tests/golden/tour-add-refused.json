@@ -1,0 +1,19 @@
+{
+  "command": "tour add",
+  "refused": [
+    {
+      "problem": "299 of 280 characters",
+      "where": "intro"
+    },
+    {
+      "problem": "lines 40-44 are outside retry_charge (11-22)",
+      "where": "block 1"
+    },
+    {
+      "problem": "a list. A step is one paragraph",
+      "where": "block 2 text"
+    }
+  ],
+  "schema": 1,
+  "tour": "<tour>"
+}

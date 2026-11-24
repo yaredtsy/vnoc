@@ -113,12 +113,13 @@ impl Cli {
     }
 }
 
-/// Whether the command at `path` (its names from the first, none for `vnoc` itself) starts the driver.
+/// Whether the command at `path` (its names from the first, none for `vnoc` itself) starts the driver. Of `tour`, only `add` reads the code.
 fn starts_driver(path: &[String]) -> bool {
-    !matches!(
-        path.first().map(String::as_str),
-        Some("tags" | "tag" | "guide" | "skill" | "agent" | "init")
-    )
+    match path.first().map(String::as_str) {
+        Some("tour") => path.get(1).map(String::as_str) == Some("add"),
+        Some("tags" | "tag" | "guide" | "skill" | "agent" | "init") => false,
+        _ => true,
+    }
 }
 
 /// Whether the command at `path` has a list for `--format` to shape.
@@ -287,6 +288,124 @@ pub enum Command {
     /// never writes outside the project (or the home folder with --global), and never writes an agent's settings.
     #[command(subcommand)]
     Agent(AgentCommand),
+    /// Tours: explain a piece of the code to the person, step by step, on their V-NOC canvas. Write one when they ask you to walk them through code.
+    ///
+    /// A tour is a route through the code with a few sentences at each stop: `start` it, `add` one stop at a time (read the code first: `vnoc code`),
+    /// then `finish` it. The person reads it while you write it. `list` and `show` read tours back: `show <tour>` prints the route with the ids you
+    /// need to carry on in a new session. Every stop is checked against the code as it is now, and a text that does not pass is refused whole with
+    /// every reason, and nothing is written. A tour is kept in `.vnoc/local/tours/` (private), and writes nothing else of the project.
+    #[command(subcommand)]
+    Tour(TourCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TourCommand {
+    /// Starts a tour and prints its id: `vnoc tour start --title "checkout_order" --question "walk me through checkout_order" --author claude-code`.
+    ///
+    /// Starts a new, empty tour in `.vnoc/local/tours/` and prints its id (`checkout-order-7k2q`), which every later command takes (the start of it
+    /// is enough when only one tour starts so). `--title` says what the tour is of, in a few words: usually the node it starts at. `--question` is what
+    /// the person asked, in their words. Pass your own name as `--author`. In a project with no `.vnoc/` it makes one (`vnoc.toml` and a
+    /// `.gitignore`), and says so. It needs no driver.
+    Start(TourStartArgs),
+    /// Adds one stop: a node, a paragraph on what it is for, and blocks that light some of its lines. The text comes on standard input.
+    ///
+    /// Adds ONE stop to the tour, about one function, class, file or folder (`vnoc show` names: `path::Name`, `path:line`, an ID, a path). Read its
+    /// code first (`vnoc code`): the text is checked against the code as it is now. The text, from `--body-file <file>` or `-` for standard input,
+    /// is an intro (one paragraph: what this node is for), then blocks, each a heading with the file's own line numbers as `vnoc code` printed
+    /// them and one paragraph: `## 11-24 Hold the stock, then charge`. A `###` heading is a detail inside the `##` before it, and its lines are
+    /// inside that block's. A function under 8 lines, a folder, and a `--same-as` stop have the intro only. Budgets (characters): a title 60, an
+    /// intro 160 / 280 / 480 and a block 160 / 280 / 600 by the tour's detail (quick, normal, detailed). One paragraph each; only `code` and
+    /// *emphasis* in the text: no list, table, code fence, image, link or HTML. At most 12 blocks (details count) in a stop and 40 stops in a tour.
+    /// `--from <stop>` says which stop this one was reached from, and `--line <n>` the line of that stop's node where the call is; `--from` alone
+    /// is containment (a method of the class, a file of the folder). `--same-as <stop>` is for a node the tour already explained: one sentence.
+    /// Every problem of the call is listed, nothing is written, and exit is 2: fix the text and send the whole stop again. A node that
+    /// is not in the index is the usual "no such node", with "did you mean".
+    Add(TourAddArgs),
+    /// Ends the tour: it is finished, and the person's canvas shows it as complete. Run it when the last stop is written.
+    ///
+    /// Writes the end of the tour. Planned stops that were never written leave the route, and the answer says how many. Finishing a tour that is
+    /// finished already changes nothing and says so (exit 0). Writes IDs and pins nothing yet.
+    Finish(TourFinishArgs),
+    /// Lists the tours of this project, newest first: id, state, stops, where it is kept, the title and the question.
+    ///
+    /// Lists every tour in `.vnoc/tours/` (the project's) and `.vnoc/local/tours/` (private), newest first, one row each: the id, whether it is
+    /// writing, stopping, stopped or finished, how many stops, which folder, whether it is pinned, the title and the question. A tour that cannot
+    /// be read says why. Prints `no tours` when there are none (exit 0). It needs no driver.
+    List,
+    /// Prints a tour's route: a row a stop, with its id, its node and lines, its steps, and where it came from. `--text` adds every sentence.
+    ///
+    /// Prints the tour: its title, question and state, then one row per stop (number, id, kind, name, `path:first-last`, how many steps, and
+    /// `← s1 line 13` for the stop it was reached from, `= s2` for one that repeats `s2`), with the stops nested in a stop indented under it. With
+    /// `--text` every intro, block title and text is printed under its row, with each block's id and lines. This is how a tour is carried on in
+    /// a new session: the ids in it are what `add --from` takes. It reads the tour as written and does not look at the code. It needs no driver.
+    Show(TourShowArgs),
+}
+
+/// `quick`, `normal` or `detailed`: how much each step may say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum DetailArg {
+    Quick,
+    Normal,
+    Detailed,
+}
+
+#[derive(Debug, Args)]
+pub struct TourStartArgs {
+    /// What the tour is of, in a few words (at most 60 characters, one line): usually the name of the node it starts at. It becomes the id's slug.
+    #[arg(long, value_name = "TEXT")]
+    pub title: String,
+    /// What the person asked, in their words (at most 200 characters, one line). It tells two tours of one node apart.
+    #[arg(long, value_name = "TEXT")]
+    pub question: Option<String>,
+    /// Who is writing the tour: pass your own name.
+    #[arg(long, value_name = "NAME")]
+    pub author: Option<String>,
+    /// How much each step may say: `quick`, `normal` (the default) or `detailed`. It sets the text budgets of `add`.
+    #[arg(long, value_enum, value_name = "DETAIL", default_value_t = DetailArg::Normal)]
+    pub detail: DetailArg,
+}
+
+#[derive(Debug, Args)]
+pub struct TourAddArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(
+        value_name = "NODE",
+        help = "the node this stop is about: path::Name, path:line, an ID, or a path",
+        long_help = "The node this stop is about (see `vnoc show --help` for how to name one): a function, a class, a file or a folder."
+    )]
+    pub node: String,
+    #[arg(
+        long,
+        value_name = "FILE",
+        required = true,
+        help = "the stop's text: a file, or - for standard input"
+    )]
+    pub body_file: String,
+    /// The stop this one was reached from, as printed by `add` and `show` (`s1`). Without `--line` it is containment: a method of the class, a file of the folder.
+    #[arg(long, value_name = "STOP")]
+    pub from: Option<crate::tours::StopId>,
+    /// The line of the `--from` stop's node where the call is (the file's own line number).
+    #[arg(long, value_name = "N", requires = "from")]
+    pub line: Option<u32>,
+    /// The stop that already explained this node: this one is one sentence about why the tour is here again, with no blocks.
+    #[arg(long, value_name = "STOP")]
+    pub same_as: Option<crate::tours::StopId>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourFinishArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+}
+
+#[derive(Debug, Args)]
+pub struct TourShowArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// Print every intro, block title and text under its stop.
+    #[arg(long)]
+    pub text: bool,
 }
 
 #[derive(Debug, Subcommand)]

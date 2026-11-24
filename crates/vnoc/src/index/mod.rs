@@ -345,6 +345,12 @@ impl Index {
             .and_then(|text| NodeId::parse(text).ok())
     }
 
+    /// The ID text of the file's `# FileID:` comment exactly as the driver reported it (`file_id` has it read as an ID, which writes it in capitals):
+    /// the text a tour leaves its marker line out by (`tours/hash.rs`).
+    pub fn file_id_text(&self, path: &RepoPath) -> Option<&str> {
+        self.file_ids.get(path).map(String::as_str)
+    }
+
     /// The ID in the folder's `.vnoc-id`, if there is a readable one.
     pub fn folder_id(&self, path: &RepoPath) -> Option<NodeId> {
         self.folders.get(path).copied().flatten()

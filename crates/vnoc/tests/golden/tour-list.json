@@ -1,0 +1,20 @@
+{
+  "command": "tour list",
+  "problems": [],
+  "schema": 1,
+  "tours": [
+    {
+      "author": "claude-code",
+      "folder": "private",
+      "id": "<tour>",
+      "pinned": false,
+      "planned": 0,
+      "question": "what happens when the gateway drops the call",
+      "readable": true,
+      "state": "writing",
+      "steps": 4,
+      "title": "retry_charge",
+      "written": 1
+    }
+  ]
+}

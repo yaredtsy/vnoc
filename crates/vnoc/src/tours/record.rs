@@ -16,6 +16,8 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use vnoc_domain::{NodeId, NodeKind, RepoPath};
 
+use super::hash::Hash;
+
 // ------------------------------------------------------------------------------------------------------------------ ids
 
 /// Why a text is not an id of its kind.
@@ -461,7 +463,7 @@ pub struct StopRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lines: Option<Lines>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hash: Option<String>,
+    pub hash: Option<Hash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<StopId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -479,7 +481,7 @@ pub struct StepRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<StepId>,
     pub lines: Lines,
-    pub hash: String,
+    pub hash: Hash,
     pub title: String,
     pub text: String,
 }
@@ -623,11 +625,11 @@ mod tests {
     #[test]
     fn the_keys_come_in_the_order_of_the_table_whatever_order_they_were_read_in() {
         // `text` and `kind` first, the others scrambled
-        let line = r#"{"text":"t","hash":"h","from":"s1","kind":"class","line":3,"qualname":"q","lines":[2,4],"path":"a.py","id":"s2","type":"stop","same_as":"s1","node":"0Q8V5W4T2F7KX9M3B6D1RZ4H7K","occurrence":2}"#;
+        let line = r#"{"text":"t","hash":"00000000000000aa","from":"s1","kind":"class","line":3,"qualname":"q","lines":[2,4],"path":"a.py","id":"s2","type":"stop","same_as":"s1","node":"0Q8V5W4T2F7KX9M3B6D1RZ4H7K","occurrence":2}"#;
         assert_eq!(
             print_line(&parse_line(line).unwrap()),
             format!(
-                "{{\"type\":\"stop\",\"id\":\"s2\",\"path\":\"a.py\",\"qualname\":\"q\",\"occurrence\":2,\"kind\":\"class\",\"node\":\"{NODE}\",\"lines\":[2,4],\"hash\":\"h\",\"from\":\"s1\",\"line\":3,\"same_as\":\"s1\",\"text\":\"t\"}}\n"
+                "{{\"type\":\"stop\",\"id\":\"s2\",\"path\":\"a.py\",\"qualname\":\"q\",\"occurrence\":2,\"kind\":\"class\",\"node\":\"{NODE}\",\"lines\":[2,4],\"hash\":\"00000000000000aa\",\"from\":\"s1\",\"line\":3,\"same_as\":\"s1\",\"text\":\"t\"}}\n"
             )
         );
     }
@@ -708,6 +710,14 @@ mod tests {
                 "a detail that is not one",
             ),
             (r#"{"type":"end","at":3}"#, "a time that is a number"),
+            (
+                r#"{"type":"step","id":"s1.b1","stop":"s1","lines":[1,2],"hash":"h","title":"t","text":"t"}"#,
+                "a hash that is not 16 hexadecimal characters",
+            ),
+            (
+                r#"{"type":"stop","id":"s1","path":"a.py","qualname":"f","kind":"function","hash":"zzzzzzzzzzzzzzzz","text":"t"}"#,
+                "a hash with a letter past f",
+            ),
         ];
         for (line, what) in cases {
             assert!(parse_line(line).is_err(), "{what}: {line}");
