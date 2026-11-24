@@ -7226,6 +7226,44 @@ fn start_with_no_title_is_clap_s_error_and_a_title_too_long_is_refused() {
 }
 
 #[test]
+fn finish_refuses_a_tour_with_no_stop_written_and_writes_nothing() {
+    // TR14b: an agent that chained `add` and `finish` in one call finished an empty tour when the `add` was refused
+    let root = sample_copy("tour-finish-empty");
+    let empty = tour_start(&root, "empty");
+    let before = std::fs::read(tour_file(&root, &empty)).unwrap();
+    let said = "error: no stop is written: add one first. Nothing was finished\n";
+    for flags in [&[][..], &["--json"][..]] {
+        let mut args = vec!["finish", empty.as_str()];
+        args.extend_from_slice(flags);
+        let (status, out, err) = tour_fails(&root, &args, "");
+        assert_eq!(status, 2, "{err}");
+        assert!(out.is_empty(), "{out}");
+        assert_eq!(err, said);
+    }
+    assert_eq!(std::fs::read(tour_file(&root, &empty)).unwrap(), before);
+
+    // planned and not written is the same: the plan is not a stop
+    let planned = tour_start(&root, "planned");
+    assert_eq!(code_of(&root, &["plan", &planned, RETRY]), 0);
+    let before = std::fs::read(tour_file(&root, &planned)).unwrap();
+    let (status, _, err) = tour_fails(&root, &["finish", &planned], "");
+    assert_eq!((status, err.as_str()), (2, said));
+    assert_eq!(std::fs::read(tour_file(&root, &planned)).unwrap(), before);
+
+    // one stop written, and it finishes; a finished tour is still added to
+    assert_eq!(code(&tour_add(&root, &planned, RETRY, &[], RETRY_BODY)), 0);
+    assert_eq!(code_of(&root, &["finish", &planned]), 0);
+    let more = tour_add(
+        &root,
+        &planned,
+        "billing/charge.py::refund",
+        &[],
+        "refund gives the money back.\n",
+    );
+    assert_eq!(code(&more), 0, "{}", text(&more.stderr));
+}
+
+#[test]
 fn finish_twice_says_so_and_writes_once() {
     let root = sample_copy("tour-finish-twice");
     let tour = tour_start(&root, "twice");
@@ -9043,6 +9081,7 @@ fn delete_moves_the_tour_and_its_state_to_the_trash_and_restore_brings_both_back
     assert!(trash.contains(&format!("{entry}.tour.toml")), "{trash:?}");
     // the text form names the trash path
     let again = tour_start(&root, "text");
+    assert_eq!(code(&tour_add(&root, &again, RETRY, &[], RETRY_BODY)), 0);
     assert_eq!(code_of(&root, &["finish", &again]), 0);
     let said = tour_ok(&root, &["delete", &again]);
     assert!(

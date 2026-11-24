@@ -1224,6 +1224,13 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
     let tour = read_tour(&vnoc_root, &tour_id)?;
     stopped(global, "tour finish", &vnoc_root, &lock, &tour)?;
     let shown = view::tour_view(&tour, Where::Private);
+    // TR14b: a tour with no stop written (none at all, or planned only) has nothing to finish; an agent that chained `add` and `finish` in one call
+    // finished an empty tour when the `add` was refused. The request's mistake, exit `2`, and nothing is written
+    if shown.written == 0 {
+        return Err(Failure::Usage(
+            "no stop is written: add one first. Nothing was finished".to_string(),
+        ));
+    }
     let already = tour.state == crate::tours::State::Finished;
     if !already {
         let end = Record::End(EndRecord { at: time::now() });
