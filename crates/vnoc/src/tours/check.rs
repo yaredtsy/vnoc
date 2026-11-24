@@ -578,6 +578,8 @@ pub enum Source {
     Record,
     /// a check made now, and recorded
     Check,
+    /// the answer the running core gave last time: nothing changed that it read since, and no disk was touched (the core only; a command has no memory)
+    Memory,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

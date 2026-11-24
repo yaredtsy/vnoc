@@ -42,6 +42,12 @@ use crate::protocol::{
 };
 use crate::protocol::{Locate, LocateParams, Located};
 use crate::search::{Prepared, answer, prepare};
+use crate::tours::check::{Answer, Mode};
+use crate::tours::place::Move;
+use crate::tours::record::TourId;
+use crate::tours::serve::{self, Cannot, GoError, Touch, Tours};
+use crate::tours::store::{self, Halt, StoreError};
+use crate::tours::view;
 use crate::userdata::{LockError, TrashError, UserData, WriteLock};
 use crate::watchdog::timed;
 use vnoc_domain::NodeId;
@@ -81,6 +87,8 @@ struct State {
     corpus: Mutex<Option<(CorpusKey, Arc<Corpus>)>>,
     /// The doc index, kept under the doc-text generation (03 §9). Taken inside `corpus`'s lock (while a corpus is built), never the other way round.
     doc_index: Mutex<Option<(u64, Arc<DocIndex>)>>,
+    /// The tours the core has replayed, the answers it gave about them, and where it last put each place. Not the index's: a tour never moves the revision.
+    tours: Tours,
 }
 
 #[derive(Clone)]
@@ -101,6 +109,7 @@ impl Core {
             everything_pending: AtomicBool::new(false),
             corpus: Mutex::new(None),
             doc_index: Mutex::new(None),
+            tours: Tours::default(),
         };
         Core {
             client,
@@ -224,6 +233,11 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<Docs, _>(docs)
         .request::<CallTree, _>(call_tree)
         .request::<HasCalls, _>(has_calls)
+        .request::<protocol::Tours, _>(tours)
+        .request::<protocol::Tour, _>(tour)
+        .request::<protocol::TourGo, _>(tour_go)
+        .request::<protocol::TourOpen, _>(tour_open)
+        .request::<protocol::TourHalt, _>(tour_halt)
         .notification::<FilesChanged>(files_changed)
         .notification::<Rebuild>(|core, _| {
             core.spawn_update(Work::Everything);
@@ -315,14 +329,115 @@ fn initialized(core: &mut Core, _: InitializedParams) -> ControlFlow<async_lsp::
     ControlFlow::Continue(())
 }
 
+/// `vnoc/filesChanged`: the split of 03 §8. A path of the tours store, or of a tour's state, is the tours' and starts no index update (D12); the tours lock is
+/// nobody's; any other path is the index's as it always was, and also drops what the core answered about the tours that read it. A batch of only tour paths
+/// starts no update and moves no revision; a mixed batch updates for the other paths only; an empty batch is "look again", as it was.
 fn files_changed(
     core: &mut Core,
     params: FilesChangedParams,
 ) -> ControlFlow<async_lsp::Result<()>> {
-    core.spawn_update(Work::Files(
-        params.paths.into_iter().map(PathBuf::from).collect(),
-    ));
+    let paths: Vec<PathBuf> = params.paths.into_iter().map(PathBuf::from).collect();
+    let Some(project) = core.state.project.get() else {
+        core.spawn_update(Work::Files(paths));
+        return ControlFlow::Continue(());
+    };
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let mut told = ToursTold::default();
+    let mut others = Vec::new();
+    for path in paths.iter() {
+        match serve::classify(&vnoc_root, path) {
+            Touch::Tour(Some(id)) => {
+                told.replay.insert(id);
+            }
+            Touch::Tour(None) => told.rescan = true,
+            Touch::State(id) => {
+                told.places.insert(id);
+            }
+            Touch::Ignored => {}
+            Touch::Other => others.push(path.clone()),
+        }
+    }
+    told.read = others
+        .iter()
+        .filter_map(|p| project.repo_path_of(p))
+        .map(|p| p.as_str().to_string())
+        .collect();
+    if paths.is_empty() || !others.is_empty() {
+        core.spawn_update(Work::Files(others));
+    }
+    if !told.is_empty() {
+        let core = core.clone();
+        tokio::spawn(async move { core.tours_told(told).await });
+    }
     ControlFlow::Continue(())
+}
+
+/// What a batch of file changes said to the tours.
+#[derive(Default)]
+struct ToursTold {
+    /// tours whose file changed: replayed again
+    replay: std::collections::BTreeSet<TourId>,
+    /// a folder of the tours store changed in a way that names no tour: look at both again
+    rescan: bool,
+    /// tours whose state file changed
+    places: std::collections::BTreeSet<TourId>,
+    /// the project's files that changed (repo paths): the answers that read them are dropped
+    read: Vec<String>,
+}
+
+impl ToursTold {
+    fn is_empty(&self) -> bool {
+        self.replay.is_empty() && !self.rescan && self.places.is_empty() && self.read.is_empty()
+    }
+}
+
+impl Core {
+    /// Does what a batch of file changes means to the tours, then tells the editor: `vnoc/toursChanged` for the tours that changed or whose answer no longer
+    /// holds, `vnoc/tourPlaceChanged` for a place somebody else moved.
+    async fn tours_told(&self, told: ToursTold) {
+        let state = self.state.clone();
+        let done = tokio::task::spawn_blocking(move || {
+            let project = state.project.get()?;
+            let vnoc_root = store::vnoc_root(project.git_root());
+            let mut changed = std::collections::BTreeSet::new();
+            for id in &told.replay {
+                state.tours.replay(&vnoc_root, id);
+                changed.insert(id.clone());
+            }
+            if told.rescan {
+                changed.extend(state.tours.sync(&vnoc_root).1);
+            }
+            changed.extend(state.tours.drop_answers_reading(&told.read));
+            let moved: Vec<_> = told
+                .places
+                .iter()
+                .filter_map(|id| Some((id.clone(), state.tours.place_moved(&vnoc_root, id)?)))
+                .collect();
+            Some((changed, moved))
+        })
+        .await;
+        let Ok(Some((changed, moved))) = done else {
+            return;
+        };
+        if !changed.is_empty() {
+            let ids = changed.iter().map(ToString::to_string).collect();
+            if let Err(e) = self
+                .client
+                .notify::<protocol::ToursChanged>(protocol::ToursChangedParams { ids })
+            {
+                tracing::warn!("could not tell the editor that tours changed: {e}");
+            }
+        }
+        for (id, place) in moved {
+            let params = protocol::TourPlaceChangedParams {
+                id: id.to_string(),
+                place,
+            };
+            if let Err(e) = self.client.notify::<protocol::TourPlaceChanged>(params) {
+                tracing::warn!("could not tell the editor that a place moved: {e}");
+            }
+        }
+    }
 }
 
 /// `vnoc/structure`: the tree, from the index. Waits for the first build.
@@ -809,4 +924,236 @@ fn calls_error(e: CallsError) -> ResponseError {
         }
         CallsError::Internal(message) => internal(message),
     }
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------------ tours
+
+fn bad_params(e: impl Display) -> ResponseError {
+    ResponseError::new(ErrorCode::INVALID_PARAMS, e)
+}
+
+/// A store failure as a response: a tour that is not there, is in both places or cannot be read is the request's; the lock is busy (`REQUEST_FAILED`: the request
+/// was fine, the tour was not free); the disk is the core's.
+fn tour_error(e: StoreError) -> ResponseError {
+    match e {
+        StoreError::NotFound(_)
+        | StoreError::InBoth(_)
+        | StoreError::TooBig(_)
+        | StoreError::Refused(_)
+        | StoreError::Unreadable { .. } => bad_params(e),
+        StoreError::Lock(_) => ResponseError::new(ErrorCode::REQUEST_FAILED, e),
+        StoreError::Io { .. } | StoreError::Init(_) | StoreError::NoFreeId => internal(e),
+    }
+}
+
+fn parse_tour(id: &str) -> Result<TourId, ResponseError> {
+    TourId::parse(id).map_err(bad_params)
+}
+
+fn open_project(state: &State) -> Result<&Project, ResponseError> {
+    state
+        .project
+        .get()
+        .ok_or_else(|| internal("no folder is open"))
+}
+
+/// Runs blocking work on the tours (the disk, the tours lock) off the runtime's threads.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ResponseError> {
+    tokio::task::spawn_blocking(work).await.map_err(internal)
+}
+
+/// The answer for each of these tours: the core's memory, the recorded check, a check (03 §3). The index is waited for only when some tour needs a check, and
+/// the answer is asked for first with the index the core has, if its first build is done.
+async fn answers_for(
+    state: &Arc<State>,
+    rows: Vec<Arc<store::Row>>,
+) -> Result<std::collections::BTreeMap<TourId, Answer>, ResponseError> {
+    let mut with_index = matches!(*state.status.borrow(), Status::Ready);
+    loop {
+        let (held, rows) = (state.clone(), rows.clone());
+        let asked = blocking(move || {
+            let project = held.project.get().ok_or(Cannot::Store(StoreError::Refused(
+                "no folder is open".into(),
+            )))?;
+            let ask = serve::Ask {
+                vnoc_root: &store::vnoc_root(project.git_root()),
+                project,
+                index: with_index.then_some(&held.index),
+            };
+            held.tours.answers(&ask, &rows, Mode::default())
+        })
+        .await?;
+        match asked {
+            Ok(done) => return Ok(done),
+            Err(Cannot::Store(e)) => return Err(tour_error(e)),
+            Err(Cannot::NeedsIndex) if !with_index => {
+                ready_project(state).await?;
+                with_index = true;
+            }
+            Err(Cannot::NeedsIndex) => return Err(internal("the index is not ready")),
+        }
+    }
+}
+
+/// `vnoc/tours`: the rows of the list, newest first. The freshness of the rows named in `check` is asked for (and so, if need be, checked); the others say what the
+/// core remembers.
+fn tours(
+    core: &mut Core,
+    params: Option<protocol::ToursParams>,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tours", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let asked: Vec<TourId> = params
+            .unwrap_or_default()
+            .check
+            .iter()
+            .map(|id| parse_tour(id))
+            .collect::<Result<_, _>>()?;
+        let rows = {
+            let (state, vnoc_root) = (state.clone(), vnoc_root.clone());
+            blocking(move || state.tours.sync(&vnoc_root).0).await?
+        };
+        let to_check: Vec<_> = rows
+            .iter()
+            .filter(|r| asked.contains(&r.id))
+            .cloned()
+            .collect();
+        let mut known = {
+            let (state, ids) = (
+                state.clone(),
+                rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+            );
+            blocking(move || state.tours.remembered(&ids)).await?
+        };
+        if !to_check.is_empty() {
+            for (id, answer) in answers_for(&state, to_check).await? {
+                known.insert(id, answer.recorded);
+            }
+        }
+        let shown = {
+            let state = state.clone();
+            blocking(move || {
+                let project = state.project.get()?;
+                let root = store::vnoc_root(project.git_root());
+                Some(serve::list_rows(project, &rows, &known, true, &|id| {
+                    store::read_place(&root, id)
+                }))
+            })
+            .await?
+            .ok_or_else(|| internal("no folder is open"))?
+        };
+        Ok(serde_json::json!({ "tours": shown }))
+    })
+}
+
+/// `vnoc/tour`: the tour as the stage plays it. Its freshness is asked for; the place is the one written, as the tour is now.
+fn tour(
+    core: &mut Core,
+    params: protocol::TourParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tour", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let row = {
+            let (state, vnoc_root, id) = (state.clone(), vnoc_root.clone(), id.clone());
+            blocking(move || state.tours.row(&vnoc_root, &id)).await?
+        }
+        .ok_or_else(|| bad_params(StoreError::NotFound(id.clone())))?;
+        let Ok(found) = &row.tour else {
+            let why = row.tour.as_ref().err().map(|e| e.why.clone());
+            return Ok(serde_json::json!({ "unreadable": why }));
+        };
+        let answer = answers_for(&state, vec![row.clone()]).await?.remove(&id);
+        let shown = {
+            let (state, row, found) = (state.clone(), row.clone(), found.clone());
+            blocking(move || {
+                let project = state.project.get()?;
+                let root = store::vnoc_root(project.git_root());
+                let mut shown = serve::show_view(
+                    project,
+                    &found,
+                    row.place,
+                    store::read_place(&root, &row.id).as_ref(),
+                );
+                if let Some(answer) = &answer {
+                    view::mark(&mut shown, answer);
+                }
+                Some(shown)
+            })
+            .await?
+            .ok_or_else(|| internal("no folder is open"))?
+        };
+        serde_json::to_value(shown).map_err(internal)
+    })
+}
+
+/// `vnoc/tourGo`: the same function as `vnoc tour go`, under the tours lock; the place written is remembered, so the watcher's word of it is not an echo.
+fn tour_go(
+    core: &mut Core,
+    params: protocol::TourGoParams,
+) -> impl std::future::Future<Output = Result<crate::tours::place::Place, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourGo", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let wanted = Move::parse(&params.r#move).map_err(bad_params)?;
+        let gone = blocking(move || state.tours.go(&vnoc_root, &id, wanted))
+            .await?
+            .map_err(|e| match e {
+                GoError::Store(e) => tour_error(e),
+                GoError::NoSuch { .. } => bad_params(e),
+            })?;
+        Ok(gone.place)
+    })
+}
+
+/// `vnoc/tourOpen`: sets `place.open`, the same way.
+fn tour_open(
+    core: &mut Core,
+    params: protocol::TourOpenParams,
+) -> impl std::future::Future<Output = Result<crate::tours::place::Place, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourOpen", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        blocking(move || state.tours.open(&vnoc_root, &id, params.open))
+            .await?
+            .map_err(tour_error)
+    })
+}
+
+/// `vnoc/tourHalt`: writes `halt` through `store::halt`, the function of `vnoc tour halt`, and answers the tour's state.
+fn tour_halt(
+    core: &mut Core,
+    params: protocol::TourHaltParams,
+) -> impl std::future::Future<Output = Result<protocol::TourHaltResult, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourHalt", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let (did, tour) = blocking(move || state.tours.halt(&vnoc_root, &id))
+            .await?
+            .map_err(tour_error)?;
+        Ok(protocol::TourHaltResult {
+            halt: match did {
+                Halt::Written => "written",
+                Halt::Already => "already",
+                Halt::Finished => "finished",
+            }
+            .to_string(),
+            state: view::state_word(tour.state).to_string(),
+        })
+    })
 }

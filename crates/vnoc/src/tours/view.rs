@@ -9,6 +9,7 @@ use vnoc_domain::NodeKind;
 use super::check::{Answer, BlockState, Recorded, Source, StopState};
 use super::fold::{State, Tour, TourBlock, TourStop, Unreadable, steps_in_order};
 use super::on::{self, How};
+use super::place::{self, At, Place};
 use super::record::{Commit, StepId, TourId};
 use super::store::{Row, Where};
 use std::collections::BTreeMap;
@@ -136,6 +137,24 @@ pub struct BlockView {
     pub moved_to: Option<[u32; 2]>,
 }
 
+/// One step of a stop in reading order, for the stage (03 §8): the intro first, then every block and detail. A page draws these and computes none of it.
+#[derive(Debug, Clone, Serialize)]
+pub struct StepView {
+    pub id: String,
+    /// 0 the intro, 1 a block, 2 a detail
+    pub depth: usize,
+    /// the block a detail is in
+    pub parent: Option<String>,
+    pub title: Option<String>,
+    /// the intro's text, or the block's (empty for a stop that is planned and not written)
+    pub text: String,
+    /// the lines now, for a block (moved blocks already moved); none for an intro
+    pub lines: Option<[u32; 2]>,
+    /// with a check: `fresh` or `changed` (a stop that is gone has every step `changed`); without one, not said
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fresh: Option<&'static str>,
+}
+
 /// One stop of the route.
 #[derive(Debug, Clone, Serialize)]
 pub struct StopView {
@@ -174,6 +193,8 @@ pub struct StopView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub as_written: Option<AsWritten>,
     pub blocks: Vec<BlockView>,
+    /// the stop's steps in reading order, the intro first: what the stage plays
+    pub reading: Vec<StepView>,
 }
 
 /// A stop's code as the pinned commit has it (01 §8): the stop's lines there, and the lines its blocks light there (the whole of it for a stop with no
@@ -244,6 +265,8 @@ pub struct TourView {
     pub planned: usize,
     /// the steps of the written stops
     pub steps: usize,
+    /// `steps` × 20 seconds, up to a whole minute
+    pub minutes: usize,
     pub pinned: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pin: Option<String>,
@@ -254,6 +277,10 @@ pub struct TourView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<CheckInfo>,
     pub stops: Vec<StopView>,
+    /// the planned stop the agent is on: the first stop of the route that is planned and not written, while the tour is being written; else none
+    pub writing: Option<String>,
+    /// where the reader is, as the tour is now (`place::settle`); the cover for a tour nobody has opened
+    pub place: Place,
     /// the lines of the file that could not be read, `line 7: why`
     pub problems: Vec<String>,
 }
@@ -279,6 +306,24 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
     if stop.written {
         blocks_of(&stop.blocks, None, 0, &mut blocks);
     }
+    let mut reading = vec![StepView {
+        id: StepId::intro(stop.id).to_string(),
+        depth: 0,
+        parent: None,
+        title: None,
+        text: stop.text.clone().unwrap_or_default(),
+        lines: None,
+        fresh: None,
+    }];
+    reading.extend(blocks.iter().map(|b| StepView {
+        id: b.id.clone(),
+        depth: b.depth + 1,
+        parent: b.parent.clone(),
+        title: Some(b.title.clone()),
+        text: b.text.clone(),
+        lines: Some(b.lines),
+        fresh: None,
+    }));
     StopView {
         number,
         id: stop.id.to_string(),
@@ -299,6 +344,7 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
         now: None,
         as_written: None,
         blocks,
+        reading,
     }
 }
 
@@ -326,6 +372,7 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
         written: size.written,
         planned: size.planned,
         steps,
+        minutes: size.minutes,
         pinned: tour.pinned(),
         pin: tour
             .pin
@@ -334,6 +381,10 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
             .map(|p| p.commit.to_string()),
         pin_in_repository: None,
         check: None,
+        writing: (tour.state == State::Writing)
+            .then(|| stops.iter().find(|s| s.planned).map(|s| s.id.clone()))
+            .flatten(),
+        place: Place::cover(),
         stops,
         problems: tour
             .problems
@@ -372,12 +423,71 @@ pub fn mark(view: &mut TourView, answer: &Answer) {
             }
         }
         stop.now = recorded.now.get(&id).cloned();
+        if !stop.planned {
+            mark_steps(stop, id, recorded);
+        }
         stop.check = match recorded.stop(id) {
             StopState::Gone => Some("gone"),
             StopState::Changed => Some("changed"),
             StopState::Fresh if any_moved => Some("moved"),
             StopState::Fresh => None,
         };
+    }
+}
+
+/// Where a step's lines are now (03 §8): `stop_written` is the stop's own lines as it was written, `found` where a check put the node (a changed stop's `now`,
+/// a fresh one's `displaced`), `block` a block's written lines and what the check says of it. A block that is not `moved` is where it was **counted from the
+/// node's first line**, cut to the node's end (check.rs `walk`); a moved one has its new lines; none for a stop that is gone; for a stop's intro (`block` none) the
+/// node's lines, as found or as written.
+pub fn step_lines(
+    stop_written: Option<[u32; 2]>,
+    found: Option<&super::check::Now>,
+    stop_state: StopState,
+    block: Option<([u32; 2], BlockState)>,
+) -> Option<[u32; 2]> {
+    let (delta, node_last) = match (found.and_then(|n| n.lines), stop_written) {
+        (Some([first, last]), Some(written)) => (i64::from(first) - i64::from(written[0]), last),
+        (Some([_, last]), None) => (0, last),
+        (None, _) => (0, u32::MAX),
+    };
+    let shifted = |line: u32| u32::try_from((i64::from(line) + delta).max(1)).unwrap_or(line);
+    match (block, stop_state) {
+        (_, StopState::Gone) => None,
+        (Some((lines, state)), _) => Some(match state {
+            BlockState::Moved(l) => [l.first, l.last],
+            BlockState::Fresh => [shifted(lines[0]), shifted(lines[1])],
+            BlockState::Changed => [shifted(lines[0]), shifted(lines[1]).min(node_last)],
+        }),
+        (None, _) => found.and_then(|n| n.lines).or(stop_written),
+    }
+}
+
+/// A stop's steps with what the check says of each: its lines now, and `fresh` or `changed`.
+fn mark_steps(stop: &mut StopView, id: super::record::StopId, recorded: &Recorded) {
+    let stop_state = recorded.stop(id);
+    let found = recorded.now.get(&id).or(recorded.displaced.get(&id));
+    let written = stop.lines;
+    let word = |changed: bool| if changed { "changed" } else { "fresh" };
+    for step in &mut stop.reading {
+        let Ok(at) = step.id.parse::<StepId>() else {
+            continue;
+        };
+        // the step's own word: the intro says what its stop says; a block says what its block says, and all of a stop that is gone are changed
+        let (fresh, block) = if at.is_intro() {
+            (stop_state == StopState::Fresh, None)
+        } else {
+            let (Some(lines), state) = (step.lines, recorded.block(at)) else {
+                continue;
+            };
+            (
+                stop_state != StopState::Gone && !matches!(state, BlockState::Changed),
+                Some((lines, state)),
+            )
+        };
+        step.fresh = Some(word(!fresh));
+        if !at.is_intro() {
+            step.lines = step_lines(written, found, stop_state, block);
+        }
     }
 }
 
@@ -419,7 +529,7 @@ pub fn check_word(changed: usize, gone: usize) -> String {
 pub fn when_words(from: Source, fresh: bool, at: &str, today: &str) -> String {
     match from {
         Source::Check => "(checked now)".to_string(),
-        Source::Record if !fresh => {
+        Source::Record | Source::Memory if !fresh => {
             let (day, time) = at.split_once('T').unwrap_or((at, ""));
             let when = if day == today.split('T').next().unwrap_or("") && time.len() >= 5 {
                 format!("{} UTC", &time[..5])
@@ -428,7 +538,7 @@ pub fn when_words(from: Source, fresh: bool, at: &str, today: &str) -> String {
             };
             format!("(as checked at {when})")
         }
-        Source::Record => {
+        Source::Record | Source::Memory => {
             let (day, time) = at.split_once('T').unwrap_or((at, ""));
             let since = if day == today.split('T').next().unwrap_or("") && time.len() >= 5 {
                 format!("{} UTC", &time[..5])
@@ -766,8 +876,65 @@ pub struct ListRowView {
     /// with `--on`: how the tour is on the node
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<OnView>,
+    /// `steps` × 20 seconds, up to a whole minute
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<usize>,
+    /// being written (`writing` or `stopping`) and nothing added for [`QUIET_SECS`]: "no news"
+    pub quiet: bool,
+    /// the first stop: the row's icon
+    pub root: Option<RootView>,
+    /// where the reader is; none for a tour nobody has opened here ("new")
+    pub place: Option<PlaceSummary>,
     #[serde(skip)]
     pins: String,
+}
+
+/// A tour's first stop, for the row's icon.
+#[derive(Debug, Clone, Serialize)]
+pub struct RootView {
+    pub kind: String,
+    pub name: String,
+}
+
+/// Where the reader is, in a row: the number of the stop on the route (none on the cover and the end), `cover`, `step` or `end`, and how many stops
+/// have been read to their last step.
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaceSummary {
+    pub stop: Option<usize>,
+    pub at: &'static str,
+    pub seen: usize,
+}
+
+/// A tour being written whose file has not grown for this many seconds is quiet.
+pub const QUIET_SECS: u64 = 5 * 60;
+
+/// The row's `place`: `place` is the reader's place as it is written (`None`: nobody has opened this tour here), `tour` the tour it is a place in.
+pub fn place_summary(tour: &Tour, place: Option<&Place>) -> Option<PlaceSummary> {
+    let settled = place::settle(tour, place?);
+    let (stop, at) = match settled.at {
+        At::Cover => (None, "cover"),
+        At::End => (None, "end"),
+        At::Step(_) => (place::position(tour, settled.at).map(|p| p.stop), "step"),
+    };
+    Some(PlaceSummary {
+        stop,
+        at,
+        seen: settled.seen.len(),
+    })
+}
+
+/// The row's `root`: the first stop's kind and name; none for a tour with no stop, or whose first stop is planned (it has no kind yet).
+pub fn root_of(tour: &Tour) -> Option<RootView> {
+    let stop = tour.stops.first()?;
+    Some(RootView {
+        kind: stop.kind.as_ref()?.as_str().to_string(),
+        name: stop_label(stop),
+    })
+}
+
+/// Whether a tour is quiet: being written, and its file last changed `age` seconds ago or more.
+pub fn is_quiet(state: State, age_secs: Option<u64>) -> bool {
+    matches!(state, State::Writing | State::Stopping) && age_secs.is_some_and(|a| a >= QUIET_SECS)
 }
 
 /// How a tour is on a node (`list --on`).
@@ -809,14 +976,15 @@ impl OnView {
 /// then the private one marked `(private copy)`.
 /// `checks` are the answers known (recorded and valid, or just made); a fresh one is said in the row only with `say_fresh` (`list --check`).
 /// `in_repository` says whether git has a pinned commit (`pin::has_commit`), asked only for a tour whose pin still holds.
-pub fn list_rows(
-    rows: &[Row],
+pub fn list_rows<R: std::borrow::Borrow<Row>>(
+    rows: &[R],
     checks: &BTreeMap<TourId, Recorded>,
     say_fresh: bool,
     in_repository: &dyn Fn(&Commit) -> bool,
 ) -> Vec<ListRowView> {
+    let rows: Vec<&Row> = rows.iter().map(std::borrow::Borrow::borrow).collect();
     rows.iter()
-        .map(|row| {
+        .map(|&row| {
             let copy = row.place == Where::Private
                 && rows
                     .iter()
@@ -854,6 +1022,10 @@ pub fn list_rows(
                         skipped: (!view.problems.is_empty()).then_some(view.problems.len()),
                         check: recorded.map(|r| if r.fresh() { "fresh" } else { "changed" }),
                         on: None,
+                        minutes: Some(tour.size().minutes),
+                        quiet: false,
+                        root: root_of(tour),
+                        place: None,
                         pins,
                     }
                 }
@@ -876,6 +1048,10 @@ pub fn list_rows(
                     skipped: None,
                     check: None,
                     on: None,
+                    minutes: None,
+                    quiet: false,
+                    root: None,
+                    place: None,
                     pins: String::new(),
                 },
             }
@@ -1358,5 +1534,142 @@ mod tests {
             stopped_text(&id, 0).contains("(0 stops written)")
                 && stopped_text(&id, 0).contains("\"Tour stopped.\"")
         );
+    }
+
+    fn step(id: &str, stop: u32, parent: Option<&str>, lines: [u32; 2]) -> String {
+        let parent = parent.map_or(String::new(), |p| format!(r#","parent":"{p}""#));
+        format!(
+            r#"{{"type":"step","id":"{id}","stop":"s{stop}"{parent},"lines":[{},{}],"hash":"{H}","title":"T {id}","text":"text {id}"}}"#,
+            lines[0], lines[1]
+        )
+    }
+
+    /// A step as the tests compare it: id, depth, lines, word.
+    type Read = (String, usize, Option<[u32; 2]>, Option<&'static str>);
+
+    fn reading(shown: &TourView, stop: usize) -> Vec<Read> {
+        shown.stops[stop]
+            .reading
+            .iter()
+            .map(|s| (s.id.clone(), s.depth, s.lines, s.fresh))
+            .collect()
+    }
+
+    #[test]
+    fn a_stops_steps_are_in_reading_order_with_their_depth_and_parent_and_no_word_without_a_check()
+    {
+        let t = tour(&[
+            stop(1, "a.py", "f", ""),
+            step("s1.b1", 1, None, [12, 20]),
+            step("s1.b2", 1, Some("s1.b1"), [14, 15]),
+            step("s1.b3", 1, None, [22, 28]),
+            r#"{"type":"plan","stops":[{"id":"s2","path":"a.py","qualname":"g"}]}"#.to_string(),
+        ]);
+        let shown = tour_view(&t, Where::Private);
+        assert_eq!(
+            reading(&shown, 0),
+            [
+                ("s1".to_string(), 0, None, None),
+                ("s1.b1".to_string(), 1, Some([12, 20]), None),
+                ("s1.b2".to_string(), 2, Some([14, 15]), None),
+                ("s1.b3".to_string(), 1, Some([22, 28]), None),
+            ]
+        );
+        assert_eq!(shown.stops[0].reading[2].parent.as_deref(), Some("s1.b1"));
+        assert_eq!(shown.stops[0].reading[0].text, "intro of s1");
+        // a stop that is planned has its intro and no text yet
+        assert_eq!(reading(&shown, 1), [("s2".to_string(), 0, None, None)]);
+        assert_eq!(shown.stops[1].reading[0].text, "");
+        // the agent is on the planned stop while the tour is being written
+        assert_eq!(shown.writing.as_deref(), Some("s2"));
+        assert_eq!(shown.minutes, 2, "four steps, 20 seconds each");
+    }
+
+    #[test]
+    fn a_check_gives_each_step_its_lines_now_and_its_own_word() {
+        let t = tour(&[
+            stop(1, "a.py", "f", ""),
+            step("s1.b1", 1, None, [12, 20]),
+            step("s1.b2", 1, Some("s1.b1"), [14, 15]),
+            step("s1.b3", 1, None, [22, 28]),
+            stop(2, "b.py", "g", ""),
+            step("s2.b1", 2, None, [12, 20]),
+        ]);
+        let mut shown = tour_view(&t, Where::Private);
+        let s = |n: &str| n.parse::<StepId>().unwrap();
+        let mut recorded = Recorded::empty(0);
+        // s1 is fresh and two lines down; its block b2 is changed, b3 moved to the top
+        recorded.displaced.insert(
+            "s1".parse().unwrap(),
+            super::super::check::Now {
+                qualname: "f".into(),
+                path: "a.py".into(),
+                lines: Some([13, 32]),
+            },
+        );
+        recorded.blocks.insert(s("s1.b2"), StopState::Changed);
+        recorded.moved.insert(s("s1.b3"), [14, 15]);
+        // s2 is gone
+        recorded
+            .stops
+            .insert("s2".parse().unwrap(), StopState::Gone);
+        mark(
+            &mut shown,
+            &Answer {
+                from: Source::Check,
+                recorded,
+            },
+        );
+        assert_eq!(
+            reading(&shown, 0),
+            [
+                ("s1".to_string(), 0, None, Some("fresh")),
+                ("s1.b1".to_string(), 1, Some([14, 22]), Some("fresh")),
+                ("s1.b2".to_string(), 2, Some([16, 17]), Some("changed")),
+                ("s1.b3".to_string(), 1, Some([14, 15]), Some("fresh")),
+            ],
+            "the lines are the written ones two down; the moved block is where it moved to"
+        );
+        assert_eq!(
+            reading(&shown, 1),
+            [
+                ("s2".to_string(), 0, None, Some("changed")),
+                ("s2.b1".to_string(), 1, None, Some("changed")),
+            ],
+            "a stop that is gone has no lines, and every step of it says so"
+        );
+    }
+
+    #[test]
+    fn a_row_says_where_the_reader_is_what_the_tour_starts_with_and_whether_it_is_quiet() {
+        let t = tour(&[
+            stop(1, "a.py", "f", ""),
+            step("s1.b1", 1, None, [12, 20]),
+            stop(2, "b.py", "g", ""),
+        ]);
+        let at = |text: &str| Place {
+            at: text.parse().unwrap(),
+            seen: vec!["s1".parse().unwrap()],
+            ..Place::cover()
+        };
+        assert!(place_summary(&t, None).is_none());
+        let on = place_summary(&t, Some(&at("s2"))).unwrap();
+        assert_eq!((on.stop, on.at, on.seen), (Some(2), "step", 1));
+        let on = place_summary(&t, Some(&at("cover"))).unwrap();
+        assert_eq!((on.stop, on.at), (None, "cover"));
+        let on = place_summary(&t, Some(&at("end"))).unwrap();
+        assert_eq!((on.stop, on.at), (None, "end"));
+        // a place whose step the tour no longer has is read as the nearest that is there
+        let on = place_summary(&t, Some(&at("s9.b1")));
+        assert_eq!(on.unwrap().at, "cover");
+        let root = root_of(&t).unwrap();
+        assert_eq!((root.kind.as_str(), root.name.as_str()), ("function", "f"));
+        assert!(root_of(&tour(&[])).is_none());
+        assert!(!is_quiet(State::Writing, Some(QUIET_SECS - 1)));
+        assert!(is_quiet(State::Writing, Some(QUIET_SECS)));
+        assert!(is_quiet(State::Stopping, Some(QUIET_SECS + 1)));
+        assert!(!is_quiet(State::Stopped, Some(QUIET_SECS * 10)));
+        assert!(!is_quiet(State::Finished, Some(QUIET_SECS * 10)));
+        assert!(!is_quiet(State::Writing, None));
     }
 }

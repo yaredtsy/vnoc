@@ -8,6 +8,7 @@
       "author": "claude-code",
       "folder": "private",
       "id": "<tour>",
+      "minutes": 3,
       "on": {
         "first": "s2",
         "how": "stops",
@@ -20,9 +21,15 @@
         "words": "stops 2 and 4 of 4"
       },
       "pinned": false,
+      "place": null,
       "planned": 0,
       "question": "what happens when the gateway drops the call",
+      "quiet": false,
       "readable": true,
+      "root": {
+        "kind": "function",
+        "name": "retry_charge"
+      },
       "state": "writing",
       "steps": 7,
       "title": "retry_charge",

@@ -626,3 +626,122 @@ impl Request for CallTree {
     type Result = CallTreeResult;
     const METHOD: &'static str = "vnoc/callTree";
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------- tours
+//
+// 03 §8 of docs/26-tours. The wire is snake_case. What a request answers is the Rust type the commands' `--json` prints (`tours::view`, `tours::place`): one
+// type for each answer. A page computes none of it. A tour request takes the tours lock and never the project's write lock, and a tour never moves the index's
+// revision.
+
+/// `vnoc/tours`: every tour, newest first, as the list draws it. `check` is the ids of the rows being drawn: each is asked for its freshness (the core's
+/// memory, the recorded check, a check: 03 §3), and a row not named says what the core already knows of it, or nothing.
+pub enum Tours {}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ToursParams {
+    #[serde(default)]
+    pub check: Vec<String>,
+}
+
+impl Request for Tours {
+    type Params = Option<ToursParams>;
+    /// `{ "tours": [ListRowView] }`
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tours";
+}
+
+/// `vnoc/tour`: one tour as the stage plays it (`TourView`, with the place, the steps and a check), or `{ "unreadable": why }`.
+pub enum Tour {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourParams {
+    pub id: String,
+}
+
+impl Request for Tour {
+    type Params = TourParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tour";
+}
+
+/// `vnoc/tourGo`: a move, in the words of `vnoc tour go` (`next`, `prev`, `next-stop`, `prev-stop`, `back`, or a jump to `s4`, `s3.b2`, `cover`, `end`). The
+/// core makes it, writes the state file, and answers with the new place.
+pub enum TourGo {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourGoParams {
+    pub id: String,
+    #[serde(rename = "move")]
+    pub r#move: String,
+}
+
+impl Request for TourGo {
+    type Params = TourGoParams;
+    type Result = crate::tours::place::Place;
+    const METHOD: &'static str = "vnoc/tourGo";
+}
+
+/// `vnoc/tourOpen`: a window shows this tour (`open`), or closed it. Sets `place.open`; answers with the place.
+pub enum TourOpen {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourOpenParams {
+    pub id: String,
+    pub open: bool,
+}
+
+impl Request for TourOpen {
+    type Params = TourOpenParams;
+    type Result = crate::tours::place::Place;
+    const METHOD: &'static str = "vnoc/tourOpen";
+}
+
+/// `vnoc/tourHalt`: the reader pressed Stop. Writes `halt` (what `vnoc tour halt` writes); the agent's next write is refused.
+pub enum TourHalt {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourHaltParams {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourHaltResult {
+    /// `written`, `already` (stopping or stopped before), or `finished` (nothing to stop)
+    pub halt: String,
+    /// the tour's state now: `writing`, `stopping`, `stopped` or `finished`
+    pub state: String,
+}
+
+impl Request for TourHalt {
+    type Params = TourHaltParams;
+    type Result = TourHaltResult;
+    const METHOD: &'static str = "vnoc/tourHalt";
+}
+
+/// `vnoc/toursChanged` (core → editor): these tours changed (a file of the tours store appeared, changed or went), or the answer the core gave about their
+/// freshness no longer holds. Ask again for what is shown.
+pub enum ToursChanged {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ToursChangedParams {
+    pub ids: Vec<String>,
+}
+
+impl Notification for ToursChanged {
+    type Params = ToursChangedParams;
+    const METHOD: &'static str = "vnoc/toursChanged";
+}
+
+/// `vnoc/tourPlaceChanged` (core → editor): the place of a tour was moved by another process (`vnoc tour go`). Not sent for the core's own `vnoc/tourGo`.
+pub enum TourPlaceChanged {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourPlaceChangedParams {
+    pub id: String,
+    pub place: crate::tours::place::Place,
+}
+
+impl Notification for TourPlaceChanged {
+    type Params = TourPlaceChangedParams;
+    const METHOD: &'static str = "vnoc/tourPlaceChanged";
+}

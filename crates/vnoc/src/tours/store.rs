@@ -918,10 +918,16 @@ pub struct Listed {
     pub problems: Vec<String>,
 }
 
-/// Every tour of both folders (a folder that is not there is empty), the rules of 01 §10: a file whose name is not `<valid tour id>.jsonl` is
-/// skipped and named once. Never writes.
-pub fn list(vnoc_root: &Path) -> Listed {
-    let mut listed = Listed::default();
+/// The files of both folders that are a tour's, by id: what [`list`] reads. The folder that is not there is empty; a file whose name is not
+/// `<valid tour id>.jsonl` is not a tour's, and is named once in `problems` (01 §10). Reads no tour.
+#[derive(Debug, Default)]
+pub struct Scanned {
+    pub files: Vec<(TourId, Where, PathBuf)>,
+    pub problems: Vec<String>,
+}
+
+pub fn scan(vnoc_root: &Path) -> Scanned {
+    let mut scanned = Scanned::default();
     for (place, dir, shown) in [
         (Where::Project, layout::tours_dir(vnoc_root), ".vnoc/tours/"),
         (
@@ -934,7 +940,9 @@ pub fn list(vnoc_root: &Path) -> Listed {
             Ok(entries) => entries,
             Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
             Err(e) => {
-                listed.problems.push(format!("could not read {shown}: {e}"));
+                scanned
+                    .problems
+                    .push(format!("could not read {shown}: {e}"));
                 continue;
             }
         };
@@ -949,38 +957,64 @@ pub fn list(vnoc_root: &Path) -> Listed {
                 .and_then(|stem| TourId::parse(stem).ok());
             let Some(id) = id else {
                 if names.insert(name.clone()) {
-                    listed.problems.push(format!(
+                    scanned.problems.push(format!(
                         "{shown}{name} is not a tour: a tour's file is named <id>.jsonl"
                     ));
                 }
                 continue;
             };
-            let path = entry.path();
-            let len = fs::metadata(&path).map_or(0, |m| m.len());
-            let tour = load(&path).unwrap_or_else(|e| {
-                Err(Unreadable {
-                    why: format!("could not read the file: {e}"),
-                    too_new: false,
-                })
-            });
-            listed.tours.push(Row {
-                id,
-                place,
-                path,
-                tour,
-                len,
-            });
+            scanned.files.push((id, place, entry.path()));
         }
     }
-    listed.tours.sort_by(|a, b| {
+    scanned.problems.sort();
+    scanned
+}
+
+/// One tour's file read: the fold, and the length from before it was read.
+pub fn row_at(id: TourId, place: Where, path: PathBuf) -> Row {
+    let len = fs::metadata(&path).map_or(0, |m| m.len());
+    let tour = load(&path).unwrap_or_else(|e| {
+        Err(Unreadable {
+            why: format!("could not read the file: {e}"),
+            too_new: false,
+        })
+    });
+    Row {
+        id,
+        place,
+        path,
+        tour,
+        len,
+    }
+}
+
+/// The order of [`list`]: newest first by the tour record's `at`, then by id; what cannot be read is last. The same id in both folders is two rows (the
+/// project's first).
+pub fn sort_rows<R: std::borrow::Borrow<Row>>(rows: &mut [R]) {
+    rows.sort_by(|a, b| {
+        let (a, b) = (a.borrow(), b.borrow());
         let at = |row: &Row| row.tour.as_ref().map_or(String::new(), |t| t.at.clone());
         at(b)
             .cmp(&at(a))
             .then_with(|| a.id.cmp(&b.id))
             .then_with(|| a.place.cmp(&b.place).reverse())
     });
-    listed.problems.sort();
-    listed
+}
+
+/// Every tour of both folders (a folder that is not there is empty), the rules of 01 §10: a file whose name is not `<valid tour id>.jsonl` is
+/// skipped and named once. Never writes.
+pub fn list(vnoc_root: &Path) -> Listed {
+    let scanned = scan(vnoc_root);
+    let mut tours: Vec<Row> = scanned
+        .files
+        .into_iter()
+        .map(|(id, place, path)| row_at(id, place, path))
+        .collect();
+    sort_rows(&mut tours);
+    Listed {
+        tours,
+        problems: scanned.problems,
+    }
 }
 
 // ------------------------------------------------------------------------------------------------------------ the state file

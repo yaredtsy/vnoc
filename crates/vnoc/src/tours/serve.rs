@@ -2,17 +2,22 @@
 //! check and a place. `vnoc tour show`, `list`, `where` and `go` print them; `vnoc/tour`, `vnoc/tours` and `vnoc/tourGo` (`server.rs`) answer with them. Nothing
 //! here prints, and nothing here starts a driver: the caller that needs the index gives it ([`check_needed`]).
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::borrow::Borrow;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::time::SystemTime;
 
-use super::add::block_of;
+use super::add::{block_of, did_you_mean_stops};
 use super::check::{self, Answer, Code, Mode, Recorded, Source, StopState};
-use super::place::{self, At, Place};
+use super::place::{self, At, By, Move, Place};
 use super::record::{Commit, StepId, StopId};
-use super::store::{Row, StoreError};
-use super::{Tour, TourId, pin, time, view};
+use super::store::{self, Halt, Row, StoreError, Where};
+use super::{Tour, TourId, pin, steps_in_order, time, view};
+use crate::index::Index;
 use crate::project::Project;
 use crate::source;
+use crate::userdata::{ToursLock, layout};
 
 /// A tour to find the freshness of: what the check is made true of is the file as it was **before** it was read.
 pub struct Subject<'a> {
@@ -328,33 +333,706 @@ pub fn where_view(
             .get(&stop.id)
             .or(recorded.displaced.get(&stop.id));
         let path = found.map_or_else(|| stop.path.to_string(), |n| n.path.clone());
-        // how far the node is from where it was written: a block that is not `moved` is where it was **counted from the node's first line**
-        // (check.rs `walk`), cut to the node's end
-        let (delta, node_last) = match (found.and_then(|n| n.lines), stop.lines) {
-            (Some([first, last]), Some(written)) => {
-                (i64::from(first) - i64::from(written.first), last)
-            }
-            (Some([_, last]), None) => (0, last),
-            (None, _) => (0, u32::MAX),
-        };
-        let shifted = |line: u32| u32::try_from((i64::from(line) + delta).max(1)).unwrap_or(line);
-        let lines = match (block, stop_state) {
-            (_, StopState::Gone) => None,
-            (Some(b), _) => Some(match recorded.block(b.id) {
-                check::BlockState::Moved(l) => [l.first, l.last],
-                check::BlockState::Fresh => [shifted(b.lines.first), shifted(b.lines.last)],
-                check::BlockState::Changed => {
-                    [shifted(b.lines.first), shifted(b.lines.last).min(node_last)]
-                }
-            }),
-            (None, _) => found
-                .and_then(|n| n.lines)
-                .or_else(|| stop.lines.map(|l| [l.first, l.last])),
-        };
+        let lines = view::step_lines(
+            stop.lines.map(|l| [l.first, l.last]),
+            found,
+            stop_state,
+            block.map(|b| ([b.lines.first, b.lines.last], recorded.block(b.id))),
+        );
         shown.lines = lines;
         view.check = Some(state);
         view.code = where_code(project, tour, step, state, &path, lines);
     }
     view.step = Some(shown);
     view
+}
+
+// ----------------------------------------------------------------------------------------------------------------- the views of a command and a request
+
+/// The rows of `list` and of `vnoc/tours`: [`view::list_rows`], and for each readable tour the three things a row says that the replay alone does not: where the
+/// reader is (`place_of`: the place as it is written, `None` for a tour nobody has opened), and whether the tour is quiet (its file's time).
+pub fn list_rows<R: Borrow<Row>>(
+    project: &Project,
+    rows: &[R],
+    known: &BTreeMap<TourId, Recorded>,
+    say_fresh: bool,
+    place_of: &dyn Fn(&TourId) -> Option<Place>,
+) -> Vec<view::ListRowView> {
+    let mut out = view::list_rows(rows, known, say_fresh, &|commit| {
+        pin::has_commit(project, commit)
+    });
+    for (shown, row) in out.iter_mut().zip(rows) {
+        let row: &Row = row.borrow();
+        let Ok(tour) = &row.tour else { continue };
+        let age = std::fs::metadata(&row.path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .map(|d| d.as_secs());
+        shown.quiet = view::is_quiet(tour.state, age);
+        shown.place = view::place_summary(tour, place_of(&row.id).as_ref());
+    }
+    out
+}
+
+/// The view of a tour as `show` and `vnoc/tour` have it, before a check is put on it: the pin (whether git has the commit), and the place as the tour is now.
+pub fn show_view(
+    project: &Project,
+    tour: &Tour,
+    folder: Where,
+    place: Option<&Place>,
+) -> view::TourView {
+    let mut shown = view::tour_view(tour, folder);
+    if let Some(pin) = tour.pin.as_ref().filter(|_| tour.pinned()) {
+        shown.pin_in_repository = Some(pin::has_commit(project, &pin.commit));
+    }
+    shown.place = place::settle(tour, &place.cloned().unwrap_or_default());
+    shown
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------------ a move
+
+/// Why a move was not made.
+#[derive(Debug)]
+pub enum GoError {
+    Store(StoreError),
+    /// a jump to a stop or a block the tour does not have: `code` is `no_stop` or `no_block`, `near` what could have been meant
+    NoSuch {
+        code: &'static str,
+        said: String,
+        near: Vec<String>,
+    },
+}
+
+impl From<StoreError> for GoError {
+    fn from(e: StoreError) -> GoError {
+        GoError::Store(e)
+    }
+}
+
+impl std::fmt::Display for GoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GoError::Store(e) => e.fmt(f),
+            GoError::NoSuch { said, .. } => f.write_str(said),
+        }
+    }
+}
+
+/// What a move did.
+pub struct Gone {
+    pub tour: Tour,
+    /// the place now: written, unless `nothing_to_go_back_to`
+    pub place: Place,
+    /// `back` with nothing to pop: the place stays and nothing is written
+    pub nothing_to_go_back_to: bool,
+}
+
+/// The tour as it is, or why it cannot be moved in.
+fn readable_tour(measured: &store::Measured, id: &TourId) -> Result<Tour, StoreError> {
+    match &measured.tour {
+        Ok(tour) => Ok(tour.clone()),
+        Err(e) => Err(StoreError::Unreadable {
+            id: id.clone(),
+            why: e.why.clone(),
+            too_new: e.too_new,
+        }),
+    }
+}
+
+/// `vnoc tour go`, and `vnoc/tourGo`: the tours lock holds from reading the tour and the place to writing the place, so two moves made together each apply to
+/// the place as it is then. Blocks (the lock); the core calls it from `spawn_blocking`.
+pub fn go(vnoc_root: &Path, id: &TourId, wanted: Move, by: By) -> Result<Gone, GoError> {
+    let lock = ToursLock::take(vnoc_root).map_err(StoreError::from)?;
+    let measured = store::read_measured(vnoc_root, id)?;
+    let tour = readable_tour(&measured, id)?;
+    if let Move::Jump(At::Step(step)) = wanted
+        && !place::has_step(&tour, step)
+    {
+        return Err(match tour.stop(step.stop()) {
+            None => GoError::NoSuch {
+                code: "no_stop",
+                said: format!("no stop {} in this tour", step.stop()),
+                near: did_you_mean_stops(&tour, step.stop())
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            },
+            Some(stop) => GoError::NoSuch {
+                code: "no_block",
+                said: format!("no block {step} in this tour"),
+                near: steps_in_order(stop)
+                    .iter()
+                    .skip(1)
+                    .map(ToString::to_string)
+                    .collect(),
+            },
+        });
+    }
+    let was = store::read_place(vnoc_root, id).unwrap_or_default();
+    let settled = place::settle(&tour, &was);
+    let nothing_to_go_back_to = wanted == Move::Back && settled.back.is_empty();
+    let now = if nothing_to_go_back_to {
+        settled
+    } else {
+        let mut moved = place::go(&tour, &settled, wanted);
+        moved.by = by;
+        store::write_place_locked(&lock, vnoc_root, id, &moved)?;
+        moved
+    };
+    Ok(Gone {
+        tour,
+        place: now,
+        nothing_to_go_back_to,
+    })
+}
+
+/// `vnoc/tourOpen`: a window shows this tour (`open`), or does not any more. The place is kept (`moved` and `by` too: opening is not a move); written only when
+/// `open` changes. The place a tour nobody has opened gets is the cover.
+pub fn set_open(vnoc_root: &Path, id: &TourId, open: bool) -> Result<(Place, bool), StoreError> {
+    let lock = ToursLock::take(vnoc_root)?;
+    let measured = store::read_measured(vnoc_root, id)?;
+    let tour = readable_tour(&measured, id)?;
+    let was = store::read_place(vnoc_root, id);
+    let mut place = place::settle(&tour, &was.clone().unwrap_or_default());
+    if was.is_some() && place.open == open {
+        return Ok((place, false));
+    }
+    place.open = open;
+    store::write_place_locked(&lock, vnoc_root, id, &place)?;
+    Ok((place, true))
+}
+
+// -------------------------------------------------------------------------------------------------------------------- what a file change is to a tour
+
+/// What a path of `vnoc/filesChanged` is to the tours (03 §8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Touch {
+    /// under `.vnoc/tours/` or `.vnoc/local/tours/`: a tour's file (`Some`), or something in those folders that is not named like one (a folder, a temporary
+    /// file: the folders are looked at again)
+    Tour(Option<TourId>),
+    /// a tour's state file, `.vnoc/local/tour-state/<id>.json`
+    State(TourId),
+    /// the tours lock, and what else is in `local/tour-state/`: a tour does not care
+    Ignored,
+    /// any other path: the index's, and the answers of the tours that read it
+    Other,
+}
+
+pub fn classify(vnoc_root: &Path, path: &Path) -> Touch {
+    let named = |dir: PathBuf, suffix: &str| -> Option<TourId> {
+        let name = path.strip_prefix(&dir).ok()?.to_str()?;
+        TourId::parse(name.strip_suffix(suffix)?).ok()
+    };
+    let (project_dir, private_dir) = (
+        layout::tours_dir(vnoc_root),
+        layout::local_tours_dir(vnoc_root),
+    );
+    if path.starts_with(&project_dir) || path.starts_with(&private_dir) {
+        let id = named(project_dir, ".jsonl").or_else(|| named(private_dir, ".jsonl"));
+        return Touch::Tour(id);
+    }
+    let state_dir = layout::tour_state_dir(vnoc_root);
+    if path.starts_with(&state_dir) {
+        return named(state_dir, ".json").map_or(Touch::Ignored, Touch::State);
+    }
+    if path == layout::tours_lock_file(vnoc_root) {
+        return Touch::Ignored;
+    }
+    Touch::Other
+}
+
+// --------------------------------------------------------------------------------------------------------------------- what the core holds
+
+/// The file a tour was replayed from, as it was: its length and time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Stamp {
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+fn stamp_of(path: &Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(Stamp {
+        len: meta.len(),
+        modified: meta.modified().ok(),
+    })
+}
+
+struct Kept {
+    row: Arc<Row>,
+    stamp: Option<Stamp>,
+}
+
+/// An answer the core gave (rung 1), with the files it read: the answer holds until one of them is named by `vnoc/filesChanged`, or the tour's own file changes.
+struct Remembered {
+    recorded: Recorded,
+    files: BTreeSet<String>,
+}
+
+#[derive(Default)]
+struct Held {
+    kept: BTreeMap<(TourId, Where), Kept>,
+    answers: BTreeMap<TourId, Remembered>,
+    /// the place of each tour as this core last wrote it or told the editor of it: a state file is a move only when its place is not this
+    placed: BTreeMap<TourId, Place>,
+    /// the checks (rung 3) made, for the tests
+    checks: usize,
+}
+
+/// What a question about freshness is asked of: the project, and the index when there is one (it is built after the editor says it is ready).
+pub struct Ask<'a> {
+    pub vnoc_root: &'a Path,
+    pub project: &'a Project,
+    pub index: Option<&'a RwLock<Index>>,
+}
+
+/// Why freshness could not be answered.
+#[derive(Debug)]
+pub enum Cannot {
+    Store(StoreError),
+    /// the answer needs a check, and a check needs the index, which is not given: ask again with it
+    NeedsIndex,
+}
+
+impl From<StoreError> for Cannot {
+    fn from(e: StoreError) -> Cannot {
+        Cannot::Store(e)
+    }
+}
+
+/// The tours the core has replayed, the answers it gave about their freshness, and where it last put each place. Owned by the server, not by the index: a tour
+/// never moves the index's revision (D12), and nothing here touches the index but to read it for a check.
+#[derive(Default)]
+pub struct Tours {
+    held: Mutex<Held>,
+}
+
+impl Tours {
+    fn held(&self) -> MutexGuard<'_, Held> {
+        self.held.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// How many checks (rung 3) were made: what the tests count.
+    pub fn checks_made(&self) -> usize {
+        self.held().checks
+    }
+
+    /// Every tour of both folders, in the order of `list`, brought up to date by `stat`: a file whose length or time is not the one replayed is replayed again, a
+    /// new one is read, one that went is forgotten. The ids that changed in any of those ways (their remembered answers are dropped).
+    pub fn sync(&self, vnoc_root: &Path) -> (Vec<Arc<Row>>, Vec<TourId>) {
+        let scanned = store::scan(vnoc_root);
+        let mut held = self.held();
+        let mut changed = BTreeSet::new();
+        let present: BTreeSet<(TourId, Where)> = scanned
+            .files
+            .iter()
+            .map(|(id, place, _)| (id.clone(), *place))
+            .collect();
+        held.kept.retain(|key, _| {
+            let stays = present.contains(key);
+            if !stays {
+                changed.insert(key.0.clone());
+            }
+            stays
+        });
+        for (id, place, path) in scanned.files {
+            let stamp = stamp_of(&path);
+            let current = held
+                .kept
+                .get(&(id.clone(), place))
+                .is_some_and(|k| k.stamp == stamp && k.row.path == path);
+            if !current {
+                changed.insert(id.clone());
+                let row = Arc::new(store::row_at(id.clone(), place, path));
+                held.kept.insert((id, place), Kept { row, stamp });
+            }
+        }
+        for id in &changed {
+            held.answers.remove(id);
+        }
+        let mut rows: Vec<Arc<Row>> = held.kept.values().map(|k| k.row.clone()).collect();
+        store::sort_rows(&mut rows);
+        (rows, changed.into_iter().collect())
+    }
+
+    /// A tour's file changed (`vnoc/filesChanged` named it): replay it whatever its length and time say, and forget what was answered about it.
+    pub fn replay(&self, vnoc_root: &Path, id: &TourId) {
+        let mut found = Vec::new();
+        match store::locate(vnoc_root, id) {
+            store::Located::None => {}
+            store::Located::Private(path) => found.push((Where::Private, path)),
+            store::Located::Project(path) => found.push((Where::Project, path)),
+            store::Located::Both { private, project } => {
+                found.push((Where::Project, project));
+                found.push((Where::Private, private));
+            }
+        }
+        let mut held = self.held();
+        held.kept.retain(|(kept, _), _| kept != id);
+        held.answers.remove(id);
+        for (place, path) in found {
+            let stamp = stamp_of(&path);
+            let row = Arc::new(store::row_at(id.clone(), place, path));
+            held.kept.insert((id.clone(), place), Kept { row, stamp });
+        }
+    }
+
+    /// The tour with this id, as `show` reads it (the project's copy when the id is in both), replayed only when its file is not the one replayed.
+    pub fn row(&self, vnoc_root: &Path, id: &TourId) -> Option<Arc<Row>> {
+        let (place, path) = match store::locate(vnoc_root, id) {
+            store::Located::None => {
+                let mut held = self.held();
+                held.kept.retain(|(kept, _), _| kept != id);
+                held.answers.remove(id);
+                return None;
+            }
+            store::Located::Private(path) => (Where::Private, path),
+            store::Located::Project(path) | store::Located::Both { project: path, .. } => {
+                (Where::Project, path)
+            }
+        };
+        let stamp = stamp_of(&path);
+        let mut held = self.held();
+        if let Some(k) = held.kept.get(&(id.clone(), place))
+            && k.stamp == stamp
+            && k.row.path == path
+        {
+            return Some(k.row.clone());
+        }
+        let row = Arc::new(store::row_at(id.clone(), place, path));
+        held.answers.remove(id);
+        held.kept.insert(
+            (id.clone(), place),
+            Kept {
+                row: row.clone(),
+                stamp,
+            },
+        );
+        Some(row)
+    }
+
+    /// The answers the core remembers (rung 1), for the tours given: what a row of the list says for free.
+    pub fn remembered(&self, ids: &[TourId]) -> BTreeMap<TourId, Recorded> {
+        let held = self.held();
+        ids.iter()
+            .filter_map(|id| Some((id.clone(), held.answers.get(id)?.recorded.clone())))
+            .collect()
+    }
+
+    /// The answer for each tour, by id, in the three rungs of 03 §3 with the core's memory in front of them: what the core said last time and has not been told
+    /// is wrong; the recorded check; a check (which needs the index: [`Cannot::NeedsIndex`] when `ask` has none). What is answered is remembered, with the files it read.
+    pub fn answers(
+        &self,
+        ask: &Ask,
+        rows: &[Arc<Row>],
+        mode: Mode,
+    ) -> Result<BTreeMap<TourId, Answer>, Cannot> {
+        let mut done = BTreeMap::new();
+        {
+            let mut held = self.held();
+            for row in rows {
+                if mode.again {
+                    held.answers.remove(&row.id);
+                } else if row.tour.is_ok()
+                    && !done.contains_key(&row.id)
+                    && let Some(r) = held.answers.get(&row.id)
+                {
+                    done.insert(
+                        row.id.clone(),
+                        Answer {
+                            from: Source::Memory,
+                            recorded: r.recorded.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        let asked: Vec<&Arc<Row>> = rows.iter().filter(|r| !done.contains_key(&r.id)).collect();
+        let subjects: Vec<Subject> = asked.iter().filter_map(|r| subject(r)).collect();
+        let mut resolved = resolve(ask.vnoc_root, ask.project.git_root(), &subjects, mode)?;
+        let mut checked = 0;
+        if !resolved.need.is_empty() {
+            let index = ask.index.ok_or(Cannot::NeedsIndex)?;
+            let index = index.read().unwrap_or_else(|e| e.into_inner());
+            let tree = index.tree(&ask.project.name(), ask.project.prefix());
+            let code = Code {
+                index: &index,
+                project: ask.project,
+                tree: &tree,
+            };
+            checked = resolved.need.len();
+            check_needed(&code, ask.vnoc_root, &resolved.need, &mut resolved.done)?;
+        }
+        let mut held = self.held();
+        held.checks += checked;
+        for row in asked {
+            let Some(answer) = resolved.done.get(&row.id) else {
+                continue;
+            };
+            // a check records itself in the state file, which the watcher will report: a place that was there before is not a move
+            if answer.from == Source::Check
+                && !held.placed.contains_key(&row.id)
+                && let Some(place) = store::read_place(ask.vnoc_root, &row.id)
+            {
+                held.placed.insert(row.id.clone(), place);
+            }
+            // a tour replayed while it was being answered is not the one this is true of
+            let current = held
+                .kept
+                .get(&(row.id.clone(), row.place))
+                .is_some_and(|k| Arc::ptr_eq(&k.row, row));
+            if current {
+                held.answers.insert(
+                    row.id.clone(),
+                    Remembered {
+                        recorded: answer.recorded.clone(),
+                        files: answer.recorded.files.keys().cloned().collect(),
+                    },
+                );
+            }
+        }
+        done.extend(resolved.done);
+        Ok(done)
+    }
+
+    /// `vnoc/filesChanged` named these files of the project (repo paths, `/`): the answers of the tours that read any of them are dropped. The ids.
+    pub fn drop_answers_reading(&self, paths: &[String]) -> Vec<TourId> {
+        let mut held = self.held();
+        let mut dropped = Vec::new();
+        held.answers.retain(|id, r| {
+            let reads = paths.iter().any(|p| r.files.contains(p));
+            if reads {
+                dropped.push(id.clone());
+            }
+            !reads
+        });
+        dropped
+    }
+
+    /// This core wrote (or announced) the place of a tour: a state file with this place is not a move.
+    pub fn note_place(&self, id: &TourId, place: &Place) {
+        self.held().placed.insert(id.clone(), place.clone());
+    }
+
+    /// A state file changed: the place in it, as the tour is now, when it is not the one this core last wrote or announced (and then it is noted, so the next rewrite of
+    /// the file for its recorded check, which does not touch the place, says nothing).
+    pub fn place_moved(&self, vnoc_root: &Path, id: &TourId) -> Option<Place> {
+        let written = store::read_place(vnoc_root, id)?;
+        {
+            let mut held = self.held();
+            if held.placed.get(id) == Some(&written) {
+                return None;
+            }
+            held.placed.insert(id.clone(), written.clone());
+        }
+        Some(match store::read(vnoc_root, id) {
+            Ok((_, Ok(tour))) => place::settle(&tour, &written),
+            _ => written,
+        })
+    }
+
+    /// `vnoc/tourGo`: [`go`], and the place it wrote is noted so the watcher's word of the write is not an echo.
+    pub fn go(&self, vnoc_root: &Path, id: &TourId, wanted: Move) -> Result<Gone, GoError> {
+        let gone = go(vnoc_root, id, wanted, By::Reader)?;
+        if !gone.nothing_to_go_back_to {
+            self.note_place(id, &gone.place);
+        }
+        Ok(gone)
+    }
+
+    /// `vnoc/tourOpen`: [`set_open`], noted the same way.
+    pub fn open(&self, vnoc_root: &Path, id: &TourId, open: bool) -> Result<Place, StoreError> {
+        let (place, wrote) = set_open(vnoc_root, id, open)?;
+        if wrote {
+            self.note_place(id, &place);
+        }
+        Ok(place)
+    }
+
+    /// `vnoc/tourHalt`: `store::halt`, the function of `vnoc tour halt`, and the tour as it is after.
+    pub fn halt(&self, vnoc_root: &Path, id: &TourId) -> Result<(Halt, Tour), StoreError> {
+        let did = store::halt(vnoc_root, id)?;
+        self.replay(vnoc_root, id);
+        let tour = match self.row(vnoc_root, id).map(|r| r.tour.clone()) {
+            Some(Ok(tour)) => tour,
+            _ => return Err(StoreError::NotFound(id.clone())),
+        };
+        Ok((did, tour))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tours::record::{Bare, Record};
+
+    fn id(text: &str) -> TourId {
+        TourId::parse(text).unwrap()
+    }
+
+    /// A project folder with `.vnoc/`, fresh for this test; the tours store's root.
+    fn vnoc_root(label: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("vnoc-serve-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        crate::testdir::remove_at_end(&d);
+        std::fs::create_dir_all(d.join(".vnoc")).unwrap();
+        d.join(".vnoc")
+    }
+
+    fn started(root: &Path) -> TourId {
+        let project = root.parent().unwrap();
+        store::start(
+            project,
+            store::StartParams {
+                title: "T".into(),
+                question: None,
+                author: None,
+                detail: crate::tours::record::Detail::Normal,
+            },
+        )
+        .unwrap()
+        .id
+    }
+
+    // ---- where a path goes (03 §8)
+
+    #[test]
+    fn a_path_goes_to_the_tours_the_state_the_bin_or_the_index() {
+        let root = Path::new("/p/.vnoc");
+        let class = |p: &str| classify(root, Path::new(p));
+        let tour = id("orders-7k2q");
+        // a tour's file, in either folder
+        assert_eq!(
+            class("/p/.vnoc/tours/orders-7k2q.jsonl"),
+            Touch::Tour(Some(tour.clone()))
+        );
+        assert_eq!(
+            class("/p/.vnoc/local/tours/orders-7k2q.jsonl"),
+            Touch::Tour(Some(tour.clone()))
+        );
+        // something in those folders that is not named like one: the folders are looked at again
+        assert_eq!(class("/p/.vnoc/tours"), Touch::Tour(None));
+        assert_eq!(class("/p/.vnoc/local/tours"), Touch::Tour(None));
+        assert_eq!(class("/p/.vnoc/tours/notes.txt"), Touch::Tour(None));
+        assert_eq!(
+            class("/p/.vnoc/local/tours/.orders-7k2q.tmp"),
+            Touch::Tour(None)
+        );
+        // a state file; the folder and a temporary file of an atomic write are nobody's
+        assert_eq!(
+            class("/p/.vnoc/local/tour-state/orders-7k2q.json"),
+            Touch::State(tour)
+        );
+        assert_eq!(class("/p/.vnoc/local/tour-state"), Touch::Ignored);
+        assert_eq!(
+            class("/p/.vnoc/local/tour-state/.orders-7k2q.json.tmp1"),
+            Touch::Ignored
+        );
+        // the lock
+        assert_eq!(class("/p/.vnoc/local/tours.lock"), Touch::Ignored);
+        // everything else is the index's, `.vnoc/` or not
+        for other in [
+            "/p/billing/charge.py",
+            "/p/.vnoc/nodes/AB/ABCD/node.toml",
+            "/p/.vnoc/vnoc.toml",
+            "/p/.vnoc/local/other.json",
+            "/p/.vnoc/tours-extra/x.jsonl",
+            "/elsewhere/.vnoc/tours/orders-7k2q.jsonl",
+        ] {
+            assert_eq!(class(other), Touch::Other, "{other}");
+        }
+    }
+
+    // ---- the place
+
+    #[test]
+    fn a_state_file_is_a_move_only_when_its_place_is_not_the_one_the_core_last_wrote() {
+        let root = vnoc_root("place");
+        let tour = started(&root);
+        let tours = Tours::default();
+        let at = |text: &str| Place {
+            at: text.parse().unwrap(),
+            ..Place::cover()
+        };
+        // no state file yet: nothing moved
+        assert_eq!(tours.place_moved(&root, &tour), None);
+        // another process writes a place: a move, once
+        store::write_place(&root, &tour, &at("end")).unwrap();
+        assert_eq!(tours.place_moved(&root, &tour).unwrap().at, At::End);
+        assert_eq!(tours.place_moved(&root, &tour), None, "told already");
+        // the file rewritten for its check keeps the place: not a move
+        store::write_check(&root, &tour, serde_json::json!({ "x": 1 })).unwrap();
+        assert_eq!(tours.place_moved(&root, &tour), None);
+        // the core's own write is noted: not an echo
+        let mine = at("cover");
+        store::write_place(&root, &tour, &mine).unwrap();
+        tours.note_place(&tour, &mine);
+        assert_eq!(tours.place_moved(&root, &tour), None);
+        // the place is read as the tour is now: a step that is not there is the nearest one
+        store::write_place(&root, &tour, &at("s4.b2")).unwrap();
+        assert_eq!(tours.place_moved(&root, &tour).unwrap().at, At::Cover);
+    }
+
+    // ---- what is held
+
+    #[test]
+    fn the_tours_are_replayed_when_their_file_changes_and_not_before() {
+        let root = vnoc_root("held");
+        let tour = started(&root);
+        let tours = Tours::default();
+        let first = tours.row(&root, &tour).unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &tours.row(&root, &tour).unwrap()),
+            "not read again"
+        );
+        let (rows, changed) = tours.sync(&root);
+        assert_eq!(rows.len(), 1);
+        assert!(
+            changed.is_empty(),
+            "the file is the one replayed: {changed:?}"
+        );
+        assert!(Arc::ptr_eq(&first, &rows[0]));
+        // a line is appended: the length is not the one replayed
+        store::append(&root, &tour, &[Record::Halt(Bare {})]).unwrap();
+        let (rows, changed) = tours.sync(&root);
+        assert_eq!(changed, std::slice::from_ref(&tour));
+        assert!(!Arc::ptr_eq(&first, &rows[0]));
+        // told by the watcher, it is read again whatever the file says
+        let held = tours.row(&root, &tour).unwrap();
+        tours.replay(&root, &tour);
+        assert!(!Arc::ptr_eq(&held, &tours.row(&root, &tour).unwrap()));
+        // a tour that went is forgotten
+        std::fs::remove_file(&held.path).unwrap();
+        assert_eq!(tours.sync(&root).1, std::slice::from_ref(&tour));
+        assert!(tours.row(&root, &tour).is_none());
+    }
+
+    #[test]
+    fn what_an_answer_read_drops_it_and_a_tour_with_nothing_written_needs_no_index() {
+        let root = vnoc_root("answers");
+        let tour = started(&root);
+        let project = Project::open(root.parent().unwrap()).unwrap();
+        let tours = Tours::default();
+        let rows = vec![tours.row(&root, &tour).unwrap()];
+        let ask = Ask {
+            vnoc_root: &root,
+            project: &project,
+            index: None,
+        };
+        // nothing is written: fresh with no code to look at, and no index is asked for
+        let first = tours.answers(&ask, &rows, Mode::default()).unwrap();
+        assert_eq!(first[&tour].from, Source::Check);
+        assert!(first[&tour].recorded.fresh());
+        let second = tours.answers(&ask, &rows, Mode::default()).unwrap();
+        assert_eq!(second[&tour].from, Source::Memory);
+        // `again` asks anew
+        let again = tours.answers(&ask, &rows, Mode { again: true }).unwrap();
+        assert_eq!(again[&tour].from, Source::Check);
+        // no file was read by it (none is written about), so none drops it; the tour's own file does
+        assert!(tours.drop_answers_reading(&["a.py".to_string()]).is_empty());
+        assert_eq!(tours.remembered(std::slice::from_ref(&tour)).len(), 1);
+        tours.replay(&root, &tour);
+        assert!(tours.remembered(&[tour]).is_empty());
+    }
 }

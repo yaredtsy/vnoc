@@ -3285,8 +3285,8 @@ async fn list(global: &Global, args: &TourListArgs) -> Result<(), Failure> {
             })
             .collect()
     };
-    let mut rows = view::list_rows(&listed.tours, &known, args.check, &|commit| {
-        pin::has_commit(&project, commit)
+    let mut rows = serve::list_rows(&project, &listed.tours, &known, args.check, &|id| {
+        store::read_place(&vnoc_root, id)
     });
 
     if let Some((_, query)) = &on_node {
@@ -3377,11 +3377,13 @@ async fn show(global: &Global, args: &TourShowArgs) -> Result<(), Failure> {
     let read = store::read_measured(&vnoc_root, &tour_id).map_err(store_failure)?;
     match &read.tour {
         Ok(tour) => {
-            let mut tour_view = view::tour_view(tour, read.place);
+            let mut tour_view = serve::show_view(
+                &project,
+                tour,
+                read.place,
+                store::read_place(&vnoc_root, &tour_id).as_ref(),
+            );
             let holds = tour.pin.as_ref().filter(|_| tour.pinned());
-            if let Some(pin) = holds {
-                tour_view.pin_in_repository = Some(pin::has_commit(&project, &pin.commit));
-            }
             if args.as_written && holds.is_none() {
                 return Err(Failure::Usage(format!(
                     "this tour is not pinned: there is no commit to read it as written from (vnoc tour pin {tour_id})"
@@ -3593,53 +3595,26 @@ async fn go_command(global: &Global, args: &TourGoArgs) -> Result<(), Failure> {
     let vnoc_root = store::vnoc_root(project.git_root());
     let id = resolve(global, "tour go", &vnoc_root, &args.tour)?;
     // the tours lock holds from reading the tour and the place to writing the place: two moves made together each apply to the place as it is then
-    let lock = take_lock(vnoc_root.clone()).await?;
-    let measured = store::read_measured(&vnoc_root, &id).map_err(store_failure)?;
-    let tour = readable(&measured, &id)?;
-    if let Move::Jump(At::Step(step)) = wanted
-        && !place::has_step(&tour, step)
-    {
-        drop(lock);
-        let said = match tour.stop(step.stop()) {
-            None => {
-                let near = did_you_mean_stops(&tour, step.stop());
-                (
-                    "no_stop",
-                    format!("no stop {} in this tour", step.stop()),
-                    near.iter().map(ToString::to_string).collect(),
-                )
-            }
-            Some(stop) => (
-                "no_block",
-                format!("no block {step} in this tour"),
-                steps_in_order(stop)
-                    .iter()
-                    .skip(1)
-                    .map(ToString::to_string)
-                    .collect(),
-            ),
-        };
-        return no_such(global, "tour go", said.0, said.1, said.2);
-    }
-    let was = store::read_place(&vnoc_root, &id).unwrap_or_default();
-    let settled = place::settle(&tour, &was);
-    let nothing_to_go_back_to = wanted == Move::Back && settled.back.is_empty();
-    let now = if nothing_to_go_back_to {
-        settled
-    } else {
-        let mut moved = place::go(&tour, &settled, wanted);
-        moved.by = By::Command;
-        store::write_place_locked(&lock, &vnoc_root, &id, &moved).map_err(store_failure)?;
-        moved
+    let gone = {
+        let (vnoc_root, id) = (vnoc_root.clone(), id.clone());
+        tokio::task::spawn_blocking(move || serve::go(&vnoc_root, &id, wanted, By::Command))
+            .await
+            .map_err(|e| Failure::Environment(e.to_string()))?
     };
-    drop(lock);
-    let (view, text) = place_answer(global, &project, &vnoc_root, &id, &now).await?;
+    let gone = match gone {
+        Ok(gone) => gone,
+        Err(serve::GoError::Store(e)) => return Err(store_failure(e)),
+        Err(serve::GoError::NoSuch { code, said, near }) => {
+            return no_such(global, "tour go", code, said, near);
+        }
+    };
+    let (view, text) = place_answer(global, &project, &vnoc_root, &id, &gone.place).await?;
     out::render(
         &WhereOut {
             schema: 1,
             command: "tour go",
             moved_by: Some(args.r#move.clone()),
-            nothing_to_go_back_to,
+            nothing_to_go_back_to: gone.nothing_to_go_back_to,
             view,
             text,
         },
