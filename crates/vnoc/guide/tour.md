@@ -8,6 +8,7 @@ Four commands. Each prints what it did. The text goes in on standard input, as a
 One `vnoc tour` command per call, with the tour's id written out: no `T=…` or `$T`, no `for` loops, no two commands joined with `;` or a newline.
 The host allows only a command it can read, and asks the user about anything else. Run `finish` on its own, after the last `add` printed `written`.
 Read a function with `vnoc code <node>`, a file or a folder with `vnoc show <node>`.
+Send one `add` at a time and read its answer before the next: never several in one message. The answer may be a refusal to fix, or Stop.
 ```
 vnoc tour start --title "orders" --question "how does an order get parsed" --author claude-code
 started orders-7k2q   private   .vnoc/local/tours/orders-7k2q.jsonl
@@ -125,7 +126,10 @@ the plan does not do it for you.
 - A tour need not be a tree. Stops with no `--from` are at the top, in the order you add them.
 - **Planning** puts stops on the route before they are written: the user sees the outline at once, and "stop 3 of 10". It is optional.
   `vnoc tour start --title "<title>" --plan <node> <node>` and `vnoc tour plan <id> <node> --from <stop>` plan; `add` on a planned node fills it (it
-  says so), and `finish` removes what is left. `route` proposes a plan from the call tree:
+  says so), and `finish` removes what is left.
+  For a tour across files (a question, not one function's call tree), find the route first, then start with `--plan <the nodes in reading order>` and fill it
+  with `add`, in that order: `vnoc tour start --title "…" --question "…" --author <your name> --plan <node> <node> …`. Stops are not reordered afterwards
+  with `--replace`. The plan fixes only the order: write each stop's text right after reading it. Otherwise do not prepare the whole tour first. `route` proposes a plan from the call tree:
 ```
 vnoc tour route orders/service.py::OrderService.place --depth 2
 OrderService.place    1 stop    about 1 min

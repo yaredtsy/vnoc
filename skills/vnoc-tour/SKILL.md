@@ -17,7 +17,9 @@ user's canvas the moment you add it. **The tour is the answer.** Do not also exp
    Search and read between stops as you need. Say nothing in the chat while you write.
 3. Run `finish` on its own, after the last `add` printed "written": `vnoc tour finish <id>`. Then one line: `Tour finished: <title> · <n> stops.`
 
-Add one stop per command, in the order the user should read them. Do not prepare the whole tour first.
+Add one stop per command, in the order the user should read them. Send one `add` at a time and read its answer before the next: never several in one message. The answer may be a refusal to fix, or Stop.
+For a tour across files (a question, not one function's call tree), find the route first, then start with `--plan <the nodes in reading order>` and fill it with `add`, in that order:
+`vnoc tour start --title "…" --question "…" --author <your name> --plan <node> <node> …`. Stops are not reordered afterwards with `--replace`. The plan fixes only the order: write each stop's text right after reading it. Otherwise do not prepare the whole tour first.
 One `vnoc tour` command per call, with the tour's id written out. No `T=…` or `$T`, no `for` loops, no two commands joined with `;` or a
 newline: the host allows only a command it can read, and asks the user about anything else.
 
