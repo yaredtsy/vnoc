@@ -52,13 +52,17 @@ Replaying 40 stops is parsing about 150 short lines. **[measure]** TR5.
 
 ## 2. Finding each stop, and comparing
 
-`tours::find(index, stop) -> Option<node>` is the whole of finding (D6), and the one function a later module replaces:
+`tours::find(index, project, tree, stop) -> Option<&Node>` is the whole of finding (D6), and the one function a later module replaces
+(as built in TR4):
 
 ```
-the stop has `node` (an ID)   →  Index::resolve_ref(NodeRef::Id)         the def that carries it, wherever it is now
-else                          →  Index::resolve_ref(NodeRef::Location)   the exact path, qualname and occurrence
-neither                       →  None: GONE
+the stop has `node` (an ID), and the index has it   →  Index::resolve_ref(NodeRef::Id)         the def that carries it, wherever it is now
+else                                                →  Index::resolve_ref(NodeRef::Location)   the exact path, qualname and occurrence
+neither                                             →  None: GONE
 ```
+
+An ID the index does not have falls back to the name (decided at TR4's review): a hand-deleted marker line on a function that is still
+there finds it. If something else has taken that name since, its hash says so: the stop is *changed*, never silently fresh.
 
 Then, for a stop that was found, `tours::check`:
 
@@ -113,7 +117,8 @@ Then, for a stop that was found, `tours::check`:
 |---|---|
 | **what is recorded** | [`01`](01-on-disk.md) §9: the tour file's length, each file's size and time (a file that was not there is recorded as not there), and only what was **not** fresh: changed stops and blocks, moved blocks with their new lines, gone stops |
 | **which files** | every path a stop names, and every path a stop found by its ID is at now. A stop that is *gone* by name records its named path, so the file appearing again makes the record invalid |
-| **a one-shot command** | has no memory: it starts at 2. So `vnoc tour check` twice in a row reads the source files once |
+| **a one-shot command** | has no memory: it starts at 2, **before it builds an index or starts a driver**: a tour whose record is valid costs `stat`s only, and the index is built only when some tour needs rung 3. So `vnoc tour check` twice in a row reads the source files once, and the second run starts no driver |
+| **what a record does not see** | a stop that is *gone* because its ID is Missing, whose code comes back in a file the tour never named (a restored branch): the record stays valid until one of its files changes. `--again` (and the next edit of a recorded file) checks anew. Accepted: it is a rare case, and it errs on the side of *gone* |
 | **the open tour is live** | when a file of the open tour changes, the core drops its answer and sends `vnoc/toursChanged`; the window asks again and gets a new check. Edit `reserve_stock`, save, and stop 3 says so |
 | **a file of no open or drawn tour changes** | nothing is computed. Its tours' recorded checks are simply not valid any more, and are found so when someone next looks |
 | **the list after a restart** | the rows drawn ask; each is answered by `stat`s if nothing changed while VS Code was closed |

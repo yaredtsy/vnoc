@@ -136,7 +136,7 @@ Commit: `tours TR4: vnoc tour start, add, finish, list, show`.
 
 | Files | What |
 |---|---|
-| `tours/check.rs` | compare; each block in place, else slid inside its parent's lines, else changed; `fresh(…, mode)`: the recorded check when it is valid (the tour's length, each file's size and time, TR0's answer to check 7), else a check, then `write_part` |
+| `tours/check.rs` | compare; each block in place, else slid inside its parent's lines, else changed; `fresh(…, mode)`: the recorded check when it is valid (the tour's length, each file's size and time, TR0's answer to check 7), checked **before** any index is built, else a check, then `write_state_part` |
 | `tours/on.rs` | the map of 03 §6 |
 | `cli/tour.rs` | `tour check [<tour>…] [--again]`; `show --check`; `list --check`; `list` shows a valid recorded answer; `list --on <node>` |
 
