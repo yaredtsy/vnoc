@@ -5,6 +5,9 @@ The user plays it on the V-NOC canvas: each stop appears the moment you add it. 
 
 ## A whole tour, start to finish
 Four commands. Each prints what it did. The text goes in on standard input, as a heredoc.
+One `vnoc tour` command per call, with the tour's id written out: no `T=…` or `$T`, no `for` loops, no two commands joined with `;` or a newline.
+The host allows only a command it can read, and asks the user about anything else. Run `finish` on its own, after the last `add` printed `written`.
+Read a function with `vnoc code <node>`, a file or a folder with `vnoc show <node>`.
 ```
 vnoc tour start --title "orders" --question "how does an order get parsed" --author claude-code
 started orders-7k2q   private   .vnoc/local/tours/orders-7k2q.jsonl
@@ -103,13 +106,16 @@ good:  Parsing and building are one step, so a half-built Order can never be see
 bad:   Title: "This block creates the lines of the order."
 good:  Title: "Build the lines"
 
+bad:   Title: "retry_charge" (the function's name, which the stop already has)
+good:  Title: "Retry only a dropped connection" (what the part does)
+
 bad:   ten blocks of three lines each, side by side
 good:  three blocks for the three parts, and a ### inside the one part that needs taking apart
 
 bad:   a second full stop on check_stock, retelling it
 good:  --same-as s2, one sentence: "Called again here, before the stock is taken."
 ```
-Most stops need two or three `##` blocks and no `###`. A stop planned as a second visit (`= s2` in `show` and `route`) takes `--same-as s2` too;
+Most stops need two or three `##` blocks and no `###`. No block for a line that only starts or returns. A stop planned as a second visit (`= s2` in `show` and `route`) takes `--same-as s2` too;
 the plan does not do it for you.
 
 ## The route
