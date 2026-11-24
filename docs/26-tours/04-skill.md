@@ -274,4 +274,30 @@ asked was not reached: no agent tried it unasked (t10's rule held).
 - **Asked of the user:** a plain "explain X" does not make a tour (t11's reading). The description stays on "walk me through", "a
   tour", "step by step".
 
+### Results, TR14b (Claude Code on Sonnet, re-runs after the fixes, 2026-11-24)
+
+Commits `37357ba` (finish refuses a tour with no stop), `d43aff7` (both skills, the guide), `d364129`, `580d4de` (harness). Skills:
+`vnoc-tour` 5449 bytes, `vnoc` 4578. Batches `runs/batch-tours-claude-20261124-211908.md` (4 runs) and `-212356.md` (10): 14 runs,
+$1.17, 1086 s. 6 yes, 3 judged, 4 no, 1 capped (an API stall: `api_retry` waited 181 s, not the agent).
+
+| # | TR14a | TR14b |
+|---|---|---|
+| t1 ×3 | two `add`s in one call, `vnoc search` | 3 yes: one `add` per call, `finish` alone, no variables, no invented command |
+| t4 ×3 | `vnoc` skill loaded, chat answer | **`vnoc-tour` loaded in all 3**; tours of 5 – 8 stops. Read everything first, then wrote; one line between stops; in one run stops written out of order, then reordered with `--replace` |
+| t5 | `finish` chained after a refused `add`, 0 stops | `finish` alone; 2 general blocks |
+| t6 ×3 | four `add`s in one call, halt after s6 | one `add` per call, halt at s3 every time. In 2 runs, three more `add`s were refused: they were **parallel tool calls in the same assistant message** as the refused one (same message id), sent before any answer. After seeing it, each run stopped and said the line. Not Stop ignored; adds sent several at once |
+| t10 | `T=` variables refused | none; asked both questions, did neither |
+| t11 ×3 | (asked no tour) | 3 yes: walk-through of `retry_charge`, 1 stop, 3 blocks, at most 1 refusal |
+| permissions | variables, loops, invented commands | **none refused** in 14 runs |
+
+**Decided from it** (TR14c):
+- *the tour skill:* `Send one add at a time and read its answer before the next: never several in one message. The answer may be a
+  refusal to fix, or Stop.` And: `For a tour across files, find the route first, then start with --plan <the nodes in reading order>
+  and fill it with add, in that order` (so nobody reorders with `--replace`).
+- *no format change for order:* a tour has no "insert before s3"; `plan` covers it. If one is wanted later it is an addition (an
+  `after` key on `stop`, or a `move` record), not a change: older readers ignore an unknown key (01 §11).
+- *the refusal text of Stop stays:* the agent obeyed it once it saw it.
+- *the harness:* an `add` counts against Stop only if it was sent after the agent saw the refusal (a later assistant message); t4 does
+  not need "as it goes" for reading (a cross-file question reads first) but needs one `add` per call and no text between stops.
+
 Next: [`05-on-screen.md`](05-on-screen.md)
