@@ -4,8 +4,11 @@
 //! This module starts with the part that touches nothing: [`record`] (the lines: parse one, print one) and [`fold`] (lines in, a tour out).
 //! No disk, no index, no driver and no git here; the files come in later steps (`06-build-order.md`).
 
+pub mod body;
 pub mod fold;
+pub mod hash;
 pub mod record;
+pub mod rules;
 
 pub use fold::{Problem, Size, State, Tour, TourBlock, TourStop, Unreadable, fold, steps_in_order};
 pub use record::{
