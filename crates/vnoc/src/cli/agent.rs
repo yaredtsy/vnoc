@@ -396,6 +396,9 @@ fn about(action: &Action, command: &str, picked: &[Agent]) -> String {
     }
 }
 
+/// What a permissions row says is allowed (TR13b: the tour commands too).
+const ALLOWED: &str = "V-NOC's read commands and the tour commands";
+
 /// A permissions row: what is allowed and for whom, then where (`in`), then what else there is to say.
 fn permission_text(action: &Action, dry_run: bool) -> String {
     let word = verb(action, dry_run);
@@ -409,7 +412,7 @@ fn permission_text(action: &Action, dry_run: bool) -> String {
         .first()
         .and_then(|a| agents::permission_name(*a))
         .unwrap_or("the agent");
-    let mut text = format!("{word}V-NOC's read commands for {name}\n");
+    let mut text = format!("{word}{ALLOWED} for {name}\n");
     text.push_str(&format!("{}{}\n", label("in"), action.path));
     let note = match (&action.why, action.change) {
         (Some(why), _) => Some(why.as_str()),
@@ -857,18 +860,18 @@ fn permission_status_text(p: &agents::PermissionStatus) -> String {
     );
     match p.state {
         PermissionState::InPlace => format!(
-            "{}V-NOC's read commands for {name}\n{}{path}\n",
+            "{}{ALLOWED} for {name}\n{}{path}\n",
             label("allowed"),
             label("in")
         ),
         PermissionState::Partial => format!(
-            "{}V-NOC's read commands for {name}\n{}{path}\n{}",
+            "{}{ALLOWED} for {name}\n{}{path}\n{}",
             style::paint(style::warn(), format!("{:<13}", "partly")),
             label("in"),
             continued(&format!("some are missing: {ask} adds them"))
         ),
         PermissionState::Changed => format!(
-            "{}V-NOC's read commands for {name}\n{}{path}\n{}",
+            "{}{ALLOWED} for {name}\n{}{path}\n{}",
             style::paint(style::warn(), format!("{:<13}", "changed")),
             label("in"),
             continued(&format!(
@@ -876,7 +879,7 @@ fn permission_status_text(p: &agents::PermissionStatus) -> String {
             ))
         ),
         PermissionState::Missing => format!(
-            "{}V-NOC's read commands for {name}\n{}",
+            "{}{ALLOWED} for {name}\n{}",
             style::paint(style::warn(), format!("{:<13}", "not allowed")),
             continued(&format!("each one asks: {ask}"))
         ),

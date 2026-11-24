@@ -996,7 +996,7 @@ created      AGENTS.md
              the rules block, for claude
 created      CLAUDE.md
              imports AGENTS.md, so every Claude Code reads the rules
-allowed      V-NOC's read commands for Claude Code
+allowed      V-NOC's read commands and the tour commands for Claude Code
 in           .claude/settings.local.json
 
 commit these files so your team's agents get them
@@ -1021,7 +1021,8 @@ commit these files so your team's agents get them
     );
     assert_eq!(code(&again), 0);
     assert!(
-        out(&again).contains("current      V-NOC's read commands for Claude Code\n"),
+        out(&again)
+            .contains("current      V-NOC's read commands and the tour commands for Claude Code\n"),
         "{}",
         out(&again)
     );
@@ -1054,7 +1055,10 @@ commit these files so your team's agents get them
             "--permissions",
         ],
     );
-    assert!(out(&o).contains("allowed      V-NOC's read commands for Claude Code"));
+    assert!(
+        out(&o)
+            .contains("allowed      V-NOC's read commands and the tour commands for Claude Code")
+    );
     // the rules were written, so the team has a file; the settings alone would not say it
     assert!(out(&o).contains("commit these files"));
     std::fs::remove_file(root2.join("AGENTS.md")).unwrap();
@@ -1075,7 +1079,7 @@ fn permissions_project_writes_the_shared_file_and_not_the_local_one() {
         ],
     );
     assert_eq!((code(&o), err(&o).as_str()), (0, ""));
-    assert!(out(&o).contains("allowed      V-NOC's read commands for Claude Code\nin           .claude/settings.json\n"), "{}", out(&o));
+    assert!(out(&o).contains("allowed      V-NOC's read commands and the tour commands for Claude Code\nin           .claude/settings.json\n"), "{}", out(&o));
     assert_eq!(allow_in(&root, ".claude/settings.json").len(), 27);
     assert!(!exists(&root, SETTINGS_LOCAL));
     // an unknown scope is a usage error
@@ -1131,7 +1135,7 @@ fn the_user_s_own_entries_and_keys_stay_and_nothing_is_added_twice() {
         &["agent", "install", "--agent", "claude", "--permissions"],
     );
     assert_eq!(code(&o), 0, "{}", err(&o));
-    assert!(out(&o).contains("allowed      V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n             only V-NOC's entries; the rest of the file is as it was\n"), "{}", out(&o));
+    assert!(out(&o).contains("allowed      V-NOC's read commands and the tour commands for Claude Code\nin           .claude/settings.local.json\n             only V-NOC's entries; the rest of the file is as it was\n"), "{}", out(&o));
     let after = get(&root, SETTINGS_LOCAL);
     // tabs stayed tabs; the key order stayed
     assert!(after.starts_with("{\n\t\"model\": \"opus\",\n\t\"permissions\": {\n\t\t\"allow\": [\n\t\t\t\"Bash(ls *)\","), "{after}");
@@ -1160,7 +1164,7 @@ fn a_settings_file_that_is_not_json_is_left_exit_2_and_the_lines_are_printed() {
     assert_eq!(code(&o), 2);
     assert_eq!(get(&root, SETTINGS_LOCAL), "{ \"permissions\": ");
     let text = out(&o);
-    assert!(text.contains("left         V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n             it is not valid JSON"), "{text}");
+    assert!(text.contains("left         V-NOC's read commands and the tour commands for Claude Code\nin           .claude/settings.local.json\n             it is not valid JSON"), "{text}");
     assert!(text.contains("to let Claude Code run V-NOC's read commands and the commands that write a tour without asking, add to .claude/settings.json:"), "{text}");
     // the rest was written all the same
     assert!(exists(&root, ".claude/skills/vnoc/SKILL.md"));
@@ -1199,7 +1203,7 @@ fn codex_gets_a_rules_file_in_the_home_folder_only_and_a_file_that_is_not_ours_i
     assert_eq!((code(&o), err(&o).as_str()), (0, ""));
     assert!(
         out(&o).contains(
-            "allowed      V-NOC's read commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
+            "allowed      V-NOC's read commands and the tour commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
         ),
         "{}",
         out(&o)
@@ -1221,7 +1225,7 @@ fn codex_gets_a_rules_file_in_the_home_folder_only_and_a_file_that_is_not_ours_i
     assert_eq!(code(&o), 2);
     assert_eq!(get(&home, ".codex/rules/vnoc.rules"), "# mine\n");
     assert!(
-        out(&o).contains("left         V-NOC's read commands for Codex"),
+        out(&o).contains("left         V-NOC's read commands and the tour commands for Codex"),
         "{}",
         out(&o)
     );
@@ -1245,10 +1249,10 @@ fn a_dry_run_lists_the_permissions_too_and_writes_nothing() {
     );
     assert_eq!((code(&o), err(&o).as_str()), (0, ""));
     let text = out(&o);
-    assert!(text.contains("will allow   V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n"), "{text}");
+    assert!(text.contains("will allow   V-NOC's read commands and the tour commands for Claude Code\nin           .claude/settings.local.json\n"), "{text}");
     assert!(
         text.contains(
-            "will allow   V-NOC's read commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
+            "will allow   V-NOC's read commands and the tour commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
         ),
         "{text}"
     );
@@ -1314,10 +1318,10 @@ fn remove_takes_back_only_what_install_added_and_status_says_where_they_are() {
     assert_eq!(allow_in(&root, SETTINGS_LOCAL).len(), 28);
     let s = vnoc(&root, &home, &["agent", "status"]);
     assert_eq!(code(&s), 0);
-    assert!(out(&s).contains("allowed      V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n"), "{}", out(&s));
+    assert!(out(&s).contains("allowed      V-NOC's read commands and the tour commands for Claude Code\nin           .claude/settings.local.json\n"), "{}", out(&s));
     assert!(
         out(&s).contains(
-            "allowed      V-NOC's read commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
+            "allowed      V-NOC's read commands and the tour commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
         ),
         "{}",
         out(&s)
@@ -1331,7 +1335,7 @@ fn remove_takes_back_only_what_install_added_and_status_says_where_they_are() {
 
     let o = vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
     assert_eq!((code(&o), err(&o).as_str()), (0, ""));
-    assert!(out(&o).contains("removed      V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n"), "{}", out(&o));
+    assert!(out(&o).contains("removed      V-NOC's read commands and the tour commands for Claude Code\nin           .claude/settings.local.json\n"), "{}", out(&o));
     assert_eq!(
         allow_in(&root, SETTINGS_LOCAL),
         ["Bash(ls *)"],
@@ -1346,7 +1350,7 @@ fn remove_takes_back_only_what_install_added_and_status_says_where_they_are() {
     assert_eq!(code(&o), 0);
     assert!(
         out(&o).contains(
-            "deleted      V-NOC's read commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
+            "deleted      V-NOC's read commands and the tour commands for Codex\nin           ~/.codex/rules/vnoc.rules\n"
         ),
         "{}",
         out(&o)
@@ -1368,7 +1372,8 @@ fn a_settings_file_v_noc_made_goes_when_it_is_taken_back_to_nothing() {
     let o = vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
     assert_eq!(code(&o), 0);
     assert!(
-        out(&o).contains("deleted      V-NOC's read commands for Claude Code"),
+        out(&o)
+            .contains("deleted      V-NOC's read commands and the tour commands for Claude Code"),
         "{}",
         out(&o)
     );
