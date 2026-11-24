@@ -281,6 +281,8 @@ pub struct TourView {
     pub writing: Option<String>,
     /// where the reader is, as the tour is now (`place::settle`); the cover for a tour nobody has opened
     pub place: Place,
+    /// what the cover of a finished tour may offer, by the settings; `null` when there is nothing to offer, and for a tour that is not finished
+    pub offers: Option<OffersView>,
     /// the lines of the file that could not be read, `line 7: why`
     pub problems: Vec<String>,
 }
@@ -385,6 +387,7 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
             .then(|| stops.iter().find(|s| s.planned).map(|s| s.id.clone()))
             .flatten(),
         place: Place::cover(),
+        offers: None,
         stops,
         problems: tour
             .problems
@@ -885,8 +888,20 @@ pub struct ListRowView {
     pub root: Option<RootView>,
     /// where the reader is; none for a tour nobody has opened here ("new")
     pub place: Option<PlaceSummary>,
+    /// what the cover of a finished tour may offer, by the settings; `null` when there is nothing to offer, and for a tour that is not finished
+    pub offers: Option<OffersView>,
     #[serde(skip)]
     pins: String,
+}
+
+/// What the cover of a finished tour offers (05 §3), by `[tours] ids` and `[tours] commit`: only for `"ask"`. `"always"` was done at `finish` and `"never"` is
+/// not offered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OffersView {
+    /// how many written stops have no node ID: `Write IDs`
+    pub ids: usize,
+    /// the files of the tour that keep it from being pinned because they are not committed: `Commit and Pin…`
+    pub commit: Vec<String>,
 }
 
 /// A tour's first stop, for the row's icon.
@@ -1026,6 +1041,7 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                         quiet: false,
                         root: root_of(tour),
                         place: None,
+                        offers: None,
                         pins,
                     }
                 }
@@ -1052,6 +1068,7 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                     quiet: false,
                     root: None,
                     place: None,
+                    offers: None,
                     pins: String::new(),
                 },
             }

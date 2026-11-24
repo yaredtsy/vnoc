@@ -13,6 +13,7 @@ use super::check::{self, Answer, Code, Mode, Recorded, Source, StopState};
 use super::on::{self, On, Query};
 use super::place::{self, At, By, Move, Place};
 use super::record::{Commit, StepId, StopId};
+use super::settings;
 use super::store::{self, Halt, Row, StoreError, Where};
 use super::{Tour, TourId, pin, steps_in_order, time, view};
 use crate::index::Index;
@@ -403,9 +404,11 @@ pub fn list_rows<R: Borrow<Row>>(
     let mut out = view::list_rows(rows, known, say_fresh, &|commit| {
         pin::has_commit(project, commit)
     });
+    let offering = Offering::of(project);
     for (shown, row) in out.iter_mut().zip(rows) {
         let row: &Row = row.borrow();
         let Ok(tour) = &row.tour else { continue };
+        shown.offers = offering.offers(project, tour);
         let age = std::fs::metadata(&row.path)
             .and_then(|m| m.modified())
             .ok()
@@ -429,7 +432,66 @@ pub fn show_view(
         shown.pin_in_repository = Some(pin::has_commit(project, &pin.commit));
     }
     shown.place = place::settle(tour, &place.cloned().unwrap_or_default());
+    shown.offers = Offering::of(project).offers(project, tour);
     shown
+}
+
+/// What the cover of a finished tour may offer (05 §3), by the two settings of `[tours]`. Read once for a list of rows.
+pub struct Offering {
+    ids: settings::Choice,
+    commit: settings::Choice,
+    /// the project writes ID lines at all (`[ids] default` is not `none`)
+    writes_ids: bool,
+}
+
+impl Offering {
+    /// The settings as `vnoc.toml` has them. A file that cannot be read offers nothing: the settings command says why.
+    pub fn of(project: &Project) -> Offering {
+        let never = Offering {
+            ids: settings::Choice::Never,
+            commit: settings::Choice::Never,
+            writes_ids: false,
+        };
+        let Ok(read) = settings::read(&store::vnoc_root(project.git_root())) else {
+            return never;
+        };
+        Offering {
+            ids: read.ids.value,
+            commit: read.commit.value,
+            writes_ids: super::act::project_writes_ids(project).unwrap_or(false),
+        }
+    }
+
+    /// `ids`: the written stops that have no node ID, when `[tours] ids` is `"ask"` and the project writes ID lines. `commit`: the files that keep the tour
+    /// from being pinned because they are not committed, when `[tours] commit` is `"ask"` and the tour is not pinned at a commit HEAD has behind it
+    /// ([`pin::uncommitted_files`]: by git alone). `None` when neither has anything, and for a tour that is not finished.
+    pub fn offers(&self, project: &Project, tour: &Tour) -> Option<view::OffersView> {
+        if tour.state != super::State::Finished {
+            return None;
+        }
+        let ids = if self.ids == settings::Choice::Ask && self.writes_ids {
+            tour.stops
+                .iter()
+                .filter(|s| s.written && s.node.is_none())
+                .count()
+        } else {
+            0
+        };
+        let held = tour
+            .pin
+            .as_ref()
+            .filter(|_| tour.pinned())
+            .is_some_and(|pin| pin::reachable(project, &pin.commit));
+        let commit: Vec<String> = if self.commit == settings::Choice::Ask && !held {
+            pin::uncommitted_files(project, tour)
+                .iter()
+                .map(|f| f.path.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        (ids > 0 || !commit.is_empty()).then_some(view::OffersView { ids, commit })
+    }
 }
 
 /// The rows of `list --on` and of `vnoc/tours { on }`: only the tours that pass through the node, in the order of `rows`, each with how (`on`). `tours` are the

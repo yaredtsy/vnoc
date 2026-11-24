@@ -754,6 +754,130 @@ impl Request for TourHalt {
     const METHOD: &'static str = "vnoc/tourHalt";
 }
 
+/// `vnoc/tourPin`: the pin of one tour (`vnoc tour pin`): `{ state: "pinned", commit }`, or `{ state: "not_pinned", reasons: [..] }` with the stale stops, the
+/// files that are not committed (`reasons[].files`), git's own words. With `commit`, the files that are the one thing in the way are committed first, exactly those
+/// files and the `node.toml` of the tour's IDs, with `message` (`Code for the tour "<title>"` by default); the answer then has `committed`. A tour that is
+/// pinned at a commit HEAD has behind it answers `already: true` and does nothing.
+pub enum TourPin {}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct TourPinCommit {
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourPinParams {
+    pub id: String,
+    #[serde(default)]
+    pub commit: Option<TourPinCommit>,
+}
+
+impl Request for TourPin {
+    type Params = TourPinParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourPin";
+}
+
+/// `vnoc/tourIds`: gives the nodes of the tour's stops an ID (`vnoc tour ids`): the ID lines are written into the code through the editor, `node.toml` beside
+/// them, and the tour is told where its lines went, so it stays fresh. Answers `{ stops, changed, recorded }`: `changed` is the files that were changed.
+pub enum TourIds {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourIdsParams {
+    pub id: String,
+}
+
+impl Request for TourIds {
+    type Params = TourIdsParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourIds";
+}
+
+/// `vnoc/tourEdit`: the tour's title and question (`vnoc tour edit`), in the command's words when one is refused. Answers what was set.
+pub enum TourEdit {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourEditParams {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub question: Option<String>,
+}
+
+impl Request for TourEdit {
+    type Params = TourEditParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourEdit";
+}
+
+/// `vnoc/tourShare`: moves the tour's file to the project's folder (`share: true`) or back to the private one. Answers `{ tour, folder, path }`.
+pub enum TourShare {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourShareParams {
+    pub id: String,
+    pub share: bool,
+}
+
+impl Request for TourShare {
+    type Params = TourShareParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourShare";
+}
+
+/// `vnoc/tourDelete`: the tour's file and state go to the trash (`vnoc tour delete`). Answers `{ token }`, the trash entry `vnoc/tourRestore` takes.
+pub enum TourDelete {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourDeleteParams {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourDeleteResult {
+    pub token: String,
+}
+
+impl Request for TourDelete {
+    type Params = TourDeleteParams;
+    type Result = TourDeleteResult;
+    const METHOD: &'static str = "vnoc/tourDelete";
+}
+
+/// `vnoc/tourRestore`: Undo of a delete: the file and the state come back as they were. Answers `{ tour, folder }`.
+pub enum TourRestore {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourRestoreParams {
+    pub token: String,
+}
+
+impl Request for TourRestore {
+    type Params = TourRestoreParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourRestore";
+}
+
+/// `vnoc/tourSettings`: the two settings of `[tours]` in `.vnoc/vnoc.toml` (`vnoc tour settings`): `ids` and `commit`, each `always`, `ask` or `never`. With a
+/// param, that key is changed first and nothing else in the file moves. Answers both, with where each comes from.
+pub enum TourSettings {}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct TourSettingsParams {
+    #[serde(default)]
+    pub ids: Option<String>,
+    #[serde(default)]
+    pub commit: Option<String>,
+}
+
+impl Request for TourSettings {
+    type Params = Option<TourSettingsParams>;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourSettings";
+}
+
 /// `vnoc/toursChanged` (core → editor): these tours changed (a file of the tours store appeared, changed or went), or the answer the core gave about their
 /// freshness no longer holds. Ask again for what is shown.
 pub enum ToursChanged {}

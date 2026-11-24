@@ -243,6 +243,37 @@ fn one_modified_and_one_untracked_file_are_both_named_with_their_status() {
 }
 
 #[test]
+fn the_files_a_cover_offers_to_commit_are_the_tours_own_by_git_alone_in_the_order_of_the_route() {
+    let root = repo("offers");
+    commit_all(
+        &root,
+        &[
+            ("a.py", "def f():\n    pass\n"),
+            ("b.py", "def f():\n    pass\n"),
+            ("other.py", "x = 1\n"),
+        ],
+    );
+    write(&root, "b.py", "def f():\n    return 1\n");
+    write(&root, "a.py", "def f():\n    return 2\n");
+    write(&root, "other.py", "x = 2\n");
+    write(&root, "new.py", "def f():\n    pass\n");
+    let tour = finished(&["b.py", "a.py", "b.py", "new.py"]);
+    let files: Vec<String> = uncommitted_files(&project(&root), &tour)
+        .iter()
+        .map(Changed::line)
+        .collect();
+    assert_eq!(
+        files,
+        [" M b.py", " M a.py", "?? new.py"],
+        "other.py is not the tour's"
+    );
+    // everything committed: nothing to offer
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "all"]);
+    assert!(uncommitted_files(&project(&root), &tour).is_empty());
+}
+
+#[test]
 fn an_ignored_file_and_a_file_git_never_had_are_worded_by_why() {
     let root = repo("ignored");
     commit_all(

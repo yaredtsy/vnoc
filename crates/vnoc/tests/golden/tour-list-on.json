@@ -9,6 +9,7 @@
       "folder": "private",
       "id": "<tour>",
       "minutes": 3,
+      "offers": null,
       "on": {
         "first": "s2",
         "how": "stops",

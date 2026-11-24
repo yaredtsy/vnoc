@@ -19,10 +19,13 @@ use super::args::{
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
 use super::project::{Opened, open_from, open_without_driver};
-use super::write::{attach_failure, marker_words, take_lock as take_write_lock};
+use super::write::{attach_failure, take_lock as take_write_lock};
 use super::{Failure, Global};
 use crate::calls::{self, CallsError};
 use crate::source;
+use crate::tours::act::{
+    self, ActError, Ask, IdStop, IdsWritten, PinOut, SettingShown, SettingsShown,
+};
 use crate::tours::add::{
     AddOptions, MAX_STOPS, block_of, did_you_mean_stops, nested_in, plan_more, plan_route,
     plan_stop, planned_stops,
@@ -32,9 +35,9 @@ use crate::tours::doc;
 use crate::tours::find::find;
 use crate::tours::finish::{self as finishing, Step};
 use crate::tours::on::{self, Map, Query};
-use crate::tours::pin::{self, Changed, Pinnable, Reason};
+use crate::tours::pin::{self, Pinnable};
 use crate::tours::place::{self, At, By, Move, Place};
-use crate::tours::record::{Bare, Detail, DropRecord, EndRecord, MetaRecord, Record, StopId};
+use crate::tours::record::{Bare, Detail, DropRecord, EndRecord, Record, StopId};
 use crate::tours::route;
 use crate::tours::rules::Refusal;
 use crate::tours::serve::{self, Subject, short_commit, subject, where_view, written_code};
@@ -161,17 +164,29 @@ async fn take_lock(vnoc_root: PathBuf) -> Result<ToursLock, Failure> {
         .map_err(|e| Failure::Environment(e.to_string()))
 }
 
+/// What an action's failure is to a command: the request's mistakes are `2`, the environment's `3`.
+fn act_failure(e: ActError, project: &crate::project::Project) -> Failure {
+    match e {
+        ActError::Store(e) => store_failure(e),
+        ActError::Usage(said) | ActError::NoStop { said, .. } => Failure::Usage(said),
+        ActError::Attach(e) => attach_failure(e, project),
+        ActError::Environment(said) => Failure::Environment(said),
+    }
+}
+
+fn settings_failure(e: settings::SettingsError) -> Failure {
+    match e {
+        settings::SettingsError::NoFile => Failure::Usage(e.to_string()),
+        _ => Failure::Environment(e.to_string()),
+    }
+}
+
 /// The tour as it is now, under the lock the caller holds. A tour that cannot be read cannot be written to.
 fn read_tour(vnoc_root: &Path, id: &TourId) -> Result<crate::tours::Tour, Failure> {
-    let (_, folded) = store::read(vnoc_root, id).map_err(store_failure)?;
-    folded.map_err(|e| {
-        let said = format!("the tour {id} cannot be read: {e}");
-        // a tour of a newer schema is for a newer V-NOC (the environment); a broken one is the request's
-        if e.too_new {
-            Failure::Environment(said)
-        } else {
-            Failure::Usage(said)
-        }
+    act::read_tour(vnoc_root, id).map_err(|e| match e {
+        ActError::Store(e) => store_failure(e),
+        ActError::Environment(said) => Failure::Environment(said),
+        other => Failure::Usage(other.to_string()),
     })
 }
 
@@ -1374,143 +1389,26 @@ async fn ids_after_end(
 
 // ------------------------------------------------------------------------------------------------------------------------------- the pin
 
-/// How a pin is asked for.
-enum Ask<'a> {
-    /// `finish` and `import` (02 §5): files that are not committed are dealt with by `[tours] commit`, or by the flags of this call
-    Finish {
-        commit: Choice,
-        message: Option<&'a str>,
-    },
-    /// `vnoc tour pin` (02 §8): files are committed only with `--commit`
-    Pin {
-        commit: bool,
-        message: Option<&'a str>,
-    },
+/// The project writes no ID lines: `[ids] default = "none"` in `.vnoc/vnoc.toml`. `Err` for a file that cannot be read.
+fn project_writes_ids(project: &crate::project::Project) -> Result<bool, Failure> {
+    act::project_writes_ids(project).map_err(|e| act_failure(e, project))
 }
 
-/// What a commit made to pin did.
-#[derive(Serialize)]
-struct CommittedOut {
-    commit: String,
-    message: String,
-    /// the tour's code files
-    files: Vec<String>,
-    /// the `node.toml` of the tour's IDs that were committed with them (TR9b), under the code files in the text
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    node_files: Vec<String>,
+/// A real check of the tour against the code as it is now, and where its stops and blocks are (what a pin records).
+fn placed_check(opened: &Opened, tour: &Tour, len: u64) -> (Recorded, check::Placed) {
+    act::placed_check(&opened.project, &opened.index, tour, len)
 }
 
-impl CommittedOut {
-    /// `committed 2 files as 3c9e1f7   <message>` and the files under it, code first, then the node files of the IDs.
-    fn lines(&self) -> Vec<String> {
-        let mut lines = vec![format!(
-            "committed {} as {}   {}",
-            count_files(self.files.len() + self.node_files.len()),
-            &self.commit[..7],
-            self.message
-        )];
-        lines.extend(
-            self.files
-                .iter()
-                .chain(&self.node_files)
-                .map(|f| format!("  {f}")),
-        );
-        lines
-    }
+/// The stops of the tour with what there is to do for each, from the index as it is now.
+fn picks_of(
+    opened: &Opened,
+    tour: &Tour,
+    named: &[crate::tours::StopId],
+) -> Vec<(crate::tours::StopId, crate::tours::ids::Pick)> {
+    act::picks_of(&opened.project, &opened.index, tour, named)
 }
 
-/// What became of the pin of one tour, for `--json`.
-#[derive(Serialize)]
-struct PinOut {
-    /// `pinned`, `ask` (the user is to be asked: `[tours] commit` is `ask`) or `not_pinned`
-    state: &'static str,
-    /// the pinned commit, all 40 characters
-    #[serde(skip_serializing_if = "Option::is_none")]
-    commit: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    committed: Option<CommittedOut>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    reasons: Vec<Reason>,
-    /// for `ask`: the command that would do it
-    #[serde(skip_serializing_if = "Option::is_none")]
-    command: Option<String>,
-    /// for `ask`: the `node.toml` files of the tour's IDs that `--commit` would commit with the code files (which are in `reasons`)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    node_files: Vec<String>,
-    /// `--commit` was asked and was refused: nothing was committed
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    refused: bool,
-}
-
-/// What [`pin_tour`] did: the answer, the lines to print under it (no end of line), and the 7 characters of the commit when the tour is pinned now.
-struct Pinned {
-    out: PinOut,
-    lines: Vec<String>,
-    at: Option<String>,
-}
-
-/// Not pinned, and why, worded for the way it was asked.
-fn not_pinned(
-    ask: &Ask<'_>,
-    id: &TourId,
-    pinnable: &Pinnable,
-    committed: Option<CommittedOut>,
-    node_files: &[Changed],
-) -> Pinned {
-    let Pinnable::No(reasons) = pinnable else {
-        unreachable!("not_pinned is for a pin that cannot be made")
-    };
-    let of_this_tour = matches!(ask, Ask::Pin { .. });
-    // a commit that was made stays made: it is said first, and the reason under it
-    let mut lines: Vec<String> = committed
-        .as_ref()
-        .map(CommittedOut::lines)
-        .unwrap_or_default();
-    for reason in reasons {
-        lines.extend(reason.lines(of_this_tour));
-    }
-    let mut out = PinOut {
-        state: "not_pinned",
-        commit: None,
-        committed,
-        reasons: reasons.clone(),
-        command: None,
-        node_files: Vec::new(),
-        refused: false,
-    };
-    match ask {
-        Ask::Finish { commit, .. } => {
-            if let (Choice::Ask, Some(files)) = (commit, pinnable.only_uncommitted()) {
-                let why = reasons[0].words();
-                lines = crate::tours::finish::ask_commit_lines(id, &why, files, node_files);
-                out.state = "ask";
-                out.command = Some(format!("vnoc tour pin {id} --commit"));
-                out.node_files = node_files.iter().map(|f| f.path.to_string()).collect();
-            }
-        }
-        Ask::Pin { commit, .. } => {
-            if *commit {
-                // `--commit` is for files that are the one thing in the way; nothing was committed unless a commit was made
-                out.refused = pinnable.only_uncommitted().is_none() && out.committed.is_none();
-                if out.refused {
-                    lines.push("nothing was committed: --commit is for files that are the one thing in the way".to_string());
-                }
-            } else if pinnable.only_uncommitted().is_some() {
-                lines.push(format!(
-                    "commit them, then run this again. Or: vnoc tour pin {id} --commit"
-                ));
-            }
-        }
-    }
-    Pinned {
-        out,
-        lines,
-        at: None,
-    }
-}
-
-/// The pin of one tour (01 §8, 02 §5 and §8): finished, then what git says, then the check against the code as it is now, then HEAD or the reasons;
-/// files that are not committed are committed first when `ask` says so. The tour is read here, after whatever the caller wrote before.
+/// The pin of one tour (01 §8, 02 §5 and §8): `act::pin_begin` asks what needs no code, the index is opened for the rest, `act::pin_finish` does it.
 async fn pin_tour(
     global: &Global,
     lazy: &mut Lazy,
@@ -1518,129 +1416,44 @@ async fn pin_tour(
     vnoc_root: &Path,
     id: &TourId,
     ask: &Ask<'_>,
-) -> Result<Pinned, Failure> {
-    let measured = store::read_measured(vnoc_root, id).map_err(store_failure)?;
-    let tour = match &measured.tour {
-        Ok(tour) => tour,
-        Err(e) => return Err(Failure::Usage(format!("the tour {id} cannot be read: {e}"))),
-    };
-    let no = |reasons: Vec<Reason>| Pinnable::No(reasons);
-    // what needs no look at the code
-    let head = match pin::head(project, tour) {
-        Ok(head) => head,
-        Err(reasons) => return Ok(not_pinned(ask, id, &no(reasons), None, &[])),
-    };
+) -> Result<act::Pinned, Failure> {
+    let (measured, head) =
+        match act::pin_begin(project, vnoc_root, id, ask).map_err(|e| act_failure(e, project))? {
+            act::Begun::Done(pinned) => return Ok(pinned),
+            act::Begun::Check { measured, head } => (measured, head),
+        };
     let opened = match lazy.get(global).await {
         Ok(opened) => opened,
-        Err(Failure::Environment(why)) => {
-            return Ok(not_pinned(
-                ask,
-                id,
-                &no(vec![Reason::NotChecked { why }]),
-                None,
-                &[],
-            ));
-        }
+        Err(Failure::Environment(why)) => return Ok(act::not_checked(ask, id, why)),
         Err(e) => return Err(e),
     };
-    let (recorded, placed) = placed_check(opened, tour, measured.len);
-    // what was just found is the record of this tour: the next look costs `stat`s
-    check::record(vnoc_root, id, &recorded).map_err(store_failure)?;
-
-    let mut pinnable = pin::can_pin(project, tour, head, &recorded, &placed);
-    let wants_commit = match ask {
-        Ask::Finish { commit, .. } => *commit == Choice::Always,
-        Ask::Pin { commit, .. } => *commit,
-    };
-    let mut committed = None;
-    // the node files of the tour's IDs go with the code files, and only when code is being committed: they do not decide the pin
-    let node_files = if pinnable.only_uncommitted().is_some() {
-        pin::node_files(project, tour)
-    } else {
-        Vec::new()
-    };
-    if wants_commit && let Some(files) = pinnable.only_uncommitted() {
-        let message = match ask {
-            Ask::Finish { message, .. } | Ask::Pin { message, .. } => message.map(String::from),
-        }
-        .unwrap_or_else(|| crate::tours::finish::default_message(&tour.title));
-        let code_files: Vec<Changed> = files.to_vec();
-        let all: Vec<Changed> = code_files.iter().chain(&node_files).cloned().collect();
-        let done = pin::commit_files(project, &all, &message)
-            .map_err(|e| Failure::Environment(e.to_string()))?;
-        committed = Some(CommittedOut {
-            commit: done.commit.as_str().to_string(),
-            message,
-            files: code_files.iter().map(|f| f.path.to_string()).collect(),
-            node_files: node_files.iter().map(|f| f.path.to_string()).collect(),
-        });
-        // a hook that changed a file while the commit was made: the commit holds code the check never read. It stays; it is not what was checked
-        let code_paths: Vec<_> = code_files.iter().map(|f| f.path.clone()).collect();
-        let hooked = pin::changed_since_read(project, &placed.read, &code_paths);
-        pinnable = match hooked.first() {
-            Some(path) => {
-                // git left the index with those files as they were before the hook: HEAD's, so the next `pin` finds them committed
-                pin::settle_index(project, &hooked);
-                Pinnable::No(vec![Reason::HookChanged {
-                    path: path.clone(),
-                    tour: id.to_string(),
-                }])
-            }
-            // what is on disk is what HEAD holds now: asked again, with the new HEAD
-            None => pin::can_pin(project, tour, done.commit, &recorded, &placed),
-        };
-    }
-    match pinnable {
-        Pinnable::No(_) => Ok(not_pinned(ask, id, &pinnable, committed, &node_files)),
-        Pinnable::Yes { head } => {
-            // the tour is as it was when it was read: a write in between would be a stop the pin never saw
-            let lock = take_lock(vnoc_root.to_path_buf()).await?;
-            let len = std::fs::metadata(&measured.path).map(|m| m.len()).ok();
-            if len != Some(measured.len) {
-                return Err(store_failure(StoreError::Refused(format!(
-                    "the tour {id} changed while it was being pinned: run the command again"
-                ))));
-            }
-            let record = pin::make(head.clone(), &placed);
-            store::append_locked(&lock, vnoc_root, id, &[Record::Pin(record)])
-                .map_err(store_failure)?;
-            drop(lock);
-            let at = short_commit(&head);
-            let mut lines = committed
-                .as_ref()
-                .map(CommittedOut::lines)
-                .unwrap_or_default();
-            if matches!(ask, Ask::Pin { .. }) {
-                lines.push(format!("pinned {id} at {at}"));
-            }
-            Ok(Pinned {
-                out: PinOut {
-                    state: "pinned",
-                    commit: Some(head.as_str().to_string()),
-                    committed,
-                    reasons: Vec::new(),
-                    command: None,
-                    node_files: Vec::new(),
-                    refused: false,
-                },
-                lines,
-                at: Some(at),
-            })
-        }
-    }
+    act::pin_finish(project, &opened.index, vnoc_root, id, ask, &measured, head)
+        .map_err(|e| act_failure(e, project))
 }
 
-/// A real check of the tour against the code as it is now, and where its stops and blocks are (what a pin records).
-fn placed_check(opened: &Opened, tour: &Tour, len: u64) -> (Recorded, check::Placed) {
-    let index = opened.index.read().expect("the index lock is not poisoned");
-    let tree = index.tree(&opened.project.name(), opened.project.prefix());
-    let code = Code {
-        index: &index,
-        project: &opened.project,
-        tree: &tree,
+/// Gives the stops' nodes an ID: the project's write lock first, then (inside each marker's edit, and at the end) the tours lock: never the other way round.
+async fn write_ids(
+    global: &Global,
+    opened: &Opened,
+    vnoc_root: &Path,
+    id: &TourId,
+    named: &[crate::tours::StopId],
+) -> Result<IdsWritten, Failure> {
+    let project = &opened.project;
+    let _one_writer = take_write_lock(project).await?;
+    let mut env = crate::identity::Env {
+        project,
+        index: &opened.index,
+        host: &opened.host,
+        edits: crate::identity::EditSink::Disk,
     };
-    let mut read = |path: &Path| source::read_text(path);
-    check::check_placed(&code, &mut read, tour, len)
+    match act::write_ids(&mut env, vnoc_root, id, named).await {
+        Err(ActError::NoStop { said, near }) => {
+            no_such(global, "tour ids", "no_stop", said, near)?;
+            unreachable!("a refusal is a failure")
+        }
+        done => done.map_err(|e| act_failure(e, project)),
+    }
 }
 
 /// `can be pinned` for a finished, fresh tour that is not pinned and whose files are all committed; `can be pinned again` for one that is pinned
@@ -1664,10 +1477,6 @@ async fn can_pin_words(
         Pinnable::Yes { .. } => Some("can be pinned"),
         Pinnable::No(_) => None,
     }
-}
-
-fn count_files(n: usize) -> String {
-    format!("{n} {}", if n == 1 { "file" } else { "files" })
 }
 
 /// One tour of `vnoc tour pin`.
@@ -1748,13 +1557,8 @@ async fn pin_command(global: &Global, args: &TourPinArgs) -> Result<(), Failure>
             }
             continue;
         }
-        let holds = tour
-            .pin
-            .as_ref()
-            .filter(|_| tour.pinned())
-            .map(|pin| (pin.commit.clone(), pin::reachable(&project, &pin.commit)));
         // pinned, and the commit is behind HEAD: nothing to do
-        if let Some((commit, true)) = holds {
+        if let Some(commit) = act::pinned_already(&project, tour) {
             if named {
                 tours.push(PinnedTour {
                     tour: row.id.to_string(),
@@ -1764,15 +1568,7 @@ async fn pin_command(global: &Global, args: &TourPinArgs) -> Result<(), Failure>
                         row.id,
                         short_commit(&commit)
                     )],
-                    out: PinOut {
-                        state: "pinned",
-                        commit: Some(commit.as_str().to_string()),
-                        committed: None,
-                        reasons: Vec::new(),
-                        command: None,
-                        node_files: Vec::new(),
-                        refused: false,
-                    },
+                    out: PinOut::pinned(&commit, None),
                 });
             }
             continue;
@@ -2105,19 +1901,16 @@ async fn edit(global: &Global, args: &TourEditArgs) -> Result<(), Failure> {
     if !problems.is_empty() {
         return Err(Failure::Usage(problems.join("\n  ")));
     }
-    let (_project, w) = writing(global, "tour edit", &args.tour).await?;
-    let meta = MetaRecord {
-        title: title.map(String::from),
-        question: question.map(String::from),
-        detail: args.detail.map(detail_of),
-    };
-    store::append_locked(&w.lock, &w.vnoc_root, &w.id, &[Record::Meta(meta)])
-        .map_err(store_failure)?;
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let id = resolve(global, "tour edit", &vnoc_root, &args.tour)?;
+    act::edit(&vnoc_root, &id, title, question, args.detail.map(detail_of))
+        .map_err(|e| act_failure(e, &project))?;
     out::render(
         &Edited {
             schema: 1,
             command: "tour edit",
-            tour: w.id.to_string(),
+            tour: id.to_string(),
             title: title.map(String::from),
             question: question.map(String::from),
             detail: args
@@ -2185,36 +1978,6 @@ async fn share(global: &Global, args: &TourShareArgs) -> Result<(), Failure> {
 
 // ----------------------------------------------------------------------------------------------------------------------- ids
 
-/// What `ids` says went with a stop.
-#[derive(Serialize)]
-struct IdStop {
-    stop: String,
-    /// `written`, `had`, `by_name` or `gone`
-    state: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    /// the file the ID line is in, or the `.vnoc-id` file of the folder
-    #[serde(skip_serializing_if = "Option::is_none")]
-    changed: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    said: Option<String>,
-}
-
-#[derive(Serialize)]
-struct IdsWritten {
-    schema: u32,
-    command: &'static str,
-    tour: String,
-    stops: Vec<IdStop>,
-    /// every file written or made, once, in the order they were
-    changed: Vec<String>,
-    /// an `ids` record was written
-    recorded: bool,
-    /// the ID lines are in the code and the tour was told where they put its lines: the tours that follow the files' changes need no check
-    #[serde(skip)]
-    words: Vec<String>,
-}
-
 impl Render for IdsWritten {
     fn text(&self, _quiet: bool) -> String {
         let written = self.stops.iter().filter(|s| s.state == "written").count();
@@ -2255,188 +2018,15 @@ impl Render for IdsWritten {
     }
 }
 
-/// The project writes no ID lines: `[ids] default = "none"` in `.vnoc/vnoc.toml`. `Err` for a file that cannot be read.
-fn project_writes_ids(project: &crate::project::Project) -> Result<bool, Failure> {
-    Ok(crate::userdata::UserData::new(project.git_root())
-        .settings()
-        .map_err(super::write::settings_failure)?
-        .markers)
-}
-
 async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failure> {
     let opened = open_from(global).await?;
-    let project = &opened.project;
-    let vnoc_root = store::vnoc_root(project.git_root());
+    let vnoc_root = store::vnoc_root(opened.project.git_root());
     let id = resolve(global, "tour ids", &vnoc_root, &args.tour)?;
-    if let Located::Both { .. } = store::locate(&vnoc_root, &id) {
-        return Err(store_failure(StoreError::InBoth(id)));
-    }
-    if !project_writes_ids(project)? {
-        return Err(Failure::Usage(
-            "this project writes no ID lines ([ids] default = \"none\" in .vnoc/vnoc.toml)".into(),
-        ));
-    }
     let written = write_ids(global, &opened, &vnoc_root, &id, &args.stops).await?;
     out::render(&written, global)
 }
 
-/// The stops of the tour with what there is to do for each, from the index as it is now. No lock is held: it is for counting.
-fn picks_of(
-    opened: &Opened,
-    tour: &Tour,
-    named: &[crate::tours::StopId],
-) -> Vec<(crate::tours::StopId, crate::tours::ids::Pick)> {
-    let index = opened.index.read().expect("the index lock is not poisoned");
-    let tree = index.tree(&opened.project.name(), opened.project.prefix());
-    let code = Code {
-        index: &index,
-        project: &opened.project,
-        tree: &tree,
-    };
-    crate::tours::ids::pick(&code, tour, named)
-}
-
-/// Gives the stops' nodes an ID: the project's write lock, `ensure_node` for each node that has none (each marker's edit tells the tours where
-/// their lines went), then the `ids` record under the tours lock. Neither lock is held by the caller.
-async fn write_ids(
-    global: &Global,
-    opened: &Opened,
-    vnoc_root: &Path,
-    id: &TourId,
-    named: &[crate::tours::StopId],
-) -> Result<IdsWritten, Failure> {
-    use crate::tours::ids::{self, Outcome};
-    let project = &opened.project;
-    // the project's write lock first, then (inside each marker's edit, and at the end) the tours lock: never the other way round
-    let _one_writer = take_write_lock(project).await?;
-    let tour = read_tour(vnoc_root, id)?;
-    for wanted in named {
-        if !tour.stop(*wanted).is_some_and(|s| s.written) {
-            let near = did_you_mean_stops(&tour, *wanted);
-            no_such(
-                global,
-                "tour ids",
-                "no_stop",
-                format!("no written stop {wanted} in this tour"),
-                near.iter().map(ToString::to_string).collect(),
-            )?;
-            unreachable!("a refusal is a failure");
-        }
-    }
-    let picks = picks_of(opened, &tour, named);
-    let mut env = crate::identity::Env {
-        project,
-        index: &opened.index,
-        host: &opened.host,
-        edits: crate::identity::EditSink::Disk,
-    };
-    let done = ids::write(&mut env, &picks)
-        .await
-        .map_err(|e| attach_failure(e, project))?;
-
-    // the tour as the edits left it (each marker's edit wrote a `rebase`), then the `ids` record, under the tours lock
-    let lock = take_lock(vnoc_root.to_path_buf()).await?;
-    let tour = read_tour(vnoc_root, id)?;
-    let record = ids::record(&tour, &done);
-    let recorded = record.is_some();
-    if let Some(record) = record {
-        store::append_locked(&lock, vnoc_root, id, &[Record::Ids(record)])
-            .map_err(store_failure)?;
-    }
-    drop(lock);
-
-    let mut stops = Vec::new();
-    let mut words = Vec::new();
-    let mut changed: Vec<String> = Vec::new();
-    for ((stop, outcome), (_, pick)) in done.iter().zip(&picks) {
-        let (state, node, file, said) = match outcome {
-            Outcome::Had(node) => ("had", Some(node.to_string()), None, String::new()),
-            Outcome::Written {
-                id: node,
-                path,
-                kind,
-                marker,
-            } => {
-                let said = match marker {
-                    crate::identity::MarkerWritten::Line(line) => marker_words(*kind, *line),
-                    crate::identity::MarkerWritten::FolderFile => {
-                        "a .vnoc-id file was made".to_string()
-                    }
-                };
-                ("written", Some(node.to_string()), Some(path.clone()), said)
-            }
-            Outcome::ByName { id: node, notice } => (
-                "by_name",
-                Some(node.to_string()),
-                None,
-                notice.clone().unwrap_or_else(|| {
-                    "the ID is known but is not written in the code".to_string()
-                }),
-            ),
-            Outcome::Gone => (
-                "gone",
-                None,
-                None,
-                "its node is not found in the code now: skipped".to_string(),
-            ),
-        };
-        let what = match pick {
-            ids::Pick::Needs { path, .. } => path.clone(),
-            _ => String::new(),
-        };
-        if let Some(file) = &file
-            && !changed.contains(file)
-        {
-            changed.push(file.clone());
-        }
-        words.push(match (state, what.is_empty()) {
-            ("written", false) => format!("{what}   {said}"),
-            ("had", _) => String::new(),
-            _ => said.clone(),
-        });
-        stops.push(IdStop {
-            stop: stop.to_string(),
-            state,
-            id: node,
-            changed: file,
-            said: (!said.is_empty()).then_some(said),
-        });
-    }
-    Ok(IdsWritten {
-        schema: 1,
-        command: "tour ids",
-        tour: id.to_string(),
-        stops,
-        changed,
-        recorded,
-        words,
-    })
-}
-
 // ------------------------------------------------------------------------------------------------------------------ settings
-
-#[derive(Serialize)]
-struct SettingShown {
-    value: Choice,
-    /// `file` (`[tours]` in `.vnoc/vnoc.toml` says it) or `default`
-    from: Origin,
-}
-
-#[derive(Serialize)]
-struct SettingsShown {
-    schema: u32,
-    command: &'static str,
-    ids: SettingShown,
-    commit: SettingShown,
-    /// the keys this call changed
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    changed: Vec<&'static str>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    problems: Vec<String>,
-    /// `ids = "always"` in a project that writes no ID lines: it does nothing there
-    #[serde(skip_serializing_if = "Option::is_none")]
-    does_nothing: Option<String>,
-}
 
 impl Render for SettingsShown {
     fn text(&self, _quiet: bool) -> String {
@@ -2468,52 +2058,25 @@ impl Render for SettingsShown {
     }
 }
 
-fn settings_failure(e: settings::SettingsError) -> Failure {
-    match e {
-        settings::SettingsError::NoFile => Failure::Usage(e.to_string()),
-        _ => Failure::Environment(e.to_string()),
-    }
-}
-
 async fn settings(global: &Global, args: &TourSettingsArgs) -> Result<(), Failure> {
     let project = open_without_driver(global)?;
-    let vnoc_root = store::vnoc_root(project.git_root());
-    let mut changed = Vec::new();
-    if args.ids.is_some() || args.commit.is_some() {
-        // the project's file: under the project's write lock, as everything else that writes `.vnoc/`
-        let _one_writer = take_write_lock(&project).await?;
-        let choice = |arg: super::args::ChoiceArg| match arg {
-            super::args::ChoiceArg::Always => Choice::Always,
-            super::args::ChoiceArg::Ask => Choice::Ask,
-            super::args::ChoiceArg::Never => Choice::Never,
-        };
-        for (key, arg) in [(Key::Ids, args.ids), (Key::Commit, args.commit)] {
-            if let Some(arg) = arg {
-                settings::set(&vnoc_root, key, choice(arg)).map_err(settings_failure)?;
-                changed.push(key.as_str());
-            }
-        }
-    }
-    let read = settings::read(&vnoc_root).map_err(settings_failure)?;
-    let shown = |s: settings::Setting| SettingShown {
-        value: s.value,
-        from: s.from,
+    let choice = |arg: super::args::ChoiceArg| match arg {
+        super::args::ChoiceArg::Always => Choice::Always,
+        super::args::ChoiceArg::Ask => Choice::Ask,
+        super::args::ChoiceArg::Never => Choice::Never,
     };
-    out::render(
-        &SettingsShown {
-            schema: 1,
-            command: "tour settings",
-            ids: shown(read.ids),
-            commit: shown(read.commit),
-            changed,
-            problems: read.problems,
-            does_nothing: settings::does_nothing_here(
-                read.ids.value,
-                project_writes_ids(&project)?,
-            ),
-        },
-        global,
-    )
+    let set: Vec<(Key, Choice)> = [(Key::Ids, args.ids), (Key::Commit, args.commit)]
+        .into_iter()
+        .filter_map(|(key, arg)| Some((key, choice(arg?))))
+        .collect();
+    // the project's file: under the project's write lock, as everything else that writes `.vnoc/`
+    let _one_writer = if set.is_empty() {
+        None
+    } else {
+        Some(take_write_lock(&project).await?)
+    };
+    let shown = act::settings(&project, &set).map_err(|e| act_failure(e, &project))?;
+    out::render(&shown, global)
 }
 
 // -------------------------------------------------------------------------------------------------------------- export, import

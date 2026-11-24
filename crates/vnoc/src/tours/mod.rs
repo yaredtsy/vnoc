@@ -8,6 +8,7 @@
 //! the second happens by itself. [`pin`] holds every call of git: whether a tour can be pinned, the commit of its files, and its code as written at the pinned commit. [`serve`] is what the commands and the core answer with, from one place: the three rungs of
 //! a tour's freshness and the views of a read tour, a check and a place.
 
+pub mod act;
 pub mod add;
 pub mod body;
 pub mod check;

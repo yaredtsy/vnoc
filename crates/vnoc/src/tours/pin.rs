@@ -521,6 +521,34 @@ pub fn make(head: Commit, placed: &Placed) -> PinRecord {
 
 // ------------------------------------------------------------------------------------------------------------------------------ node files
 
+/// The files of the tour's written stops (a folder has none) that git shows as not committed: what the cover offers to commit (`TourRow.offers`). By the stops'
+/// own paths and git alone, with no check of the code: a file whose stop moved to another path is not looked at, and a stale stop is not said (`can_pin` says
+/// that first when the tour is pinned). An empty list when git cannot say.
+pub fn uncommitted_files(project: &Project, tour: &Tour) -> Vec<Changed> {
+    let mut paths: Vec<RepoPath> = Vec::new();
+    for stop in tour.stops.iter().filter(|s| s.written) {
+        if matches!(stop.kind, Some(vnoc_domain::NodeKind::Folder)) || paths.contains(&stop.path) {
+            continue;
+        }
+        paths.push(stop.path.clone());
+    }
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let Ok(status) = status_of(project.git_root(), &paths) else {
+        return Vec::new();
+    };
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            status.get(path.as_str()).map(|status| Changed {
+                status: status.clone(),
+                path,
+            })
+        })
+        .collect()
+}
+
 /// The `node.toml` of each stop's own ID that git shows as not committed (untracked or modified): what `ids` just wrote, and what `--commit` takes
 /// with the code so the ID lines and the node files they name go in one commit (01 §8). **Only `node.toml`**, never another file of that folder (a doc
 /// the user wrote there is theirs). The folder is found by [`layout::node_file`], the one place that knows the layout. They do not decide the pin: that

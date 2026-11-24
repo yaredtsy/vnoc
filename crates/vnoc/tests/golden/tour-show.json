@@ -5,6 +5,10 @@
   "folder": "private",
   "id": "<tour>",
   "minutes": 2,
+  "offers": {
+    "commit": [],
+    "ids": 1
+  },
   "pinned": false,
   "place": {
     "at": "cover",

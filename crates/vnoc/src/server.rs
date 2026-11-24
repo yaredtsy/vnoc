@@ -42,12 +42,14 @@ use crate::protocol::{
 };
 use crate::protocol::{Locate, LocateParams, Located};
 use crate::search::{Prepared, answer, prepare};
+use crate::tours::act::{self, ActError};
 use crate::tours::check::{Answer, Mode};
 use crate::tours::find;
 use crate::tours::on::{self, Query};
 use crate::tours::place::Move;
 use crate::tours::record::{StopId, TourId};
 use crate::tours::serve::{self, Cannot, GoError, Touch, Tours};
+use crate::tours::settings::{Choice, Key};
 use crate::tours::store::{self, Halt, StoreError};
 use crate::tours::view;
 use crate::userdata::{LockError, TrashError, UserData, WriteLock};
@@ -242,6 +244,13 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<protocol::TourHalt, _>(tour_halt)
         .request::<protocol::TourCode, _>(tour_code)
         .request::<protocol::TourCounts, _>(tour_counts)
+        .request::<protocol::TourPin, _>(tour_pin)
+        .request::<protocol::TourIds, _>(tour_ids)
+        .request::<protocol::TourEdit, _>(tour_edit)
+        .request::<protocol::TourShare, _>(tour_share)
+        .request::<protocol::TourDelete, _>(tour_delete)
+        .request::<protocol::TourRestore, _>(tour_restore)
+        .request::<protocol::TourSettings, _>(tour_settings)
         .notification::<FilesChanged>(files_changed)
         .notification::<Rebuild>(|core, _| {
             core.spawn_update(Work::Everything);
@@ -1246,5 +1255,266 @@ fn tour_counts(
             .ok_or_else(|| internal("no folder is open"))?
         };
         Ok(serde_json::json!({ "counts": counts }))
+    })
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------------ the user's actions
+
+/// An action's failure as a response: the request's mistakes are `INVALID_PARAMS` with the command's sentence, the store's are its own, the rest is the core's.
+fn act_error(e: ActError) -> ResponseError {
+    use crate::identity::AttachError as A;
+    match e {
+        ActError::Store(e) => tour_error(e),
+        ActError::Usage(said) | ActError::NoStop { said, .. } => bad_params(said),
+        ActError::Attach(
+            e @ (A::TitleTaken { .. }
+            | A::BadTitle
+            | A::BodyTooLarge
+            | A::BodyHasFrontmatter
+            | A::BadTag(_)
+            | A::BadAuthor
+            | A::BadKey(_)
+            | A::NotInIndex(_)),
+        ) => bad_params(e),
+        ActError::Attach(e) => internal(e),
+        ActError::Environment(said) => internal(said),
+    }
+}
+
+/// `vnoc/tourPin`: [`act::pin_begin`] and [`act::pin_finish`], the functions of `vnoc tour pin`. With `commit` the project's write lock is taken first (and the
+/// attach mutex before it), then the tours lock inside the pin: the order of every writer.
+fn tour_pin(
+    core: &mut Core,
+    params: protocol::TourPinParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("tourPin", async move {
+        let state = core.state.clone();
+        let project = ready_project(&state).await?;
+        let id = parse_tour(&params.id)?;
+        let _one_at_a_time;
+        let _one_writer;
+        if params.commit.is_some() {
+            _one_at_a_time = Some(state.attaching.lock().await);
+            _one_writer = Some(write_lock(project).await?);
+        } else {
+            _one_at_a_time = None;
+            _one_writer = None;
+        }
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let message = params.commit.as_ref().and_then(|c| c.message.clone());
+        let commit = params.commit.is_some();
+        let held = state.clone();
+        let done = blocking(move || {
+            let state = held;
+            let project = state
+                .project
+                .get()
+                .ok_or(ActError::Environment("no folder is open".into()))?;
+            let ask = act::Ask::Pin {
+                commit,
+                message: message.as_deref(),
+            };
+            act::not_in_both(&vnoc_root, &id)?;
+            let tour = act::read_tour(&vnoc_root, &id)?;
+            if let Some(commit) = act::pinned_already(project, &tour) {
+                return Ok(serde_json::json!({
+                    "tour": id.to_string(),
+                    "already": true,
+                    "state": "pinned",
+                    "commit": commit.as_str(),
+                }));
+            }
+            let out = match act::pin_begin(project, &vnoc_root, &id, &ask)? {
+                act::Begun::Done(pinned) => pinned.out,
+                act::Begun::Check { measured, head } => {
+                    act::pin_finish(
+                        project,
+                        &state.index,
+                        &vnoc_root,
+                        &id,
+                        &ask,
+                        &measured,
+                        head,
+                    )?
+                    .out
+                }
+            };
+            let mut shown =
+                serde_json::to_value(&out).map_err(|e| ActError::Environment(e.to_string()))?;
+            shown["tour"] = serde_json::json!(id.to_string());
+            Ok(shown)
+        })
+        .await?
+        .map_err(act_error)?;
+        Ok(done)
+    })
+}
+
+/// `vnoc/tourIds`: [`act::write_ids`], the function of `vnoc tour ids`, with the server's drivers. The edits go to the files on disk, as the command's do: a
+/// tour's stops are not open documents the editor could give (`vnoc/writeId` is for the node under the cursor); the watcher tells the core of the files, as of
+/// an `add`. The project's write lock is first; each marker's edit takes the tours lock to rebase the tours.
+fn tour_ids(
+    core: &mut Core,
+    params: protocol::TourIdsParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("tourIds", async move {
+        let project = ready_project(&core.state).await?;
+        let id = parse_tour(&params.id)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        // the same lock as attach: both write an ID and a node.toml
+        let _one_at_a_time = core.state.attaching.lock().await;
+        let _one_writer = write_lock(project).await?;
+        let mut env = Env {
+            project,
+            index: &core.state.index,
+            host: &core.host,
+            edits: EditSink::Disk,
+        };
+        let written = act::write_ids(&mut env, &vnoc_root, &id, &[])
+            .await
+            .map_err(act_error)?;
+        serde_json::to_value(written).map_err(internal)
+    })
+}
+
+/// `vnoc/tourEdit`: [`act::edit`].
+fn tour_edit(
+    core: &mut Core,
+    params: protocol::TourEditParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourEdit", async move {
+        let project = open_project(&state)?;
+        let id = parse_tour(&params.id)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let (title, question) = (params.title.clone(), params.question.clone());
+        {
+            let id = id.clone();
+            blocking(move || {
+                act::edit(&vnoc_root, &id, title.as_deref(), question.as_deref(), None)
+            })
+            .await?
+            .map_err(act_error)?;
+        }
+        Ok(serde_json::json!({
+            "tour": id.to_string(),
+            "title": params.title.as_deref().map(str::trim),
+            "question": params.question.as_deref().map(str::trim),
+        }))
+    })
+}
+
+/// `vnoc/tourShare`: [`store::share`], the function of `vnoc tour share`.
+fn tour_share(
+    core: &mut Core,
+    params: protocol::TourShareParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourShare", async move {
+        let project = open_project(&state)?;
+        let id = parse_tour(&params.id)?;
+        let root = project.git_root().to_path_buf();
+        let vnoc_root = store::vnoc_root(&root);
+        let to = if params.share {
+            store::Where::Project
+        } else {
+            store::Where::Private
+        };
+        let moved = {
+            let id = id.clone();
+            blocking(move || store::share(&vnoc_root, &id, to))
+                .await?
+                .map_err(tour_error)?
+        };
+        let path = moved
+            .strip_prefix(&root)
+            .unwrap_or(&moved)
+            .to_string_lossy()
+            .replace('\\', "/");
+        Ok(serde_json::json!({
+            "tour": id.to_string(),
+            "folder": view::place_word(to),
+            "path": path,
+        }))
+    })
+}
+
+/// `vnoc/tourDelete`: [`store::delete`], the function of `vnoc tour delete`; the token is the trash entry.
+fn tour_delete(
+    core: &mut Core,
+    params: protocol::TourDeleteParams,
+) -> impl std::future::Future<Output = Result<protocol::TourDeleteResult, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourDelete", async move {
+        let project = open_project(&state)?;
+        let id = parse_tour(&params.id)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let gone = blocking(move || store::delete(&vnoc_root, &id))
+            .await?
+            .map_err(tour_error)?;
+        Ok(protocol::TourDeleteResult { token: gone.entry })
+    })
+}
+
+/// `vnoc/tourRestore`: [`store::restore`]: the file and the state come back where they were.
+fn tour_restore(
+    core: &mut Core,
+    params: protocol::TourRestoreParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourRestore", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let back = blocking(move || store::restore(&vnoc_root, &params.token))
+            .await?
+            .map_err(tour_error)?;
+        Ok(serde_json::json!({
+            "tour": back.id.to_string(),
+            "folder": view::place_word(back.was),
+        }))
+    })
+}
+
+/// `vnoc/tourSettings`: [`act::settings`], the function of `vnoc tour settings`. A key that is given is changed first, under the project's write lock (it is
+/// the project's file).
+fn tour_settings(
+    core: &mut Core,
+    params: Option<protocol::TourSettingsParams>,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourSettings", async move {
+        let project = open_project(&state)?;
+        let params = params.unwrap_or_default();
+        let choice = |text: &str| {
+            Choice::parse(text)
+                .ok_or_else(|| bad_params(format!("`{text}` is not one of always, ask, never")))
+        };
+        let mut set = Vec::new();
+        for (key, text) in [(Key::Ids, &params.ids), (Key::Commit, &params.commit)] {
+            if let Some(text) = text {
+                set.push((key, choice(text)?));
+            }
+        }
+        let _one_writer = if set.is_empty() {
+            None
+        } else {
+            Some(write_lock(project).await?)
+        };
+        let shown = {
+            let state = state.clone();
+            blocking(move || {
+                let project = state
+                    .project
+                    .get()
+                    .ok_or(ActError::Environment("no folder is open".into()))?;
+                act::settings(project, &set)
+            })
+            .await?
+            .map_err(act_error)?
+        };
+        serde_json::to_value(shown).map_err(internal)
     })
 }
