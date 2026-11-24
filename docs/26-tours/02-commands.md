@@ -252,7 +252,7 @@ agent in the middle of reading; it is answered at its next write, at most one st
 ```
 $ vnoc tour list
 checkout-order-7k2q   writing    6 of 10 stops   private                        checkout_order   "what happens when the payment times out"
-app-3fd0              finished   9 stops         project   pinned 8a1c2e4        app/
+app-3fd0              finished   9 stops         project   pinned at 8a1c2e4     app/
 reserve-stock-m3xd    finished   1 stop          private   not pinned · changed  reserve_stock
 
 $ vnoc tour show checkout-order-7k2q
@@ -336,6 +336,19 @@ pinned reserve-stock-m3xd at 3c9e1f7
 | `pin` with no tour | every finished tour that is not pinned, or whose pin cannot be reached from HEAD: pins the ones that can be, lists the others with their reason |
 | `--commit` | when the only thing in the way is files that are not committed: `git add` the untracked ones among them, `git commit --only -m <message> -- <those files>`, then pin. **Exactly the tour's files, the whole of each, nothing else:** other staged or changed files stay as they were. Refused when a stop is stale (commit would pin the wrong code), in the middle of a merge or a rebase, and when a file is ignored. A hook that fails the commit fails the command, with the hook's output |
 | `-m "…"` | the message. Without it: `Code for the tour "<title>"` |
+
+**As built (TR9).** Reasons the three questions do not list: `still being written: finish it first`, `no stop is written`, and *not
+checked* when no driver starts. A merge, a rebase, a cherry-pick or a revert in the middle refuses a pin (TR9b adds the last two). A
+pin is appended only if the tour's file is still the length it was read at, else `changed while it was being pinned`. `finish` and
+`pin` record the check they made. A second `finish` on a finished tour does not pin again, unless `--commit` is given. A stop on a
+file git ignores is *gone* through the command line (the index never walks an ignored file), so its reason is the stale one; the
+`is ignored by git` wording is for a file the index still has. **A hook that changes a file while committing it** (a formatter, a
+`lint-staged` that adds what it changed) would make the commit hold code the check never saw: after `--commit`, the files are
+compared with the bytes the check read, and a difference is *not pinned*: `a hook changed app/inventory.py while committing it: run
+vnoc tour pin <tour> again` (TR9b). The commit stays; the next `pin` checks the new code.
+**The node files of the tour's IDs** (decided by the user, 2026-11-24): `--commit` also commits the `node.toml` of each stop's own ID
+when git shows it uncommitted (what `ids` just wrote), and never a doc file of that folder. The `ask the user` list of `finish` shows
+them under the code files, so the list is what `--commit` will commit. They do not decide the pin (TR9b).
 
 `finish` runs the plain `pin` and prints its result. Whether it also commits is the setting `[tours] commit` (§5): by default it does
 not, and the skill tells the agent to **ask the user** and to run `pin --commit` only on a yes.
@@ -476,7 +489,7 @@ s1 written   stop 1   ƒ checkout_order   app/checkout.py:11-30   5 steps   · 1
 |---|---|
 | `0` | done. Also: listed nothing, checked and found stale stops, could not pin (it says why), finished a finished tour |
 | `1` | the tour was stopped by the reader (§5) |
-| `2` | bad arguments; no such node, tour, stop or block (with "did you mean"); a text or a document that was refused |
+| `2` | bad arguments; no such node, tour, stop or block (with "did you mean"); a text or a document that was refused; `pin --commit` refused before git was asked (a stale stop, an ignored file, a merge in the middle): the reasons, then `nothing was committed` |
 | `3` | the environment: no driver, the lock could not be had in 5 seconds, `format` or `schema` too new; for `pin --commit`: git refused the commit |
 
 As 21's C6 and 22.08 §3: `1` is "the thing has something to tell you", `2` is the caller's mistake, `3` is the machine's.

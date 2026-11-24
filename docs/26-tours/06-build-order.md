@@ -222,6 +222,14 @@ the commit holds the marker lines too, and the tour is pinned and fresh.
 
 Commit: `tours TR9: a tour is pinned to a commit that holds it; pin --commit; the code as written`.
 
+### TR9b Fix-up (from TR9's review)
+
+A first, small commit before TR10: after `pin --commit`, compare each committed file with the bytes the check read; a difference is
+*not pinned* with `a hook changed <file> while committing it` (01 §8). Test: a `pre-commit` hook that appends a line to the file and
+`git add`s it → committed, not pinned, the sentence; `pin` again → pinned at that commit. `CHERRY_PICK_HEAD` and `REVERT_HEAD` refuse
+a pin as a merge does (`a cherry-pick`, `a revert`). `--commit` also commits the uncommitted `node.toml` of each stop's own ID, never a doc file (02 §8); the `ask the user` list shows them; the TR9 test with `ids` and `commit` at `"always"` then finds them in the commit and none left untracked. Commit: `tours TR9b: a hook that changes a file while committing it does not
+leave a wrong pin`.
+
 ### TR10 The reader's place
 
 | Files | What |

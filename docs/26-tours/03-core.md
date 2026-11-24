@@ -206,7 +206,20 @@ tours::pin::as_written(root, tour, stop) -> Option<Excerpt>
 | **kept** | in memory by commit and path. A commit's file never changes |
 | **`None`** | the stop falls back to how a tour that is not pinned shows it, and the row says the commit is not in this repository |
 | **making a pin** (`tours::pin::make`) | the check of §2 (all fresh, none gone), then `git status --porcelain -z -- <paths>` (says nothing) and `git ls-tree --name-only -z HEAD -- <paths>` (names every path), then `git rev-parse --verify -q HEAD` (exit 1 and nothing when there is no commit yet: TR0); [`01`](01-on-disk.md) §8 step 2; the `pin` record carries where every stop and block is now. `can_pin` answers the same questions without writing, for `check` and for the row's menu |
-| **`--commit`** (`tours::pin::commit_files`) | `git add -- <untracked among them>`, `git commit --only -m … -- <paths>`. Only from `vnoc tour pin --commit` and `vnoc/tourPin { commit: true }`, never from `finish` |
+| **`--commit`** (`tours::pin::commit_files`) | `git add -- <untracked among them>`, `git commit --only -m … -- <paths>`. From `vnoc tour pin --commit`, `vnoc/tourPin { commit: true }`, and `finish` only when `[tours] commit = "always"` or `--commit` says so (02 §5). After a failed commit, `git reset -q --` on the files `add` took in: nothing stays staged |
+
+**As built (TR9).** `pin::head(project, tour) -> Result<Commit, Vec<Reason>>` answers what needs no code (finished, a written stop,
+git runs, a repository with a commit, no merge or rebase in the middle), so a project with no git is told so without a driver.
+`check::check_placed` returns `(Recorded, Placed)` (the check, and where each stop and block is now) and `check` calls it.
+`pin::can_pin(project, tour, head, &recorded, &placed) -> Pinnable`, `pin::make(head, &placed) -> PinRecord`. `vnoc tour show --text
+--as-written` implies `--check`, marks lit lines `>` at the line's start (`vnoc code` has no lit mark), lights all of a stop with no
+blocks, and adds `as_written` to `--json`. A folder stop has no `where` entry: it has no lines.
+
+**Git, as TR9 found it.** Reads run with `--literal-pathspecs` and `GIT_OPTIONAL_LOCKS=0`; the commit names its paths
+`:(literal)<path>` instead, so hooks do not inherit `GIT_LITERAL_PATHSPECS`. `check-ignore` refuses literal pathspecs and runs without
+(only a reason's wording). `status` needs `--untracked-files=all`, else a new folder is one `?? dir/` line. `show` gets
+`--no-textconv`. `rev-parse --git-path` finds `MERGE_HEAD`, `rebase-merge`, `rebase-apply` (and from TR9b `CHERRY_PICK_HEAD`,
+`REVERT_HEAD`) in a worktree too: git 2.5 or newer.
 
 ## 6. Tours on a node
 
@@ -272,7 +285,7 @@ crates/vnoc/src/tours/
 | `check::fresh(root, index, tour, mode) -> Checked` (memory, record, or check: §3) | `tour show --check`, `tour check`, `vnoc/tour`, `vnoc/tours { check }` |
 | `place::go`, `store::read_place`, `store::write_place` | `tour where`, `tour go`, `vnoc/tourGo` |
 | `pin::make`, `pin::can_pin`, `pin::commit_files`, `pin::as_written` | `tour finish`, `tour pin`, `vnoc/tourPin`, `vnoc/tourCode` |
-| `finish::finish(env, tour, Overrides) -> Finished { ids, pin, offers }` | `tour finish`, `tour import`: one order for both, and `offers` is what an `"ask"` setting leaves for the user |
+| `finish.rs`: the decisions and their words; the order (IDs, then the pin) is `cli/tour.rs` `ids_after_end` then `pin_tour`, one path for both (as built, TR7b and TR9; no single `finish::finish`) | `tour finish`, `tour import`; `offers` is what an `"ask"` setting leaves for the user |
 | `settings::read(root)`, `settings::set(root, key, value)` | `finish`, `tour settings`, `vnoc/tourSettings` |
 | `ids::give(env, tour, stops)` (the attach flow's `ensure_node`, then one `ids` record) | `tour ids`, `vnoc/tourIds` |
 | `on::Map::of(tours)`, `.on(node) -> Vec<On>` | `tour list --on`, `vnoc/tours { on }` |
