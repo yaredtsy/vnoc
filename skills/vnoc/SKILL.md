@@ -51,6 +51,7 @@ Tags: run `vnoc tags` first and reuse one that fits (`.vnoc/tags.toml` says what
 
 ## More
 `vnoc guide` lists the topics (read · tree · find · write · check). `vnoc <command> --help` has every flag.
+Asked to walk someone through code, or for a tour: use the vnoc-tour skill (vnoc guide tour).
 
 ## Without the command
 First tell the user the `vnoc` command is not installed (VS Code: "V-NOC: Install `vnoc` Command in PATH", or `install.sh` from the

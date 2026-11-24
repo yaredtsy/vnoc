@@ -23,10 +23,12 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const BLOCK_START: &str = "<!-- vnoc:start";
 pub const BLOCK_END: &str = "<!-- vnoc:end -->";
 
-/// The two texts that get written: the skill and the rules block. [`Texts::built_in`] is what this binary carries; a test hands in others.
+/// The texts that get written: the skill, the second skill (`vnoc-tour`, written beside it) and the rules block. [`Texts::built_in`] is what this binary
+/// carries; a test hands in others.
 #[derive(Clone, Copy)]
 pub struct Texts<'a> {
     pub skill: &'a str,
+    pub tour_skill: &'a str,
     pub rules: &'a str,
 }
 
@@ -34,6 +36,7 @@ impl Texts<'static> {
     pub fn built_in() -> Self {
         Texts {
             skill: crate::cli::guide::SKILL,
+            tour_skill: crate::cli::guide::SKILL_TOUR,
             rules: crate::cli::guide::RULES,
         }
     }
@@ -94,6 +97,18 @@ impl SkillFolder {
 
     pub fn file(self) -> String {
         format!("{}/SKILL.md", self.dir())
+    }
+
+    /// The second skill's folder, beside the first (`docs/26-tours/04-skill.md` §5).
+    pub fn tour_dir(self) -> &'static str {
+        match self {
+            SkillFolder::Claude => ".claude/skills/vnoc-tour",
+            SkillFolder::Agents => ".agents/skills/vnoc-tour",
+        }
+    }
+
+    pub fn tour_file(self) -> String {
+        format!("{}/SKILL.md", self.tour_dir())
     }
 
     /// The names that map to this folder.
@@ -249,6 +264,9 @@ pub fn detect(root: &Path) -> Vec<Agent> {
 #[serde(rename_all = "lowercase")]
 pub enum Part {
     Skill,
+    /// the second skill, `vnoc-tour`, in the folder beside the first
+    #[serde(rename = "tour_skill")]
+    TourSkill,
     Rules,
     /// the one-line `CLAUDE.md` that imports `AGENTS.md`
     Import,
@@ -492,7 +510,27 @@ pub fn plan(
 }
 
 impl Plan<'_> {
+    /// The two skills of an agent: `vnoc` and `vnoc-tour`, each in its own folder under the agent's skills folder.
     fn skill(&mut self, agent: Agent, options: &Options, texts: &Texts) {
+        let folder = agent.skill_folder();
+        self.skill_file(agent, options, Part::Skill, folder.file(), texts.skill);
+        self.skill_file(
+            agent,
+            options,
+            Part::TourSkill,
+            folder.tour_file(),
+            texts.tour_skill,
+        );
+    }
+
+    fn skill_file(
+        &mut self,
+        agent: Agent,
+        options: &Options,
+        part: Part,
+        relative: String,
+        text: &str,
+    ) {
         let (base, is_home) = if options.global {
             match self.home {
                 Some(home) => (home, true),
@@ -501,22 +539,22 @@ impl Plan<'_> {
         } else {
             (self.root, false)
         };
-        let full = base.join(agent.skill_folder().file());
+        let full = base.join(relative);
         let mut action = Action {
-            part: Part::Skill,
+            part,
             path: shown(base, is_home, &full),
             change: Change::Create,
             agents: vec![agent],
             readers: skill_readers(agent.skill_folder()),
             why: None,
-            content: Some(texts.skill.to_string()),
+            content: Some(text.to_string()),
             full: full.clone(),
         };
         match read_text(&full) {
             Ok(None) => {}
             Ok(Some(existing)) => {
                 if skill_version(&existing).is_some() {
-                    if existing == texts.skill {
+                    if existing == text {
                         action.change = Change::Same;
                         action.content = None;
                     } else {
@@ -625,7 +663,7 @@ pub fn apply(actions: &[Action], root: &Path, home: Option<&Path>) -> io::Result
                 fs::remove_file(&action.full).map_err(at)?;
                 // the skill's own folder (`…/skills/vnoc/`) goes with its file, and `skills/` and then `.claude/` or `.agents/` after it, each only while
                 // it is empty (`remove_dir` refuses a folder with anything in it); a rules file's folder is the project
-                if action.part == Part::Skill {
+                if matches!(action.part, Part::Skill | Part::TourSkill) {
                     let mut dir = action.full.parent();
                     for _ in 0..3 {
                         match dir {
@@ -711,27 +749,41 @@ pub fn status(root: &Path, home: Option<&Path>, texts: &Texts) -> Status {
     if let Some(home) = home {
         bases.push((home, true));
     }
+    // a skill folder that has the first skill and not the second: an install made before tours (said once, `vnoc-tour: not installed`)
+    let mut tour_missing = false;
     for (base, is_home) in bases {
         for folder in SKILL_FOLDERS {
-            let full = base.join(folder.file());
-            let Ok(Some(text)) = read_text(&full) else {
-                continue;
-            };
-            let Some(version) = skill_version(&text) else {
-                continue;
-            };
-            let state = match compare_versions(&version, VERSION) {
-                std::cmp::Ordering::Less => State::Older { version },
-                std::cmp::Ordering::Greater => State::Newer { version },
-                std::cmp::Ordering::Equal if text == texts.skill => State::Current,
-                std::cmp::Ordering::Equal => State::Changed,
-            };
-            status.files.push(FileStatus {
-                part: Part::Skill,
-                path: shown(base, is_home, &full),
-                state,
-                serves: folder.agents(),
-            });
+            let mut has_first = false;
+            let mut has_tour = false;
+            for (part, relative, wanted) in [
+                (Part::Skill, folder.file(), texts.skill),
+                (Part::TourSkill, folder.tour_file(), texts.tour_skill),
+            ] {
+                let full = base.join(relative);
+                let Ok(Some(text)) = read_text(&full) else {
+                    continue;
+                };
+                let Some(version) = skill_version(&text) else {
+                    continue;
+                };
+                match part {
+                    Part::Skill => has_first = true,
+                    _ => has_tour = true,
+                }
+                let state = match compare_versions(&version, VERSION) {
+                    std::cmp::Ordering::Less => State::Older { version },
+                    std::cmp::Ordering::Greater => State::Newer { version },
+                    std::cmp::Ordering::Equal if text == wanted => State::Current,
+                    std::cmp::Ordering::Equal => State::Changed,
+                };
+                status.files.push(FileStatus {
+                    part,
+                    path: shown(base, is_home, &full),
+                    state,
+                    serves: folder.agents(),
+                });
+            }
+            tour_missing |= has_first && !has_tour;
         }
     }
     for name in RULES_FILES {
@@ -781,6 +833,9 @@ pub fn status(root: &Path, home: Option<&Path>, texts: &Texts) -> Status {
         (false, true) => status.missing.push(Part::Skill),
         _ => {}
     }
+    if tour_missing {
+        status.missing.push(Part::TourSkill);
+    }
     status
 }
 
@@ -815,21 +870,27 @@ pub fn plan_remove(
         } else {
             (root, false)
         };
-        let full = base.join(agent.skill_folder().file());
-        if let Ok(Some(text)) = read_text(&full) {
-            let ours = skill_version(&text).is_some();
-            plan.push(Action {
-                part: Part::Skill,
-                path: shown(base, is_home, &full),
-                change: if ours { Change::Delete } else { Change::Leave },
-                agents: vec![agent],
-                readers: skill_readers(agent.skill_folder()),
-                why: (!ours).then(|| {
-                    "it was not written by V-NOC (its header has no metadata.vnoc-version), so it is not removed".to_string()
-                }),
-                full,
-                content: None,
-            });
+        let folder = agent.skill_folder();
+        for (part, relative) in [
+            (Part::Skill, folder.file()),
+            (Part::TourSkill, folder.tour_file()),
+        ] {
+            let full = base.join(relative);
+            if let Ok(Some(text)) = read_text(&full) {
+                let ours = skill_version(&text).is_some();
+                plan.push(Action {
+                    part,
+                    path: shown(base, is_home, &full),
+                    change: if ours { Change::Delete } else { Change::Leave },
+                    agents: vec![agent],
+                    readers: skill_readers(folder),
+                    why: (!ours).then(|| {
+                        "it was not written by V-NOC (its header has no metadata.vnoc-version), so it is not removed".to_string()
+                    }),
+                    full,
+                    content: None,
+                });
+            }
         }
         if global {
             continue;
@@ -872,7 +933,8 @@ pub fn plan_remove(
         }
     }
     // the skills first, then the rules files (a stable sort: the order inside each is the table's), then the permissions
-    plan.actions.sort_by_key(|a| a.part != Part::Skill);
+    plan.actions
+        .sort_by_key(|a| !matches!(a.part, Part::Skill | Part::TourSkill));
     let mut actions = plan.actions;
     if !global {
         actions.extend(plan_remove_permissions(root, home, &agents));
@@ -949,14 +1011,18 @@ fn without_block(text: &str, start: usize, end: usize) -> (Change, Option<String
 /// Claude Code and Codex. The name of the agent, and the text. Nothing for any other. `vnoc agent` is never in them: setting up agents is
 /// the user's step, and a write is never allowed by default.
 pub fn permission_lines(picked: &[Agent]) -> Vec<(Agent, &'static str)> {
-    const CLAUDE: &str = "to let Claude Code run V-NOC's read commands without asking, add to .claude/settings.json:
+    const CLAUDE: &str = "to let Claude Code run V-NOC's read commands and the commands that write a tour without asking, add to .claude/settings.json:
   \"permissions\": { \"allow\": [\"Bash(vnoc status *)\", \"Bash(vnoc show *)\", \"Bash(vnoc code *)\", \"Bash(vnoc doc list *)\", \"Bash(vnoc doc read *)\",
                              \"Bash(vnoc doc path *)\", \"Bash(vnoc tree *)\", \"Bash(vnoc find *)\", \"Bash(vnoc grep *)\", \"Bash(vnoc calls *)\",
                              \"Bash(vnoc missing *)\", \"Bash(vnoc check *)\", \"Bash(vnoc tags *)\", \"Bash(vnoc guide *)\",
-                             \"Bash(vnoc skill *)\"] }";
+                             \"Bash(vnoc skill *)\", \"Bash(vnoc tour start *)\", \"Bash(vnoc tour add *)\", \"Bash(vnoc tour finish *)\",
+                             \"Bash(vnoc tour plan *)\", \"Bash(vnoc tour drop *)\", \"Bash(vnoc tour resume *)\", \"Bash(vnoc tour list *)\",
+                             \"Bash(vnoc tour show *)\", \"Bash(vnoc tour check *)\", \"Bash(vnoc tour where *)\", \"Bash(vnoc tour route *)\",
+                             \"Bash(vnoc tour export *)\"] }";
     const CODEX: &str = "to let Codex run them without asking, add to ~/.codex/rules/default.rules:
   prefix_rule(pattern = [\"vnoc\", [\"status\", \"show\", \"code\", \"tree\", \"find\", \"grep\", \"calls\", \"missing\", \"check\", \"tags\", \"guide\", \"skill\"]], decision = \"allow\")
-  prefix_rule(pattern = [\"vnoc\", \"doc\", [\"list\", \"read\", \"path\"]], decision = \"allow\")";
+  prefix_rule(pattern = [\"vnoc\", \"doc\", [\"list\", \"read\", \"path\"]], decision = \"allow\")
+  prefix_rule(pattern = [\"vnoc\", \"tour\", [\"start\", \"add\", \"finish\", \"plan\", \"drop\", \"resume\", \"list\", \"show\", \"check\", \"where\", \"route\", \"export\"]], decision = \"allow\")";
     let mut lines = Vec::new();
     if picked.contains(&Agent::Claude) {
         lines.push((Agent::Claude, CLAUDE));
@@ -969,7 +1035,7 @@ pub fn permission_lines(picked: &[Agent]) -> Vec<(Agent, &'static str)> {
 
 /// What V-NOC adds to Claude Code's `permissions.allow` (07 §4): the read commands. A prefix rule `Bash(vnoc show *)` also matches a bare `vnoc show`
 /// and not `vnoc showx`. `vnoc agent` is not in it, and neither is any write: those ask.
-pub const CLAUDE_ALLOW: [&str; 15] = [
+pub const CLAUDE_ALLOW: [&str; 27] = [
     "Bash(vnoc status *)",
     "Bash(vnoc show *)",
     "Bash(vnoc code *)",
@@ -985,7 +1051,24 @@ pub const CLAUDE_ALLOW: [&str; 15] = [
     "Bash(vnoc tags *)",
     "Bash(vnoc guide *)",
     "Bash(vnoc skill *)",
+    // the writing loop of a tour (04 §5): these write only under the tours folders (02 §13). Not `go`, `pin`, `ids`, `edit`, `share`, `delete`,
+    // `import`, `settings` or `halt`: those reach further, and the host asks the user each time
+    "Bash(vnoc tour start *)",
+    "Bash(vnoc tour add *)",
+    "Bash(vnoc tour finish *)",
+    "Bash(vnoc tour plan *)",
+    "Bash(vnoc tour drop *)",
+    "Bash(vnoc tour resume *)",
+    "Bash(vnoc tour list *)",
+    "Bash(vnoc tour show *)",
+    "Bash(vnoc tour check *)",
+    "Bash(vnoc tour where *)",
+    "Bash(vnoc tour route *)",
+    "Bash(vnoc tour export *)",
 ];
+
+/// The tour commands the allow rules cover, by name: what Codex's rule lists.
+const TOUR_ALLOWED: &str = "[\"start\", \"add\", \"finish\", \"plan\", \"drop\", \"resume\", \"list\", \"show\", \"check\", \"where\", \"route\", \"export\"]";
 
 /// The first line of the file V-NOC writes for Codex: how V-NOC knows the file is its own (`remove` deletes only a file that has it).
 const CODEX_MARK: &str =
@@ -995,9 +1078,10 @@ const CODEX_MARK: &str =
 pub fn codex_rules_text() -> String {
     format!(
         "{CODEX_MARK}\n\
-         # It lets Codex run V-NOC's read commands without asking; every write still asks.\n\
+         # It lets Codex run V-NOC's read commands and the commands that write a tour without asking; every other write still asks.\n\
          prefix_rule(pattern = [\"vnoc\", [\"status\", \"show\", \"code\", \"tree\", \"find\", \"grep\", \"calls\", \"missing\", \"check\", \"tags\", \"guide\", \"skill\"]], decision = \"allow\")\n\
-         prefix_rule(pattern = [\"vnoc\", \"doc\", [\"list\", \"read\", \"path\"]], decision = \"allow\")\n"
+         prefix_rule(pattern = [\"vnoc\", \"doc\", [\"list\", \"read\", \"path\"]], decision = \"allow\")\n\
+         prefix_rule(pattern = [\"vnoc\", \"tour\", {TOUR_ALLOWED}], decision = \"allow\")\n"
     )
 }
 
@@ -1585,14 +1669,22 @@ mod tests {
             let agent = Agent::parse(name).unwrap();
             let actions = plan(&root, None, &[agent], &Options::default(), &texts());
             // `claude` in a project with no CLAUDE.md also gets the import file (07 §2)
-            let mut expected = vec![(skill, Change::Create), (rules, Change::Create)];
+            // the second skill goes beside the first, in the same skills folder
+            let tour = skill.replace("/vnoc/", "/vnoc-tour/");
+            let mut expected = vec![
+                (skill, Change::Create),
+                (tour.as_str(), Change::Create),
+                (rules, Change::Create),
+            ];
             if agent == Agent::Claude {
                 expected.push(("CLAUDE.md", Change::Create));
             }
             assert_eq!(paths(&actions), expected, "{name}");
             assert_eq!(actions[0].part, Part::Skill);
-            assert_eq!(actions[1].part, Part::Rules);
+            assert_eq!(actions[1].part, Part::TourSkill);
+            assert_eq!(actions[2].part, Part::Rules);
             assert_eq!(actions[0].agents, [agent]);
+            assert_eq!(actions[1].agents, [agent]);
             assert_eq!(rules_for(&root, agent), rules);
         }
         // nothing was written by planning
@@ -1604,7 +1696,7 @@ mod tests {
     fn gemini_with_no_gemini_md_creates_it_with_the_block() {
         let root = fresh("gemini");
         let actions = install(&root, None, &[Agent::Gemini], &Options::default());
-        assert_eq!(actions[1].change, Change::Create);
+        assert_eq!(actions[2].change, Change::Create);
         let text = get(&root, "GEMINI.md");
         assert_eq!(text, format!("{}\n", crate::cli::guide::RULES.trim_end()));
         assert!(text.starts_with(BLOCK_START) && text.trim_end().ends_with(BLOCK_END));
@@ -1619,16 +1711,16 @@ mod tests {
         // a CLAUDE.md: it gets the block, and AGENTS.md is not made
         put(&root, "CLAUDE.md", "# Notes\nuse tabs\n");
         let actions = install(&root, None, &[Agent::Claude], &Options::default());
-        assert_eq!(actions[1].path, "CLAUDE.md");
-        assert_eq!(actions[1].change, Change::AddBlock);
+        assert_eq!(actions[2].path, "CLAUDE.md");
+        assert_eq!(actions[2].change, Change::AddBlock);
         assert!(get(&root, "CLAUDE.md").starts_with("# Notes\nuse tabs\n\n<!-- vnoc:start"));
         assert!(!root.join("AGENTS.md").exists());
         // a CLAUDE.md that imports AGENTS.md: AGENTS.md gets it and CLAUDE.md is left as it is
         let root = fresh("claude-import");
         put(&root, "CLAUDE.md", "@AGENTS.md\n\n## Claude Code\nx\n");
         let actions = install(&root, None, &[Agent::Claude], &Options::default());
-        assert_eq!(actions[1].path, "AGENTS.md");
-        assert_eq!(actions[1].change, Change::Create);
+        assert_eq!(actions[2].path, "AGENTS.md");
+        assert_eq!(actions[2].change, Change::Create);
         assert_eq!(get(&root, "CLAUDE.md"), "@AGENTS.md\n\n## Claude Code\nx\n");
         // the other place Claude Code reads
         let root = fresh("claude-dot");
@@ -1653,17 +1745,20 @@ mod tests {
             paths(&actions),
             [
                 (".claude/skills/vnoc/SKILL.md", Change::Create),
+                (".claude/skills/vnoc-tour/SKILL.md", Change::Create),
                 (".agents/skills/vnoc/SKILL.md", Change::Create),
+                (".agents/skills/vnoc-tour/SKILL.md", Change::Create),
                 ("AGENTS.md", Change::Create),
                 ("CLAUDE.md", Change::Create),
             ]
         );
-        assert_eq!(actions[2].agents, [Agent::Claude, Agent::Cursor]);
+        assert_eq!(actions[4].agents, [Agent::Claude, Agent::Cursor]);
         // codex + pi: one folder, written once, and one AGENTS.md
         let root = fresh("share-one");
         let actions = install(&root, None, &[Agent::Codex, Agent::Pi], &Options::default());
-        assert_eq!(actions.len(), 2);
+        assert_eq!(actions.len(), 3);
         assert_eq!(actions[0].agents, [Agent::Codex, Agent::Pi]);
+        assert_eq!(actions[1].agents, [Agent::Codex, Agent::Pi]);
         assert_eq!(block_count(&get(&root, "AGENTS.md")), 1);
     }
 
@@ -1679,7 +1774,9 @@ mod tests {
             paths(&actions),
             [
                 (".claude/skills/vnoc/SKILL.md", Change::Create),
+                (".claude/skills/vnoc-tour/SKILL.md", Change::Create),
                 (".agents/skills/vnoc/SKILL.md", Change::Create),
+                (".agents/skills/vnoc-tour/SKILL.md", Change::Create),
                 ("AGENTS.md", Change::Create),
                 ("CLAUDE.md", Change::Create),
             ]
@@ -1754,7 +1851,7 @@ mod tests {
             );
             let added = &after[before.len()..];
             if before.is_empty() {
-                assert_eq!(actions[1].change, Change::AddBlock);
+                assert_eq!(actions[2].change, Change::AddBlock);
                 assert_eq!(added, format!("{block}\n"));
             } else {
                 // exactly one blank line between what was there and the block
@@ -1774,6 +1871,7 @@ mod tests {
                 paths(&again),
                 [
                     (".agents/skills/vnoc/SKILL.md", Change::Same),
+                    (".agents/skills/vnoc-tour/SKILL.md", Change::Same),
                     ("AGENTS.md", Change::Same)
                 ],
                 "{label}"
@@ -1794,7 +1892,7 @@ mod tests {
             &format!("# Top\n\nbefore\n\n{old}\n\nafter, with no newline at the end"),
         );
         let actions = install(&root, None, &[Agent::Codex], &Options::default());
-        assert_eq!(actions[1].change, Change::ReplaceBlock);
+        assert_eq!(actions[2].change, Change::ReplaceBlock);
         let block = crate::cli::guide::RULES.trim_end();
         assert_eq!(
             get(&root, "AGENTS.md"),
@@ -1808,12 +1906,13 @@ mod tests {
         let text = "intro\n<!-- vnoc:start (x) -->\nhalf a block\n";
         put(&root, "AGENTS.md", text);
         let actions = install(&root, None, &[Agent::Codex], &Options::default());
-        assert_eq!(actions[1].change, Change::Leave);
-        assert!(actions[1].refused());
-        assert!(actions[1].why.as_deref().unwrap().contains("vnoc:end"));
+        assert_eq!(actions[2].change, Change::Leave);
+        assert!(actions[2].refused());
+        assert!(actions[2].why.as_deref().unwrap().contains("vnoc:end"));
         assert_eq!(get(&root, "AGENTS.md"), text);
         // the skill beside it was still written
         assert!(root.join(".agents/skills/vnoc/SKILL.md").is_file());
+        assert!(root.join(".agents/skills/vnoc-tour/SKILL.md").is_file());
     }
 
     #[test]
@@ -1876,7 +1975,10 @@ mod tests {
         let actions = install(&root, None, &[Agent::Codex], &skill);
         assert_eq!(
             paths(&actions),
-            [(".agents/skills/vnoc/SKILL.md", Change::Create)]
+            [
+                (".agents/skills/vnoc/SKILL.md", Change::Create),
+                (".agents/skills/vnoc-tour/SKILL.md", Change::Create)
+            ]
         );
         assert!(!root.join("AGENTS.md").exists());
         let root = fresh("halves-rules");
@@ -1902,12 +2004,20 @@ mod tests {
             paths(&actions),
             [
                 ("~/.claude/skills/vnoc/SKILL.md", Change::Create),
-                ("~/.agents/skills/vnoc/SKILL.md", Change::Create)
+                ("~/.claude/skills/vnoc-tour/SKILL.md", Change::Create),
+                ("~/.agents/skills/vnoc/SKILL.md", Change::Create),
+                ("~/.agents/skills/vnoc-tour/SKILL.md", Change::Create)
             ]
         );
-        assert!(actions.iter().all(|a| a.part == Part::Skill));
+        assert!(
+            actions
+                .iter()
+                .all(|a| matches!(a.part, Part::Skill | Part::TourSkill))
+        );
         assert!(home.join(".claude/skills/vnoc/SKILL.md").is_file());
+        assert!(home.join(".claude/skills/vnoc-tour/SKILL.md").is_file());
         assert!(home.join(".agents/skills/vnoc/SKILL.md").is_file());
+        assert!(home.join(".agents/skills/vnoc-tour/SKILL.md").is_file());
         assert_eq!(
             fs::read_dir(&root).unwrap().count(),
             0,
@@ -1918,7 +2028,7 @@ mod tests {
         assert!(plan(&root, None, &[Agent::Codex], &global, &texts()).is_empty());
         // status sees the user-level files when it is given the home
         let seen = status(&root, Some(&home), &texts());
-        assert_eq!(seen.files.len(), 2);
+        assert_eq!(seen.files.len(), 4);
         assert!(seen.files.iter().all(|f| f.path.starts_with("~/")));
         // and remove --global takes them back, and only them
         put(&root, ".agents/skills/vnoc/SKILL.md", &old_skill());
@@ -1926,6 +2036,7 @@ mod tests {
         apply(&removal, &root, Some(&home)).unwrap();
         assert!(!home.join(".claude/skills/vnoc").exists());
         assert!(!home.join(".agents/skills/vnoc").exists());
+        assert!(!home.join(".agents/skills/vnoc-tour").exists());
         assert!(root.join(".agents/skills/vnoc/SKILL.md").is_file());
     }
 
@@ -1966,23 +2077,26 @@ mod tests {
             states,
             [
                 (".claude/skills/vnoc/SKILL.md", State::Current),
+                (".claude/skills/vnoc-tour/SKILL.md", State::Current),
                 (".agents/skills/vnoc/SKILL.md", State::Current),
+                (".agents/skills/vnoc-tour/SKILL.md", State::Current),
                 ("AGENTS.md", State::Current),
                 ("CLAUDE.md", State::Current),
             ]
         );
         assert_eq!(seen.files[0].serves, [Agent::Claude, Agent::Cline]);
-        assert!(seen.files[1].serves.contains(&Agent::Codex));
+        assert_eq!(seen.files[1].part, Part::TourSkill);
+        assert!(seen.files[2].serves.contains(&Agent::Codex));
         assert!(
-            seen.files[2].serves.contains(&Agent::Claude)
-                && seen.files[2].serves.contains(&Agent::Codex)
+            seen.files[4].serves.contains(&Agent::Claude)
+                && seen.files[4].serves.contains(&Agent::Codex)
         );
 
         // older: the version in the installed copy edited down
         put(&root, ".agents/skills/vnoc/SKILL.md", &old_skill());
         let seen = status(&root, None, &texts());
         assert_eq!(
-            seen.files[1].state,
+            seen.files[2].state,
             State::Older {
                 version: "0.0.1".into()
             }
@@ -1994,7 +2108,7 @@ mod tests {
         );
         put(&root, ".agents/skills/vnoc/SKILL.md", &newer);
         assert_eq!(
-            status(&root, None, &texts()).files[1].state,
+            status(&root, None, &texts()).files[2].state,
             State::Newer {
                 version: "99.0.0".into()
             }
@@ -2002,19 +2116,20 @@ mod tests {
         // changed by hand: this version's header, other words
         let edited = format!("{}\nAnd always say please.\n", crate::cli::guide::SKILL);
         put(&root, ".agents/skills/vnoc/SKILL.md", &edited);
-        assert_eq!(status(&root, None, &texts()).files[1].state, State::Changed);
+        assert_eq!(status(&root, None, &texts()).files[2].state, State::Changed);
         // a rules block that differs
         let text =
             get(&root, "AGENTS.md").replace("Notes are information", "Notes are mere information");
         put(&root, "AGENTS.md", &text);
-        assert_eq!(status(&root, None, &texts()).files[2].state, State::Changed);
+        assert_eq!(status(&root, None, &texts()).files[4].state, State::Changed);
         // a SKILL.md that is not ours is not a file V-NOC wrote
         put(
             &root,
             ".agents/skills/vnoc/SKILL.md",
             "---\nname: vnoc\n---\nmine\n",
         );
-        assert_eq!(status(&root, None, &texts()).files.len(), 3); // AGENTS.md and the import file
+        // the claude skill and its vnoc-tour, the codex vnoc-tour, AGENTS.md and the import file
+        assert_eq!(status(&root, None, &texts()).files.len(), 5);
 
         // missing: the skill with no rules, and the rules with no skill
         let root = fresh("status-missing");
@@ -2042,6 +2157,33 @@ mod tests {
     }
 
     #[test]
+    fn an_install_from_before_tours_has_the_first_skill_and_status_says_the_second_is_missing() {
+        let root = fresh("status-before-tours");
+        install(&root, None, &[Agent::Codex], &Options::default());
+        assert!(status(&root, None, &texts()).missing.is_empty());
+        // what an older V-NOC left: the first skill and the rules, no vnoc-tour folder
+        fs::remove_dir_all(root.join(".agents/skills/vnoc-tour")).unwrap();
+        let seen = status(&root, None, &texts());
+        assert_eq!(seen.missing, [Part::TourSkill]);
+        assert!(seen.files.iter().all(|f| f.part != Part::TourSkill));
+        // installing again writes the second beside the first and nothing else
+        let again = install(&root, None, &[Agent::Codex], &Options::default());
+        assert_eq!(
+            paths(&again),
+            [
+                (".agents/skills/vnoc/SKILL.md", Change::Same),
+                (".agents/skills/vnoc-tour/SKILL.md", Change::Create),
+                ("AGENTS.md", Change::Same)
+            ]
+        );
+        assert!(status(&root, None, &texts()).missing.is_empty());
+        assert_eq!(
+            get(&root, ".agents/skills/vnoc-tour/SKILL.md"),
+            crate::cli::guide::SKILL_TOUR
+        );
+    }
+
+    #[test]
     fn remove_takes_back_what_was_written_and_nothing_else() {
         // a rules file with other text: the block goes, and the file is as it was
         let root = fresh("remove");
@@ -2060,6 +2202,7 @@ mod tests {
             changes,
             [
                 (".agents/skills/vnoc/SKILL.md", Change::Delete),
+                (".agents/skills/vnoc-tour/SKILL.md", Change::Delete),
                 ("AGENTS.md", Change::RemoveBlock),
                 ("GEMINI.md", Change::Delete),
             ]
@@ -2075,6 +2218,7 @@ mod tests {
             "a file that held only the block goes"
         );
         assert!(!root.join(".agents/skills/vnoc").exists());
+        assert!(!root.join(".agents/skills/vnoc-tour").exists());
         // the folders V-NOC made around it go too, once they are empty (A11f)
         assert!(!root.join(".agents").exists());
         // and nothing is left to remove

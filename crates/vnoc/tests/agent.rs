@@ -117,6 +117,16 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 const SKILL: &str = include_str!("../../../skills/vnoc/SKILL.md");
+const TOUR_SKILL: &str = include_str!("../../../skills/vnoc-tour/SKILL.md");
+
+/// The commands of the writing loop that the allow rules cover (04 §5), and the ones they leave to the user.
+const TOUR_ALLOWED: [&str; 12] = [
+    "start", "add", "finish", "plan", "drop", "resume", "list", "show", "check", "where", "route",
+    "export",
+];
+const TOUR_ASKED: [&str; 9] = [
+    "go", "pin", "ids", "edit", "share", "delete", "import", "settings", "halt",
+];
 const RULES: &str = include_str!("../../../skills/vnoc/rules.md");
 
 // --------------------------------------------------------------------------------------------------------------------- install
@@ -139,8 +149,12 @@ fn claude_and_codex_get_both_folders_and_one_block_and_the_lines_for_their_permi
         out(&o).split("\ncommit").next().unwrap(),
         "created      .claude/skills/vnoc/SKILL.md
              the skill, for claude
+created      .claude/skills/vnoc-tour/SKILL.md
+             the vnoc-tour skill, for claude
 created      .agents/skills/vnoc/SKILL.md
              the skill, for codex
+created      .agents/skills/vnoc-tour/SKILL.md
+             the vnoc-tour skill, for codex
 created      AGENTS.md
              the rules block, for claude, codex
 created      CLAUDE.md
@@ -165,7 +179,9 @@ created      CLAUDE.md
     assert_eq!(
         files(&root),
         [
+            ".agents/skills/vnoc-tour/SKILL.md",
             ".agents/skills/vnoc/SKILL.md",
+            ".claude/skills/vnoc-tour/SKILL.md",
             ".claude/skills/vnoc/SKILL.md",
             "AGENTS.md",
             "CLAUDE.md"
@@ -239,7 +255,9 @@ fn all_names_unknown_agents_and_conflicting_flags_are_refused() {
     assert_eq!(
         files(&root),
         [
+            ".agents/skills/vnoc-tour/SKILL.md",
             ".agents/skills/vnoc/SKILL.md",
+            ".claude/skills/vnoc-tour/SKILL.md",
             ".claude/skills/vnoc/SKILL.md",
             "AGENTS.md",
             "CLAUDE.md"
@@ -397,8 +415,18 @@ fn dry_run_writes_nothing_and_json_lists_the_actions() {
                 "create".to_string()
             ),
             (
+                "tour_skill".to_string(),
+                ".claude/skills/vnoc-tour/SKILL.md".to_string(),
+                "create".to_string()
+            ),
+            (
                 "skill".to_string(),
                 ".agents/skills/vnoc/SKILL.md".to_string(),
+                "create".to_string()
+            ),
+            (
+                "tour_skill".to_string(),
+                ".agents/skills/vnoc-tour/SKILL.md".to_string(),
                 "create".to_string()
             ),
             (
@@ -435,15 +463,21 @@ fn global_writes_the_skill_in_the_home_folder_and_nothing_in_the_project() {
         out(&o),
         "created      ~/.claude/skills/vnoc/SKILL.md
              the skill, for claude
+created      ~/.claude/skills/vnoc-tour/SKILL.md
+             the vnoc-tour skill, for claude
 created      ~/.agents/skills/vnoc/SKILL.md
              the skill, for codex
+created      ~/.agents/skills/vnoc-tour/SKILL.md
+             the vnoc-tour skill, for codex
 "
     );
     assert!(files(&root).is_empty(), "nothing in the project");
     assert_eq!(
         files(&home),
         [
+            ".agents/skills/vnoc-tour/SKILL.md",
             ".agents/skills/vnoc/SKILL.md",
+            ".claude/skills/vnoc-tour/SKILL.md",
             ".claude/skills/vnoc/SKILL.md"
         ]
     );
@@ -687,7 +721,7 @@ fn vnoc_status_has_a_line_for_the_agents() {
     );
     let json: Value =
         serde_json::from_slice(&vnoc(&root, &home, &["status", "--json"]).stdout).unwrap();
-    assert_eq!(json["agents"]["files"].as_array().unwrap().len(), 4);
+    assert_eq!(json["agents"]["files"].as_array().unwrap().len(), 6);
     assert_eq!(json["agents"]["files"][0]["state"], "current");
     assert_eq!(json["agents"]["missing"], json!([]));
     // an older skill says what to run
@@ -956,6 +990,8 @@ fn permissions_writes_the_entries_to_the_local_settings_file_and_says_so() {
         out(&o),
         "created      .claude/skills/vnoc/SKILL.md
              the skill, for claude
+created      .claude/skills/vnoc-tour/SKILL.md
+             the vnoc-tour skill, for claude
 created      AGENTS.md
              the rules block, for claude
 created      CLAUDE.md
@@ -967,7 +1003,7 @@ commit these files so your team's agents get them
 "
     );
     let entries = allow_in(&root, SETTINGS_LOCAL);
-    assert_eq!(entries.len(), 15);
+    assert_eq!(entries.len(), 27);
     assert!(entries.contains(&"Bash(vnoc show *)".to_string()));
     assert!(entries.iter().all(|e| e.starts_with("Bash(vnoc ")));
     assert!(
@@ -1040,7 +1076,7 @@ fn permissions_project_writes_the_shared_file_and_not_the_local_one() {
     );
     assert_eq!((code(&o), err(&o).as_str()), (0, ""));
     assert!(out(&o).contains("allowed      V-NOC's read commands for Claude Code\nin           .claude/settings.json\n"), "{}", out(&o));
-    assert_eq!(allow_in(&root, ".claude/settings.json").len(), 15);
+    assert_eq!(allow_in(&root, ".claude/settings.json").len(), 27);
     assert!(!exists(&root, SETTINGS_LOCAL));
     // an unknown scope is a usage error
     let bad = vnoc(
@@ -1104,8 +1140,8 @@ fn the_user_s_own_entries_and_keys_stay_and_nothing_is_added_twice() {
     assert_eq!(&entries[..2], ["Bash(ls *)", "Bash(vnoc show *)"]);
     assert_eq!(
         entries.len(),
-        16,
-        "one user entry and fifteen of ours, `vnoc show` once"
+        28,
+        "one user entry and twenty-seven of ours, `vnoc show` once"
     );
     let v: Value = serde_json::from_str(&after).unwrap();
     assert_eq!(v["model"], "opus");
@@ -1125,7 +1161,7 @@ fn a_settings_file_that_is_not_json_is_left_exit_2_and_the_lines_are_printed() {
     assert_eq!(get(&root, SETTINGS_LOCAL), "{ \"permissions\": ");
     let text = out(&o);
     assert!(text.contains("left         V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n             it is not valid JSON"), "{text}");
-    assert!(text.contains("to let Claude Code run V-NOC's read commands without asking, add to .claude/settings.json:"), "{text}");
+    assert!(text.contains("to let Claude Code run V-NOC's read commands and the commands that write a tour without asking, add to .claude/settings.json:"), "{text}");
     // the rest was written all the same
     assert!(exists(&root, ".claude/skills/vnoc/SKILL.md"));
 }
@@ -1275,7 +1311,7 @@ fn remove_takes_back_only_what_install_added_and_status_says_where_they_are() {
             "--permissions",
         ],
     );
-    assert_eq!(allow_in(&root, SETTINGS_LOCAL).len(), 16);
+    assert_eq!(allow_in(&root, SETTINGS_LOCAL).len(), 28);
     let s = vnoc(&root, &home, &["agent", "status"]);
     assert_eq!(code(&s), 0);
     assert!(out(&s).contains("allowed      V-NOC's read commands for Claude Code\nin           .claude/settings.local.json\n"), "{}", out(&s));
@@ -1337,4 +1373,260 @@ fn a_settings_file_v_noc_made_goes_when_it_is_taken_back_to_nothing() {
         out(&o)
     );
     assert!(!exists(&root, SETTINGS_LOCAL));
+}
+
+// --------------------------------------------------------------------------------------------------------------------- the tours' skill
+
+#[test]
+fn install_writes_the_tours_skill_beside_the_first_for_each_agent_that_gets_the_first() {
+    let (root, home) = world("tour-skill");
+    let o = vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude,codex"],
+    );
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""));
+    for folder in [".claude/skills", ".agents/skills"] {
+        assert_eq!(get(&root, &format!("{folder}/vnoc/SKILL.md")), SKILL);
+        assert_eq!(
+            get(&root, &format!("{folder}/vnoc-tour/SKILL.md")),
+            TOUR_SKILL
+        );
+    }
+    // the rules block is the one block it was: it names no second skill
+    let rules = get(&root, "AGENTS.md");
+    assert_eq!(rules.matches("<!-- vnoc:start").count(), 1);
+    assert!(
+        !rules.contains("vnoc-tour"),
+        "the rules block does not change"
+    );
+    // an agent that is not picked gets neither
+    let (root, home) = world("tour-skill-one");
+    vnoc(&root, &home, &["agent", "install", "--agent", "codex"]);
+    assert!(!root.join(".claude").exists());
+    assert!(root.join(".agents/skills/vnoc-tour/SKILL.md").is_file());
+    // twice changes nothing
+    let again = vnoc(&root, &home, &["agent", "install", "--agent", "codex"]);
+    assert!(
+        out(&again).contains("current      .agents/skills/vnoc-tour/SKILL.md"),
+        "{}",
+        out(&again)
+    );
+    // `--skill-only` writes both skills and no rules; `--rules-only` neither skill
+    let (root, home) = world("tour-skill-only");
+    vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "codex", "--skill-only"],
+    );
+    assert_eq!(
+        files(&root),
+        [
+            ".agents/skills/vnoc-tour/SKILL.md",
+            ".agents/skills/vnoc/SKILL.md"
+        ]
+    );
+    let (root, home) = world("tour-rules-only");
+    vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "codex", "--rules-only"],
+    );
+    assert_eq!(files(&root), ["AGENTS.md"]);
+}
+
+#[test]
+fn an_install_from_before_tours_is_told_the_second_skill_is_not_installed_and_install_adds_it() {
+    let (root, home) = world("before-tours");
+    // what an older V-NOC left: the first skill and the rules, no vnoc-tour
+    vnoc(&root, &home, &["agent", "install", "--agent", "codex"]);
+    std::fs::remove_dir_all(root.join(".agents/skills/vnoc-tour")).unwrap();
+    let o = vnoc(&root, &home, &["agent", "status"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("vnoc-tour: not installed"), "{}", out(&o));
+    assert!(
+        out(&o).contains("current      .agents/skills/vnoc/SKILL.md"),
+        "{}",
+        out(&o)
+    );
+    let json: Value =
+        serde_json::from_slice(&vnoc(&root, &home, &["agent", "status", "--json"]).stdout).unwrap();
+    assert_eq!(json["missing"], json!(["tour_skill"]));
+    // the one line of `vnoc status` says it too
+    let status = vnoc(&root, &home, &["status"]);
+    assert!(
+        out(&status).contains("vnoc-tour: not installed"),
+        "{}",
+        out(&status)
+    );
+    // a fresh install has nothing missing, and says both skills
+    let (root, home) = world("not-before-tours");
+    vnoc(&root, &home, &["agent", "install", "--agent", "codex"]);
+    let o = vnoc(&root, &home, &["agent", "status"]);
+    assert!(!out(&o).contains("not installed"), "{}", out(&o));
+    assert!(
+        out(&o).contains(".agents/skills/vnoc-tour/SKILL.md"),
+        "{}",
+        out(&o)
+    );
+    assert!(
+        out(&o).contains("the vnoc-tour skill, read by codex"),
+        "{}",
+        out(&o)
+    );
+    // installing again over the old install writes the second and changes nothing else
+    let (root, home) = world("before-tours-2");
+    vnoc(&root, &home, &["agent", "install", "--agent", "codex"]);
+    std::fs::remove_dir_all(root.join(".agents/skills/vnoc-tour")).unwrap();
+    let before = get(&root, ".agents/skills/vnoc/SKILL.md");
+    let o = vnoc(&root, &home, &["agent", "install", "--agent", "codex"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(get(&root, ".agents/skills/vnoc-tour/SKILL.md"), TOUR_SKILL);
+    assert_eq!(get(&root, ".agents/skills/vnoc/SKILL.md"), before);
+    assert!(!out(&vnoc(&root, &home, &["agent", "status"])).contains("not installed"));
+}
+
+#[test]
+fn remove_takes_back_both_skills_and_the_folders_it_made() {
+    let (root, home) = world("remove-both");
+    vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude,codex"],
+    );
+    let o = vnoc(&root, &home, &["agent", "remove"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(
+        out(&o).contains(".claude/skills/vnoc-tour/SKILL.md"),
+        "{}",
+        out(&o)
+    );
+    assert!(
+        out(&o).contains(".agents/skills/vnoc-tour/SKILL.md"),
+        "{}",
+        out(&o)
+    );
+    assert_eq!(files(&root), Vec::<String>::new(), "nothing is left");
+    assert!(!root.join(".claude").exists() && !root.join(".agents").exists());
+    // a vnoc-tour skill written by hand is left, and said
+    let (root, home) = world("remove-hand-tour");
+    vnoc(&root, &home, &["agent", "install", "--agent", "codex"]);
+    put(
+        &root,
+        ".agents/skills/vnoc-tour/SKILL.md",
+        "---\nname: vnoc-tour\n---\nmine\n",
+    );
+    let o = vnoc(&root, &home, &["agent", "remove"]);
+    assert_eq!(code(&o), 0, "{}", out(&o));
+    assert!(
+        out(&o).contains("left         .agents/skills/vnoc-tour/SKILL.md"),
+        "{}",
+        out(&o)
+    );
+    assert!(get(&root, ".agents/skills/vnoc-tour/SKILL.md").contains("mine"));
+    assert!(
+        !root.join(".agents/skills/vnoc/SKILL.md").exists(),
+        "the first skill still went"
+    );
+    // --global: both, from the home folder
+    let (root, home) = world("remove-global");
+    vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "codex", "--global"],
+    );
+    assert!(home.join(".agents/skills/vnoc-tour/SKILL.md").is_file());
+    vnoc(&root, &home, &["agent", "remove", "--global"]);
+    assert_eq!(files(&home), Vec::<String>::new());
+}
+
+#[test]
+fn the_allow_list_has_where_and_the_writing_loop_and_none_of_what_reaches_further() {
+    let (root, home) = world("allow-tour");
+    let o = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude,codex",
+            "--permissions",
+        ],
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    // Claude Code: one `Bash(vnoc tour <command> *)` for each
+    let entries = allow_in(&root, SETTINGS_LOCAL);
+    for command in TOUR_ALLOWED {
+        let rule = format!("Bash(vnoc tour {command} *)");
+        assert_eq!(entries.iter().filter(|e| **e == rule).count(), 1, "{rule}");
+    }
+    assert!(entries.contains(&"Bash(vnoc tour where *)".to_string()));
+    for command in TOUR_ASKED {
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.contains(&format!("vnoc tour {command}"))),
+            "`{command}` asks the user: {entries:?}"
+        );
+    }
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e == "Bash(vnoc tour *)" || e == "Bash(vnoc *)"),
+        "{entries:?}"
+    );
+    // Codex: one rule, the same twelve words, and none of the others
+    let rules = get(&home, ".codex/rules/vnoc.rules");
+    let line = rules
+        .lines()
+        .find(|l| l.contains("\"tour\""))
+        .unwrap_or_else(|| panic!("a rule for tour in\n{rules}"));
+    assert!(line.contains("decision = \"allow\""), "{line}");
+    for command in TOUR_ALLOWED {
+        assert!(
+            line.contains(&format!("\"{command}\"")),
+            "{command} in {line}"
+        );
+    }
+    for command in TOUR_ASKED {
+        assert!(
+            !line.contains(&format!("\"{command}\"")),
+            "{command} in {line}"
+        );
+    }
+    // the lines printed for an agent that is not given the rules say the same
+    let (root, home) = world("allow-tour-lines");
+    let o = vnoc(
+        &root,
+        &home,
+        &[
+            "agent",
+            "install",
+            "--agent",
+            "claude,codex",
+            "--no-permissions",
+        ],
+    );
+    let text = out(&o);
+    assert!(text.contains("\"Bash(vnoc tour where *)\""), "{text}");
+    assert!(
+        text.contains("\"vnoc\", \"tour\", [\"start\", \"add\", \"finish\""),
+        "{text}"
+    );
+    for command in TOUR_ASKED {
+        assert!(!text.contains(&format!("vnoc tour {command}")), "{command}");
+    }
+    // taking it back takes the tour rules too
+    let (root, home) = world("allow-tour-remove");
+    vnoc(
+        &root,
+        &home,
+        &["agent", "install", "--agent", "claude", "--permissions"],
+    );
+    vnoc(&root, &home, &["agent", "remove"]);
+    assert!(
+        !root.join(SETTINGS_LOCAL).exists(),
+        "a settings file of only ours goes"
+    );
 }

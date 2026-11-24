@@ -276,14 +276,15 @@ pub enum Command {
     /// Prints a short how-to with examples: `vnoc guide` lists the subjects, `vnoc guide <topic>` prints one.
     ///
     /// Prints a short how-to for one subject, with examples that were run on a sample project: `vnoc guide` lists the subjects (read, tree, find,
-    /// write, check), `vnoc guide <topic>` prints one. Read `write` before you write your first note and `find` before you search. A flag you
+    /// write, check, tour), `vnoc guide <topic>` prints one. Read `write` before you write your first note and `find` before you search. A flag you
     /// do not find there is in `vnoc <command> --help`. It needs no project and no driver.
     Guide(GuideArgs),
-    /// Prints the skill file that tells an agent when and how to use V-NOC, as this binary carries it.
+    /// Prints the skill file that tells an agent when and how to use V-NOC, as this binary carries it: `vnoc skill`, or `vnoc skill tour` for the tours'.
     ///
     /// Prints the skill file (`SKILL.md`) that tells an agent when to use V-NOC, what never to do to the code it marks, and the commands that
-    /// matter, exactly as this binary carries it. It changes nothing. It needs no project and no driver.
-    Skill,
+    /// matter, exactly as this binary carries it. `vnoc skill tour` prints the second skill, `vnoc-tour`, for walking someone through code. It changes
+    /// nothing. It needs no project and no driver.
+    Skill(SkillArgs),
     /// Sets up the coding agents the user names: writes the skill and the rules block where their tools look. The user's step: an agent runs it only when asked.
     ///
     /// `vnoc agent install` writes the V-NOC skill (`SKILL.md`) into `.claude/skills/vnoc/` or `.agents/skills/vnoc/` and a marked block of rules into
@@ -690,7 +691,7 @@ pub enum AgentCommand {
     /// left (exit 2) unless --force; in a rules file only the block between its markers is replaced, the rest is as it was; installing twice
     /// changes nothing. Prints each file it wrote or left, then what to commit.
     ///
-    /// For Claude Code and Codex it also offers to let them run V-NOC's read commands without asking (never a write): in a terminal it asks,
+    /// For Claude Code and Codex it also offers to let them run V-NOC's read commands, and the commands that write a tour (`tour start`, `add`, `finish`, `plan`, `drop`, `resume`, and the tour reads), without asking (never `tour go`, `pin`, `ids`, `edit`, `share`, `delete`, `import`, `settings`, or any other write): in a terminal it asks,
     /// Enter means yes; --permissions says yes and --no-permissions says no without asking; with no terminal and neither flag nothing is
     /// written and the lines are printed. Claude Code: the entries are added to `.claude/settings.local.json` (yours, not committed;
     /// --permissions=project: the shared `.claude/settings.json`), and what is there already stays. Codex: `~/.codex/rules/vnoc.rules`.
@@ -732,7 +733,7 @@ pub struct InstallArgs {
     /// Replace a `SKILL.md` that V-NOC did not write.
     #[arg(long)]
     pub force: bool,
-    /// Let Claude Code and Codex run V-NOC's read commands without asking, with no question. `local` (the default) is `.claude/settings.local.json`,
+    /// Let Claude Code and Codex run V-NOC's read commands and the tour-writing commands without asking, with no question. `local` (the default) is `.claude/settings.local.json`,
     /// `project` is the shared `.claude/settings.json`.
     #[arg(
         long,
@@ -767,8 +768,15 @@ pub struct RemoveArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct SkillArgs {
+    /// Which skill: `tour` for the tours' skill. Without it, the first.
+    #[arg(value_name = "SKILL")]
+    pub which: Option<String>,
+}
+
+#[derive(Debug, Args)]
 pub struct GuideArgs {
-    /// The subject: `read`, `tree`, `find`, `write` or `check`. Without it, the list of subjects.
+    /// The subject: `read`, `tree`, `find`, `write`, `check` or `tour`. Without it, the list of subjects.
     #[arg(value_name = "TOPIC")]
     pub topic: Option<String>,
 }

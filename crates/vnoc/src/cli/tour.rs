@@ -218,7 +218,7 @@ impl Render for Started {
         }
         if !quiet {
             text.push_str(&format!(
-                "next: vnoc tour add {} <node> --body-file -\n",
+                "next: vnoc tour add {} <node> --body-file -   (vnoc guide tour)\n",
                 self.tour
             ));
         }

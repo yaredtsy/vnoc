@@ -140,6 +140,15 @@ fn slug(title: &str) -> String {
 /// The id for `title` on this `attempt`: the slug, `-`, and four characters taken from a BLAKE3 hash of the time in nanoseconds, the process id,
 /// the title, the attempt and a number that counts up in this process (two calls in one clock tick differ by it).
 fn id_for(title: &str, attempt: u32) -> TourId {
+    // FOR TESTS ONLY: `tests/guide.rs` sets this so the ids in a guide's examples are the ones its run prints. Not in any help text or guide; a value
+    // that is not four characters of the alphabet is ignored.
+    if let Some(suffix) = std::env::var("VNOC_TOUR_ID_SUFFIX")
+        .ok()
+        .filter(|v| valid_suffix(v))
+    {
+        return TourId::parse(&format!("{}-{suffix}", slug(title)))
+            .expect("a slug and four characters of the alphabet are an id");
+    }
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
@@ -156,6 +165,11 @@ fn id_for(title: &str, attempt: u32) -> TourId {
         .collect();
     TourId::parse(&format!("{}-{suffix}", slug(title)))
         .expect("a slug and four characters of the alphabet are an id")
+}
+
+/// Four characters of [`SUFFIX_ALPHABET`]: what an id's suffix is (the one `VNOC_TOUR_ID_SUFFIX` may give).
+fn valid_suffix(text: &str) -> bool {
+    text.len() == 4 && text.bytes().all(|b| SUFFIX_ALPHABET.contains(&b))
 }
 
 /// A new tour id for a title: `checkout-order-7k2q`. Two calls with the same title give two ids.
@@ -1147,6 +1161,17 @@ mod tests {
     }
 
     // ---- ids
+
+    #[test]
+    fn a_suffix_for_tests_is_four_characters_of_the_alphabet_and_nothing_else() {
+        for good in ["7k2q", "0000", "zzzz", "abcd"] {
+            assert!(valid_suffix(good), "{good}");
+        }
+        // the wrong length, a character the alphabet leaves out (i, l, o, u), upper case, a dash
+        for bad in ["", "7k2", "7k2q9", "ilou", "7K2Q", "7k-q", "7k2 ", "ünïc"] {
+            assert!(!valid_suffix(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn ids_for_five_titles() {

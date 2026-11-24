@@ -364,6 +364,7 @@ fn who(agents: &[Agent]) -> String {
 fn about(action: &Action, command: &str, picked: &[Agent]) -> String {
     let what = match (action.part, action.change) {
         (Part::Skill, _) => "the skill",
+        (Part::TourSkill, _) => "the vnoc-tour skill",
         (Part::Rules, Change::AddBlock) => "the V-NOC block, after what was there",
         (Part::Rules, Change::RemoveBlock) => "the V-NOC block; the rest of the file is as it was",
         (Part::Rules, Change::Delete) => "it held nothing but the V-NOC block",
@@ -537,7 +538,7 @@ fn permission_question(covered: &[Agent]) -> String {
         .filter_map(|a| agents::permission_name(*a))
         .collect();
     format!(
-        "Let {} run V-NOC's read commands without asking? Writes (doc new, doc tag, relink, repair, init) still ask.",
+        "Let {} run V-NOC's read commands, and the commands that write a tour, without asking? Other writes (doc new, doc tag, relink, repair, init, tour pin) still ask.",
         names.join(" and ")
     )
 }
@@ -834,7 +835,9 @@ fn describe(state: &State, part: Part) -> (&'static str, String, bool) {
         State::Changed => (
             "changed",
             match part {
-                Part::Skill => "by hand: vnoc agent install replaces it".to_string(),
+                Part::Skill | Part::TourSkill => {
+                    "by hand: vnoc agent install replaces it".to_string()
+                }
                 Part::Rules => "it differs from this vnoc's block (edited, or from another version): vnoc agent install replaces it".to_string(),
                 Part::Import => "it has more than the one import line V-NOC wrote: vnoc agent remove leaves it".to_string(),
                 Part::Permissions => String::new(),
@@ -901,6 +904,7 @@ impl Render for StatusAnswer {
             text.push_str(&format!("{word}{}\n", file.path));
             let part = match file.part {
                 Part::Skill => "the skill",
+                Part::TourSkill => "the vnoc-tour skill",
                 Part::Rules => "the rules block",
                 Part::Import => "the import of AGENTS.md",
                 Part::Permissions => "the permissions",
@@ -913,9 +917,18 @@ impl Render for StatusAnswer {
             text.push_str(&continued(&line));
         }
         for part in &self.status.missing {
+            if *part == Part::TourSkill {
+                // an install made before tours
+                text.push_str(&format!(
+                    "{}vnoc-tour: not installed\n{}",
+                    style::paint(style::warn(), format!("{:<13}", "missing")),
+                    continued("the skill for tours: vnoc agent install --skill-only writes it")
+                ));
+                continue;
+            }
             let (what, fix) = match part {
                 Part::Skill => ("the skill", "--skill-only"),
-                Part::Rules | Part::Import | Part::Permissions => {
+                Part::Rules | Part::Import | Part::Permissions | Part::TourSkill => {
                     ("the rules block", "--rules-only")
                 }
             };
@@ -955,7 +968,12 @@ pub fn summary(status: &agents::Status) -> String {
     }
     let mut parts = Vec::new();
     for part in [Part::Skill, Part::Rules] {
-        let files: Vec<_> = status.files.iter().filter(|f| f.part == part).collect();
+        // the second skill is judged with the first: the worst state of either is what is said
+        let files: Vec<_> = status
+            .files
+            .iter()
+            .filter(|f| f.part == part || (part == Part::Skill && f.part == Part::TourSkill))
+            .collect();
         if files.is_empty() {
             continue;
         }
@@ -976,16 +994,19 @@ pub fn summary(status: &agents::Status) -> String {
             });
         let places = files
             .iter()
+            .filter(|f| f.part != Part::TourSkill)
             .map(|f| match part {
                 Part::Skill => f.path.trim_end_matches("/vnoc/SKILL.md").to_string(),
-                Part::Rules | Part::Import | Part::Permissions => f.path.clone(),
+                Part::Rules | Part::Import | Part::Permissions | Part::TourSkill => f.path.clone(),
             })
             .collect::<Vec<_>>()
             .join(", ");
         parts.push(match worst.map(|f| &f.state) {
             None => match part {
                 Part::Skill => format!("skill current ({places})"),
-                Part::Rules | Part::Import | Part::Permissions => format!("rules in {places}"),
+                Part::Rules | Part::Import | Part::Permissions | Part::TourSkill => {
+                    format!("rules in {places}")
+                }
             },
             Some(State::Older { version }) => style::paint(
                 style::warn(),
@@ -1006,8 +1027,16 @@ pub fn summary(status: &agents::Status) -> String {
         });
     }
     for part in &status.missing {
+        if *part == Part::TourSkill {
+            parts.push(style::paint(
+                style::warn(),
+                "vnoc-tour: not installed (vnoc agent install --skill-only)",
+            ));
+            continue;
+        }
         let (name, flag) = match part {
             Part::Skill => ("skill", "--skill-only"),
+            Part::TourSkill => unreachable!("said above"),
             Part::Rules | Part::Import | Part::Permissions => ("rules", "--rules-only"),
         };
         parts.push(style::paint(
@@ -1123,7 +1152,7 @@ mod tests {
     fn the_question_names_only_the_agents_it_covers() {
         assert_eq!(
             permission_question(&[Agent::Claude]),
-            "Let Claude Code run V-NOC's read commands without asking? Writes (doc new, doc tag, relink, repair, init) still ask."
+            "Let Claude Code run V-NOC's read commands, and the commands that write a tour, without asking? Other writes (doc new, doc tag, relink, repair, init, tour pin) still ask."
         );
         assert!(
             permission_question(&[Agent::Claude, Agent::Codex])

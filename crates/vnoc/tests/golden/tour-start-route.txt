@@ -4,4 +4,4 @@ planned 4 stops
   s2  ◌ OrderService.parse_order   orders/service.py  ← s1 line 16
   s3  ◌ Line   orders/models.py                       ← s2 line 12
   s4  ◌ Order   orders/models.py                      ← s2 line 13
-next: vnoc tour add <tour> <node> --body-file -
+next: vnoc tour add <tour> <node> --body-file -   (vnoc guide tour)
