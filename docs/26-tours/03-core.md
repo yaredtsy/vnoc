@@ -48,7 +48,8 @@ Layers, each cheaper than the next, and each done only when something asks for i
 | the state, pinned | [`01`](01-on-disk.md) §4's table |
 | the size | stops written, stops planned, steps. Minutes = steps × 20 s (2 steps guessed for a planned stop), rounded up |
 
-Replaying 40 stops is parsing about 150 short lines. **[measure]** TR5.
+Replaying 40 stops is parsing about 150 short lines. **Measured (TR5, `tours_checks measure-check`, macOS, release build; a tour of 40 stops and
+100 blocks over 12 files, an 18 KB file; median of 9): 348 µs to read the file and fold it.**
 
 ## 2. Finding each stop, and comparing
 
@@ -122,6 +123,11 @@ Then, for a stop that was found, `tours::check`:
 | **the open tour is live** | when a file of the open tour changes, the core drops its answer and sends `vnoc/toursChanged`; the window asks again and gets a new check. Edit `reserve_stock`, save, and stop 3 says so |
 | **a file of no open or drawn tour changes** | nothing is computed. Its tours' recorded checks are simply not valid any more, and are found so when someone next looks |
 | **the list after a restart** | the rows drawn ask; each is answered by `stat`s if nothing changed while VS Code was closed |
+
+**Measured (TR5, the same tour and machine, median of 9; the index is already built, which is the cost the record avoids):** a real check, which finds
+all 40 stops, reads each of the 12 files once and hashes every stop and block, **626 µs** (`Index::tree`, which the command builds first, 60 µs more); a
+valid recorded check, the state file and 13 `stat`s, **45 µs**. The record is about 14 times cheaper than a check, and much more than that
+with the driver: starting it and building the index is what a valid record leaves out. Replay (§1) is the same for both.
 
 **[check]** TR0 (open check 7): that a size and a changed-time are enough to say "this file did not change". If a platform's clock is
 too coarse for that, the record also keeps a hash of each file, compared only when the size and time are equal and the time is within
