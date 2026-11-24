@@ -346,7 +346,7 @@ not, and the skill tells the agent to **ask the user** and to run `pin --commit`
 |---|---|
 | `ids <tour> [<stop>…]` | gives every stop's node (or the ones named) an ID, where it has none: the ID, the marker in the code, `node.toml`, by the attach flow without its doc. Then one `ids` record. Prints each file it changed, and `read these files again before you edit them`. Lines move down by one where a marker was added; the hashes leave marker lines out, so the tour stays fresh. Refused in a project whose `vnoc.toml` says `[ids] default = "none"`. A node that already has an ID is only recorded |
 | `edit <tour> --title "…" --question "…" --detail …` | a `meta` record. The id and the file's name stay |
-| `share <tour>` | moves a **finished** tour's file to `.vnoc/tours/` and prints `commit it to share it with the project`. A tour that is being written is refused. `--private` moves it back |
+| `share <tour>` | moves a tour that is **not being written** (finished, or stopped) to `.vnoc/tours/` and prints `commit it to share it with the project`. A tour that is being written is refused. `--private` moves it back |
 | `delete <tour>…` | moves the tour's file and its state file to `.vnoc/local/trash/` and prints the path. Nothing is erased. A tour that is being written is refused (stop it first) |
 | `settings` | prints the two settings of [`01`](01-on-disk.md) §12 and where each value comes from (the file, or the default). With `--ids <value>` or `--commit <value>`: changes that key in `.vnoc/vnoc.toml` and keeps everything else in the file, as `vnoc tag describe` does for `tags.toml` |
 

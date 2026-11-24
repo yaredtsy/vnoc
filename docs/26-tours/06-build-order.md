@@ -171,7 +171,7 @@ Commit: `tours TR6: replace, drop, edit, share, delete; a stopped tour refuses t
 |---|---|
 | `identity/attach.rs` | `ensure_node` split out of `attach` (the ID, the marker, `node.toml`); `attach` = `ensure_node` + `create_doc`. No behaviour change: the existing attach tests pass untouched. (22's PG2 plans the same split; whichever lands second builds on the first) |
 | `extension/src/attentionView.ts` | a Missing node with no docs: the tooltip *"It has no docs. Remove cleans it up."* instead of *"Its docs are kept."* (README §6 ask 7; only if the user keeps the pick) |
-| `tours/rebase.rs` | `rebase(vnoc_root, path, before, after)` ([`01`](01-on-disk.md) §7): every tour with a stop in `path`; the stops and blocks fresh against `before` get new lines and hashes against `after` (the slide of TR5's `compare`), one `rebase` record per tour; replay applies it (`fold.rs`). Called by `tour ids` and by every other writer of a marker: `identity::attach` (both sinks: `before` is the text the plan was made from, `after` that text with the planned edits applied, so the editor's sink needs no second read), `write_id`, `repair`. Lock order: the write lock, then the tours lock |
+| `tours/rebase.rs` | `rebase(vnoc_root, path, before, after)` ([`01`](01-on-disk.md) §7): every tour with a stop in `path`; the stops and blocks fresh against `before` get new lines and hashes against `after` (the slide of TR5's `compare`), one `rebase` record per tour; replay applies it (`fold.rs`). Called from **one place**: `identity/attach.rs` `apply_edits`, which every marker edit goes through (attach, write-ID, relink, repair, `tour ids`; checked at TR6's review: it is the only caller of `EditSink::apply`). Both sinks: `before` is the text the plan was made from, `after` that text with the planned edits applied (`edits::apply_text_edits`), so the editor's sink needs no second read. Lock order: the write lock, then the tours lock |
 | `tours/ids.rs`, `cli/tour.rs` | `tour ids <tour> [<stop>…]`: under the project's write lock, `ensure_node` for each stop's node with `EditSink::Disk`; one `ids` record; prints each changed file. Refused with `[ids] default = "none"` |
 | `tours/settings.rs`, `cli/tour.rs` | `[tours]` in `vnoc.toml` ([`01`](01-on-disk.md) §12): `read` with the defaults, an unknown value read as `"ask"` and reported once; `set` one key with `toml_edit`; `tour settings [--ids …] [--commit …]` |
 | `tours/finish.rs`, `cli/tour.rs` | `finish` after `end`, step 1 of [`02`](02-commands.md) §5: `ids` by the setting, `--ids`, `--no-ids`; the `ask the user` line |
@@ -183,7 +183,7 @@ TR0's check 5 found holds (`vnoc check` prints what it printed before, with the 
 line (golden); `"always"` writes them; `"never"` prints nothing; `--ids` and `--no-ids` win over each; `ids = "sometimes"` is read as
 `"ask"` with one problem line; `tour settings --ids always` changes that key and keeps a comment and an unknown table in the file.
 
-Commit: `tours TR7: vnoc tour ids gives a tour's stops IDs; [tours] ids says when`.
+Two commits: `tours TR7a: the rebase record; vnoc tour ids` (ensure_node, rebase, the hook, `ids`, the tooltip) and `tours TR7b: [tours] ids says when` (settings, `finish`'s IDs step).
 
 ### TR8 A tour as one document: export, import
 

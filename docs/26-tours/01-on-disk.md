@@ -372,7 +372,7 @@ lock). It is state, not history; if it is lost, the reader starts at the cover a
 | Part | Holds | Written by |
 |---|---|---|
 | **`place`** (D17) | `at`: `"cover"`, `"end"`, or a step's id · `seen`: the stops read to their last step · `back`: where the reader was before each jump, 20 at most · `moved` and `by` (`reader` or `command`) · `open`: a window is showing this tour (set and cleared by the core; `where` reads it together with `moved`, so a crash that left it `true` reads as "open, last moved two days ago") | the core, when the reader moves on the canvas; `vnoc tour go` |
-| **`check`** (D8) | the tour file's length and each file's `[size, changed-time in ns]` when the check ran · what was not fresh: the changed stops and blocks, the blocks found at other lines. A stop not named is fresh; a file recorded as `null` was not there | the core, when it checks a tour for the sidebar or for an open tour; `vnoc tour check` |
+| **`check`** (D8) | the tour file's length and each file's `[size, changed-time in ns]` when the check ran · what was not fresh: the changed stops and blocks, the blocks found at other lines · `now`: for a stop found under another name or path, its name, path and lines now (added in TR6, so `check` can say `read_order (was parse_order)` without an index) · A stop not named is fresh; a file recorded as `null` was not there | the core, when it checks a tour for the sidebar or for an open tour; `vnoc tour check` |
 
 - **A recorded check is valid** while the tour's file has that length and every file in `files` has that size and time. Then it is the
   answer, and no source file is read. Otherwise the tour is checked again and the record rewritten ([`03`](03-core.md) §3).
