@@ -113,6 +113,15 @@ const ASK: Setting = Setting {
     from: Origin::Default,
 };
 
+/// The one sentence for `ids = "always"` (the file's, or `--ids` of one call) in a project that writes no ID lines (`[ids] default = "none"`): the
+/// setting asks for what the project forbids (01 §12). `None` for anything else.
+pub fn does_nothing_here(ids: Choice, project_writes_ids: bool) -> Option<String> {
+    (ids == Choice::Always && !project_writes_ids).then(|| {
+        "ids = \"always\" does nothing here: this project writes no ID lines ([ids] default = \"none\")"
+            .to_string()
+    })
+}
+
 /// The settings of the project whose `.vnoc/` is `vnoc_root`. No file is the defaults; a file that is not TOML is an error.
 pub fn read(vnoc_root: &Path) -> Result<Settings, SettingsError> {
     let text = match std::fs::read_to_string(layout::project_file(vnoc_root)) {
@@ -233,6 +242,23 @@ mod tests {
                 "[tours] commit = 3 in .vnoc/vnoc.toml is not \"always\", \"ask\" or \"never\": read as \"ask\"",
             ]
         );
+    }
+
+    #[test]
+    fn always_in_a_project_that_writes_no_ids_has_its_sentence() {
+        assert_eq!(
+            does_nothing_here(Choice::Always, false).as_deref(),
+            Some(
+                "ids = \"always\" does nothing here: this project writes no ID lines ([ids] default = \"none\")"
+            )
+        );
+        for (choice, writes) in [
+            (Choice::Always, true),
+            (Choice::Ask, false),
+            (Choice::Never, false),
+        ] {
+            assert_eq!(does_nothing_here(choice, writes), None);
+        }
     }
 
     #[test]

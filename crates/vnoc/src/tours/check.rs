@@ -113,7 +113,7 @@ impl Lens<'_> {
 
     /// Every run of `count` lines that are not markers (a run starts and ends on one; marker lines between are inside it and count for nothing)
     /// inside lines `from..=to`, with the block's hash: their file lines.
-    fn runs(&self, from: u32, to: u32, count: usize, want: hash::Hash) -> BTreeSet<(u32, u32)> {
+    fn runs(&self, from: u32, to: u32, count: usize, want: &[hash::Hash]) -> BTreeSet<(u32, u32)> {
         let kept: Vec<u32> = (from.max(1)..=to.min(self.all.len() as u32))
             .filter(|n| !self.is_marker(self.all[*n as usize - 1]))
             .collect();
@@ -123,7 +123,7 @@ impl Lens<'_> {
         }
         for i in 0..=kept.len() - count {
             let (a, b) = (kept[i], kept[i + count - 1]);
-            if self.hash(a, b) == want {
+            if want.contains(&self.hash(a, b)) {
                 found.insert((a, b));
             }
         }
@@ -145,7 +145,10 @@ pub fn compare(stop: &TourStop, node: &Node, file_text: &str, marker_ids: &[&str
     let total = lens.all.len() as u32;
     let (first, last) = node_range(node, total);
     let intro_changed = match (&stop.hash, node.kind) {
-        (Some(want), Kind::Function | Kind::Class) => lens.hash(first, last) != *want,
+        (Some(want), Kind::Function | Kind::Class) => {
+            let now = lens.hash(first, last);
+            now != *want && Some(now) != stop.earlier_hash
+        }
         _ => false,
     };
     let mut blocks = Vec::new();
@@ -182,6 +185,11 @@ pub fn compare(stop: &TourStop, node: &Node, file_text: &str, marker_ids: &[&str
     }
 }
 
+/// A block's lines hash to its hash, or to the one its last `rebase` replaced (the code before V-NOC's own edit: not saved yet, or undone).
+fn accepts(block: &TourBlock, now: hash::Hash) -> bool {
+    now == block.hash || Some(now) == block.earlier_hash
+}
+
 fn flatten<'a>(blocks: &'a [TourBlock], visit: &mut dyn FnMut(&'a TourBlock)) {
     for block in blocks {
         visit(block);
@@ -207,14 +215,17 @@ fn walk(
         let in_place = block.lines.first >= written_first
             && end <= node_last
             && end <= lens.all.len() as u32
-            && lens.hash(base, end) == block.hash;
+            && accepts(block, lens.hash(base, end));
         let (state, now) = if in_place {
             (BlockState::Fresh, (base, end))
         } else {
             let count = length as usize;
+            let want: Vec<hash::Hash> = std::iter::once(block.hash)
+                .chain(block.earlier_hash)
+                .collect();
             let mut found = BTreeSet::new();
             for k in (count.saturating_sub(slack).max(1)..=count).rev() {
-                found.extend(lens.runs(region.0, region.1, k, block.hash));
+                found.extend(lens.runs(region.0, region.1, k, &want));
             }
             match (found.len(), found.first()) {
                 (1, Some(&(a, b))) => (

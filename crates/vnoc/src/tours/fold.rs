@@ -53,6 +53,8 @@ pub struct TourBlock {
     pub id: StepId,
     pub lines: Lines,
     pub hash: Hash,
+    /// The hash the last `rebase` replaced, when it was another: the check accepts it too (the code before V-NOC's own edit: not saved yet, or undone).
+    pub earlier_hash: Option<Hash>,
     pub title: String,
     pub text: String,
     pub details: Vec<TourBlock>,
@@ -70,6 +72,8 @@ pub struct TourStop {
     pub node: Option<NodeId>,
     pub lines: Option<Lines>,
     pub hash: Option<Hash>,
+    /// As [`TourBlock::earlier_hash`].
+    pub earlier_hash: Option<Hash>,
     /// The stop this one is nested in: its `from` when that stop is on the route, else `None` (the stop is at the top).
     pub from: Option<StopId>,
     pub line: Option<u32>,
@@ -363,12 +367,19 @@ impl Replay {
                     };
                     if id.is_intro() {
                         stop.lines = Some(to.lines);
-                        if to.hash.is_some() {
-                            stop.hash = to.hash;
+                        if let Some(hash) = to.hash {
+                            // only a hash that is another is remembered: a rebase that moves lines must not forget the one before it
+                            if stop.hash != Some(hash) {
+                                stop.earlier_hash = stop.hash;
+                            }
+                            stop.hash = Some(hash);
                         }
                     } else if let Some(block) = block_mut(&mut stop.blocks, id) {
                         block.lines = to.lines;
                         if let Some(hash) = to.hash {
+                            if block.hash != hash {
+                                block.earlier_hash = Some(block.hash);
+                            }
                             block.hash = hash;
                         }
                     }
@@ -451,6 +462,7 @@ impl Replay {
             node: None,
             lines: None,
             hash: None,
+            earlier_hash: None,
             from,
             line: planned.line,
             same_as: planned.same_as,
@@ -474,6 +486,7 @@ impl Replay {
             node: record.node,
             lines: record.lines,
             hash: record.hash,
+            earlier_hash: None,
             from,
             line: record.line,
             same_as: record.same_as,
@@ -509,6 +522,7 @@ impl Replay {
         if let Some(old) = find_block(&mut stop.blocks, record.id) {
             old.lines = record.lines;
             old.hash = record.hash;
+            old.earlier_hash = None;
             old.title = record.title;
             old.text = record.text;
             return;
@@ -517,6 +531,7 @@ impl Replay {
             id: record.id,
             lines: record.lines,
             hash: record.hash,
+            earlier_hash: None,
             title: record.title,
             text: record.text,
             details: Vec::new(),
@@ -1478,6 +1493,50 @@ mod tests {
         assert_eq!(pin.places.0.len(), 1);
         assert_eq!(pin.places.0[0].0.to_string(), "s1");
         assert_eq!(pin.places.0[0].1.path.as_str(), "a.py");
+    }
+
+    #[test]
+    fn a_rebase_keeps_the_hash_it_replaced_and_a_rebase_of_the_same_hash_forgets_nothing() {
+        let rebase = |lines: &str, hash: u64| {
+            format!(
+                r#"{{"type":"rebase","steps":{{"s1":{{"lines":{lines},"hash":"{hash:016x}"}},"s1.b1":{{"lines":{lines},"hash":"{hash:016x}"}}}}}}"#
+            )
+        };
+        let h = |t: &Tour| {
+            let s = &t.stops[0];
+            (
+                s.hash.unwrap().to_string(),
+                s.earlier_hash.map(|h| h.to_string()),
+                s.blocks[0].hash.to_string(),
+                s.blocks[0].earlier_hash.map(|h| h.to_string()),
+            )
+        };
+        let base = [stop(1, None), step(1, 1, None)];
+        let with = |extra: &[String]| tour(&[base.to_vec(), extra.to_vec()].concat());
+        // as written: no earlier hash
+        let t = with(&[]);
+        assert_eq!(h(&t).1, None);
+        // one rebase: the hash it replaced (stop 1 hashed to 1, the block to 1)
+        let t = with(&[rebase("[1,21]", 0xa)]);
+        assert_eq!(
+            h(&t),
+            (
+                format!("{:016x}", 0xa),
+                Some(format!("{:016x}", 1)),
+                format!("{:016x}", 0xa),
+                Some(format!("{:016x}", 1))
+            )
+        );
+        // a second one that moves lines and keeps the hash does not forget the first; one that changes it remembers the latest only
+        let t = with(&[rebase("[1,21]", 0xa), rebase("[1,22]", 0xa)]);
+        assert_eq!(h(&t).1, Some(format!("{:016x}", 1)));
+        let t = with(&[rebase("[1,21]", 0xa), rebase("[1,22]", 0xb)]);
+        assert_eq!(h(&t).1, Some(format!("{:016x}", 0xa)));
+        // a stop written again, and a block written again, start over
+        let t = with(&[rebase("[1,21]", 0xa), stop(1, None), step(1, 1, None)]);
+        assert_eq!(h(&t).1, None);
+        let t = with(&[rebase("[1,21]", 0xa), step(1, 1, None)]);
+        assert_eq!(h(&t).3, None);
     }
 
     #[test]

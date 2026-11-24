@@ -9678,7 +9678,7 @@ fn finish_with_ids_never_says_nothing_and_the_flags_win_over_each_setting() {
 }
 
 #[test]
-fn a_project_that_writes_no_ids_gets_nothing_from_finish_and_no_line() {
+fn a_project_that_writes_no_ids_gets_nothing_from_finish_and_the_always_says_it_does_nothing() {
     let root = sample_copy("tour-finish-none");
     write_vnoc_toml(
         &root,
@@ -9686,15 +9686,70 @@ fn a_project_that_writes_no_ids_gets_nothing_from_finish_and_no_line() {
     );
     let tour = ids_tour(&root);
     let charge = std::fs::read(root.join("billing/charge.py")).unwrap();
-    assert_eq!(finish_ok(&root, &tour, &[]), "finished: 4 stops, 5 steps\n");
+    let said = finish_ok(&root, &tour, &[]);
+    golden_text("tour-finish-ids-none.txt", &said);
     assert_eq!(
         std::fs::read(root.join("billing/charge.py")).unwrap(),
         charge
     );
-    let ask = sample_copy("tour-finish-none-ask");
-    write_vnoc_toml(&ask, "format = 1\n\n[ids]\ndefault = \"none\"\n");
-    let t = ids_tour(&ask);
-    assert_eq!(finish_ok(&ask, &t, &[]), "finished: 4 stops, 5 steps\n");
+    assert!(records_of(&root, &tour, "ids").is_empty());
+    let json = tour_json(
+        &sample_copy_like(&root, "tour-finish-none-json"),
+        &["settings"],
+    );
+    assert!(
+        json["does_nothing"]
+            .as_str()
+            .unwrap()
+            .starts_with("ids = \"always\" does nothing here")
+    );
+    // `--ids` of one call, with the setting at ask: the same sentence, and still nothing written
+    let flag = sample_copy("tour-finish-none-flag");
+    write_vnoc_toml(&flag, "format = 1\n\n[ids]\ndefault = \"none\"\n");
+    let t = ids_tour(&flag);
+    let said = finish_ok(&flag, &t, &["--ids"]);
+    assert_eq!(
+        said.matches("note: ids = \"always\" does nothing here")
+            .count(),
+        1,
+        "{said}"
+    );
+    assert!(
+        !said.contains("ask the user") && !said.contains("wrote IDs"),
+        "{said}"
+    );
+    // the setting at ask or never: no line at all
+    for word in ["ask", "never"] {
+        let ask = sample_copy(&format!("tour-finish-none-{word}"));
+        write_vnoc_toml(
+            &ask,
+            &format!("format = 1\n\n[ids]\ndefault = \"none\"\n\n[tours]\nids = \"{word}\"\n"),
+        );
+        let t = ids_tour(&ask);
+        assert_eq!(finish_ok(&ask, &t, &[]), "finished: 4 stops, 5 steps\n");
+    }
+}
+
+/// A second copy of a project's `.vnoc/vnoc.toml`, in a fresh sample: for a command that only reads the settings.
+fn sample_copy_like(root: &Path, label: &str) -> PathBuf {
+    let copy = sample_copy(label);
+    std::fs::copy(root.join(".vnoc/vnoc.toml"), copy.join(".vnoc/vnoc.toml")).unwrap();
+    copy
+}
+
+#[test]
+fn settings_says_always_does_nothing_where_the_project_writes_no_ids() {
+    let root = sample_copy("tour-settings-none");
+    write_vnoc_toml(&root, "format = 1\n\n[ids]\ndefault = \"none\"\n");
+    assert!(!tour_ok(&root, &["settings"]).contains("does nothing"));
+    let said = tour_ok(&root, &["settings", "--ids", "always"]);
+    golden_text("tour-settings-ids-none.txt", &said);
+    // the file still says what the person asked, and the other table is as it was
+    let toml = std::fs::read_to_string(root.join(".vnoc/vnoc.toml")).unwrap();
+    assert!(
+        toml.starts_with("format = 1\n\n[ids]\ndefault = \"none\"\n"),
+        "{toml}"
+    );
 }
 
 #[test]
@@ -9758,4 +9813,77 @@ fn settings_shows_both_with_where_each_comes_from_and_sets_one_keeping_the_file(
     assert_eq!(exit, 2, "{stderr}");
     assert!(stderr.contains("no .vnoc/vnoc.toml"), "{stderr}");
     assert!(!bare.join(".vnoc/vnoc.toml").exists());
+}
+
+// ------------------------------------------------------------------------------------------------------------------ tours (TR7c)
+
+#[test]
+fn a_rebased_tour_is_fresh_on_the_code_before_the_edit_and_changed_on_other_code() {
+    // the editor applied V-NOC's edit to a buffer that was not saved, or the person undid it: the file on disk is the code before the edit
+    let root = sample_copy("tour-rebase-undo");
+    let tour = loop_tour(&root);
+    let original = std::fs::read(root.join("billing/charge.py")).unwrap();
+    let done = run(vnoc(&root, &["doc", "new", RETRY, "--title", "why retry"]));
+    assert_eq!(code(&done), 0, "{}", text(&done.stderr));
+    assert!(checked(&root, &[]).1);
+    let edited = std::fs::read(root.join("billing/charge.py")).unwrap();
+    assert_ne!(edited, original);
+    std::fs::write(root.join("billing/charge.py"), &original).unwrap();
+    let (from, fresh, stops) = checked(&root, &[]);
+    assert_eq!(
+        (from.as_str(), fresh, stops),
+        ("check", true, vec![]),
+        "undone"
+    );
+    // the edit again (a redo): fresh
+    std::fs::write(root.join("billing/charge.py"), &edited).unwrap();
+    assert!(checked(&root, &[]).1);
+    // the code before the edit with a change inside the loop: changed, as it is with any other code
+    std::fs::write(root.join("billing/charge.py"), &original).unwrap();
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "return one_try()",
+        "return one_try(1)",
+    );
+    assert!(!checked(&root, &[]).1);
+    // the docstring changed in some other way than the edit: changed
+    std::fs::write(root.join("billing/charge.py"), &original).unwrap();
+    edit_file(
+        &root,
+        "billing/charge.py",
+        "Charge the order,",
+        "Charge one order,",
+    );
+    assert!(!checked(&root, &[]).1);
+    let _ = tour;
+}
+
+#[test]
+fn a_function_with_no_docstring_is_fresh_on_its_code_before_the_marker_too() {
+    let root = sample_copy("tour-rebase-undo-tally");
+    let source = "def tally(values):\n    total = 0\n    count = 0\n    for value in values:\n        total += value\n        count += 1\n    average = total / count\n    return average\n";
+    std::fs::write(root.join("billing/extra.py"), source).unwrap();
+    let tour = tour_start(&root, "tally");
+    let body = "tally adds the values up and divides by how many there were.\n\n## 2-3 Start from zero\nBoth counters begin at nothing.\n\n## 4-8 Loop, then divide\nEach value adds to the total and the count; the average is their ratio.\n";
+    assert_eq!(
+        code(&tour_add(
+            &root,
+            &tour,
+            "billing/extra.py::tally",
+            &[],
+            body
+        )),
+        0
+    );
+    tour_ok(&root, &["ids", &tour]);
+    assert!(checked(&root, &[]).1);
+    std::fs::write(root.join("billing/extra.py"), source).unwrap();
+    assert!(checked(&root, &[]).1, "undone");
+    std::fs::write(
+        root.join("billing/extra.py"),
+        source.replace("count = 0", "count = 1"),
+    )
+    .unwrap();
+    assert!(!checked(&root, &[]).1);
 }

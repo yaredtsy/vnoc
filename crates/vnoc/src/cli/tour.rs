@@ -732,7 +732,14 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
     let mut notes = read.problems;
     // a stop whose node had an ID when it was written has nothing to give: no index is built for a tour with no such stop
     let could = tour.stops.iter().any(|s| s.written && s.node.is_none());
-    if (!already || by_flag) && choice != Choice::Never && could && project_writes_ids(&project)? {
+    let writes_ids = project_writes_ids(&project)?;
+    if (!already || by_flag)
+        && let Some(sentence) = settings::does_nothing_here(choice, writes_ids)
+    {
+        // the setting asks for what the project forbids: said instead of written
+        notes.push(sentence);
+    }
+    if (!already || by_flag) && choice != Choice::Never && could && writes_ids {
         // the tour is finished already: no driver to count with is a note, not a failure of `finish`
         let opened = match open_from(global).await {
             Ok(opened) => Some(opened),
@@ -1400,6 +1407,9 @@ struct SettingsShown {
     changed: Vec<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     problems: Vec<String>,
+    /// `ids = "always"` in a project that writes no ID lines: it does nothing there
+    #[serde(skip_serializing_if = "Option::is_none")]
+    does_nothing: Option<String>,
 }
 
 impl Render for SettingsShown {
@@ -1422,6 +1432,9 @@ impl Render for SettingsShown {
         }
         text.push_str(&row("ids", &self.ids));
         text.push_str(&row("commit", &self.commit));
+        if let Some(sentence) = &self.does_nothing {
+            text.push_str(&format!("{sentence}\n"));
+        }
         for problem in &self.problems {
             text.push_str(&format!("note: {problem}\n"));
         }
@@ -1468,6 +1481,10 @@ async fn settings(global: &Global, args: &TourSettingsArgs) -> Result<(), Failur
             commit: shown(read.commit),
             changed,
             problems: read.problems,
+            does_nothing: settings::does_nothing_here(
+                read.ids.value,
+                project_writes_ids(&project)?,
+            ),
         },
         global,
     )
