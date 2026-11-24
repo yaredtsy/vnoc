@@ -169,16 +169,24 @@ A stop with `--same-as` sends the intro only: one sentence on why the tour is he
 | Check | The refusal says |
 |---|---|
 | a text or a title over its budget | `block 2 text: 412 of 280 characters` |
+| a text over 64 KB (read before anything else) | `the text is 70000 bytes: the most one stop takes is 65536` |
+| the text has an intro | `intro: there is none. Start with one paragraph on what this is for, before the first heading` |
+| a block has text | `block 2 text: there is none. Every block is one paragraph on why those lines are there` |
+| a part is one paragraph | `block 2 text: a blank line starts a second paragraph. A step is one paragraph` (`intro: …` for the intro) |
+| a heading has line numbers, from 1, the first not after the last, and a title | ``block 1: the heading has no line numbers: write `## 11-24 Title` (`## 24 Title` for one line)``; `block 1: lines start at 1, not 0`; `block 1: lines 24-11 are backwards: the first line comes first`; ``block 1: the heading has no title: write `## 11-24 Title` `` (a `###` heading says `###` in its example) |
+| a `###` has a `##` before it | `block 1: a detail needs a block before it: write a ## block first` |
 | a block's lines are inside the node | `block 1: lines 40-44 are outside reserve_stock (19-31)` |
 | a detail's lines are inside its block | `block 3 (18-26) is not inside block 1 (11-24)` |
 | blocks beside each other do not overlap | `blocks 2 and 3 both light line 17` |
 | a node under 8 lines has no blocks (W9) | `check_stock is 4 lines: a stop this short is one step. Put it all in the first paragraph` |
 | a folder has no blocks; a `--same-as` stop has none | `app/ is a folder: it has no lines to light` |
+| a `--same-as` stop has no blocks | `a --same-as stop is one sentence: it has no blocks` |
 | a title is a phrase on one line, with no full stop at the end | `block 1 title ends with a full stop` |
 | a text has no list, table, code fence, image, link or HTML, and no heading but the block headings | `block 2 text: a list. A step is one paragraph` |
 | `--from` is a stop of this tour; `--line` is inside that stop's node | `--line 99 is outside checkout_order (11-30)` |
 | `--same-as` is a written stop on the same node | `s2 is check_stock, not reserve_stock` |
 | at most 12 blocks in a stop (details counted), 40 stops on the route | `this tour has 40 stops, the most one tour holds. Finish it and start a second tour` |
+| at most 12 blocks in a stop, details counted (said at the first block over) | `this stop has 13 blocks, the most one stop holds is 12 (details count). Make the rest a second stop` |
 | the node is in the index | the usual "no such node" with "did you mean" (21.02 §4) |
 
 Blocks are numbered in the order they are written in the text (`block 3` is the third heading, at any depth). Every problem of one
