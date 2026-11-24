@@ -117,6 +117,8 @@ Commit: `tours TR3: tours live in .vnoc/tours and .vnoc/local/tours; start, appe
 | `cli/args.rs`, `cli/mod.rs` | `Command::Tour(TourCommand)` |
 | `cli/tour.rs` | the five handlers: parse, call, print ([`02`](02-commands.md) §3 – §6, §12); `--json`. `finish` does not pin yet |
 | `tours/add.rs` | the records keep `hash` as the `Hash` type of TR2, not a string (`record.rs`); `plan_stop` ([`03`](03-core.md) §7): the node from `Lookup::resolve`, its lines from `source.rs`, the marker IDs, the rules, the hashes, the records |
+| `tours/find.rs` | `find` ([`03`](03-core.md) §2): a stop → its node now, by ID, then by exact name. Moved here from TR5: `--from`, `--line` and `--same-as` need it |
+| `tours/store.rs` | `next_stop_id` and `next_block_id` return `None` when the numbers are used up (TR3 saturated, which would reuse an id): `add` refuses |
 | `tours/view.rs` | the outline `show` prints, without a check |
 | `crates/vnoc/tests/cli.rs`, `tests/golden/tour-*.{txt,json}` | below |
 
@@ -134,7 +136,6 @@ Commit: `tours TR4: vnoc tour start, add, finish, list, show`.
 
 | Files | What |
 |---|---|
-| `tours/find.rs` | `find` ([`03`](03-core.md) §2): by ID, by name |
 | `tours/check.rs` | compare; each block in place, else slid inside its parent's lines, else changed; `fresh(…, mode)`: the recorded check when it is valid (the tour's length, each file's size and time, TR0's answer to check 7), else a check, then `write_part` |
 | `tours/on.rs` | the map of 03 §6 |
 | `cli/tour.rs` | `tour check [<tour>…] [--again]`; `show --check`; `list --check`; `list` shows a valid recorded answer; `list --on <node>` |

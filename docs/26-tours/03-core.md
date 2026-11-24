@@ -250,7 +250,7 @@ crates/vnoc/src/tours/
 | Library function | Used by |
 |---|---|
 | `store::start(root, StartParams) -> TourId` | `tour start` |
-| `store::append(root, id, &[Record])` (the lock, the newline rule, one `write_all`) | every step-by-step write; the core for `halt` |
+| `store::append(root, id, &[Record])` (the lock, the newline rule, one `write_all`); `store::append_locked(&ToursLock, …)` for a caller that already holds the lock: read the file, make the ids, append, all under one lock (01 §5) | every step-by-step write; the core for `halt` |
 | `add::plan_stop(tour, index, node, body, options) -> Result<Vec<Record>, Vec<Refusal>>` | `tour add`: everything of 02 §4, with no disk write |
 | `doc::nest(&Tour) -> Document`, `doc::flatten(Document) -> Result<Flat, Vec<Refusal>>` | `export`; `import`: the two translations of 02 §10, pure |
 | `doc::plan_tour(index, flat, old: Option<&Tour>) -> Result<Vec<Record>, Vec<Refusal>>` | `import`, `import --replace`: `plan_stop`'s checks for every stop; a refusal carries its place in the document as the person wrote it |
