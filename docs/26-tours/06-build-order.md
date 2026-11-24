@@ -216,7 +216,7 @@ Tests (each in its own repository): all committed → pinned at HEAD; one file m
 stop is refused; a failing hook; an ignored file; no git; not a repository. After a pin: change a function → `show --as-written`
 prints the old lines, lit where the pin says; `add --replace` → not pinned; `pin` again → pinned at the new commit. A `pin` record
 with a commit that is not there → `as_written` is `None`, `list` says so. A pin with `commit: "--help"` or a path with `..` is refused
-on read. The setting: `finish` on a tour of uncommitted work with `commit` at `"ask"` commits nothing and prints the files (golden);
+on read. A tour document and a tour file with `\r\n` line ends import and replay as with `\n` (TR8 left it untested). The setting: `finish` on a tour of uncommitted work with `commit` at `"ask"` commits nothing and prints the files (golden);
 `"always"` commits exactly them and pins; `"never"` prints `not pinned` and no command; with `ids = "always"` and `commit = "always"`
 the commit holds the marker lines too, and the tour is pinned and fresh.
 
