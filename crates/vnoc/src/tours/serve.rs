@@ -405,10 +405,15 @@ pub fn list_rows<R: Borrow<Row>>(
         pin::has_commit(project, commit)
     });
     let offering = Offering::of(project);
+    let readable: Vec<&Tour> = rows
+        .iter()
+        .filter_map(|row| row.borrow().tour.as_ref().ok())
+        .collect();
+    let mut offers = offering.offers_of(project, &readable).into_iter();
     for (shown, row) in out.iter_mut().zip(rows) {
         let row: &Row = row.borrow();
         let Ok(tour) = &row.tour else { continue };
-        shown.offers = offering.offers(project, tour);
+        shown.offers = offers.next().flatten();
         let age = std::fs::metadata(&row.path)
             .and_then(|m| m.modified())
             .ok()
@@ -466,31 +471,68 @@ impl Offering {
     /// from being pinned because they are not committed, when `[tours] commit` is `"ask"` and the tour is not pinned at a commit HEAD has behind it
     /// ([`pin::uncommitted_files`]: by git alone). `None` when neither has anything, and for a tour that is not finished.
     pub fn offers(&self, project: &Project, tour: &Tour) -> Option<view::OffersView> {
-        if tour.state != super::State::Finished {
-            return None;
-        }
-        let ids = if self.ids == settings::Choice::Ask && self.writes_ids {
-            tour.stops
-                .iter()
-                .filter(|s| s.written && s.node.is_none())
-                .count()
-        } else {
-            0
-        };
-        let held = tour
-            .pin
-            .as_ref()
-            .filter(|_| tour.pinned())
-            .is_some_and(|pin| pin::reachable(project, &pin.commit));
-        let commit: Vec<String> = if self.commit == settings::Choice::Ask && !held {
-            pin::uncommitted_files(project, tour)
-                .iter()
-                .map(|f| f.path.to_string())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        (ids > 0 || !commit.is_empty()).then_some(view::OffersView { ids, commit })
+        self.offers_of(project, &[tour]).pop().flatten()
+    }
+
+    /// [`Offering::offers`] for the rows of a list: **one** `git status` for all the rows (the union of their paths), and one question "does HEAD have this
+    /// commit behind it" for each distinct pinned commit. One answer per tour, in the order given; the same answers as asking one tour at a time.
+    pub fn offers_of(&self, project: &Project, tours: &[&Tour]) -> Vec<Option<view::OffersView>> {
+        let asks = self.commit == settings::Choice::Ask;
+        let mut reachable: BTreeMap<String, bool> = BTreeMap::new();
+        // the tours whose commit files are looked at: finished, and not pinned at a commit HEAD has behind it
+        let looked_at: Vec<bool> = tours
+            .iter()
+            .map(|tour| {
+                if !asks || tour.state != super::State::Finished {
+                    return false;
+                }
+                let held = tour
+                    .pin
+                    .as_ref()
+                    .filter(|_| tour.pinned())
+                    .is_some_and(|pin| {
+                        *reachable
+                            .entry(pin.commit.as_str().to_string())
+                            .or_insert_with(|| pin::reachable(project, &pin.commit))
+                    });
+                !held
+            })
+            .collect();
+        let candidates: Vec<&Tour> = tours
+            .iter()
+            .zip(&looked_at)
+            .filter(|(_, looked)| **looked)
+            .map(|(tour, _)| *tour)
+            .collect();
+        let mut files = pin::uncommitted_files_of(project, &candidates).into_iter();
+        tours
+            .iter()
+            .zip(&looked_at)
+            .map(|(tour, looked)| {
+                if tour.state != super::State::Finished {
+                    return None;
+                }
+                let ids = if self.ids == settings::Choice::Ask && self.writes_ids {
+                    tour.stops
+                        .iter()
+                        .filter(|s| s.written && s.node.is_none())
+                        .count()
+                } else {
+                    0
+                };
+                let commit: Vec<String> = if *looked {
+                    files
+                        .next()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|f| f.path.to_string())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                (ids > 0 || !commit.is_empty()).then_some(view::OffersView { ids, commit })
+            })
+            .collect()
     }
 }
 

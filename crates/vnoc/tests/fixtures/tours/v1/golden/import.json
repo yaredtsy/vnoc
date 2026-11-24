@@ -1,0 +1,16 @@
+{
+  "command": "tour import",
+  "pin": {
+    "reasons": [
+      {
+        "code": "not_a_repository"
+      }
+    ],
+    "state": "not_pinned"
+  },
+  "replaced": false,
+  "schema": 1,
+  "steps": 5,
+  "stops": 3,
+  "tour": "<tour>"
+}

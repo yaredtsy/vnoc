@@ -1,0 +1,59 @@
+{
+  "after": {
+    "at": "end"
+  },
+  "at": "s3",
+  "back": [
+    "cover"
+  ],
+  "before": {
+    "at": "s2"
+  },
+  "by": "command",
+  "check": "fresh",
+  "code": {
+    "first": 10,
+    "lines": [
+      "def apply_tax(amount, country):",
+      "    \"\"\"ID: 6W9JVH8GKHQ64D5G6MG5ZVB4JB\"\"\"",
+      "    return round(amount * (1 + rate_for(country)), 2)"
+    ],
+    "path": "billing/tax.py",
+    "source": "now"
+  },
+  "command": "tour where",
+  "here": "intro",
+  "moved": "2026-11-24T21:09:40Z",
+  "moved_ago": "<ago>",
+  "open": false,
+  "question": "what happens when the gateway drops the call",
+  "schema": 1,
+  "seen": [
+    "s3"
+  ],
+  "state": "finished",
+  "step": {
+    "id": "s3",
+    "kind": "intro",
+    "lines": [
+      10,
+      12
+    ],
+    "number": 1,
+    "of": 1,
+    "text": "apply_tax raises an amount by the country's rate and rounds it to cents, so the total on the invoice is the amount that is charged."
+  },
+  "steps": 5,
+  "stop": {
+    "id": "s3",
+    "kind": "function",
+    "name": "apply_tax",
+    "number": 3,
+    "of": 3,
+    "path": "billing/tax.py",
+    "planned": false
+  },
+  "stops": 3,
+  "title": "retry_charge, then the invoice",
+  "tour": "retry-charge-mjpt"
+}

@@ -273,6 +273,93 @@ fn the_files_a_cover_offers_to_commit_are_the_tours_own_by_git_alone_in_the_orde
     assert!(uncommitted_files(&project(&root), &tour).is_empty());
 }
 
+/// A finished tour with one stop on each of these files, pinned at `commit` when one is given.
+fn finished_pinned(files: &[&str], commit: Option<&str>) -> Tour {
+    let mut lines = vec![
+        r#"{"type":"tour","schema":1,"id":"t-0000","title":"T","at":"x","detail":"normal"}"#
+            .to_string(),
+    ];
+    for (i, file) in files.iter().enumerate() {
+        lines.push(format!(
+            r#"{{"type":"stop","id":"s{}","path":"{file}","qualname":"f","kind":"function","lines":[1,2],"hash":"0123456789abcdef","text":"t"}}"#,
+            i + 1
+        ));
+    }
+    lines.push(r#"{"type":"end","at":"x"}"#.to_string());
+    if let Some(commit) = commit {
+        lines.push(format!(
+            r#"{{"type":"pin","commit":"{commit}","at":"x","where":{{"s1":["{}",1,2]}}}}"#,
+            files[0]
+        ));
+    }
+    fold(&format!("{}\n", lines.join("\n"))).unwrap()
+}
+
+fn calls_of(run: impl FnOnce()) -> usize {
+    let before = GIT_CALLS.with(std::cell::Cell::get);
+    run();
+    GIT_CALLS.with(std::cell::Cell::get) - before
+}
+
+#[test]
+fn a_list_of_three_finished_unpinned_tours_asks_git_status_once_with_the_same_answers() {
+    use crate::tours::serve::Offering;
+    let root = repo("offers-list");
+    commit_all(
+        &root,
+        &[
+            ("a.py", "def f():\n    pass\n"),
+            ("b.py", "def f():\n    pass\n"),
+            ("c.py", "def f():\n    pass\n"),
+        ],
+    );
+    write(&root, "a.py", "def f():\n    return 1\n");
+    write(&root, "c.py", "def f():\n    return 3\n");
+    let project = project(&root);
+    let tours = [
+        finished(&["a.py", "b.py"]),
+        finished(&["b.py"]),
+        finished(&["c.py", "a.py"]),
+    ];
+    let offering = Offering::of(&project);
+    let refs: Vec<&Tour> = tours.iter().collect();
+    let mut together = Vec::new();
+    let calls = calls_of(|| together = offering.offers_of(&project, &refs));
+    assert_eq!(calls, 1, "one git status for the whole list");
+    let alone: Vec<_> = tours.iter().map(|t| offering.offers(&project, t)).collect();
+    assert_eq!(together, alone, "the same answers as one tour at a time");
+    assert_eq!(together[0].as_ref().unwrap().commit, ["a.py"]);
+    // (the offer to write IDs is there for each, as the project's settings ask)
+    assert!(together[1].as_ref().unwrap().commit.is_empty());
+    assert_eq!(together[2].as_ref().unwrap().commit, ["c.py", "a.py"]);
+}
+
+#[test]
+fn a_commit_the_list_pins_at_is_asked_about_once_however_many_tours_are_pinned_there() {
+    use crate::tours::serve::Offering;
+    let root = repo("offers-pinned");
+    commit_all(&root, &[("a.py", "def f():\n    pass\n")]);
+    let head = git(&root, &["rev-parse", "HEAD"]).trim().to_string();
+    write(&root, "a.py", "def f():\n    return 1\n");
+    let project = project(&root);
+    let tours = [
+        finished_pinned(&["a.py"], Some(&head)),
+        finished_pinned(&["a.py"], Some(&head)),
+        finished_pinned(&["a.py"], None),
+    ];
+    let offering = Offering::of(&project);
+    let refs: Vec<&Tour> = tours.iter().collect();
+    let mut together = Vec::new();
+    let calls = calls_of(|| together = offering.offers_of(&project, &refs));
+    assert_eq!(
+        calls, 2,
+        "one merge-base for the commit, one status for the unpinned tour"
+    );
+    assert!(together[0].as_ref().unwrap().commit.is_empty());
+    assert!(together[1].as_ref().unwrap().commit.is_empty());
+    assert_eq!(together[2].as_ref().unwrap().commit, ["a.py"]);
+}
+
 #[test]
 fn an_ignored_file_and_a_file_git_never_had_are_worded_by_why() {
     let root = repo("ignored");

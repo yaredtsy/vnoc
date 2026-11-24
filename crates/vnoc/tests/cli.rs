@@ -12989,3 +12989,161 @@ fn tour_route_refuses_what_it_cannot_do_and_writes_no_tour() {
         .stdin(Stdio::null());
     assert_eq!(code(&run(cmd)), 3);
 }
+
+// ------------------------------------------------------------------------------------------------------------ the schema 1 fixtures (TR14d)
+
+/// `tests/fixtures/tours/v1/`: a project with a shared and a private tour, a state file and an export document, frozen at TR14d. A copy outside this repository.
+fn frozen_tours_copy(label: &str) -> PathBuf {
+    let root = scratch(label);
+    copy_dir(
+        &tests_dir().join("fixtures/tours/v1/project"),
+        &root,
+        &|_| false,
+    );
+    root
+}
+
+/// A golden of the frozen fixtures: it lives beside them (`fixtures/tours/v1/golden/`) and is never rewritten. `VNOC_BLESS=1` only writes one that is not
+/// there yet; a changed answer is a changed format, and a new format adds a new folder.
+fn frozen_golden(name: &str, actual: &Value) {
+    let path = tests_dir().join("fixtures/tours/v1/golden").join(name);
+    if blessing() && !path.exists() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(actual).unwrap() + "\n").unwrap();
+    }
+    let expected: Value = serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("fixtures/tours/v1/golden/{name}")),
+    )
+    .unwrap();
+    assert_eq!(
+        actual, &expected,
+        "`{name}` is schema 1 as frozen at TR14d: it must not change"
+    );
+}
+
+/// Every `.jsonl` of the project's two tour folders, by name.
+fn tour_files_of(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut found = std::collections::BTreeMap::new();
+    for folder in [".vnoc/tours", ".vnoc/local/tours"] {
+        let Ok(entries) = std::fs::read_dir(root.join(folder)) else {
+            continue;
+        };
+        for entry in entries {
+            let entry = entry.unwrap();
+            found.insert(
+                format!("{folder}/{}", entry.file_name().to_string_lossy()),
+                std::fs::read(entry.path()).unwrap(),
+            );
+        }
+    }
+    found
+}
+
+/// What a command printed as JSON, with what changes from run to run put away: the root, the tour an import made, and how long ago the place moved.
+fn frozen_json(root: &Path, args: &[&str], made: Option<&str>) -> Value {
+    let mut text = without_root(&tour_ok_json(root, args), root);
+    if let Some(made) = made {
+        text = text.replace(made, "<tour>");
+    }
+    let mut value: Value = serde_json::from_str(&text).unwrap();
+    if value.get("moved_ago").is_some() {
+        value["moved_ago"] = json!("<ago>");
+    }
+    value
+}
+
+fn tour_ok_json(root: &Path, args: &[&str]) -> String {
+    let mut all = args.to_vec();
+    all.push("--json");
+    tour_ok(root, &all)
+}
+
+#[test]
+fn tour_frozen_schema_1_the_fixtures_read_as_the_goldens_say_and_reading_never_writes_a_tour_byte()
+{
+    let root = frozen_tours_copy("frozen-v1");
+    let shared = "retry-charge-mjpt";
+    let private = "rate-for-yvzr";
+    let files = tour_files_of(&root);
+    // the files are the fixture's own, and every record type of 01 §4 is in them
+    let all: String = files.values().map(|b| text(b)).collect();
+    let types: std::collections::BTreeSet<String> = all
+        .lines()
+        .map(|l| {
+            serde_json::from_str::<Value>(l).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    for wanted in [
+        "tour", "meta", "plan", "stop", "step", "drop", "ids", "rebase", "pin", "halt", "halted",
+        "resume", "end",
+    ] {
+        assert!(
+            types.contains(wanted),
+            "the fixtures have no `{wanted}` record"
+        );
+    }
+    // the unknown key and the unknown type are in the private tour, and the tour still reads
+    let private_text = text(&files[&format!(".vnoc/local/tours/{private}.jsonl")]);
+    assert!(private_text.contains("\"confidence\":\"high\""));
+    assert!(private_text.contains("\"type\":\"bookmark\""));
+    let state_of = |name: &str| -> Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(root.join(format!(".vnoc/local/tour-state/{name}.json")))
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let state_before = state_of(shared);
+    assert!(state_before["place"].is_object() && state_before["check"].is_object());
+
+    frozen_golden("list.json", &frozen_json(&root, &["list"], None));
+    frozen_golden(
+        "show-shared.json",
+        &frozen_json(&root, &["show", shared], None),
+    );
+    frozen_golden(
+        "show-private.json",
+        &frozen_json(&root, &["show", private], None),
+    );
+    frozen_golden(
+        "where-shared.json",
+        &frozen_json(&root, &["where", shared], None),
+    );
+    // `check` is not a golden (its text says when it ran), but it must run and must not touch a tour file
+    let checked = tour_json(&root, &["check"]);
+    assert_eq!(checked["command"], "tour check");
+    assert_eq!(
+        tour_files_of(&root),
+        files,
+        "list, show, where and check wrote a tour file"
+    );
+    // the state file: the place is as it was; only the check part may be new
+    let state_after = state_of(shared);
+    assert_eq!(state_after["schema"], state_before["schema"]);
+    assert_eq!(
+        state_after["place"], state_before["place"],
+        "the place moved"
+    );
+    assert!(state_of(private).get("place").is_none());
+
+    // the document of `export` imports as a new tour with the stops and steps it nests
+    let document = tests_dir().join("fixtures/tours/v1/export.json");
+    let imported = tour_json(&root, &["import", document.to_str().unwrap()]);
+    let made = imported["tour"].as_str().unwrap().to_string();
+    assert_ne!(made, shared);
+    let mut listed = imported.clone();
+    listed["tour"] = json!("<tour>");
+    frozen_golden("import.json", &listed);
+    frozen_golden(
+        "show-imported.json",
+        &frozen_json(&root, &["show", &made], Some(&made)),
+    );
+    // the tours that were there are as they were
+    for (name, bytes) in &files {
+        assert_eq!(&std::fs::read(root.join(name)).unwrap(), bytes, "{name}");
+    }
+}

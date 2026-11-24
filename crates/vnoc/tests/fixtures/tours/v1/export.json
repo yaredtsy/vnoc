@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "title": "retry_charge, then the invoice",
+  "question": "what happens when the gateway drops the call",
+  "author": "claude-code",
+  "detail": "normal",
+  "stops": [
+    { "id": "s1", "node": "billing/charge.py::retry_charge",
+      "text": "retry_charge asks the gateway to charge an order and tries again when the call is dropped, up to `attempts` times, before it gives up with a ChargeError.",
+      "blocks": [
+        { "id": "s1.b2", "lines": [20, 25], "title": "Try, then give up", "text": "The loop makes up to `attempts` tries. The first one that does not drop returns its answer; when all of them drop, the error names the order.",
+          "blocks": [
+            { "id": "s1.b3", "lines": [23, 24], "title": "A dropped call tries again", "text": "Only a *ConnectionError* counts as a dropped call: it moves on to the next try. Any other error leaves the loop at once." }
+          ] }
+      ] },
+    { "id": "s2", "node": "billing/invoice.py::Invoice.total",
+      "text": "Invoice.total adds the amounts of the invoice lines and has the tax applied for the invoice's country. It is what the customer is charged.",
+      "stops": [
+        { "id": "s3", "line": 21, "node": "billing/tax.py::apply_tax",
+          "text": "apply_tax raises an amount by the country's rate and rounds it to cents, so the total on the invoice is the amount that is charged." }
+      ] }
+  ]
+}

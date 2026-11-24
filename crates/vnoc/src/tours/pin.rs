@@ -70,8 +70,16 @@ impl Said {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread has run git, for the tests that count the calls a list makes.
+    pub(crate) static GIT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// `git -C <root> <args>`. `literal` reads every path as a name and not as a pattern; it is not used for the commit, whose hooks would inherit it.
 fn git(root: &Path, literal: bool, args: &[&str]) -> Result<Said, Unrun> {
+    #[cfg(test)]
+    GIT_CALLS.with(|n| n.set(n.get() + 1));
     let mut command = Command::new("git");
     if literal {
         command.arg("--literal-pathspecs");
@@ -525,6 +533,13 @@ pub fn make(head: Commit, placed: &Placed) -> PinRecord {
 /// own paths and git alone, with no check of the code: a file whose stop moved to another path is not looked at, and a stale stop is not said (`can_pin` says
 /// that first when the tour is pinned). An empty list when git cannot say.
 pub fn uncommitted_files(project: &Project, tour: &Tour) -> Vec<Changed> {
+    uncommitted_files_of(project, &[tour])
+        .pop()
+        .unwrap_or_default()
+}
+
+/// The distinct paths of a tour's written stops that are files, in the order of the route.
+fn offered_paths(tour: &Tour) -> Vec<RepoPath> {
     let mut paths: Vec<RepoPath> = Vec::new();
     for stop in tour.stops.iter().filter(|s| s.written) {
         if matches!(stop.kind, Some(vnoc_domain::NodeKind::Folder)) || paths.contains(&stop.path) {
@@ -532,19 +547,37 @@ pub fn uncommitted_files(project: &Project, tour: &Tour) -> Vec<Changed> {
         }
         paths.push(stop.path.clone());
     }
-    if paths.is_empty() {
-        return Vec::new();
-    }
-    let Ok(status) = status_of(project.git_root(), &paths) else {
-        return Vec::new();
-    };
     paths
+}
+
+/// [`uncommitted_files`] for several tours with **one** `git status` for all of them (the union of their paths): the list of a project asks it once, not once
+/// per row. One answer per tour, in the order given. An empty answer for a tour with no file, and for all of them when git cannot say.
+pub fn uncommitted_files_of(project: &Project, tours: &[&Tour]) -> Vec<Vec<Changed>> {
+    let wanted: Vec<Vec<RepoPath>> = tours.iter().map(|t| offered_paths(t)).collect();
+    let mut union: Vec<RepoPath> = Vec::new();
+    for path in wanted.iter().flatten() {
+        if !union.contains(path) {
+            union.push(path.clone());
+        }
+    }
+    if union.is_empty() {
+        return wanted.iter().map(|_| Vec::new()).collect();
+    }
+    let Ok(status) = status_of(project.git_root(), &union) else {
+        return wanted.iter().map(|_| Vec::new()).collect();
+    };
+    wanted
         .into_iter()
-        .filter_map(|path| {
-            status.get(path.as_str()).map(|status| Changed {
-                status: status.clone(),
-                path,
-            })
+        .map(|paths| {
+            paths
+                .into_iter()
+                .filter_map(|path| {
+                    status.get(path.as_str()).map(|status| Changed {
+                        status: status.clone(),
+                        path,
+                    })
+                })
+                .collect()
         })
         .collect()
 }

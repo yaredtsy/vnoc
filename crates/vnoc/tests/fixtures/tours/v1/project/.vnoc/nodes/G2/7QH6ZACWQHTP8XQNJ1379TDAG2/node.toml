@@ -1,0 +1,5 @@
+path = "billing/invoice.py"
+qualname = "Invoice"
+id_in_code = "yes"
+status = "active"
+kind = "class"

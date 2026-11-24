@@ -1,0 +1,58 @@
+{
+  "author": "claude-code",
+  "command": "tour show",
+  "detail": "normal",
+  "folder": "private",
+  "id": "rate-for-yvzr",
+  "minutes": 1,
+  "offers": null,
+  "pinned": false,
+  "place": {
+    "at": "cover",
+    "back": [],
+    "by": "reader",
+    "moved": "",
+    "open": false,
+    "seen": []
+  },
+  "planned": 0,
+  "problems": [],
+  "question": "where does the tax rate come from",
+  "readable": true,
+  "schema": 1,
+  "state": "finished",
+  "steps": 1,
+  "stops": [
+    {
+      "blocks": [],
+      "depth": 0,
+      "id": "s1",
+      "kind": "function",
+      "lines": [
+        6,
+        7
+      ],
+      "name": "rate_for",
+      "node": "4KF02248CHCTYAG49B0KKZ5SD7",
+      "number": 1,
+      "path": "billing/tax.py",
+      "planned": false,
+      "qualname": "rate_for",
+      "reading": [
+        {
+          "depth": 0,
+          "id": "s1",
+          "lines": null,
+          "parent": null,
+          "text": "rate_for looks the country up in the RATES table and answers 0.0 for a country that is not there, so an unknown country pays no tax.",
+          "title": null
+        }
+      ],
+      "steps": 1,
+      "text": "rate_for looks the country up in the RATES table and answers 0.0 for a country that is not there, so an unknown country pays no tax."
+    }
+  ],
+  "title": "rate_for",
+  "writing": null,
+  "written": 1
+}
