@@ -11,21 +11,23 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use super::args::{
-    DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourFinishArgs, TourListArgs, TourShowArgs,
-    TourStartArgs,
+    DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourDeleteArgs, TourDropArgs, TourEditArgs,
+    TourFinishArgs, TourListArgs, TourResumeArgs, TourShareArgs, TourShowArgs, TourStartArgs,
 };
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
 use super::project::{Opened, open_from, open_without_driver};
 use super::{Failure, Global};
 use crate::source;
-use crate::tours::add::{AddOptions, plan_stop};
+use crate::tours::add::{
+    AddOptions, block_of, did_you_mean_stops, nested_in, plan_more, plan_stop,
+};
 use crate::tours::check::{self, Answer, Code, Mode, Recorded, Source};
 use crate::tours::on::{self, Map, Query};
-use crate::tours::record::{Detail, EndRecord, Record};
+use crate::tours::record::{Bare, Detail, DropRecord, EndRecord, MetaRecord, Record};
 use crate::tours::rules::Refusal;
 use crate::tours::store::{self, Located, Pick, Row, StartParams, StoreError, Where};
-use crate::tours::{Tour, TourId, hash, steps_in_order, time, view};
+use crate::tours::{State, Tour, TourId, hash, steps_in_order, time, view};
 use crate::userdata::ToursLock;
 
 /// The most of a stop's text that is read before it is called too big: `body::read` says the size, and refuses anything over 64 KB.
@@ -39,6 +41,12 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
         TourCommand::List(args) => list(global, args).await,
         TourCommand::Show(args) => show(global, args).await,
         TourCommand::Check(args) => check(global, args).await,
+        TourCommand::Drop(args) => drop_id(global, args).await,
+        TourCommand::Resume(args) => resume(global, args).await,
+        TourCommand::Edit(args) => edit(global, args).await,
+        TourCommand::Share(args) => share(global, args).await,
+        TourCommand::Delete(args) => delete(global, args).await,
+        TourCommand::Halt(args) => halt(global, args).await,
     }
 }
 
@@ -48,9 +56,13 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
 /// the project's settings are the environment's (`3`).
 fn store_failure(e: StoreError) -> Failure {
     match e {
-        StoreError::NotFound(_) | StoreError::InBoth(_) | StoreError::TooBig(_) => {
-            Failure::Usage(e.to_string())
-        }
+        StoreError::NotFound(_)
+        | StoreError::InBoth(_)
+        | StoreError::TooBig(_)
+        | StoreError::Refused(_) => Failure::Usage(e.to_string()),
+        // a tour of a newer schema is for a newer V-NOC (the environment); a broken one is the request's
+        StoreError::Unreadable { too_new: true, .. } => Failure::Environment(e.to_string()),
+        StoreError::Unreadable { .. } => Failure::Usage(e.to_string()),
         StoreError::Lock(_)
         | StoreError::Io { .. }
         | StoreError::Init(_)
@@ -283,6 +295,14 @@ struct Added {
     /// the tour was pinned and is not any more
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     unpinned: bool,
+    /// `--replace`: the stop was written again where it stood
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    replaced: bool,
+    /// `--to`: blocks were added to this stop (and `under` this block)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    added_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    under: Option<String>,
     #[serde(skip)]
     headline: String,
 }
@@ -302,13 +322,26 @@ impl Render for Added {
                 self.written + self.planned
             )
         };
-        let mut text = format!(
-            "{} written   stop {}   {}   {}   · {of}\n",
-            self.stop,
-            self.number,
-            self.headline,
-            steps_words(self.steps.len())
-        );
+        let mut text = if self.added_to.is_some() {
+            let new = self.blocks.len();
+            format!(
+                "{} +{new} {}   stop {}   {}   {} in all\n",
+                self.stop,
+                if new == 1 { "block" } else { "blocks" },
+                self.number,
+                self.headline,
+                steps_words(self.steps.len())
+            )
+        } else {
+            format!(
+                "{} {}   stop {}   {}   {}   · {of}\n",
+                self.stop,
+                if self.replaced { "replaced" } else { "written" },
+                self.number,
+                self.headline,
+                steps_words(self.steps.len())
+            )
+        };
         let id_width = self.blocks.iter().map(|b| b.id.len()).max().unwrap_or(0);
         let lines_of = |b: &AddedBlock| {
             if b.lines[0] == b.lines[1] {
@@ -405,47 +438,119 @@ fn refused_stop(
     Err(Failure::Reported)
 }
 
+/// The refusal of a write on a tour the reader stopped (02 §5): the text, as the answer, on standard output, and exit `1`. `resume`, `edit`, `share`
+/// and `delete` do not ask.
+fn stopped(
+    global: &Global,
+    command: &'static str,
+    vnoc_root: &Path,
+    lock: &ToursLock,
+    tour: &Tour,
+) -> Result<(), Failure> {
+    let Some(written) = store::reader_stopped(lock, vnoc_root, tour).map_err(store_failure)? else {
+        return Ok(());
+    };
+    let message = view::stopped_text(&tour.id, written);
+    if global.json {
+        #[derive(Serialize)]
+        struct Stopped<'a> {
+            schema: u32,
+            command: &'static str,
+            tour: String,
+            stopped: bool,
+            written: usize,
+            message: &'a str,
+        }
+        out::json(&Stopped {
+            schema: 1,
+            command,
+            tour: tour.id.to_string(),
+            stopped: true,
+            written,
+            message: &message,
+        })?;
+    } else {
+        out::text(&message)?;
+    }
+    Err(Failure::Stopped)
+}
+
+/// The same refusal, asked before a command does anything slow (a driver, the index): takes the lock, reads the tour, and asks.
+async fn early_stop(
+    global: &Global,
+    command: &'static str,
+    vnoc_root: &Path,
+    id: &TourId,
+) -> Result<(), Failure> {
+    let lock = take_lock(vnoc_root.to_path_buf()).await?;
+    let tour = read_tour(vnoc_root, id)?;
+    stopped(global, command, vnoc_root, &lock, &tour)
+}
+
 async fn add(global: &Global, args: &TourAddArgs) -> Result<(), Failure> {
-    // what needs no driver: the tour (in one place), and the text
+    // clap's `requires` does not hold here (it lets `--under` through with a node and no `--to`)
+    if args.under.is_some() && args.to.is_none() {
+        return Err(Failure::Usage(
+            "--under goes with --to: vnoc tour add <tour> --to <stop> --under <block>".to_string(),
+        ));
+    }
+    // what needs no driver: the tour (in one place, and not stopped), and the text
     let project = open_without_driver(global)?;
     let vnoc_root = store::vnoc_root(project.git_root());
     let tour_id = resolve(global, "tour add", &vnoc_root, &args.tour)?;
     if let Located::Both { .. } = store::locate(&vnoc_root, &tour_id) {
         return Err(store_failure(StoreError::InBoth(tour_id)));
     }
+    early_stop(global, "tour add", &vnoc_root, &tour_id).await?;
     let body = read_body(&args.body_file)?;
 
     // the code as it is now
     let opened = open_from(global).await?;
     let lookup = Lookup::new(&opened, 1);
-    let node = match lookup.resolve(&args.node) {
-        Ok(Target::Node(node)) => node,
-        Ok(Target::Missing(missing)) => {
-            return refused_with(global, "tour add", missing_error(&missing.was, &missing.id));
-        }
-        Err(error) => return refused_with(global, "tour add", error),
+    let node = match &args.node {
+        Some(text) => match lookup.resolve(text) {
+            Ok(Target::Node(node)) => Some(node),
+            Ok(Target::Missing(missing)) => {
+                return refused_with(global, "tour add", missing_error(&missing.was, &missing.id));
+            }
+            Err(error) => return refused_with(global, "tour add", error),
+        },
+        None => None,
     };
 
     // the lock for the rest: the ids come from the file read under it, and the records go to the same file under it (01 §5)
     let lock = take_lock(vnoc_root.clone()).await?;
     let tour = read_tour(&vnoc_root, &tour_id)?;
+    stopped(global, "tour add", &vnoc_root, &lock, &tour)?;
     let was_pinned = tour.pinned();
-    let options = AddOptions {
-        from: args.from,
-        line: args.line,
-        same_as: args.same_as,
-    };
     let planned = {
         let index = opened.index.read().expect("the index lock is not poisoned");
-        plan_stop(
-            &tour,
-            &index,
-            &opened.project,
-            &lookup.tree,
-            node,
-            &body,
-            options,
-        )
+        match (args.to, node) {
+            (Some(to), _) => plan_more(
+                &tour,
+                &index,
+                &opened.project,
+                &lookup.tree,
+                to,
+                args.under,
+                &body,
+            ),
+            (None, Some(node)) => plan_stop(
+                &tour,
+                &index,
+                &opened.project,
+                &lookup.tree,
+                node,
+                &body,
+                AddOptions {
+                    from: args.from,
+                    line: args.line,
+                    same_as: args.same_as,
+                    replace: args.replace,
+                },
+            ),
+            (None, None) => unreachable!("clap wants a node without --to"),
+        }
     };
     let records = match planned {
         Ok(records) => records,
@@ -454,19 +559,23 @@ async fn add(global: &Global, args: &TourAddArgs) -> Result<(), Failure> {
     store::append_locked(&lock, &vnoc_root, &tour_id, &records).map_err(store_failure)?;
 
     // what was written, as the replay has it now (the number is the place on the route)
-    let Some(Record::Stop(written)) = records.first() else {
-        return Err(Failure::Environment(
-            "a stop was planned with no stop record".to_string(),
-        ));
+    let stop_id = match (&records.first(), args.to) {
+        (_, Some(to)) => to,
+        (Some(Record::Stop(written)), None) => written.id,
+        _ => {
+            return Err(Failure::Environment(
+                "a stop was planned with no stop record".to_string(),
+            ));
+        }
     };
     let after = read_tour(&vnoc_root, &tour_id)?;
-    let Some(stop) = after.stop(written.id) else {
+    let Some(stop) = after.stop(stop_id) else {
         return Err(Failure::Environment(format!(
-            "the stop {} was written and is not in the tour",
-            written.id
+            "the stop {stop_id} was written and is not in the tour"
         )));
     };
-    let text = source::read_text(&opened.project.open_dir().join(&node.path)).unwrap_or_default();
+    let text =
+        source::read_text(&opened.project.git_root().join(stop.path.as_str())).unwrap_or_default();
     let blocks: Vec<AddedBlock> = records
         .iter()
         .filter_map(|record| match record {
@@ -485,8 +594,8 @@ async fn add(global: &Global, args: &TourAddArgs) -> Result<(), Failure> {
             schema: 1,
             command: "tour add",
             tour: tour_id.to_string(),
-            stop: written.id.to_string(),
-            number: after.number(written.id).unwrap_or(after.stops.len()),
+            stop: stop_id.to_string(),
+            number: after.number(stop_id).unwrap_or(after.stops.len()),
             kind: stop.kind.as_ref().map(|k| k.as_str().to_string()),
             path: stop.path.to_string(),
             lines: stop.lines.map(|l| [l.first, l.last]),
@@ -498,6 +607,9 @@ async fn add(global: &Global, args: &TourAddArgs) -> Result<(), Failure> {
             written: size.written,
             planned: size.planned,
             unpinned: was_pinned,
+            replaced: args.replace.is_some(),
+            added_to: args.to.map(|to| to.to_string()),
+            under: args.under.map(|u| u.to_string()),
             headline: view::stop_headline(stop),
         },
         global,
@@ -569,6 +681,7 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
     }
     let lock = take_lock(vnoc_root.clone()).await?;
     let tour = read_tour(&vnoc_root, &tour_id)?;
+    stopped(global, "tour finish", &vnoc_root, &lock, &tour)?;
     let shown = view::tour_view(&tour, Where::Private);
     let already = tour.state == crate::tours::State::Finished;
     if !already {
@@ -584,6 +697,453 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
             stops: shown.written,
             steps: shown.steps,
             left_the_route: if already { 0 } else { shown.planned },
+        },
+        global,
+    )
+}
+
+// -------------------------------------------------------------------------------------------- drop, resume, edit, halt
+
+/// A tour is named, in one folder only, and the lock is taken: what every write after this does.
+struct Writing {
+    vnoc_root: PathBuf,
+    id: TourId,
+    lock: ToursLock,
+    tour: Tour,
+}
+
+async fn writing(
+    global: &Global,
+    command: &'static str,
+    text: &str,
+) -> Result<(crate::project::Project, Writing), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let id = resolve(global, command, &vnoc_root, text)?;
+    if let Located::Both { .. } = store::locate(&vnoc_root, &id) {
+        return Err(store_failure(StoreError::InBoth(id)));
+    }
+    let lock = take_lock(vnoc_root.clone()).await?;
+    let tour = read_tour(&vnoc_root, &id)?;
+    Ok((
+        project,
+        Writing {
+            vnoc_root,
+            id,
+            lock,
+            tour,
+        },
+    ))
+}
+
+/// A refusal with the nearest names under it ("did you mean"): one sentence, and the list.
+fn no_such(
+    global: &Global,
+    command: &'static str,
+    why: &'static str,
+    said: String,
+    items: Vec<String>,
+) -> Result<(), Failure> {
+    let mut error = NodeError::new(why, said);
+    if !items.is_empty() {
+        error.message = format!("{} · did you mean: {}", error.message, items.join(" · "));
+        error.hints = Some(Hints {
+            lead: "did you mean".to_string(),
+            items,
+            more: 0,
+        });
+    }
+    refused_with(global, command, error)
+}
+
+#[derive(Serialize)]
+struct Dropped {
+    schema: u32,
+    command: &'static str,
+    tour: String,
+    dropped: String,
+    /// the blocks that went with it, and the stops nested in it
+    blocks: usize,
+    stops: usize,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    unpinned: bool,
+}
+
+impl Render for Dropped {
+    fn text(&self, _quiet: bool) -> String {
+        let plural =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let mut went = Vec::new();
+        if self.blocks > 0 {
+            went.push(plural(self.blocks, "block", "blocks"));
+        }
+        if self.stops > 0 {
+            went.push(format!(
+                "{} nested in it",
+                plural(self.stops, "stop", "stops")
+            ));
+        }
+        let mut text = format!("dropped {}", self.dropped);
+        if !went.is_empty() {
+            text.push_str(&format!("   ({} went with it)", went.join(" and ")));
+        }
+        text.push('\n');
+        if self.unpinned {
+            text.push_str("not pinned any more: the tour changed after it was pinned\n");
+        }
+        text
+    }
+}
+
+async fn drop_id(global: &Global, args: &TourDropArgs) -> Result<(), Failure> {
+    let (_project, w) = writing(global, "tour drop", &args.tour).await?;
+    stopped(global, "tour drop", &w.vnoc_root, &w.lock, &w.tour)?;
+    let tour = &w.tour;
+    let id = args.id;
+    let Some(stop) = tour.stop(id.stop()) else {
+        let near = did_you_mean_stops(tour, id.stop());
+        return no_such(
+            global,
+            "tour drop",
+            "no_stop",
+            format!("no stop {} in this tour", id.stop()),
+            near.iter().map(ToString::to_string).collect(),
+        );
+    };
+    // what goes with it
+    let (blocks, stops) = if id.is_intro() {
+        let nested = tour
+            .stops
+            .iter()
+            .filter(|s| nested_in(tour, s.id, stop.id))
+            .collect::<Vec<_>>();
+        let blocks = steps_in_order(stop).len() - 1
+            + nested
+                .iter()
+                .map(|s| steps_in_order(s).len() - 1)
+                .sum::<usize>();
+        (blocks, nested.len())
+    } else {
+        match block_of(stop, id) {
+            Some((block, _)) => {
+                let mut details = 0;
+                let mut stack: Vec<&crate::tours::TourBlock> = block.details.iter().collect();
+                while let Some(b) = stack.pop() {
+                    details += 1;
+                    stack.extend(b.details.iter());
+                }
+                (details, 0)
+            }
+            None => {
+                let have: Vec<String> = steps_in_order(stop)
+                    .iter()
+                    .skip(1)
+                    .map(ToString::to_string)
+                    .collect();
+                let said = format!("no block {id} in this tour");
+                return no_such(global, "tour drop", "no_block", said, have);
+            }
+        }
+    };
+    let was_pinned = tour.pinned();
+    store::append_locked(
+        &w.lock,
+        &w.vnoc_root,
+        &w.id,
+        &[Record::Drop(DropRecord { id })],
+    )
+    .map_err(store_failure)?;
+    out::render(
+        &Dropped {
+            schema: 1,
+            command: "tour drop",
+            tour: w.id.to_string(),
+            dropped: id.to_string(),
+            blocks,
+            stops,
+            unpinned: was_pinned,
+        },
+        global,
+    )
+}
+
+#[derive(Serialize)]
+struct Resumed {
+    schema: u32,
+    command: &'static str,
+    tour: String,
+    /// `resume` was written; false when the tour was not stopped
+    resumed: bool,
+}
+
+impl Render for Resumed {
+    fn text(&self, _quiet: bool) -> String {
+        if self.resumed {
+            format!("resumed {}: add is accepted again\n", self.tour)
+        } else {
+            "not stopped: nothing to resume\n".to_string()
+        }
+    }
+}
+
+async fn resume(global: &Global, args: &TourResumeArgs) -> Result<(), Failure> {
+    let (_project, w) = writing(global, "tour resume", &args.tour).await?;
+    let stopped = matches!(w.tour.state, State::Stopping | State::Stopped);
+    if stopped {
+        store::append_locked(&w.lock, &w.vnoc_root, &w.id, &[Record::Resume(Bare {})])
+            .map_err(store_failure)?;
+    }
+    out::render(
+        &Resumed {
+            schema: 1,
+            command: "tour resume",
+            tour: w.id.to_string(),
+            resumed: stopped,
+        },
+        global,
+    )
+}
+
+#[derive(Serialize)]
+struct Halted {
+    schema: u32,
+    command: &'static str,
+    tour: String,
+    /// `written`, `already` or `finished`
+    halt: &'static str,
+}
+
+impl Render for Halted {
+    fn text(&self, _quiet: bool) -> String {
+        match self.halt {
+            "written" => format!("stopping {}: the next add is refused\n", self.tour),
+            "already" => format!("{} is stopping or stopped already\n", self.tour),
+            _ => format!("{} is finished: nothing to stop\n", self.tour),
+        }
+    }
+}
+
+async fn halt(global: &Global, args: &TourResumeArgs) -> Result<(), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let id = resolve(global, "tour halt", &vnoc_root, &args.tour)?;
+    let root = vnoc_root.clone();
+    let did = {
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || store::halt(&root, &id))
+            .await
+            .map_err(|e| Failure::Environment(e.to_string()))?
+            .map_err(store_failure)?
+    };
+    out::render(
+        &Halted {
+            schema: 1,
+            command: "tour halt",
+            tour: id.to_string(),
+            halt: match did {
+                store::Halt::Written => "written",
+                store::Halt::Already => "already",
+                store::Halt::Finished => "finished",
+            },
+        },
+        global,
+    )
+}
+
+#[derive(Serialize)]
+struct Edited {
+    schema: u32,
+    command: &'static str,
+    tour: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    question: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+impl Render for Edited {
+    fn text(&self, _quiet: bool) -> String {
+        let mut text = format!("edited {}\n", self.tour);
+        for (what, value) in [
+            ("title", &self.title),
+            ("question", &self.question),
+            ("detail", &self.detail),
+        ] {
+            if let Some(value) = value {
+                text.push_str(&format!("  {what}: {value}\n"));
+            }
+        }
+        text
+    }
+}
+
+async fn edit(global: &Global, args: &TourEditArgs) -> Result<(), Failure> {
+    let title = args.title.as_deref().map(str::trim);
+    let question = args.question.as_deref().map(str::trim);
+    let problems = store::check_edit(title, question);
+    if !problems.is_empty() {
+        return Err(Failure::Usage(problems.join("\n  ")));
+    }
+    let (_project, w) = writing(global, "tour edit", &args.tour).await?;
+    let meta = MetaRecord {
+        title: title.map(String::from),
+        question: question.map(String::from),
+        detail: args.detail.map(detail_of),
+    };
+    store::append_locked(&w.lock, &w.vnoc_root, &w.id, &[Record::Meta(meta)])
+        .map_err(store_failure)?;
+    out::render(
+        &Edited {
+            schema: 1,
+            command: "tour edit",
+            tour: w.id.to_string(),
+            title: title.map(String::from),
+            question: question.map(String::from),
+            detail: args
+                .detail
+                .map(|d| view::detail_word(detail_of(d)).to_string()),
+        },
+        global,
+    )
+}
+
+// ------------------------------------------------------------------------------------------------------- share, delete
+
+#[derive(Serialize)]
+struct Shared {
+    schema: u32,
+    command: &'static str,
+    tour: String,
+    /// `project` or `private`: where the file is now
+    folder: &'static str,
+    path: String,
+}
+
+impl Render for Shared {
+    fn text(&self, quiet: bool) -> String {
+        if self.folder == "project" {
+            let mut text = format!("shared {}   project   {}\n", self.tour, self.path);
+            if !quiet {
+                text.push_str("commit it to share it with the project\n");
+            }
+            text
+        } else {
+            format!("made {} private   {}\n", self.tour, self.path)
+        }
+    }
+}
+
+async fn share(global: &Global, args: &TourShareArgs) -> Result<(), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let id = resolve(global, "tour share", &vnoc_root, &args.tour)?;
+    let to = if args.private {
+        Where::Private
+    } else {
+        Where::Project
+    };
+    let root = vnoc_root.clone();
+    let moved = {
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || store::share(&root, &id, to))
+            .await
+            .map_err(|e| Failure::Environment(e.to_string()))?
+            .map_err(store_failure)?
+    };
+    out::render(
+        &Shared {
+            schema: 1,
+            command: "tour share",
+            tour: id.to_string(),
+            folder: view::place_word(to),
+            path: doc_path(&project, &moved),
+        },
+        global,
+    )
+}
+
+#[derive(Serialize)]
+struct DeletedTour {
+    tour: String,
+    /// the folder it was in
+    was: &'static str,
+    /// the trash entry: what a restore takes
+    entry: String,
+    /// where its file is now
+    path: String,
+    /// its state file went with it
+    state: bool,
+}
+
+#[derive(Serialize)]
+struct Deleted {
+    schema: u32,
+    command: &'static str,
+    tours: Vec<DeletedTour>,
+}
+
+impl Render for Deleted {
+    fn text(&self, _quiet: bool) -> String {
+        self.tours
+            .iter()
+            .map(|t| format!("deleted {}   {}   → {}\n", t.tour, t.was, t.path))
+            .collect()
+    }
+}
+
+async fn delete(global: &Global, args: &TourDeleteArgs) -> Result<(), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let mut ids: Vec<TourId> = Vec::new();
+    for text in &args.tours {
+        let id = resolve(global, "tour delete", &vnoc_root, text)?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    // all or none: one that cannot be deleted stops the command before the first moves
+    let mut problems = Vec::new();
+    for id in &ids {
+        match store::locate(&vnoc_root, id) {
+            Located::Both { .. } => problems.push(StoreError::InBoth(id.clone()).to_string()),
+            _ => {
+                if let Ok((_, Ok(tour))) = store::read(&vnoc_root, id)
+                    && matches!(tour.state, State::Writing | State::Stopping)
+                {
+                    problems.push(format!(
+                        "the tour {id} is being written ({}): stop it first",
+                        tour.state
+                    ));
+                }
+            }
+        }
+    }
+    if !problems.is_empty() {
+        return Err(Failure::Usage(problems.join("\n  ")));
+    }
+    let mut tours = Vec::new();
+    for id in ids {
+        let root = vnoc_root.clone();
+        let gone = tokio::task::spawn_blocking(move || store::delete(&root, &id))
+            .await
+            .map_err(|e| Failure::Environment(e.to_string()))?
+            .map_err(store_failure)?;
+        let file = store::trash_path(&vnoc_root, &gone.entry);
+        tours.push(DeletedTour {
+            tour: gone.id.to_string(),
+            was: view::place_word(gone.was),
+            entry: gone.entry,
+            path: doc_path(&project, &file),
+            state: gone.with_state,
+        });
+    }
+    out::render(
+        &Deleted {
+            schema: 1,
+            command: "tour delete",
+            tours,
         },
         global,
     )
@@ -767,9 +1327,20 @@ fn checked_stops(tour: &Tour, recorded: &Recorded) -> Vec<CheckedStop> {
                 check::StopState::Changed => "changed",
                 check::StopState::Gone => "gone",
             },
-            name: shown.name.clone(),
-            path: shown.path.clone(),
-            lines: shown.lines,
+            // where the stop is now, when the check said (a stop found by its ID may have another name or path than it was written with)
+            name: recorded
+                .now
+                .get(&stop.id)
+                .map_or_else(|| shown.name.clone(), |n| n.qualname.clone())
+                .clone(),
+            path: recorded
+                .now
+                .get(&stop.id)
+                .map_or_else(|| shown.path.clone(), |n| n.path.clone()),
+            lines: recorded
+                .now
+                .get(&stop.id)
+                .map_or(shown.lines, |n| n.lines.or(shown.lines)),
             blocks,
         });
     }

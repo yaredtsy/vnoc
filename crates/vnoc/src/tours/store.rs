@@ -18,8 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::fold::{Problem, Tour, Unreadable, fold};
-use super::record::{Detail, Record, StepId, StopId, TourId, TourRecord, print_line};
+use super::fold::{Problem, State, Tour, Unreadable, fold};
+use super::record::{Bare, Detail, Record, StepId, StopId, TourId, TourRecord, print_line};
 use super::time;
 use crate::userdata::layout;
 use crate::userdata::{ToursLock, ToursLockError, UserData, UserDataError};
@@ -61,6 +61,16 @@ pub enum StoreError {
     TooBig(TourId),
     #[error("could not find a free id for a new tour in {START_ATTEMPTS} tries")]
     NoFreeId,
+    /// The tour's file is not one this version reads (`too_new`: a newer schema, which is the environment's problem and not a broken file).
+    #[error("the tour {id} cannot be read: {why}")]
+    Unreadable {
+        id: TourId,
+        why: String,
+        too_new: bool,
+    },
+    /// A request that cannot be met, with its sentence (a tour that is being written cannot be shared; the id is in the trash's way…).
+    #[error("{0}")]
+    Refused(String),
 }
 
 fn io_error(what: impl Into<String>) -> impl FnOnce(io::Error) -> StoreError {
@@ -255,7 +265,312 @@ pub fn pick(vnoc_root: &Path, text: &str) -> Pick {
     }
 }
 
+// ------------------------------------------------------------------------------------------------------------------- stop
+
+/// What [`halt`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Halt {
+    /// a `halt` was written: the tour is stopping
+    Written,
+    /// the tour was stopping or stopped already: nothing was written
+    Already,
+    /// the tour is finished: there is nothing to stop
+    Finished,
+}
+
+/// The reader presses Stop (the core's, from TR15; `vnoc tour halt` for tests): appends `halt` unless the tour is stopping or stopped (or finished),
+/// under the lock. The agent is told at its next write ([`reader_stopped`]).
+pub fn halt(vnoc_root: &Path, id: &TourId) -> Result<Halt, StoreError> {
+    let lock = ToursLock::take(vnoc_root)?;
+    let tour = readable(vnoc_root, id)?;
+    match tour.state {
+        State::Stopping | State::Stopped => Ok(Halt::Already),
+        State::Finished => Ok(Halt::Finished),
+        State::Writing => {
+            append_locked(&lock, vnoc_root, id, &[Record::Halt(Bare {})])?;
+            Ok(Halt::Written)
+        }
+    }
+}
+
+/// The tour as it is, or why it cannot be written to.
+fn readable(vnoc_root: &Path, id: &TourId) -> Result<Tour, StoreError> {
+    match read(vnoc_root, id)?.1 {
+        Ok(tour) => Ok(tour),
+        Err(e) => Err(StoreError::Unreadable {
+            id: id.clone(),
+            why: e.why,
+            too_new: e.too_new,
+        }),
+    }
+}
+
+/// Called by every write of the agent (`add`, `plan`, `drop`, `finish`) under the lock, with the tour as read under it: `Some(stops written)` when the
+/// reader stopped the tour, and the write is to be refused (02 §5). A tour that is *stopping* gets `halted` written first, once, which is how the screen
+/// knows the agent has been told; one that is *stopped* has had it. `resume`, `edit`, `share` and `delete` are the user's and do not ask.
+pub fn reader_stopped(
+    lock: &ToursLock,
+    vnoc_root: &Path,
+    tour: &Tour,
+) -> Result<Option<usize>, StoreError> {
+    match tour.state {
+        State::Stopping => {
+            append_locked(lock, vnoc_root, &tour.id, &[Record::Halted(Bare {})])?;
+            Ok(Some(tour.size().written))
+        }
+        State::Stopped => Ok(Some(tour.size().written)),
+        State::Writing | State::Finished => Ok(None),
+    }
+}
+
+// ------------------------------------------------------------------------------------------------------------- share, delete
+
+/// A tour that is being written (`writing`, `stopping`) is not the user's to move or delete yet: finish it, or stop it. A stopped one is.
+fn refuse_if_being_written(tour: &Tour, what: &str) -> Result<(), StoreError> {
+    match tour.state {
+        State::Writing | State::Stopping => Err(StoreError::Refused(format!(
+            "the tour {} is being written ({}): {what}",
+            tour.id, tour.state
+        ))),
+        State::Stopped | State::Finished => Ok(()),
+    }
+}
+
+/// Moves a tour's file to the other folder (`share`: private to the project's; `--private`: back), byte for byte, under the lock. The state file does
+/// not move: it is named by the id (01 §9). Refused when the tour is being written, is there already, or its id is in both folders. Returns the
+/// new path.
+pub fn share(vnoc_root: &Path, id: &TourId, to: Where) -> Result<PathBuf, StoreError> {
+    let _lock = ToursLock::take(vnoc_root)?;
+    let (from, here) = match locate(vnoc_root, id) {
+        Located::None => return Err(StoreError::NotFound(id.clone())),
+        Located::Both { .. } => return Err(StoreError::InBoth(id.clone())),
+        Located::Private(path) => (path, Where::Private),
+        Located::Project(path) => (path, Where::Project),
+    };
+    if here == to {
+        return Err(StoreError::Refused(format!(
+            "the tour {id} is {} already",
+            match to {
+                Where::Private => "private",
+                Where::Project => "the project's",
+            }
+        )));
+    }
+    if let Ok(tour) = readable(vnoc_root, id) {
+        refuse_if_being_written(&tour, "finish it before moving it, or stop it")?;
+    }
+    let dir = match to {
+        Where::Private => layout::local_tours_dir(vnoc_root),
+        Where::Project => layout::tours_dir(vnoc_root),
+    };
+    let target = file_in(&dir, id);
+    fs::create_dir_all(&dir).map_err(io_error(format!("could not make {}", dir.display())))?;
+    fs::rename(&from, &target).map_err(io_error(format!(
+        "could not move {} to {}",
+        from.display(),
+        target.display()
+    )))?;
+    Ok(target)
+}
+
+/// A deleted tour that can be restored: `<stamp>_<id>.tour.toml` beside its file and (if it had one) its state file, in `.vnoc/local/trash/`.
+///
+/// **Files, not a folder**, because the node trash (`userdata/trash.rs`) lists, restores and counts *folders* of the trash and nothing else: a file is
+/// never an entry of its list (no warning, no "skipped"), is not counted by Empty Trash's entries, is counted in its bytes, and goes with the rest when
+/// the trash is emptied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trashed {
+    /// `<stamp>_<id>`: what [`restore`] takes
+    pub entry: String,
+    pub id: TourId,
+    /// the folder it was in
+    pub was: Where,
+    /// UTC, `2026-11-24T12:03:02Z`
+    pub deleted_at: String,
+    /// its state file (the reader's place and the last check) went with it
+    pub with_state: bool,
+}
+
+fn trash_files(vnoc_root: &Path, entry: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let dir = layout::trash_dir(vnoc_root);
+    (
+        dir.join(format!("{entry}.tour.toml")),
+        dir.join(format!("{entry}.jsonl")),
+        dir.join(format!("{entry}.state.json")),
+    )
+}
+
+/// Moves a tour's file and its state file to the trash, under the lock; nothing is erased. Refused while the tour is being written (stop it first), and
+/// when its id is in both folders (which copy?). A project tour is also in git's history, if it was committed.
+pub fn delete(vnoc_root: &Path, id: &TourId) -> Result<Trashed, StoreError> {
+    let _lock = ToursLock::take(vnoc_root)?;
+    let (path, was) = match locate(vnoc_root, id) {
+        Located::None => return Err(StoreError::NotFound(id.clone())),
+        Located::Both { .. } => return Err(StoreError::InBoth(id.clone())),
+        Located::Private(path) => (path, Where::Private),
+        Located::Project(path) => (path, Where::Project),
+    };
+    if let Ok(tour) = readable(vnoc_root, id) {
+        refuse_if_being_written(&tour, "stop it first")?;
+    }
+    let trash = layout::trash_dir(vnoc_root);
+    fs::create_dir_all(&trash).map_err(io_error(format!("could not make {}", trash.display())))?;
+    // a free entry: two deletes of one id in a second take the next second's name
+    let now = time::now();
+    let stamp = now.replace(['-', ':'], "");
+    let stamp = stamp.trim_end_matches('Z');
+    let entry = (0..)
+        .map(|n| {
+            if n == 0 {
+                format!("{stamp}_{id}")
+            } else {
+                format!("{stamp}-{n}_{id}")
+            }
+        })
+        .find(|e| !trash_files(vnoc_root, e).0.exists())
+        .expect("a free name");
+    let (manifest, tour_to, state_to) = trash_files(vnoc_root, &entry);
+    let state_from = state_file(vnoc_root, id);
+    let with_state = state_from.is_file();
+    let text = format!(
+        "id = \"{id}\"\ndeleted_at = \"{now}\"\nwas = \"{}\"\nstate = {with_state}\n",
+        match was {
+            Where::Private => "private",
+            Where::Project => "project",
+        }
+    );
+    crate::userdata::atomic::write_atomic(&manifest, text.as_bytes())
+        .map_err(io_error(format!("could not write {}", manifest.display())))?;
+    let moved = fs::rename(&path, &tour_to).and_then(|()| {
+        if with_state {
+            fs::rename(&state_from, &state_to)
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(e) = moved {
+        let _ = fs::remove_file(&manifest);
+        return Err(io_error(format!(
+            "could not move {} to the trash",
+            path.display()
+        ))(e));
+    }
+    Ok(Trashed {
+        entry,
+        id: id.clone(),
+        was,
+        deleted_at: now,
+        with_state,
+    })
+}
+
+/// Where a deleted tour's file is, by its trash entry.
+pub fn trash_path(vnoc_root: &Path, entry: &str) -> PathBuf {
+    trash_files(vnoc_root, entry).1
+}
+
+/// What `delete` left in the trash that can be restored, newest first. An entry that disagrees with itself (its name, its manifest, its file) is not
+/// listed and is left alone.
+pub fn trashed(vnoc_root: &Path) -> Vec<Trashed> {
+    let Ok(read_dir) = fs::read_dir(layout::trash_dir(vnoc_root)) else {
+        return Vec::new();
+    };
+    let mut found: Vec<Trashed> = read_dir
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let entry = name.strip_suffix(".tour.toml")?.to_string();
+            let (_, id_text) = entry.split_once('_')?;
+            let id = TourId::parse(id_text).ok()?;
+            let doc = fs::read_to_string(e.path())
+                .ok()?
+                .parse::<toml_edit::DocumentMut>()
+                .ok()?;
+            if doc.get("id")?.as_str()? != id_text {
+                return None;
+            }
+            let was = match doc.get("was")?.as_str()? {
+                "private" => Where::Private,
+                "project" => Where::Project,
+                _ => return None,
+            };
+            let (_, tour_file, state) = trash_files(vnoc_root, &entry);
+            tour_file.is_file().then_some(())?;
+            Some(Trashed {
+                id,
+                was,
+                deleted_at: doc.get("deleted_at")?.as_str()?.to_string(),
+                with_state: state.is_file(),
+                entry,
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| b.entry.cmp(&a.entry));
+    found
+}
+
+/// Puts a deleted tour back where it was, with its state file, byte for byte (the screen's Undo). Refused when the id exists again, in either folder.
+pub fn restore(vnoc_root: &Path, entry: &str) -> Result<Trashed, StoreError> {
+    let _lock = ToursLock::take(vnoc_root)?;
+    let found = trashed(vnoc_root)
+        .into_iter()
+        .find(|t| t.entry == entry)
+        .ok_or_else(|| StoreError::Refused(format!("`{entry}` is not in the trash")))?;
+    if locate(vnoc_root, &found.id) != Located::None {
+        return Err(StoreError::Refused(format!(
+            "the tour {} exists again: restoring would put a second one beside it",
+            found.id
+        )));
+    }
+    let dir = match found.was {
+        Where::Private => layout::local_tours_dir(vnoc_root),
+        Where::Project => layout::tours_dir(vnoc_root),
+    };
+    fs::create_dir_all(&dir).map_err(io_error(format!("could not make {}", dir.display())))?;
+    let (manifest, tour_from, state_from) = trash_files(vnoc_root, entry);
+    let to = file_in(&dir, &found.id);
+    fs::rename(&tour_from, &to).map_err(io_error(format!("could not restore {}", to.display())))?;
+    if found.with_state {
+        let state_to = state_file(vnoc_root, &found.id);
+        if let Some(parent) = state_to.parent() {
+            fs::create_dir_all(parent)
+                .map_err(io_error(format!("could not make {}", parent.display())))?;
+        }
+        let _ = fs::remove_file(&state_to);
+        fs::rename(&state_from, &state_to).map_err(io_error(format!(
+            "could not restore {}",
+            state_to.display()
+        )))?;
+    }
+    let _ = fs::remove_file(&manifest);
+    Ok(found)
+}
+
 // ---------------------------------------------------------------------------------------------------------------- start
+
+/// What is wrong with the arguments of `edit`: the title and the question as `start` has them, and a question is never empty (it can be changed, not taken
+/// away).
+pub fn check_edit(title: Option<&str>, question: Option<&str>) -> Vec<String> {
+    let params = |title: &str, question: Option<&str>| StartParams {
+        title: title.to_string(),
+        question: question.map(String::from),
+        author: None,
+        detail: Detail::Normal,
+    };
+    let mut problems = Vec::new();
+    if let Some(title) = title {
+        problems.extend(check_start(&params(title, None)));
+    }
+    match question {
+        Some(q) if q.trim().is_empty() => problems.push(
+            "--question is empty: a tour's question can be changed, not taken away".to_string(),
+        ),
+        Some(q) => problems.extend(check_start(&params("t", Some(q)))),
+        None => {}
+    }
+    problems
+}
 
 /// What is wrong with the arguments of `start`, one sentence each: a title is one line of 1 to 60 characters, a question one line of at most
 /// 200, an author one line (02 §3).
@@ -1594,5 +1909,292 @@ mod tests {
             id: StepId::parse("s3.b1").unwrap(),
         }));
         assert_eq!(line.trim_end(), drop_line("s3.b1"));
+    }
+
+    // ---- Stop, share, delete
+
+    /// A tour started in a project, with one stop written, and a state file.
+    fn tour_with_state(root: &Path) -> TourId {
+        let started = start(root, params("T")).unwrap();
+        let vnoc_root = vnoc_of(root);
+        append(
+            &vnoc_root,
+            &started.id,
+            &[parse_line(&stop_line(1)).unwrap()],
+        )
+        .unwrap();
+        write_state_part(&vnoc_root, &started.id, Part::Place, json!({"at": "cover"})).unwrap();
+        started.id
+    }
+
+    fn finish_it(vnoc_root: &Path, id: &TourId) {
+        let end = parse_line(r#"{"type":"end","at":"2026-11-23T18:47:31Z"}"#).unwrap();
+        append(vnoc_root, id, &[end]).unwrap();
+    }
+
+    fn records(vnoc_root: &Path, id: &TourId) -> Vec<String> {
+        fs::read_to_string(match locate(vnoc_root, id) {
+            Located::Private(p) | Located::Project(p) => p,
+            other => panic!("{other:?}"),
+        })
+        .unwrap()
+        .lines()
+        .map(|l| {
+            serde_json::from_str::<Value>(l).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+    }
+
+    #[test]
+    fn halt_writes_once_and_the_next_write_is_told_once() {
+        let root = project("halt");
+        let vnoc_root = vnoc_of(&root);
+        let id = tour_with_state(&root);
+        assert_eq!(super::halt(&vnoc_root, &id).unwrap(), Halt::Written);
+        assert_eq!(
+            super::halt(&vnoc_root, &id).unwrap(),
+            Halt::Already,
+            "stopping already"
+        );
+        let tour = read(&vnoc_root, &id).unwrap().1.unwrap();
+        assert_eq!(tour.state, State::Stopping);
+        let lock = ToursLock::take(&vnoc_root).unwrap();
+        // the first write after: `halted` is written, and the write is refused with the stops written
+        assert_eq!(reader_stopped(&lock, &vnoc_root, &tour).unwrap(), Some(1));
+        let tour = read(&vnoc_root, &id).unwrap().1.unwrap();
+        assert_eq!(tour.state, State::Stopped);
+        // every later one is refused and writes nothing more
+        for _ in 0..3 {
+            assert_eq!(reader_stopped(&lock, &vnoc_root, &tour).unwrap(), Some(1));
+        }
+        drop(lock);
+        assert_eq!(
+            records(&vnoc_root, &id),
+            ["tour", "stop", "halt", "halted"],
+            "one `halted`"
+        );
+        assert_eq!(
+            super::halt(&vnoc_root, &id).unwrap(),
+            Halt::Already,
+            "stopped already"
+        );
+        // resume, and a tour that is writing (or finished) is not refused
+        append(&vnoc_root, &id, &[Record::Resume(Bare {})]).unwrap();
+        let tour = read(&vnoc_root, &id).unwrap().1.unwrap();
+        let lock = ToursLock::take(&vnoc_root).unwrap();
+        assert_eq!(reader_stopped(&lock, &vnoc_root, &tour).unwrap(), None);
+        drop(lock);
+        finish_it(&vnoc_root, &id);
+        assert_eq!(
+            super::halt(&vnoc_root, &id).unwrap(),
+            Halt::Finished,
+            "nothing to stop"
+        );
+        assert_eq!(
+            records(&vnoc_root, &id).last().map(String::as_str),
+            Some("end")
+        );
+    }
+
+    #[test]
+    fn a_tour_that_cannot_be_read_cannot_be_halted() {
+        let root = project("halt-unreadable");
+        let vnoc_root = vnoc_of(&root);
+        let dir = layout::local_tours_dir(&vnoc_root);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("broken-0000.jsonl"), "nonsense\n").unwrap();
+        let id = TourId::parse("broken-0000").unwrap();
+        assert!(matches!(
+            super::halt(&vnoc_root, &id),
+            Err(StoreError::Unreadable { too_new: false, .. })
+        ));
+    }
+
+    #[test]
+    fn share_moves_the_file_as_it_is_and_the_state_stays_and_each_refusal_says_why() {
+        let root = project("share");
+        let vnoc_root = vnoc_of(&root);
+        let id = tour_with_state(&root);
+        // being written: refused
+        assert!(
+            matches!(share(&vnoc_root, &id, Where::Project), Err(StoreError::Refused(m)) if m.contains("is being written (writing)"))
+        );
+        super::halt(&vnoc_root, &id).unwrap();
+        assert!(
+            matches!(share(&vnoc_root, &id, Where::Project), Err(StoreError::Refused(m)) if m.contains("(stopping)"))
+        );
+        let tour = read(&vnoc_root, &id).unwrap().1.unwrap();
+        let lock = ToursLock::take(&vnoc_root).unwrap();
+        reader_stopped(&lock, &vnoc_root, &tour).unwrap();
+        drop(lock);
+        // stopped is the user's to move
+        let before = fs::read(file_in(&layout::local_tours_dir(&vnoc_root), &id)).unwrap();
+        let state_before = fs::read(state_file(&vnoc_root, &id)).unwrap();
+        let to = share(&vnoc_root, &id, Where::Project).unwrap();
+        assert_eq!(to, file_in(&layout::tours_dir(&vnoc_root), &id));
+        assert_eq!(fs::read(&to).unwrap(), before, "byte for byte");
+        assert!(!file_in(&layout::local_tours_dir(&vnoc_root), &id).exists());
+        assert_eq!(read(&vnoc_root, &id).unwrap().0, Where::Project);
+        assert_eq!(
+            fs::read(state_file(&vnoc_root, &id)).unwrap(),
+            state_before,
+            "the state did not move"
+        );
+        // already there
+        assert!(
+            matches!(share(&vnoc_root, &id, Where::Project), Err(StoreError::Refused(m)) if m.contains("the project's already"))
+        );
+        // and back
+        let back = share(&vnoc_root, &id, Where::Private).unwrap();
+        assert_eq!(fs::read(back).unwrap(), before);
+        assert!(
+            matches!(share(&vnoc_root, &id, Where::Private), Err(StoreError::Refused(m)) if m.contains("private already"))
+        );
+        // the same id in the other folder: nothing is merged
+        fs::create_dir_all(layout::tours_dir(&vnoc_root)).unwrap();
+        fs::copy(
+            file_in(&layout::local_tours_dir(&vnoc_root), &id),
+            file_in(&layout::tours_dir(&vnoc_root), &id),
+        )
+        .unwrap();
+        assert!(matches!(
+            share(&vnoc_root, &id, Where::Project),
+            Err(StoreError::InBoth(_))
+        ));
+        assert!(matches!(
+            share(
+                &vnoc_root,
+                &TourId::parse("nope-0000").unwrap(),
+                Where::Project
+            ),
+            Err(StoreError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn delete_moves_the_tour_and_its_state_to_the_trash_and_restore_puts_both_back() {
+        let root = project("delete");
+        let vnoc_root = vnoc_of(&root);
+        let id = tour_with_state(&root);
+        assert!(
+            matches!(delete(&vnoc_root, &id), Err(StoreError::Refused(m)) if m.contains("stop it first"))
+        );
+        finish_it(&vnoc_root, &id);
+        let path = file_in(&layout::local_tours_dir(&vnoc_root), &id);
+        let (tour_bytes, state_bytes) = (
+            fs::read(&path).unwrap(),
+            fs::read(state_file(&vnoc_root, &id)).unwrap(),
+        );
+        let gone = delete(&vnoc_root, &id).unwrap();
+        assert_eq!((gone.was, gone.with_state), (Where::Private, true));
+        assert!(!path.exists() && !state_file(&vnoc_root, &id).exists());
+        assert_eq!(locate(&vnoc_root, &id), Located::None);
+        let trash = layout::trash_dir(&vnoc_root);
+        let mut names: Vec<String> = fs::read_dir(&trash)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                format!("{}.jsonl", gone.entry),
+                format!("{}.state.json", gone.entry),
+                format!("{}.tour.toml", gone.entry)
+            ]
+        );
+        assert_eq!(trashed(&vnoc_root), std::slice::from_ref(&gone));
+        // the node trash does not see it: no entry, nothing skipped, nothing counted, and its bytes are in the size
+        let data = crate::userdata::UserData::new(&root);
+        assert!(data.trash_list().is_empty());
+        let (_, entries, bytes) = data.trash_info();
+        assert_eq!(entries, 0);
+        assert!(bytes >= (tour_bytes.len() + state_bytes.len()) as u64);
+
+        // restore: where it was, byte for byte, state too; the entry is gone
+        let back = restore(&vnoc_root, &gone.entry).unwrap();
+        assert_eq!(back.id, id);
+        assert_eq!(fs::read(&path).unwrap(), tour_bytes);
+        assert_eq!(fs::read(state_file(&vnoc_root, &id)).unwrap(), state_bytes);
+        assert!(trashed(&vnoc_root).is_empty());
+        assert_eq!(fs::read_dir(&trash).unwrap().count(), 0);
+        assert!(
+            matches!(restore(&vnoc_root, &gone.entry), Err(StoreError::Refused(m)) if m.contains("is not in the trash"))
+        );
+    }
+
+    #[test]
+    fn restore_is_refused_when_the_id_is_there_again_and_a_project_tour_goes_back_to_the_project() {
+        let root = project("restore");
+        let vnoc_root = vnoc_of(&root);
+        let id = tour_with_state(&root);
+        finish_it(&vnoc_root, &id);
+        share(&vnoc_root, &id, Where::Project).unwrap();
+        let first = delete(&vnoc_root, &id).unwrap();
+        assert_eq!(first.was, Where::Project);
+        // put a tour of that id back by hand, in the other folder: restoring would make two
+        let dir = layout::local_tours_dir(&vnoc_root);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(file_in(&dir, &id), "x\n").unwrap();
+        assert!(
+            matches!(restore(&vnoc_root, &first.entry), Err(StoreError::Refused(m)) if m.contains("exists again"))
+        );
+        assert_eq!(trashed(&vnoc_root).len(), 1, "still in the trash");
+        fs::remove_file(file_in(&dir, &id)).unwrap();
+        restore(&vnoc_root, &first.entry).unwrap();
+        assert_eq!(
+            locate(&vnoc_root, &id),
+            Located::Project(file_in(&layout::tours_dir(&vnoc_root), &id))
+        );
+    }
+
+    #[test]
+    fn two_deletes_of_one_id_in_one_second_have_two_entries_and_a_tour_with_no_state_has_none() {
+        let root = project("delete-twice");
+        let vnoc_root = vnoc_of(&root);
+        let a = start(&root, params("A")).unwrap();
+        finish_it(&vnoc_root, &a.id);
+        let first = delete(&vnoc_root, &a.id).unwrap();
+        assert!(!first.with_state);
+        // the same id again, at once (a copy of the file put back by hand): the second delete takes another name
+        let dir = layout::local_tours_dir(&vnoc_root);
+        fs::copy(trash_path(&vnoc_root, &first.entry), file_in(&dir, &a.id)).unwrap();
+        let second = delete(&vnoc_root, &a.id).unwrap();
+        assert_ne!(first.entry, second.entry);
+        assert_eq!(trashed(&vnoc_root).len(), 2);
+        restore(&vnoc_root, &first.entry).unwrap();
+        assert_eq!(trashed(&vnoc_root).len(), 1);
+        // a manifest that disagrees with its name is not an entry
+        let (manifest, ..) = trash_files(&vnoc_root, &second.entry);
+        let text = fs::read_to_string(&manifest)
+            .unwrap()
+            .replace(a.id.as_str(), "other-0000");
+        fs::write(&manifest, text).unwrap();
+        assert!(trashed(&vnoc_root).is_empty());
+    }
+
+    #[test]
+    fn the_arguments_of_edit_are_checked_like_start_and_a_question_is_never_taken_away() {
+        assert!(check_edit(Some("A title"), Some("A question")).is_empty());
+        assert!(check_edit(None, None).is_empty());
+        assert_eq!(
+            check_edit(Some(&"x".repeat(61)), None),
+            ["--title is 61 characters: the most it takes is 60"]
+        );
+        assert_eq!(
+            check_edit(None, Some("  ")),
+            ["--question is empty: a tour's question can be changed, not taken away"]
+        );
+        assert_eq!(
+            check_edit(Some("two\nlines"), Some(&"q".repeat(201))),
+            [
+                "--title is not one line",
+                "--question is 201 characters: the most it takes is 200"
+            ]
+        );
     }
 }

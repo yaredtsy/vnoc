@@ -54,6 +54,8 @@ pub enum StopState {
 pub struct BlockCheck {
     pub id: StepId,
     pub state: BlockState,
+    /// the block's lines now: where it was found, or where it was (counted from the node's first line, cut to the node's end) when it was not
+    pub now: (u32, u32),
 }
 
 /// One stop against its node.
@@ -164,6 +166,7 @@ pub fn compare(stop: &TourStop, node: &Node, file_text: &str, marker_ids: &[&str
             blocks.push(BlockCheck {
                 id: b.id,
                 state: BlockState::Changed,
+                now: (b.lines.first, b.lines.last),
             });
         });
     }
@@ -225,6 +228,7 @@ fn walk(
         out.push(BlockCheck {
             id: block.id,
             state,
+            now,
         });
         walk(&block.details, now, lens, at, slack, out);
     }
@@ -245,6 +249,21 @@ pub struct Recorded {
     pub blocks: BTreeMap<StepId, StopState>,
     /// blocks found at other lines
     pub moved: BTreeMap<StepId, [u32; 2]>,
+    /// where a stop that is *changed* is now, by what the check found: its name and path as they are, which may not be what it was written with
+    /// (found by its ID after a rename or a move), and its lines. An addition to 01 §9's record, read as empty when it is not there.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub now: BTreeMap<StopId, Now>,
+}
+
+/// A changed stop's node as it is now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Now {
+    /// `""` for a file
+    pub qualname: String,
+    pub path: String,
+    /// a def's lines; none for a file
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<[u32; 2]>,
 }
 
 impl Recorded {
@@ -257,6 +276,7 @@ impl Recorded {
             stops: BTreeMap::new(),
             blocks: BTreeMap::new(),
             moved: BTreeMap::new(),
+            now: BTreeMap::new(),
         }
     }
 
@@ -405,6 +425,19 @@ pub fn check(code: &Code, read: Reader, tour: &Tour, tour_len: u64) -> Recorded 
         };
         if result.state != StopState::Fresh {
             recorded.stops.insert(stop.id, result.state);
+        }
+        if result.state == StopState::Changed
+            && let Some(node) = find(code.index, code.project, code.tree, stop)
+            && let Some((path, qualname, _)) = place_of(node)
+        {
+            recorded.now.insert(
+                stop.id,
+                Now {
+                    qualname,
+                    path: path.to_string(),
+                    lines: node.range.map(|r| [r.start.line + 1, r.end.line + 1]),
+                },
+            );
         }
         for block in result.blocks {
             match block.state {

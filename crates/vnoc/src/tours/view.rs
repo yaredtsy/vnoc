@@ -162,6 +162,9 @@ pub struct StopView {
     /// with a check: `changed`, `gone`, or `moved` (fresh, with a block at other lines); a fresh stop says nothing
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<&'static str>,
+    /// with a check, for a stop that is changed: where its node is now (its name and path may not be what it was written with)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub now: Option<super::check::Now>,
     pub blocks: Vec<BlockView>,
 }
 
@@ -243,6 +246,7 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
         same_as: stop.same_as.map(|s| s.to_string()),
         text: stop.text.clone(),
         check: None,
+        now: None,
         blocks,
     }
 }
@@ -315,6 +319,7 @@ pub fn mark(view: &mut TourView, answer: &Answer) {
                 }
             }
         }
+        stop.now = recorded.now.get(&id).cloned();
         stop.check = match recorded.stop(id) {
             StopState::Gone => Some("gone"),
             StopState::Changed => Some("changed"),
@@ -322,6 +327,28 @@ pub fn mark(view: &mut TourView, answer: &Answer) {
             StopState::Fresh => None,
         };
     }
+}
+
+/// `quick`, `normal`, `detailed`.
+pub fn detail_word(detail: super::record::Detail) -> &'static str {
+    match detail {
+        super::record::Detail::Quick => "quick",
+        super::record::Detail::Normal => "normal",
+        super::record::Detail::Detailed => "detailed",
+    }
+}
+
+/// What an agent is told when its write is refused because the reader pressed Stop (02 §5), word for word.
+pub fn stopped_text(id: &TourId, written: usize) -> String {
+    let stops = count(written, "stop", "stops");
+    let said = if written == 0 {
+        "Tour stopped.".to_string()
+    } else {
+        format!("Tour stopped at stop {written}.")
+    };
+    format!(
+        "stopped: the reader stopped this tour ({stops} written). Add nothing more.\nSay one line: \"{said}\"\nTo go on later, only if the user asks: vnoc tour resume {id}\n"
+    )
 }
 
 /// `fresh`, `1 stop changed`, `2 stops gone`, `1 changed, 1 gone`: the tour's word.
@@ -387,11 +414,33 @@ pub fn stale_lines(tour: &Tour, recorded: &Recorded) -> Vec<String> {
                 out.push(line);
             }
             StopState::Changed => {
+                // where the stop is now, when the check said: a stop found by its ID may have another name or path than it was written with
+                let (name, place, was) = match recorded.now.get(&stop.id) {
+                    Some(now) => {
+                        let name = if now.qualname.is_empty() {
+                            now.path.rsplit('/').next().unwrap_or(&now.path).to_string()
+                        } else {
+                            now.qualname.clone()
+                        };
+                        let place = match now.lines {
+                            Some([a, b]) if a == b => format!("{}:{a}", now.path),
+                            Some([a, b]) => format!("{}:{a}-{b}", now.path),
+                            None => now.path.clone(),
+                        };
+                        (name, place, Some(now))
+                    }
+                    None => (stop_label(stop), stop_place(stop), None),
+                };
+                let was_name =
+                    (name != stop_label(stop)).then(|| format!(" (was {})", stop_label(stop)));
+                let was_path = was
+                    .filter(|now| now.path != stop.path.as_str())
+                    .map(|_| format!(" (was {})", stop.path));
                 let mut line = format!(
-                    "{} changed: {} {}",
+                    "{} changed: {name}{} {place}{}",
                     stop.id,
-                    stop_label(stop),
-                    stop_place(stop)
+                    was_name.unwrap_or_default(),
+                    was_path.unwrap_or_default()
                 );
                 let mut stack: Vec<&TourBlock> = stop.blocks.iter().rev().collect();
                 while let Some(block) = stack.pop() {
@@ -516,14 +565,27 @@ pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
         .iter()
         .map(|s| {
             let kind = tour.stops[s.number - 1].kind.as_ref();
-            let name = format!("{}{} {}", "  ".repeat(s.depth), icon(kind), s.name);
             let label = stop_label(&tour.stops[s.number - 1]);
+            // a changed stop that a check found under another name: the name it has now, and the one it was written with
+            let shown_name = match &s.now {
+                Some(now) if !now.qualname.is_empty() && now.qualname != label => {
+                    format!("{} (was {label})", now.qualname)
+                }
+                _ => s.name.clone(),
+            };
+            let name = format!("{}{} {shown_name}", "  ".repeat(s.depth), icon(kind));
             let place = if s.planned && s.lines.is_none() {
                 // not written: the name it will be found by
                 if s.qualname.is_empty() {
                     s.path.clone()
                 } else {
                     format!("{}::{}", s.path, s.qualname)
+                }
+            } else if let Some(now) = &s.now {
+                match now.lines {
+                    Some([a, b]) if a == b => format!("{}:{a}", now.path),
+                    Some([a, b]) => format!("{}:{a}-{b}", now.path),
+                    None => now.path.clone(),
                 }
             } else {
                 stop_place(&tour.stops[s.number - 1])
@@ -970,5 +1032,19 @@ mod tests {
         assert!(views[1].private_copy);
         assert!(!views[0].private_copy);
         assert!(!views[2].readable);
+    }
+
+    #[test]
+    fn the_stopped_text_is_the_one_of_the_plan_word_for_word() {
+        let id = TourId::parse("checkout-order-7k2q").unwrap();
+        assert_eq!(
+            stopped_text(&id, 6),
+            "stopped: the reader stopped this tour (6 stops written). Add nothing more.\nSay one line: \"Tour stopped at stop 6.\"\nTo go on later, only if the user asks: vnoc tour resume checkout-order-7k2q\n"
+        );
+        assert!(stopped_text(&id, 1).contains("(1 stop written)"));
+        assert!(
+            stopped_text(&id, 0).contains("(0 stops written)")
+                && stopped_text(&id, 0).contains("\"Tour stopped.\"")
+        );
     }
 }

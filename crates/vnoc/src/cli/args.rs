@@ -330,6 +330,34 @@ pub enum TourCommand {
     /// Writes the end of the tour. Planned stops that were never written leave the route, and the answer says how many. Finishing a tour that is
     /// finished already changes nothing and says so (exit 0). Writes IDs and pins nothing yet.
     Finish(TourFinishArgs),
+    /// Takes a stop (with its blocks, and the stops nested in it) or a block (with its details) off the tour: `vnoc tour drop <tour> s3`, `s3.b2`.
+    ///
+    /// Writes one `drop` record. A stop goes with the blocks of it and the stops nested in it; a block with its details. The ids are not used again by
+    /// a later `add`. An id the tour does not have is refused with the nearest ones. Refused with exit 1 when the reader has stopped the tour.
+    Drop(TourDropArgs),
+    /// After the reader stopped the tour: lets `add` work again. Only when the user asks you to carry on.
+    ///
+    /// Writes `resume` when the tour is stopped (or stopping): `add`, `drop` and `finish` are accepted again. On a tour that is not stopped it says so
+    /// and does nothing (exit 0).
+    Resume(TourResumeArgs),
+    /// Changes a tour's title, question or detail: one `meta` record. The id and the file's name stay.
+    ///
+    /// `vnoc tour edit <tour> --title "…" --question "…" --detail quick|normal|detailed`: at least one. The same rules as `start` (a title of at most 60
+    /// characters on one line, a question of at most 200). The text of a stop is changed by `vnoc tour add --replace`, not here.
+    Edit(TourEditArgs),
+    /// Moves a finished tour's file to `.vnoc/tours/`, where `git` shares it with the project; `--private` moves it back. The user's command.
+    ///
+    /// The file moves as it is, byte for byte, and its state (where the reader is) stays. Refused while the tour is being written, when it is there
+    /// already, and when the same id is in the other folder. Prints the new path and, for a share, that it is for the user to commit. An agent runs it
+    /// only when asked.
+    Share(TourShareArgs),
+    /// Moves tours to `.vnoc/local/trash/` (the file and its state). Nothing is erased. The user's command.
+    ///
+    /// Refused for a tour that is being written (stop it first). A tour that was committed is also in git. An agent runs it only when asked.
+    Delete(TourDeleteArgs),
+    /// The reader's Stop button, from a terminal: for tests and trials. The next `add` is refused.
+    #[command(hide = true)]
+    Halt(TourResumeArgs),
     /// Lists the tours of this project, newest first: id, state, stops, where it is kept, the title and the question.
     ///
     /// Lists every tour in `.vnoc/tours/` (the project's) and `.vnoc/local/tours/` (private), newest first, one row each: the id, whether it is
@@ -386,10 +414,12 @@ pub struct TourAddArgs {
     pub tour: String,
     #[arg(
         value_name = "NODE",
+        required_unless_present = "to",
+        conflicts_with = "to",
         help = "the node this stop is about: path::Name, path:line, an ID, or a path",
-        long_help = "The node this stop is about (see `vnoc show --help` for how to name one): a function, a class, a file or a folder."
+        long_help = "The node this stop is about (see `vnoc show --help` for how to name one): a function, a class, a file or a folder. Not given with --to."
     )]
-    pub node: String,
+    pub node: Option<String>,
     #[arg(
         long,
         value_name = "FILE",
@@ -398,14 +428,25 @@ pub struct TourAddArgs {
     )]
     pub body_file: String,
     /// The stop this one was reached from, as printed by `add` and `show` (`s1`). Without `--line` it is containment: a method of the class, a file of the folder.
-    #[arg(long, value_name = "STOP")]
+    #[arg(long, value_name = "STOP", conflicts_with = "to")]
     pub from: Option<crate::tours::StopId>,
     /// The line of the `--from` stop's node where the call is (the file's own line number).
     #[arg(long, value_name = "N", requires = "from")]
     pub line: Option<u32>,
     /// The stop that already explained this node: this one is one sentence about why the tour is here again, with no blocks.
-    #[arg(long, value_name = "STOP")]
+    #[arg(long, value_name = "STOP", conflicts_with = "to")]
     pub same_as: Option<crate::tours::StopId>,
+    /// Write this stop again where `s3` stands, keeping its id and its place on the route: new text, new blocks (their ids go on from the highest used).
+    /// The node may be another. `--from` and `--line` are the stop's own unless you give them. This is how a stop that no longer matches is fixed.
+    #[arg(long, value_name = "STOP", conflicts_with = "to")]
+    pub replace: Option<crate::tours::StopId>,
+    /// Add blocks to a stop that is written, instead of a stop: the text is blocks only (`##`, and `###` for their details), with no intro, written after
+    /// the stop's blocks. They are checked against the stop's node now and against the blocks it has.
+    #[arg(long, value_name = "STOP")]
+    pub to: Option<crate::tours::StopId>,
+    /// With `--to`: the blocks of the text are details of this block (`s1.b2`), written as `##`; a `###` is refused, details nest one level.
+    #[arg(long, value_name = "BLOCK", requires = "to")]
+    pub under: Option<crate::tours::StepId>,
 }
 
 #[derive(Debug, Args)]
@@ -1059,4 +1100,53 @@ mod tests {
             }
         }
     }
+}
+
+#[derive(Debug, Args)]
+pub struct TourDropArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(value_name = "ID", help = "a stop (`s3`) or a block (`s3.b2`)")]
+    pub id: crate::tours::StepId,
+}
+
+#[derive(Debug, Args)]
+pub struct TourResumeArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+}
+
+#[derive(Debug, Args)]
+#[command(group = clap::ArgGroup::new("what").required(true).multiple(true).args(["title", "question", "detail"]))]
+pub struct TourEditArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// The new title (at most 60 characters, one line).
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// The new question (at most 200 characters, one line).
+    #[arg(long, value_name = "TEXT")]
+    pub question: Option<String>,
+    /// How much each step may say: `quick`, `normal` or `detailed`.
+    #[arg(long, value_enum, value_name = "DETAIL")]
+    pub detail: Option<DetailArg>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourShareArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// Move it back to `.vnoc/local/tours/`.
+    #[arg(long)]
+    pub private: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourDeleteArgs {
+    #[arg(
+        value_name = "TOUR",
+        required = true,
+        help = "the tours to delete: each an id, or the start of one"
+    )]
+    pub tours: Vec<String>,
 }

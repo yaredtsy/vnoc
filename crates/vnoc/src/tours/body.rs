@@ -59,6 +59,22 @@ pub fn parse(text: &str) -> Result<Body, Vec<Refusal>> {
 /// list every problem of one call together (02 §4: "every problem of one call is listed"). A heading that was refused, and what is under it, is
 /// not in the body. Over [`MAX_BODY_BYTES`] the body is empty.
 pub fn read(text: &str) -> (Body, Vec<Refusal>) {
+    read_as(text, Text::Stop)
+}
+
+/// What the text is for: it decides whether an intro is wanted and whether a `###` is allowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Text {
+    /// a stop: an intro (required), `##` blocks and `###` details of them
+    Stop,
+    /// `add --to`: blocks only. An intro is refused, since the stop has its own
+    Blocks,
+    /// `add --to --under`: the `##` blocks are details of one block. An intro is refused, and so is a `###`: details nest one level
+    Details,
+}
+
+/// [`read`] for a text of the kind it is.
+pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
     if text.len() > MAX_BODY_BYTES {
         let refusal = Refusal {
             place: "text".to_string(),
@@ -107,7 +123,16 @@ pub fn read(text: &str) -> (Body, Vec<Refusal>) {
     for (head, lines) in parts {
         let Some(head) = head else {
             let (intro, intro_lines) = paragraph("intro", &lines, &mut refusals);
-            if intro_lines.is_empty() {
+            if kind != Text::Stop {
+                if !intro_lines.is_empty() {
+                    refusals.push(Refusal {
+                        place: "intro".to_string(),
+                        problem:
+                            "intro: --to adds blocks: leave out the first paragraph, start with a ## heading"
+                                .to_string(),
+                    });
+                }
+            } else if intro_lines.is_empty() {
                 refusals.push(Refusal {
                     place: "intro".to_string(),
                     problem: "intro: there is none. Start with one paragraph on what this is for, before the first heading".to_string(),
@@ -127,6 +152,14 @@ pub fn read(text: &str) -> (Body, Vec<Refusal>) {
         match head.hashes {
             2 | 3 => {
                 let detail = head.hashes == 3;
+                if detail && kind == Text::Details {
+                    refuse(
+                        "details nest one level: with --under the blocks of the text are the details, write them as ##"
+                            .to_string(),
+                        &mut refusals,
+                    );
+                    continue;
+                }
                 if detail && open == Open::Nothing {
                     refuse(
                         "a detail needs a block before it: write a ## block first".to_string(),
@@ -577,5 +610,57 @@ mod tests {
         let body = parse("\u{feff}Intro line one\r\nline two\r\n\r\n## 1-2 T\r\ntext\r\n").unwrap();
         assert_eq!(body.intro, "Intro line one line two");
         assert_eq!(body.blocks[0].text, "text");
+    }
+
+    fn said(text: &str, kind: Text) -> Vec<String> {
+        read_as(text, kind)
+            .1
+            .into_iter()
+            .map(|r| r.problem)
+            .collect()
+    }
+
+    #[test]
+    fn a_text_for_to_has_blocks_and_no_intro_and_one_that_has_an_intro_is_refused() {
+        let (body, refusals) = read_as(
+            "## 3-5 First\nIt starts.\n\n### 4 Detail\nInside.\n",
+            Text::Blocks,
+        );
+        assert!(refusals.is_empty(), "{refusals:?}");
+        assert_eq!(body.intro, "");
+        assert_eq!(body.blocks.len(), 1);
+        assert_eq!(body.blocks[0].details.len(), 1);
+        // an intro is the stop's own: refused, with the sentence of 02 §4
+        assert_eq!(
+            said("An intro.\n\n## 3-5 First\nIt starts.\n", Text::Blocks),
+            ["intro: --to adds blocks: leave out the first paragraph, start with a ## heading"]
+        );
+        // and the same text is a stop's with no refusal about the intro the other way round
+        assert_eq!(
+            said("## 3-5 First\nIt starts.\n", Text::Stop),
+            [
+                "intro: there is none. Start with one paragraph on what this is for, before the first heading"
+            ]
+        );
+        // nothing at all is no blocks and no refusal here: the caller says that
+        assert!(said("", Text::Blocks).is_empty());
+    }
+
+    #[test]
+    fn with_under_the_blocks_are_details_and_a_heading_of_three_is_refused() {
+        let (body, refusals) = read_as("## 3-4 One\nA.\n\n## 5-6 Two\nB.\n", Text::Details);
+        assert!(refusals.is_empty());
+        assert_eq!(body.blocks.len(), 2);
+        assert_eq!(
+            said("## 3-4 One\nA.\n\n### 4 Deeper\nB.\n", Text::Details),
+            [
+                "block 2: details nest one level: with --under the blocks of the text are the details, write them as ##"
+            ]
+        );
+        // the other refusals of the shape are the same
+        assert_eq!(
+            said("## 0-4 One\nA.\n", Text::Details),
+            ["block 1: lines start at 1, not 0"]
+        );
     }
 }
