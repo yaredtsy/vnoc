@@ -402,6 +402,11 @@ def run(agent, scenario, arm="text", n=1, rules=True, model=None):
 # ----------------------------------------------------------------------------------------------------------------- score
 
 
+def plain(text):
+    """Codex writes typographic quotes (`isn’t`); the scorer's patterns are ASCII."""
+    return (text or "").replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
+
+
 def unwrap(command):
     """`/bin/zsh -lc '<cmd>'` as Codex reports a command: the command itself."""
     try:
@@ -436,7 +441,7 @@ def load_codex(events):
                     calls.append({"id": f"{item['id']}.{i}", "name": verb, "input": {"file_path": change.get("path", "")}, "pos": sent, "msg": None})
                     results[f"{item['id']}.{i}"] = {"is_error": item.get("status") == "failed", "content": item.get("status", ""), "pos": pos}
             elif t == "agent_message":
-                texts.append(item.get("text", ""))
+                texts.append(plain(item.get("text", "")))
             elif t == "mcp_tool_call":
                 calls.append({"id": item["id"], "name": "mcp", "input": {"tool": item.get("tool"), "server": item.get("server")}, "pos": sent, "msg": None})
         elif kind == "turn.completed":
@@ -691,7 +696,7 @@ def ordered_items(run_dir):
         for e in events:
             item = e.get("item") or {}
             if e.get("type") == "item.completed" and item.get("type") == "agent_message":
-                items.append(("text", item.get("text", "")))
+                items.append(("text", plain(item.get("text", ""))))
             elif e.get("type") == "item.completed" and item.get("type") == "command_execution":
                 items.append(("call", {"id": item["id"], "name": "Bash", "input": {"command": unwrap(item.get("command", ""))}}))
         return items
@@ -990,7 +995,8 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
     elif scenario == "t3":
         sizes = setup.get("route_sizes", {})
         said = " ".join(chat["opening"] + chat["end"] + chat["between"])
-        asked = any("?" in l and re.search(r"\bsizes?\b|depth|deeper|how (?:far|big|much|deep)|and what (?:it|those|they)", l, re.I) for l in said.splitlines())
+        # a question about the size: a line with `?` and the sizes named in the same text (Codex lists them, then asks "Which would you like?")
+        asked = "?" in said and bool(re.search(r"\bsizes?\b|depth|deeper|how (?:far|big|much|deep)|and what (?:it|those|they)|\d+ stops", said, re.I))
         if sizes.get("2", 99) <= 12:
             verdict = "n/a"
             one.items.append({"check": "not a test of W13", "ok": True, "detail": f"`route billing --depth 2` is {sizes.get('2')} stops, 12 or fewer"})
@@ -1091,7 +1097,8 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
         fresh = code == 0 and not any(not t["fresh"] for t in json.loads(text)["tours"])
         one.need("the tour is fresh by my `check` afterwards", fresh, text[:200] if not fresh else "")
     elif scenario == "t9":
-        first_call = next((i for i, c in enumerate(calls) if c["name"] not in ("Skill", "ToolSearch")), None)
+        reads_skill = lambda c: c["name"] == "Bash" and re.match(r"\s*(sed -n \S+|cat)\s+\S*skills/vnoc(-tour)?/SKILL\.md", command_of(c)) is not None
+        first_call = next((i for i, c in enumerate(calls) if c["name"] not in ("Skill", "ToolSearch") and not reads_skill(c)), None)  # Codex loads a skill by reading its file
         first_tour = next((t for t in tc if t["i"] == first_call), None)
         if one.need("`vnoc tour where` before anything else", bool(first_tour and first_tour["sub"] == "where"),
                     f"first call: {(command_of(calls[first_call]) or calls[first_call]['name'])[:90] if first_call is not None else 'none'}"):
@@ -1111,6 +1118,11 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
             one.need("no new commit", not commits, f"commits: {commits}")
             one.need("the agent names the files and asks", asks and names_file, f"asks: {asks}; names a changed file: {names_file}")
             one.judge("the question", quote([final], 1, 400))
+        elif scenario == "t10b" and any(re.search(r"git add failed|index\.lock", result_text(results.get(c["id"]))) for c in calls if "finish" in [x for x, _ in tour_subs(c)]):
+            # the agent's sandbox keeps `.git` read-only, so `finish` cannot pin: this run says nothing about D21
+            verdict = "n/a"
+            one.items.append({"check": "sandbox: not a test of D21", "ok": True,
+                              "detail": "`finish` could not write `.git` inside the agent's sandbox: " + next(result_text(results.get(c["id"])).strip().splitlines()[0][:200] for c in calls if "finish" in [x for x, _ in tour_subs(c)])})
         elif scenario == "t10b":
             one.need("`finish` did both and asked nothing", not ask_lines and "pinned at" in finish_out, f"finish said: {finish_out.strip()[:200]!r}")
             c = commits[0] if len(commits) == 1 else None
@@ -1237,9 +1249,10 @@ def score(run_dir):
     tokens_in = sum(usage.get(k, 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
     skill_loaded = any(
         (c["name"] == "Skill" and "vnoc" in json.dumps(c["input"]))
-        or (c["name"] == "Read" and path_of(c).endswith("skills/vnoc/SKILL.md"))  # Claude: the Skill tool, or the file read
-        or (c["name"] == "Bash" and re.search(r"skills/vnoc/SKILL\.md", command_of(c)) is not None)
+        or (c["name"] == "Read" and re.search(r"skills/vnoc(-tour)?/SKILL\.md$", path_of(c)))  # Claude: the Skill tool, or the file read
+        or (c["name"] == "Bash" and re.search(r"skills/vnoc(-tour)?/SKILL\.md", command_of(c)) is not None)  # Codex has no Skill tool: it reads the file
         for c in calls)
+    read_skills = {m for c in calls for m in re.findall(r"skills/(vnoc(?:-tour)?)/SKILL\.md", command_of(c) or path_of(c))}  # by file, as Codex loads one
     refusals = [{"tool": c["name"], "input": (command_of(c) or path_of(c))[:100].replace("\n", " ")} for c in calls if refused(c, results)]
     denials = (result or {}).get("permission_denials", [])
     row = {
@@ -1258,7 +1271,7 @@ def score(run_dir):
         "find_skills_read": any("find-skills" in json.dumps(c["input"]) for c in calls),
         "commands": [command_of(c) or f"{c['name']} {path_of(c)}" for c in calls],
         "build": meta.get("build"), "tour": tour,
-        "skills_loaded": sorted({str(c["input"].get("skill")) for c in calls if c["name"] == "Skill"}),
+        "skills_loaded": sorted({str(c["input"].get("skill")) for c in calls if c["name"] == "Skill"} | read_skills),
     }
     (run_dir / "score.json").write_text(json.dumps(row, indent=2) + "\n")
     return row
