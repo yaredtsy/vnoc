@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type * as Monaco from "monaco-editor/editor/editor.api.js";
 
+import { CODE_LINE_H } from "../canvas/layout.ts";
 import { CODE_FIELD_CLASS } from "./codeField.ts";
 import { platformNow, staysInCode, swallows } from "./cardKeys.ts";
 import type { EditState } from "./editState.ts";
@@ -61,6 +62,8 @@ export function CodeEditor({ text, path, firstLine, editState, writable, onText,
         domReadOnly: !i.editable,
         contextmenu: false,
         fontSize: 11,
+        lineHeight: CODE_LINE_H, // the layout makes a card's code view as tall as its lines (`codeViewHeight`)
+        padding: { top: 4, bottom: 4 },
         fontFamily: getComputedStyle(document.body).getPropertyValue("--editor-font") || "monospace",
         overviewRulerLanes: 0,
         hideCursorInOverviewRuler: true,

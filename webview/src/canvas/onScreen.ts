@@ -1,12 +1,14 @@
 // Which cards are on screen (docs/16-ui-redesign/03-canvas.md §6.1): the viewport and one screen of margin on every side. Pure, so the rule is tested;
 // the canvas reports the result to the host after a pan settles, and only those cards are probed.
 
-import { CARD_W, type Placed } from "./layout.ts";
+import { type Placed } from "./layout.ts";
 
 export interface Box {
   id: string;
   x: number;
   y: number;
+  /** the card's width (it is wider with its code open) */
+  w: number;
   h: number;
 }
 
@@ -32,7 +34,7 @@ export function onScreenIds(cards: readonly Box[], view: View, size: { width: nu
   const top = -view.y / view.zoom - h;
   const right = -view.x / view.zoom + 2 * w;
   const bottom = -view.y / view.zoom + 2 * h;
-  return cards.filter((c) => c.x < right && c.x + CARD_W > left && c.y < bottom && c.y + c.h > top).map((c) => c.id);
+  return cards.filter((c) => c.x < right && c.x + c.w > left && c.y < bottom && c.y + c.h > top).map((c) => c.id);
 }
 
 /**

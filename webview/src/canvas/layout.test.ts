@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type Calls, callId } from "@vnoc/shared/calls.ts";
 import type { CallMark, CallSite, CallTreeNode, Kind, TreeNode } from "@vnoc/shared/messages.ts";
-import { CARD_H, CODE_H, COL_W, FOOTER_H, HEADER_H, LINE_H, MAX_CARDS, META_H, ROW_H, SITE_LIST_PAD, SITE_ROW_H, canOpen, cardHeight, layout, siteListHeight } from "./layout.ts";
+import { CARD_H, CARD_W, CODE_H, CODE_LINE_H, CODE_PAD_PX, CODE_W_MAX, COL_W, GAP_W, FOOTER_H, HEADER_H, LINE_H, MAX_CARDS, META_H, ROW_H, SITE_LIST_PAD, SITE_ROW_H, canOpen, cardHeight, codeCardWidth, codeColumns, codeViewHeight, layout, siteListHeight } from "./layout.ts";
 
 const n = (id: string, kind: Kind, children: TreeNode[] = [], syntax_error = false): TreeNode => ({ id, kind, name: id, path: id, qualname: null, range: null, syntax_error, node_id: null, docs: 0, link: null, children });
 
@@ -235,14 +235,14 @@ test("a function inside a class is a method: its card says so, and so does a cal
 });
 
 test("heights: every card is 80 px (32 + 24 + 1 + 23); +220 with its code; a call card's open site list adds a line for each site", () => {
-  assert.equal(cardHeight({ codeOpen: false, siteRows: 0 }), CARD_H);
+  assert.equal(cardHeight({ codeOpen: false, codeH: CODE_H, siteRows: 0 }), CARD_H);
   assert.equal(CARD_H, 80);
   assert.equal(HEADER_H + META_H + LINE_H + FOOTER_H, CARD_H, "the four rows are the card");
   assert.deepEqual([HEADER_H, META_H, LINE_H, FOOTER_H], [32, 24, 1, 23]);
-  assert.equal(cardHeight({ codeOpen: true, siteRows: 0 }), CARD_H + CODE_H);
+  assert.equal(cardHeight({ codeOpen: true, codeH: CODE_H, siteRows: 0 }), CARD_H + CODE_H);
   assert.equal(siteListHeight(4), 4 * SITE_ROW_H + SITE_LIST_PAD);
   assert.equal(siteListHeight(0), 0);
-  assert.equal(cardHeight({ codeOpen: true, siteRows: 4 }), CARD_H + CODE_H + siteListHeight(4));
+  assert.equal(cardHeight({ codeOpen: true, codeH: CODE_H, siteRows: 4 }), CARD_H + CODE_H + siteListHeight(4));
 });
 
 test("a call card with more than two sites shows its list when it is in the open set, and what is below it starts lower", () => {
@@ -399,4 +399,81 @@ test("the call cards of an open function are part of its family: they count agai
   const over = layout(project, new Set(["a.py", "f"]), new Set(), callsOf(198));
   assert.deepEqual([over.nodes.length, over.total], [3, 201], "f is drawn closed, with its +198");
   assert.deepEqual([over.nodes.at(-1)!.collapsed, over.nodes.at(-1)!.plus], [true, 198]);
+});
+
+// a card with its code open is as wide as its longest line (the user's decision for Bend's long lines), 300 to 560 px
+const CHAR_W = 6.6;
+const widthFor = (text: string, firstLine = 1): number => codeCardWidth(codeColumns(text, firstLine), CHAR_W);
+
+test("a short function keeps the plain card's width", () => {
+  assert.equal(widthFor("def f(x):\n    return x + 1"), CARD_W);
+});
+
+test("a 52-character line widens the card; a 200-character line stops at the most", () => {
+  const w52 = widthFor(`def f(x):\n${"x".repeat(52)}`);
+  assert.ok(w52 > CARD_W && w52 < CODE_W_MAX, `${w52}`);
+  assert.equal(widthFor(`def f(x):\n    ${"x".repeat(196)}`), CODE_W_MAX);
+});
+
+test("the line numbers count: a file's thousands of lines make the gutter wider, a tab is four characters", () => {
+  assert.equal(codeColumns("a", 1), 4 + 1);
+  assert.equal(codeColumns("a", 12_345), 5 + 1);
+  assert.equal(codeColumns("\ta", 1), 4 + 5);
+});
+
+test("a card draws as wide as its code wants only when its code is open; what hangs from it starts where it ends", () => {
+  const fn = (id: string): TreeNode => ({ ...n(id, "function"), range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } } });
+  const file = n("a.py", "file", [fn("f"), fn("g")]);
+  const wide = (id: string) => (id === "f" ? 480 : id === "a.py" ? 9999 : 20);
+  const closed = layout(file, new Set(), new Set(), undefined, undefined, file, wide);
+  assert.deepEqual(closed.nodes.map((p) => p.width), [CARD_W, CARD_W, CARD_W], "no code open: every card is plain");
+  const open = layout(file, new Set(), new Set(["f", "a.py"]), undefined, undefined, file, wide);
+  const [root, f, g] = open.nodes;
+  assert.deepEqual([root.width, f.width, g.width], [CODE_W_MAX, 480, CARD_W], "the file asks for too much (the limit), a function for 480, one with no code is plain");
+  assert.deepEqual([f.x, g.x], [CODE_W_MAX + GAP_W, CODE_W_MAX + GAP_W], "both start where the file card ends");
+  assert.equal(cardHeight(f), CARD_H + CODE_H);
+});
+
+test("a wide card moves its calls to the right as well", () => {
+  const caller: TreeNode = { ...n("f", "function"), range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } } };
+  const file = n("a.py", "file", [caller]);
+  const callsOf = (id: string): Calls => (id === "f" ? { state: "known", children: [{ key: null, kind: "function", name: "g", qualname: "g", path: null, marks: [], call_count: 1, call_sites: [], children: [] }] } : { state: "unknown" });
+  const l = layout(file, new Set(["a.py", "f"]), new Set(["f"]), callsOf, undefined, file, () => 450);
+  const [, f, g] = l.nodes;
+  assert.equal(f.width, 450);
+  assert.equal(g.role, "call");
+  assert.equal(g.x, f.x + 450 + GAP_W);
+});
+
+// a card with its code open has a code view as tall as its lines (the user's yes after `wall`'s six lines sat in 220 px), at most CODE_H
+test("a code view is as tall as its lines plus its padding: six lines are short, sixty are CODE_H, one line still has room", () => {
+  assert.equal(codeViewHeight(6), 6 * CODE_LINE_H + CODE_PAD_PX);
+  assert.ok(codeViewHeight(6) <= CODE_H - 100, `${codeViewHeight(6)}`);
+  assert.equal(codeViewHeight(60), CODE_H);
+  assert.equal(codeViewHeight(1), CODE_LINE_H + CODE_PAD_PX);
+  assert.equal(codeViewHeight(0), codeViewHeight(1), "an empty text still has one line");
+});
+
+test("each card has its own height: the cards under a short one start higher, and the layout never asks for more than CODE_H", () => {
+  const fn = (id: string): TreeNode => ({ ...n(id, "function"), range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } } });
+  const file = n("a.py", "file", [fn("f"), fn("g"), fn("h")]);
+  const lines: Record<string, number> = { f: 6, g: 60 };
+  const l = layout(file, new Set(), new Set(["f", "g"]), undefined, undefined, file, () => CARD_W, (id) => (id in lines ? codeViewHeight(lines[id]) : CODE_H * 3));
+  const [, f, g, h] = l.nodes;
+  assert.deepEqual([f.codeH, g.codeH, h.codeH], [codeViewHeight(6), CODE_H, CODE_H], "h has no code open: what it would ask is capped, and its card is plain");
+  assert.deepEqual([cardHeight(f), cardHeight(g), cardHeight(h)], [CARD_H + codeViewHeight(6), CARD_H + CODE_H, CARD_H], "a card with no code open has no code view");
+  assert.equal(g.y, f.y + cardHeight(f) + (ROW_H - CARD_H), "g starts under f's own height");
+  assert.equal(h.y, g.y + CARD_H + CODE_H + (ROW_H - CARD_H));
+});
+
+test("a call card's code view is as tall as its callee's lines too", () => {
+  const caller: TreeNode = { ...n("f", "function"), range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } } };
+  const callee: TreeNode = { ...n("g", "function"), range: { start: { line: 5, character: 0 }, end: { line: 11, character: 0 } } };
+  const file = n("a.py", "file", [caller, callee]);
+  const callsOf = (id: string): Calls => (id === "f" ? { state: "known", children: [{ key: "g", kind: "function", name: "g", qualname: "g", path: "a.py", marks: [], call_count: 1, call_sites: [], children: [] }] } : { state: "unknown" });
+  const open = callId("f", ["g"]);
+  const l = layout(file, new Set(["a.py", "f"]), new Set([open]), callsOf, undefined, file, () => CARD_W, () => codeViewHeight(6));
+  const call = l.nodes.find((p) => p.id === open)!;
+  assert.equal(call.role, "call");
+  assert.equal(cardHeight(call), CARD_H + codeViewHeight(6));
 });

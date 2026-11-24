@@ -7,7 +7,7 @@ import { MAIN, emptySession } from "@vnoc/shared/session.ts";
 import { CARD_W, type Placed } from "./layout.ts";
 import { type Box, cardsReport, onScreenIds } from "./onScreen.ts";
 
-const card = (id: string, x: number, y: number, h = 80): Box => ({ id, x, y, h });
+const card = (id: string, x: number, y: number, h = 80): Box => ({ id, x, y, w: CARD_W, h });
 const size = { width: 1000, height: 800 };
 const at = (x = 0, y = 0, zoom = 1) => ({ x, y, zoom });
 

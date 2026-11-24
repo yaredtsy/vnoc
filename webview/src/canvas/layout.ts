@@ -10,8 +10,15 @@ import type { Contents } from "../node-card/metaOf.ts";
 
 /** A card's width (04 §1): names get about 160 px beside four always-visible buttons. */
 export const CARD_W = 300;
+/** The room for an edge between a card and what hangs from it. */
+export const GAP_W = 40;
 /** One column: a card and the room for its edge. */
-export const COL_W = CARD_W + 40;
+export const COL_W = CARD_W + GAP_W;
+/** A card that shows code is as wide as its longest line, up to this (a longer line scrolls inside the code). */
+export const CODE_W_MAX = 560;
+/** What the code view takes besides the characters (CodeEditor's Monaco): the line-number column is at least this many characters, then the decorations margin, the scroll bar and a little slack. */
+export const GUTTER_CHARS = 4;
+const CODE_CHROME_PX = 10 + 8 + 10;
 /** The rows of a card (docs/16-ui-redesign/04-node-cards.md §1): header, meta line, a 1 px line, footer. The card's own 1 px border is inside the 80. */
 export const HEADER_H = 32;
 export const META_H = 24;
@@ -26,8 +33,11 @@ export const MAX_CARDS = 200;
 /** A file's code is all of it: the host clamps a range that runs past the end of the document. */
 const WHOLE_FILE = { start: { line: 0, character: 0 }, end: { line: 10_000_000, character: 0 } };
 
-/** What an open code view adds to a card. */
+/** The most an open code view adds to a card: longer code scrolls inside it. */
 export const CODE_H = 220;
+/** One line of the code view, set on the editor (CodeEditor) so the layout and Monaco agree; and what the view takes besides its lines: 4 px above and below, and the horizontal scroll bar a long line brings. */
+export const CODE_LINE_H = 17;
+export const CODE_PAD_PX = 4 + 4 + 8;
 
 /** One line of a call card's open site list (04 §2.1), and the room around the list. */
 export const SITE_ROW_H = 18;
@@ -36,8 +46,21 @@ export const SITE_LIST_PAD = 8;
 /** What an open site list with this many lines adds to a card. */
 export const siteListHeight = (rows: number): number => (rows > 0 ? rows * SITE_ROW_H + SITE_LIST_PAD : 0);
 
+/** How many characters wide a code view must be for this text: the line numbers (`firstLine` is the file line of the first one) and its longest line, tabs as four. */
+export function codeColumns(text: string, firstLine: number): number {
+  const lines = text.split("\n");
+  const longest = Math.max(0, ...lines.map((l) => l.replace(/\t/g, "    ").length));
+  return Math.max(GUTTER_CHARS, String(firstLine + lines.length - 1).length) + longest;
+}
+
+/** A card with its code open: its `columns` at the code font's character width `charW` (px), kept between a plain card's width and CODE_W_MAX. */
+export const codeCardWidth = (columns: number, charW: number): number => Math.min(CODE_W_MAX, Math.max(CARD_W, Math.ceil(columns * charW + CODE_CHROME_PX)));
+
+/** A card with its code open: its `lines` of code at CODE_LINE_H and its padding, at least what one line needs, at most CODE_H. */
+export const codeViewHeight = (lines: number): number => Math.min(CODE_H, Math.max(1, lines) * CODE_LINE_H + CODE_PAD_PX);
+
 /** The height of a drawn card: the base card, its open code view, its open site list. */
-export const cardHeight = (p: Pick<Placed, "codeOpen" | "siteRows">): number => CARD_H + (p.codeOpen ? CODE_H : 0) + siteListHeight(p.siteRows);
+export const cardHeight = (p: Pick<Placed, "codeOpen" | "codeH" | "siteRows">): number => CARD_H + (p.codeOpen ? p.codeH : 0) + siteListHeight(p.siteRows);
 
 /** What a call card knows about the call it stands for (04 §2): one callee, called from its parent card, the calls to it merged. */
 export type CallInfo = {
@@ -70,6 +93,10 @@ export type Placed = {
   range: TreeNode["range"];
   /** the card shows its code (the callee's, for a call) between the meta line and the footer */
   codeOpen: boolean;
+  /** CARD_W, or with its code open, as wide as the longest line (`codeCardWidth`) */
+  width: number;
+  /** what the open code view adds to the card: as tall as its lines, at most CODE_H (`codeViewHeight`); CODE_H while the code is not read yet */
+  codeH: number;
   depth: number;
   x: number;
   y: number;
@@ -154,10 +181,12 @@ export function layout(
   callsOf: (id: string) => Calls = unknownCalls,
   sitesOpen: ReadonlySet<string> = new Set(),
   whole: TreeNode = root,
+  codeWidth: (id: string) => number = () => CARD_W,
+  codeHeight: (id: string) => number = () => CODE_H,
 ): Layout {
-  const drawn = build(MAX_CARDS, root, expanded, codeOpen, callsOf, sitesOpen, whole);
+  const drawn = build(MAX_CARDS, root, expanded, codeOpen, callsOf, sitesOpen, whole, codeWidth, codeHeight);
   // when the budget held something back, a second walk with none says how many cards there would have been
-  return { ...drawn, total: drawn.capped ? build(Infinity, root, expanded, codeOpen, callsOf, sitesOpen, whole).nodes.length : drawn.nodes.length };
+  return { ...drawn, total: drawn.capped ? build(Infinity, root, expanded, codeOpen, callsOf, sitesOpen, whole, codeWidth, codeHeight).nodes.length : drawn.nodes.length };
 }
 
 /**
@@ -165,7 +194,7 @@ export function layout(
  * calls, together: a family) do not all fit, that card is drawn closed with its `+N`, and so is every open card after it. The root and its whole family
  * are always drawn, past the budget if they must be: they count against it, so everything below them stays closed (03 §6.1).
  */
-function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, codeOpen: ReadonlySet<string>, callsOf: (id: string) => Calls, sitesOpen: ReadonlySet<string>, whole: TreeNode): Omit<Layout, "total"> & { capped: boolean } {
+function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, codeOpen: ReadonlySet<string>, callsOf: (id: string) => Calls, sitesOpen: ReadonlySet<string>, whole: TreeNode, codeWidth: (id: string) => number, codeHeight: (id: string) => number): Omit<Layout, "total"> & { capped: boolean } {
   const nodes: Placed[] = [];
   let capped = false;
   /** The cards drawn or promised: the root, and every family accepted so far (its cards are drawn when the walk gets to them). */
@@ -199,7 +228,13 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
   };
   collect(whole, null);
 
-  const walk = (n: TreeNode, depth: number, parentId: string | null, parentKind: Kind | null) => {
+  /** A card's width: a plain card, or as wide as its code wants, within the limits. */
+  const widthOf = (id: string, codeOpen: boolean): number => (codeOpen ? Math.min(CODE_W_MAX, Math.max(CARD_W, Math.round(codeWidth(id)))) : CARD_W);
+
+  /** A card's open code view: as tall as its lines, within the limits. */
+  const heightOf = (id: string): number => Math.min(CODE_H, Math.max(CODE_LINE_H + CODE_PAD_PX, Math.round(codeHeight(id))));
+
+  const walk = (n: TreeNode, depth: number, x: number, parentId: string | null, parentKind: Kind | null) => {
     // classes and functions have a range; a file's code is all of it; a folder has none
     const range = n.kind === "file" ? WHOLE_FILE : n.range;
     const structural = n.children.length > 0;
@@ -212,22 +247,24 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
     // a class that has methods is not "calls nothing": its methods are what is under it
     const footer = calls ? callsFooter(calls) : null;
     const isCollapsed = (structural || look?.chevron === true) && !open;
+    const shown = range !== null && codeOpen.has(n.id);
+    const width = widthOf(n.id, shown);
     place({
       id: n.id, role: "node", key: n.id, kind: n.kind, name: n.name, path: n.path, line: n.range ? n.range.start.line + 1 : null, range,
-      codeOpen: range !== null && codeOpen.has(n.id), depth, x: depth * COL_W, y, parentId, inClass: n.kind === "function" && parentKind === "class",
+      codeOpen: shown, width, codeH: heightOf(n.id), depth, x, y, parentId, inClass: n.kind === "function" && parentKind === "class",
       childCount: n.children.length, callsChevron: look?.chevron ?? false, plus: n.children.length + (look?.plus ?? 0), callsFooter: structural && footer?.state === "nothing" ? null : footer, contents: contentsOf(n),
       collapsed: isCollapsed, syntaxError: n.syntax_error, docs: n.docs, link: n.link, call: null, siteRows: 0, heldBack: asked && isCollapsed,
     });
     if (isCollapsed) return;
     for (const c of n.children) {
       edges.push({ id: `${n.id}->${c.id}`, source: n.id, target: c.id, kind: "node" });
-      walk(c, depth + 1, n.id, n.kind);
+      walk(c, depth + 1, x + width + GAP_W, n.id, n.kind);
     }
-    if (open && calls?.state === "known") drawCalls(n.id, n.id, [], calls.children, depth + 1, { name: n.name, path: n.path });
+    if (open && calls?.state === "known") drawCalls(n.id, n.id, [], calls.children, depth + 1, x + width + GAP_W, { name: n.name, path: n.path });
   };
 
   /** `owner` and `steps` name the call node in its owner's tree (05 §1); `children`: the calls under `parentId`. */
-  const drawCalls = (parentId: string, owner: string, steps: string[], children: readonly CallTreeNode[], depth: number, caller: { name: string; path: string | null }) => {
+  const drawCalls = (parentId: string, owner: string, steps: string[], children: readonly CallTreeNode[], depth: number, x: number, caller: { name: string; path: string | null }) => {
     for (const c of children) {
       const way = [...steps, stepOf(c, children)];
       const id = callId(owner, way);
@@ -238,10 +275,12 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
       const look = callLook({ key: c.key, marks: c.marks, calls }, open);
       const collapsed = look.chevron && !open;
       const range = callee?.node.range ?? null;
+      const shown = range !== null && codeOpen.has(id);
+      const width = widthOf(id, shown);
       const siteRows = sitesOpen.has(id) && c.call_sites.length > SITES_SHOWN ? c.call_sites.length : 0;
       place({
         id, role: "call", key: c.key, kind: c.kind, name: c.name, path: c.path ?? "", line: range ? range.start.line + 1 : null, range,
-        codeOpen: range !== null && codeOpen.has(id), depth, x: depth * COL_W, y, parentId, inClass: c.kind === "function" && callee?.parentKind === "class",
+        codeOpen: shown, width, codeH: heightOf(id), depth, x, y, parentId, inClass: c.kind === "function" && callee?.parentKind === "class",
         childCount: 0, callsChevron: look.chevron, plus: look.plus ?? 0, callsFooter: look.unknown || c.marks.includes("recursive") ? null : callsFooter(calls), contents: noContents, collapsed, syntaxError: callee?.node.syntax_error ?? false,
         docs: callee?.node.docs ?? 0, link: callee?.node.link ?? null,
         call: { count: c.call_count, sites: c.call_sites, lines: c.call_sites.map((s) => s.start.line + 1), callerName: caller.name, callerPath: caller.path, look },
@@ -251,10 +290,10 @@ function build(budget: number, root: TreeNode, expanded: ReadonlySet<string>, co
       if (collapsed || !look.chevron || calls.state !== "known") continue;
       // a node the walk cut has no calls of its own here: what is under it is its callee's own tree, so the ids below belong to the callee
       const cut = c.children.length === 0 && c.marks.includes("cut") && c.key !== null;
-      drawCalls(id, cut ? c.key! : owner, cut ? [] : way, calls.children, depth + 1, { name: c.name, path: c.path });
+      drawCalls(id, cut ? c.key! : owner, cut ? [] : way, calls.children, depth + 1, x + width + GAP_W, { name: c.name, path: c.path });
     }
   };
 
-  walk(root, 0, null, null);
+  walk(root, 0, 0, null, null);
   return { nodes, edges, hidden: size(root) - nodes.filter((p) => p.role === "node").length, capped };
 }

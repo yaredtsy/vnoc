@@ -9,24 +9,12 @@ import { shikiToMonaco } from "@shikijs/monaco";
 import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
+import { bendGrammar } from "./bendGrammar.ts";
+
 const LIGHT = "github-light";
 const DARK = "github-dark";
 
-/**
- * File extension to the Monaco language id (the same ids Shiki registers). Anything else shows as plain text, on purpose: a language the core reads and this table
- * does not know is drawn without colours, never wrongly and never a bug. A line here is a choice of looks, not something a language needs (docs/23 §6).
- */
-const LANGUAGES: Record<string, string> = {
-  py: "python", pyi: "python",
-  rs: "rust",
-  ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript",
-  json: "json",
-  md: "markdown",
-};
-
-export function languageOf(path: string): string {
-  return LANGUAGES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "plaintext";
-}
+export { languageOf } from "./languages.ts";
 
 /** VS Code puts `vscode-light` / `vscode-dark` / `vscode-high-contrast(-light)` on `<body>`. */
 export function currentTheme(): string {
@@ -42,6 +30,7 @@ export function loadMonaco(): Promise<typeof monaco> {
       themes: [import("@shikijs/themes/github-light"), import("@shikijs/themes/github-dark")],
       langs: [
         import("@shikijs/langs/python"),
+        import("@shikijs/langs/python").then((m) => bendGrammar(m.default[0])), // Bend's: Python's without its error marks
         import("@shikijs/langs/rust"),
         import("@shikijs/langs/typescript"),
         import("@shikijs/langs/tsx"),

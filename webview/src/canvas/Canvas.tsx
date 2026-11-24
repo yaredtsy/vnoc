@@ -15,7 +15,7 @@ import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts"
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
-import { followsReveal, needsFraming } from "./revealFollow.ts";
+import { DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, selectedDrawn } from "./revealFollow.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { useSearchDim } from "./useSearchDim.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
@@ -23,13 +23,13 @@ import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
 const nodeTypes = { card: NodeCard };
 
 // the size is known from the layout, so a card off screen can be left out of the page before it was ever measured (`onlyRenderVisibleElements`)
-const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p, width: CARD_W, height: cardHeight(p) }));
+const toFlow = (laid: Layout): Node<Placed>[] => laid.nodes.map((p) => ({ id: p.id, type: "card", position: { x: p.x, y: p.y }, data: p, width: p.width, height: cardHeight(p) }));
 
 /**
  * Brings the requested node into view once it is drawn. Inside `<ReactFlow>` so it can reach the view. The camera moves only when it has to (`revealFollow.ts`): a card that is whole in the pane at a readable zoom is
  * selected and pulses and nothing else; any other is framed (fitView on the one card, up to 120 %). The canvas's own first fit comes first: a reveal is judged once it is done, so that what a reveal sees is the drawing
  * as the canvas framed it (Show Calls on a small drawing, and the cards that open under a card are then in view). The pane can change size just after (a pick from the search opens the docs tab beside the canvas):
- * the same test is made then, and a card still on its way is framed again for the new size.
+ * the same test is made then, and a card still on its way is framed again for the new size. The docs panel opening is such a change too: the card it opened for (the selected one) is judged for the narrower pane.
  */
 function CenterOn({ laid, context }: { laid: Layout; context: string }) {
   const { fitView } = useReactFlow();
@@ -81,6 +81,24 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
       stop();
     };
   }, [fitView, store, target, laid]);
+  // the docs panel opening (a card's 📄, the bar's ⓘ) narrows the pane: once the selection and the width have settled, the selected card is judged as a reveal's card is, and framed if it has to be; the effect below follows a late change of the pane
+  const docsOpen = useView((v) => v.docsOpen);
+  const wasOpen = useRef(docsOpen);
+  const drawn = useRef(laid);
+  drawn.current = laid;
+  useEffect(() => {
+    const opened = docsJustOpened(wasOpen.current, docsOpen);
+    wasOpen.current = docsOpen;
+    if (!opened) return;
+    const timer = setTimeout(() => {
+      const id = selectedDrawn(useSession.getState().contexts[context]?.selected ?? null, (card) => drawn.current.nodes.some((p) => p.id === card));
+      if (id === null) return;
+      const now = { id, at: performance.now(), moving: false };
+      judged.current = now;
+      if (hasToMove(id)) frame(id, now);
+    }, DOCS_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [docsOpen, context]);
   useEffect(() => {
     const last = judged.current;
     if (!last || !followsReveal(last.at, performance.now())) return;
@@ -103,7 +121,7 @@ function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | n
   const last = useRef("");
   useEffect(() => {
     const timer = setTimeout(() => {
-      const visible = new Set(onScreenIds(laid.nodes.map((p) => ({ id: p.id, x: p.x, y: p.y, h: cardHeight(p) })), { x, y, zoom }, { width, height }));
+      const visible = new Set(onScreenIds(laid.nodes.map((p) => ({ id: p.id, x: p.x, y: p.y, w: p.width, h: cardHeight(p) })), { x, y, zoom }, { width, height }));
       const report = cardsReport(laid.nodes, visible, selected);
       const same = `${report.keys.join("\n")}\n\n${report.onScreen.join("\n")}`;
       if (same === last.current) return;
