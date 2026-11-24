@@ -114,6 +114,11 @@ then the next stop on the route                                              (s1
 The route (the order of the stops) is the order in which they were planned or added, with one rule: a nested stop comes after the stop
 it is nested in. A **step** is what the stage shows at one moment: a stop's intro, or one block.
 
+**A planned stop that is written** (decided at TR10's review, built in TR11): a `stop` record whose id is a planned stop keeps the
+planned stop's place when its `from` is the plan's; with another `from` (or one where the plan had none), the stop moves, with the
+stops nested in it, to where a new stop with that `from` goes. A stop already written that is replaced (`--replace`) stays where it
+stands, as before.
+
 **How V-NOC stores the tree: flat, with id chains.** Never nested arrays (`children: [ { children: [ … ] } ]`). The nested form
 exists in one place only, outside the store: the document a person exports, edits and imports ([`02`](02-commands.md) §10), which is
 translated to this on the way in and from this on the way out.
@@ -352,7 +357,7 @@ second window. The `pin` record is all it needs.
 | a file of the tour is ignored by git, or the project is not a git repository | it can never be pinned. Flagged, with the reason. (An ignored file is found by step 2's `ls-tree`: `status` alone would read it as clean, TR0) |
 | a submodule's file | not pinned first: its commit is another repository's. Said in the refusal |
 | the tour's IDs (`ids`, or `finish` with `ids = "always"`) wrote `node.toml` files that are not committed | `--commit` commits them too (decided by the user, 2026-11-24): the ID lines in the code and the node files they name go in one commit. Only the `node.toml` of a stop's own ID, never a doc file in that folder; listed under the code files. The pin does not wait for them: it is about code |
-| a hook changes a file while `--commit` commits it (a formatter, `lint-staged`) | the commit holds code the check never read: not pinned, `a hook changed <file> while committing it`, and `pin` again checks the new code (TR9b). Found by comparing the files after the commit with the bytes the check read |
+| a hook changes a file while `--commit` commits it (a formatter, `lint-staged`) | the commit holds code the check never read: not pinned, `a hook changed <file> while committing it`, and `pin` again checks the new code (TR9b). Found by comparing the files after the commit with the bytes the check read. git leaves the real index at the file before the hook (`status` says `MM`), so those files get `git reset -q --` (`pin::settle_index`): the next `pin` sees them clean |
 
 **Why not a copy of the code in the tour instead.** It would make every tour playable with no git. It also doubles the file and puts
 source text into `.vnoc/`, in every review of a shared tour. The pin gives the same for everything that is committed, and for what is
@@ -365,7 +370,7 @@ lock). It is state, not history; if it is lost, the reader starts at the cover a
 
 ```json
 { "schema": 1,
-  "place": { "at": "s3.b2", "seen": ["s1", "s2"], "back": ["s1.b1"], "moved": "2026-11-23T18:52:10Z", "by": "reader", "open": true },
+  "place": { "at": "s3.b2", "seen": ["s1", "s2"], "back": ["s1.b1", "cover"], "moved": "2026-11-23T18:52:10Z", "by": "reader", "open": true },
   "check": { "tour_len": 4182, "at": "2026-11-23T18:52:11Z",
              "files": { "app/checkout.py": [1204, 1763923201123456789], "app/inventory.py": [1893, 1763923190000000000] },
              "stops": { "s3": "changed" }, "blocks": { "s3.b2": "changed" }, "moved": { "s3.b1": [22, 23] } } }
@@ -376,6 +381,10 @@ lock). It is state, not history; if it is lost, the reader starts at the cover a
 | **`place`** (D17) | `at`: `"cover"`, `"end"`, or a step's id · `seen`: the stops read to their last step · `back`: where the reader was before each jump, 20 at most · `moved` and `by` (`reader` or `command`) · `open`: a window is showing this tour (set and cleared by the core; `where` reads it together with `moved`, so a crash that left it `true` reads as "open, last moved two days ago") | the core, when the reader moves on the canvas; `vnoc tour go` |
 | **`check`** (D8) | the tour file's length and each file's `[size, changed-time in ns]` when the check ran · what was not fresh: the changed stops and blocks, the blocks found at other lines · `now`: for a stop found under another name or path, its name, path and lines now (added in TR6, so `check` can say `read_order (was parse_order)` without an index) · A stop not named is fresh; a file recorded as `null` was not there | the core, when it checks a tour for the sidebar or for an open tour; `vnoc tour check` |
 
+- **As built (TR10):** `back` holds `"cover"` and `"end"` as well as step ids. A `place` that does not parse reads as none and keeps
+  the `check` beside it. `check` gained **`displaced`**: for a fresh stop found at other lines (shifted or moved), its lines now, so a
+  valid recorded check can say which lines to light with no index; a fresh block's lines now are its written lines shifted by its
+  stop's displacement (`compare` calls a block `moved` only when it moved inside its stop). Missing reads as empty.
 - **A recorded check is valid** while the tour's file has that length and every file in `files` has that size and time. Then it is the
   answer, and no source file is read. Otherwise the tour is checked again and the record rewritten ([`03`](03-core.md) §3).
 - **One place per tour on this machine** (ask 3). The tour's id is the "session id": `vnoc tour where <tour>` has one answer.

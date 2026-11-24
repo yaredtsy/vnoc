@@ -196,7 +196,7 @@ call is listed, and nothing is written. The agent fixes the text and sends the s
 
 | Call | The stop |
 |---|---|
-| `add <tour> <node>` and the route has a **planned** stop on this node, not written | fills the first such stop: its id, its place, its `from` and `line` (the call's own `--from`, if given, wins) |
+| `add <tour> <node>` and the route has a **planned** stop on this node, not written | fills the first such stop in route order (the planned stop's name found now by `tours::find` is the node of the call): its id, its place, its `from` and `line`. The call's own `--line` wins. The call's own `--from` wins too, and when it names another stop than the plan's (or the plan had none) the stop **moves**, with the stops nested in it, to where a new stop with that `--from` goes (decided at TR10's review; fold rule in 01 §3) |
 | `add <tour> <node>` otherwise | a new stop: after the last stop nested in its `--from` stop, or at the end of the route |
 | `--replace s3` | the stop `s3`, where it stands, with a new text and new blocks. The node may be the same or another. This is how a stale stop is fixed |
 | `--to s3` | no new stop: the blocks in the text (no intro) are added after `s3`'s blocks. With `--under s3.b1` they are details of that block, written as `##` |
@@ -312,6 +312,17 @@ What it is for:
 
 `where` is on the allow list; `go` is not (ask 4): moving someone's screen is done when they ask.
 
+**As built (TR10).** Under the step, only the lit lines, each marked `>`, 40 at most, then `… N more lines`; no context lines. A planned
+stop's step says `planned: not written yet`. With no tour moved yet: `no tour has been opened or moved yet` and `name one: vnoc tour
+where <tour>`, exit 0. Line 1 ends `open on the canvas` or `not open`, and `moved 12 s ago` or `never moved`. A changed or gone stop of a
+pinned tour shows the lines as written, under `as written at <short>: the code changed since`; otherwise the lines now and `the lines
+may not match`. `where` may start a driver (when the recorded check is not valid); `go` never does. `--json` is one flat object:
+`schema`, `command`, `tour`, `title`, `state`, `open`, `at`, `here` (`cover` · `intro` · `block` · `end`), `stops`, `steps`, `seen`,
+`back`; when there: `question`, `moved`, `moved_ago` (seconds), `by`, `before`, `after` (`{at, title?}`); on a step: `stop` {`id`,
+`number`, `of`, `name`, `kind`, `path`, `planned`}, `step` {`id`, `kind`, `number`, `of`, `title?`, `text?`, `lines?`}, `check`, `code`
+{`source`: `now` · `as_written`, `commit?`, `path`, `first`, `lines`, `more?`, `note?`}. `go --json` is the same plus `move` (and
+`nothing_to_go_back_to`). With no tour moved: `{schema, command, tour: null, message}`.
+
 ## 8. `pin` (D19)
 
 [`01`](01-on-disk.md) §8 has what a pin is. The command:
@@ -345,10 +356,10 @@ file git ignores is *gone* through the command line (the index never walks an ig
 `is ignored by git` wording is for a file the index still has. **A hook that changes a file while committing it** (a formatter, a
 `lint-staged` that adds what it changed) would make the commit hold code the check never saw: after `--commit`, the files are
 compared with the bytes the check read, and a difference is *not pinned*: `a hook changed app/inventory.py while committing it: run
-vnoc tour pin <tour> again` (TR9b). The commit stays; the next `pin` checks the new code.
+vnoc tour pin <tour> again` (TR9b). The commit stays; the next `pin` checks the new code. A not-pinned answer after a commit prints the `committed …` lines above its reason.
 **The node files of the tour's IDs** (decided by the user, 2026-11-24): `--commit` also commits the `node.toml` of each stop's own ID
 when git shows it uncommitted (what `ids` just wrote), and never a doc file of that folder. The `ask the user` list of `finish` shows
-them under the code files, so the list is what `--commit` will commit. They do not decide the pin (TR9b).
+them under the code files, so the list is what `--commit` will commit. They do not decide the pin (TR9b): they are listed only when code files are in the way; with all code committed and only `node.toml` files not, `pin` pins and commits nothing. `--json`: a list `node_files` beside `files` (which stays the code files); the text's `committed N files` counts both, code first.
 
 `finish` runs the plain `pin` and prints its result. Whether it also commits is the setting `[tours] commit` (§5): by default it does
 not, and the skill tells the agent to **ask the user** and to run `pin --commit` only on a yes.

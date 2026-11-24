@@ -138,7 +138,7 @@ one tick of the check. **Answered for macOS (README §7, TR0 check 7): enough th
 Where the reader is in a tour is kept by the core, in the tour's state file, so that the canvas and a command have the same answer.
 
 ```rust
-pub struct Place { pub at: At, pub seen: Vec<StopId>, pub back: Vec<StepId>, pub moved: Time, pub by: By, pub open: bool }
+pub struct Place { pub at: At, pub seen: Vec<StopId>, pub back: Vec<At>, pub moved: Time, pub by: By, pub open: bool }
 pub enum At { Cover, Step(StepId), End }
 pub enum Move { Next, Prev, NextStop, PrevStop, Back, To(At), Jump(At) }
 
@@ -184,6 +184,15 @@ the reader   →  the state file      .vnoc/local/tour-state/<id>.json      the 
 | a person runs `import --replace` | anywhere | ids in the document are kept, so the place holds where its step is kept |
 | runs `where` | moves a second later | the answer is a snapshot, and says when the reader last moved |
 | runs `go s7` | presses Next at the same moment | two writes of one small file, each under the lock, each applied to the place as it is then. The later one wins. The agent's is a jump, so `←` takes the reader back |
+
+**As built (TR10).** `back` holds `At`, not a step: a jump from the cover or the end has one to push. Jumps (`s4`, `s3.b2`, `cover`,
+`end`) push, `next`/`prev`/`next-stop`/`prev-stop` never do, a jump to where you are pushes nothing; `back` with nothing to pop stays
+and says `nothing to go back to`. `prev-stop` from the end is the last stop's intro. A stop of one step (short, `same_as`, planned) is
+seen on arrival. `settle` applies the nearest-step rule on read (for `where` and before a `go`, not written back by `where`) and drops
+`back` and `seen` entries the tour no longer has; "the next stop" of a dropped stop is the lowest stop id above it (it has no place on
+the route any more). `go` holds the tours lock from reading the tour and the place to writing the place. A halted tour reads
+`stopping` until the agent's next command. `WhereView` and its text are `tours/view.rs`; the builder that reads the files and the pin
+is `cli/tour.rs`.
 
 Nothing here needs the two to wait for each other: the lock is held for one small write, and the only thing that can be "lost" is
 which of two moves made in the same instant came last.
