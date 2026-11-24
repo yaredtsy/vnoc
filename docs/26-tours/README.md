@@ -88,7 +88,7 @@ commit, it shows those steps with the code as it was.
 | **D9** | **A text that breaks a rule is refused when it is written,** with every reason at once. **There is no fallback text.** | The agent is in a loop with a shell: it reads the refusal and sends the stop again. One state less on every surface. |
 | **D10** | **The reader's Stop is a line in the same file.** The agent's next write reads it and is refused. Writes take one lock file, `.vnoc/local/tours.lock`, for a few milliseconds. | The design's two beats (*stopping*, *stopped*) are two records. It is also the mechanism a question needs in 27. |
 | **D11** | **The core replays the log and answers with the tour, resolved against the code as it is now.** The extension and the pages draw it. | P1: the command line, the extension and a later editor must agree on what stop 3 is and whether it is stale. |
-| **D12** | **A tour changing is not the index changing.** A write under the tours folders sends `vnoc/toursChanged`; it starts no index update and moves no revision. | Today every path under `.vnoc/**` can move the revision, which marks call trees stale and makes every page ask for the structure again. An agent adds a stop every few seconds. |
+| **D12** | **A tour changing is not the index changing.** A write under the tours folders sends `vnoc/toursChanged`; it starts no index update and moves no revision. | Today every path under `.vnoc/**` starts an update: a walk of the project and a read of `.vnoc/nodes`, for nothing (TR0, check 2: it moves no revision and sends no `indexChanged`, because nothing it reads has changed). An agent adds a stop every few seconds, and a reader's Next writes the state file: that is an update per click. |
 | **D13** | **A second skill, `vnoc-tour`,** with its own description, and one guide topic, `vnoc guide tour`. | A tour is a different job with different trigger words. The trial (TR14) measures it against a section in the first skill. |
 | **D14** *(changed)* | **Every command is the user's.** The skill tells an agent which ones it runs by itself (write, read, `where`) and which only when asked (`go`, `ids`, `pin --commit`, `share`, `delete`, `import`). Only the first group is on the agent's allow list. | Your call: the user gets the full option. The guard is no longer "the command does not exist" but "the agent is not allowed to run it unasked", and a delete goes to the trash. |
 | **D15** | **No tour is ever deleted by V-NOC itself,** and a deleted tour goes to `.vnoc/local/trash/`. | A private tour is the only copy until it is shared. |
@@ -124,7 +124,7 @@ Read from the code on 2026-11-23. Nothing about tours exists in `crates/`, `exte
 - **The command line is ready for it.** Clap subcommands in `cli/args.rs`, one thin handler per command (C2), `--json` with `"schema": 1`,
   exit codes in `cli/mod.rs`. A one-shot is about 30 ms on httpx (21.05 §3), so a command per stop, and a `where` in the middle of a
   chat, cost nothing a person would notice. `Lookup::resolve` (`cli/nodes.rs`) turns any `<node>` into a `Node`.
-- **No node has a content hash today.** D7 adds one, in the tours module only; BLAKE3 is already a dependency.
+- **No node has a content hash today.** D7 adds one, in the tours module only. BLAKE3 is built already (`vnoc-domain` depends on it; `crates/vnoc` has it as a dev-dependency only), so TR2 moves it to `crates/vnoc`'s dependencies: no new crate in the build.
 - **A node is found by ID or by name already:** `Index::resolve_ref` with `NodeRef::Id` and `NodeRef::Location`. D6 is those two calls.
 - **Writing an ID without a doc is not a flow today.** `identity::attach` ends in `create_doc`. `vnoc tour ids` needs "make sure this
   node has an ID" split out of it: the same split 22's PG2 planned (`ensure_node`). **[check]** TR0: what a node folder with a
@@ -158,12 +158,13 @@ number.
 | 4 | D14: on the agent's allow list (no permission question): `start`, `add`, `finish`, `plan`, `drop`, `resume`, `list`, `show`, `check`, `where`, `route`, `export`. **Not** on it: `go`, `ids`, `pin`, `share`, `delete`, `edit`, `import`, `settings`. OK? | **Yes.** The first group writes only inside the tours folders and can lose nothing. `ids` and `pin --commit` touch your source or your history; `delete`, `share`, `import` change what you keep; `go` moves your screen. |
 | 5 | D20: `import --replace` replaces the tour's file (a new file, renamed over the old one). Ids in the document are kept, so your place survives. The old file goes to the trash. OK? | **Yes.** Turning a document back into "the lines to add" is possible and buys nothing: a person who edits a tour as a file wants the file to be what they wrote. |
 | 6 | D21: both settings start as `"ask"`. With `ids = "always"` the IDs are written **at `finish`**, in one go, not at every `add`. OK? | **Yes.** `"ask"` costs one question per tour and never surprises anyone. Writing a marker at every `add` would move the lines of a file the agent is still reading; at `finish` every stop is written, and the hashes leave marker lines out. |
+| 7 | TR0, check 5: a tour's stops can give doc-less nodes an ID (`vnoc tour ids`). When such a function is later deleted, it is a Missing node with `0 docs`: Needs Attention lists it (its tooltip says "Its docs are kept.", which is wrong for none) and `vnoc check` exits 1. Keep that, or leave Missing nodes with no docs out of both? | **Keep it, fix the words.** It is true: an ID whose code is gone, and a `node.toml` left in `.vnoc/nodes/` that **Remove** cleans up. Hiding it would leave that folder for ever. The tooltip says *"It has no docs. Remove cleans it up."* when there are none: one line in `extension/src/attentionView.ts`, in TR7 |
 
 ## 7. Open checks
 
 | # | Check | Step | Decides |
 |---|---|---|---|
-| 1 | The released 0.3.1 opens a project that has `.vnoc/tours/x.jsonl`, `.vnoc/local/tours/y.jsonl` and `.vnoc/local/tour-state/y.json`: nothing listed, nothing changed, `git status` clean, `vnoc check` passes | TR0 | D2, D3 are additions to the format |
+| 1 | The released 0.3.1 opens a project that has `.vnoc/tours/x.jsonl`, `.vnoc/local/tours/y.jsonl` and `.vnoc/local/tour-state/y.json`: nothing listed, nothing changed; `status`, `tree`, `check` print the same with the same exit code as without them; `git status` shows nothing but the files you put there **(answered for the command line, TR0 below; the VS Code half by hand)** | TR0 | D2, D3 are additions to the format |
 | 2 | What the running core does today when a file under `.vnoc/local/` changes: is `.vnoc/` read again, does the revision move? | TR0 | how much D12 has to filter |
 | 3 | Two processes appending to one file under the lock file, 200 lines each: every line whole, none lost. macOS here, Windows in CI | TR0 | D10. The lock is **not** on the tour file itself: on Windows a lock on a file stops other processes from reading it |
 | 4 | Which lines of a def hold an ID marker, from `Def.id` alone: "a line that contains the ID text of this def or of a def inside it". Python and Bend | TR0 | D7: the hash rule of [`01`](01-on-disk.md) §7 |
@@ -329,6 +330,26 @@ macOS two writes of the same size in a row are told apart by the time, and the f
 time is within one tick of the check) is not needed here. **Not answered: Linux and Windows.** TR5's recorded-check tests run on all
 three in CI and decide whether that fallback is built. I do not guess them; the same program gives the number on each machine
 (`tours_checks stat <dir>`).
+
+### TR0 reviewed (2026-11-24)
+
+Every **Contradicts** above is settled in the plan, and the design did not change:
+
+| Contradicts | Now |
+|---|---|
+| "`vnoc check` passes" (§7 row 1, 01 §11, TR7's tests) | "the same output and the same exit code as without them": in §7 row 1, 01 §11, 06 TR7 |
+| "`git status` shows nothing new" | "nothing but the files you put there": §7 row 1 |
+| D12's *Why* (the revision) | rewritten: the cost is an update per write, a walk and a read of `.vnoc/nodes`, for nothing. The split of 03 §8 stays, for that |
+| `git show` after `--` | no `--` before `<commit>:<path>`; the commit is checked as 40 hex and the path as a `RepoPath` first: 01 §10. `--end-of-options` is not used, so it sets no oldest git |
+| an ignored file reads as clean | step 2 of making a pin is two calls: `status` must say nothing **and** `ls-tree HEAD` must name every path; `check-ignore` only words the reason: 01 §8, 03 §5. `rev-parse --verify -q HEAD` for "no commit yet" |
+
+Also from the answers: the tours lock tries every 5 ms, not 50 (check 3; 06 TR3). BLAKE3 moves from `crates/vnoc`'s dev-dependencies to
+its dependencies in TR2 (§5). Check 4's two notes need nothing: the hash leaves out what the driver reports as `Def.id`, whatever form
+it has, and it covers the lines the driver says the def has (for Bend, a comment above the def is in them when the driver says so).
+
+Left for the user: the Missing node with no docs (check 5's question; §6 ask 7). Answered here: check 6 (a), yes, it is the rule, and
+`ls-tree` now guards it as well; (b) no flag newer than what CI's git has is used, checked when TR9's tests run on the three systems;
+(c) stays with TR9.
 
 ## 8. What later work stands on
 

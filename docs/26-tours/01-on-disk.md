@@ -277,13 +277,19 @@ commit is in the tour's `pin` record. A tour that is not pinned has no commit in
 ```
 1. is every written stop fresh against the files as they are now?            (the check of 03 §2: fresh, or moved)
       no  → not pinned: "s3 changed since it was written". Replace it, then pin.
-2. are all the tour's files committed?    git status --porcelain -- <the files of its stops>
+2. are all the tour's files committed, and in HEAD?
+      git status --porcelain -z -- <the files of its stops>     must say nothing      (modified, staged, untracked: each says so)
+      git ls-tree --name-only -z HEAD -- <the same files>       must name every one   (an ignored file, or one git never had, is not there)
       no  → not pinned: "2 files have changes that are not committed: app/inventory.py, app/payments.py"
+                        "app/generated.py is ignored by git: this tour cannot be pinned"   (git check-ignore -q, only to word it)
 3. both yes → what is in HEAD is what is on disk is what the tour explains.
       write  pin { commit: HEAD, where: each stop's and block's path and lines now }
 ```
 
-No old file is read to make a pin: step 2 is what makes HEAD equal to the files step 1 just checked.
+No old file is read to make a pin: step 2 is what makes HEAD equal to the files step 1 just checked. **Why two calls in step 2**
+(TR0, check 6): `status` with paths says **nothing** for a clean file, an ignored file and a path that does not exist alike. `ls-tree`
+says which of them HEAD holds. Step 1 already turned a deleted file into a *gone* stop, so a pin is never tried on one; `ls-tree` is
+the guard that does not depend on that. Each call is 3 to 5 ms (TR0).
 
 **When files are not committed.** The tour is finished, playable, and flagged *not pinned*, with the list. What happens next is the
 setting `[tours] commit` (§12): `"always"` makes `finish` commit them and pin; `"ask"` (the start) makes it print them, and the agent
@@ -330,7 +336,7 @@ second window. The `pin` record is all it needs.
 | the tour is edited after the pin (a stop replaced, a block added) | not pinned until pinned again (§4). `add --replace` on a pinned tour says so |
 | the commit is not in this repository: a shallow clone, a teammate who has not fetched it | the row says `pinned at f4d6e15 (not in this repository)`. Changed stops fall back to the *changed* mark. Nothing is lost: after a fetch it works |
 | history was rewritten: the branch was rebased or squashed when it was merged, and the pinned commit is on no branch | the same as above for teammates; on your machine it works until git cleans up. **Pin a project tour after its code is merged:** `vnoc tour pin` on a tour that is fresh and committed writes a new `pin` with the commit you are on. `vnoc tour check` says `can be pinned again` when the pinned commit is not reachable from HEAD and the tour is fresh |
-| a file of the tour is ignored by git, or the project is not a git repository | it can never be pinned. Flagged, with the reason |
+| a file of the tour is ignored by git, or the project is not a git repository | it can never be pinned. Flagged, with the reason. (An ignored file is found by step 2's `ls-tree`: `status` alone would read it as clean, TR0) |
 | a submodule's file | not pinned first: its commit is another repository's. Said in the refusal |
 
 **Why not a copy of the code in the tour instead.** It would make every tour playable with no git. It also doubles the file and puts
@@ -374,7 +380,7 @@ Everything in `.vnoc/tours/` arrives by `git pull` and is untrusted input (`04-s
 | a `type` this version does not know → skipped, silently | a newer V-NOC, or 27 |
 | the last line has no `\n` → not read, no problem | it is being written this moment, or a crash tore it. The next append starts with `\n`, which turns the torn piece into one broken line |
 | `path` must be a valid `RepoPath` (no `..`, not absolute), in a stop and in a `pin` | a pulled tour cannot make V-NOC read a file outside the project |
-| `commit` must be 40 hexadecimal characters; `git show` is given `<commit>:<path>` after `--` | a pulled tour cannot hand git an option |
+| `commit` must be 40 hexadecimal characters, and `path` a valid `RepoPath`, before git sees either. `git show` gets `<commit>:<path>` as its one argument, **with no `--` before it** (after `--` git reads it as a path and prints nothing, with exit 0: TR0). A 40-hex commit cannot start with `-`, so it cannot be read as an option. The paths of `status`, `ls-tree`, `add`, `commit` go after `--` | a pulled tour cannot hand git an option |
 | a line ends at `\n`; a `\r` before it is dropped | git may check a committed tour out with `\r\n`. V-NOC writes `\n` |
 | a `text` or `title` is shown as text. Only `` `code` `` and `*emphasis*` are drawn, by a small renderer of their own, never through the doc panel's Markdown and never as HTML | the text comes from a model, or from a pull |
 | at most **40** stops on the route, **12** blocks in a stop, **1 MB** a file. A write refuses past them; a reader stops reading at 1 MB and says so | 40 is the design's limit (the segments, the route). A tour that wants more is two tours |
@@ -394,7 +400,7 @@ All of it is addition (`04-storage/04-growth-path.md` §2 and §3).
 
 | Addition | An older V-NOC does |
 |---|---|
-| `.vnoc/tours/` | does not read it (it reads `vnoc.toml`, `tags.toml`, `nodes/`). **[check]** TR0 with the released 0.3.1: nothing listed, nothing changed, `vnoc check` passes. **Answered (README §7, TR0 check 1): the command line, yes; `check` exits 1 on the sample with or without them, so the claim is "same output". The VS Code half is by hand** |
+| `.vnoc/tours/` | does not read it (it reads `vnoc.toml`, `tags.toml`, `nodes/`). **Checked in TR0** with the released 0.3.1 command line: nothing listed, nothing changed, and `status`, `tree`, `check` print the same, with the same exit code, as without the new folders (README §7, check 1). The VS Code half is by hand |
 | `.vnoc/local/tours/`, `.vnoc/local/tour-state/`, `.vnoc/local/tours.lock` | nothing: `local/` is ignored by git and unknown names in it are not read |
 | `[tours]` in `vnoc.toml` | keeps it when it rewrites the file (`toml_edit`), reads nothing from it |
 | a node folder with `node.toml` and no doc (after `vnoc tour ids`) | **[check]** TR0. It is what a node looks like after its last doc file was deleted by hand, so it should already be a state every version reads. **Answered (README §7, TR0 check 5): a quiet state in 0.3.1; it is reported only if its code is deleted (Missing, `0 docs`) or its `ID:` line is removed (ID lost)** |

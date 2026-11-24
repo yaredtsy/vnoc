@@ -194,7 +194,7 @@ tours::pin::as_written(root, tour, stop) -> Option<Excerpt>
 | **the lit lines** | the pin's `where` for each block: the lines of that commit, exact. No sliding, no hash: the pin was made when the files on disk were that commit ([`01`](01-on-disk.md) §8) |
 | **kept** | in memory by commit and path. A commit's file never changes |
 | **`None`** | the stop falls back to how a tour that is not pinned shows it, and the row says the commit is not in this repository |
-| **making a pin** (`tours::pin::make`) | the check of §2 (all fresh), then `git status --porcelain -z -- <paths>` (all clean), then `git rev-parse HEAD`; the `pin` record carries where every stop and block is now. `can_pin` answers the same questions without writing, for `check` and for the row's menu |
+| **making a pin** (`tours::pin::make`) | the check of §2 (all fresh, none gone), then `git status --porcelain -z -- <paths>` (says nothing) and `git ls-tree --name-only -z HEAD -- <paths>` (names every path), then `git rev-parse --verify -q HEAD` (exit 1 and nothing when there is no commit yet: TR0); [`01`](01-on-disk.md) §8 step 2; the `pin` record carries where every stop and block is now. `can_pin` answers the same questions without writing, for `check` and for the row's menu |
 | **`--commit`** (`tours::pin::commit_files`) | `git add -- <untracked among them>`, `git commit --only -m … -- <paths>`. Only from `vnoc tour pin --commit` and `vnoc/tourPin { commit: true }`, never from `finish` |
 
 ## 6. Tours on a node

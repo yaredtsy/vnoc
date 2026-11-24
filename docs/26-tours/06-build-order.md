@@ -97,7 +97,7 @@ Commit: `tours TR2: the text of a stop, the rules, the hash`.
 | Files | What |
 |---|---|
 | `userdata/layout.rs` | `tours_dir`, `local_tours_dir`, `tour_state_dir`, `tours_lock_file` |
-| `userdata/lock.rs` | the wait loop taken out as a function both locks use. `WriteLock` unchanged in behaviour |
+| `userdata/lock.rs` | the wait loop taken out as a function both locks use, with the time between tries as a parameter. `WriteLock` unchanged in behaviour (50 ms, 5 s). The tours lock tries every **5 ms**, 5 s at most: it is held for microseconds, and a reader's Next waits on it (TR0, check 3: a 50 ms sleep was every wait) |
 | `tours/store.rs` | `new_id(title)`; `start` (`create_new`; D16's creation of `.vnoc/` by the function `init` uses); `append` (the lock; a file that does not end in `\n` gets one first; one `write_all`); `read`; `list` (both folders, the rules of [`01`](01-on-disk.md) §10); `next_stop_id`, `next_step_id`; the state file: `read_state`, `write_part` (read under the lock, replace one part, `write_atomic`) |
 | the newest format fixture | one project tour, one private tour with its state file; "opening it changes no byte" still passes |
 
@@ -167,6 +167,7 @@ Commit: `tours TR6: replace, drop, edit, share, delete; a stopped tour refuses t
 | Files | What |
 |---|---|
 | `identity/attach.rs` | `ensure_node` split out of `attach` (the ID, the marker, `node.toml`); `attach` = `ensure_node` + `create_doc`. No behaviour change: the existing attach tests pass untouched. (22's PG2 plans the same split; whichever lands second builds on the first) |
+| `extension/src/attentionView.ts` | a Missing node with no docs: the tooltip *"It has no docs. Remove cleans it up."* instead of *"Its docs are kept."* (README §6 ask 7; only if the user keeps the pick) |
 | `tours/ids.rs`, `cli/tour.rs` | `tour ids <tour> [<stop>…]`: under the project's write lock, `ensure_node` for each stop's node with `EditSink::Disk`; one `ids` record; prints each changed file. Refused with `[ids] default = "none"` |
 | `tours/settings.rs`, `cli/tour.rs` | `[tours]` in `vnoc.toml` ([`01`](01-on-disk.md) §12): `read` with the defaults, an unknown value read as `"ask"` and reported once; `set` one key with `toml_edit`; `tour settings [--ids …] [--commit …]` |
 | `tours/finish.rs`, `cli/tour.rs` | `finish` after `end`, step 1 of [`02`](02-commands.md) §5: `ids` by the setting, `--ids`, `--no-ids`; the `ask the user` line |
@@ -174,7 +175,7 @@ Commit: `tours TR6: replace, drop, edit, share, delete; a stopped tour refuses t
 Tests: a tour of four stops, two with IDs already: two markers written, two files named, one `ids` record with four entries; the tour
 is still fresh after it (the marker line is left out of the hash, the blocks moved by one); rename one of the functions → found, fresh;
 `ids` twice writes nothing the second time; `[ids] default = "none"` → refused, nothing written; a folder stop gets a `.vnoc-id`; what
-TR0's check 5 found holds (`vnoc check` passes after). The setting: `finish` with `ids` absent or `"ask"` writes nothing and prints the
+TR0's check 5 found holds (`vnoc check` prints what it printed before, with the same exit code: the sample has two problems on purpose). The setting: `finish` with `ids` absent or `"ask"` writes nothing and prints the
 line (golden); `"always"` writes them; `"never"` prints nothing; `--ids` and `--no-ids` win over each; `ids = "sometimes"` is read as
 `"ask"` with one problem line; `tour settings --ids always` changes that key and keeps a comment and an unknown table in the file.
 
