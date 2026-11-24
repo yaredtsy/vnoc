@@ -6,6 +6,7 @@
 //! the order of §4's table, with no white space, and ends with `\n`. A line read is never written back over itself (the log only grows), so what
 //! is dropped on reading is never lost from the file.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
@@ -397,10 +398,18 @@ pub struct TourRecord {
     pub author: Option<String>,
     pub at: String,
     pub detail: Detail,
-    /// After an `import --replace`: the highest stop and block numbers ever used (§5). Its shape is not fixed by `01-on-disk.md` yet, so it is kept
-    /// as it was written.
+    /// After an `import --replace`: the highest numbers ever used (§5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next: Option<serde_json::Value>,
+    pub next: Option<Next>,
+}
+
+/// The highest numbers ever used in a tour: `{"stop": 12, "blocks": {"s3": 4, "s7": 2}}`. A stop with no entry has used no block number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Next {
+    pub stop: u32,
+    /// stop id → the highest block number used under it; written in stop order
+    #[serde(default)]
+    pub blocks: BTreeMap<StopId, u32>,
 }
 
 /// A later value for some of the first line's.
@@ -575,7 +584,8 @@ mod tests {
         vec![
             r#"{"type":"tour","schema":1,"id":"checkout-order-7k2q","title":"checkout_order","question":"what happens when the payment times out","author":"claude-code","at":"2026-11-23T18:40:02Z","detail":"normal"}"#,
             r#"{"type":"tour","schema":1,"id":"a-0000","title":"t","at":"2026-11-23T18:40:02Z","detail":"quick"}"#,
-            r#"{"type":"tour","schema":1,"id":"a-0000","title":"t","at":"x","detail":"detailed","next":{"block":{"s1":3},"stop":9}}"#,
+            r#"{"type":"tour","schema":1,"id":"a-0000","title":"t","at":"x","detail":"detailed","next":{"stop":9,"blocks":{"s1":3,"s2":1,"s10":4}}}"#,
+            r#"{"type":"tour","schema":1,"id":"a-0000","title":"t","at":"x","detail":"quick","next":{"stop":0,"blocks":{}}}"#,
             r#"{"type":"meta","title":"New title"}"#,
             r#"{"type":"meta","title":"t","question":"q","detail":"detailed"}"#,
             r#"{"type":"meta"}"#,
@@ -828,6 +838,51 @@ mod tests {
             "{\"type\":\"halt\"}",
         ] {
             assert!(matches!(parse_line(line).unwrap(), Record::Halt(_)));
+        }
+    }
+
+    #[test]
+    fn next_is_typed_and_written_stop_first_and_its_blocks_in_stop_order() {
+        let head = r#"{"type":"tour","schema":1,"id":"a-0000","title":"t","at":"x","detail":"normal","next":"#;
+        // blocks read in any order are written in stop order (s2 before s10), `stop` first
+        let read = format!(r#"{head}{{"blocks":{{"s10":4,"s2":1,"s1":3}},"stop":12}}}}"#);
+        let Record::Tour(tour) = parse_line(&read).unwrap() else {
+            panic!()
+        };
+        let next = tour.next.clone().unwrap();
+        assert_eq!(next.stop, 12);
+        assert_eq!(next.blocks.len(), 3);
+        assert_eq!(
+            print_line(&Record::Tour(tour)),
+            format!(r#"{head}{{"stop":12,"blocks":{{"s1":3,"s2":1,"s10":4}}}}}}"#) + "\n"
+        );
+        // a stop with no entry has used none: no `blocks` at all reads as none, and is written as an empty object
+        let Record::Tour(tour) = parse_line(&format!(r#"{head}{{"stop":5}}}}"#)).unwrap() else {
+            panic!()
+        };
+        assert!(tour.next.as_ref().unwrap().blocks.is_empty());
+        assert!(print_line(&Record::Tour(tour)).contains(r#""next":{"stop":5,"blocks":{}}"#));
+        // what is not a `next` makes the line an error
+        for (what, next) in [
+            ("a number", "3"),
+            ("a list", "[]"),
+            ("no stop", r#"{"blocks":{}}"#),
+            ("a negative stop", r#"{"stop":-1}"#),
+            ("a stop that is text", r#"{"stop":"9"}"#),
+            (
+                "a block key that is not a stop",
+                r#"{"stop":1,"blocks":{"x":1}}"#,
+            ),
+            (
+                "a block key that is a block",
+                r#"{"stop":1,"blocks":{"s1.b1":1}}"#,
+            ),
+            (
+                "a block count that is text",
+                r#"{"stop":1,"blocks":{"s1":"2"}}"#,
+            ),
+        ] {
+            assert!(parse_line(&format!("{head}{next}}}")).is_err(), "{what}");
         }
     }
 

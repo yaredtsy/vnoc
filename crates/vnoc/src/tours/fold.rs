@@ -237,6 +237,10 @@ pub fn fold(text: &str) -> Result<Tour, Unreadable> {
         finished: false,
     };
     for (n, line) in lines {
+        // a blank line (a hand edit, a merge) is nothing
+        if line.trim().is_empty() {
+            continue;
+        }
         match parse_line(line) {
             Ok(record) => replay.apply(n, record),
             Err(e) => replay.problem(n, e.to_string()),
@@ -311,9 +315,7 @@ impl Replay {
             Record::End(end) => {
                 self.finished = true;
                 self.tour.ended = Some(end.at);
-                // planned stops still not written leave the route; a written stop that was nested in one is at the top then
-                self.tour.stops.retain(|s| s.written);
-                self.relink();
+                self.leave_the_route();
             }
             Record::Other => {}
         }
@@ -416,8 +418,9 @@ impl Replay {
         }
     }
 
-    /// A block goes under its `parent` when that is a block of the same stop that is there now; else at the top of its stop. A block whose id is
-    /// there already is replaced: the old one, with its details, goes, and this one is added as new (a later line with the same id wins).
+    /// A block goes under its `parent` when that is a block of the same stop that is there now; else at the top of its stop. A block whose id the
+    /// stop has already is replaced **in place**: it keeps its position among its siblings and its details, and takes the new lines, hash, title
+    /// and text (its `parent` is not looked at again: the block stays where it is).
     fn write_step(&mut self, n: usize, record: StepRecord) {
         let Some(stop) = self.tour.stops.iter_mut().find(|s| s.id == record.stop) else {
             return self.problem(
@@ -434,7 +437,13 @@ impl Replay {
                 ),
             );
         }
-        remove_block(&mut stop.blocks, record.id);
+        if let Some(old) = find_block(&mut stop.blocks, record.id) {
+            old.lines = record.lines;
+            old.hash = record.hash;
+            old.title = record.title;
+            old.text = record.text;
+            return;
+        }
         let block = TourBlock {
             id: record.id,
             lines: record.lines,
@@ -462,14 +471,31 @@ impl Replay {
         self.tour.stops.retain(|s| !gone.contains(&s.id));
     }
 
-    /// A stop whose `from` is no longer on the route is at the top.
-    fn relink(&mut self) {
-        let present: Vec<StopId> = self.tour.stops.iter().map(|s| s.id).collect();
-        for stop in &mut self.tour.stops {
-            if stop.from.is_some_and(|f| !present.contains(&f)) {
-                stop.from = None;
+    /// At an `end`, the planned stops that were never written leave the route. A written stop that was nested in one moves up to the nearest stop
+    /// above it that stays (the planned stop's own `from`, and if that leaves too, its `from`), or to the top when there is none; and its `line`,
+    /// which was a line of the stop that left, is dropped.
+    fn leave_the_route(&mut self) {
+        let planned_from: Vec<(StopId, Option<StopId>)> = self
+            .tour
+            .stops
+            .iter()
+            .filter(|s| !s.written)
+            .map(|s| (s.id, s.from))
+            .collect();
+        for stop in self.tour.stops.iter_mut().filter(|s| s.written) {
+            let mut moved = false;
+            while let Some(parent) = stop.from {
+                let Some((_, above)) = planned_from.iter().find(|(id, _)| *id == parent) else {
+                    break;
+                };
+                stop.from = *above;
+                moved = true;
+            }
+            if moved {
+                stop.line = None;
             }
         }
+        self.tour.stops.retain(|s| s.written);
     }
 
     fn finish(&mut self) {
@@ -632,8 +658,8 @@ mod tests {
             t.pinned(),
             "the pin is after every stop, step and drop; the `ids` after it is not an edit"
         );
-        // s3 was planned and never written: the `end` takes it off the route, and s4, which was reached from it, is at the top
-        assert_eq!(route(&t), ["s1:0", "s2:1", "s4:0"]);
+        // s3 was planned and never written: the `end` takes it off the route, and s4, which was reached from it, moves up to s3's own `from`, s1
+        assert_eq!(route(&t), ["s1:0", "s2:1", "s4:1"]);
         assert_eq!(t.number(StopId::new(4).unwrap()), Some(3));
         let s1 = t.stop(StopId::new(1).unwrap()).unwrap();
         assert_eq!(s1.node.map(|n| n.to_string()).as_deref(), Some(NODE));
@@ -650,7 +676,8 @@ mod tests {
         let s4 = t.stop(StopId::new(4).unwrap()).unwrap();
         assert_eq!(
             (s4.same_as, s4.from, s4.line),
-            (StopId::new(2), None, Some(21))
+            (StopId::new(2), StopId::new(1), None),
+            "its line was a line of s3, which left"
         );
         assert_eq!(steps(&t, 4), ["s4"]);
         assert_eq!(
@@ -737,12 +764,38 @@ mod tests {
         let t = tour(&[
             stop(1, None),
             r#"{"type":"step","id":"s1.b1"}"#.to_string(),
-            "".to_string(),
+            "this is not a record".to_string(),
             r#"{"type":"drop"}"#.to_string(),
             stop(2, None),
         ]);
         assert_eq!(route(&t), ["s1:0", "s2:0"]);
         assert_eq!(problems(&t), [3, 4, 5]);
+    }
+
+    #[test]
+    fn a_blank_line_is_skipped_with_no_problem() {
+        let t = tour(&[
+            stop(1, None),
+            "".to_string(),
+            "   ".to_string(),
+            "\t".to_string(),
+            stop(2, None),
+            "broken".to_string(),
+            "".to_string(),
+        ]);
+        assert_eq!(route(&t), ["s1:0", "s2:0"]);
+        assert_eq!(
+            problems(&t),
+            [7],
+            "only the broken line, by its number in the file"
+        );
+        // with `\r\n` ends, and a blank line right after the first
+        let text = format!("{HEAD}\r\n\r\n{}\r\n \r\n", stop(1, None));
+        let t = fold(&text).unwrap();
+        assert_eq!(route(&t), ["s1:0"]);
+        assert!(t.problems.is_empty());
+        // the first line is not skipped: a file that starts with a blank line is not a tour
+        assert!(fold(&format!("\n{HEAD}\n")).is_err());
     }
 
     #[test]
@@ -1092,8 +1145,11 @@ mod tests {
     }
 
     #[test]
-    fn a_block_written_again_replaces_the_old_one_and_its_details() {
-        let again = step(1, 1, None).replace("block 1", "new text");
+    fn a_block_written_again_is_replaced_in_place_and_keeps_its_details() {
+        let again = step(1, 1, None)
+            .replace("block 1", "new text")
+            .replace("\"k1\"", "\"new\"")
+            .replace("[2,5]", "[7,9]");
         let t = tour(&[
             stop(1, None),
             step(1, 1, None),
@@ -1101,8 +1157,38 @@ mod tests {
             step(1, 3, None),
             again,
         ]);
-        assert_eq!(steps(&t, 1), ["s1", "s1.b3", "s1.b1"]);
-        assert_eq!(t.stops[0].blocks[1].text, "new text");
+        // the same place among its siblings (first), and its detail still under it
+        assert_eq!(steps(&t, 1), ["s1", "s1.b1", "s1.b2", "s1.b3"]);
+        let b1 = &t.stops[0].blocks[0];
+        assert_eq!(b1.id.to_string(), "s1.b1");
+        assert_eq!(
+            (b1.text.as_str(), b1.hash.as_str(), b1.lines),
+            ("new text", "new", Lines::new(7, 9).unwrap())
+        );
+        assert_eq!(b1.details.len(), 1);
+        assert_eq!(b1.details[0].text, "block 2");
+        // a detail replaced in place stays under its parent, in its place; a new `parent` in the record does not move it
+        let detail_again = step(1, 3, Some("s1.b1")).replace("block 3", "again");
+        let t = tour(&[
+            stop(1, None),
+            step(1, 1, None),
+            step(1, 2, Some("s1.b1")),
+            step(1, 3, Some("s1.b2")),
+            step(1, 4, Some("s1.b1")),
+            detail_again,
+        ]);
+        assert_eq!(steps(&t, 1), ["s1", "s1.b1", "s1.b2", "s1.b3", "s1.b4"]);
+        assert_eq!(t.stops[0].blocks[0].details[0].details[0].text, "again");
+        assert!(t.problems.is_empty());
+        // a block that was dropped is not replaced: a new block with its id is added at the end
+        let t = tour(&[
+            stop(1, None),
+            step(1, 1, None),
+            step(1, 2, None),
+            r#"{"type":"drop","id":"s1.b1"}"#.to_string(),
+            step(1, 1, None),
+        ]);
+        assert_eq!(steps(&t, 1), ["s1", "s1.b2", "s1.b1"]);
     }
 
     #[test]
@@ -1391,15 +1477,56 @@ mod tests {
     }
 
     #[test]
-    fn an_end_takes_the_planned_stops_off_the_route_and_a_stop_nested_in_one_goes_to_the_top() {
+    fn an_end_takes_the_planned_stops_off_the_route_and_a_stop_nested_in_one_moves_up() {
+        let end = || r#"{"type":"end","at":"x"}"#.to_string();
+        // the planned stop was at the top: its nested stop goes to the top, and its line goes
         let t = tour(&[
             plan(&[(1, None), (2, Some(1)), (3, None), (4, Some(3))]),
             stop(1, None),
             stop(4, Some(3)),
-            r#"{"type":"end","at":"x"}"#.to_string(),
+            end(),
         ]);
         assert_eq!(route(&t), ["s1:0", "s4:0"]);
-        assert_eq!(t.stops[1].from, None);
+        assert_eq!((t.stops[1].from, t.stops[1].line), (None, None));
+        // the planned stop was nested: its nested stop moves up to the planned stop's own `from`, with no line
+        let t = tour(&[
+            plan(&[(1, None), (2, Some(1)), (3, Some(2))]),
+            stop(1, None),
+            stop(3, Some(2)),
+            end(),
+        ]);
+        assert_eq!(route(&t), ["s1:0", "s3:1"]);
+        assert_eq!((t.stops[1].from, t.stops[1].line), (StopId::new(1), None));
+        // several levels of planned stops leave at once: up to the nearest one that stays
+        let t = tour(&[
+            plan(&[(1, None), (2, Some(1)), (3, Some(2)), (4, Some(3))]),
+            stop(1, None),
+            stop(4, Some(3)),
+            end(),
+        ]);
+        assert_eq!(route(&t), ["s1:0", "s4:1"]);
+        assert_eq!((t.stops[1].from, t.stops[1].line), (StopId::new(1), None));
+        let t = tour(&[
+            plan(&[(1, None), (2, Some(1)), (3, Some(2)), (4, Some(3))]),
+            stop(1, None),
+            stop(2, Some(1)),
+            stop(4, Some(3)),
+            end(),
+        ]);
+        assert_eq!(route(&t), ["s1:0", "s2:1", "s4:2"], "s3 left, s2 stays");
+        assert_eq!(t.stops[2].from, StopId::new(2));
+        // a stop whose parent stays keeps its `from` and its line
+        let t = tour(&[
+            plan(&[(1, None), (2, Some(1)), (3, Some(1))]),
+            stop(1, None),
+            stop(2, Some(1)),
+            end(),
+        ]);
+        assert_eq!(route(&t), ["s1:0", "s2:1"]);
+        assert_eq!(
+            (t.stops[1].from, t.stops[1].line),
+            (StopId::new(1), Some(3))
+        );
         // before the end, they are there
         let t = tour(&[plan(&[(1, None), (2, Some(1))]), stop(1, None)]);
         assert_eq!(route(&t), ["s1:0", "s2:1"]);
