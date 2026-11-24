@@ -372,6 +372,22 @@ export interface TourStep {
 }
 ```
 
+**As built (TR15a, `22f5e88`).** The answers are the commands' `--json` types (`tours/view.rs`), built by `tours/serve.rs` for both
+the CLI and `server.rs`; `shared/tours.ts` is written from them in TR16, not from the sketch above. Names that differ from it: a row's
+place summary is `place` (`{stop, at, seen}` or `null`; `at` on a row stays the tour's time), the view's full place is `place`
+(`at`, `seen`, `back`, `moved`, `by`, `open`), a stop's steps in reading order are `reading` (`steps` is a count), and freshness stays
+`check` (with `from`: `memory` is new, the rung-1 answer; the commands never print it). New keys: `minutes` (`tour.size()`, 20 s a
+step), `quiet` (writing or stopping, the tour's file untouched for 5 minutes), `root`, `writing` (the first planned stop while the
+tour is writing). A gone stop's steps are all `changed`; a moved block is `fresh` with its lines moved. `place`, `root`, `writing`
+are explicit `null`. `vnoc/tours` takes `{check?}`; `tourOpen` writes only when `open` changes and never touches `moved`; `tourHalt`
+answers `{halt: written | already | finished, state}`. A tour request takes the tours lock only, and waits for the first index
+build only when some tour needs a real check (rung 3). Paths are classified against the git root; a tour-folder path not named like
+a tour rescans both folders. **The echo:** the core keeps the place it last wrote or announced per tour, and a state-file event is a
+move only when the file's place differs; a check that records itself notes the place already there. A watcher event that lands
+between `go`'s write and its note is an echo of the same place: harmless, accepted. Measured: a tour-only batch leaves a new `.py`
+file unseen by `vnoc/structure` (no walk); a mixed batch moves the revision by 1. The test temp folders are removed by a thread-local
+guard (`tests/common/testdir.rs`; `VNOC_KEEP_TEMP=1` keeps them).
+
 **The watcher.** No new one. `extension/src/core.ts` already watches `.vnoc/**` and sends `vnoc/filesChanged { paths }`. In the core's
 `files_changed` (`server.rs`):
 
