@@ -12,8 +12,8 @@ use serde::Serialize;
 
 use super::args::{
     DetailArg, TourAddArgs, TourCheckArgs, TourCommand, TourDeleteArgs, TourDropArgs, TourEditArgs,
-    TourFinishArgs, TourIdsArgs, TourListArgs, TourResumeArgs, TourShareArgs, TourShowArgs,
-    TourStartArgs,
+    TourFinishArgs, TourIdsArgs, TourListArgs, TourResumeArgs, TourSettingsArgs, TourShareArgs,
+    TourShowArgs, TourStartArgs,
 };
 use super::nodes::{Hints, Lookup, NodeError, Target, doc_path};
 use super::out::{self, Render};
@@ -25,9 +25,11 @@ use crate::tours::add::{
     AddOptions, block_of, did_you_mean_stops, nested_in, plan_more, plan_stop,
 };
 use crate::tours::check::{self, Answer, Code, Mode, Recorded, Source};
+use crate::tours::finish::{self as finishing, Step};
 use crate::tours::on::{self, Map, Query};
 use crate::tours::record::{Bare, Detail, DropRecord, EndRecord, MetaRecord, Record};
 use crate::tours::rules::Refusal;
+use crate::tours::settings::{self, Choice, Key, Origin};
 use crate::tours::store::{self, Located, Pick, Row, StartParams, StoreError, Where};
 use crate::tours::{State, Tour, TourId, hash, steps_in_order, time, view};
 use crate::userdata::ToursLock;
@@ -47,6 +49,7 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
         TourCommand::Resume(args) => resume(global, args).await,
         TourCommand::Edit(args) => edit(global, args).await,
         TourCommand::Ids(args) => ids(global, args).await,
+        TourCommand::Settings(args) => settings(global, args).await,
         TourCommand::Share(args) => share(global, args).await,
         TourCommand::Delete(args) => delete(global, args).await,
         TourCommand::Halt(args) => halt(global, args).await,
@@ -634,6 +637,20 @@ fn first_line(text: &str, number: u32) -> String {
 
 // --------------------------------------------------------------------------------------------------------------------- finish
 
+/// What `finish` did about IDs, for `--json`.
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "lowercase")]
+enum IdsStep {
+    /// the setting is `ask`: the question for the user, not done
+    Ask { missing: usize, command: String },
+    /// written, as `vnoc tour ids` does
+    Written {
+        stops: Vec<IdStop>,
+        changed: Vec<String>,
+        recorded: bool,
+    },
+}
+
 #[derive(Serialize)]
 struct Finished {
     schema: u32,
@@ -645,6 +662,14 @@ struct Finished {
     steps: usize,
     /// planned stops that were never written and left the route
     left_the_route: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ids: Option<IdsStep>,
+    /// what was read as `ask` because it is not a value (`[tours]` in `vnoc.toml`), once
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notes: Vec<String>,
+    /// the text of the IDs step: the line to ask the user, or what was written
+    #[serde(skip)]
+    ids_text: String,
 }
 
 impl Render for Finished {
@@ -671,6 +696,10 @@ impl Render for Finished {
                 }
             ));
         }
+        text.push_str(&self.ids_text);
+        for note in &self.notes {
+            text.push_str(&format!("note: {note}\n"));
+        }
         text
     }
 }
@@ -691,6 +720,57 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
         let end = Record::End(EndRecord { at: time::now() });
         store::append_locked(&lock, &vnoc_root, &tour_id, &[end]).map_err(store_failure)?;
     }
+    // the tours lock is let go: the IDs step takes the project's write lock, and then the tours lock again inside each edit (that order only)
+    drop(lock);
+
+    // step 1 of 02 §5: the IDs. A finished tour is not offered them again by the setting; a flag asks for them whatever
+    let read = settings::read(&vnoc_root).map_err(settings_failure)?;
+    let choice = finishing::effective(read.ids.value, args.ids, args.no_ids);
+    let by_flag = args.ids || args.no_ids;
+    let mut ids = None;
+    let mut ids_text = String::new();
+    let mut notes = read.problems;
+    // a stop whose node had an ID when it was written has nothing to give: no index is built for a tour with no such stop
+    let could = tour.stops.iter().any(|s| s.written && s.node.is_none());
+    if (!already || by_flag) && choice != Choice::Never && could && project_writes_ids(&project)? {
+        // the tour is finished already: no driver to count with is a note, not a failure of `finish`
+        let opened = match open_from(global).await {
+            Ok(opened) => Some(opened),
+            Err(Failure::Environment(why)) => {
+                notes.push(format!(
+                    "could not tell which stops have no ID, so none were written or offered: {why}"
+                ));
+                None
+            }
+            Err(e) => return Err(e),
+        };
+        let missing = opened
+            .as_ref()
+            .map_or(0, |o| finishing::missing(&picks_of(o, &tour, &[])));
+        match finishing::step(choice, true, missing) {
+            Step::Nothing => {}
+            Step::Ask { missing } => {
+                let line = finishing::ask_line(&tour_id, missing);
+                ids_text = format!("{line}\n");
+                ids = Some(IdsStep::Ask {
+                    missing,
+                    command: format!("vnoc tour ids {tour_id}"),
+                });
+            }
+            Step::Write => {
+                let opened = opened
+                    .as_ref()
+                    .expect("a stop is missing an ID only when the index was built");
+                let written = write_ids(global, opened, &vnoc_root, &tour_id, &[]).await?;
+                ids_text = written.text(false);
+                ids = Some(IdsStep::Written {
+                    stops: written.stops,
+                    changed: written.changed,
+                    recorded: written.recorded,
+                });
+            }
+        }
+    }
     out::render(
         &Finished {
             schema: 1,
@@ -700,6 +780,9 @@ async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(), Failure> {
             stops: shown.written,
             steps: shown.steps,
             left_the_route: if already { 0 } else { shown.planned },
+            ids,
+            notes,
+            ids_text,
         },
         global,
     )
@@ -1139,8 +1222,15 @@ impl Render for IdsWritten {
     }
 }
 
+/// The project writes no ID lines: `[ids] default = "none"` in `.vnoc/vnoc.toml`. `Err` for a file that cannot be read.
+fn project_writes_ids(project: &crate::project::Project) -> Result<bool, Failure> {
+    Ok(crate::userdata::UserData::new(project.git_root())
+        .settings()
+        .map_err(super::write::settings_failure)?
+        .markers)
+}
+
 async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failure> {
-    use crate::tours::ids::{self, Outcome};
     let opened = open_from(global).await?;
     let project = &opened.project;
     let vnoc_root = store::vnoc_root(project.git_root());
@@ -1148,39 +1238,59 @@ async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failure> {
     if let Located::Both { .. } = store::locate(&vnoc_root, &id) {
         return Err(store_failure(StoreError::InBoth(id)));
     }
-    let settings = crate::userdata::UserData::new(project.git_root())
-        .settings()
-        .map_err(super::write::settings_failure)?;
-    if !settings.markers {
+    if !project_writes_ids(project)? {
         return Err(Failure::Usage(
             "this project writes no ID lines ([ids] default = \"none\" in .vnoc/vnoc.toml)".into(),
         ));
     }
+    let written = write_ids(global, &opened, &vnoc_root, &id, &args.stops).await?;
+    out::render(&written, global)
+}
+
+/// The stops of the tour with what there is to do for each, from the index as it is now. No lock is held: it is for counting.
+fn picks_of(
+    opened: &Opened,
+    tour: &Tour,
+    named: &[crate::tours::StopId],
+) -> Vec<(crate::tours::StopId, crate::tours::ids::Pick)> {
+    let index = opened.index.read().expect("the index lock is not poisoned");
+    let tree = index.tree(&opened.project.name(), opened.project.prefix());
+    let code = Code {
+        index: &index,
+        project: &opened.project,
+        tree: &tree,
+    };
+    crate::tours::ids::pick(&code, tour, named)
+}
+
+/// Gives the stops' nodes an ID: the project's write lock, `ensure_node` for each node that has none (each marker's edit tells the tours where
+/// their lines went), then the `ids` record under the tours lock. Neither lock is held by the caller.
+async fn write_ids(
+    global: &Global,
+    opened: &Opened,
+    vnoc_root: &Path,
+    id: &TourId,
+    named: &[crate::tours::StopId],
+) -> Result<IdsWritten, Failure> {
+    use crate::tours::ids::{self, Outcome};
+    let project = &opened.project;
     // the project's write lock first, then (inside each marker's edit, and at the end) the tours lock: never the other way round
     let _one_writer = take_write_lock(project).await?;
-    let tour = read_tour(&vnoc_root, &id)?;
-    for named in &args.stops {
-        if !tour.stop(*named).is_some_and(|s| s.written) {
-            let near = did_you_mean_stops(&tour, *named);
-            return no_such(
+    let tour = read_tour(vnoc_root, id)?;
+    for wanted in named {
+        if !tour.stop(*wanted).is_some_and(|s| s.written) {
+            let near = did_you_mean_stops(&tour, *wanted);
+            no_such(
                 global,
                 "tour ids",
                 "no_stop",
-                format!("no written stop {named} in this tour"),
+                format!("no written stop {wanted} in this tour"),
                 near.iter().map(ToString::to_string).collect(),
-            );
+            )?;
+            unreachable!("a refusal is a failure");
         }
     }
-    let picks = {
-        let index = opened.index.read().expect("the index lock is not poisoned");
-        let tree = index.tree(&project.name(), project.prefix());
-        let code = Code {
-            index: &index,
-            project,
-            tree: &tree,
-        };
-        ids::pick(&code, &tour, &args.stops)
-    };
+    let picks = picks_of(opened, &tour, named);
     let mut env = crate::identity::Env {
         project,
         index: &opened.index,
@@ -1192,12 +1302,12 @@ async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failure> {
         .map_err(|e| attach_failure(e, project))?;
 
     // the tour as the edits left it (each marker's edit wrote a `rebase`), then the `ids` record, under the tours lock
-    let lock = take_lock(vnoc_root.clone()).await?;
-    let tour = read_tour(&vnoc_root, &id)?;
+    let lock = take_lock(vnoc_root.to_path_buf()).await?;
+    let tour = read_tour(vnoc_root, id)?;
     let record = ids::record(&tour, &done);
     let recorded = record.is_some();
     if let Some(record) = record {
-        store::append_locked(&lock, &vnoc_root, &id, &[Record::Ids(record)])
+        store::append_locked(&lock, vnoc_root, id, &[Record::Ids(record)])
             .map_err(store_failure)?;
     }
     drop(lock);
@@ -1206,10 +1316,10 @@ async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failure> {
     let mut words = Vec::new();
     let mut changed: Vec<String> = Vec::new();
     for ((stop, outcome), (_, pick)) in done.iter().zip(&picks) {
-        let (state, id, file, said) = match outcome {
-            Outcome::Had(id) => ("had", Some(id.to_string()), None, String::new()),
+        let (state, node, file, said) = match outcome {
+            Outcome::Had(node) => ("had", Some(node.to_string()), None, String::new()),
             Outcome::Written {
-                id,
+                id: node,
                 path,
                 kind,
                 marker,
@@ -1220,11 +1330,11 @@ async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failure> {
                         "a .vnoc-id file was made".to_string()
                     }
                 };
-                ("written", Some(id.to_string()), Some(path.clone()), said)
+                ("written", Some(node.to_string()), Some(path.clone()), said)
             }
-            Outcome::ByName { id, notice } => (
+            Outcome::ByName { id: node, notice } => (
                 "by_name",
-                Some(id.to_string()),
+                Some(node.to_string()),
                 None,
                 notice.clone().unwrap_or_else(|| {
                     "the ID is known but is not written in the code".to_string()
@@ -1254,20 +1364,110 @@ async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failure> {
         stops.push(IdStop {
             stop: stop.to_string(),
             state,
-            id,
+            id: node,
             changed: file,
             said: (!said.is_empty()).then_some(said),
         });
     }
+    Ok(IdsWritten {
+        schema: 1,
+        command: "tour ids",
+        tour: id.to_string(),
+        stops,
+        changed,
+        recorded,
+        words,
+    })
+}
+
+// ------------------------------------------------------------------------------------------------------------------ settings
+
+#[derive(Serialize)]
+struct SettingShown {
+    value: Choice,
+    /// `file` (`[tours]` in `.vnoc/vnoc.toml` says it) or `default`
+    from: Origin,
+}
+
+#[derive(Serialize)]
+struct SettingsShown {
+    schema: u32,
+    command: &'static str,
+    ids: SettingShown,
+    commit: SettingShown,
+    /// the keys this call changed
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    changed: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    problems: Vec<String>,
+}
+
+impl Render for SettingsShown {
+    fn text(&self, _quiet: bool) -> String {
+        let row = |key: &str, s: &SettingShown| {
+            let from = match s.from {
+                Origin::File => "from .vnoc/vnoc.toml",
+                Origin::Default => "the default",
+            };
+            format!("{key:<7}{:<8}{from}\n", s.value.as_str())
+        };
+        let mut text = String::new();
+        for key in &self.changed {
+            let now = if *key == "ids" {
+                &self.ids
+            } else {
+                &self.commit
+            };
+            text.push_str(&format!("set {key} = {}\n", now.value));
+        }
+        text.push_str(&row("ids", &self.ids));
+        text.push_str(&row("commit", &self.commit));
+        for problem in &self.problems {
+            text.push_str(&format!("note: {problem}\n"));
+        }
+        text
+    }
+}
+
+fn settings_failure(e: settings::SettingsError) -> Failure {
+    match e {
+        settings::SettingsError::NoFile => Failure::Usage(e.to_string()),
+        _ => Failure::Environment(e.to_string()),
+    }
+}
+
+async fn settings(global: &Global, args: &TourSettingsArgs) -> Result<(), Failure> {
+    let project = open_without_driver(global)?;
+    let vnoc_root = store::vnoc_root(project.git_root());
+    let mut changed = Vec::new();
+    if args.ids.is_some() || args.commit.is_some() {
+        // the project's file: under the project's write lock, as everything else that writes `.vnoc/`
+        let _one_writer = take_write_lock(&project).await?;
+        let choice = |arg: super::args::ChoiceArg| match arg {
+            super::args::ChoiceArg::Always => Choice::Always,
+            super::args::ChoiceArg::Ask => Choice::Ask,
+            super::args::ChoiceArg::Never => Choice::Never,
+        };
+        for (key, arg) in [(Key::Ids, args.ids), (Key::Commit, args.commit)] {
+            if let Some(arg) = arg {
+                settings::set(&vnoc_root, key, choice(arg)).map_err(settings_failure)?;
+                changed.push(key.as_str());
+            }
+        }
+    }
+    let read = settings::read(&vnoc_root).map_err(settings_failure)?;
+    let shown = |s: settings::Setting| SettingShown {
+        value: s.value,
+        from: s.from,
+    };
     out::render(
-        &IdsWritten {
+        &SettingsShown {
             schema: 1,
-            command: "tour ids",
-            tour: id.to_string(),
-            stops,
+            command: "tour settings",
+            ids: shown(read.ids),
+            commit: shown(read.commit),
             changed,
-            recorded,
-            words,
+            problems: read.problems,
         },
         global,
     )

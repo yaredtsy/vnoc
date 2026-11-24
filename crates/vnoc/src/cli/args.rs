@@ -328,7 +328,10 @@ pub enum TourCommand {
     /// Ends the tour: it is finished, and the person's canvas shows it as complete. Run it when the last stop is written.
     ///
     /// Writes the end of the tour. Planned stops that were never written leave the route, and the answer says how many. Finishing a tour that is
-    /// finished already changes nothing and says so (exit 0). Writes IDs and pins nothing yet.
+    /// finished already changes nothing and says so (exit 0). Then, for the stops whose node has no ID, by the project's `[tours] ids` (see `vnoc
+    /// tour settings`) and `--ids` / `--no-ids`: `always` writes them as `vnoc tour ids` does and names the changed files, `ask` (the start) prints
+    /// a line that starts with `ask the user`: pass it on to the user as a question, do not run the command yourself; `never` says nothing. It pins
+    /// nothing yet.
     Finish(TourFinishArgs),
     /// Takes a stop (with its blocks, and the stops nested in it) or a block (with its details) off the tour: `vnoc tour drop <tour> s3`, `s3.b2`.
     ///
@@ -353,6 +356,12 @@ pub enum TourCommand {
     /// edited: lines moved down. Refused in a project whose `vnoc.toml` says `[ids] default = "none"`. Doing it twice writes nothing the second
     /// time. An agent runs it only when asked.
     Ids(TourIdsArgs),
+    /// Shows or changes what `finish` does by itself: `[tours] ids` and `commit` in `.vnoc/vnoc.toml`. The user's command.
+    ///
+    /// With no flag, prints both settings and where each value comes from (the file, or the default `ask`). `--ids <when>` and `--commit <when>`
+    /// (`always`, `ask`, `never`) change that key and keep everything else in the file: its comments, its other tables, its order. A value in the
+    /// file that is not one of the three is read as `ask` and said. `commit` is stored and shown; it does nothing until tours can be pinned.
+    Settings(TourSettingsArgs),
     /// Moves a finished tour's file to `.vnoc/tours/`, where `git` shares it with the project; `--private` moves it back. The user's command.
     ///
     /// The file moves as it is, byte for byte, and its state (where the reader is) stays. Refused while the tour is being written, when it is there
@@ -461,6 +470,30 @@ pub struct TourAddArgs {
 pub struct TourFinishArgs {
     #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
     pub tour: String,
+    /// Write IDs for the stops that have none, for this call, whatever `[tours] ids` says (as `vnoc tour ids` does).
+    #[arg(long, conflicts_with = "no_ids")]
+    pub ids: bool,
+    /// Do not write IDs and do not offer to, for this call, whatever `[tours] ids` says.
+    #[arg(long)]
+    pub no_ids: bool,
+}
+
+/// `always`, `ask` or `never`: what happens by itself (`[tours]` in `vnoc.toml`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ChoiceArg {
+    Always,
+    Ask,
+    Never,
+}
+
+#[derive(Debug, Args)]
+pub struct TourSettingsArgs {
+    /// Write IDs for a tour's stops when it is finished: `always`, `ask` (the start: say it could be done) or `never`.
+    #[arg(long, value_enum, value_name = "WHEN")]
+    pub ids: Option<ChoiceArg>,
+    /// Commit a tour's files so it can be pinned: `always`, `ask` (the start) or `never`. It does nothing until tours can be pinned.
+    #[arg(long, value_enum, value_name = "WHEN")]
+    pub commit: Option<ChoiceArg>,
 }
 
 #[derive(Debug, Args)]

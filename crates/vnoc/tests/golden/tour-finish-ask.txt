@@ -1,0 +1,2 @@
+finished: 4 stops, 5 steps
+ask the user  2 stops have no ID: the tour will not follow a rename.        vnoc tour ids <tour>

@@ -6545,7 +6545,13 @@ fn the_loop_of_the_guide_start_add_add_add_finish_then_show() {
 
     let finished = run(vnoc(&root, &["tour", "finish", &tour]));
     assert_eq!(code(&finished), 0);
-    assert_eq!(text(&finished.stdout), "finished: 4 stops, 7 steps\n");
+    // the setting is absent, so `ask`: the line for the agent to pass on (TR7), and nothing written
+    assert!(
+        text(&finished.stdout)
+            .starts_with("finished: 4 stops, 7 steps\nask the user  4 stops have no ID: "),
+        "{}",
+        text(&finished.stdout)
+    );
     golden_text(
         "tour-finish.txt",
         &tour_unrooted(&finished.stdout, &root, &tour),
@@ -7230,7 +7236,12 @@ fn finish_twice_says_so_and_writes_once() {
     let tour = tour_start(&root, "twice");
     assert_eq!(code(&tour_add(&root, &tour, RETRY, &[], RETRY_BODY)), 0);
     let first = run(vnoc(&root, &["tour", "finish", &tour]));
-    assert_eq!(text(&first.stdout), "finished: 1 stop, 4 steps\n");
+    assert!(
+        text(&first.stdout)
+            .starts_with("finished: 1 stop, 4 steps\nask the user  1 stop has no ID: "),
+        "{}",
+        text(&first.stdout)
+    );
     let after_first = std::fs::read(tour_file(&root, &tour)).unwrap();
     let second = run(vnoc(&root, &["tour", "finish", &tour]));
     assert_eq!(code(&second), 0);
@@ -9518,4 +9529,233 @@ fn a_tour_in_another_file_is_not_written_to_and_a_pinned_tour_stays_pinned() {
         "the pin names the code as it was"
     );
     assert!(checked(&root, &[]).1);
+}
+
+// ------------------------------------------------------------------------------------------------------------------ tours (TR7b)
+//
+// `[tours] ids` says when `finish` writes IDs by itself, and `vnoc tour settings` shows and changes it.
+
+fn write_vnoc_toml(root: &Path, text: &str) {
+    std::fs::write(root.join(".vnoc/vnoc.toml"), text).unwrap();
+}
+
+/// `vnoc tour finish <tour> …` that must succeed: its standard output.
+fn finish_ok(root: &Path, tour: &str, flags: &[&str]) -> String {
+    let mut args = vec!["finish", tour];
+    args.extend_from_slice(flags);
+    tour_ok(root, &args)
+}
+
+#[test]
+fn finish_with_ids_absent_or_ask_writes_nothing_and_says_the_line() {
+    let root = sample_copy("tour-finish-ask");
+    let tour = ids_tour(&root);
+    let charge = std::fs::read(root.join("billing/charge.py")).unwrap();
+    let routes = std::fs::read(root.join("api/routes.py")).unwrap();
+    let said = finish_ok(&root, &tour, &[]);
+    golden_text(
+        "tour-finish-ask.txt",
+        &tour_unrooted(said.as_bytes(), &root, &tour),
+    );
+    assert_eq!(
+        std::fs::read(root.join("billing/charge.py")).unwrap(),
+        charge
+    );
+    assert_eq!(std::fs::read(root.join("api/routes.py")).unwrap(), routes);
+    assert!(records_of(&root, &tour, "ids").is_empty());
+    assert!(records_of(&root, &tour, "rebase").is_empty());
+    // the same with the word given
+    let again = sample_copy("tour-finish-ask-written");
+    write_vnoc_toml(&again, "format = 1\n\n[tours]\nids = \"ask\"\n");
+    let t2 = ids_tour(&again);
+    assert_eq!(
+        tour_unrooted(finish_ok(&again, &t2, &[]).as_bytes(), &again, &t2),
+        tour_unrooted(said.as_bytes(), &root, &tour)
+    );
+    // the question is asked with the finish, not after it: a finished tour is not asked again
+    assert!(!finish_ok(&root, &tour, &[]).contains("ask the user"));
+    // json says it as data
+    let json_root = sample_copy("tour-finish-ask-json");
+    let t3 = ids_tour(&json_root);
+    let shown = tour_json(&json_root, &["finish", &t3]);
+    assert_eq!(shown["ids"]["state"], "ask");
+    assert_eq!(shown["ids"]["missing"], 2);
+    assert_eq!(
+        shown["ids"]["command"],
+        json!(format!("vnoc tour ids {t3}"))
+    );
+}
+
+#[test]
+fn finish_with_ids_always_writes_the_markers_and_the_tour_is_fresh_after() {
+    let root = sample_copy("tour-finish-always");
+    write_vnoc_toml(&root, "format = 1\n\n[tours]\nids = \"always\"\n");
+    let tour = ids_tour(&root);
+    let said = finish_ok(&root, &tour, &[]);
+    assert!(said.starts_with("finished: 4 stops"), "{said}");
+    assert!(said.contains("wrote IDs for 2 of 4 stops"), "{said}");
+    assert!(
+        said.contains("billing/charge.py") && said.contains("api/routes.py"),
+        "{said}"
+    );
+    assert!(
+        said.contains("read these files again before you edit them"),
+        "{said}"
+    );
+    assert!(!said.contains("ask the user"), "{said}");
+    let charge = std::fs::read_to_string(root.join("billing/charge.py")).unwrap();
+    assert!(charge.contains("\n    ID: "), "{charge}");
+    assert_eq!(records_of(&root, &tour, "ids").len(), 1);
+    let (from, fresh, stops) = checked(&root, &[]);
+    assert_eq!((from.as_str(), fresh, stops), ("check", true, vec![]));
+    assert!(marks(&root, &tour).is_empty());
+    // the end comes before the IDs: the tour is finished whatever happened after
+    let kinds: Vec<String> = tour_lines(&root, &tour)
+        .iter()
+        .map(|l| l["type"].as_str().unwrap().to_string())
+        .collect();
+    let end = kinds.iter().position(|k| k == "end").unwrap();
+    assert!(
+        kinds[end + 1..].iter().all(|k| k == "rebase" || k == "ids"),
+        "{kinds:?}"
+    );
+    // json
+    let json_root = sample_copy("tour-finish-always-json");
+    write_vnoc_toml(&json_root, "format = 1\n\n[tours]\nids = \"always\"\n");
+    let t = ids_tour(&json_root);
+    let shown = tour_json(&json_root, &["finish", &t]);
+    assert_eq!(shown["ids"]["state"], "written");
+    assert_eq!(
+        shown["ids"]["changed"],
+        json!(["billing/charge.py", "api/routes.py"])
+    );
+}
+
+#[test]
+fn finish_with_ids_never_says_nothing_and_the_flags_win_over_each_setting() {
+    let never = sample_copy("tour-finish-never");
+    write_vnoc_toml(&never, "format = 1\n\n[tours]\nids = \"never\"\n");
+    let tour = ids_tour(&never);
+    let charge = std::fs::read(never.join("billing/charge.py")).unwrap();
+    let said = finish_ok(&never, &tour, &[]);
+    assert_eq!(said, "finished: 4 stops, 5 steps\n");
+    assert_eq!(
+        std::fs::read(never.join("billing/charge.py")).unwrap(),
+        charge
+    );
+
+    // `--ids` over "never": written
+    let forced = sample_copy("tour-finish-flag-ids");
+    write_vnoc_toml(&forced, "format = 1\n\n[tours]\nids = \"never\"\n");
+    let t = ids_tour(&forced);
+    let said = finish_ok(&forced, &t, &["--ids"]);
+    assert!(said.contains("wrote IDs for 2 of 4 stops"), "{said}");
+
+    // `--no-ids` over "always": nothing, and no line
+    let off = sample_copy("tour-finish-flag-no-ids");
+    write_vnoc_toml(&off, "format = 1\n\n[tours]\nids = \"always\"\n");
+    let t = ids_tour(&off);
+    let charge = std::fs::read(off.join("billing/charge.py")).unwrap();
+    assert_eq!(
+        finish_ok(&off, &t, &["--no-ids"]),
+        "finished: 4 stops, 5 steps\n"
+    );
+    assert_eq!(
+        std::fs::read(off.join("billing/charge.py")).unwrap(),
+        charge
+    );
+
+    // `--ids` over "ask": written, not asked; `--no-ids` over "ask": not asked
+    let ask = sample_copy("tour-finish-flag-over-ask");
+    let t = ids_tour(&ask);
+    assert_eq!(
+        finish_ok(&ask, &t, &["--no-ids"]),
+        "finished: 4 stops, 5 steps\n"
+    );
+    // both flags at once is clap's error
+    let (exit, _, stderr) = tour_fails(&ask, &["finish", &t, "--ids", "--no-ids"], "");
+    assert_eq!(exit, 2, "{stderr}");
+}
+
+#[test]
+fn a_project_that_writes_no_ids_gets_nothing_from_finish_and_no_line() {
+    let root = sample_copy("tour-finish-none");
+    write_vnoc_toml(
+        &root,
+        "format = 1\n\n[ids]\ndefault = \"none\"\n\n[tours]\nids = \"always\"\n",
+    );
+    let tour = ids_tour(&root);
+    let charge = std::fs::read(root.join("billing/charge.py")).unwrap();
+    assert_eq!(finish_ok(&root, &tour, &[]), "finished: 4 stops, 5 steps\n");
+    assert_eq!(
+        std::fs::read(root.join("billing/charge.py")).unwrap(),
+        charge
+    );
+    let ask = sample_copy("tour-finish-none-ask");
+    write_vnoc_toml(&ask, "format = 1\n\n[ids]\ndefault = \"none\"\n");
+    let t = ids_tour(&ask);
+    assert_eq!(finish_ok(&ask, &t, &[]), "finished: 4 stops, 5 steps\n");
+}
+
+#[test]
+fn an_ids_setting_that_is_not_a_value_is_read_as_ask_and_said_once() {
+    let root = sample_copy("tour-finish-sometimes");
+    write_vnoc_toml(&root, "format = 1\n\n[tours]\nids = \"sometimes\"\n");
+    let tour = ids_tour(&root);
+    let said = finish_ok(&root, &tour, &[]);
+    assert_eq!(
+        said.matches("ask the user").count(),
+        1,
+        "read as ask: {said}"
+    );
+    assert_eq!(said.matches("note: ").count(), 1, "{said}");
+    assert!(
+        said.contains("note: [tours] ids = \"sometimes\" in .vnoc/vnoc.toml is not \"always\", \"ask\" or \"never\": read as \"ask\"\n"),
+        "{said}"
+    );
+    let shown = tour_ok(&root, &["settings"]);
+    assert_eq!(shown.matches("note: ").count(), 1, "{shown}");
+    assert!(shown.contains("ids    ask"), "{shown}");
+    let json = tour_json(&root, &["settings"]);
+    assert_eq!(json["ids"], json!({"value": "ask", "from": "default"}));
+    assert_eq!(json["problems"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn settings_shows_both_with_where_each_comes_from_and_sets_one_keeping_the_file() {
+    let root = sample_copy("tour-settings");
+    let shown = tour_ok(&root, &["settings"]);
+    golden_text("tour-settings.txt", &shown);
+    let text = "# the project's, committed\nformat = 1\n\n[ids]\ndefault = \"on-attach\"   # as ever\n\n[future]\nkeep = [1, 2]   # a table this version does not know\n";
+    write_vnoc_toml(&root, text);
+    let said = tour_ok(&root, &["settings", "--ids", "always"]);
+    assert!(said.starts_with("set ids = always\n"), "{said}");
+    assert!(
+        said.contains("ids    always  from .vnoc/vnoc.toml"),
+        "{said}"
+    );
+    assert!(said.contains("commit ask     the default"), "{said}");
+    let after = std::fs::read_to_string(root.join(".vnoc/vnoc.toml")).unwrap();
+    assert_eq!(after, format!("{text}\n[tours]\nids = \"always\"\n"));
+    assert!(
+        after.starts_with(text),
+        "everything that was there is as it was"
+    );
+    // the second key, then the first changed again: one line each
+    tour_ok(&root, &["settings", "--commit", "never"]);
+    tour_ok(&root, &["settings", "--ids", "ask", "--commit", "always"]);
+    let after = std::fs::read_to_string(root.join(".vnoc/vnoc.toml")).unwrap();
+    assert_eq!(
+        after,
+        format!("{text}\n[tours]\nids = \"ask\"\ncommit = \"always\"\n")
+    );
+    let json = tour_json(&root, &["settings"]);
+    assert_eq!(json["commit"], json!({"value": "always", "from": "file"}));
+    // a project with no vnoc.toml: nothing to change
+    let bare = sample_copy("tour-settings-bare");
+    std::fs::remove_file(bare.join(".vnoc/vnoc.toml")).unwrap();
+    let (exit, _, stderr) = tour_fails(&bare, &["settings", "--ids", "always"], "");
+    assert_eq!(exit, 2, "{stderr}");
+    assert!(stderr.contains("no .vnoc/vnoc.toml"), "{stderr}");
+    assert!(!bare.join(".vnoc/vnoc.toml").exists());
 }
