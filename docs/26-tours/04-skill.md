@@ -237,4 +237,41 @@ scenarios; the six of A14 stay as they are.
 The results go into this file, as 21.06 §8 has A14's, and the wording of the skill, the guide and the refusals is changed from them in
 the same step.
 
+### Results, TR14a (Claude Code on Sonnet, one run each, 2026-11-24)
+
+`tools/agent-trial`, debug builds, at `f74cc4a`; `runs/batch-tours-claude-20261124-202840.md`. 14 runs, $1.15, 381 s.
+
+| # | Result | What happened |
+|---|---|---|
+| t1 | fail → wording | a tour, as it goes, 3 good stops; but two `add`s in one call, and an invented `vnoc search` |
+| t2 | fail (the arm) | `vnoc` skill only, tour text as a section: no skill loaded, no tour. **D13 holds: the second skill** |
+| t3 | pass (judged) | 5 stops (the folder, its files nested; functions as blocks), no question: under 12, so none was due. Block titles were function names |
+| t4 | fail → wording | "explain step by step how an order is placed, charged and invoiced": the `vnoc` skill loaded, not `vnoc-tour`; explained in the chat |
+| t5 | fail → product | `add` refused (334 of 280) **and `finish` in the same call ran: `finished: 0 stops`**; the fixed `add` then landed after `end`. Blocks fine (3 general, no details: right for that function) |
+| t6 | pass | halt seen; nothing after; `Tour stopped at stop 6.` Four `add`s in one call |
+| t7, t8, t10, t10c | pass | t8: `check`, `--replace` on exactly the stale stops; t10: both questions asked, nothing done |
+| t9 | pass | `where` first; the answer about that step (in the chat: right until 27) |
+| t10b | pass (scorer too strict) | three sentences, no question: "committed it as `b031b05` … your uncommitted change is now in that commit" |
+| t11 | not a test | "explain `retry_charge` in full detail" asks for no tour; an explanation in the chat is right. The prompt becomes "walk me through … in full detail" |
+| t12 | pass (read by me) | t1, t3, t5 read with `show --text`: steps say why; one block retold its lines (t3 `apply_tax`); trivial blocks in t5 (`Start with an empty list`, `Return the result`) |
+| t13 | pass | says `vnoc` is missing, explains in the chat |
+
+**Check 9:** every heredoc `vnoc tour add` ran without a refusal (t1, t3, t5 – t8, t10*). The refusals were all elsewhere: **a
+shell variable or a loop** (`T=<id>` … `$T`, `for f in …; do vnoc code …`) cannot be checked by the host and is refused (asked, in
+a real session) in t3, t4, t6, t10, t10b, t10c; and commands that do not exist (`vnoc search`, `vnoc notes`). Whether `pin --commit` is
+asked was not reached: no agent tried it unasked (t10's rule held).
+
+**Decided from it** (built in TR14b):
+- *product:* `finish` on a tour with no written stop is refused, exit `2`, `no stop is written: add one first. Nothing was finished`.
+  `add` on a finished tour stays allowed (extending a tour is asked for, and t8's `--replace` needs it).
+- *the tour skill:* one `vnoc tour` command per call, the id written out, no `T=…`, `$T` or loops ("the host allows only a command
+  it can read; anything else asks the user each time"); `finish` alone, after the last `add` printed `written`; `vnoc find <name>`
+  to find a node; a block's title says what the part does, not the function's name; no block for a line that only starts or returns.
+- *the `vnoc` skill:* its description ends `For a step-by-step walk-through or a tour of code, use the vnoc-tour skill.`; the
+  pointer line moves from *More* to just under the title; the topics list gains `tour`; the same "one command per call, no variables
+  or loops" line (A14 allowed all of `vnoc`, so it never showed).
+- *the harness:* t11's prompt; t10b's check allows three sentences with no question; t3 passes a tour of 12 or fewer with no question.
+- **Asked of the user:** a plain "explain X" does not make a tour (t11's reading). The description stays on "walk me through", "a
+  tour", "step by step".
+
 Next: [`05-on-screen.md`](05-on-screen.md)
