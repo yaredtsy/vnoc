@@ -87,3 +87,22 @@ export const mermaidTheme = (shikiTheme: string): string => (shikiTheme.endsWith
 export function linkTarget(href: string | null): string | null {
   return href !== null && /^https?:\/\//i.test(href) ? href : null;
 }
+
+/** The least a diagram is drawn at, as a share of its natural size: a wide flowchart shrunk to fit the pane was unreadable (TR19b's review). */
+export const DIAGRAM_MIN_SHARE = 0.8;
+
+/**
+ * The width a diagram is drawn at in a pane `available` px wide: the pane's width, but no less than 80% of its natural width (a wider diagram scrolls sideways inside the pane)
+ * and no more than the natural width (a narrower one keeps its size, it is not stretched). Whole pixels.
+ */
+export function diagramWidth(natural: number, available: number): number {
+  if (!(natural > 0)) return Math.max(0, Math.floor(available));
+  return Math.round(Math.min(natural, Math.max(natural * DIAGRAM_MIN_SHARE, available)));
+}
+
+/** The natural width of an SVG Mermaid made: the third number of its `viewBox`. null when it has none. */
+export function naturalWidth(svg: string): number | null {
+  const box = /<svg\b[^>]*?\sviewBox="([^"]*)"/i.exec(svg)?.[1];
+  const parts = box?.trim().split(/[\s,]+/).map(Number);
+  return parts && parts.length === 4 && parts.every(Number.isFinite) && parts[2] > 0 ? parts[2] : null;
+}

@@ -76,9 +76,10 @@
 .tour-fence, .tour-fence-box pre { margin: 0 0 8px; padding: 6px 8px; overflow-x: auto; border-radius: 4px; background: var(--vscode-textCodeBlock-background, var(--code-bg)) !important; font-family: var(--editor-font); font-size: 12px; line-height: 1.45; white-space: pre; }
 .tour-fence code, .tour-fence-box code { background: none; padding: 0; font-size: inherit; }
 .tour-diagram { margin: 0 0 8px; }
-.tour-diagram-drawn { display: flex; justify-content: center; padding: 6px; border: 1px solid var(--vscode-panel-border, var(--border)); border-radius: 4px; cursor: zoom-in; }
+.tour-diagram-drawn { display: block; overflow-x: auto; padding: 6px; border: 1px solid var(--vscode-panel-border, var(--border)); border-radius: 4px; cursor: zoom-in; }
 .tour-diagram-drawn:hover, .tour-diagram-drawn:focus-visible { border-color: var(--card-selected); outline: none; }
-.tour-diagram-drawn svg { max-width: 100%; height: auto; }
+/* the SVG's width is set by `diagramWidth` (80% of natural at least): a wide one scrolls in the box, a narrow one is centred */
+.tour-diagram-drawn svg { display: block; margin: 0 auto; height: auto; }
 .tour-diagram-note { margin: 0; color: var(--muted-foreground); font-size: 11px; }
 .tour-diagram-failed .tour-fence { margin-bottom: 4px; }
 .tour-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 32px; background: color-mix(in srgb, var(--vscode-editor-background, #000) 82%, transparent); cursor: zoom-out; }

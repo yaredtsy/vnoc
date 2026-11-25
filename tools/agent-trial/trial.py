@@ -647,7 +647,10 @@ PERMISSION_TEXT = re.compile(r"requires approval|require approval|haven't grante
 SHELL_VARIABLE = "shell variable or loop"  # a command refused because the host cannot check `T=<id>` … `$T` or a `for` loop; not check 9
 WRITE_LOOP = ("start", "add", "finish", "plan", "drop", "resume", "list", "show", "check", "where", "route", "export")  # allowed by install
 USER_COMMANDS = ("pin", "go", "ids", "settings", "edit", "share", "delete", "import", "halt")  # asked about, so refused in a headless run
-CHAT_LIMIT = 300  # characters of an opening or an end line before it is `judged`, not `held`
+CHAT_LIMIT = 300  # characters of an opening before it is `judged`, not `held`
+PROGRESS_LIMIT = 100  # TR14d, built in TR20: a text between the first `add` and the end of this many characters or fewer is a progress line, counted and not failed
+END_LIMIT = 500  # characters of an end (the finish line, a line the tour cannot say, the questions `finish` asked for) before it is `judged`
+END_LINES = 4  # lines of an end before it is `judged`
 
 
 def result_text(r):
@@ -728,7 +731,10 @@ def chat_facts(items):
         else:
             end, between = [t for _, t in after[-1:]], [t for _, t in after[:-1]]
     chars = lambda xs: sum(len(x) for x in xs)
-    return {"opening": opening, "between": between, "end": end, "opening_chars": chars(opening), "between_chars": chars(between),
+    progress = [t for t in between if len(t) <= PROGRESS_LIMIT]  # a short line beside an `add`: noise, counted and listed, not failed
+    long_between = [t for t in between if len(t) > PROGRESS_LIMIT]  # anything longer explains in the chat: that fails
+    return {"opening": opening, "between": between, "progress": progress, "between_long": long_between, "end": end, "opening_chars": chars(opening),
+            "between_chars": chars(between), "progress_chars": chars(progress), "between_long_chars": chars(long_between),
             "end_chars": chars(end), "total_chars": chars([t for _, t in texts])}
 
 
@@ -952,17 +958,20 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
     as_it_goes = None if stops_written < 2 else written[0]["i"] < max(reads or [-1])  # n/a for a tour of one stop
     guide_read = any(is_vnoc(c) and re.search(r"vnoc\s+guide\s+tour|vnoc\s+skill\s+tour", command_of(c)) for c in calls)
     one = Checks()
-    held = chat["between_chars"] == 0
+    held = chat["between_long_chars"] == 0
     chat_lines = quote(chat["opening"], 2) + quote(chat["end"], 2)
 
     def chat_rule():
-        one.need("nothing said in the chat between the first stop and the end", held,
-                 f"{len(chat['between'])} text(s), {chat['between_chars']} chars: " + " / ".join(quote(chat["between"], 2, 120)))
-        # TR14d: the end may be two lines, the first the finish line (the second is for what the tour cannot say); more lines, or over 300 characters, is judged
+        one.need("nothing explained in the chat between the first stop and the end", held,
+                 f"{len(chat['between_long'])} text(s) over {PROGRESS_LIMIT} chars, {chat['between_long_chars']} chars: " + " / ".join(quote(chat["between_long"], 2, 120)))
+        if chat["progress"]:  # TR14d: a progress line beside an `add` is counted and listed, not failed
+            one.items.append({"check": f"progress lines beside an `add` ({PROGRESS_LIMIT} chars or fewer; counted, not failed)", "ok": True,
+                              "detail": f"{len(chat['progress'])}: " + " / ".join(quote(chat["progress"], 3, 100))})
+        # TR14d: the end is the finish line, one line the tour cannot say, and the questions `finish` asked for: four lines; more, or over 500 characters, is judged
         end_lines = [l for t in chat["end"] for l in t.splitlines() if l.strip()]
-        end_held = chat["end_chars"] <= CHAT_LIMIT and (len(end_lines) <= 1 or (len(end_lines) == 2 and re.search(r"finished", end_lines[0], re.I) is not None))
+        end_held = chat["end_chars"] <= END_LIMIT and len(end_lines) <= END_LINES
         if held and (chat["opening_chars"] > CHAT_LIMIT or not end_held):
-            one.judge("the opening is one line and the end is the finish line and at most one more", chat_lines)
+            one.judge(f"the opening is one line and the end is at most {END_LINES} lines and {END_LIMIT} characters", chat_lines)
 
     def tour_made(finished=True):
         made = one.need("a tour was written", any(t["new_stop_ids"] for t in tours), f"{len(tours)} tour file(s) touched")
@@ -1148,7 +1157,7 @@ def judge_tour(scenario, calls, results, texts, work, meta, run_dir, result):
                     per[node_of(t)] = per.get(node_of(t), 0) + add_outcome(results.get(t["id"]))[1]
             one.need("inside the budget after at most two refusals per stop", all(v <= 2 for v in per.values()), f"refusals per node: {per or 'none'}")
             chat_rule()
-            one.need("no text moved to the chat instead", chat["end_chars"] <= CHAT_LIMIT, f"the end says {chat['end_chars']} chars")
+            one.need("no text moved to the chat instead", chat["end_chars"] <= END_LIMIT, f"the end says {chat['end_chars']} chars")
     elif scenario == "t13":
         says = last_text(texts, r"vnoc.*(not found|not installed|missing|isn't|is not|not on|unavailable|can't|cannot)|command.*(not found|missing)|not (found|on the path)", 3)
         one.need("no tour file written by hand", not any(t["new_stop_ids"] for t in tours) and not any(".vnoc/local/tours" in json.dumps(c["input"]) for c in calls),

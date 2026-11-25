@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type MermaidLike, drawDiagram, linkTarget, mermaidTheme, renderText } from "./text.ts";
+import { type MermaidLike, diagramWidth, drawDiagram, linkTarget, mermaidTheme, naturalWidth, renderText } from "./text.ts";
 
 test("a paragraph keeps its words, `code` and emphasis and strong are marks", () => {
   assert.equal(renderText("It checks the stock.").html, "<p>It checks the stock.</p>\n");
@@ -92,4 +92,20 @@ test("an image is its alt text, and never an <img>", () => {
   const { html } = renderText("![the shop](http://x/y.png)");
   assert.ok(!html.includes("<img") && html.includes('<span class="tour-image">the shop</span>'), html);
   assert.ok(!renderText("![](x)").html.includes("<img"));
+});
+
+test("a diagram is drawn at the pane's width, never under 80% of its natural size, never over it", () => {
+  assert.equal(diagramWidth(1000, 400), 800, "a wide one is held at 80% and scrolls");
+  assert.equal(diagramWidth(1000, 900), 900, "between 80% and 100% it fits the pane");
+  assert.equal(diagramWidth(1000, 1400), 1000, "a pane wider than the diagram does not stretch it");
+  assert.equal(diagramWidth(300, 400), 300, "a narrower one keeps its natural size");
+  assert.equal(diagramWidth(300, 100), 240, "even a small one is held at 80%");
+  assert.equal(diagramWidth(0, 400), 400, "no known size: the pane's width");
+});
+
+test("the natural width of Mermaid's SVG is its viewBox", () => {
+  assert.equal(naturalWidth('<svg id="d" width="100%" style="max-width: 584.5px;" viewBox="0 0 584.5 300" role="graphics-document">'), 584.5);
+  assert.equal(naturalWidth('<svg viewBox="-8, -8, 120 40">'), 120);
+  assert.equal(naturalWidth("<svg></svg>"), null);
+  assert.equal(naturalWidth('<svg viewBox="0 0 0 10">'), null);
 });

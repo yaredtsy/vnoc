@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { request } from "../../host.ts";
-import { type MermaidLike, drawDiagram, linkTarget, mermaidTheme, renderText } from "../text.ts";
+import { type MermaidLike, diagramWidth, drawDiagram, linkTarget, mermaidTheme, naturalWidth, renderText } from "../text.ts";
 import { highlightEnv, useHighlighter, useThemeName } from "./useHighlight.ts";
 
 /** What the suite reads of a drawn text: the Markdown it has, and how its diagrams ended (`failed`: the source is shown with a note). */
@@ -13,6 +13,19 @@ export interface TextDrawn {
   diagrams: number;
   drawn: number;
   failed: number;
+}
+
+/** the padding of a drawn diagram's box (`.tour-diagram-drawn`), both sides */
+const DIAGRAM_PAD = 12;
+
+/** Sets the SVG of a drawn diagram to the width the size rule gives for the box it is in (80% of natural at least: a wider one scrolls inside the box). */
+function sizeDiagram(place: HTMLElement, natural: number | null) {
+  const svg = place.querySelector("svg");
+  if (!svg) return;
+  const width = diagramWidth(natural ?? 0, place.clientWidth - DIAGRAM_PAD);
+  svg.style.maxWidth = "none";
+  svg.style.width = `${width}px`;
+  svg.style.height = "auto";
 }
 
 /** Mermaid, brought in when a step has a diagram and not before: its own chunk. */
@@ -31,6 +44,8 @@ export function Rich({ text, className, onDrawn }: { text: string; className?: s
   const prefix = useId().replace(/[^a-zA-Z0-9]/g, "");
   const [large, setLarge] = useState<string | null>(null);
   const drawnNow = useRef<TextDrawn | null>(null);
+  /** what Mermaid drew, before the size was set on it: a click opens this one, at its own size */
+  const original = useRef(new WeakMap<Element, { svg: string; natural: number | null }>());
 
   // the diagrams: drawn into their placeholders once the HTML is in; a new text is a new HTML, and the old SVGs go with it
   useEffect(() => {
@@ -48,12 +63,20 @@ export function Rich({ text, className, onDrawn }: { text: string; className?: s
     drawnNow.current = counts;
     onDrawn?.({ ...counts });
     let live = true;
+    // a pane that is dragged wider or narrower: the diagrams follow the rule again
+    const sizes = new ResizeObserver((entries) => {
+      for (const e of entries) sizeDiagram(e.target as HTMLElement, original.current.get(e.target)?.natural ?? null);
+    });
     places.forEach(async (place, n) => {
       const source = rendered.diagrams[Number(place.dataset.diagram)];
       const result = await drawDiagram(loadMermaid, source, `tour-${prefix}-${n}`, mermaidTheme(theme));
       if (!live || !place.isConnected) return;
       if (result.ok) {
         place.innerHTML = result.svg; // Mermaid's SVG with `securityLevel: "strict"`: sanitised
+        const natural = naturalWidth(result.svg);
+        original.current.set(place, { svg: result.svg, natural });
+        sizeDiagram(place, natural);
+        sizes.observe(place);
         place.classList.add("tour-diagram-drawn");
         place.tabIndex = 0;
         place.title = "Click to see it large";
@@ -68,6 +91,7 @@ export function Rich({ text, className, onDrawn }: { text: string; className?: s
     });
     return () => {
       live = false;
+      sizes.disconnect();
     };
   }, [rendered.html]); // eslint-disable-line react-hooks/exhaustive-deps -- `onDrawn` is the stage's note
 
@@ -81,13 +105,13 @@ export function Rich({ text, className, onDrawn }: { text: string; className?: s
       return;
     }
     const diagram = target?.closest(".tour-diagram-drawn");
-    if (diagram) setLarge(diagram.innerHTML);
+    if (diagram) setLarge(original.current.get(diagram)?.svg ?? diagram.innerHTML);
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
     const diagram = e.target instanceof Element ? e.target.closest(".tour-diagram-drawn") : null;
     if (diagram && (e.key === "Enter" || e.key === " ")) {
       e.preventDefault();
-      setLarge(diagram.innerHTML);
+      setLarge(original.current.get(diagram)?.svg ?? diagram.innerHTML);
     }
   };
 
