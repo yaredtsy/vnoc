@@ -40,6 +40,11 @@ pub enum BuildError {
     /// Not one driver could be used: why each one could not (or that none was given).
     #[error("{0}")]
     NoDriver(String),
+    /// The whole update ran past its limit (the server's): it was stopped where it was, and the next update reads again.
+    #[error(
+        "reading the project took longer than {0:?}: it was stopped, and the next change reads it again"
+    )]
+    TooLong(std::time::Duration),
 }
 
 /// Why no driver is usable, in words for a person: the reason for each one given, or that none was.

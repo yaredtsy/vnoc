@@ -51,8 +51,8 @@ pub(super) async fn answers_for(
         Err(Cannot::Store(e)) => return Err(tour_error(e)),
         Err(Cannot::NeedsIndex) => {}
     }
-    ready_project(state).await?;
-    drop(state.one_at_a_time.lock().await);
+    // a request that cannot be answered in a moment says to ask again, it does not sit in a slot
+    super::wait_for_index(state).await?;
     match ask_tours(state, &rows, true).await? {
         Ok(done) => Ok(done),
         Err(Cannot::Store(e)) => Err(tour_error(e)),

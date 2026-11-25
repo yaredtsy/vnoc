@@ -29,6 +29,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::Duration;
 
 use async_lsp::lsp_types::{
     InitializeParams, InitializeResult, InitializedParams, ServerCapabilities, ServerInfo,
@@ -64,6 +65,14 @@ enum Status {
     Failed(String),
 }
 
+/// How long one update (the walk and all its driver calls together) may run. Each driver call has its own limit (`driver_host`), but an update makes one for each file: the
+/// sum is bounded here. Past it the update is stopped where it is and the lock is free.
+const UPDATE_LIMIT: Duration = Duration::from_secs(60);
+
+/// How long a request waits for the first build or for an update that is running. A handler answers in about a second or says to ask again: a request that waits longer
+/// holds one of the core's slots (as many as there are cores) and, with enough of them, `vnoc/ping` stops answering.
+const WAIT_LIMIT: Duration = Duration::from_secs(8);
+
 /// What an update has to read again.
 enum Work {
     Everything,
@@ -86,6 +95,12 @@ struct State {
     calls_running: Mutex<std::collections::BTreeSet<TourId>>,
     /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
     everything_pending: AtomicBool,
+    /// The last update after a good first build failed or ran out of time, so some of the files it was told about were not read: the next update reads everything again.
+    needs_everything: AtomicBool,
+    /// [`UPDATE_LIMIT`]; a field so a test can make it short.
+    update_limit: Duration,
+    /// [`WAIT_LIMIT`]; a field for the same reason.
+    wait_limit: Duration,
     /// The corpus `vnoc/search` reads, kept with the index revision and the doc-text generation it was made for (`search::kept`). Taken after the index
     /// lock, never before it, and by nothing else.
     corpus: Mutex<Option<(CorpusKey, Arc<Corpus>)>>,
@@ -112,6 +127,9 @@ impl State {
             attaching: tokio::sync::Mutex::new(()),
             calls_running: Mutex::new(std::collections::BTreeSet::new()),
             everything_pending: AtomicBool::new(false),
+            needs_everything: AtomicBool::new(false),
+            update_limit: UPDATE_LIMIT,
+            wait_limit: WAIT_LIMIT,
             corpus: Mutex::new(None),
             doc_index: Mutex::new(None),
             tours: Tours::default(),
@@ -407,22 +425,54 @@ impl Core {
     }
 }
 
-/// Waits for the first build and gives the project: what every call-tree request starts with.
-async fn ready_project(state: &State) -> Result<&Project, ResponseError> {
-    let status = state
-        .status
-        .subscribe()
-        .wait_for(|s| !matches!(s, Status::Building))
+/// The answer of a request that waited as long as it may for the index: the request was fine, the index was not free. Said in words, as `vnoc/tourCalls` says it.
+fn ask_again() -> ResponseError {
+    ResponseError::new(
+        ErrorCode::REQUEST_FAILED,
+        "the index is being read and is not ready yet: ask again",
+    )
+}
+
+/// Runs `wait` for at most the state's wait limit; past it, "ask again". Nothing a request waits for may take a slot for longer.
+async fn within_wait<T>(
+    state: &State,
+    wait: impl std::future::Future<Output = Result<T, ResponseError>>,
+) -> Result<T, ResponseError> {
+    tokio::time::timeout(state.wait_limit, wait)
         .await
-        .map_err(internal)?
-        .clone();
-    if let Status::Failed(message) = status {
-        return Err(internal(message));
-    }
-    state
-        .project
-        .get()
-        .ok_or_else(|| internal("no folder is open"))
+        .unwrap_or_else(|_| Err(ask_again()))
+}
+
+/// Waits for the first build, then for an update that is running (a check made against the index it is about to replace would record a stale answer): both together
+/// are one wait, at most the wait limit.
+async fn wait_for_index(state: &State) -> Result<(), ResponseError> {
+    within_wait(state, async {
+        ready_project(state).await?;
+        drop(state.one_at_a_time.lock().await);
+        Ok(())
+    })
+    .await
+}
+
+/// Waits for the first build (at most the wait limit) and gives the project: what every call-tree request starts with.
+async fn ready_project(state: &State) -> Result<&Project, ResponseError> {
+    within_wait(state, async {
+        let status = state
+            .status
+            .subscribe()
+            .wait_for(|s| !matches!(s, Status::Building))
+            .await
+            .map_err(internal)?
+            .clone();
+        if let Status::Failed(message) = status {
+            return Err(internal(message));
+        }
+        state
+            .project
+            .get()
+            .ok_or_else(|| internal("no folder is open"))
+    })
+    .await
 }
 
 fn bad_params(e: impl Display) -> ResponseError {
@@ -441,4 +491,49 @@ async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ResponseError> {
     tokio::task::spawn_blocking(work).await.map_err(internal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quick(wait: Duration) -> State {
+        State {
+            wait_limit: wait,
+            ..State::new()
+        }
+    }
+
+    fn says_ask_again(e: &ResponseError) -> bool {
+        e.code == ErrorCode::REQUEST_FAILED && e.message.contains("ask again")
+    }
+
+    #[tokio::test]
+    async fn a_request_that_waits_for_the_first_build_says_ask_again_when_the_wait_is_up() {
+        let state = quick(Duration::from_millis(150)); // still `Building`
+        let started = std::time::Instant::now();
+        let e = ready_project(&state).await.map(|_| ()).unwrap_err();
+        assert!(says_ask_again(&e), "{e:?}");
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[tokio::test]
+    async fn a_request_that_waits_for_an_update_says_ask_again_and_goes_through_when_the_update_ends()
+     {
+        let state = quick(Duration::from_millis(150));
+        state.status.send_replace(Status::Ready);
+        assert!(
+            state
+                .project
+                .set(Project::open(&std::env::temp_dir()).unwrap())
+                .is_ok()
+        );
+        let running = state.one_at_a_time.lock().await;
+        let started = std::time::Instant::now();
+        let e = wait_for_index(&state).await.unwrap_err();
+        assert!(says_ask_again(&e), "{e:?}");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        drop(running);
+        wait_for_index(&state).await.expect("no update is running");
+    }
 }

@@ -4,7 +4,7 @@ use async_lsp::ResponseError;
 
 use super::{Core, State, Status, Work, internal};
 use crate::driver_host::LanguageState;
-use crate::index::{self, Touched, refresh};
+use crate::index::{self, BuildError, Touched, refresh};
 use crate::protocol;
 use crate::protocol::{
     IndexChanged, IndexChangedParams, LanguageInfo, ProjectInfoResult, SearchCardsParams,
@@ -38,35 +38,47 @@ impl Core {
                 .everything_pending
                 .store(false, Ordering::Release);
         }
-        // until one build has worked, every update is a full one (this also retries a build that failed)
-        let first = !matches!(*self.state.status.borrow(), Status::Ready);
-        let result = match &work {
-            Work::Files(paths) if !first => {
-                refresh(
-                    project,
-                    &self.host,
-                    &self.state.index,
-                    Touched::Files(paths),
-                )
-                .await
+        // until one build has worked, every update is a full one (this also retries a build that failed); so is the one after an update that did not finish
+        let built = matches!(*self.state.status.borrow(), Status::Ready);
+        let first = !built || self.state.needs_everything.load(Ordering::Acquire);
+        let limit = self.state.update_limit;
+        // the whole update is bounded: past the limit it is dropped where it stands (it holds no lock across a driver call), `one_at_a_time` goes with this scope, and the
+        // driver is told to cancel the call that was running
+        let result = tokio::time::timeout(limit, async {
+            match &work {
+                Work::Files(paths) if !first => {
+                    refresh(
+                        project,
+                        &self.host,
+                        &self.state.index,
+                        Touched::Files(paths),
+                    )
+                    .await
+                }
+                _ => refresh(project, &self.host, &self.state.index, Touched::All).await,
             }
-            _ => refresh(project, &self.host, &self.state.index, Touched::All).await,
-        };
+        })
+        .await
+        .unwrap_or(Err(BuildError::TooLong(limit)));
         match result {
             Ok(changed) => {
+                self.state.needs_everything.store(false, Ordering::Release);
                 self.state.status.send_replace(Status::Ready);
-                if changed || first {
+                if changed || !built {
                     self.announce();
                 }
             }
             // after a first success the old index stays; the driver was dropped, so the next update starts a new one
-            Err(e) if first => {
+            Err(e) if !built => {
                 tracing::error!("the first build failed: {e}");
                 self.state
                     .status
                     .send_replace(Status::Failed(e.to_string()));
             }
-            Err(e) => tracing::warn!("update failed, the index is as it was: {e}"),
+            Err(e) => {
+                tracing::warn!("update failed, the index is as it was: {e}");
+                self.state.needs_everything.store(true, Ordering::Release);
+            }
         }
     }
 
@@ -233,4 +245,83 @@ pub(super) fn project_info(
             markers: settings.markers,
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::Project;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// An update that can never end (a driver that starts and says nothing) is stopped at the limit: the status says so in words, the lock is free, and the next
+    /// update is a full one that tries again. Needs a process that hangs: a script, so not on Windows.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_update_that_runs_past_its_limit_is_stopped_and_frees_the_lock() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("vnoc-update-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let driver = dir.join("hangs");
+        std::fs::write(&driver, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&driver, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let state = Arc::new(State {
+            update_limit: Duration::from_millis(400),
+            ..State::new()
+        });
+        assert!(state.project.set(Project::open(&dir).unwrap()).is_ok());
+        let core = Core {
+            client: async_lsp::ClientSocket::new_closed(),
+            host: Arc::default(),
+            state,
+        };
+        core.host.set_paths(vec![driver]);
+
+        let started = std::time::Instant::now();
+        core.update(Work::Everything).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the update was not stopped: {:?}",
+            started.elapsed()
+        );
+        match &*core.state.status.borrow() {
+            Status::Failed(why) => assert!(why.contains("took longer"), "{why}"),
+            other => panic!(
+                "the status is not Failed: {}",
+                matches!(other, Status::Ready)
+            ),
+        }
+        assert!(
+            core.state.one_at_a_time.try_lock().is_ok(),
+            "the update still holds the lock"
+        );
+    }
+
+    /// After a good first build, an update that fails keeps the old index and Ready, and the next update reads everything again.
+    #[tokio::test]
+    async fn a_failed_update_after_a_first_build_keeps_the_index_and_the_next_one_reads_everything()
+    {
+        let dir = std::env::temp_dir().join(format!("vnoc-update-retry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = Arc::new(State::new());
+        assert!(state.project.set(Project::open(&dir).unwrap()).is_ok());
+        state.status.send_replace(Status::Ready);
+        let core = Core {
+            client: async_lsp::ClientSocket::new_closed(),
+            host: Arc::default(), // no driver: the update fails at once
+            state,
+        };
+        core.update(Work::Files(vec![dir.join("a.py")])).await;
+        assert!(matches!(*core.state.status.borrow(), Status::Ready));
+        assert!(
+            core.state
+                .needs_everything
+                .load(std::sync::atomic::Ordering::Acquire)
+        );
+    }
 }
