@@ -15,14 +15,25 @@ test("the cover asks why only for a finished tour that is not pinned", () => {
   assert.equal(wantsDryPin({ state: "stopped", pinned: false }), false);
 });
 
-test("the cover's lines from a dry answer: not pinned, then the first reason in the core's words", () => {
+test("the cover's lines from a dry answer: not pinned, then its reasons in the core's words", () => {
   const said = coverPin(view(), answer());
   assert.deepEqual(said.pin, { text: "not pinned" });
   assert.equal(said.reason, "2 files have changes that are not committed", "the core's sentence, not made here");
   assert.equal(coverPin(view(), undefined).reason, null, "the answer has not come");
   assert.equal(coverPin(view(), null).reason, null, "the core could not say");
   assert.equal(coverPin(view(), answer({ state: "pinned", reasons: undefined })).reason, null, "it would be pinned: no reason");
-  assert.equal(coverPin(view(), answer({ reasons: [{ code: "stale", words: "s2 changed since it was written: replace what changed, then pin", changed: ["s2"], gone: [] }, ...uncommitted("a.py")!] })).reason, "s2 changed since it was written: replace what changed, then pin", "the first");
+  assert.equal(coverPin(view(), answer({ reasons: [{ code: "stale", words: "s2 changed since it was written: replace what changed, then pin", changed: ["s2"], gone: [] }, ...uncommitted("a.py")!] })).reason, "s2 changed since it was written: replace what changed, then pin · 1 files have changes that are not committed", "every reason, when none has an offer");
+});
+
+test("a reason that has an offer is said once, as its offer; under `not pinned` only the reasons with no offer", () => {
+  const stale = { code: "stale" as const, words: "1 stop changed since it was written", changed: ["s2"], gone: [] };
+  const asked: OffersView = { ids: 0, commit: ["a.py", "b.py"] };
+  const said = coverPin(view({ offers: asked }), answer());
+  assert.equal(said.reason, null, "the files that are not committed are the offer");
+  assert.deepEqual(said.offers.map((o) => o.text), ["2 files have changes that are not committed."]);
+  assert.equal(coverPin(view({ offers: asked }), answer({ reasons: [stale, ...uncommitted("a.py", "b.py")!] })).reason, "1 stop changed since it was written", "the stale one has no offer");
+  assert.equal(coverPin(view({ offers: null }), answer()).reason, "2 files have changes that are not committed", "`never`: no offer, so the reason stays");
+  assert.equal(coverPin(view({ offers: { ids: 3, commit: [] } }), answer()).reason, "2 files have changes that are not committed", "`commit` is not offered, only the IDs");
 });
 
 test("a pinned tour says where, and gives no reason; a tour being written says nothing of the pin", () => {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { TourPinAnswer, TourSettingsAnswer, TourView } from "@vnoc/shared/tours.ts";
-import { type ActionDeps, BUTTONS, TourActions, idsToSave, idsWrittenMessage, pinRefusal, saveFirstMessage, settingItems, valueItems } from "./tourActions.ts";
+import { type ActionDeps, BUTTONS, TourActions, idsToSave, pinRefusal, saveFirstMessage, settingItems, valueItems } from "./tourActions.ts";
 
 const view = { title: "Checkout", stops: [{ id: "s1", path: "shop.py", planned: false }, { id: "s2", path: "util.py", planned: false, now: { path: "lib/util.py" } }, { id: "s3", path: "later.py", planned: true }] } as unknown as TourView;
 
@@ -11,12 +11,6 @@ test("the save-first message counts the dirty files of the tour's stops: not pla
   assert.deepEqual(idsToSave(["other.py"], view), [], "none of them is dirty: nothing to ask");
   assert.equal(saveFirstMessage(2), "Save 2 files first? The IDs are written into them.");
   assert.equal(saveFirstMessage(1), "Save 1 file first? The IDs are written into it.");
-});
-
-test("what was written is said by the files it went into", () => {
-  assert.equal(idsWrittenMessage(["a.py", "b.py", "c.py", "d.py"]), "IDs written into 4 files.");
-  assert.equal(idsWrittenMessage(["a.py"]), "IDs written into 1 file.");
-  assert.equal(idsWrittenMessage([]), "Every stop already has an ID.");
 });
 
 const answer = (over: Partial<TourPinAnswer>): TourPinAnswer => ({ tour: "t-1", state: "not_pinned", ...over });
@@ -48,7 +42,7 @@ function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; 
   const deps: ActionDeps = {
     request: (async (method: string, params: unknown) => {
       asked.push([method, params]);
-      if (method === "vnoc/tourIds") return { changed: ["shop.py", "util.py"] };
+      if (method === "vnoc/tourIds") return { changed: ["shop.py", "util.py"], words: "IDs written for 3 stops in 2 files." };
       if (method === "vnoc/tourSettings") return { ids: { value: "ask", from: "file" }, commit: { value: "ask", from: "file" } };
       return { tour: "t-1", state: "pinned", commit: "f4d6e15aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
     }) as ActionDeps["request"],
@@ -72,7 +66,7 @@ test("Write IDs with a dirty stop file asks once, saves, writes, then says where
   assert.equal(await w.actions.writeIds("t-1"), "written");
   assert.deepEqual(w.said.map((m) => [m.text, m.buttons]), [
     ["Save 1 file first? The IDs are written into it.", [BUTTONS.saveAndWrite, BUTTONS.cancel]],
-    ["IDs written into 2 files.", [BUTTONS.showChanges, BUTTONS.always]],
+    ["IDs written for 3 stops in 2 files.", [BUTTONS.showChanges, BUTTONS.always]],
     ["(source control)", []],
   ]);
   assert.deepEqual(w.saved, [["shop.py"]]);
@@ -84,8 +78,8 @@ test("Write IDs with a dirty stop file asks once, saves, writes, then says where
 
   const clean = window({ dirtyFiles: () => [], answers: [BUTTONS.always] });
   await clean.actions.writeIds("t-1");
-  assert.deepEqual(clean.said.map((m) => m.text), ["IDs written into 2 files."], "no dirty file: no question");
-  assert.deepEqual(clean.asked, [["vnoc/tourIds", { id: "t-1" }], ["vnoc/tourSettings", { ids: "always" }]], "Always in This Project");
+  assert.deepEqual(clean.said.map((m) => m.text), ["IDs written for 3 stops in 2 files."], "no dirty file: no question");
+  assert.deepEqual(clean.asked, [["vnoc/tourIds", { id: "t-1" }], ["vnoc/tourSettings", { ids: "always" }]], "Always Write IDs in This Project");
 });
 
 test("the core's refusal of Write IDs is one message in its words", async () => {
@@ -114,4 +108,11 @@ test("Tour Settings… picks a setting, then a value, and writes that one throug
   const none = window({ picks: ["IDs for the stops"] });
   assert.equal(await none.actions.settings(), null);
   assert.equal(none.asked.length, 1, "only read");
+});
+
+test("a message of Write IDs is the core's words as they came, and a tour with nothing written offers no button", async () => {
+  const lost = "1 stop's ID is lost from the code: see Needs Attention.";
+  const w = window({ dirtyFiles: () => [], request: (async () => ({ changed: [], words: lost })) as ActionDeps["request"] });
+  await w.actions.writeIds("t-1");
+  assert.deepEqual(w.said, [{ level: "info", text: lost, buttons: [] }]);
 });

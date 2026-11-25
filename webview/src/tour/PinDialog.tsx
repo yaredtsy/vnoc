@@ -5,7 +5,7 @@ import { closePinDialog, commitAndPin, openPinDialog, setAlways, setMessage, use
 
 /**
  * **Commit and Pin…** (docs/26-tours/05-on-screen.md §3): the one dialog a tour has, over the canvas page. The files that will be committed, each a link to its diff against HEAD; the message,
- * editable; *Always do this in this project*; **Commit and Pin** and **Cancel**. Cancel commits nothing. It is opened by the cover's button, and by the host (the row's menu, the **Pin**
+ * editable; *Always commit and pin without asking in this project*; **Commit and Pin** and **Cancel**. Cancel commits nothing. It is opened by the cover's button, and by the host (the row's menu, the **Pin**
  * message), which has the page open it with `tourDialog`, or leaves the tour for the page to take when it starts.
  */
 export function PinDialog() {
@@ -72,7 +72,7 @@ export function PinDialog() {
         </label>
         <label className="pin-check">
           <input type="checkbox" checked={dialog.always} disabled={dialog.busy} onChange={(e) => setAlways(e.target.checked)} />
-          Always do this in this project
+          Always commit and pin without asking in this project
         </label>
         {dialog.error && (
           <p className="pin-error" role="alert" data-part="pin-error">

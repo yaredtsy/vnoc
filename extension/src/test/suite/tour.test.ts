@@ -1683,8 +1683,8 @@ suite("pin and IDs by a click", () => {
     await vscode.commands.executeCommand("vnoc.tourWriteIds", { tour: id });
     const sent = messagesFrom(said);
     assert.strictEqual(sent[0].text, "Save 1 file first? The IDs are written into it.");
-    assert.ok(/^IDs written into \d+ files?\.$/.test(sent[1].text), sent[1].text);
-    assert.deepStrictEqual(sent[1].buttons, ["Show Changes", "Always in This Project"]);
+    assert.ok(/^IDs? written for \d+ stops? in \d+ files?\.$/.test(sent[1].text), sent[1].text);
+    assert.deepStrictEqual(sent[1].buttons, ["Show Changes", "Always Write IDs in This Project"]);
     assert.ok(!doc.isDirty, "saved first");
     const written = fs.readFileSync(shop(), "utf8");
     assert.ok(written.includes("# unsaved"), "what was typed was saved, not lost");

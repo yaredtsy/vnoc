@@ -403,7 +403,7 @@ export interface Requests {
   tourHalt: { params: { id: TourId }; result: TourHaltAnswer };
   /** `vnoc/tourPin`, as the core answers it: the cover asks it `dry` (why the tour is not pinned, nothing written), and **Commit and Pin** asks it with `commit`. A refusal of the core is the request failing, with its words */
   tourPin: { params: TourPinParams; result: TourPinAnswer };
-  /** `vnoc/tourSettings`: the project's two settings (`[tours] ids` and `commit`), read with no params, written with one. The dialog's *Always do this in this project* and the message's **Always in This Project** write them */
+  /** `vnoc/tourSettings`: the project's two settings (`[tours] ids` and `commit`), read with no params, written with one. The dialog's *Always commit and pin without asking in this project* and the message's **Always Write IDs in This Project** write them */
   tourSettings: { params: { ids?: SettingChoice; commit?: SettingChoice }; result: TourSettingsAnswer };
   /** **Write IDs** on the cover: the host does what the row's **Write IDs for Its Stops** does (it asks to save the stops' files first, writes, and says what it wrote in a message). Answers when it is over */
   tourWriteIds: { params: { id: TourId }; result: void };

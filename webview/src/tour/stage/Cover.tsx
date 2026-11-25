@@ -10,7 +10,7 @@ import type { CoverPin } from "../pin.ts";
  */
 const size = (v: TourView) => (v.of !== null ? `${v.of} ${v.of === 1 ? "stop" : "stops"} · about ${v.minutes} min` : `${soFar(v)} · the agent is adding more`);
 
-/** The cover (design 02 frame 2): one column. The title, the question if it has one, the size, what the agent is doing, Start. */
+/** The cover (design 02 frame 2): one column. The title, the question if it has one, the size, what the agent is doing, **Start**; then the pin and its offers, then what changed: Start is never below the fold. */
 export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: () => void; onOffer: (kind: "ids" | "commit") => void }) {
   const { view } = p;
   const writing = view.writing === null || p.beat !== "writing" ? null : view.stops.find((s) => s.id === view.writing);
@@ -21,6 +21,19 @@ export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: (
       <h3 className="stage-title">{view.title}</h3>
       {view.question && <p className="stage-lead">{view.question}</p>}
       <p className="stage-paragraph stage-dimtext">{size(view)}</p>
+      {writing && (
+        <p className="stage-paragraph stage-dimtext">
+          <Codicon name="loading" className="text-[12px]" /> The agent is writing stop {writing.number} of {view.of}…
+        </p>
+      )}
+      {p.beat === "stopping" && <p className="stage-paragraph stage-dimtext">Stopping: the agent finishes the stop it is on.</p>}
+      {p.beat === "quiet" && <p className="stage-paragraph stage-dimtext">No news from the agent. Look at its terminal, or ask it to continue the tour.</p>}
+      {view.state === "stopped" && <p className="stage-paragraph stage-dimtext">The tour was stopped: {view.written} of {view.of} stops are written.</p>}
+      <div>
+        <button type="button" className="stage-btn stage-primary" onClick={p.onStart}>
+          Start ›
+        </button>
+      </div>
       {pin && (
         <p className="stage-paragraph stage-dimtext" data-part="pin" title={pin.title}>
           {pin.text}
@@ -49,19 +62,6 @@ export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: (
           {notes.most}
         </p>
       )}
-      {writing && (
-        <p className="stage-paragraph stage-dimtext">
-          <Codicon name="loading" className="text-[12px]" /> The agent is writing stop {writing.number} of {view.of}…
-        </p>
-      )}
-      {p.beat === "stopping" && <p className="stage-paragraph stage-dimtext">Stopping: the agent finishes the stop it is on.</p>}
-      {p.beat === "quiet" && <p className="stage-paragraph stage-dimtext">No news from the agent. Look at its terminal, or ask it to continue the tour.</p>}
-      {view.state === "stopped" && <p className="stage-paragraph stage-dimtext">The tour was stopped: {view.written} of {view.of} stops are written.</p>}
-      <div>
-        <button type="button" className="stage-btn stage-primary" onClick={p.onStart}>
-          Start ›
-        </button>
-      </div>
     </div>
   );
 }

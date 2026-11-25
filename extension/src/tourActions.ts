@@ -25,15 +25,12 @@ export interface ActionDeps {
   showChanges(): void;
 }
 
-export const BUTTONS = { commitAndPin: "Commit and Pin…", saveAndWrite: "Save and Write IDs", cancel: "Cancel", showChanges: "Show Changes", always: "Always in This Project" } as const;
+export const BUTTONS = { commitAndPin: "Commit and Pin…", saveAndWrite: "Save and Write IDs", cancel: "Cancel", showChanges: "Show Changes", always: "Always Write IDs in This Project" } as const;
 
 const files = (n: number): string => (n === 1 ? "1 file" : `${n} files`);
 
 /** *"Save 3 files first? The IDs are written into them."* */
 export const saveFirstMessage = (n: number): string => `Save ${files(n)} first? The IDs are written into ${n === 1 ? "it" : "them"}.`;
-
-/** *"IDs written into 4 files."*; nothing was written when every stop already had its ID. */
-export const idsWrittenMessage = (changed: readonly string[]): string => (changed.length === 0 ? "Every stop already has an ID." : `IDs written into ${files(changed.length)}.`);
 
 /** The files of the tour's stops that have unsaved changes: the IDs are written into the files on disk, so a dirty one is saved first (paths relative to the opened folder, as `dirtyFiles` has them). */
 export function idsToSave(dirty: readonly string[], view: Pick<TourView, "stops">): string[] {
@@ -107,7 +104,7 @@ export class TourActions {
 
   /**
    * **Write IDs for Its Stops**: a stop's file with unsaved changes is saved first (the IDs are written into the file on disk), with one question; then `vnoc/tourIds`; then one message with
-   * **Show Changes** and **Always in This Project**. The core's refusal (`[ids] default = "none"`) is shown in its words.
+   * **Show Changes** and **Always Write IDs in This Project**. The core's refusal (`[ids] default = "none"`) is shown in its words.
    */
   async writeIds(id: TourId): Promise<"written" | "cancelled" | "refused"> {
     try {
@@ -121,7 +118,7 @@ export class TourActions {
         }
       }
       const written: TourIdsAnswer = await this.d.request("vnoc/tourIds", { id });
-      const pick = await this.d.say("info", idsWrittenMessage(written.changed), written.changed.length > 0 ? [BUTTONS.showChanges, BUTTONS.always] : []);
+      const pick = await this.d.say("info", written.words, written.changed.length > 0 ? [BUTTONS.showChanges, BUTTONS.always] : []);
       if (pick === BUTTONS.showChanges) this.d.showChanges();
       else if (pick === BUTTONS.always) await this.d.request("vnoc/tourSettings", { ids: "always" });
       return "written";

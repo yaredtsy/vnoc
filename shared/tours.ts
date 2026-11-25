@@ -349,6 +349,8 @@ export interface TourIdsAnswer {
   /** every file written or made, once, in the order they were */
   changed: string[];
   recorded: boolean;
+  /** the core's sentence, shown as it is: *"IDs written for 2 stops in 1 file."* */
+  words: string;
 }
 
 export type SettingChoice = "always" | "ask" | "never";

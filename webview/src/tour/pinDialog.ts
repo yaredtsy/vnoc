@@ -11,7 +11,7 @@ export interface Dialog {
   /** the files that will be committed; null while the core is asked */
   files: string[] | null;
   message: string;
-  /** *Always do this in this project* */
+  /** *Always commit and pin without asking in this project* */
   always: boolean;
   /** git's message of a commit that failed, or why there is nothing to commit */
   error: string | null;
@@ -43,7 +43,7 @@ export const setMessage = (message: string) => set({ message });
 export const setAlways = (always: boolean) => set({ always });
 
 /**
- * **Commit and Pin**: the core commits those files and nothing else, then pins at the new commit. *Always do this in this project* is sent (`tourSettings { commit: "always" }`) only after a
+ * **Commit and Pin**: the core commits those files and nothing else, then pins at the new commit. *Always commit and pin without asking in this project* is sent (`tourSettings { commit: "always" }`) only after a
  * commit was made. A commit that fails shows git's own message in the dialog and keeps it open; one that was made but did not pin says so under the files.
  */
 export async function commitAndPin(): Promise<void> {

@@ -643,7 +643,9 @@ pub(super) fn tour_ids(
         let written = act::write_ids(&mut env, &vnoc_root, &id, &[])
             .await
             .map_err(act_error)?;
-        serde_json::to_value(written).map_err(internal)
+        let mut shown = serde_json::to_value(&written).map_err(internal)?;
+        shown["words"] = serde_json::json!(written.sentence());
+        Ok(shown)
     })
 }
 

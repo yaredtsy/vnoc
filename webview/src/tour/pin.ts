@@ -34,7 +34,10 @@ export function offersOf(offers: OffersView | null): Offer[] {
   return out;
 }
 
-/** What the cover says of the pin: its line (`pinned at f4d6e15`, `not pinned`), under `not pinned` the first reason in the core's words, and the offers. `dry` is the dry pin's answer: undefined while it is awaited. */
+/**
+ * What the cover says of the pin: its line (`pinned at f4d6e15`, `not pinned`), under `not pinned` the reasons that have **no offer**, in the core's words, and the offers. A reason that has an
+ * offer is said once, as its offer (*"2 files have changes that are not committed."* with its button), not again as a reason. `dry` is the dry pin's answer: undefined while it is awaited.
+ */
 export interface CoverPin {
   pin: { text: string; title?: string } | null;
   reason: string | null;
@@ -44,11 +47,11 @@ export interface CoverPin {
 export function coverPin(view: Pick<TourView, "state" | "pinned" | "pin" | "pin_in_repository" | "offers">, dry: TourPinAnswer | null | undefined): CoverPin {
   const pin = pinNote(view);
   const unpinned = pin !== null && pin.text === "not pinned";
-  return {
-    pin,
-    reason: unpinned && wantsDryPin(view) ? (dry?.reasons?.[0]?.words ?? null) : null,
-    offers: view.state === "finished" ? offersOf(view.offers) : [],
-  };
+  const offers = view.state === "finished" ? offersOf(view.offers) : [];
+  // the one reason that has an offer is the files that are not committed (`commit`'s)
+  const offered = (code: string) => code === "uncommitted" && offers.some((o) => o.kind === "commit");
+  const said = unpinned && wantsDryPin(view) ? (dry?.reasons ?? []).filter((r) => !offered(r.code)).map((r) => r.words) : [];
+  return { pin, reason: said.length > 0 ? said.join(" · ") : null, offers };
 }
 
 /** The message the dialog proposes (the core's own default, `Code for the tour "<title>"`). */

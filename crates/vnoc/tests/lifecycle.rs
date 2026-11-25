@@ -4487,6 +4487,10 @@ fn tour_ids_writes_the_id_lines_and_the_tour_stays_fresh_because_the_edit_rebase
     );
     assert_eq!(written["stops"][0]["state"], "written");
     assert_eq!(written["recorded"], true);
+    assert_eq!(
+        written["words"], "ID written for 1 stop in 1 file.",
+        "{written}"
+    );
     let after = std::fs::read_to_string(root.join("orders/service.py")).unwrap();
     assert!(
         after.contains("def place(self, raw):\n        \"\"\"ID: "),
@@ -4521,6 +4525,38 @@ fn tour_ids_writes_the_id_lines_and_the_tour_stays_fresh_because_the_edit_rebase
     let again = core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
     assert_eq!(again["changed"], json!([]), "{again}");
     assert_eq!(again["recorded"], false);
+    assert_eq!(again["words"], "Every stop already has an ID.", "{again}");
+    core.finish();
+}
+
+#[test]
+fn tour_ids_on_stops_whose_ids_are_recorded_and_whose_lines_are_gone_says_so_not_that_every_stop_has_one() {
+    let root = tour_git_project("ids-lost");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "lost lines", &[PLACE]);
+    tell_tour_changed(&mut core, &root, &id);
+    core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    let service = root.join("orders/service.py");
+    let watcher = |core: &mut Core| {
+        core.notify(
+            "vnoc/filesChanged",
+            json!({ "paths": [service.clone(), tour_file(&root, &id), root.join(".vnoc/nodes")] }),
+        );
+        core.wait_for("vnoc/indexChanged");
+    };
+    watcher(&mut core);
+    // the `ID:` line goes (an edit by hand, a merge): `node.toml` still says the ID is in the code
+    let text = std::fs::read_to_string(&service).unwrap();
+    let cut: Vec<&str> = text.lines().filter(|l| !l.contains("\"\"\"ID: ")).collect();
+    assert!(cut.len() < text.lines().count(), "the ID line was written");
+    std::fs::write(&service, cut.join("\n") + "\n").unwrap();
+    watcher(&mut core);
+    let again = core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    assert_eq!(again["changed"], json!([]), "{again}");
+    assert_eq!(
+        again["words"], "1 stop's ID is lost from the code: see Needs Attention.",
+        "{again}"
+    );
     core.finish();
 }
 

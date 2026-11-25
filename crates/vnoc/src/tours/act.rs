@@ -471,6 +471,54 @@ pub struct IdsWritten {
     /// one line for each stop, for the text
     #[serde(skip)]
     pub words: Vec<String>,
+    /// the stops whose ID is recorded and was in the code, and whose `ID:` line is gone now (they are in Needs Attention): nothing could be written for them
+    #[serde(skip)]
+    pub lost: usize,
+    /// the notices of the stops that were given an ID that is not in the code (the marker could not be written), once each
+    #[serde(skip)]
+    pub notices: Vec<String>,
+}
+
+impl IdsWritten {
+    /// What was done, in one sentence for a message (`vnoc/tourIds`' `words`; the pages make none): *"IDs written for 2 stops in 1 file."*, and what could not be
+    /// done: *"1 stop's ID is lost from the code: see Needs Attention."* When nothing at all was to do: *"Every stop already has an ID."*
+    pub fn sentence(&self) -> String {
+        let count = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let state = |what: &str| self.stops.iter().filter(|s| s.state == what).count();
+        let (written, gone) = (state("written"), state("gone"));
+        let mut parts = Vec::new();
+        if written > 0 {
+            parts.push(format!(
+                "{} written for {} in {}.",
+                if written == 1 { "ID" } else { "IDs" },
+                count(written, "stop", "stops"),
+                count_files(self.changed.len()),
+            ));
+        }
+        if self.lost == 1 {
+            parts.push("1 stop's ID is lost from the code: see Needs Attention.".into());
+        } else if self.lost > 1 {
+            parts.push(format!(
+                "{} stops' IDs are lost from the code: see Needs Attention.",
+                self.lost
+            ));
+        }
+        parts.extend(self.notices.iter().cloned());
+        if gone > 0 {
+            parts.push(format!(
+                "{} not found in the code now: skipped.",
+                count(gone, "stop is", "stops are")
+            ));
+        }
+        if !parts.is_empty() {
+            return parts.join(" ");
+        }
+        if self.stops.is_empty() {
+            "No written stop to give an ID.".into()
+        } else {
+            "Every stop already has an ID.".into()
+        }
+    }
 }
 
 /// The stops of the tour with what there is to do for each, from the index as it is now. No lock is held: it is for counting.
@@ -528,9 +576,20 @@ pub async fn write_ids(
     }
     drop(lock);
 
+    // the IDs that `node.toml` says are in the code and are not: a stop on one of them "has" its ID and nothing is to write, which is not the whole truth
+    let lost_ids: Vec<String> = env
+        .index
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .lost_markers()
+        .into_iter()
+        .map(|l| l.id)
+        .collect();
     let mut stops = Vec::new();
     let mut words = Vec::new();
     let mut changed: Vec<String> = Vec::new();
+    let mut lost = 0;
+    let mut notices: Vec<String> = Vec::new();
     for ((stop, outcome), (_, pick)) in done.iter().zip(&picks) {
         let (state, node, file, said) = match outcome {
             Outcome::Had(node) => ("had", Some(node.to_string()), None, String::new()),
@@ -561,6 +620,19 @@ pub async fn write_ids(
                 "its node is not found in the code now: skipped".to_string(),
             ),
         };
+        if let Outcome::Had(node) = outcome
+            && lost_ids.contains(&node.to_string())
+        {
+            lost += 1;
+        }
+        if let Outcome::ByName {
+            notice: Some(notice),
+            ..
+        } = outcome
+            && !notices.contains(notice)
+        {
+            notices.push(notice.clone());
+        }
         let what = match pick {
             Pick::Needs { path, .. } => path.clone(),
             _ => String::new(),
@@ -591,6 +663,8 @@ pub async fn write_ids(
         changed,
         recorded,
         words,
+        lost,
+        notices,
     })
 }
 
