@@ -10,6 +10,19 @@ export type Beat = "finished" | "writing" | "stopping" | "stopped" | "quiet";
 
 export const beatOf = (view: Pick<TourView, "state" | "quiet">): Beat => (view.state === "finished" ? "finished" : view.state === "stopped" ? "stopped" : view.quiet ? "quiet" : view.state);
 
+/**
+ * Most of the tour is about older code (design 05 §4): the stops a check found changed or gone are more than half of the stops written. `null` when no check was made, nothing was
+ * written, or it is not most. The numbers are the core's (`check.changed`, `check.gone`, `written`); this is the one comparison, and the cover and the route's foot both read it.
+ */
+export function mostChanged(view: Pick<TourView, "check" | "written">): { stale: number; written: number } | null {
+  if (!view.check || view.written === 0) return null;
+  const stale = view.check.changed + view.check.gone;
+  return stale * 2 > view.written ? { stale, written: view.written } : null;
+}
+
+/** The route's foot of a finished tour that is mostly about older code (design 05 §4). */
+export const staleWords = (m: { stale: number; written: number }): string => `${m.stale} of ${m.written} stops changed since this was written`;
+
 /** Whether the tour is still being written: `writing` or `stopping` (the agent has not answered the halt yet). */
 export const isWriting = (view: Pick<TourView, "state">): boolean => view.state === "writing" || view.state === "stopping";
 
@@ -44,14 +57,16 @@ export function agentWords(view: TourView): string | null {
 export const stoppable = (view: Pick<TourView, "state" | "quiet">): boolean => beatOf(view) === "writing";
 
 /**
- * The route's foot line (design 05 §1): `writing 6 of 10`, `writing · 6 stops so far`, `stopping`, `stopped: 6 of 10 written`, `no news from the agent · 6 of 10 written`. Null when the
- * tour is finished.
+ * The route's foot line (design 05 §1): `writing 6 of 10`, `writing · 6 stops so far`, `stopping`, `stopped: 6 of 10 written`, `no news from the agent · 6 of 10 written`. For a
+ * finished tour, null, or `7 of 10 stops changed since this was written` when most of it is about older code (design 05 §4).
  */
 export function footWords(view: TourView): string | null {
   const written = view.of !== null ? `${view.written} of ${view.of} written` : soFar(view);
   switch (beatOf(view)) {
-    case "finished":
-      return null;
+    case "finished": {
+      const most = mostChanged(view);
+      return most ? staleWords(most) : null;
+    }
     case "quiet":
       return `no news from the agent · ${written}`;
     case "stopping":

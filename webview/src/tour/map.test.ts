@@ -76,6 +76,13 @@ test("a chain of `from` that loops, or points at nothing, draws no edge it canno
   assert.deepEqual(edges.map((e) => e.id), ["s2->s1", "s1->s2"], "an edge to a stop the tour does not have is not drawn");
 });
 
+test("a card says gone, changed or nothing in the footer's right, and a gone stop's card is struck", () => {
+  const checked = (check: TourStop["check"]) => mapOf(view("cover", { writing: null, stops: [stop(1, { check })] })).cards[0];
+  assert.deepEqual([checked("gone").description, checked("gone").struck], ["gone", true]);
+  assert.deepEqual([checked("changed").description, checked("changed").struck], ["changed", false]);
+  assert.deepEqual([checked("moved").description, checked("moved").struck], [null, false], "a block that moved: no mark");
+});
+
 test("the badge of the stop the agent is on turns, unless the agent has been quiet; then the card says `no news`", () => {
   assert.deepEqual(mapOf(view("cover")).cards.map((c) => c.writing), [false, false, false, false, true]);
   const quiet = mapOf(view("cover", { quiet: true })).cards;

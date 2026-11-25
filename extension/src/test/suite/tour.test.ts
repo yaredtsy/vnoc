@@ -33,6 +33,7 @@ interface Api {
   cli: { binaryPath(): string | undefined; driverPaths(): string[] };
   tours: { open(): unknown; list(): Promise<{ id: string; words: string }[]> };
   tourStatus(): string | null;
+  restartCore(): Promise<void>;
   toursNoticed(): string[];
   toursNoticeOpen(id: string): Promise<void> | undefined;
 }
@@ -103,7 +104,14 @@ const stageShows = async (what: string, ready: (d: Drawn) => boolean, ms = 10_00
     }, ms);
   } catch (e) {
     // what the page last drew, and if it crashed, why
-    throw new Error(`${(e as Error).message}; the stage last drew ${JSON.stringify({ ...last(), code: undefined })}; the page's errors: ${JSON.stringify(api.webviewErrors())}`);
+    const coreAt = (() => {
+      try {
+        return JSON.parse(tourCmd(["where", of, "--json"])).at;
+      } catch {
+        return "?";
+      }
+    })();
+    throw new Error(`${(e as Error).message}; the core's place is ${coreAt}; the stage last drew ${JSON.stringify({ ...last(), code: undefined })}; the page's errors: ${JSON.stringify(api.webviewErrors())}`);
   }
   // to watch it: `VNOC_SLOW=1200` waits that long (ms) on every step; `VNOC_SHOT=<file>` writes that file at the second block, and holds it for 6 s, for a screenshot
   await sleep(Number(process.env.VNOC_SLOW ?? 0));
@@ -445,7 +453,7 @@ suite("the TOURS section", () => {
     await toCover(second);
     api.stageClick("end");
     const end = await stageShows("the end card", (d) => d.mode === "end", 10_000, second);
-    assert.strictEqual(end.unseen, 1, "one written stop, not read to its last step");
+    assert.strictEqual(end.unseen, 1, `one written stop, not read to its last step; the core says ${tourCmd(["where", second, "--json"])}; the stage drew ${JSON.stringify(api.stageDrawn().slice(-6).map((d) => [d.tour === second ? "second" : "other", d.mode, d.step, d.unseen]))}`);
     assert.strictEqual(end.firstUnseen, "s1", "the core names the first one skipped");
     api.stageClick("skipped"); // the button: a jump to it
     await stageShows("the stop that was skipped", (d) => d.step === "s1", 10_000, second);
@@ -601,9 +609,11 @@ suite("the tour's bar", () => {
     await stageStep("s2");
     await sleep(500);
     assert.strictEqual(bar()!.moved, false, "the reader moved it");
+    const posted = api.tourBar().length;
     tourCmd(["go", tour, "s4"]);
     await stageStep("s4");
-    await barShows("moved by the agent", (b) => b.moved);
+    // every drawing of the bar since, not the last one: the words are on for three seconds, and a slow machine can look at them late
+    await until("moved by the agent", () => api.tourBar().slice(posted).some((b) => b.moved));
     await barShows("the words go", (b) => !b.moved, 8_000);
   });
 
@@ -989,5 +999,198 @@ suite("a tour read while it is written", () => {
     await sectionShows("unfolded by the new tour", (d) => !d.folded && d.mode === "list" && d.list.some((r) => r.id === third), 30_000);
     await until("the notification", () => api.toursNoticed().length === noticed + 1);
     assert.ok(!Object.values(api.session().contexts).some((c) => c.kind === "tour"), "nothing was opened");
+  });
+});
+
+// ── a tour that no longer matches the code (docs/26-tours/05-on-screen.md §3, design 05 §4) ─────────────────────────────────────────────────────────────────────
+//
+// A pinned tour shows a changed or gone step as it was written (`tourCode`), with the label and the switch; a tour that is not pinned shows the code as it is, the lit lines dashed. Every test
+// edits `tourdemo/shop.py` on disk and puts it back with `git checkout`: nothing another suite reads stays changed.
+
+suite("a tour that no longer matches the code", () => {
+  let pinned = "";
+  let other = "";
+  const gitIn = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace(), stdio: "ignore" });
+  const shop = () => path.join(workspace(), "tourdemo", "shop.py");
+  /** the file, with `from` replaced by `to` (saved to disk: the core reads the file) */
+  const edit = (from: string, to: string) => {
+    const text = fs.readFileSync(shop(), "utf8");
+    assert.ok(text.includes(from), `shop.py has ${from}`);
+    fs.writeFileSync(shop(), text.replace(from, to));
+  };
+  const restore = () => gitIn("checkout", "--", "tourdemo/shop.py");
+  const openTour = async (id: string) => {
+    api.toursClick("fold"); // a click on a row needs the list: fold, then unfold, shows it whatever the section showed
+    api.toursClick("unfold");
+    await sectionShows("the list has the tour", (d) => d.mode === "list" && d.list.some((r) => r.id === id), 30_000);
+    api.toursClick(`row:${id}`);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+  };
+  const routeRow = (id: string) => section()?.route.find((r) => r.kind === "stop" && r.id === id);
+  const card = (tourId: string, id: string) => mapOfTour(tourId)?.cards.find((c) => c.id === id);
+
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    // a second file, for a tour that does not name shop.py
+    fs.writeFileSync(path.join(workspace(), "tourdemo", "util.py"), "def double(n):\n    \"\"\"Twice n.\"\"\"\n    return n * 2\n");
+    for (let waited = 0; ; waited += 500) {
+      const dir = (await api.structure()).root.children.find((c) => c.id === "tourdemo");
+      if (dir?.children.some((c) => c.id === "tourdemo/util.py" && c.children.length >= 1)) break;
+      assert.ok(waited < 30_000, "the structure never held tourdemo/util.py");
+      await sleep(500);
+    }
+    // the code is committed, so a finished tour can be pinned
+    gitIn("add", "tourdemo");
+    gitIn("commit", "-q", "-m", "the tour demo");
+    const started = JSON.parse(tourCmd(["start", "--title", "Pinned shop", "--author", "the suite", "--json"])).tour;
+    pinned = started;
+    tourCmd(["add", pinned, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
+    tourCmd(["add", pinned, node("has_stock"), "--body-file", "-", "--from", "s1", "--line", "6"], SHORT.has_stock);
+    tourCmd(["add", pinned, node("release"), "--body-file", "-"], SHORT.release);
+    tourCmd(["finish", pinned, "--no-ids"]);
+    tourCmd(["pin", pinned]);
+    assert.ok(JSON.parse(tourCmd(["show", pinned, "--json"])).pinned, "the tour is pinned");
+    other = JSON.parse(tourCmd(["start", "--title", "Util only", "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", other, "tourdemo/util.py::double", "--body-file", "-"], "double returns twice its argument, and does nothing else with it: read it as one step with nothing hidden behind it.\n");
+    tourCmd(["finish", other, "--no-ids"]);
+    tourCmd(["check", other]); // records the check: the next ask of it reads no source
+  });
+
+  teardown(() => {
+    restore();
+  });
+
+  test("a pinned tour whose function was edited shows the step as it was written, with its label; Now shows the code as it is, dashed; the row and the card say changed", async function () {
+    this.timeout(60_000);
+    edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
+    await openTour(pinned);
+    await toCover(pinned);
+    api.stageClick("jump:s1.b2");
+    const written = await stageShows("as written", (d) => d.step === "s1.b2" && d.asWritten !== null, 20_000, pinned);
+    assert.strictEqual(written.asWritten!.commit.length, 7, "the label names the commit");
+    assert.deepStrictEqual(written.lit, [9, 10, 11, 12, 13, 14], "the block's lines at the commit");
+    assert.ok(written.code!.text.includes("    reserve(stock, order)\n"), written.code!.text);
+    assert.ok(!written.code!.text.includes("# held"), "the old code, not the file's");
+    assert.strictEqual(written.switch, "written", "As Written is where the step opens");
+    assert.deepStrictEqual(written.asWritten!.lit, written.lit);
+    // the stop is changed on the route and on the map
+    await sectionShows("the route says changed", (d) => routeRow("s1")?.description === "changed");
+    assert.strictEqual(routeRow("s1")?.struck, false);
+    await aMapShows(pinned, "the card says changed", (m) => m.cards.find((c) => c.id === "s1")?.description === "changed");
+    // Now: the file as it is, no label, the lit lines (dashed on the page)
+    api.stageClick("choose:now");
+    const now = await stageShows("now", (d) => d.step === "s1.b2" && d.switch === "now" && d.asWritten === null, 20_000, pinned);
+    assert.ok(now.code!.text.includes("# held"), "the code as it is now");
+    assert.deepStrictEqual(now.lit, [9, 10, 11, 12, 13, 14]);
+    // leave the step and come back: As Written again, the choice is not kept
+    api.stageClick("jump:s1.b1");
+    const fresh = await stageShows("a step that did not change", (d) => d.step === "s1.b1", 20_000, pinned);
+    assert.strictEqual(fresh.asWritten, null, "a fresh step of the same stop: as now");
+    assert.strictEqual(fresh.switch, null);
+    assert.deepStrictEqual(fresh.lit, [6, 7]);
+    api.stageClick("jump:s1.b2");
+    await stageShows("as written again", (d) => d.step === "s1.b2" && d.asWritten !== null && d.switch === "written", 20_000, pinned);
+    // a detail of the changed block that did not change is fresh: not marked
+    api.stageClick("jump:s1.b3");
+    const detail = await stageShows("the detail", (d) => d.step === "s1.b3", 20_000, pinned);
+    assert.strictEqual(detail.asWritten, null);
+    assert.deepStrictEqual(detail.lit, [11, 12, 13, 14]);
+    // a second tour that does not name shop.py: nothing of it was read for its check
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await openTour(other);
+    const cover = await stageShows("the second tour's cover", (d) => d.mode === "cover", 20_000, other);
+    assert.ok(cover.checkFrom === "memory" || cover.checkFrom === "record", `no source file was read for it: ${cover.checkFrom}`);
+  });
+
+  test("the same edit in a tour that is not pinned: the code as it is, no label, no switch", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
+    await openTour(tour);
+    await toCover(tour);
+    api.stageClick("jump:s1.b2");
+    const d = await stageShows("the code as it is", (x) => x.step === "s1.b2" && x.code !== null, 20_000, tour);
+    assert.strictEqual(d.asWritten, null);
+    assert.strictEqual(d.switch, null);
+    assert.ok(d.code!.text.includes("# held"), "the file as it is");
+    assert.deepStrictEqual(d.lit, [9, 10, 11, 12, 13, 14]);
+    await sectionShows("the route says changed", (x) => routeRow("s1")?.description === "changed");
+  });
+
+  test("a function deleted: gone and struck through; pinned, the step is shown as written with no Now; not pinned, there is no code pane", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    edit("def has_stock(stock, order):\n    return stock.get(order[\"sku\"], 0) >= order[\"qty\"]\n\n\n", "");
+    await openTour(pinned);
+    await toCover(pinned);
+    api.stageClick("jump:s2");
+    const written = await stageShows("the gone stop as written", (d) => d.step === "s2" && d.asWritten !== null, 20_000, pinned);
+    assert.strictEqual(written.switch, null, "a gone stop has no Now");
+    assert.ok(written.code!.text.includes("def has_stock"), "its code at the commit");
+    await sectionShows("the route says gone, struck", (d) => routeRow("s2")?.description === "gone" && routeRow("s2")?.struck === true);
+    await aMapShows(pinned, "the card says gone, struck", (m) => m.cards.find((c) => c.id === "s2")?.description === "gone" && m.cards.find((c) => c.id === "s2")?.struck === true);
+    assert.strictEqual(routeRow("s3")?.description, null, "release moved up: it is fresh");
+    // the tour that is not pinned: the stop has no code pane
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await openTour(tour);
+    await toCover(tour);
+    api.stageClick("jump:s2");
+    const bare = await stageShows("the gone stop, not pinned", (d) => d.step === "s2", 20_000, tour);
+    assert.strictEqual(bare.asWritten, null);
+    assert.strictEqual(bare.switch, null);
+    assert.strictEqual(bare.code, null, "no code pane");
+    await sectionShows("the route says gone, struck", (d) => routeRow("s2")?.description === "gone" && routeRow("s2")?.struck === true);
+  });
+
+  test("most of a pinned tour is about older code: the cover says so, and the route's foot says how many stops changed", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
+    edit("    stock[order[\"sku\"]] += order[\"qty\"]\n", "    stock[order[\"sku\"]] += 2 * order[\"qty\"]\n");
+    edit("def has_stock(stock, order):\n    return stock.get(order[\"sku\"], 0) >= order[\"qty\"]\n\n\n", "");
+    await openTour(pinned);
+    await toCover(pinned);
+    const route = await sectionShows("the foot says how many changed", (d) => d.foot?.text === "3 of 3 stops changed since this was written", 20_000);
+    assert.deepStrictEqual(route.route.filter((r) => r.kind === "stop").map((r) => [r.id, r.description, r.struck]), [["s1", "changed", false], ["s2", "gone", true], ["s3", "changed", false]]);
+    assert.strictEqual(route.foot?.stop, false);
+    api.stageClick("next");
+    await stageShows("the first step", (d) => d.mode === "step", 20_000, pinned);
+  });
+
+  test("a core that starts again: the list says changed from the record, and a tour opened first is answered from the record", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
+    // the check is made and recorded while the tour is open
+    await openTour(pinned);
+    await stageShows("the tour, checked", (d) => d.checkFrom !== null, 20_000, pinned);
+    await sectionShows("the route says changed", (d) => routeRow("s1")?.description === "changed");
+    api.stageClick("closeTour");
+    await dropTourContext();
+    tourCmd(["check", pinned]); // the record on disk is of the file as it is now, whatever the window's core had made of it by now
+    await api.restartCore(); // the new core remembers nothing: the record on disk is all it has
+    // opened with no list asked in between (a list that is asked for checks the rows it holds, and the core then remembers the answer: `memory`)
+    const drawn = api.stageDrawn().length;
+    api.dispatch({ type: "tourOpen", id: pinned }, "main");
+    await until("the tour's context", () => api.session().active === `tour:${pinned}`);
+    const after = () => api.stageDrawn().slice(drawn).filter((d) => d.tour === pinned && d.checkFrom !== null);
+    await until("the reopened tour drawn", () => after().length > 0, 20_000);
+    // the page and the host both ask for the tour: the first answer is from the record, a second asked while it was being answered may be the core's memory of it. Never a check
+    await until("the record's answer", () => after().some((d) => d.checkFrom === "record"), 20_000);
+    assert.ok(after().every((d) => d.checkFrom !== "check"), `no source file was read: ${JSON.stringify(after().map((d) => d.checkFrom))}`);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await api.restartCore();
+    const rows = await api.tours.list(); // the first list asks plain, then with the ids it holds: the words say changed
+    assert.ok(rows.find((r) => r.id === pinned)?.words.includes("changed"), `the row says changed: ${JSON.stringify(rows.find((r) => r.id === pinned))}`);
+    assert.ok(!rows.find((r) => r.id === other)?.words.includes("changed"), "a tour whose code did not change says nothing");
   });
 });

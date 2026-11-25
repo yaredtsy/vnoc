@@ -3,7 +3,7 @@ import * as path from "path";
 import type { Events } from "@vnoc/shared/messages";
 import type { ContextId, ContextState, Intent, Session } from "@vnoc/shared/session.ts";
 import { isWriting, statusBarText, toAnnounce } from "@vnoc/shared/tourWriting.ts";
-import type { Place, TourCoreRequests, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { AsWritten, Place, StopId, TourCoreRequests, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
 // The host's holder of tours (docs/26-tours/05-on-screen.md §5, §6). It asks the core, holds the open tour's `TourView` with its place, passes it to the pages, and sets
 // the tour context's selection from the place. It computes nothing about a tour (P1): which stop is current, what comes next, whether anything changed are the core's
@@ -47,6 +47,11 @@ export type Appearance = "open" | "notify" | "none";
 export function appearance(canvas: { visible: boolean; tourOpen: boolean; showsTour: boolean }): Appearance {
   if (canvas.visible && !canvas.tourOpen) return "open";
   return canvas.showsTour ? "none" : "notify";
+}
+
+/** The ids of the rows a list can ask the core to check: the ones that can be read, each once (a shared tour and its private copy are two rows with one id). */
+export function readableIds(rows: readonly TourRow[]): TourId[] {
+  return [...new Set(rows.filter((r) => r.readable).map((r) => r.id))];
 }
 
 // ── the decisions that need no host ──────────────────────────────────────────────────────────────────────────────────────
@@ -167,14 +172,35 @@ export class Tours {
     if (this.open?.id === id) this.setPlace(place);
   }
 
-  /** The page's `tours`: the core's list. The plain list is held, and sent again when the core says a tour changed. */
-  async list(on?: string): Promise<TourRow[]> {
-    const { tours } = await this.host.request("vnoc/tours", on === undefined ? undefined : { on });
-    if (on !== undefined) return tours;
+  /**
+   * The page's `tours`: the core's list. The plain list is held, and sent again when the core says a tour changed. It is asked with `check`: the ids of the rows held, so their
+   * `words` say `changed` when the core's check says so (rung 1 or 2 answers: nothing is read for a tour no file of which changed). The first list in a window holds no rows and
+   * asks twice: plain (sent at once), then with the ids it answered (the same, with the check). A tour the list did not have yet is checked at the next list. With `on` (a
+   * structure key) it is the tours on that node, and nothing is held.
+   */
+  async list(params?: { on?: string; check?: TourId[] }): Promise<TourRow[]> {
+    if (params?.on !== undefined) return (await this.host.request("vnoc/tours", { on: params.on, ...(params.check ? { check: params.check } : {}) })).tours;
+    const checked = new Set(params?.check ?? readableIds(this.rows ?? []));
+    const ask = async (ids: Set<TourId>) => (await this.host.request("vnoc/tours", ids.size > 0 ? { check: [...ids] } : undefined)).tours;
+    let tours = await ask(checked);
+    const unchecked = readableIds(tours).filter((id) => !checked.has(id));
+    if (unchecked.length > 0) {
+      this.publish(tours);
+      tours = await ask(new Set(readableIds(tours)));
+    }
+    this.publish(tours);
+    return tours;
+  }
+
+  private publish(tours: TourRow[]): void {
     this.rows = tours;
     this.notice(tours);
     this.host.emit("tours", { tours });
-    return tours;
+  }
+
+  /** The page's `tourCode`: one stop as it was written (`vnoc/tourCode`), `null` when the core has none to give. */
+  async code(id: TourId, stop: StopId): Promise<AsWritten | null> {
+    return this.host.request("vnoc/tourCode", { id, stop });
   }
 
   /**

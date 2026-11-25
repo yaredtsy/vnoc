@@ -162,7 +162,7 @@ export function ToursSection() {
       }),
       foot: foot === null ? null : { text: foot, stop: canStop },
       more,
-      route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, depth: r.depth })),
+      route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, struck: r.type === "stop" && r.struck, depth: r.depth })),
     });
   }, [rows, route, folded, mode, count, tourId, view?.title, foot, canStop, more]); // eslint-disable-line react-hooks/exhaustive-deps
 

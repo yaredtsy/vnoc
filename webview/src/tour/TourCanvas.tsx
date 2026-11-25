@@ -106,7 +106,7 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
   // what the suite reads of what was drawn
   useEffect(() => {
     if (!map) return;
-    post({ type: "mapDrawn", tour: tourId, cards: map.cards.map((c) => ({ id: c.id, number: c.number, mark: c.mark, here: c.here, callLine: c.callLine, description: c.description, planned: c.planned, writing: c.writing })), heavy: map.edges.filter((e) => e.onPath).map((e) => e.id), edges: map.edges.map((e) => `${e.id}:${e.kind}`) });
+    post({ type: "mapDrawn", tour: tourId, cards: map.cards.map((c) => ({ id: c.id, number: c.number, mark: c.mark, here: c.here, callLine: c.callLine, description: c.description, struck: c.struck, planned: c.planned, writing: c.writing })), heavy: map.edges.filter((e) => e.onPath).map((e) => e.id), edges: map.edges.map((e) => `${e.id}:${e.kind}`) });
   }, [map, tourId]);
 
   if (!view || !map) return <div className="flex min-w-0 flex-1 items-center justify-center text-[12px] text-muted-foreground">Opening the tour…</div>;

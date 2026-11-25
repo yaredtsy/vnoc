@@ -1,6 +1,6 @@
 import type { CallTreeResult, CodeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
-import type { Place, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { AsWritten, Place, StopId, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
 import type { Docs } from "./docs";
 
@@ -54,10 +54,11 @@ export interface Deps {
   command(name: "openFolder" | "refreshStructure"): Promise<void>;
   /** the host's holder of tours (`extension/src/tours.ts`): the core's list, the open tour as the host holds it, a move */
   tours: {
-    list(on?: string): Promise<TourRow[]>;
+    list(params?: { on?: string; check?: TourId[] }): Promise<TourRow[]>;
     get(id: TourId): Promise<TourView | TourUnreadable>;
     go(id: TourId, move: TourMove): Promise<Place>;
     halt(id: TourId): Promise<TourHaltAnswer>;
+    code(id: TourId, stop: StopId): Promise<AsWritten | null>;
   };
 }
 
@@ -90,10 +91,11 @@ export function createHandlers(d: Deps): Handlers {
     retryCalls: ({ key }) => d.retryCalls(key),
     rowClick: ({ context, id }) => d.rowClick(context, id),
     command: ({ name }) => d.command(name),
-    tours: (params) => d.tours.list(params?.on),
+    tours: (params) => d.tours.list(params ?? undefined),
     tour: ({ id }) => d.tours.get(id),
     tourGo: ({ id, move }) => d.tours.go(id, move),
     tourHalt: ({ id }) => d.tours.halt(id),
+    tourCode: ({ id, stop }) => d.tours.code(id, stop),
   };
 }
 

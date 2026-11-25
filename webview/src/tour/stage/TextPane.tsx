@@ -1,6 +1,7 @@
 import type { Beat, NextState } from "@vnoc/shared/tourWriting.ts";
 import type { StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
 import { ADDING_LINE, type Look, notWrittenSentence } from "../layout.ts";
+import { type Choice, type WrittenLook, changedSentence } from "../written.ts";
 import { Rich, type TextDrawn } from "./Rich.tsx";
 
 /**
@@ -8,7 +9,7 @@ import { Rich, type TextDrawn } from "./Rich.tsx";
  * kind adds under it: the grey bars of a stop that is not written, `⇢ Explained at stop N`, the mark of a step that changed. The words are the core's; the
  * sentences of a stop that is not written are the design's.
  */
-export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; parent: StepView | null; look: Look; beat: Beat; next: NextState; fade: boolean; onJump: (stop: string) => void; onTextDrawn?: (d: TextDrawn) => void }) {
+export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; parent: StepView | null; look: Look; beat: Beat; next: NextState; fade: boolean; written: WrittenLook; onChoose: (choice: Choice) => void; onJump: (stop: string) => void; onTextDrawn?: (d: TextDrawn) => void }) {
   const { view, stop, step, look } = p;
   const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
   return (
@@ -49,7 +50,24 @@ export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; pa
           </button>
         </p>
       )}
-      {step.fresh === "changed" && <p className="stage-mark-note">The code changed after this was written. The lines may not match.</p>}
+      {p.written.look === "written" || p.written.look === "now" ? (
+        // a step of a pinned tour whose code changed: what it says, and (not for a stop that is gone) the switch between the code as written and as it is now
+        <div data-part="written-note">
+          <p className="stage-mark-note">{changedSentence(p.written.look === "written" && p.written.gone)}</p>
+          {(p.written.look === "now" || p.written.switch) && (
+            <div className="stage-switch" role="group" aria-label="Show the code">
+              <button type="button" aria-pressed={p.written.look === "now"} data-choice="now" onClick={() => p.onChoose("now")}>
+                Now
+              </button>
+              <button type="button" aria-pressed={p.written.look === "written"} data-choice="written" onClick={() => p.onChoose("written")}>
+                As Written
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        step.fresh === "changed" && p.written.look !== "asking" && <p className="stage-mark-note">The code changed after this was written. The lines may not match.</p>
+      )}
     </div>
   );
 }

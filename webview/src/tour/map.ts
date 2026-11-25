@@ -4,7 +4,7 @@
 
 import type { TourStop, TourView } from "@vnoc/shared/tours.ts";
 import { CARD_H, CARD_W, COL_W, ROW_H } from "../canvas/layout.ts";
-import { type Mark, markOf, stopDescription } from "../sidebar/tours/route.ts";
+import { type Mark, isStruck, markOf, stopDescription } from "../sidebar/tours/route.ts";
 
 // a `type`, not an interface: React Flow wants node data to be assignable to Record<string, unknown>
 export type TourCardData = {
@@ -30,8 +30,10 @@ export type TourCardData = {
   from: string | null;
   /** the agent is on this stop and has not been quiet: its badge turns */
   writing: boolean;
-  /** the one word of the footer's right: `writing…` · `changed` · `⇢ 2` */
+  /** the one word of the footer's right: `writing…` · `gone` · `changed` · `⇢ 2` */
   description: string | null;
+  /** the stop is not in the code any more: its name is struck through */
+  struck: boolean;
   /** the number of the stop it is explained at (`⇢ explained at 2`) */
   explainedAt: number | null;
   /** how many steps it has, when it has more than one and is written (`3 steps`) */
@@ -83,6 +85,7 @@ export function mapOf(view: TourView): { cards: TourCardData[]; edges: TourEdgeD
       from: stop.from ?? null,
       writing: view.writing === stop.id && !view.quiet,
       description: stopDescription(view, stop),
+      struck: isStruck(stop),
       explainedAt: explained?.number ?? null,
       steps: !stop.planned && stop.steps > 1 ? stop.steps : null,
       key: stop.key,

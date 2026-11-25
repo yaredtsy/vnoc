@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { TreeNode } from "@vnoc/shared/messages";
 import { type Intent, MAIN, type Session, emptySession, reduce, tourContextId } from "@vnoc/shared/session.ts";
 import type { Place, TourRow, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import { QUIET_CHECK_MS, REREAD_MS, Tours, type ToursDeps, appearance, pickItem, selectionKey, shouldCheckQuiet, shouldPoll, tourContext, vnocIsAbove, whatToAsk } from "./tours.ts";
+import { QUIET_CHECK_MS, REREAD_MS, Tours, type ToursDeps, appearance, pickItem, readableIds, selectionKey, shouldCheckQuiet, shouldPoll, tourContext, vnocIsAbove, whatToAsk } from "./tours.ts";
 
 // The decisions of the host's holder that need no VS Code: which notification asks again, when the 2-second re-read runs, what the selection is for a place.
 
@@ -124,6 +124,7 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
     opened,
     setCanvasVisible: (visible: boolean) => (canvasVisible = visible),
     setRows: (r: TourRow[]) => (rows = r),
+    rows: () => rows,
     setCanvasShows: (shows: boolean) => (canvasShows = shows),
     host,
     requests,
@@ -426,6 +427,32 @@ test("W11: the canvas visible and no tour open: a tour that appears and is being
   more.toursChanged(["t-1", "t-2"]);
   await settle();
   assert.deepEqual([g.opened, g.announced], [["t-1"], ["t-2"]]);
+});
+
+test("the list is asked with the ids it holds: the first list asks twice, plain and then with its ids, and a later one asks once", async () => {
+  const h = makeHost({ above: false, rows: [row("t-1", { state: "finished" }), row("t-1", { folder: "project", state: "finished" }), row("t-2", { state: "finished" }), row("t-3", { readable: false })] });
+  const tours = new Tours(h.host);
+  const asked = () => h.requests.filter(([m]) => m === "vnoc/tours").map(([, p]) => p);
+  await tours.list();
+  assert.deepEqual(asked(), [undefined, { check: ["t-1", "t-2"] }], "plain, then the readable ids, each once");
+  assert.equal(h.events.filter(([name]) => name === "tours").length, 2, "the plain list is sent at once, then the checked one");
+  await tours.list();
+  assert.deepEqual(asked().slice(2), [{ check: ["t-1", "t-2"] }], "the rows are held: one ask, with their ids");
+  // a tour that appears: asked once for what is held, then again with it
+  h.setRows([row("t-9", { state: "finished" }), ...h.rows()]);
+  await tours.list();
+  assert.deepEqual(asked().slice(3), [{ check: ["t-1", "t-2"] }, { check: ["t-9", "t-1", "t-2"] }]);
+  // `on` is the node's tours: nothing is held, and no check
+  assert.deepEqual(readableIds([row("a"), row("a", { folder: "project" }), row("b", { readable: false })]), ["a"]);
+  await tours.list({ on: "a.py::f" });
+  assert.deepEqual(asked().at(-1), { on: "a.py::f" });
+});
+
+test("the page's tourCode is the core's, passed through", async () => {
+  const h = makeHost({ above: false });
+  const tours = new Tours(h.host);
+  await tours.code("t-1", "s2");
+  assert.deepEqual(h.requests.at(-1), ["vnoc/tourCode", { id: "t-1", stop: "s2" }]);
 });
 
 test("the open tour is asked for again every 30 seconds only while it is being written", async () => {

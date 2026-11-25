@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { agentWords, beatOf, footWords, nextState, soFar, statusBarText, stoppable, toAnnounce } from "./tourWriting.ts";
+import { agentWords, beatOf, footWords, mostChanged, nextState, soFar, statusBarText, stoppable, toAnnounce } from "./tourWriting.ts";
 import type { Place, TourRow, TourStop, TourView } from "./tours.ts";
 
 // The words of a tour being written, and when `Next` is dim: from the view alone (docs/26-tours/05-on-screen.md §3).
@@ -67,6 +67,25 @@ test("the route's foot, per state", () => {
   assert.equal(footWords({ ...tour(5, 5, "writing", place("s2", 2)), quiet: true }), "no news from the agent · 5 of 10 written");
   assert.equal(footWords({ ...tour(6, 0, "writing", place("s2", 2)), quiet: true }), "no news from the agent · 6 stops so far");
   assert.equal(footWords(tour(10, 0, "finished", place("s2", 2))), null);
+});
+
+const checked = (changed: number, gone: number, over: Partial<TourView> = {}): TourView => ({ ...tour(10, 0, "finished", place("cover", null)), check: { fresh: false, from: "check", at: "", changed, gone }, ...over });
+
+test("most of a tour is about older code when its changed and gone stops are more than half of those written", () => {
+  assert.deepEqual(mostChanged(checked(5, 1)), { stale: 6, written: 10 });
+  assert.deepEqual(mostChanged(checked(0, 6)), { stale: 6, written: 10 }, "gone counts");
+  assert.deepEqual(mostChanged(checked(3, 2)), null, "half is not most");
+  assert.deepEqual(mostChanged(checked(0, 0)), null);
+  assert.equal(mostChanged({ ...checked(9, 0), check: undefined }), null, "no check was made");
+  assert.equal(mostChanged({ ...checked(1, 0), written: 0 }), null, "nothing written");
+  assert.deepEqual(mostChanged({ check: { fresh: false, from: "memory", at: "", changed: 1, gone: 0 }, written: 1 }), { stale: 1, written: 1 });
+});
+
+test("the foot of a finished tour that is mostly about older code says how many stops changed; of one that is not, nothing", () => {
+  assert.equal(footWords(checked(5, 2)), "7 of 10 stops changed since this was written");
+  assert.equal(footWords(checked(2, 1)), null);
+  assert.equal(footWords(tour(10, 0, "finished", place("cover", null))), null, "no check");
+  assert.equal(footWords(checked(5, 2, { state: "stopped", planned: 0 })), "stopped: 10 stops written", "a tour that is not finished says what the agent did");
 });
 
 test("the status bar item says the place by the core's numbers, and the agent's words while it writes", () => {

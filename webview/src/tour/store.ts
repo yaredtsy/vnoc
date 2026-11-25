@@ -23,9 +23,12 @@ export function loadTour(id: TourId, still: () => boolean): void {
   );
 }
 
+/** The moves are sent one after the other: each is made against the place the one before left (`next`, `next`), and two sent together are two requests that can overtake each other. */
+let moves: Promise<unknown> = Promise.resolve();
+
 /** A move for the core, by the host: `next`, `prev`, `cover`, `end`, or a jump to a stop (`s4`). The view comes back as the host's `tour` event. */
 export function go(id: TourId, move: string): void {
-  void request("tourGo", { id, move }).catch(() => {});
+  moves = moves.then(() => request("tourGo", { id, move }).catch(() => {}));
 }
 
 /** ■ Stop: the core writes the halt (the agent answers it at its next command); the host asks for the tour again, and the view's state says `stopping`. */

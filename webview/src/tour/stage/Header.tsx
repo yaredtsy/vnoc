@@ -9,6 +9,8 @@ export function Header(p: {
   where: string;
   position: string;
   onGoToCode: () => void;
+  /** a stop that is not in the code any more has no `↗`: there is nowhere to go */
+  canGoToCode?: boolean;
   onFold: () => void;
   /** a jump to the step of the stop this one was reached from that holds the line (`line_step`) */
   onCalledFrom: () => void;
@@ -35,9 +37,11 @@ export function Header(p: {
       )}
       <span className="stage-grow" />
       <span className="stage-position">{p.position}</span>
-      <button type="button" className="stage-icon" title="Go to Code (Ctrl+Enter)" aria-label="Go to Code" onClick={p.onGoToCode}>
-        <Codicon name="link-external" />
-      </button>
+      {p.canGoToCode !== false && (
+        <button type="button" className="stage-icon" title="Go to Code (Ctrl+Enter)" aria-label="Go to Code" onClick={p.onGoToCode}>
+          <Codicon name="link-external" />
+        </button>
+      )}
       <button type="button" className="stage-icon" title="Fold the stage" aria-label="Fold the stage" onClick={p.onFold}>
         <Codicon name="chevron-down" />
       </button>

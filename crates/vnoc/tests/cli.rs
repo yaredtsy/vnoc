@@ -11149,6 +11149,14 @@ fn tour_pin_a_stop_that_changed_shows_the_pinned_lines_lit_where_the_pin_says_an
     assert_eq!(written["lines"], json!([11, 22]));
     assert_eq!(written["lit"], json!([[14, 15], [15, 15], [17, 22]]));
     assert_eq!(written["commit"], first[..7]);
+    assert_eq!(
+        written["steps"],
+        json!({ "s1": [11, 22], "s1.b1": [14, 15], "s1.b2": [15, 15], "s1.b3": [17, 22] }),
+        "where each step was at the commit: the intro is the stop's lines"
+    );
+    let mut masked = written.clone();
+    masked["commit"] = json!("<commit>");
+    golden("tour-show-as-written.json", &masked);
 
     // `add --replace` on the changed stop: not pinned. The code is committed already, so `pin` pins at the new HEAD
     let body = "retry_charge, written again: one more attempt than the setting says.\n\n## 17-22 The loop\nIt runs one more time than `attempts`.\n";

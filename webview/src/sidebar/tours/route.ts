@@ -22,8 +22,10 @@ export type RouteRow =
       mark: Mark;
       /** the stop the reader is on */
       current: boolean;
-      /** one word, the first that applies: `writing…` · `changed` · `⇢ 2` */
+      /** one word, the first that applies: `writing…` · `gone` · `changed` · `⇢ 2` */
       description: string | null;
+      /** the stop is not in the code any more: the name is struck through */
+      struck: boolean;
     }
   | {
       type: "step";
@@ -43,20 +45,26 @@ export function markOf(view: TourView, stopId: string, planned: boolean): Mark {
 }
 
 /**
- * The one word a stop says, the first that applies: `writing…` (`no news` when the agent has been quiet) · `changed` · `⇢ 2` (explained at stop 2). The route's row and the
- * map's card say the same.
+ * The one word a stop says, the first that applies: `writing…` (`no news` when the agent has been quiet) · `gone` · `changed` · `⇢ 2` (explained at stop 2). The route's row and the
+ * map's card say the same. A stop that moved says nothing: it is fresh, at its new lines.
  */
 export function stopDescription(view: TourView, stop: TourStop): string | null {
   const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
-  return view.writing === stop.id ? (view.quiet ? "no news" : "writing…") : stop.check === "changed" ? "changed" : explained ? `⇢ ${explained.number}` : null;
+  if (view.writing === stop.id) return view.quiet ? "no news" : "writing…";
+  if (stop.check === "gone") return "gone";
+  if (stop.check === "changed") return "changed";
+  return explained ? `⇢ ${explained.number}` : null;
 }
+
+/** A stop that is not in the code any more is struck through, on the route and on the map. */
+export const isStruck = (stop: TourStop): boolean => stop.check === "gone";
 
 export function routeRows(view: TourView): RouteRow[] {
   const rows: RouteRow[] = [];
   for (const stop of view.stops) {
     const description = stopDescription(view, stop);
     const current = view.place.stop === stop.id;
-    rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, key: stop.key, mark: markOf(view, stop.id, stop.planned), current, description });
+    rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, key: stop.key, mark: markOf(view, stop.id, stop.planned), current, description, struck: isStruck(stop) });
     // the steps are under the stop you are in, and only when it has more than one: leaving it folds them away (§1.2)
     if (current && stop.reading.length > 1) {
       for (const step of stop.reading) rows.push({ type: "step", id: step.id, depth: stop.depth + step.depth, text: step.depth === 0 ? "what it is for" : (step.title ?? ""), current: step.id === view.place.at });

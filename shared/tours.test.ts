@@ -81,6 +81,13 @@ test("tour-list.json and tour-list-on.json are lists of TourRow", () => {
   assert.deepEqual(problems, []);
 });
 
+test("tour-show-as-written.json is an AsWritten, its steps among them", () => {
+  const golden = read(`${GOLDEN}tour-show-as-written.json`);
+  check("AsWritten", golden, "tour-show-as-written.json");
+  assert.deepEqual(Object.keys(golden.steps), ["s1", "s1.b1", "s1.b2", "s1.b3"]);
+  assert.deepEqual(problems, []);
+});
+
 test("the schema 1 fixtures' show goldens are TourViews, a stop's key among them", () => {
   for (const name of ["show-shared.json", "show-private.json", "show-imported.json"]) {
     const golden = read(`${FROZEN}${name}`);

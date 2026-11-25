@@ -1,6 +1,7 @@
 import { type Beat, soFar } from "@vnoc/shared/tourWriting.ts";
 import type { TourView } from "@vnoc/shared/tours.ts";
 import { Codicon } from "@/components/Codicon.tsx";
+import { coverNotes, pinNote } from "../written.ts";
 
 /**
  * The size line (05 §3): `10 stops · about 7 min` when the size is known (a plan, a finished or a stopped tour); `6 stops so far · the agent is adding more` for a tour with no plan
@@ -12,11 +13,28 @@ const size = (v: TourView) => (v.of !== null ? `${v.of} ${v.of === 1 ? "stop" : 
 export function Cover(p: { view: TourView; beat: Beat; onStart: () => void }) {
   const { view } = p;
   const writing = view.writing === null || p.beat !== "writing" ? null : view.stops.find((s) => s.id === view.writing);
+  const pin = pinNote(view);
+  const notes = coverNotes(view);
   return (
     <div className="stage-one" data-part="cover">
       <h3 className="stage-title">{view.title}</h3>
       {view.question && <p className="stage-lead">{view.question}</p>}
       <p className="stage-paragraph stage-dimtext">{size(view)}</p>
+      {pin && (
+        <p className="stage-paragraph stage-dimtext" data-part="pin" title={pin.title}>
+          {pin.text}
+        </p>
+      )}
+      {notes.gone && (
+        <p className="stage-paragraph" data-part="first-gone">
+          {notes.gone}
+        </p>
+      )}
+      {notes.most && (
+        <p className="stage-paragraph" data-part="most-changed">
+          {notes.most}
+        </p>
+      )}
       {writing && (
         <p className="stage-paragraph stage-dimtext">
           <Codicon name="loading" className="text-[12px]" /> The agent is writing stop {writing.number} of {view.of}…

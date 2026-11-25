@@ -3983,6 +3983,61 @@ fn tour_code_gives_the_old_lines_of_a_pinned_tour_and_null_when_there_are_none_t
     core.finish();
 }
 
+#[test]
+fn tour_code_says_where_each_step_was_at_the_commit_the_intro_and_each_block_and_detail() {
+    let root = tour_git_project("code-steps");
+    let (mut core, _) = ready_core(&root);
+    let id = vnoc_ok(
+        &root,
+        &["tour", "start", "--title", "two stops", "--json"],
+        "",
+    );
+    let id = serde_json::from_str::<Value>(&id).unwrap()["tour"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    vnoc_ok(
+        &root,
+        &["tour", "add", &id, RETRY, "--body-file", "-"],
+        RETRY_BODY,
+    );
+    vnoc_ok(
+        &root,
+        &["tour", "add", &id, PARSE, "--body-file", "-"],
+        ONE_STEP,
+    );
+    vnoc_ok(&root, &["tour", "finish", &id, "--no-ids"], "");
+    tell_tour_changed(&mut core, &root, &id);
+    assert_eq!(core.tour(&id)["pinned"], true);
+
+    // a stop with blocks and a detail: the intro is the stop's lines, each block and the detail its own, at the commit
+    let blocks = core
+        .request("vnoc/tourCode", json!({ "id": id, "stop": "s1" }))
+        .unwrap();
+    eprintln!("tourCode s1: {blocks}");
+    let [first, last] = [
+        blocks["lines"][0].as_u64().unwrap(),
+        blocks["lines"][1].as_u64().unwrap(),
+    ];
+    assert_eq!(
+        blocks["steps"],
+        json!({ "s1": [first, last], "s1.b1": [14, 15], "s1.b2": [15, 15], "s1.b3": [17, 22] }),
+        "{blocks}"
+    );
+    assert_eq!(blocks["lit"], json!([[14, 15], [15, 15], [17, 22]]));
+
+    // a stop with no blocks: the intro is the whole stop
+    let whole = core
+        .request("vnoc/tourCode", json!({ "id": id, "stop": "s2" }))
+        .unwrap();
+    assert_eq!(
+        whole["steps"],
+        json!({ "s2": whole["lines"] }),
+        "the intro is the stop's lines: {whole}"
+    );
+    core.finish();
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------- tours (TR15c)
 //
 // The user's actions as requests (docs/26-tours/03-core.md §8): each is the function of the command, and says what the command says.

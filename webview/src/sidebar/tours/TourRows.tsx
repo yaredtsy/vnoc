@@ -83,7 +83,7 @@ export function RouteRowView({ row, domId, focused, onClick, onGoToCode }: { row
       <span style={{ color: kind.color }} className="flex-none">
         <Codicon name={kind.icon} />
       </span>
-      <span className={cn("min-w-0 truncate", row.current && "font-bold")}>{kind.title(row.name)}</span>
+      <span className={cn("min-w-0 truncate", row.current && "font-bold", row.struck && "line-through")}>{kind.title(row.name)}</span>
       {row.description && <span className="ml-auto flex-none pl-2 text-[11px] text-muted-foreground">{row.description}</span>}
       {/* the only hover button of a stop's row (design 04 §1.1): Go to Code */}
       <button

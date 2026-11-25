@@ -177,6 +177,8 @@ export interface AsWritten {
   code: string[];
   /** the lit lines, as ranges of file lines */
   lit: [number, number][];
+  /** where each step was at that commit, by step id: the stop's blocks the pin has a place for, and the intro (the stop's id) → the stop's lines */
+  steps: Record<string, [number, number]>;
 }
 
 /** One stop of the route: `StopView`. */

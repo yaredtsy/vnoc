@@ -35,6 +35,8 @@ export function CodePane(p: {
   parentLit: readonly [number, number] | null;
   /** the step's own mark says the code changed after it was written: the lit lines get a dashed bar and no background */
   changed: boolean;
+  /** the code is the pinned commit's (`vnoc/tourCode`): the pane has its own background and the label `as written · <commit>` on its top edge */
+  written: { commit: string } | null;
   /** the node's file, for its language */
   path: string | null;
   stopId: string;
@@ -84,7 +86,12 @@ export function CodePane(p: {
   if ("error" in p.code) return <div className="stage-code stage-empty">{p.code.error}</div>;
   const more = p.look === "lit" || p.look === "detail" ? moreLit(litIndex, view) : 0;
   return (
-    <div className="stage-code-wrap">
+    <div className={`stage-code-wrap${p.written ? " stage-written" : ""}`} data-written={p.written?.commit}>
+      {p.written && (
+        <span className="stage-written-label" data-part="written-label">
+          as written · {p.written.commit}
+        </span>
+      )}
       <div ref={box} className="stage-code" data-part="code" onScroll={measure} onPointerEnter={() => (pointerOver.current = true)} onPointerLeave={() => (pointerOver.current = false)}>
         {shown!.lines.map((text, i) => (
           <div key={i} className={`stage-line stage-${looks[i]}${p.changed && looks[i] === "lit" ? " stage-changed" : ""}`} data-line={first + i}>

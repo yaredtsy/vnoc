@@ -219,6 +219,9 @@ pub struct AsWritten {
     pub code: Vec<String>,
     /// the lit lines, as ranges of file lines
     pub lit: Vec<[u32; 2]>,
+    /// where each step was at that commit, by step id: every block of the stop the pin has a place for, and the intro (the stop's own id) → the stop's lines. A page
+    /// lights the step it shows by this; a block the pin has no place for is not here
+    pub steps: BTreeMap<String, [u32; 2]>,
 }
 
 impl AsWritten {

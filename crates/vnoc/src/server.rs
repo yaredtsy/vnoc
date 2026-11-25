@@ -375,10 +375,18 @@ fn files_changed(
         .filter_map(|p| project.repo_path_of(p))
         .map(|p| p.as_str().to_string())
         .collect();
-    if paths.is_empty() || !others.is_empty() {
+    let update = paths.is_empty() || !others.is_empty();
+    if update && told.is_empty() {
         core.spawn_update(Work::Files(others));
-    }
-    if !told.is_empty() {
+    } else if update {
+        // the tours are told after the index has taken the files in: a check made before would read the old index (a function that was deleted is still there,
+        // and the answer, recorded, would say `changed`)
+        let core = core.clone();
+        tokio::spawn(async move {
+            core.update(Work::Files(others)).await;
+            core.tours_told(told).await;
+        });
+    } else if !told.is_empty() {
         let core = core.clone();
         tokio::spawn(async move { core.tours_told(told).await });
     }
@@ -988,6 +996,8 @@ async fn answers_for(
 ) -> Result<std::collections::BTreeMap<TourId, Answer>, ResponseError> {
     let mut with_index = matches!(*state.status.borrow(), Status::Ready);
     loop {
+        // an update that is running is waited for: a check made against the index it is about to replace would record a stale answer
+        drop(state.one_at_a_time.lock().await);
         let (held, rows) = (state.clone(), rows.clone());
         let asked = blocking(move || {
             let project = held.project.get().ok_or(Cannot::Store(StoreError::Refused(

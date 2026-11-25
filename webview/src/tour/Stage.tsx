@@ -19,7 +19,9 @@ import { Foot } from "./stage/Foot.tsx";
 import { Header } from "./stage/Header.tsx";
 import type { TextDrawn } from "./stage/Rich.tsx";
 import { TextPane } from "./stage/TextPane.tsx";
-import { useCode } from "./stage/useCode.ts";
+import { type Shown as Code, useCode } from "./stage/useCode.ts";
+import { useAsWritten } from "./stage/useWritten.ts";
+import { type Choice, wantsWritten, writtenLook } from "./written.ts";
 import "./stage.css";
 
 /** The least the dock is (the header and five lines of code) and the most (45% of the canvas): design 03 §6. */
@@ -72,8 +74,20 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const stop = current?.stop ?? null;
   const step = current?.step ?? null;
   const node = structure && stop?.key ? (findNode(structure.root, stop.key) ?? null) : null;
-  const wantsCode = !!node && look !== null && look.code !== "none" && look.code !== "rows";
-  const code = useCode(node && wantsCode ? node.path : null, node?.range ?? null, wantsCode);
+  // a step the code no longer matches: for a pinned tour, the code as it was written (`tourCode`, asked when such a step is shown), else the dashed look
+  const [chosen, setChosen] = useState<{ step: string; choice: Choice } | null>(null);
+  const choice: Choice = chosen !== null && chosen.step === step?.id ? chosen.choice : "written"; // not kept: a step opens as written
+  useEffect(() => setChosen((c) => (c !== null && c.step !== (step?.id ?? null) ? null : c)), [step?.id]);
+  const theirs = useAsWritten(tourId, stop?.id ?? null, !!view && !!stop && !!step && !!look && wantsWritten(view, stop, step, look.code));
+  const written = view && stop && step && look ? writtenLook({ view, stop, step, codeLook: look.code, answer: theirs, choice }) : ({ look: "fresh" } as const);
+  const asWritten = written.look === "written" && theirs ? theirs : null;
+  const showWritten = asWritten !== null;
+  const asking = written.look === "asking";
+  const wantsCode = !!node && look !== null && look.code !== "none" && look.code !== "rows" && !showWritten && !asking;
+  const nowCode = useCode(node && wantsCode ? node.path : null, node?.range ?? null, wantsCode);
+  // the code the pane shows: the commit's lines for a step shown as written, nothing while they are asked for, else the node as it is now
+  const code: Code = asWritten ? { first: asWritten.lines[0], lines: asWritten.code, text: asWritten.code.join("\n") } : asking ? null : nowCode;
+  const wantsPane = wantsCode || showWritten || asking;
   // the agent: what it is doing (the tour's state, and no news), and whether `Next` has anywhere to go yet
   const beat = view ? beatOf(view) : "finished";
   const next = view ? nextState(view) : "ready";
@@ -98,6 +112,9 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const act = useRef<Record<string, () => void>>({});
   /** the calls of the code on screen that lead to a later stop, by file line: what a click on one jumps to */
   const callTo = useRef(new Map<number, { id: string }>());
+  /** the step on the stage, for the suite's `choose:now` */
+  const stepNow = useRef<string | null>(null);
+  stepNow.current = step?.id ?? null;
   callTo.current = view && stop ? callLines(view, stop.id) : new Map();
   act.current = {
     // a tour with no plan, on its last written step: there is no next step to go to yet, and the core would take the reader to the end card of a tour that is not finished
@@ -149,6 +166,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
           // `jump:s2` and `callLine:6`: a jump to a stop, and a click on the call at that line of the code
           const [what, arg] = key.split(":");
           if (what === "jump") go(tourId, arg);
+          else if (what === "choose") setChosen({ step: stepNow.current ?? "", choice: arg === "now" ? "now" : "written" });
           else if (what === "callLine") {
             const target = callTo.current.get(Number(arg));
             if (target) go(tourId, target.id);
@@ -161,7 +179,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
 
   // what the suite reads of what was drawn: only a drawing that is whole. While the code is being read, and between a new step and the code pane's report of it, the page has not
   // drawn the step yet (a drawing then would carry the lit lines of the step before)
-  const codeDrawn = !wantsCode || (code !== null && ("error" in code || (drawn.step === (step?.id ?? null) && drawn.text === code.text)));
+  const codeDrawn = !wantsPane || (code !== null && ("error" in code || (drawn.step === (step?.id ?? null) && drawn.text === code.text)));
   useEffect(() => {
     if (!view || !current || !codeDrawn) return;
     post({
@@ -181,10 +199,13 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       calls: stop ? [...callLines(view, stop.id).keys()] : [],
       code: code && "lines" in code ? { first: code.first, text: code.text } : null,
       // what the code pane drew: nothing when there is no code pane (the cover, the end, contents)
-      lit: wantsCode ? drawn.lit : [],
-      thin: wantsCode ? drawn.thin : [],
-      scrolledTo: wantsCode ? drawn.scrolledTo : 0,
-      coloured: wantsCode ? drawn.coloured : 0,
+      lit: wantsPane ? drawn.lit : [],
+      thin: wantsPane ? drawn.thin : [],
+      scrolledTo: wantsPane ? drawn.scrolledTo : 0,
+      coloured: wantsPane ? drawn.coloured : 0,
+      asWritten: asWritten ? { commit: asWritten.commit, lit: drawn.lit } : null,
+      switch: written.look === "written" && written.switch ? "written" : written.look === "now" ? "now" : null,
+      checkFrom: view.check?.from ?? null,
       markdown: textDrawn,
       beat,
       nextState: next,
@@ -262,6 +283,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
             where={where}
             position={position}
             onGoToCode={() => act.current.goToCode()}
+            canGoToCode={stop.check !== "gone"}
             onFold={() => setStageFolded(true)}
             onCalledFrom={() => act.current.calledFrom()}
           />
@@ -273,13 +295,14 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
                 <CodePane
                   code={code}
                   look={look.code}
-                  lit={step.lines && (look.code === "lit" || look.code === "detail") ? step.lines : null}
-                  parentLit={current!.parent?.lines ?? null}
-                  changed={step.fresh === "changed"}
-                  path={node?.path ?? null}
+                  lit={look.code === "lit" || look.code === "detail" ? (asWritten ? (asWritten.steps[step.id] ?? null) : step.lines) : null}
+                  parentLit={asWritten ? (current!.parent ? (asWritten.steps[current!.parent.id] ?? null) : null) : (current!.parent?.lines ?? null)}
+                  changed={step.fresh === "changed" && !showWritten}
+                  written={asWritten ? { commit: asWritten.commit } : null}
+                  path={asWritten ? asWritten.path : (node?.path ?? null)}
                   stopId={stop.id}
                   stepId={step.id}
-                  gone={node === null}
+                  gone={node === null && !showWritten && !asking}
                   calls={callLines(view, stop.id)}
                   onCall={jump}
                   onDrawn={(d) => setDrawn((old) => (old.scrolledTo === d.scrolledTo && old.lit.join() === d.lit.join() && old.thin.join() === d.thin.join() && old.coloured === d.coloured && old.step === d.step && old.text === d.text ? old : d))}
@@ -291,7 +314,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
               drag(e, (dx) => setStageText(clamp(start - dx, TEXT_MIN, TEXT_MAX)));
             }} />
             <div className="stage-right" style={textWidth === null ? undefined : { width: textWidth }}>
-              <TextPane view={view} stop={stop} step={step} parent={current!.parent} look={look} beat={beat} next={next} fade={fading !== null && fading === step.id} onJump={jump} onTextDrawn={(d) => setTextDrawn((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d))} />
+              <TextPane view={view} stop={stop} step={step} parent={current!.parent} look={look} beat={beat} next={next} fade={fading !== null && fading === step.id} written={written} onChoose={(c) => setChosen({ step: step.id, choice: c })} onJump={jump} onTextDrawn={(d) => setTextDrawn((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d))} />
               <Foot view={view} next={next} onJump={jump} onMove={(m) => act.current[m]()} />
             </div>
           </div>

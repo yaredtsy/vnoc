@@ -61,6 +61,14 @@ test("a stop's one word: writing…, changed, or the stop it is explained at; th
   assert.deepEqual(words(view("cover", { writing: "s3" }))[2], "writing…", "writing comes before changed");
 });
 
+test("the right-hand word is the first that applies: writing… > gone > changed > ⇢ 2; a gone stop is struck through", () => {
+  const rows = (over: Partial<TourStop>[], v: Partial<TourView> = {}) =>
+    routeRows(view("cover", { writing: null, stops: over.map((o, i) => stop(i + 1, o)), ...v })).filter((r) => r.type === "stop").map((r) => r.type === "stop" && [r.description, r.struck]);
+  assert.deepEqual(rows([{ check: "gone" }, { check: "changed" }, { check: "moved" }, { same_as: "s1" }, {}]), [["gone", true], ["changed", false], [null, false], ["⇢ 1", false], [null, false]]);
+  assert.deepEqual(rows([{ check: "gone", same_as: "s2" }, { check: "changed", same_as: "s1" }]), [["gone", true], ["changed", false]], "gone and changed come before ⇢");
+  assert.deepEqual(rows([{ check: "gone" }, { planned: true, check: "changed" }], { writing: "s2" }), [["gone", true], ["writing…", false]], "writing comes before everything");
+});
+
 test("a stop being written says `no news` when the agent has been quiet", () => {
   const words = (v: TourView) => routeRows(v).filter((r) => r.type === "stop").map((r) => r.type === "stop" && r.description);
   assert.deepEqual(words(view("cover", { quiet: true })), [null, null, "changed", "⇢ 2", "no news"]);

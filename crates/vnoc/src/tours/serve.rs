@@ -137,6 +137,14 @@ pub fn as_written_of(
             .map(|w| [w.lines.first, w.lines.last])
             .collect()
     };
+    let mut steps: BTreeMap<String, [u32; 2]> = blocks
+        .iter()
+        .filter_map(|b| at(*b).map(|w| (b.to_string(), [w.lines.first, w.lines.last])))
+        .collect();
+    steps.insert(
+        StepId::intro(stop).to_string(),
+        [place.lines.first, place.lines.last],
+    );
     let code = pin::as_written(
         project,
         pin.commit.as_str(),
@@ -150,6 +158,7 @@ pub fn as_written_of(
         lines: [place.lines.first, place.lines.last],
         code,
         lit,
+        steps,
     })
 }
 

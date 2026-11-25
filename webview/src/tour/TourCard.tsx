@@ -58,7 +58,7 @@ export const TourCard = memo(function TourCard({ data }: NodeProps<Node<TourCard
         <span className="flex w-4 flex-none items-center justify-center" style={{ color: kind.color }}>
           <Codicon name={kind.icon} />
         </span>
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" title={kind.title(data.name)}>
+        <span className={cn("min-w-0 flex-1 truncate text-[13px] font-semibold", data.struck && "line-through")} title={kind.title(data.name)}>
           {kind.title(data.name)}
         </span>
         <button type="button" className="nodrag nopan flex size-5 flex-none items-center justify-center rounded-sm hover:bg-toolbar-hover" title="Go to Code" aria-label={`Go to Code: ${data.name}`} onClick={goToCode}>
