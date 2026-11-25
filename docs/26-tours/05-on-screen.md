@@ -188,6 +188,25 @@ The host (`extension/src/tours.ts`) holds the open tour's `TourView` with its pl
 place → the host updates what it holds, sets the context's selection, and the pages draw. `vnoc/tourPlaceChanged` from outside takes
 the same path from its second arrow.
 
+**As built (TR16, `3dae1c6`; TR14e `282bb8b`).** `shared/tours.ts` holds the answer types, checked against the Rust goldens by
+`shared/tours.test.ts` (declared keys = actual keys). The session has `kind: "tour"`, `ContextState.tour`, `tourList`, the intents
+`tourOpen { id, title?, at? }` and `tourSelect { key }` (the host's selection), one tour context at a time (`tour:<id>`, parent
+MAIN). The host's holder is `extension/src/tours.ts` (no `vscode` import, unit tested); it re-reads every 2 s only when the git root
+(`core.gitRoot`) is a strict ancestor of the opened folder, and skips a redraw when the answer is the same text. Each stop carries
+`key` (its `Node.id`) for the selection.
+
+**Decided at TR16's review (built first in TR17):** P1 holds for the three lookups TR16 had to do or could not do:
+- the row gains `words` from the core: the second line design 07 §3 gives a row (its one state word, size, where you are), built by
+  `view.rs` as `list` builds its row text. The QuickPick's detail and TR18's row draw it; TR18's "state word and its order" test is a
+  Rust test, not a TypeScript one;
+- the place gains `stop` (the current stop's id, `null` at the cover and the end) and `position` (`stop`, `of`, `step`, `steps`: the
+  "stop 3 of 10 · 2 of 5" numbers, the same code as `where`); the selection reads `place.stop`, never a step id;
+- each reading step gains `kind`, decided by the core from design 03 §3: `intro`, `block`, `detail`, `short`, `contents`,
+  `same_as`, `planned` (the cover and the end are places, not steps); the stage picks its layout from it;
+- `key` follows a check: a stop the check found at another name or path is keyed by where it is now (`now`), so the selection
+  finds it;
+- the holder sends `tourOpen {open: true}` again after a core restart.
+
 ## 6. Who draws what
 
 | | Does | Does not |
