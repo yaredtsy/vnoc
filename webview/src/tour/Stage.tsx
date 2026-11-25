@@ -81,6 +81,11 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     cover: () => go(tourId, "cover"),
     again: () => go(tourId, "cover"),
     end: () => go(tourId, "end"),
+    // "called on line N": the step of the caller that holds the line, or the caller when the core named none
+    calledFrom: () => {
+      const to = stop?.line_step ?? stop?.from;
+      if (to != null) go(tourId, to);
+    },
     closeTour: () => dispatch({ type: "closeContext", id: contextId }, contextId),
     goToCode: () => {
       if (!node) return;
@@ -130,6 +135,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       text: step?.text ?? null,
       position: positionWords(view),
       next: view.place.at === "cover" ? "Start" : view.place.position && view.place.position.stop === view.place.position.of && view.place.position.step === view.place.position.steps ? "Finish" : "Next",
+      unseen: view.place.unseen,
       code: code && "lines" in code ? { first: code.first, text: code.text } : null,
       // what the code pane drew: nothing when there is no code pane (the cover, the end, contents)
       lit: wantsCode ? drawn.lit : [],
@@ -202,7 +208,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
             position={position}
             onGoToCode={() => act.current.goToCode()}
             onFold={() => setStageFolded(true)}
-            onCalledFrom={() => (stop.line_step ?? stop.from) != null && jump((stop.line_step ?? stop.from)!)}
+            onCalledFrom={() => act.current.calledFrom()}
           />
           <div className="stage-body">
             <div className="stage-left">

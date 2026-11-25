@@ -18,6 +18,8 @@ interface Saved {
   stageHeight?: number;
   stageText?: number | null;
   stageFolded?: boolean;
+  /** the sidebar's TOURS section is folded (it is, until a tour is opened) */
+  toursFolded?: boolean;
   /** the drafts of the cards being edited (docs/17 E6): in the one object, so the one `setState` below keeps them */
   drafts?: Drafts;
 }
@@ -46,6 +48,8 @@ interface View {
   stageHeight: number;
   stageText: number | null;
   stageFolded: boolean;
+  /** the sidebar's TOURS section, folded */
+  toursFolded: boolean;
   /** the docs tab: the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; the page carries it, as a message could be lost) */
   pinned: string | null;
   // not saved: how the canvas points at things (docs/10-ui-rework/06-how-it-looks.md)
@@ -75,6 +79,7 @@ export const useView = create<View>(() => ({
   stageHeight: saved.stageHeight ?? 215,
   stageText: saved.stageText ?? null,
   stageFolded: saved.stageFolded ?? false,
+  toursFolded: saved.toursFolded ?? true,
   pinned: document.getElementById("root")?.dataset.node ?? saved.pinned ?? null,
   hover: null,
   revealed: null,
@@ -137,6 +142,7 @@ export const setDocsOpen = (docsOpen: boolean) => useView.setState({ docsOpen })
 export const setMinimap = (minimap: boolean) => useView.setState({ minimap });
 export const setStageHeight = (stageHeight: number) => useView.setState({ stageHeight });
 export const setStageText = (stageText: number | null) => useView.setState({ stageText });
+export const setToursFolded = (toursFolded: boolean) => useView.setState({ toursFolded });
 export const setStageFolded = (stageFolded: boolean) => useView.setState({ stageFolded });
 export const setDocWidth = (docWidth: number) => useView.setState({ docWidth });
 export const pin = (pinned: string | null) => useView.setState({ pinned });
@@ -145,8 +151,8 @@ export const setPanelShares = (shares: Record<string, number>) => useView.setSta
 
 // the one place the view is saved: the view and the drafts are one object, because `setState` keeps one object per webview (a second call would wipe this one)
 function save() {
-  const { codeOpen, docsOpen, docWidth, minimap, pinned, panelShares, stageHeight, stageText, stageFolded } = useView.getState();
-  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares, stageHeight, stageText, stageFolded, drafts: useDrafts.getState().drafts });
+  const { codeOpen, docsOpen, docWidth, minimap, pinned, panelShares, stageHeight, stageText, stageFolded, toursFolded } = useView.getState();
+  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares, stageHeight, stageText, stageFolded, toursFolded, drafts: useDrafts.getState().drafts });
 }
 useView.subscribe(save);
 useDrafts.subscribe(save);

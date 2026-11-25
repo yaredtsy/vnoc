@@ -48,6 +48,8 @@ const docsShownPosts: { pinned: string | null; node: string | null; doc: string 
 const searchFocusedPosts: { focused: boolean; text: string }[] = [];
 /** What the tour's stage drew, each time it changed (for the test suite). */
 const stagePosts: Extract<Notes, { type: "stageDrawn" }>[] = [];
+/** What the sidebar's TOURS section drew, each time it changed (for the test suite). */
+const toursPosts: Extract<Notes, { type: "toursDrawn" }>[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
@@ -165,7 +167,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       onNote(note, store, output, (keys, onScreen) => {
         callTrees.setDrawn(keys, onScreen); // what is on screen is probed, and the selected one is prefetched
         wantCalls();
-      }, (page, drafts) => draftCopy.replace(page, drafts)),
+      }, (page, drafts) => draftCopy.replace(page, drafts), () => void panels.showCanvas()),
     (page) => {
       if (page === "canvas") draftsChip = { count: 0, label: "" }; // the chip it drew is gone with the page, which posts nothing on its way out
       void draftCopy.onPageClosed(page);
@@ -283,6 +285,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** a key pressed in the tour's stage, and a click on one of its buttons (`next`, `prev`, `goToCode`, `start`, `closeTour`), as the page handles them: the suite cannot press keys or click in a webview */
     stageKey: (key: string) => panels.emit("viewCommand", { name: "stageKey", key }),
     stageClick: (button: string) => panels.emit("viewCommand", { name: "stageClick", key: button }),
+    /** every drawing of the sidebar's TOURS section, in order */
+    toursDrawn: () => toursPosts,
+    /** a click in the TOURS section (`fold`, `unfold`, `row:<tour>`, `stop:<id>`, `step:<id>`, `back`, `close`, `key:<Key>`), as the page handles it */
+    toursClick: (what: string) => panels.emit("viewCommand", { name: "toursClick", key: what }),
     /** an intent, as a click on a card would send it */
     dispatch: (intent: Intent, context?: string) => store.dispatch(intent, context),
     /** a request to the core (the suite attaches docs through it, without the input boxes) */
@@ -375,10 +381,11 @@ export function activate(ctx: vscode.ExtensionContext) {
 }
 
 /** What a webview says that needs no answer. */
-function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void, drafts: (page: Page, drafts: Draft[]) => void) {
+function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, cardsDrawn: (keys: string[], onScreen: string[]) => void, drafts: (page: Page, drafts: Draft[]) => void, showCanvas: () => void) {
   switch (note.type) {
     case "intent":
       store.dispatch(note.intent, note.context);
+      if (note.intent.type === "tourOpen") showCanvas(); // a click on a tour's row is the request to read it: the canvas comes up beside the editor
       break;
     case "rendered":
       rendered = { context: note.context, visible: note.visible, hidden: note.hidden, callCards: note.callCards, chevrons: note.chevrons };
@@ -388,6 +395,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "cardsDrawn":
       cardsDrawn(note.keys, note.onScreen);
+      break;
+    case "toursDrawn":
+      toursPosts.push(note);
       break;
     case "stageDrawn":
       stagePosts.push(note);
