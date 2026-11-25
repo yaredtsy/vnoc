@@ -429,13 +429,19 @@ run). The row's menu is right-click only (its hover `⋯` → TR23).
 followed by a chain of failures. The core's index update has no time limit on its driver calls and holds `one_at_a_time`; a real check
 waits for it, and waiting requests fill the core's slots: one hung driver call can stop every request. Not proven.
 
+**As built (TR22r, `909c771`, `ae61677`; reviewed).** Only moved. `server.rs` → `server/` (`mod` 444, `index` 236, `docs` 273,
+`calls` 59, `tours` 873 lines); `cli/tour.rs` → `cli/tour/` (`mod` 534, `write` 660, `read` 758, `act` 1,285). Review check: the sorted
+non-blank lines before and after, `use` and `mod` lines left out, `pub(super)` stripped. `server`: only the `impl Core {` and `}`
+of `index.rs`. `cli/tour`: only `super::args::ChoiceArg` → `crate::cli::args::ChoiceArg` (`super` now means `tour`). Rust counts equal
+TR22a's (lib 556, lifecycle 72, cli 274 + 6 Bend, the same 13 Bend failures); fmt and clippy clean; no TypeScript run.
+Choices: a child module `act` would clash with `crate::tours::act::{self, …}` in `mod.rs`, so `mod.rs` imports it without `self` and
+the helpers that call it (`read_tour`, `pin_tour`, `write_ids`, `picks_of`, `placed_check`, `project_writes_ids`, `can_pin_words`,
+`ids_after_end`) live in `act.rs`; `plan` too. Git finds no rename (each new file is under half the old one): to follow a line, use
+`git blame -C -C`. `act.rs` is now the biggest file (1,285 lines); leave it until it hurts.
+
 **Next, in this order:**
-- **TR22r: the big files split, only moved** (the user, 2026-11-25). `server.rs` (1,830 lines; 812 on `main`) becomes `server/`:
-  `mod.rs` (the core, the state, the request table, `files_changed`), `index.rs` (structure, search, update), `docs.rs` (attach,
-  relink, write ID, trash), `calls.rs`, `tours.rs` (every `vnoc/tour*`, `answers_for`, the count of calls). `cli/tour.rs` (3,165) becomes
-  `cli/tour/`: `mod.rs` (dispatch), `write.rs` (start, add, finish), `read.rs` (list, show, route, where, go), `act.rs` (the
-  rest). No behaviour, name or test changes; two commits. Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a
-  `tour` module; `tours/view.rs` types and text apart.
+- Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
+  `cli/tour/act.rs` by its parts (pin, IDs, settings).
 - **TR22s: the suites can be trusted.** Find why the core stops answering in the full run (`sample` the core when `ping` does not
   answer; a time limit on the update's driver calls), make every window test fail within about 10 s when the core does not answer,
   start each `tour` test from a clean state (no context open, the workspace reset) so one failure does not chain, and drive **Open
