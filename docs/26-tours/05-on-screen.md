@@ -265,6 +265,27 @@ The scorer gets TR14d's softened chat rule, which was decided but never built (a
 `add` is counted, not failed; an end of up to four lines). The 5.2 MB of Mermaid in the package is weighed at the pull request
 (fewer diagram types if it matters). The overlay's duplicated SVG ids → TR23.
 
+**As built (TR20, `317aef8`, `d6d8a6f`).** A tour is read while it is written: the bar's agent text (`writing 6/10 ■`,
+`stopping`, `stopped`, `no news`), the pulsing dot, planned steps with grey bars and the fade-in, `Next ◌` dimmed before a planned
+stop (disabled on the last written step of a tour with no plan), `■` Stop on the bar and the route's foot, the status bar item
+(`▶ Tour 3/10 · writing 6/10`), the one notification with **Open Tour** (only for a tour that appears while the window is open and is
+being written), the section unfolding for a tour from outside, a draggable splitter (112 px minimum, double-click resets). Rules and
+words are in `shared/tourWriting.ts`. A diagram is drawn at no less than 80% and scrolls sideways. The scorer counts progress lines.
+
+**Decided at TR20's review:**
+- **The freeze is of the files on disk** (records, the state file, the export document: 01 §11), **not of a command's or a request's
+  answer.** The fixtures' goldens have gained keys at every step since TR14d, and may. So the view gains `quiet` and `of` (the plan's
+  size, `written + planned`): TypeScript stops summing and stops reading the open tour's row for `quiet`. The holder re-asks
+  `vnoc/tour` every 30 s while the open tour is writing (a quiet tour changes no file; rung 1 answers it from memory).
+- **W11 as designed:** with the canvas visible, a tour that starts being written adds its tour context and activates it (design 02
+  frame 2, README W11); the notification is for a hidden canvas only.
+- **The window suites flake** (TR20 saw three different single failures across runs: `tour` "end card … not seen", "Next walks to the
+  end card", `edit` "card to say gone"). TR21 starts by making `tour` pass five runs in a row (wait for the core's answer, never a
+  timer) and finds whether the `edit` flake is older than tours (run it on `main`'s code in a worktree only if disk allows).
+- **Six `cli` tests need the Bend driver** (`bend_driver_path`): `drivers/bend/target/debug/vnoc-driver-bend` is not built, so they
+  fail on this machine. Not a tours bug. The full Rust run is green only with it built (1.1 GB); build it once before the pull
+  request, not per step.
+
 ## 6. Who draws what
 
 | | Does | Does not |
