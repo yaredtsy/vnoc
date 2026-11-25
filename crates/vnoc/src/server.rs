@@ -1501,6 +1501,12 @@ fn tour_pin(
         let state = core.state.clone();
         let project = ready_project(&state).await?;
         let id = parse_tour(&params.id)?;
+        if params.dry && params.commit.is_some() {
+            return Err(bad_params(
+                "a dry pin commits nothing: ask for it with no `commit`",
+            ));
+        }
+        let dry = params.dry;
         let _one_at_a_time;
         let _one_writer;
         if params.commit.is_some() {
@@ -1520,9 +1526,13 @@ fn tour_pin(
                 .project
                 .get()
                 .ok_or(ActError::Environment("no folder is open".into()))?;
-            let ask = act::Ask::Pin {
-                commit,
-                message: message.as_deref(),
+            let ask = if dry {
+                act::Ask::Look
+            } else {
+                act::Ask::Pin {
+                    commit,
+                    message: message.as_deref(),
+                }
             };
             act::not_in_both(&vnoc_root, &id)?;
             let tour = act::read_tour(&vnoc_root, &id)?;
@@ -1551,6 +1561,12 @@ fn tour_pin(
             };
             let mut shown =
                 serde_json::to_value(&out).map_err(|e| ActError::Environment(e.to_string()))?;
+            // each reason says itself, in the core's words: a page makes no sentence from a `code`
+            if let Some(reasons) = shown.get_mut("reasons").and_then(|r| r.as_array_mut()) {
+                for (said, reason) in reasons.iter_mut().zip(&out.reasons) {
+                    said["words"] = serde_json::json!(reason.words());
+                }
+            }
             shown["tour"] = serde_json::json!(id.to_string());
             Ok(shown)
         })

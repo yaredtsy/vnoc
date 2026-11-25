@@ -540,3 +540,12 @@ test("a page that asks for the counts before any were asked gets the core's answ
   assert.equal(h.requests.length, 0);
   assert.deepEqual(await tours.countsOf(), { counts: { "a.py::f": 3 } });
 });
+
+test("Commit and Pin… chosen in the host is told to the pages and held for one that starts later, taken once", () => {
+  const h = makeHost({ above: false, answer: view("cover") });
+  const tours = new Tours(h.host);
+  tours.askDialog("t-1", "Retry charge");
+  assert.deepEqual(h.events.at(-1), ["tourDialog", { id: "t-1", title: "Retry charge" }]);
+  assert.deepEqual(tours.takeDialog(), { id: "t-1", title: "Retry charge" });
+  assert.equal(tours.takeDialog(), null, "taken once");
+});

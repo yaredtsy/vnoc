@@ -6,6 +6,7 @@ import { KINDS } from "../../node-card/kinds.ts";
 import { tourStopContext } from "../../node-card/nodeContext.ts";
 import { useTour } from "../../tour/store.ts";
 import { isOpen, listItem } from "./list.ts";
+import { tourRowContext } from "./menu.ts";
 import type { RouteRow } from "./route.ts";
 
 const kindOf = (kind: string | null): Kind => (kind && kind in KINDS ? (kind as Kind) : "function");
@@ -22,6 +23,7 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
       aria-selected={isOpen(row, open)}
       aria-disabled={!item.clickable}
       data-tour={item.id}
+      data-vscode-context={tourRowContext(row)}
       className={cn(
         "flex h-10 flex-none flex-col justify-center border-l-2 pr-2 pl-2 text-[13px] leading-[18px]",
         isOpen(row, open) ? "border-l-[color:var(--ring)]" : "border-l-transparent",

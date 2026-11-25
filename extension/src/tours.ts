@@ -23,7 +23,7 @@ export interface ToursDeps {
   /** an intent for a context of the session */
   dispatch(intent: Intent, context: ContextId): void;
   /** to every open page */
-  emit<E extends "tours" | "tour" | "tourCounts">(name: E, data: Events[E]): void;
+  emit<E extends "tours" | "tour" | "tourCounts" | "tourDialog">(name: E, data: Events[E]): void;
   /** `.vnoc/` is above the opened folder (`vnocIsAbove`): the host's file watcher cannot see it */
   vnocAbove(): boolean;
   /** runs `run` every `ms` until stopped */
@@ -115,6 +115,8 @@ export class Tours {
   private announced = new Set<TourId>();
   /** how many tours pass through each node (`vnoc/tourCounts`), as the core last said; null until asked. Asked again on `toursChanged` and `indexChanged` (the keys are the structure's) */
   private counts: { counts: Record<string, number>; raw: string } | null = null;
+  /** the tour **Commit and Pin…** was chosen for, until a page takes it (a page that is not started yet cannot hear the event) */
+  private dialog: { id: TourId; title: string | null } | null = null;
   private poll: { stop(): void } | undefined;
   private quietCheck: { stop(): void } | undefined;
   /** the last text given to the status bar item (undefined: none yet), so that it is told only what changed */
@@ -154,6 +156,19 @@ export class Tours {
   start(): void {
     void this.list().catch((e) => this.host.log(`vnoc/tours: ${String((e as Error).message ?? e)}`));
     void this.askCounts();
+  }
+
+  /** **Commit and Pin…** was chosen for a tour (the row's menu, the **Pin** message): the pages are told, and one that starts later finds it with `takeDialog`. */
+  askDialog(id: TourId, title: string | null): void {
+    this.dialog = { id, title };
+    this.host.emit("tourDialog", { id, title });
+  }
+
+  /** The tour the dialog was asked for and no page has taken, once. */
+  takeDialog(): { id: TourId; title: string | null } | null {
+    const taken = this.dialog;
+    this.dialog = null;
+    return taken;
   }
 
   /** The page's `tourCounts`: what the host holds, asked for if nothing has been yet. */

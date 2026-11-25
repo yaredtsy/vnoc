@@ -336,6 +336,26 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.tourPin",
+        "title": "Pin",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourCommitAndPin",
+        "title": "Commit and Pin…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourWriteIds",
+        "title": "Write IDs for Its Stops",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourSettings",
+        "title": "Tour Settings…",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.showTours",
         "title": "Show Tours",
         "category": "V-NOC"
@@ -559,6 +579,18 @@
         },
         {
           "command": "vnoc.showTours",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourPin",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourCommitAndPin",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourWriteIds",
           "when": "false"
         }
       ],
@@ -827,6 +859,21 @@
           "command": "vnoc.tourRevealInMain",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourStop'",
           "group": "1_tour@2"
+        },
+        {
+          "command": "vnoc.tourPin",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canPin",
+          "group": "2_pin@1"
+        },
+        {
+          "command": "vnoc.tourCommitAndPin",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canCommitAndPin",
+          "group": "2_pin@2"
+        },
+        {
+          "command": "vnoc.tourWriteIds",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canWriteIds",
+          "group": "2_pin@3"
         }
       ],
       "explorer/context": [
@@ -927,7 +974,7 @@
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "typecheck": "tsc --noEmit -p .",
     "test": "esbuild src/test/runTest.ts src/test/suite/index.ts src/test/suite/skeleton.test.ts src/test/suite/session.test.ts src/test/suite/sidebar.test.ts src/test/suite/attention.test.ts src/test/suite/refactor.test.ts src/test/suite/calls.test.ts src/test/suite/edit.test.ts src/test/suite/bar.test.ts src/test/suite/search.test.ts src/test/suite/cli.test.ts src/test/suite/bend.test.ts src/test/suite/tour.test.ts --bundle --platform=node --format=cjs --external:vscode --external:mocha --external:@vscode/test-electron --outbase=src --outdir=out && node out/test/runTest.js",
-    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts src/dirtyFiles.test.ts src/saveDraft.test.ts src/sidebarSlot.test.ts src/cliInstall.test.ts src/agentsJson.test.ts src/tours.test.ts"
+    "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts src/dirtyFiles.test.ts src/saveDraft.test.ts src/sidebarSlot.test.ts src/cliInstall.test.ts src/agentsJson.test.ts src/tours.test.ts src/tourActions.test.ts"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

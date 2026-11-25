@@ -287,7 +287,8 @@ export interface PinChanged {
 }
 
 /** Why a tour is not pinned (`code` says which; the rest of the keys depend on it). */
-export type PinReason =
+/** Why a tour is not pinned. Each reason says itself, in the core's words (`words`, one sentence, no full stop): a page makes no sentence from a `code`. */
+export type PinReason = { words: string } & (
   | { code: "unfinished" | "no_stops" | "not_a_repository" | "git_not_found" | "no_commit" }
   | { code: "in_progress"; what: string }
   | { code: "hook_changed"; path: string; tour: TourId }
@@ -295,7 +296,8 @@ export type PinReason =
   | { code: "uncommitted"; files: PinChanged[] }
   | { code: "not_held"; path: string; ignored: boolean }
   | { code: "submodule"; path: string; module: string }
-  | { code: "git_failed" | "not_checked"; why: string };
+  | { code: "git_failed" | "not_checked"; why: string }
+);
 
 export interface CommittedOut {
   commit: string;
@@ -303,6 +305,13 @@ export interface CommittedOut {
   /** the tour's code files */
   files: string[];
   node_files?: string[];
+}
+
+/** `vnoc/tourPin`'s parameters: `commit` commits the files that are the one thing in the way first; `dry` answers as a pin would and writes nothing (not with `commit`). */
+export interface TourPinParams {
+  id: TourId;
+  commit?: { message?: string };
+  dry?: boolean;
 }
 
 /** `vnoc/tourPin`. */
@@ -412,7 +421,7 @@ export interface TourCoreRequests {
   "vnoc/tourOpen": { params: { id: TourId; open: boolean }; result: Place };
   "vnoc/tourCode": { params: { id: TourId; stop: StopId }; result: AsWritten | null };
   "vnoc/tourHalt": { params: { id: TourId }; result: TourHaltAnswer };
-  "vnoc/tourPin": { params: { id: TourId; commit?: { message?: string } }; result: TourPinAnswer };
+  "vnoc/tourPin": { params: TourPinParams; result: TourPinAnswer };
   "vnoc/tourIds": { params: { id: TourId }; result: TourIdsAnswer };
   "vnoc/tourEdit": { params: { id: TourId; title?: string; question?: string }; result: TourEditAnswer };
   "vnoc/tourShare": { params: { id: TourId; share: boolean }; result: TourShareAnswer };

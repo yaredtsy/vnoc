@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { nodeContext, paneContext, panelContext } from "../../webview/src/node-card/nodeContext.ts";
+import { tourRowContext } from "../../webview/src/sidebar/tours/menu.ts";
 
 // A menu that names a command that does not exist, or a `when` with a typo, fails silently in VS Code. This reads package.json and fails instead
 // (docs/16-ui-redesign/08-menus.md §9). It is not type-checked with the extension: it reaches into the webview for `nodeContext`.
@@ -301,6 +302,7 @@ test("every key a card's, a row's, a pane's or a header's `when` clause tests is
     ...Object.keys(JSON.parse(nodeContext({ node: callCard(), contextId: "main", isFocusRoot: false }))),
     ...Object.keys(JSON.parse(paneContext("canvas"))),
     ...Object.keys(JSON.parse(panelContext({ id: "main", kind: "main" }))),
+    ...Object.keys(JSON.parse(tourRowContext({ id: "t-1", title: "T", readable: true, state: "finished", pinned: false }))),
   ]);
   const VSCODE = new Set(["webviewId", "webviewSection"]); // VS Code's own keys, and V-NOC's global ones (`vnoc.…`)
   for (const e of webviewMenu) {

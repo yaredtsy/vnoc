@@ -4164,6 +4164,123 @@ fn set_tour_setting(core: &mut Core, key: &str, value: &str) -> Value {
         .unwrap()
 }
 
+/// Every file under `.vnoc`, by path, with its bytes: a dry pin must leave them as they were.
+fn vnoc_files(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(dir: &Path, base: &Path, into: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, base, into);
+            } else {
+                into.insert(
+                    path.strip_prefix(base).unwrap().display().to_string(),
+                    std::fs::read(&path).unwrap_or_default(),
+                );
+            }
+        }
+    }
+    let mut found = std::collections::BTreeMap::new();
+    walk(&root.join(".vnoc"), root, &mut found);
+    found
+}
+
+#[test]
+fn a_dry_tour_pin_answers_pinned_when_it_would_and_writes_nothing() {
+    let root = tour_git_project("pin-dry");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    // `finish` pinned it: take the pin record off, so it is a tour that can be pinned
+    let file = tour_file(&root, &id);
+    let record = std::fs::read_to_string(&file).unwrap();
+    let without: String = record
+        .lines()
+        .filter(|l| !l.contains("\"type\":\"pin\""))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert_ne!(record, without, "the tour had a pin record");
+    std::fs::write(&file, &without).unwrap();
+    tell_tour_changed(&mut core, &root, &id);
+    let before = vnoc_files(&root);
+    let status = git_out(&root, &["status", "--porcelain"]);
+
+    let dry = core
+        .request("vnoc/tourPin", json!({ "id": id, "dry": true }))
+        .unwrap();
+    println!("tourPin dry: {dry}");
+    let head = git_out(&root, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_eq!(dry["state"], "pinned", "it would be pinned: {dry}");
+    assert_eq!(dry["commit"], json!(head));
+    assert!(dry.get("committed").is_none(), "{dry}");
+    // and nothing was written: the tour's file has no pin record, no file under `.vnoc` changed, git has nothing new
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), without);
+    assert_eq!(vnoc_files(&root), before, "a dry pin writes no file");
+    assert_eq!(git_out(&root, &["status", "--porcelain"]), status);
+    assert_eq!(git_out(&root, &["log", "--oneline"]).lines().count(), 1);
+    let row = &core.request("vnoc/tours", json!({})).unwrap()["tours"][0];
+    assert_eq!(row["pinned"], false, "still not pinned: {row}");
+
+    // a dry pin that also commits is not a thing
+    let both = core
+        .request(
+            "vnoc/tourPin",
+            json!({ "id": id, "dry": true, "commit": {} }),
+        )
+        .unwrap_err();
+    assert_eq!(both["code"], -32602, "{both}");
+
+    // the real one then pins it
+    let pinned = core.request("vnoc/tourPin", json!({ "id": id })).unwrap();
+    assert_eq!(pinned["state"], "pinned", "{pinned}");
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("\"type\":\"pin\""),
+        "the pin record is written by the real pin"
+    );
+    core.finish();
+}
+
+#[test]
+fn a_dry_tour_pin_on_uncommitted_work_names_the_files_in_the_cores_words_and_stages_and_commits_nothing()
+ {
+    let root = tour_git_project("pin-dry-ask");
+    let (mut core, _) = ready_core(&root);
+    leave_uncommitted(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    tell_tour_changed(&mut core, &root, &id);
+    let before = vnoc_files(&root);
+    let status = git_out(&root, &["status", "--porcelain"]);
+
+    let dry = core
+        .request("vnoc/tourPin", json!({ "id": id, "dry": true }))
+        .unwrap();
+    println!("tourPin dry: {dry}");
+    // the same answer as the real one (`tourPin` with no commit says `not_pinned`: `ask` is the answer of a `finish` that is to ask), with each reason in words
+    let real = core.request("vnoc/tourPin", json!({ "id": id })).unwrap();
+    assert_eq!(dry["state"], real["state"]);
+    assert_eq!(dry["state"], "not_pinned");
+    assert_eq!(dry["reasons"][0]["code"], "uncommitted");
+    assert_eq!(
+        dry["reasons"][0]["files"],
+        json!([{ "status": " M", "path": "orders/service.py" }])
+    );
+    assert_eq!(
+        dry["reasons"][0]["words"],
+        "1 file has changes that are not committed"
+    );
+    assert_eq!(real["reasons"][0]["words"], dry["reasons"][0]["words"]);
+    assert!(dry.get("commit").is_none(), "{dry}");
+    // nothing was staged or committed, and no file of `.vnoc` changed
+    assert_eq!(git_out(&root, &["diff", "--cached", "--name-only"]), "");
+    assert_eq!(git_out(&root, &["status", "--porcelain"]), status);
+    assert_eq!(git_out(&root, &["log", "--oneline"]).lines().count(), 1);
+    assert_eq!(vnoc_files(&root), before);
+    core.finish();
+}
+
 #[test]
 fn tour_pin_on_uncommitted_work_is_refused_with_the_files_and_with_commit_commits_exactly_those() {
     let root = tour_git_project("pin");
@@ -4288,6 +4405,35 @@ fn tour_ids_writes_the_id_lines_and_the_tour_stays_fresh_because_the_edit_rebase
     let again = core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
     assert_eq!(again["changed"], json!([]), "{again}");
     assert_eq!(again["recorded"], false);
+    core.finish();
+}
+
+#[test]
+fn a_stop_that_was_given_an_id_is_found_under_its_new_name_after_a_rename() {
+    let root = tour_git_project("ids-rename");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "with an id", &[PLACE]);
+    tell_tour_changed(&mut core, &root, &id);
+    core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    let service = root.join("orders/service.py");
+    let watcher = |core: &mut Core| {
+        core.notify(
+            "vnoc/filesChanged",
+            json!({ "paths": [service.clone(), tour_file(&root, &id), root.join(".vnoc/nodes")] }),
+        );
+        core.wait_for("vnoc/indexChanged");
+    };
+    watcher(&mut core);
+    // `place` is renamed in the source
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(&service, text.replace("def place(", "def place_order(")).unwrap();
+    watcher(&mut core);
+    let found = core.tour(&id);
+    assert_ne!(found["stops"][0]["check"], "gone", "{found}");
+    assert_eq!(
+        found["stops"][0]["now"]["qualname"], "OrderService.place_order",
+        "found by its ID, under its new name: {found}"
+    );
     core.finish();
 }
 

@@ -19,6 +19,8 @@ import { callLookup } from "@vnoc/shared/calls.ts";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
 import { Tours, tourContext, vnocIsAbove } from "./tours";
+import { type Level, TourActions } from "./tourActions";
+import * as path from "path";
 import { readingStarts, readingTheCode } from "./progress";
 import { registerSidebar } from "./sidebarView";
 import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
@@ -54,6 +56,8 @@ const mapPosts: Extract<Notes, { type: "mapDrawn" }>[] = [];
 const barPosts: Extract<Notes, { type: "tourBar" }>[] = [];
 /** The viewport each canvas last reported, by context (for the test suite). */
 const viewports: Record<string, { x: number; y: number; zoom: number }> = {};
+/** What the **Commit and Pin…** dialog was, each time it changed (for the test suite). */
+const pinDialogPosts: Extract<Notes, { type: "pinDialog" }>[] = [];
 /** What the sidebar's TOURS section drew, each time it changed (for the test suite). */
 const toursPosts: Extract<Notes, { type: "toursDrawn" }>[] = [];
 /** The nodes that showed `▶ N`, by surface, as each page last said (for the test suite). */
@@ -159,6 +163,49 @@ export function activate(ctx: vscode.ExtensionContext) {
     },
     log: (text) => output.appendLine(text),
   });
+  // what the user does to a tour from a menu or a button: the messages say what the core answered (`tourActions.ts`). The suite cannot click a message's button or a QuickPick: it queues
+  // the answers (`answerTourMessages`, `answerTourPicks`), and reads what was said
+  const messagesSaid: { level: Level; text: string; buttons: string[] }[] = [];
+  let messageAnswers: (string | undefined)[] | null = null;
+  let pickAnswers: string[] | null = null;
+  const tourActions = new TourActions({
+    request: (method, params) => c.request(method, params as object | undefined),
+    view: (id) => tours.get(id),
+    dirtyFiles: () => dirty.paths,
+    save: async (paths) => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+      for (const p of paths) {
+        const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === path.join(folder, p));
+        // a save that did not happen (the file changed on disk meanwhile) stops it: the IDs are written into the file on disk, and the buffer would then disagree with it
+        if (doc && !(await doc.save())) throw new Error(`${p} could not be saved, so no ID was written. Save it (or revert it), then write the IDs.`);
+      }
+    },
+    say: async (level, text, buttons) => {
+      messagesSaid.push({ level, text, buttons });
+      if (messageAnswers !== null) return messageAnswers.shift();
+      const show = level === "info" ? vscode.window.showInformationMessage : level === "warn" ? vscode.window.showWarningMessage : vscode.window.showErrorMessage;
+      return show(text, ...buttons);
+    },
+    pick: async (items, options) => {
+      if (pickAnswers !== null) {
+        const want = pickAnswers.shift();
+        return items.find((i) => i.label === want);
+      }
+      return vscode.window.showQuickPick(items, { title: options.title, placeHolder: options.placeHolder });
+    },
+    // the dialog is the canvas page's: the host tells it, and the canvas comes up if it was not open
+    openDialog: (id, title) => {
+      tours.askDialog(id, title);
+      void panels.showCanvas();
+    },
+    showChanges: () => void vscode.commands.executeCommand("workbench.view.scm"),
+  });
+  /** The tour a row's menu was opened on (`tour` of what the row said), or a stop's tour */
+  const tourOfArg = (arg: unknown): string => {
+    const id = (arg as { tour?: unknown } | null)?.tour;
+    if (typeof id !== "string") throw new Error("Pick a tour first.");
+    return id;
+  };
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
   const dirty = new DirtyFiles((paths) => panels.emit("dirtyFiles", { paths }));
@@ -190,6 +237,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     retryCalls: async (key) => callTrees.retry(key),
     rowClick: (context, id) => commands.rowClick(context, id),
     showTours: (key, context) => commands.showToursOf(key, context),
+    tourActions,
+    openChange: async (file) => {
+      const root = c.gitRoot ?? (await c.loadStructure()).git_root;
+      const uri = vscode.Uri.file(path.join(root, file));
+      // the diff against HEAD, as the source control view's own click opens it; where the git extension is not there, the file itself
+      if ((await vscode.commands.getCommands()).includes("git.openChange")) await vscode.commands.executeCommand("git.openChange", uri);
+      else await vscode.commands.executeCommand("vscode.open", uri);
+    },
     showDoc: (params) => commands.showDoc(params),
     command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
     tours,
@@ -235,6 +290,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     registerSidebar(panels),
     attentionTree,
     ...commands.register(),
+    // the tour row's menu (`tourRow`): the arg is what the row said, `{ tour }`; a refusal is shown in the core's words by the action itself
+    vscode.commands.registerCommand("vnoc.tourPin", (arg) => tourActions.pin(tourOfArg(arg))),
+    vscode.commands.registerCommand("vnoc.tourCommitAndPin", (arg) => tourActions.commitAndPin(tourOfArg(arg))),
+    vscode.commands.registerCommand("vnoc.tourWriteIds", (arg) => tourActions.writeIds(tourOfArg(arg))),
+    vscode.commands.registerCommand("vnoc.tourSettings", () => tourActions.settings()),
     vscode.commands.registerCommand("vnoc.reportIssue", () => reportIssue(help)),
     vscode.commands.registerCommand("vnoc.help", () => helpAndFeedback(help)),
     watchFiles(c, (fsPath) => docs.changed(fsPath)),
@@ -341,6 +401,15 @@ export function activate(ctx: vscode.ExtensionContext) {
     mapClick: (stop: string) => panels.emit("viewCommand", { name: "mapClick", key: stop }),
     /** sets the pan and zoom of the canvas that is on screen, as a drag and the wheel would: `x,y,zoom` */
     setView: (text: string) => panels.emit("viewCommand", { name: "setView", text }),
+    /** every state of the **Commit and Pin…** dialog, in order (`dialog: null`: closed) */
+    pinDialog: () => pinDialogPosts,
+    /** a button of the dialog, as the page handles it: `commit`, `cancel`, `always`, `message` (with `text`), `file:<path>` */
+    pinDialogClick: (key: string, text?: string) => panels.emit("viewCommand", { name: "pinDialog", key, text }),
+    /** every message the tour actions said (`level`, its `text`, its `buttons`), in order; with answers queued the message is not shown, and each is answered with the next one (`undefined`: dismissed) */
+    tourMessages: () => messagesSaid,
+    answerTourMessages: (answers: (string | undefined)[] | null) => void (messageAnswers = answers),
+    /** the QuickPicks of Tour Settings…, answered by the label of the item to pick; `null`: VS Code's own */
+    answerTourPicks: (labels: string[] | null) => void (pickAnswers = labels),
     /** every drawing of the sidebar's TOURS section, in order */
     toursDrawn: () => toursPosts,
     /** every report of the nodes that show `▶ N` (the cards of the canvas, the rows of the structure that are drawn): the node's id, its count and the chip's tooltip */
@@ -473,6 +542,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "stageDrawn":
       stagePosts.push(note);
+      break;
+    case "pinDialog":
+      pinDialogPosts.push(note);
       break;
     case "keysChecked":
       keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken, hosts: note.hosts });

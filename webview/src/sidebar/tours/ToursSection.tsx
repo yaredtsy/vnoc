@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { BarButton } from "@/components/BarButton.tsx";
 import { Codicon } from "@/components/Codicon.tsx";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
 import { cn } from "@/lib/utils.ts";
 import { callFacts } from "@vnoc/shared/calls.ts";
 import { findNode } from "@vnoc/shared/tree.ts";
@@ -258,6 +260,13 @@ export function ToursSection() {
           <span>Tours</span>
           {rows !== null && <span className="ml-1.5 rounded-full bg-[color:var(--card-badge-bg)] px-1.5 text-[10px] font-normal text-[color:var(--card-badge-fg)] normal-case">{rows.length}</span>}
         </button>
+        {/* the section's menu: **Tour Settings…** for now (TR22b adds the rest of 05 §3's list) */}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<BarButton icon="ellipsis" label="More Tour Actions" data-part="more" className="size-[18px] normal-case" />} />
+          <DropdownMenuContent>
+            <DropdownMenuItem onClick={() => void request("tourSettingsPick").catch(() => {})}>Tour Settings…</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {!folded && (
         <>

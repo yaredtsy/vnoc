@@ -117,6 +117,9 @@ pub enum Ask<'a> {
         commit: bool,
         message: Option<&'a str>,
     },
+    /// `vnoc/tourPin { dry: true }`: the answer of a pin that commits nothing, and writes nothing (no pin record, no check record, no commit): `pinned` says it would be
+    /// pinned now, and the reasons say why not. The cover asks it to say why a tour is not pinned
+    Look,
 }
 
 /// What a commit made to pin did.
@@ -207,7 +210,7 @@ pub fn not_pinned(
     let Pinnable::No(reasons) = pinnable else {
         unreachable!("not_pinned is for a pin that cannot be made")
     };
-    let of_this_tour = matches!(ask, Ask::Pin { .. });
+    let of_this_tour = matches!(ask, Ask::Pin { .. } | Ask::Look);
     // a commit that was made stays made: it is said first, and the reason under it
     let mut lines: Vec<String> = committed
         .as_ref()
@@ -234,6 +237,10 @@ pub fn not_pinned(
                 out.command = Some(format!("vnoc tour pin {id} --commit"));
                 out.node_files = node_files.iter().map(|f| f.path.to_string()).collect();
             }
+        }
+        Ask::Look => {
+            // what a commit of the files would take along: the dialog lists them
+            out.node_files = node_files.iter().map(|f| f.path.to_string()).collect();
         }
         Ask::Pin { commit, .. } => {
             if *commit {
@@ -327,13 +334,16 @@ pub fn pin_finish(
         .as_ref()
         .map_err(|e| ActError::Usage(format!("the tour {id} cannot be read: {e}")))?;
     let (recorded, placed) = placed_check(project, index, tour, measured.len);
-    // what was just found is the record of this tour: the next look costs `stat`s
-    check::record(vnoc_root, id, &recorded)?;
+    // what was just found is the record of this tour: the next look costs `stat`s (a look writes nothing)
+    if !matches!(ask, Ask::Look) {
+        check::record(vnoc_root, id, &recorded)?;
+    }
 
     let mut pinnable = pin::can_pin(project, tour, head, &recorded, &placed);
     let wants_commit = match ask {
         Ask::Finish { commit, .. } => *commit == Choice::Always,
         Ask::Pin { commit, .. } => *commit,
+        Ask::Look => false,
     };
     let mut committed = None;
     // the node files of the tour's IDs go with the code files, and only when code is being committed: they do not decide the pin
@@ -345,6 +355,7 @@ pub fn pin_finish(
     if wants_commit && let Some(files) = pinnable.only_uncommitted() {
         let message = match ask {
             Ask::Finish { message, .. } | Ask::Pin { message, .. } => message.map(String::from),
+            Ask::Look => None,
         }
         .unwrap_or_else(|| finishing::default_message(&tour.title));
         let code_files: Vec<Changed> = files.to_vec();
@@ -375,6 +386,12 @@ pub fn pin_finish(
     }
     match pinnable {
         Pinnable::No(_) => Ok(not_pinned(ask, id, &pinnable, committed, &node_files)),
+        // a look says it would be pinned, and leaves the file as it is
+        Pinnable::Yes { head } if matches!(ask, Ask::Look) => Ok(Pinned {
+            out: PinOut::pinned(&head, None),
+            lines: Vec::new(),
+            at: Some(short_commit(&head)),
+        }),
         Pinnable::Yes { head } => {
             // the tour is as it was when it was read: a write in between would be a stop the pin never saw
             let lock = ToursLock::take(vnoc_root).map_err(StoreError::from)?;

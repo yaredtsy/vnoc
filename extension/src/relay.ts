@@ -61,7 +61,13 @@ export interface Deps {
     code(id: TourId, stop: StopId): Promise<AsWritten | null>;
     calls(id: TourId): Promise<TourCallsAnswer>;
     countsOf(): Promise<{ counts: Record<string, number> }>;
+    /** the tour **Commit and Pin…** was chosen for in the host, once (see `Requests.tourDialogTake`) */
+    takeDialog(): { id: TourId; title: string | null } | null;
   };
+  /** what the user does to a tour from a button (`tourActions.ts`): the host asks, saves, writes and says what happened */
+  tourActions: { writeIds(id: TourId): Promise<unknown>; settings(): Promise<unknown> };
+  /** a file's diff against HEAD (`git.openChange`), a link of the **Commit and Pin…** dialog */
+  openChange(path: string): Promise<void>;
   /** `▶ N` and **Show Tours**: the node is selected in its context, the TOURS section shows its tours */
   showTours(key: string, context: ContextId): Promise<void>;
 }
@@ -102,6 +108,12 @@ export function createHandlers(d: Deps): Handlers {
     tourCode: ({ id, stop }) => d.tours.code(id, stop),
     tourCalls: ({ id }) => d.tours.calls(id),
     tourCounts: () => d.tours.countsOf(),
+    tourPin: (params) => d.core("vnoc/tourPin", params),
+    tourSettings: (params) => d.core("vnoc/tourSettings", params),
+    tourWriteIds: async ({ id }) => void (await d.tourActions.writeIds(id)),
+    tourDialogTake: async () => d.tours.takeDialog(),
+    openChange: ({ path }) => d.openChange(path),
+    tourSettingsPick: async () => void (await d.tourActions.settings()),
     showTours: ({ key, context }) => d.showTours(key, context),
   };
 }

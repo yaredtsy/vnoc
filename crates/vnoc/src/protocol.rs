@@ -768,7 +768,8 @@ impl Request for TourHalt {
 /// `vnoc/tourPin`: the pin of one tour (`vnoc tour pin`): `{ state: "pinned", commit }`, or `{ state: "not_pinned", reasons: [..] }` with the stale stops, the
 /// files that are not committed (`reasons[].files`), git's own words. With `commit`, the files that are the one thing in the way are committed first, exactly those
 /// files and the `node.toml` of the tour's IDs, with `message` (`Code for the tour "<title>"` by default); the answer then has `committed`. A tour that is
-/// pinned at a commit HEAD has behind it answers `already: true` and does nothing.
+/// pinned at a commit HEAD has behind it answers `already: true` and does nothing. With `dry` the answer is the same and nothing is written: `pinned` means it would be.
+/// Each reason in the answer has `words`, the core's sentence for it (the pages make none).
 pub enum TourPin {}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -782,6 +783,9 @@ pub struct TourPinParams {
     pub id: String,
     #[serde(default)]
     pub commit: Option<TourPinCommit>,
+    /// answer as a pin would and write nothing (no pin record, no file, no commit): `pinned` says it would be pinned now, and the reasons say why not. Not with `commit`
+    #[serde(default)]
+    pub dry: bool,
 }
 
 impl Request for TourPin {

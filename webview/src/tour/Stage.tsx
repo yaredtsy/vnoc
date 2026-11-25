@@ -21,6 +21,9 @@ import type { TextDrawn } from "./stage/Rich.tsx";
 import { TextPane } from "./stage/TextPane.tsx";
 import { type Shown as Code, useCode } from "./stage/useCode.ts";
 import { useAsWritten } from "./stage/useWritten.ts";
+import { useDryPin } from "./stage/useDryPin.ts";
+import { coverPin } from "./pin.ts";
+import { openPinDialog } from "./pinDialog.ts";
 import { type Choice, wantsWritten, writtenLook } from "./written.ts";
 import "./stage.css";
 
@@ -88,6 +91,9 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   // the code the pane shows: the commit's lines for a step shown as written, nothing while they are asked for, else the node as it is now
   const code: Code = asWritten ? { first: asWritten.lines[0], lines: asWritten.code, text: asWritten.code.join("\n") } : asking ? null : nowCode;
   const wantsPane = wantsCode || showWritten || asking;
+  // the cover of a finished tour that is not pinned: why not, from the core (a dry pin, nothing is written), and what it offers by the project's settings
+  const dry = useDryPin(view, current?.mode === "cover");
+  const pinned = view ? coverPin(view, dry) : null;
   // the agent: what it is doing (the tour's state, and no news), and whether `Next` has anywhere to go yet
   const beat = view ? beatOf(view) : "finished";
   const next = view ? nextState(view) : "ready";
@@ -133,6 +139,9 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       if (to != null) go(tourId, to);
     },
     closeTour: () => dispatch({ type: "closeContext", id: contextId }, contextId),
+    // the cover's offers: **Write IDs** is the host's (it saves the stops' files first), **Commit and Pin…** opens the dialog
+    writeIds: () => void request("tourWriteIds", { id: tourId }).catch(() => {}),
+    commitAndPin: () => void openPinDialog(tourId, view?.title ?? null),
     goToCode: () => stop && goToStop(structure?.root ?? null, stop, step),
   };
   const jump = useCallback((to: string) => go(tourId, to), [tourId]);
@@ -217,8 +226,11 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
         const all = segmentsOf(view);
         return { total: all.length, planned: all.filter((x) => x.planned).length, filled: all.filter((x) => x.filled).length };
       })(),
+      pin: current.mode === "cover" ? (pinned?.pin?.text ?? null) : null,
+      reason: current.mode === "cover" ? (pinned?.reason ?? null) : null,
+      offers: current.mode === "cover" ? (pinned?.offers ?? []).map((o) => `${o.text} | ${o.button}`) : [],
     });
-  }, [view, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const style = { height: folded ? 30 : height };
   const grip = (
@@ -328,7 +340,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
               <Codicon name="chevron-down" />
             </button>
           </div>
-          {current!.mode === "cover" ? <Cover view={view} beat={beat} onStart={() => act.current.start()} /> : <End view={view} onBack={() => act.current.back()} onSkipped={() => act.current.skipped()} onAgain={() => act.current.again()} onClose={() => act.current.closeTour()} />}
+          {current!.mode === "cover" ? <Cover view={view} beat={beat} pin={pinned!} onStart={() => act.current.start()} onOffer={(kind) => act.current[kind === "ids" ? "writeIds" : "commitAndPin"]()} /> : <End view={view} onBack={() => act.current.back()} onSkipped={() => act.current.skipped()} onAgain={() => act.current.again()} onClose={() => act.current.closeTour()} />}
         </>
       )}
     </div>

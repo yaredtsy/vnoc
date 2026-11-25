@@ -139,3 +139,18 @@
 .tour-dot-pulsing { animation: tour-dot-pulse 1.2s ease-in-out infinite; }
 @keyframes tour-dot-pulse { 50% { opacity: 0.2; } }
 @media (prefers-reduced-motion: reduce) { .tour-dot-pulsing { animation: none; } }
+
+/* the Commit and Pin… dialog: over the canvas page, the only dialog a tour has */
+.pin-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 55%, transparent); }
+.pin-dialog { width: min(480px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; background: var(--vscode-editorWidget-background, var(--card)); color: var(--foreground); border: 1px solid var(--vscode-editorWidget-border, var(--border)); border-radius: 4px; box-shadow: 0 6px 24px rgb(0 0 0 / 0.35); font-size: 13px; }
+.pin-title { margin: 0; font-size: 14px; }
+.pin-dim { margin: 0; color: var(--muted-foreground); }
+.pin-files { margin: 0; padding: 0; list-style: none; max-height: 140px; overflow: auto; font-family: var(--editor-font); font-size: 12px; }
+.pin-file { padding: 1px 0; border: 0; background: none; font: inherit; color: var(--vscode-textLink-foreground, var(--ring)); cursor: pointer; text-align: left; }
+.pin-file:hover { text-decoration: underline; }
+.pin-label { display: flex; flex-direction: column; gap: 3px; color: var(--muted-foreground); }
+.pin-message { resize: vertical; padding: 4px 6px; font: inherit; color: var(--foreground); background: var(--vscode-input-background, var(--background)); border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 2px; }
+.pin-check { display: flex; align-items: center; gap: 6px; }
+.pin-error { margin: 0; color: var(--vscode-errorForeground, #f85149); white-space: pre-wrap; }
+/* an offer on the cover: the sentence, and its button after it */
+.stage-offer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; max-width: none; }

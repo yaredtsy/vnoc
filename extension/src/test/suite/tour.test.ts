@@ -39,6 +39,12 @@ interface Api {
   tourChips(): Extract<Notes, { type: "tourChips" }>[];
   showTours(key: string, context: string): Promise<void>;
   request<T>(method: string, params?: object): Promise<T>;
+  pinDialog(): Extract<Notes, { type: "pinDialog" }>[];
+  pinDialogClick(key: string, text?: string): void;
+  tourMessages(): { level: string; text: string; buttons: string[] }[];
+  answerTourMessages(answers: (string | undefined)[] | null): void;
+  answerTourPicks(labels: string[] | null): void;
+  dirtyFiles(): string[];
 }
 let api: Api;
 
@@ -1384,5 +1390,245 @@ suite("the tours of the selected node", () => {
     assert.strictEqual(mapOfTour(tour)!.cards.find((c) => c.id === "s1")!.off, 3);
     api.stageClick("closeTour");
     await dropTourContext();
+  });
+});
+
+// ── pin and IDs by a click (docs/26-tours/05-on-screen.md §3, §5 "Decided for TR22a") ───────────────────────────────────────────────────────────────────────────────
+//
+// The cover says why a tour is not pinned and offers what the settings allow; **Commit and Pin…** is one dialog; **Write IDs for Its Stops** saves first and says what it wrote; **Pin** and
+// **Tour Settings…** are commands. The suite cannot click in a webview or answer a message: it presses the page's buttons through the host and queues the answers. Each test makes its own
+// tour of its own edit, and puts the workspace back: git reset to the commit it had at the start of the suite, the files this test made removed, `.vnoc/vnoc.toml` as it was.
+
+suite("pin and IDs by a click", () => {
+  const gitOut = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace(), encoding: "utf8" });
+  const shop = () => path.join(workspace(), "tourdemo", "shop.py");
+  const toml = () => path.join(workspace(), ".vnoc", "vnoc.toml");
+  const untracked = () => gitOut("status", "--porcelain", "--untracked-files=all").split("\n").filter((l) => l.startsWith("??")).map((l) => l.slice(3));
+  let head0 = "";
+  let toml0: string | null = null;
+  let untracked0 = new Set<string>();
+  const dialog = () => api.pinDialog().at(-1)?.dialog ?? null;
+  const dialogShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof dialog>>) => boolean, ms = 30_000) => {
+    await until(what, () => {
+      const d = dialog();
+      return d !== null && ready(d);
+    }, ms);
+    return dialog()!;
+  };
+  /** the tour the way an agent writes it, of what shop.py is now: checkout and has_stock, finished with no IDs (the settings decide the rest) */
+  const finished = (title: string): string => {
+    const id = JSON.parse(tourCmd(["start", "--title", title, "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", id, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
+    tourCmd(["add", id, node("has_stock"), "--body-file", "-", "--from", "s1", "--line", "6"], SHORT.has_stock);
+    tourCmd(["finish", id, "--no-ids"]);
+    return id;
+  };
+  /** work that is not committed: a note after the last function (no stop of the tours moves) */
+  const leaveWork = () => fs.appendFileSync(shop(), "\n# not committed yet\n");
+  const openTour = async (id: string) => {
+    api.toursClick("fold");
+    api.toursClick("unfold");
+    await sectionShows("the list has the tour", (d) => d.mode === "list" && d.list.some((r) => r.id === id), 30_000);
+    api.toursClick(`row:${id}`);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await toCover(id);
+  };
+  const messagesFrom = (n: number) => api.tourMessages().slice(n);
+
+  suiteSetup(async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    head0 = gitOut("rev-parse", "HEAD").trim();
+    toml0 = fs.existsSync(toml()) ? fs.readFileSync(toml(), "utf8") : null;
+  });
+
+  setup(() => {
+    untracked0 = new Set(untracked());
+    api.answerTourMessages([]);
+  });
+
+  teardown(async function () {
+    this.timeout(30_000);
+    api.answerTourMessages(null);
+    api.answerTourPicks(null);
+    api.pinDialogClick("cancel");
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await vscode.window.tabGroups.close(vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputText));
+    gitOut("reset", "--hard", head0);
+    for (const f of untracked()) if (!untracked0.has(f) && !f.startsWith(".vnoc/")) fs.rmSync(path.join(workspace(), f), { force: true });
+    if (toml0 === null) fs.rmSync(toml(), { force: true });
+    else fs.writeFileSync(toml(), toml0);
+  });
+
+  test("a tour of uncommitted work: the cover says not pinned, why, and what it offers; Commit and Pin… lists exactly those files, and Cancel commits nothing", async function () {
+    this.timeout(90_000);
+    leaveWork();
+    const id = finished("Uncommitted shop");
+    await openTour(id);
+    const cover = await stageShows("not pinned, with its reason", (d) => d.mode === "cover" && d.pin === "not pinned" && d.reason !== null, 30_000, id);
+    assert.strictEqual(cover.reason, "1 file has changes that are not committed", "the core's words");
+    assert.deepStrictEqual(cover.offers, ["2 stops have no ID: the tour will not follow a rename. | Write IDs", "1 file has changes that are not committed. | Commit and Pin…"]);
+    // the dry pin names the files, and wrote nothing
+    const dry = await api.request<{ state: string; reasons: { code: string; files: { path: string }[]; words: string }[] }>("vnoc/tourPin", { id, dry: true });
+    assert.deepStrictEqual(dry.reasons[0].files.map((f) => f.path), ["tourdemo/shop.py"]);
+    assert.ok(!JSON.parse(tourCmd(["show", id, "--json"])).pinned, "asking why did not pin it");
+    // the dialog lists exactly them, with the message the core would use
+    const status = gitOut("status", "--porcelain");
+    const commits = gitOut("log", "--oneline");
+    api.stageClick("commitAndPin");
+    const open = await dialogShows("the dialog", (d) => d.tour === id && d.files.length > 0);
+    assert.deepStrictEqual(open.files, ["tourdemo/shop.py"]);
+    assert.strictEqual(open.message, 'Code for the tour "Uncommitted shop"');
+    assert.strictEqual(open.always, false);
+    assert.strictEqual(open.error, null);
+    // Cancel: nothing is committed, nothing is staged
+    api.pinDialogClick("cancel");
+    await until("the dialog closed", () => dialog() === null);
+    assert.strictEqual(gitOut("status", "--porcelain"), status, "git status is as it was");
+    assert.strictEqual(gitOut("log", "--oneline"), commits, "git log is as it was");
+    assert.strictEqual(gitOut("diff", "--cached", "--name-only"), "", "nothing staged");
+  });
+
+  test("Commit and Pin commits those files and the cover says pinned at …; the check box writes commit = always and changes nothing else in vnoc.toml", async function () {
+    this.timeout(90_000);
+    leaveWork();
+    const id = finished("Commit and pin");
+    await openTour(id);
+    await stageShows("not pinned", (d) => d.mode === "cover" && d.pin === "not pinned", 30_000, id);
+    api.stageClick("commitAndPin");
+    await dialogShows("the dialog", (d) => d.tour === id && d.files.length > 0);
+    api.pinDialogClick("message", "Code for the pin suite");
+    api.pinDialogClick("always");
+    const typed = await dialogShows("message and check box", (d) => d.message === "Code for the pin suite" && d.always);
+    assert.deepStrictEqual(typed.files, ["tourdemo/shop.py"]);
+    const before = toml0 ?? "";
+    api.pinDialogClick("commit");
+    await until("the dialog closed", () => dialog() === null, 30_000);
+    assert.strictEqual(gitOut("log", "-1", "--format=%s").trim(), "Code for the pin suite");
+    assert.strictEqual(gitOut("show", "--name-only", "--format=", "HEAD").trim(), "tourdemo/shop.py", "exactly the tour's file");
+    const pinned = await stageShows("pinned at the new commit", (d) => d.mode === "cover" && d.pin?.startsWith("pinned at ") === true, 30_000, id);
+    assert.strictEqual(pinned.pin, `pinned at ${gitOut("rev-parse", "--short=7", "HEAD").trim()}`);
+    assert.strictEqual(pinned.reason, null);
+    // the setting: `commit = "always"` in `[tours]`, and every other line of the file as it was
+    const after = fs.readFileSync(toml(), "utf8");
+    assert.ok(/^\[tours\]/m.test(after) && /^commit = "always"$/m.test(after), after);
+    const was = new Set(before.split("\n"));
+    const added = after.split("\n").filter((l) => !was.has(l) && l.trim() !== "");
+    assert.deepStrictEqual(added.filter((l) => l !== "[tours]" && l !== 'commit = "always"'), [], `nothing else changed: ${after}`);
+    assert.strictEqual((await api.request<{ commit: { value: string } }>("vnoc/tourSettings")).commit.value, "always");
+  });
+
+  test("with never the cover offers nothing but still says not pinned, and the menu's Commit and Pin… still works", async function () {
+    this.timeout(90_000);
+    await api.request("vnoc/tourSettings", { ids: "never", commit: "never" });
+    leaveWork();
+    const id = finished("Never offered");
+    await openTour(id);
+    const cover = await stageShows("not pinned and nothing offered", (d) => d.mode === "cover" && d.pin === "not pinned" && d.reason !== null, 30_000, id);
+    assert.deepStrictEqual(cover.offers, []);
+    assert.strictEqual(cover.reason, "1 file has changes that are not committed");
+    await vscode.commands.executeCommand("vnoc.tourCommitAndPin", { tour: id });
+    const open = await dialogShows("the dialog from the menu", (d) => d.tour === id && d.files.length > 0);
+    assert.deepStrictEqual(open.files, ["tourdemo/shop.py"]);
+    api.pinDialogClick("cancel");
+    await until("the dialog closed", () => dialog() === null);
+  });
+
+  test("Pin on a tour with files not committed is refused in the core's words, and its message offers Commit and Pin…", async function () {
+    this.timeout(90_000);
+    leaveWork();
+    const id = finished("Refused pin");
+    const said = api.tourMessages().length;
+    api.answerTourMessages(["Commit and Pin…"]);
+    await vscode.commands.executeCommand("vnoc.tourPin", { tour: id });
+    assert.deepStrictEqual(messagesFrom(said)[0], { level: "warn", text: "Not pinned: 1 file has changes that are not committed.", buttons: ["Commit and Pin…"] });
+    const open = await dialogShows("the dialog the message opened", (d) => d.tour === id && d.files.length > 0);
+    assert.deepStrictEqual(open.files, ["tourdemo/shop.py"]);
+    api.pinDialogClick("cancel");
+    await until("the dialog closed", () => dialog() === null);
+  });
+
+  test("Pin on a tour that can be pinned pins it, at HEAD", async function () {
+    this.timeout(90_000);
+    leaveWork();
+    const id = finished("Pinnable");
+    assert.ok(!JSON.parse(tourCmd(["show", id, "--json"])).pinned);
+    gitOut("commit", "-qam", "the work the tour is about");
+    const said = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourPin", { tour: id });
+    const head = gitOut("rev-parse", "HEAD").trim();
+    assert.deepStrictEqual(messagesFrom(said).map((m) => m.text), [`Pinned at ${head.slice(0, 7)}.`]);
+    const shown = JSON.parse(tourCmd(["show", id, "--json"]));
+    assert.strictEqual(shown.pinned, true);
+    assert.strictEqual(shown.pin, head);
+  });
+
+  test("Write IDs for Its Stops: a dirty stop file is saved first, after a question; then the IDs are written, and a rename in the source keeps the stop found", async function () {
+    this.timeout(120_000);
+    const id = finished("IDs for the stops");
+    await sleep(1500); // the editor's file watcher has told it of the last test's reset: a buffer made dirty before that would meet a file it thinks changed under it
+    const doc = await vscode.workspace.openTextDocument(shop());
+    const editor = await vscode.window.showTextDocument(doc);
+    await editor.edit((b) => b.insert(new vscode.Position(doc.lineCount, 0), "\n# unsaved\n"));
+    assert.ok(doc.isDirty);
+    await until("the host knows the file is dirty", () => api.dirtyFiles().includes("tourdemo/shop.py"));
+    // Cancel: nothing is saved and nothing is written
+    let said = api.tourMessages().length;
+    api.answerTourMessages(["Cancel"]);
+    await vscode.commands.executeCommand("vnoc.tourWriteIds", { tour: id });
+    assert.deepStrictEqual(messagesFrom(said), [{ level: "warn", text: "Save 1 file first? The IDs are written into it.", buttons: ["Save and Write IDs", "Cancel"] }]);
+    assert.ok(doc.isDirty, "not saved");
+    assert.ok(!/ID: /.test(fs.readFileSync(shop(), "utf8")), "no ID written");
+    // Save and Write IDs
+    said = api.tourMessages().length;
+    api.answerTourMessages(["Save and Write IDs", undefined]);
+    await vscode.commands.executeCommand("vnoc.tourWriteIds", { tour: id });
+    const sent = messagesFrom(said);
+    assert.strictEqual(sent[0].text, "Save 1 file first? The IDs are written into it.");
+    assert.ok(/^IDs written into \d+ files?\.$/.test(sent[1].text), sent[1].text);
+    assert.deepStrictEqual(sent[1].buttons, ["Show Changes", "Always in This Project"]);
+    assert.ok(!doc.isDirty, "saved first");
+    const written = fs.readFileSync(shop(), "utf8");
+    assert.ok(written.includes("# unsaved"), "what was typed was saved, not lost");
+    assert.ok((written.match(/ID: [0-9A-Z]+/g) ?? []).length >= 2, `an ID line for each stop: ${written}`);
+    // a rename in the source: the stop is found by its ID
+    fs.writeFileSync(shop(), written.replace("def has_stock(", "def in_stock("));
+    // what `vnoc tour check` finds by itself, reading the files: the stop is found by its ID, under its new name (it would be gone without one)
+    const checked = JSON.parse(tourCmd(["check", id, "--json"])).tours[0].stops.find((x: { id: string }) => x.id === "s2");
+    assert.ok(checked && checked.state !== "gone", `the stop follows the rename: ${JSON.stringify(checked)}`);
+    // and the running core, once it has the file: `now` says where the stop is, by its ID
+    let found: { check?: string; now?: { qualname: string } } | undefined;
+    for (let waited = 0; waited < 30_000; waited += 500) {
+      const view = await api.request<{ stops: { id: string; check?: string; now?: { qualname: string } }[] }>("vnoc/tour", { id });
+      found = view.stops.find((x) => x.id === "s2");
+      if (found?.now?.qualname === "in_stock") break;
+      await sleep(500);
+    }
+    assert.ok(found?.now?.qualname === "in_stock" && found.check !== "gone", `the running core follows the rename: ${JSON.stringify(found)}`);
+  });
+
+  test("Write IDs in a project that writes no IDs shows the core's refusal", async function () {
+    this.timeout(60_000);
+    const id = finished("No IDs here");
+    const original = fs.existsSync(toml()) ? fs.readFileSync(toml(), "utf8") : "";
+    fs.mkdirSync(path.dirname(toml()), { recursive: true });
+    fs.writeFileSync(toml(), `${original}\n[ids]\ndefault = "none"\n`);
+    const said = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourWriteIds", { tour: id });
+    const sent = messagesFrom(said);
+    assert.strictEqual(sent.length, 1, JSON.stringify(sent));
+    assert.strictEqual(sent[0].level, "error");
+    assert.ok(sent[0].text.includes('[ids] default = "none"'), sent[0].text);
+  });
+
+  test("Tour Settings… picks a setting and then a value, and writes it: ids = never", async function () {
+    this.timeout(60_000);
+    api.answerTourPicks(["IDs for the stops", "never"]);
+    await vscode.commands.executeCommand("vnoc.tourSettings");
+    const after = fs.readFileSync(toml(), "utf8");
+    assert.ok(/^ids = "never"$/m.test(after), after);
+    assert.strictEqual((await api.request<{ ids: { value: string } }>("vnoc/tourSettings")).ids.value, "never");
   });
 });

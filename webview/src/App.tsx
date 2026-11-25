@@ -13,6 +13,7 @@ import { DocPanel } from "./docs/DocPanel.tsx";
 import { on, request } from "./host.ts";
 import { useData } from "./state/data.ts";
 import { useSession } from "./state/session.ts";
+import { PinDialog } from "./tour/PinDialog.tsx";
 import { Stage } from "./tour/Stage.tsx";
 import { TourCanvas } from "./tour/TourCanvas.tsx";
 import "./state/draftFeed.ts"; // the canvas page tells the host its drafts, and takes the host's copy when it starts with none (9.5c)
@@ -58,6 +59,8 @@ export function App() {
             {tour !== null && <Stage tourId={tour} contextId={active} />}
           </div>
         </div>
+        {/* **Commit and Pin…**: over the page, for the tour the cover or the host chose it for */}
+        <PinDialog />
       </ReactFlowProvider>
     </TooltipProvider>
   );
