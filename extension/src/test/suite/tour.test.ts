@@ -1710,16 +1710,16 @@ suite("pin and IDs by a click", () => {
 
   test("Write IDs on a clean tour whose stops have no IDs: the file gets both IDs, and NEEDS ATTENTION shows nothing for those nodes", async function () {
     this.timeout(120_000);
-    // two functions in a file no other test has made a stop of: `.vnoc/` keeps the ID records of the earlier tests' stops (a `git reset` takes the markers out of the source and leaves the records, and
+    // two functions (named so that no other suite's node can be taken for them: the refactor suite has an `alpha`) in a file no other test has made a stop of: `.vnoc/` keeps the ID records of the earlier tests' stops (a `git reset` takes the markers out of the source and leaves the records, and
     // those stops are then rightly "ID lost"), so a stop that has never had an ID is the case to look at
     const fresh = path.join(workspace(), "tourdemo", "fresh.py");
-    fs.writeFileSync(fresh, "def alpha(x):\n    return x + 1\n\n\ndef beta(x):\n    return alpha(x) * 2\n");
+    fs.writeFileSync(fresh, "def fresh_one(x):\n    return x + 1\n\n\ndef fresh_two(x):\n    return fresh_one(x) * 2\n");
     gitOut("add", "tourdemo/fresh.py");
     gitOut("commit", "-q", "-m", "fresh.py");
     head0 = gitOut("rev-parse", "HEAD").trim(); // the teardown resets to here, not before the file
     const id = JSON.parse(tourCmd(["start", "--title", "IDs, then attention", "--author", "the suite", "--json"])).tour;
-    tourCmd(["add", id, "tourdemo/fresh.py::alpha", "--body-file", "-"], "alpha adds one.\n");
-    tourCmd(["add", id, "tourdemo/fresh.py::beta", "--body-file", "-"], "beta doubles what alpha gives.\n");
+    tourCmd(["add", id, "tourdemo/fresh.py::fresh_one", "--body-file", "-"], "fresh_one adds one.\n");
+    tourCmd(["add", id, "tourdemo/fresh.py::fresh_two", "--body-file", "-"], "fresh_two doubles what fresh_one gives.\n");
     tourCmd(["finish", id, "--no-ids"]);
     assert.ok(!/ID: /.test(fs.readFileSync(fresh, "utf8")), "the stops have no ID yet");
     const said = api.tourMessages().length;
@@ -1729,9 +1729,9 @@ suite("pin and IDs by a click", () => {
     // the core reads the file again (the watcher told it) and the structure has the IDs on both nodes
     const named = async () => {
       const file = (await api.structure()).root.children.find((c) => c.id === "tourdemo")?.children.find((c) => c.id === "tourdemo/fresh.py");
-      return ["alpha", "beta"].map((n) => file?.children.find((c) => c.name === n)?.node_id ?? null);
+      return ["fresh_one", "fresh_two"].map((n) => file?.children.find((c) => c.name === n)?.node_id ?? null);
     };
-    await waitFor("the structure to have an ID on alpha and beta", async () => (await named()).every((n) => n !== null), 30_000);
+    await waitFor("the structure to have an ID on fresh_one and fresh_two", async () => (await named()).every((n) => n !== null), 30_000);
     // and the view has caught up with that structure: the same revision for 1.5 s, then what it says
     let revision = -1;
     let since = Date.now();
@@ -1741,7 +1741,7 @@ suite("pin and IDs by a click", () => {
       return Date.now() - since >= 1500;
     }, 30_000);
     const shown = api.attention();
-    const ours = (text: string) => /alpha|beta|fresh\.py/.test(text);
+    const ours = (text: string) => /fresh_one|fresh_two|fresh\.py/.test(text);
     assert.deepStrictEqual(shown.lostIds.filter(ours), [], `no ID is lost for them: ${JSON.stringify(shown)}`);
     assert.deepStrictEqual(Object.values(shown.groups).flat().filter(ours), [], `NEEDS ATTENTION shows nothing for them: ${JSON.stringify(shown.groups)}`);
     assert.deepStrictEqual(shown.missing.filter(ours), [], JSON.stringify(shown.missing));
