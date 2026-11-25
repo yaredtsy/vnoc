@@ -42,7 +42,7 @@ export function panelsOf(s: Pick<Session, "order" | "contexts" | "active">, root
   };
   const panels = s.order.flatMap((id): Panel[] => {
     const c = s.contexts[id];
-    if (!c) return [];
+    if (!c || c.kind === "tour") return []; // a tour has its own section (docs/26-tours, TR18), not a panel of the structure
     if (c.kind === "main" || c.call === null) return [{ id, kind: "main", depth: 0, label: "MAIN", tooltip: null, active: s.active === id, preview: false, closable: false }];
     const caller = callerName(c.call, root);
     const lines = linesOf(c.call);

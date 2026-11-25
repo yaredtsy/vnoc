@@ -23,6 +23,8 @@ import type { CliSetup } from "./cliSetup";
 import { writeId } from "./writeId";
 import { emptyTrash, removeAllMissing, removeMissing, restoreRemoved } from "./trash";
 import { absolute, selectionOf } from "./files";
+import { pickItem } from "./tours";
+import type { ToursAnswer } from "@vnoc/shared/tours.ts";
 
 // Every `vnoc.*` command: what a sidebar row, a card's right-click menu, the Explorer and the editor's menu run. Each one turns its argument into a
 // node (`nodeFor`), then changes the session or shows something. The commands never keep state of their own.
@@ -108,6 +110,7 @@ export class Commands {
         this.store.dispatch({ type: "explore", call: call.id, activate: true }, call.context);
       }),
       on("vnoc.goToCallSite", (arg) => this.goToCallSite(this.callFor(arg).node)),
+      on("vnoc.openTour", () => this.openTour()),
       on("vnoc.closeContext", (arg) => this.closeContext(this.contextOf(arg))),
       on("vnoc.closeOtherContexts", (arg) => this.closeOtherContexts(this.contextOf(arg))),
       on("vnoc.expandAll", async (arg, selected) => this.expandAll(await this.nodeFor(arg, selected))),
@@ -368,6 +371,22 @@ export class Commands {
   }
 
   /** Close (08 §5): an EXPLORE context goes with its children; MAIN stays. */
+  /**
+   * Open Tour… (design 02 frame 10): the core's list as a QuickPick, in the core's order; the one picked becomes the window's tour context (a tour that was open is
+   * replaced) and the canvas comes up. The place is the core's: the tour opens where the reader was.
+   */
+  private async openTour(): Promise<void> {
+    const { tours } = await this.request<ToursAnswer>("vnoc/tours");
+    if (tours.length === 0) {
+      void vscode.window.showInformationMessage("There are no tours yet. Ask your coding agent for one: “give me a tour of …”.");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(tours.map(pickItem), { title: "Open Tour", placeHolder: "Pick a tour", matchOnDescription: true, matchOnDetail: true });
+    if (!picked) return;
+    this.store.dispatch({ type: "tourOpen", id: picked.row.id, title: picked.row.title });
+    await this.panels.showCanvas();
+  }
+
   private closeContext(id: ContextId): void {
     if (this.store.get().contexts[id]?.kind === "explore") this.store.dispatch({ type: "closeContext", id }, id);
   }

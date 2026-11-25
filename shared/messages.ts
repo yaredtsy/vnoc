@@ -2,6 +2,7 @@
 // (docs/10-ui-rework/01-state.md §4). Types only: nothing here runs, so any side can import it.
 
 import type { ContextId, Intent, Session } from "./session";
+import type { Place, TourId, TourMove, TourRow, TourUnreadable, TourView } from "./tours";
 
 export type Kind = "folder" | "file" | "class" | "function";
 
@@ -381,6 +382,15 @@ export interface Requests {
   rowClick: { params: { context: ContextId; id: string }; result: void };
   /** the buttons of the sidebar's states (06 §8): Open Folder, and Try Again (the core reads the project again) */
   command: { params: { name: "openFolder" | "refreshStructure" }; result: void };
+  /**
+   * The list of tours (`vnoc/tours`), in the core's order. With `on`, a structure key: the tours that pass through that node, each row with its `on`. The host holds the
+   * plain list and sends it again as the `tours` event when the core says a tour changed; a page that starts asks once.
+   */
+  tours: { params: { on?: string } | void; result: TourRow[] };
+  /** A tour as the stage plays it (`vnoc/tour`), with the place as the core has it now. The host holds the open tour's and answers from it; `tour` events follow. */
+  tour: { params: { id: TourId }; result: TourView | TourUnreadable };
+  /** A move in a tour (`vnoc tour go`'s words: `next`, `prev`, `next-stop`, `prev-stop`, `back`, `s4`, `s3.b2`, `cover`, `end`): the core makes it and answers the new place, which the host takes */
+  tourGo: { params: { id: TourId; move: TourMove }; result: Place };
 }
 
 /** extension → webview. No answer. */
@@ -407,6 +417,10 @@ export interface Events {
   showNode: { id: string; path?: string };
   /** the set of files with unsaved changes changed: `paths` are all of them, relative to the opened folder, sorted (the whole set, as the session is: nothing to get out of step). A card marks its code while its file is in it */
   dirtyFiles: { paths: string[] };
+  /** the list of tours, again (the core said a tour changed, and a page asked for the list before): the whole list, in the core's order */
+  tours: { tours: TourRow[] };
+  /** the open tour, again: it changed, or its place did (the host took the core's answer). The whole view, with the place in it; `unreadable` when the file cannot be read now. `null`: no tour is open */
+  tour: { id: TourId; view: TourView | TourUnreadable } | { id: null; view: null };
 }
 
 /** webview → extension, no answer. */

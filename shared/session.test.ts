@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type CallId, callId, callLookup } from "./calls.ts";
 import type { CallTreeNode, TreeNode } from "./messages";
-import { type ContextState, type Intent, MAIN, type Session, emptySession, exploreId, keepEqual, openOf, reduce, restoreSession, toSaved } from "./session.ts";
+import { type ContextState, type Intent, MAIN, type Session, emptySession, exploreId, keepEqual, openOf, reduce, restoreSession, toSaved, tourContextId } from "./session.ts";
 import { sessionProblems } from "./sessionInvariants.ts";
 
 const node = (id: string, kind: TreeNode["kind"], children: TreeNode[] = []): TreeNode => ({
@@ -756,4 +756,134 @@ test("the search intent sets the box's text, and an empty box or null clears it;
   // never saved: a session read back from what was saved has no search
   assert.equal(restoreSession(JSON.parse(JSON.stringify(toSaved(s)))).search, null);
   assert.equal("search" in toSaved(s), false);
+});
+
+// ── a tour is a context (docs/26-tours/05-on-screen.md §5) ─────────────────────────────────────────────────────────────
+
+const T1 = tourContextId("t-1");
+const T2 = tourContextId("t-2");
+
+test("opening a tour adds its context under MAIN and makes it the active one; MAIN is not touched", () => {
+  const before = run(emptySession(), { type: "select", id: "f" });
+  const s = run(before, { type: "tourOpen", id: "t-1", title: "Retry charge" });
+  assert.deepEqual(s.order, [MAIN, T1]);
+  assert.equal(s.active, T1);
+  const tour = ctx(s, T1);
+  assert.deepEqual([tour.kind, tour.parent, tour.call, tour.tour, tour.title, tour.preview, tour.selected], ["tour", MAIN, null, "t-1", "Retry charge", false, null]);
+  assert.equal(ctx(s), ctx(before), "MAIN is the same object");
+  assert.equal(emptySession().tourList.view, "all");
+});
+
+test("a tour with no title is called by its id, and `at` selects the key it names when the tree has it", () => {
+  assert.equal(ctx(run(emptySession(), { type: "tourOpen", id: "t-1" }), T1).title, "t-1");
+  assert.equal(ctx(run(emptySession(), { type: "tourOpen", id: "t-1", at: "g" }), T1).selected, "g");
+  assert.equal(ctx(run(emptySession(), { type: "tourOpen", id: "t-1", at: "gone" }), T1).selected, null, "a key the tree does not have selects nothing");
+});
+
+test("a second tour replaces the first: one tour context at a time, with what was opened from it", () => {
+  let s = run(emptySession(), { type: "tourOpen", id: "t-1" });
+  s = runIn(T1, s, { type: "select", id: Cm }); // an EXPLORE child of the tour context
+  assert.deepEqual(s.order, [MAIN, T1, exploreId(Cm)]);
+  s = run(s, { type: "tourOpen", id: "t-2" });
+  assert.deepEqual(s.order, [MAIN, T2]);
+  assert.equal(s.active, T2);
+  assert.equal(ctx(s, T2).tour, "t-2");
+});
+
+test("the tour that is open, opened again, is activated and keeps its own state; the title and the selection are updated", () => {
+  let s = run(emptySession(), { type: "tourOpen", id: "t-1", title: "A" }, { type: "focus", id: "f" });
+  s = runIn(T1, s, { type: "focus", id: "pkg" }, { type: "expand", ids: ["a.py"] });
+  s = run(s, { type: "activate", id: MAIN });
+  const again = run(s, { type: "tourOpen", id: "t-1", title: "B", at: "g" });
+  assert.equal(again.active, T1);
+  assert.deepEqual([ctx(again, T1).title, ctx(again, T1).selected, [...ctx(again, T1).focus]], ["B", "g", ["pkg"]]);
+  assert.deepEqual([...openOf(ctx(again, T1))], ["a.py"], "its viewport is the context's own");
+  // the same again changes nothing
+  assert.equal(run(again, { type: "tourOpen", id: "t-1", title: "B", at: "g" }), again);
+});
+
+test("closing the tour gives MAIN back, unchanged and active; a tour context is closed like an EXPLORE one", () => {
+  const main = run(emptySession(), { type: "focus", id: "pkg" }, { type: "select", id: "m" });
+  let s = run(main, { type: "tourOpen", id: "t-1" });
+  s = run(s, { type: "closeContext", id: T1 });
+  assert.deepEqual(s.order, [MAIN]);
+  assert.equal(s.active, MAIN);
+  assert.equal(ctx(s), ctx(main), "MAIN is the same object it was");
+  assert.equal(run(s, { type: "closeContext", id: T1 }), s, "a context that is gone closes nothing");
+  assert.equal(run(s, { type: "closeContext", id: MAIN }), s, "MAIN stays");
+});
+
+test("the host's selection follows a place it holds: the tour context's selection is the stop's key, and null leaves none", () => {
+  let s = run(emptySession(), { type: "select", id: "f" }, { type: "tourOpen", id: "t-1" });
+  s = runIn(T1, s, { type: "tourSelect", key: "m" });
+  assert.equal(ctx(s, T1).selected, "m");
+  assert.equal(ctx(s).selected, "f", "MAIN's selection is its own");
+  assert.equal(runIn(T1, s, { type: "tourSelect", key: "m" }), s, "the same stop again changes nothing");
+  s = runIn(T1, s, { type: "tourSelect", key: "g" });
+  assert.equal(ctx(s, T1).selected, "g");
+  assert.equal(runIn(T1, s, { type: "tourSelect", key: "gone" }).contexts[T1].selected, null, "a stop whose node is not in the tree selects nothing");
+  assert.equal(runIn(T1, s, { type: "tourSelect", key: null }).contexts[T1].selected, null);
+  // a context that is not a tour has no place to follow
+  assert.equal(run(s, { type: "tourSelect", key: "f" }), s);
+});
+
+test("nothing of the place is in the session: no place, no seen marks, no way back", () => {
+  const s = run(emptySession(), { type: "tourOpen", id: "t-1", at: "g" });
+  assert.deepEqual(Object.keys(ctx(s, T1)).sort(), ["call", "focus", "id", "kind", "open", "parent", "preview", "recent", "selected", "title", "tour"]);
+  assert.deepEqual(Object.keys(s).sort(), ["active", "contexts", "cursor", "highlight", "order", "reveal", "search", "seq", "tourList"]);
+});
+
+test("a tour whose node is gone from the tree loses its selection with the code, and the context stays", () => {
+  const s = run(emptySession(), { type: "tourOpen", id: "t-1", at: "g" });
+  const next = reduce(s, MAIN, { type: "treeChanged" }, node("/", "folder", [node("b.py", "file", [node("f", "function")])]), lookup);
+  assert.equal(ctx(next, T1).selected, null);
+  assert.equal(next.order.includes(T1), true);
+});
+
+test("save and restore keep which tour was open, and the tour list's view", () => {
+  let s = run(emptySession(), { type: "tourOpen", id: "t-1", title: "Retry charge", at: "g" });
+  s = { ...s, tourList: { view: "onSelection" } };
+  const back = restoreSession(JSON.parse(JSON.stringify(toSaved(s))));
+  assert.deepEqual(back.order, [MAIN, T1]);
+  assert.equal(back.active, T1);
+  assert.deepEqual([ctx(back, T1).tour, ctx(back, T1).title, ctx(back, T1).selected], ["t-1", "Retry charge", "g"]);
+  assert.deepEqual(back.tourList, { view: "onSelection" });
+  assert.deepEqual(sessionProblems(back, tree), []);
+});
+
+test("a saved tour context that is not valid is dropped and MAIN stays; a second tour context is dropped", () => {
+  const s = run(emptySession(), { type: "tourOpen", id: "t-1" });
+  const saved = JSON.parse(JSON.stringify(toSaved(s)));
+  for (const bad of [{ tour: null }, { tour: "t-2" }, { parent: "elsewhere" }]) {
+    const broken = JSON.parse(JSON.stringify(saved));
+    Object.assign(broken.contexts[T1], bad);
+    const back = restoreSession(broken);
+    assert.deepEqual(back.order, [MAIN], JSON.stringify(bad));
+    assert.equal(back.active, MAIN);
+  }
+  const two = JSON.parse(JSON.stringify(saved));
+  two.contexts[T2] = { ...two.contexts[T1], id: T2, tour: "t-2" };
+  two.order.push(T2);
+  assert.deepEqual(restoreSession(two).order, [MAIN, T1], "one tour context per window");
+  const bad = JSON.parse(JSON.stringify(saved));
+  bad.tourList = { view: "everything" };
+  assert.deepEqual(restoreSession(bad).tourList, { view: "all" }, "a view that is not one falls back");
+});
+
+test("a session saved before the tours has no tour context, no `tour` key and no tourList, and restores", () => {
+  const old = { contexts: { main: { id: "main", title: "Main", kind: "main", parent: null, call: null, preview: false, focus: ["pkg"], selected: "m", open: {}, recent: [] } }, order: ["main"], active: "main" };
+  const back = restoreSession(old);
+  assert.deepEqual(back.order, [MAIN]);
+  assert.equal(ctx(back).tour, null);
+  assert.deepEqual(back.tourList, { view: "all" });
+  assert.deepEqual([...ctx(back).focus], ["pkg"]);
+  assert.deepEqual(sessionProblems(back, tree), []);
+  // an EXPLORE context saved before the tours restores with no tour
+  const explored = run(emptySession(), { type: "select", id: Cm });
+  const saved = JSON.parse(JSON.stringify(toSaved(explored)));
+  for (const c of Object.values(saved.contexts) as Record<string, unknown>[]) delete c.tour;
+  delete saved.tourList;
+  const again = restoreSession(saved);
+  assert.deepEqual(again.order, [MAIN, exploreId(Cm)]);
+  assert.equal(ctx(again, exploreId(Cm)).tour, null);
 });

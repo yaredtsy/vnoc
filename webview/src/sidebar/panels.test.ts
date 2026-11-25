@@ -14,7 +14,7 @@ const tree = n("/", "folder", "p", [
 
 const C1 = callId("app/api.py::checkout", ["app/order.py::checkout_order"]); // checkout calls checkout_order
 const C2 = callId("app/api.py::checkout", ["app/order.py::checkout_order", "app/order.py::reserve"]); // checkout_order calls reserve
-const explore = (call: string, title: string, parent: string, over: Partial<ContextState> = {}): ContextState => ({ id: exploreId(call), title, kind: "explore", parent, call, preview: false, focus: [], selected: null, open: {}, recent: [], ...over });
+const explore = (call: string, title: string, parent: string, over: Partial<ContextState> = {}): ContextState => ({ id: exploreId(call), title, kind: "explore", parent, call, tour: null, preview: false, focus: [], selected: null, open: {}, recent: [], ...over });
 const session = (active: string, contexts: ContextState[]): Pick<Session, "order" | "contexts" | "active"> => {
   const main = emptySession().contexts[MAIN];
   return { order: [MAIN, ...contexts.map((c) => c.id)], contexts: Object.fromEntries([main, ...contexts].map((c) => [c.id, c])), active };

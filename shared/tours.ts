@@ -1,0 +1,391 @@
+// What the core answers about tours (docs/26-tours/03-core.md §8, "As built"), as the pages and the host get it. Types only: nothing here runs, and nothing in
+// TypeScript computes a state, a count, a next step or whether something changed from a tour (P1, 05-on-screen.md §6): the core answers it.
+//
+// These are the Rust `--json` types, copied (`crates/vnoc/src/tours/view.rs` is the source of truth: `ListRowView`, `StopView`, `TourView`, `Place`, `OnView`,
+// `AsWritten`; `act.rs` and `pin.rs` for the actions). The wire is snake_case, as the rest of the protocol. A key that Rust leaves out when it has nothing to
+// say (`skip_serializing_if`) is optional here; every other key is required. `tours.test.ts` reads the Rust goldens and fails when the two differ, so keep
+// one property to a line: it reads this file's interfaces to know what they declare.
+
+/** `t-0000`-style id of a tour, as the core makes it (`retry-charge-mjpt`). */
+export type TourId = string;
+/** `s3`: a stop of one tour. */
+export type StopId = string;
+/** `s3` (a stop's intro) or `s3.b1`, `s3.b1.b2` (a block, a detail). */
+export type StepId = string;
+
+/** `private` is `.vnoc/local/tours/`, `project` is `.vnoc/tours/` (shared by the repository). */
+export type TourFolder = "private" | "project";
+export type TourState = "writing" | "stopping" | "stopped" | "finished";
+export type TourDetail = "quick" | "normal" | "detailed";
+/** a kind of node as the tour wrote it; a kind this version does not know is a string too */
+export type TourNodeKind = "folder" | "file" | "class" | "function" | (string & {});
+
+/** The first stop of a tour: the row's icon and name. */
+export interface RootView {
+  kind: string;
+  name: string;
+}
+
+/** What the cover of a finished tour may offer, by `[tours]` settings: how many written stops have no node ID, and the files of the tour that are not committed. */
+export interface OffersView {
+  ids: number;
+  commit: string[];
+}
+
+/** Where the reader is, in a row: the number of the stop on the route (null on the cover and at the end), where, and how many stops were read to their last step. */
+export interface PlaceSummary {
+  stop: number | null;
+  at: "cover" | "step" | "end";
+  seen: number;
+}
+
+/** With `vnoc/tours { on }`: how a tour is on the node. */
+export interface OnView {
+  how: "starts" | "stops" | "inside";
+  /** the numbers on screen of the stops that are the node */
+  stops: number[];
+  /** stops inside the node */
+  inside: number;
+  /** the stop a click opens */
+  first: StopId;
+  /** the stops of the route */
+  of: number;
+  /** line 2 of the row, in the core's words */
+  words: string;
+}
+
+/** One row of the list: `ListRowView`. A tour that cannot be read has `readable: false` and a `problem`, and none of the facts a readable one has. */
+export interface TourRow {
+  id: TourId;
+  folder: TourFolder;
+  /** the same id is in the project's folder too: this is the private copy (absent when false) */
+  private_copy?: boolean;
+  readable: boolean;
+  problem?: string;
+  title?: string;
+  question?: string;
+  author?: string;
+  state?: TourState;
+  written?: number;
+  planned?: number;
+  steps?: number;
+  pinned?: boolean;
+  /** the pinned commit, 7 characters or 40 as the core says */
+  pin?: string;
+  pin_in_repository?: boolean;
+  /** the lines of the file that were skipped */
+  skipped?: number;
+  /** the recorded (or just made) check; absent when none holds */
+  check?: "fresh" | "changed";
+  on?: OnView;
+  minutes?: number;
+  /** being written and nothing added for 5 minutes: "no news" */
+  quiet: boolean;
+  root: RootView | null;
+  /** null: nobody opened this tour here ("new") */
+  place: PlaceSummary | null;
+  offers: OffersView | null;
+}
+
+/** Where the reader is, as the core keeps it (the state file, 01 §9): `at` is `cover`, `end` or a step id. One place per tour per machine (D17). */
+export interface Place {
+  at: "cover" | "end" | StepId;
+  /** the stops read to their last step, in the order they were */
+  seen: StopId[];
+  /** where the reader was before each jump, the latest last: `cover`, `end` or a step id */
+  back: string[];
+  /** when it last moved, `2026-11-23T18:52:10Z`; "" for a place nobody has moved */
+  moved: string;
+  by: "reader" | "command";
+  /** a window is showing this tour (set by `vnoc/tourOpen`) */
+  open: boolean;
+}
+
+/** A changed or moved block or stop, where its node is now: a changed stop's `now`. */
+export interface NowView {
+  /** "" for a file */
+  qualname: string;
+  path: string;
+  /** a def's lines; absent for a file */
+  lines?: [number, number];
+}
+
+/** One block of a stop. */
+export interface BlockView {
+  id: StepId;
+  /** the block a detail is in */
+  parent?: StepId;
+  /** 0 at the top of the stop, 1 for a detail */
+  depth: number;
+  lines: [number, number];
+  title: string;
+  text: string;
+  /** with a check: `changed` or `moved` */
+  check?: "changed" | "moved";
+  /** a moved block's lines now */
+  moved_to?: [number, number];
+}
+
+/** One step of a stop in reading order: the intro first, then each block with its details. The stage plays these. */
+export interface StepView {
+  id: StepId;
+  /** 0 the intro, 1 a block, 2 a detail */
+  depth: number;
+  /** the block a detail is in */
+  parent: StepId | null;
+  title: string | null;
+  /** the intro's text, or the block's (empty for a stop that is planned and not written) */
+  text: string;
+  /** file lines now; null for an intro */
+  lines: [number, number] | null;
+  /** with a check: `fresh` or `changed` (a stop that is gone has every step changed) */
+  fresh?: "fresh" | "changed";
+}
+
+/** A stop's code as the pinned commit has it (`vnoc/tourCode`, and `as_written` of a stop). */
+export interface AsWritten {
+  /** the first 7 characters of the commit */
+  commit: string;
+  path: string;
+  /** where the stop was at that commit */
+  lines: [number, number];
+  code: string[];
+  /** the lit lines, as ranges of file lines */
+  lit: [number, number][];
+}
+
+/** One stop of the route: `StopView`. */
+export interface TourStop {
+  /** the number on screen: the place on the route, from 1 */
+  number: number;
+  id: StopId;
+  depth: number;
+  /** on the route and not written yet */
+  planned: boolean;
+  /** null for a planned stop */
+  kind: TourNodeKind | null;
+  name: string;
+  path: string;
+  qualname: string;
+  /** the node's key in the structure (`TreeNode.id`: a path, or `path::qualname#n`), from what the stop wrote. null for a planned stop and for one a check found gone: the host sets the selection with it */
+  key: string | null;
+  lines?: [number, number];
+  /** the node's permanent ID, when it had one when the stop was written */
+  node?: string;
+  /** the intro and the blocks, steps in all */
+  steps: number;
+  from?: StopId;
+  line?: number;
+  same_as?: StopId;
+  text?: string;
+  /** with a check: `changed`, `gone`, or `moved`; a fresh stop says nothing */
+  check?: "changed" | "gone" | "moved";
+  now?: NowView;
+  as_written?: AsWritten;
+  blocks: BlockView[];
+  /** the stop's steps in reading order, the intro first */
+  reading: StepView[];
+}
+
+/** What a check said of the whole tour. */
+export interface CheckInfo {
+  fresh: boolean;
+  /** `record`, `check`, or `memory` (the answer the core gave last time) */
+  from: "record" | "check" | "memory";
+  at: string;
+  changed: number;
+  gone: number;
+}
+
+/** A tour as `vnoc/tour` answers it: `TourView`. The CLI's `show --json` adds `schema`, `command` and `readable` around the same object. */
+export interface TourView {
+  id: TourId;
+  title: string;
+  question?: string;
+  author?: string;
+  detail: TourDetail;
+  state: TourState;
+  folder: TourFolder;
+  written: number;
+  planned: number;
+  steps: number;
+  minutes: number;
+  pinned: boolean;
+  pin?: string;
+  pin_in_repository?: boolean;
+  check?: CheckInfo;
+  stops: TourStop[];
+  /** the planned stop the agent is on, while the tour is being written */
+  writing: StopId | null;
+  /** where the reader is: the core's, kept per tour */
+  place: Place;
+  offers: OffersView | null;
+  /** `line 7: why`: lines of the file that could not be read */
+  problems: string[];
+}
+
+/** `vnoc/tour` answers a tour that cannot be read with its reason. */
+export interface TourUnreadable {
+  unreadable: string | null;
+}
+
+/** `vnoc/tourHalt`. */
+export interface TourHaltAnswer {
+  halt: "written" | "already" | "finished";
+  state: TourState;
+}
+
+/** `vnoc/tourCounts`: how many tours pass through each node, by the structure's key. */
+export interface TourCountsAnswer {
+  counts: Record<string, number>;
+}
+
+export interface PinChanged {
+  /** git's two-letter status: ` M`, `M `, `??` … */
+  status: string;
+  path: string;
+}
+
+/** Why a tour is not pinned (`code` says which; the rest of the keys depend on it). */
+export type PinReason =
+  | { code: "unfinished" | "no_stops" | "not_a_repository" | "git_not_found" | "no_commit" }
+  | { code: "in_progress"; what: string }
+  | { code: "hook_changed"; path: string; tour: TourId }
+  | { code: "stale"; changed: StopId[]; gone: StopId[] }
+  | { code: "uncommitted"; files: PinChanged[] }
+  | { code: "not_held"; path: string; ignored: boolean }
+  | { code: "submodule"; path: string; module: string }
+  | { code: "git_failed" | "not_checked"; why: string };
+
+export interface CommittedOut {
+  commit: string;
+  message: string;
+  /** the tour's code files */
+  files: string[];
+  node_files?: string[];
+}
+
+/** `vnoc/tourPin`. */
+export interface TourPinAnswer {
+  tour: TourId;
+  state: "pinned" | "ask" | "not_pinned";
+  /** the pinned commit, all 40 characters */
+  commit?: string;
+  committed?: CommittedOut;
+  reasons?: PinReason[];
+  /** for `ask`: the command that would do it */
+  command?: string;
+  node_files?: string[];
+  /** `--commit` was asked and was refused: nothing was committed */
+  refused?: boolean;
+  /** pinned at a commit HEAD has behind it: nothing was done */
+  already?: boolean;
+}
+
+export interface IdStop {
+  stop: StopId;
+  state: "written" | "had" | "by_name" | "gone";
+  id?: string;
+  /** the file the ID line is in, or the `.vnoc-id` file of the folder */
+  changed?: string;
+  said?: string;
+}
+
+/** `vnoc/tourIds`: it writes into the files on disk (TR22 saves a dirty buffer of them first). */
+export interface TourIdsAnswer {
+  schema: number;
+  command: string;
+  tour: TourId;
+  stops: IdStop[];
+  /** every file written or made, once, in the order they were */
+  changed: string[];
+  recorded: boolean;
+}
+
+export type SettingChoice = "always" | "ask" | "never";
+
+export interface SettingShown {
+  value: SettingChoice;
+  /** `file` (`[tours]` in `.vnoc/vnoc.toml` says it) or `default` */
+  from: "file" | "default";
+}
+
+/** `vnoc/tourSettings`. */
+export interface TourSettingsAnswer {
+  schema: number;
+  command: string;
+  ids: SettingShown;
+  commit: SettingShown;
+  /** the keys this call changed */
+  changed?: string[];
+  problems?: string[];
+  /** `ids = "always"` in a project that writes no ID lines: it does nothing there */
+  does_nothing?: string;
+}
+
+/** `vnoc/tourEdit`: what was set. */
+export interface TourEditAnswer {
+  tour: TourId;
+  title: string | null;
+  question: string | null;
+}
+
+/** `vnoc/tourShare`. */
+export interface TourShareAnswer {
+  tour: TourId;
+  folder: TourFolder;
+  /** the file, relative to the git root */
+  path: string;
+}
+
+/** `vnoc/tourDelete`: the trash entry `vnoc/tourRestore` takes. */
+export interface TourDeleteAnswer {
+  token: string;
+}
+
+/** `vnoc/tourRestore`. */
+export interface TourRestoreAnswer {
+  tour: TourId;
+  folder: TourFolder;
+}
+
+/** What `move` may be in `vnoc/tourGo`: the words of `vnoc tour go`. A jump is `s4`, `s3.b2`, `cover` or `end`; the core makes the move and answers the new place. */
+export type TourMove = "next" | "prev" | "next-stop" | "prev-stop" | "back" | (string & {});
+
+export interface ToursParams {
+  /** a tree key (or any reference the core reads): the tours that pass through that node, each row with `on` */
+  on?: string;
+  /** the tours to check now */
+  check?: TourId[];
+}
+
+export interface ToursAnswer {
+  /** newest first, in the core's order */
+  tours: TourRow[];
+}
+
+/** Every request to the core about tours, by its method (03 §8). The host sends them; a page never does. */
+export interface TourCoreRequests {
+  "vnoc/tours": { params: ToursParams | undefined; result: ToursAnswer };
+  "vnoc/tour": { params: { id: TourId }; result: TourView | TourUnreadable };
+  "vnoc/tourGo": { params: { id: TourId; move: TourMove }; result: Place };
+  "vnoc/tourOpen": { params: { id: TourId; open: boolean }; result: Place };
+  "vnoc/tourCode": { params: { id: TourId; stop: StopId }; result: AsWritten | null };
+  "vnoc/tourHalt": { params: { id: TourId }; result: TourHaltAnswer };
+  "vnoc/tourPin": { params: { id: TourId; commit?: { message?: string } }; result: TourPinAnswer };
+  "vnoc/tourIds": { params: { id: TourId }; result: TourIdsAnswer };
+  "vnoc/tourEdit": { params: { id: TourId; title?: string; question?: string }; result: TourEditAnswer };
+  "vnoc/tourShare": { params: { id: TourId; share: boolean }; result: TourShareAnswer };
+  "vnoc/tourDelete": { params: { id: TourId }; result: TourDeleteAnswer };
+  "vnoc/tourRestore": { params: { token: string }; result: TourRestoreAnswer };
+  "vnoc/tourSettings": { params: { ids?: SettingChoice; commit?: SettingChoice } | undefined; result: TourSettingsAnswer };
+  "vnoc/tourCounts": { params: undefined; result: TourCountsAnswer };
+}
+
+/** The two notifications the core sends (03 §8). */
+export interface TourCoreNotifications {
+  /** a tour's file changed, appeared or went; or the answer the core gave about its freshness no longer holds: ask again for what is shown */
+  "vnoc/toursChanged": { ids: TourId[] };
+  /** the place was moved by another process (`vnoc tour go`); not sent for the core's own `vnoc/tourGo` */
+  "vnoc/tourPlaceChanged": { id: TourId; place: Place };
+}

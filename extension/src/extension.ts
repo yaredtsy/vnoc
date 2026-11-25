@@ -18,6 +18,7 @@ import { CANVAS, DOCS, Surfaces } from "./surfaces";
 import { callLookup } from "@vnoc/shared/calls.ts";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
+import { Tours, vnocIsAbove } from "./tours";
 import { readingStarts, readingTheCode } from "./progress";
 import { registerSidebar } from "./sidebarView";
 import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
@@ -108,6 +109,19 @@ export function activate(ctx: vscode.ExtensionContext) {
   // the doc panel's pencil (§8): a doc the other page has a draft of is `busy`, and the host is the only one that can say so
   const editStart = (p: EditStartParams) => (draftCopy.busy(p.path, p.page) ? Promise.resolve({ busy: true as const }) : commands.editStartDocOf(p.path, p.saveFirst === true));
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
+  // the tours: the host asks the core, holds the open tour with its place, and sets the tour context's selection from it (`tours.ts`)
+  const tours = new Tours({
+    request: (method, params) => c.request(method, params as object | undefined),
+    session: () => store.get(),
+    dispatch: (intent, context) => store.dispatch(intent, context),
+    emit: (name, data) => panels.emit(name, data),
+    vnocAbove: () => vnocIsAbove(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, c.gitRoot),
+    every: (ms, run) => {
+      const timer = setInterval(run, ms);
+      return { stop: () => clearInterval(timer) };
+    },
+    log: (text) => output.appendLine(text),
+  });
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
   const dirty = new DirtyFiles((paths) => panels.emit("dirtyFiles", { paths }));
@@ -140,6 +154,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     rowClick: (context, id) => commands.rowClick(context, id),
     showDoc: (params) => commands.showDoc(params),
     command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
+    tours,
   });
   panels = new Surfaces(
     ctx,
@@ -185,7 +200,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     store.onChange(({ next }) => {
       panels.emit("session", next);
       wantCalls();
+      tours.sync(); // a tour became this window's tour context, or its context closed
     }),
+    // a tour's file changed, or another process moved a place: the open tour and the list are asked for again, or the place is taken
+    c.onToursChanged(({ ids }) => tours.toursChanged(ids)),
+    c.onTourPlaceChanged(({ id, place }) => tours.placeChanged(id, place)),
     // what the session points at may be gone (a focused node you deleted: you are one step back, not looking at nothing)
     c.onStructure((structure) => {
       if (attention.update(structure)) {
@@ -195,12 +214,15 @@ export function activate(ctx: vscode.ExtensionContext) {
       store.dispatch({ type: "treeChanged" });
       wantCalls();
       commands.syncCursor();
+      tours.recheck(); // the git root is known now: is `.vnoc/` above the opened folder?
     }),
     // every call tree came from the old core, and its revisions mean nothing against the new one: drop them all, fetch what is open again
     c.onRestarted(() => callTrees.restarted()),
+    { dispose: () => tours.dispose() }, // the core is told the tour is not shown any more, before it is stopped
     { dispose: () => void c.stop() },
     { dispose: () => clearTimeout(startCheck) },
   );
+  tours.sync(); // a tour context the session was restored with
 
   // the command in PATH follows this version, and `vnoc.cliInstalled` and `vnoc.agentsSetUp` are set (they wait for the core: they never hold up the start)
   void cli.activate();
@@ -248,6 +270,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     languageContexts: () => contexts,
     /** the run of the core: one more after each restart */
     coreEpoch: () => c.epoch,
+    /** what the tour holder holds: the open tour's view as the pages were last sent it (null: none open), and the plain list */
+    tours: { open: () => tours.heldTour(), list: () => tours.list() },
     /** an intent, as a click on a card would send it */
     dispatch: (intent: Intent, context?: string) => store.dispatch(intent, context),
     /** a request to the core (the suite attaches docs through it, without the input boxes) */

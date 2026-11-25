@@ -6,6 +6,7 @@ import { CloseAction, type ErrorHandler, LanguageClient, State, TransportKind } 
 import { chooseBinary, chooseDrivers } from "@vnoc/shared/binaryChoice.ts";
 import { languageExtensions } from "@vnoc/shared/languages.ts";
 import type { LanguageInfo, MissingNode, StructureResult, TreeNode } from "@vnoc/shared/messages";
+import type { TourCoreNotifications } from "@vnoc/shared/tours.ts";
 
 // The core is a separate process: this extension starts it (vscode-languageclient is only a very good JSON-RPC-over-stdio client here, we use
 // its custom-request API and none of the language features). The extension never starts a driver: the core owns the drivers.
@@ -96,6 +97,13 @@ export class Core {
   /** Fires, before `structure()` returns, every time a structure arrives: what the session points at may be gone. */
   readonly onStructure = this.structureArrived.event;
 
+  private readonly toursChangedEmitter = new vscode.EventEmitter<TourCoreNotifications["vnoc/toursChanged"]>();
+  /** Fires when the core says a tour's file changed, appeared or went (`vnoc/toursChanged`): what is shown of tours is asked for again. It is not the index changing. */
+  readonly onToursChanged = this.toursChangedEmitter.event;
+  private readonly tourPlaceEmitter = new vscode.EventEmitter<TourCoreNotifications["vnoc/tourPlaceChanged"]>();
+  /** Fires when another process moved a tour's place (`vnoc/tourPlaceChanged`, not sent for this window's own `vnoc/tourGo`). */
+  readonly onTourPlaceChanged = this.tourPlaceEmitter.event;
+
   /** Whether the user was told, in this run, that the core is not coming back (03 §5): once, not on every retry. */
   private announced = false;
 
@@ -178,6 +186,8 @@ export class Core {
       }
     });
     this.client.onNotification("vnoc/indexChanged", (p: { revision: number }) => onIndexChanged(p.revision));
+    this.client.onNotification("vnoc/toursChanged", (p: TourCoreNotifications["vnoc/toursChanged"]) => this.toursChangedEmitter.fire(p));
+    this.client.onNotification("vnoc/tourPlaceChanged", (p: TourCoreNotifications["vnoc/tourPlaceChanged"]) => this.tourPlaceEmitter.fire(p));
     await this.client.start();
     this.output.appendLine(`core started: ${core}\ndrivers: ${drivers.join(path.delimiter)}`);
   }
