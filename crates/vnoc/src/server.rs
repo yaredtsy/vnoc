@@ -1353,7 +1353,25 @@ fn tour_calls(
     })
 }
 
-/// The count of `vnoc/tourCalls` for one tour, kept when it is whole and the tour and the index are as they were when it started.
+/// What a stop's driver ask came to, for the count of `vnoc/tourCalls`.
+enum Asked<T> {
+    Calls(T),
+    /// the driver has no call trees: no stop has calls to count
+    NoDriver,
+    /// a node the driver cannot start a tree at, a driver that is slow (past [`CALLS_ASK`]) or broke: the stop is left out of the count, which goes on and is kept all the
+    /// same (the tour's or a stop's file changing drops it): a count made again at every ask would never end
+    Left,
+}
+
+fn of_the_ask<T>(asked: Result<Result<T, CallsError>, tokio::time::error::Elapsed>) -> Asked<T> {
+    match asked {
+        Ok(Ok(answered)) => Asked::Calls(answered),
+        Ok(Err(CallsError::MissingCapability(_))) => Asked::NoDriver,
+        Ok(Err(CallsError::Invalid(_) | CallsError::Internal(_))) | Err(_) => Asked::Left,
+    }
+}
+
+/// The count of `vnoc/tourCalls` for one tour, kept when the tour is as it was when it started (a stop whose driver ask failed is left out).
 async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseError> {
     let state = core.state.clone();
     let project = ready_project(&state).await?;
@@ -1388,7 +1406,6 @@ async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseE
         .await?
         .ok_or_else(|| internal("no folder is open"))?
     };
-    let revision = state.index.read().unwrap().revision();
     let tree = {
         let index = state.index.read().unwrap_or_else(|e| e.into_inner());
         index.tree(&project.name(), project.prefix())
@@ -1408,7 +1425,6 @@ async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseE
         tree.find(&location.to_string()).and_then(route::known_of)
     };
     let mut off = std::collections::BTreeMap::new();
-    let mut whole = true;
     for stop in &shown.stops {
         let (Some(key), Some("function" | "class")) = (stop.key.as_deref(), stop.kind.as_deref())
         else {
@@ -1425,16 +1441,10 @@ async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseE
             calls::ask(project, &state.index, &core.host, key, Some(1)),
         )
         .await;
-        let answered = match asked {
-            Ok(Ok(answered)) => answered,
-            // a driver with no call trees has no calls to count; a node the driver cannot start a tree at counts none
-            Ok(Err(CallsError::MissingCapability(_))) => break,
-            Ok(Err(CallsError::Invalid(_))) => continue,
-            // the driver is slow or broke: this stop is left out, and the count is not kept (the next ask makes it again)
-            Ok(Err(_)) | Err(_) => {
-                whole = false;
-                continue;
-            }
+        let answered = match of_the_ask(asked) {
+            Asked::Calls(answered) => answered,
+            Asked::NoDriver => break,
+            Asked::Left => continue,
         };
         let item = route::from_calls(&calls::merge(&answered.root), root, 1, &known);
         let outside: std::collections::BTreeSet<&str> = item
@@ -1452,10 +1462,8 @@ async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseE
         .iter()
         .flat_map(|s| std::iter::once(s.path.clone()).chain(s.now.as_ref().map(|n| n.path.clone())))
         .collect();
-    // not kept when the index moved while the calls were asked: they were made against one that is gone
-    if whole && state.index.read().unwrap().revision() == revision {
-        state.tours.keep_calls(row, off, files);
-    }
+    // kept also when the index moved while the calls were asked: a file that changed drops the count through `vnoc/filesChanged`, as it does an answer
+    state.tours.keep_calls(row, off, files);
     Ok(())
 }
 
@@ -1726,6 +1734,25 @@ mod tests {
     use crate::tours::check::Source;
     use crate::tours::record::Detail;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_stop_whose_driver_ask_fails_or_runs_out_of_time_is_left_out_and_the_count_goes_on() {
+        let late = tokio::time::timeout(Duration::from_millis(1), std::future::pending::<()>())
+            .await
+            .unwrap_err();
+        assert!(matches!(of_the_ask::<u8>(Err(late)), Asked::Left));
+        for failed in [
+            CallsError::Internal("the driver went away".into()),
+            CallsError::Invalid("not a function".into()),
+        ] {
+            assert!(matches!(of_the_ask::<u8>(Ok(Err(failed))), Asked::Left));
+        }
+        assert!(matches!(
+            of_the_ask::<u8>(Ok(Err(CallsError::MissingCapability("no callTree".into())))),
+            Asked::NoDriver
+        ));
+        assert!(matches!(of_the_ask(Ok(Ok(7u8))), Asked::Calls(7)));
+    }
 
     /// A state with a folder open and no index: the first build has not happened (`Status::Building`), and a tour with no stop in it.
     fn state_with_a_tour(label: &str) -> (Arc<State>, PathBuf) {

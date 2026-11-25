@@ -20,12 +20,16 @@
 
 /* the code pane: the editor's own font and colours, line numbers dim, long lines not wrapped (the pane scrolls sideways) */
 .stage-code-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
-/* the code as it was written (a pinned tour, a step that changed): its own background, and a label on the top edge */
-.stage-written .stage-code { background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 92%, var(--vscode-editorWarning-foreground, #cca700)); padding-top: 12px; }
-.stage-written-label { position: absolute; top: 0; left: 8px; z-index: 1; padding: 0 6px; font-size: 10px; line-height: 14px; border-radius: 0 0 3px 3px; background: var(--vscode-editorWarning-foreground, #cca700); color: var(--vscode-editor-background, var(--background)); font-family: var(--editor-font); }
+/* the code as it was written (a pinned tour, a step that changed): its own background, and a label in a strip of its own on the top edge, above the code (it covers none of it) */
+.stage-code-wrap.stage-written { flex-direction: column; }
+.stage-written .stage-code { background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 92%, var(--vscode-editorWarning-foreground, #cca700)); min-height: 0; }
+.stage-written-strip { flex: none; height: 16px; padding-left: 8px; background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 92%, var(--vscode-editorWarning-foreground, #cca700)); border-bottom: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 50%, transparent); }
+.stage-written-label { display: inline-block; padding: 0 6px; font-size: 10px; line-height: 16px; border-radius: 0 0 3px 3px; background: var(--vscode-editorWarning-foreground, #cca700); color: var(--vscode-editor-background, var(--background)); font-family: var(--editor-font); }
+/* Now / As Written: the chosen side is drawn pressed, as VS Code's own toggles are (aria-pressed) */
 .stage-switch { display: inline-flex; margin: 2px 0 6px; border: 1px solid var(--vscode-widget-border, var(--border)); border-radius: 3px; overflow: hidden; }
 .stage-switch button { height: 22px; padding: 0 10px; border: 0; font: inherit; font-size: 12px; cursor: pointer; background: transparent; color: var(--muted-foreground); }
-.stage-switch button[aria-pressed="true"] { background: var(--vscode-button-secondaryBackground, var(--accent)); color: var(--foreground); }
+.stage-switch button + button { border-left: 1px solid var(--vscode-widget-border, var(--border)); }
+.stage-switch button[aria-pressed="true"] { background: var(--vscode-inputOption-activeBackground, var(--vscode-button-background, var(--accent))); color: var(--vscode-inputOption-activeForeground, var(--vscode-button-foreground, var(--foreground))); font-weight: 600; box-shadow: inset 0 -2px 0 var(--vscode-inputOption-activeBorder, var(--ring)); }
 .stage-code { flex: 1; min-width: 0; overflow: auto; background: var(--vscode-editor-background, var(--background)); font-family: var(--editor-font); font-size: var(--vscode-editor-font-size, 12px); line-height: 18px; }
 .stage-empty { display: flex; align-items: center; justify-content: center; color: var(--muted-foreground); font-family: var(--font); }
 .stage-line { display: flex; height: 18px; white-space: pre; position: relative; }

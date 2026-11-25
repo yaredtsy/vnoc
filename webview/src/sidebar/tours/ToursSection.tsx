@@ -17,7 +17,7 @@ import { appearedFromOutside } from "./appear.ts";
 import { DEFAULT_TOURS_SHARE, dragTours, toursShare } from "./split.ts";
 import { useData } from "../../state/data.ts";
 import { listItem } from "./list.ts";
-import { emptyOn, lineTwo, opensAt, selectionOf, showAll, viewButtons, viewKey, viewOf, type ListView } from "./onView.ts";
+import { emptyOn, lineTwo, opensAt, selectionOf, showAll, stateWordOf, viewButtons, viewKey, viewOf, type ListView } from "./onView.ts";
 import { headerPlace, rowKey, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
 import { useTourList } from "./store.ts";
@@ -219,7 +219,7 @@ export function ToursSection() {
       empty: emptyOnText,
       list: (shown ?? []).map((r) => {
         const item = listItem(r);
-        return { id: item.id, title: item.title, words: item.words, line2: lineTwo(r, listView), question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable };
+        return { id: item.id, title: item.title, words: item.words, line2: lineTwo(r, listView), stateWord: stateWordOf(r, listView), question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable };
       }),
       foot: foot === null ? null : { text: foot, stop: canStop },
       more,
@@ -326,7 +326,7 @@ export function ToursSection() {
                       </button>
                     </div>
                   ) : (
-                    (shown ?? []).map((row, i) => <TourListRow key={`${row.id}:${row.folder}`} row={row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} line2={lineTwo(row, listView)} onOpen={() => openTour(row)} />)
+                    (shown ?? []).map((row, i) => <TourListRow key={`${row.id}:${row.folder}`} row={row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} line2={lineTwo(row, listView)} stateWord={stateWordOf(row, listView)} onOpen={() => openTour(row)} />)
                   )}
                 </>
               )

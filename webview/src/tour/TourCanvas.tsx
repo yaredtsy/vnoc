@@ -8,7 +8,7 @@ import { on, post, request } from "../host.ts";
 import { useView } from "../state/view.ts";
 import { rememberViewport, reportViewport, savedViewport } from "../state/viewports.ts";
 import { CENTER_TOUR_EVENT, cameraMove, centre } from "./camera.ts";
-import { callsShape, mapOf, boxOf, type TourCardData } from "./map.ts";
+import { ASK_AGAIN_MS, callsShape, mapOf, boxOf, saysAskAgain, type TourCardData } from "./map.ts";
 import { go, loadTour, useTour } from "./store.ts";
 import { TourCard } from "./TourCard.tsx";
 
@@ -106,15 +106,16 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
     if (shape === null) return;
     let wanted = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    // the core counts in the background and answers "ask again" when the count takes longer than a moment: asked again a few times, a second apart
-    const ask = (tries: number) =>
+    // the core counts in the background and answers "ask again" when the count takes longer than a moment: asked again every 2 s, with no cap, as long as the map is shown and the answer
+    // says so (the core always ends the count; any other error is not asked again)
+    const ask = () =>
       request("tourCalls", { id: tourId }).then(
         ({ off }) => wanted && setCalls((held) => (held?.tour === tourId && JSON.stringify(held.off) === JSON.stringify(off) ? held : { tour: tourId, off })),
-        () => {
-          if (wanted && tries > 0) timer = setTimeout(() => ask(tries - 1), 1000);
+        (error) => {
+          if (wanted && saysAskAgain(error)) timer = setTimeout(ask, ASK_AGAIN_MS);
         },
       );
-    void ask(8);
+    void ask();
     return () => {
       wanted = false;
       clearTimeout(timer);

@@ -103,6 +103,11 @@ export function mapOf(view: TourView, off: Readonly<Record<string, number>> = {}
   return { cards, edges };
 }
 
+/** How long the page waits before it asks the core for the calls again, when the core said to ask again. */
+export const ASK_AGAIN_MS = 2000;
+/** Whether the core's refusal is its "ask again" (a count still being made): the one failure of `tourCalls` that is asked again. */
+export const saysAskAgain = (error: unknown): boolean => (error instanceof Error ? error.message : String(error)).trim().endsWith("ask again");
+
 /**
  * What the core's `tourCalls` answer depends on, as the page sees it: each stop, where it is (its key), whether it is written, and what a check said of it. Equal text, nothing to ask again:
  * a move of the reader changes the view and not this.

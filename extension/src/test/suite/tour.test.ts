@@ -1216,7 +1216,7 @@ suite("the tours of the selected node", () => {
   const sidebarChips = () => api.tourChips().filter((c) => c.surface === "sidebar").at(-1)?.chips ?? [];
   const canvasChips = () => api.tourChips().filter((c) => c.surface === "canvas").at(-1)?.chips ?? [];
   const counts = async (): Promise<Record<string, number>> => (await api.request<{ counts: Record<string, number> }>("vnoc/tourCounts")).counts;
-  const coreRows = async (on: string): Promise<{ id: string; on: { how: string; words: string; first: string } }[]> => (await api.request<{ tours: any[] }>("vnoc/tours", { on })).tours;
+  const coreRows = async (on: string): Promise<{ id: string; state_word: string; words: string; on: { how: string; words: string; first: string } }[]> => (await api.request<{ tours: any[] }>("vnoc/tours", { on })).tours;
   /** MAIN is the active context with `key` selected, the section is showing the second view */
   const selectOn = async (key: string | null) => {
     api.dispatch({ type: "activate", id: "main" }, "main");
@@ -1255,6 +1255,9 @@ suite("the tours of the selected node", () => {
     assert.deepStrictEqual(drawn.buttons, [`All ${all}`, `On has_stock ${rows.length}`]);
     assert.deepStrictEqual(drawn.list.map((r) => [r.id, r.line2]), rows.map((r) => [r.id, r.on.words]), "line 2 is the core's words");
     assert.strictEqual(drawn.list.find((r) => r.id === pinnedId)?.line2, "stop 2 of 3");
+    // the row keeps its state at the right of line 1: the core's `state_word`, the word its own `words` starts with (after `shared ·`)
+    assert.deepStrictEqual(drawn.list.map((r) => [r.id, r.stateWord]), rows.map((r) => [r.id, r.state_word]), "the state word is the core's");
+    assert.ok(rows.every((r) => r.state_word !== "" && r.words.replace(/^shared · /, "").startsWith(r.state_word)), JSON.stringify(rows.map((r) => [r.state_word, r.words])));
     assert.strictEqual(drawn.empty, null);
     // a click opens at the stop the core named
     api.toursClick(`row:${pinnedId}`);

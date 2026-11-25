@@ -61,6 +61,9 @@ export function viewKey(key: string, view: ListView, canOn: boolean): ListView |
 /** Line 2 of a row: in the second view, the core's account of how the tour is on the node (`on.words`); in **All**, the row's own words. */
 export const lineTwo = (row: TourRow, view: ListView): string => (view === "on" && row.on ? row.on.words : row.words);
 
+/** The word at the right of line 1: in **On the selected node** the row keeps its state (line 2 is then how the tour is on the node); **All** has it in line 2 already. */
+export const stateWordOf = (row: TourRow, view: ListView): string | null => (view === "on" && row.state_word ? row.state_word : null);
+
 /**
  * Where a click on a row opens its tour: in **On the selected node**, at the cover for a tour that starts at the node, else at the stop the core says (`on.first`: the first of
  * the stops that are the node, or of those inside it). `null`: where the reader left it (**All**).

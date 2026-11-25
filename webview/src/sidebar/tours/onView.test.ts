@@ -4,9 +4,9 @@ import { test } from "node:test";
 import type { TreeNode } from "@vnoc/shared/messages.ts";
 import { type ContextState, MAIN, emptySession } from "@vnoc/shared/session.ts";
 import type { TourRow } from "@vnoc/shared/tours.ts";
-import { emptyOn, lineTwo, offChipText, offChipTip, opensAt, selectionOf, showAll, toursChipText, toursChipTip, viewButtons, viewKey, viewOf } from "./onView.ts";
+import { emptyOn, lineTwo, offChipText, offChipTip, opensAt, selectionOf, showAll, stateWordOf, toursChipText, toursChipTip, viewButtons, viewKey, viewOf } from "./onView.ts";
 
-const row = (on?: TourRow["on"]): TourRow => ({ id: "t-1", folder: "private", readable: true, quiet: false, root: null, place: null, offers: null, words: "finished · 6 stops · today", ...(on ? { on } : {}) });
+const row = (on?: TourRow["on"]): TourRow => ({ id: "t-1", folder: "private", readable: true, quiet: false, root: null, place: null, offers: null, words: "finished · 6 stops · today", state_word: "finished", ...(on ? { on } : {}) });
 const node = (id: string, children: TreeNode[] = []): TreeNode => ({ id, name: id, kind: "function", children, docs: 0 }) as unknown as TreeNode;
 const tree = node("/", [node("a.py", [node("a.py::f#1"), node("a.py::g#1")])]);
 const noFacts = () => null;
@@ -40,6 +40,13 @@ test("line 2 is the core's on.words in the second view and the row's own words i
   assert.equal(lineTwo(on, "on"), "stop 3 of 10");
   assert.equal(lineTwo(on, "all"), "finished · 6 stops · today");
   assert.equal(lineTwo(row(), "on"), "finished · 6 stops · today", "a row with no `on` says its own words");
+});
+
+test("the On view keeps the state word at the right of line 1; All has it in line 2 and draws none there", () => {
+  assert.equal(stateWordOf(row(), "on"), "finished");
+  assert.equal(stateWordOf(row(), "all"), null);
+  assert.equal(stateWordOf({ ...row(), state_word: "" }, "on"), null, "a tour that cannot be read has none");
+  assert.equal(stateWordOf({ ...row(), state_word: "stop 4" }, "on"), "stop 4");
 });
 
 test("a click opens at the cover for starts, else at the stop the core named; in All, where it was left", () => {

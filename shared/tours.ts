@@ -90,6 +90,8 @@ export interface TourRow {
   offers: OffersView | null;
   /** the row's second line, in the core's words: `shared · ` for a project tour, the one state word that applies, the size, and when it was started (`2 h ago`, `yesterday`, `12 Nov`): `writing · 6 of 10 stops · 2 h ago`, `stop 4 · 9 stops · 2 h ago` */
   words: string;
+  /** the one state word `words` starts with (after `shared ·`): `writing`, `changed`, `stop 4`, `finished`, `new`, `seen 2 of 9`; empty for a tour that cannot be read. The On view draws it at the right of line 1 */
+  state_word: string;
 }
 
 /** The numbers of "stop 3 of 10 · 2 of 5", from the core (the same code `vnoc tour where` uses). */

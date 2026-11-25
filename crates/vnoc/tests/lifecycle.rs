@@ -3538,6 +3538,8 @@ fn tour_go_writes_the_state_file_and_does_not_echo_but_another_process_does() {
         row["words"].as_str().unwrap().starts_with("writing · "),
         "{row}"
     );
+    // the one word `words` starts with is a field of its own
+    assert_eq!(row["state_word"], "writing", "{row}");
     let opened = core
         .request("vnoc/tourOpen", json!({ "id": id, "open": true }))
         .unwrap();
@@ -3658,6 +3660,7 @@ fn an_answer_of_vnoc_tour_has_the_steps_the_place_and_what_the_row_says() {
         row["words"].as_str().unwrap().starts_with("no news"),
         "{row}"
     );
+    assert_eq!(row["state_word"], "no news", "{row}");
     let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
     assert_eq!(
         row["root"],
@@ -3959,6 +3962,34 @@ fn tour_calls_counts_the_callees_that_are_not_stops_once_each_and_keeps_the_answ
     core.notify("vnoc/filesChanged", json!({ "paths": [service] }));
     core.wait_for("vnoc/toursChanged");
     assert_eq!(tour_calls(&mut core, &alone), json!({ "off": {} }));
+    core.finish();
+}
+
+#[test]
+fn tour_calls_leaves_out_a_stop_whose_driver_ask_fails_and_keeps_the_count_all_the_same() {
+    let root = tour_git_project("calls-fails");
+    let (mut core, _) = ready_core(&root);
+    // `place` calls `parse_order`; `apply_tax` is in a file that will not be readable by the driver
+    let id = finished_tour(
+        &root,
+        "one that fails",
+        &[PLACE, "billing/tax.py::apply_tax"],
+    );
+    tell_tour_changed(&mut core, &root, &id);
+    // the file is broken behind the core's back: the index still has `apply_tax`, and the driver cannot read it
+    let tax = root.join("billing/tax.py");
+    let whole = std::fs::read_to_string(&tax).unwrap();
+    std::fs::write(&tax, "def apply_tax(amount, country:\n").unwrap();
+    let answer = tour_calls(&mut core, &id);
+    println!("tourCalls: {answer}");
+    // the stop that failed is left out; the other one is counted
+    assert_eq!(answer, json!({ "off": { "s1": 1 } }));
+    // and the count was kept: with the file whole again the answer is the same one, at once (a count made anew would have `apply_tax`'s two)
+    std::fs::write(&tax, whole).unwrap();
+    let again = core
+        .request("vnoc/tourCalls", json!({ "id": id }))
+        .expect("kept: answered at once, not 'ask again'");
+    assert_eq!(again, json!({ "off": { "s1": 1 } }));
     core.finish();
 }
 

@@ -87,10 +87,13 @@ export function CodePane(p: {
   const more = p.look === "lit" || p.look === "detail" ? moreLit(litIndex, view) : 0;
   return (
     <div className={`stage-code-wrap${p.written ? " stage-written" : ""}`} data-written={p.written?.commit}>
+      {/* the label has a strip of its own on the pane's top edge: the code starts under it, and none of it is covered */}
       {p.written && (
-        <span className="stage-written-label" data-part="written-label">
-          as written · {p.written.commit}
-        </span>
+        <div className="stage-written-strip" data-part="written-strip">
+          <span className="stage-written-label" data-part="written-label">
+            as written · {p.written.commit}
+          </span>
+        </div>
       )}
       <div ref={box} className="stage-code" data-part="code" onScroll={measure} onPointerEnter={() => (pointerOver.current = true)} onPointerLeave={() => (pointerOver.current = false)}>
         {shown!.lines.map((text, i) => (

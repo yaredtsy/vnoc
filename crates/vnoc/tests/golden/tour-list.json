@@ -20,6 +20,7 @@
         "name": "retry_charge"
       },
       "state": "writing",
+      "state_word": "writing",
       "steps": 4,
       "title": "retry_charge",
       "words": "writing · 1 stop · <when>",

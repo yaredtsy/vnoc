@@ -1048,6 +1048,9 @@ pub struct ListRowView {
     pub offers: Option<OffersView>,
     /// the row's second line (design 07 §3): `shared ·` for a project tour, the one state word that applies, the size. See [`row_words`]
     pub words: String,
+    /// the one word of design 07 §3 that `words` starts with (after `shared ·`): `writing`, `changed`, `stop 4`, `finished`, `new`, `seen 2 of 9`. Empty for a tour that cannot be read.
+    /// The On view draws it at the right of line 1 (`words` is then the node's)
+    pub state_word: String,
     #[serde(skip)]
     pins: String,
 }
@@ -1208,6 +1211,7 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                         place: None,
                         offers: None,
                         words: String::new(),
+                        state_word: String::new(),
                         pins,
                     }
                 }
@@ -1236,6 +1240,7 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                     place: None,
                     offers: None,
                     words: "cannot be read".to_string(),
+                    state_word: String::new(),
                     pins: String::new(),
                 },
             }
@@ -1246,7 +1251,7 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
 /// The state word a row says (design 07 §3: one word, the first that applies, in this order): `writing`, `stopping` or `stopped` while the tour is not
 /// finished, `no news` for one that is being written and quiet, `changed` when a check says so, `stop 4` when the reader is on a stop (where you are),
 /// `finished` when every stop was read to its last step, `new` when nobody opened it here; else how many stops were read: `seen 2 of 9`.
-fn row_state_word(row: &ListRowView) -> String {
+pub fn row_state_word(row: &ListRowView) -> String {
     let written = row.written.unwrap_or(0);
     match (row.state, &row.place) {
         _ if row.quiet => "no news".to_string(),

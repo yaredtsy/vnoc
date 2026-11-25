@@ -67,9 +67,9 @@ test("the selection is the current stop's key, read from `place.stop`; at the co
 });
 
 test("a row of Open Tour… says what the row says", () => {
-  const row: TourRow = { id: "t-1", folder: "private", readable: true, title: "Retry charge", question: "Why does it retry?", quiet: false, root: null, place: null, offers: null, words: "stop 4 · 9 stops" };
+  const row: TourRow = { id: "t-1", folder: "private", readable: true, title: "Retry charge", question: "Why does it retry?", quiet: false, root: null, place: null, offers: null, words: "stop 4 · 9 stops", state_word: "stop 4" };
   assert.deepEqual({ ...pickItem(row), row: undefined }, { label: "Retry charge", description: "stop 4 · 9 stops", detail: "Why does it retry?", row: undefined });
-  const broken: TourRow = { id: "t-9", folder: "private", readable: false, problem: "line 1: not a tour", quiet: false, root: null, place: null, offers: null, words: "cannot be read" };
+  const broken: TourRow = { id: "t-9", folder: "private", readable: false, problem: "line 1: not a tour", quiet: false, root: null, place: null, offers: null, words: "cannot be read", state_word: "" };
   assert.deepEqual({ ...pickItem(broken), row: undefined }, { label: "t-9", description: "cannot be read", detail: "line 1: not a tour", row: undefined });
 });
 
@@ -332,7 +332,7 @@ test("a tour the core cannot find is held as unreadable, with the core's words, 
 // ── the tour read while it is written (docs/26-tours/05-on-screen.md §3, design 04 §6) ───────────────────────────────────
 
 const at = (at: string, stopNo: number, of: number) => place(at, { position: { stop: stopNo, of, step: 1, steps: 1 } });
-const row = (id: string, over: Partial<TourRow> = {}): TourRow => ({ id, folder: "private", readable: true, title: `Tour ${id}`, state: "writing", quiet: false, root: null, place: null, offers: null, words: "", ...over });
+const row = (id: string, over: Partial<TourRow> = {}): TourRow => ({ id, folder: "private", readable: true, title: `Tour ${id}`, state: "writing", quiet: false, root: null, place: null, offers: null, words: "", state_word: "", ...over });
 
 test("the status bar item says `▶ Tour 3/10` from the place the core gave while a tour is open, follows a move, and goes when the tour closes", async () => {
   const h = makeHost({ above: false, answer: view("s2", { place: at("s2", 2, 3) }) });

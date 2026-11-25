@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { Place, StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
 import { CARD_H, CARD_W, COL_W, ROW_H } from "../canvas/layout.ts";
-import { boxOf, callsShape, mapOf } from "./map.ts";
+import { ASK_AGAIN_MS, boxOf, callsShape, mapOf, saysAskAgain } from "./map.ts";
 
 const step = (id: string, kind: StepKind): StepView => ({ id, kind, depth: 0, parent: null, title: null, text: "t", lines: null });
 const stop = (n: number, over: Partial<TourStop> = {}): TourStop => ({
@@ -102,4 +102,12 @@ test("the calls are asked again when the stops change, not when the reader moves
   assert.notStrictEqual(callsShape(view("cover")), callsShape(view("cover", { stops: [...stops.slice(0, 4), stop(5, { depth: 2, from: "s3" })] })), "a stop written");
   assert.notStrictEqual(callsShape(view("cover")), callsShape(view("cover", { stops: stops.map((s, i) => (i === 1 ? { ...s, check: "changed" as const } : s)) })), "a check said changed");
   assert.notStrictEqual(callsShape(view("cover")), callsShape(view("cover", { stops: stops.map((s, i) => (i === 1 ? { ...s, key: "b.py::g" } : s)) })), "a stop found elsewhere");
+});
+
+test("the calls are asked again, every 2 s with no cap, only when the core said to ask again", () => {
+  assert.equal(ASK_AGAIN_MS, 2000);
+  assert.equal(saysAskAgain("the calls of this tour are being counted: ask again"), true);
+  assert.equal(saysAskAgain(new Error("the calls of this tour are being counted: ask again")), true);
+  assert.equal(saysAskAgain("no tour t-nope"), false, "any other failure is not asked again");
+  assert.equal(saysAskAgain(undefined), false);
 });

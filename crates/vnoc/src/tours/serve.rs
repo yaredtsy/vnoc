@@ -426,6 +426,7 @@ pub fn list_rows<R: Borrow<Row>>(
         shown.offers = offers.next().flatten();
         shown.quiet = view::is_quiet(tour.state, file_age(&row.path));
         shown.place = view::place_summary(tour, place_of(&row.id).as_ref());
+        shown.state_word = view::row_state_word(shown);
         shown.words = view::row_words(shown, &view::when_word(&tour.at, &now));
     }
     out

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { TourRow } from "@vnoc/shared/tours.ts";
 import { isOpen, listItem } from "./list.ts";
 
-const row = (over: Partial<TourRow> = {}): TourRow => ({ id: "t-1", folder: "private", readable: true, title: "Retry charge", question: "what happens when it drops", quiet: false, root: { kind: "function", name: "retry_charge" }, place: null, offers: null, words: "stop 3 · 9 stops", ...over });
+const row = (over: Partial<TourRow> = {}): TourRow => ({ id: "t-1", folder: "private", readable: true, title: "Retry charge", question: "what happens when it drops", quiet: false, root: { kind: "function", name: "retry_charge" }, place: null, offers: null, words: "stop 3 · 9 stops", state_word: "stop 3", ...over });
 
 test("a row draws the core's words unchanged, the title, the question, and the icon of its first stop", () => {
   assert.deepEqual(listItem(row()), { key: "t-1:private", id: "t-1", title: "Retry charge", words: "stop 3 · 9 stops", question: "what happens when it drops", kind: "function", clickable: true });
