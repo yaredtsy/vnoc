@@ -338,7 +338,8 @@ other (bursts overtook each other); `stageDrawn` waits for the code pane. `tour`
 - The three rare flakes TR21a could not catch (cover not leaving at `s1.b2`, the end card's unseen count, the Open Tour… QuickPick not
   taking the keyboard) wait for TR24's full runs; one seen again in a step's end run is fixed in that step.
 - A gone file or folder stop keeps the contents look with its sentence: no as written for rows.
-- Screenshots: the user gives the terminal Screen Recording permission, or the pictures are TR24's by-hand look.
+- Screenshots (the user): Playwright drives VS Code, as `tools/media` does (`lib/vscode.mjs` `launch({ dev: true })`, then
+  `page.screenshot`): it needs no Screen Recording permission. Never `screencapture`. The script stays out of the commits.
 
 **Decided for TR21b:**
 - **On the selected node** is the list's second view. It follows the selection of the **active context** (a selected call counts as
