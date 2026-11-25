@@ -222,6 +222,20 @@ the place; the pages count nothing); `Next` dimmed with `◌` before a planned s
 §2.2) → TR19; `↑ ↓` (next / previous stop), `Alt+←` (back), the contents' `+ N not on this tour` fold, the code pane's syntax colours
 (as a card's code view has them, if it does), the cover's title said twice → TR23.
 
+**As built (TR18, `25261a6`, `8b1a621`).** The core gives `line_step` (a call's step in its `from` stop) and `place.unseen`. The
+TOURS section is `webview/src/sidebar/tours/*`: folded by default (fold saved per window; it unfolds when a tour is opened), the
+**All** view only, rows drawn from `words` with the question after it in quotes, a click opens at the cover or where it was left. With a
+tour open it shows the route (`‹ Tours`, stops nested by depth, ✓ seen, ● current, ◌ planned, `⇢ N`; the current stop's steps
+under it when it has more than one, as design 04 §1.2). The list is asked for again each time the section shows it (a move sends no
+`toursChanged`, so a row's `words` would go stale). The section is 45% of the view when open; a shared tour and its private copy are
+two rows. The window suite `tour` has 17 tests.
+
+**Left out at TR18, and where each goes:** the "when" word of a row's line 2 (design 07 §3) and the end card's **Go to the first one
+I skipped** (`place.first_unseen`) → **TR19's first commit**, from the core; hover `↗` and double-click for Go to Code on the route,
+**Reveal Root in Main**, **Start Again** → TR19; the route's foot line (`writing 6 of 10 ■ Stop`), the live writing dot, unfolding
+when a tour appears from outside, the splitter → TR20; `changed` and `⚠` on the route, the second view and its switch, the empty
+state "on node" → TR21; the section's `＋` / `⋯`, the row menu, Delete (also on an unreadable row), `Delete`/`⌘⌫` → TR22.
+
 ## 6. Who draws what
 
 | | Does | Does not |
