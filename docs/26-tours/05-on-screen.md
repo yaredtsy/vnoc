@@ -506,9 +506,19 @@ should still not sit on a long wait). The TOURS section does not exist while the
 slow update: kept, unit-tested. For TR22b's first commit: Write IDs on stops whose IDs are recorded but whose markers are gone says so
 in the core's words (not *"Every stop already has an ID."*), and the shot script uses a fresh file. The 0.3.1 hotfix is the user's call.
 
+**The user, 2026-11-26:** TR22t's two full runs are not run; go on. They are owed at TR24's by-hand pass at the latest.
+
+**TR22b is cut in two**, to keep two commits a prompt:
+- **TR22b:** the review fixes (TR22s's screenshot list, TR22t's Write IDs on lost markers, the shot script on a fresh file); then
+  **Rename…**, **Share with the Project** / **Make Private Again** and the end card's **Share…**, Delete with Undo (hover `🗑`, the
+  row's menu, `Delete`/`⌘⌫`, an unreadable row with only Delete; a tour being written shows `■` Stop instead), **Delete Finished
+  Tours**. Every message after an act is the core's `words` in its answer (`tourShare`, `tourDelete`, `tourEdit`), as `tourIds`'.
+- **TR22c:** **Export as JSON…**, **Open as JSON**, **Import into This Tour**, **Import a Tour from JSON…**; **Check All Tours**;
+  **Ask for a Tour…** everywhere (`＋`, the node menu, a row's **Ask for a New Tour**, the empty states' **Ask for One** and **Copy a
+  Request**); **Open Tour…** from the bar's `⋯` through the host (`vnoc.openTour(id)`), the selected node's tours first; **Show Docs**.
+
 **Next, in this order:**
-- **TR22t's proof:** the two full `pnpm -r test` runs, each failing only the 3 Bend tests.
-- **TR22b** (unchanged list above), its first commit: the screenshot fixes just decided.
+- **TR22b**, then **TR22c**, as cut above.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
