@@ -7012,12 +7012,25 @@ fn from_nests_a_stop_and_line_says_where_the_call_is_and_the_stop_is_found_by_it
         "parse_order turns the raw request into an Order.\n",
     );
     assert_eq!(code(&s1), 0, "{}", text(&s1.stderr));
-    // `--from` alone is containment: a method of the class
-    let s2 = tour_add(
+    // `--from` alone is containment, and the class does not lie inside its method
+    let refused = tour_add(
         &root,
         &tour,
         "orders/service.py::OrderService",
         &["--from", "s1"],
+        "The class that holds it.\n",
+    );
+    assert_eq!(code(&refused), 2);
+    assert!(
+        text(&refused.stderr).contains("s1 (OrderService.parse_order) does not contain OrderService: --from without --line is for something inside that stop."),
+        "{}",
+        text(&refused.stderr)
+    );
+    let s2 = tour_add(
+        &root,
+        &tour,
+        "orders/service.py::OrderService",
+        &["--from", "s1", "--line", "12"],
         "The class that holds it.\n",
     );
     assert_eq!(code(&s2), 0, "{}", text(&s2.stderr));
@@ -11890,6 +11903,9 @@ fn tour_where_lights_the_lines_a_stop_that_was_pushed_down_has_now() {
 
 const CHARGE_ERROR: &str = "billing/charge.py::ChargeError";
 const REFUND: &str = "billing/charge.py::refund";
+const CHARGE_FILE: &str = "billing/charge.py";
+const SERVICE_CLASS: &str = "orders/service.py::OrderService";
+const SERVICE_PLACE: &str = "orders/service.py::OrderService.place";
 
 /// `vnoc tour start --title <title> --plan <nodes>` that must succeed: the tour's id.
 fn start_plan(root: &Path, title: &str, nodes: &[&str]) -> String {
@@ -12074,10 +12090,10 @@ fn tour_plan_start_plan_with_one_unknown_node_writes_nothing_and_says_did_you_me
 #[test]
 fn tour_plan_plans_more_where_add_would_put_them_and_says_each_with_a_count() {
     let root = sample_copy("tour-plan-more");
-    let tour = start_plan(&root, "retry", &[RETRY, REFUND]);
+    let tour = start_plan(&root, "retry", &[CHARGE_FILE, REFUND]);
     let out = run(vnoc(
         &root,
-        &["tour", "plan", &tour, ONE_TRY, CHARGE_ERROR, "--from", "s1"],
+        &["tour", "plan", &tour, RETRY, CHARGE_ERROR, "--from", "s1"],
     ));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     golden_text("tour-plan.txt", &tour_unrooted(&out.stdout, &root, &tour));
@@ -12112,7 +12128,7 @@ fn tour_plan_plans_more_where_add_would_put_them_and_says_each_with_a_count() {
     // a plan can be a tree: `--from` a planned stop
     let out = run(vnoc(
         &root,
-        &["tour", "plan", &tour, GET_ORDER, "--from", "s3"],
+        &["tour", "plan", &tour, ONE_TRY, "--from", "s3"],
     ));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     assert_eq!(
@@ -12274,10 +12290,10 @@ fn tour_plan_add_with_a_line_and_a_from_wins_over_the_plan_and_moves_the_stop() 
 
     // a plan of `a c b`: b moves up under a, with the stop planned under it
     let root = sample_copy("tour-plan-move-2");
-    let tour = start_plan(&root, "retry", &[RETRY, CHARGE_ERROR, ONE_TRY]);
+    let tour = start_plan(&root, "retry", &[RETRY, REFUND, SERVICE_CLASS]);
     let out = run(vnoc(
         &root,
-        &["tour", "plan", &tour, REFUND, "--from", "s3"],
+        &["tour", "plan", &tour, SERVICE_PLACE, "--from", "s3"],
     ));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
@@ -12293,9 +12309,9 @@ fn tour_plan_add_with_a_line_and_a_from_wins_over_the_plan_and_moves_the_stop() 
     add_ok(
         &root,
         &tour,
-        ONE_TRY,
+        SERVICE_CLASS,
         &["--from", "s1", "--line", "19"],
-        "one_try makes the one call.\n",
+        "OrderService is what retry_charge's caller is.\n",
     );
     assert_eq!(
         route_of(&root, &tour),
@@ -12379,20 +12395,20 @@ fn tour_plan_add_with_a_line_and_a_from_wins_over_the_plan_and_moves_the_stop() 
 #[test]
 fn tour_plan_finish_removes_what_is_left_and_says_how_many_on_its_first_line() {
     let root = sample_copy("tour-plan-finish");
-    let tour = start_plan(&root, "retry", &[RETRY, ONE_TRY, CHARGE_ERROR]);
+    let tour = start_plan(&root, "retry", &[RETRY, SERVICE_CLASS, CHARGE_ERROR]);
     add_ok(&root, &tour, RETRY, &[], RETRY_BODY);
     // a written stop nested in a planned one moves up: s2 is planned, s4 is written under it
     let out = run(vnoc(
         &root,
-        &["tour", "plan", &tour, REFUND, "--from", "s2"],
+        &["tour", "plan", &tour, SERVICE_PLACE, "--from", "s2"],
     ));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     add_ok(
         &root,
         &tour,
-        REFUND,
+        SERVICE_PLACE,
         &["--from", "s2"],
-        "refund gives the money back.\n",
+        "place puts the order in.\n",
     );
     let out = run(vnoc(&root, &["tour", "finish", &tour, "--no-ids"]));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
@@ -13057,6 +13073,130 @@ fn tour_ok_json(root: &Path, args: &[&str]) -> String {
     let mut all = args.to_vec();
     all.push("--json");
     tour_ok(root, &all)
+}
+
+const FROM_WITHOUT_LINE: &str = "does not contain refund: --from without --line is for something inside that stop. If it is called there, add --line <the line of the call>; otherwise leave --from out.";
+
+#[test]
+fn tour_from_without_line_is_refused_unless_the_node_is_inside_for_add_plan_and_import_and_a_stop_says_its_key()
+ {
+    let root = sample_copy("tour-from-contain");
+    let tour = tour_start(&root, "contain");
+    let s1 = tour_add(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(code(&s1), 0, "{}", text(&s1.stderr));
+    // inside: the function nested in it
+    let s2 = tour_add(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--from", "s1"],
+        "one_try makes the one call.\n",
+    );
+    assert_eq!(code(&s2), 0, "{}", text(&s2.stderr));
+    // not inside: refused, exit 2, with the sentence
+    let out = tour_add(
+        &root,
+        &tour,
+        REFUND,
+        &["--from", "s1"],
+        "refund gives the money back.\n",
+    );
+    assert_eq!(code(&out), 2);
+    let said = text(&out.stderr);
+    assert!(
+        said.contains(&format!("s1 (retry_charge) {FROM_WITHOUT_LINE}")),
+        "{said}"
+    );
+    golden_text("tour-add-from-refused.txt", &without_root(&said, &root));
+    // as data, as every refusal
+    let (status, stdout, _) = tour_fails(
+        &root,
+        &[
+            "add",
+            &tour,
+            REFUND,
+            "--body-file",
+            "-",
+            "--from",
+            "s1",
+            "--json",
+        ],
+        "refund gives the money back.\n",
+    );
+    assert_eq!(status, 2);
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["refused"][0]["where"], "--from", "{json}");
+    assert!(
+        json["refused"][0]["problem"]
+            .as_str()
+            .unwrap()
+            .starts_with("s1 (retry_charge) does not contain refund: "),
+        "{json}"
+    );
+    // with a line, it is the call that is said
+    let ok = tour_add(
+        &root,
+        &tour,
+        REFUND,
+        &["--from", "s1", "--line", "19"],
+        "refund gives the money back.\n",
+    );
+    assert_eq!(code(&ok), 0, "{}", text(&ok.stderr));
+
+    // plan: every node of the call must be inside; one that is not is refused whole
+    let (status, _, err) = tour_fails(&root, &["plan", &tour, REFUND, "--from", "s1"], "");
+    assert_eq!(status, 2, "{err}");
+    assert!(
+        err.contains(&format!("s1 (retry_charge) {FROM_WITHOUT_LINE}")),
+        "{err}"
+    );
+    let planned = tour_ok(&root, &["plan", &tour, ONE_TRY, "--from", "s1"]);
+    assert!(planned.starts_with("planned 1 stop"), "{planned}");
+
+    // a planned stop filled with another `--from` is a new claim
+    let (status, _, err) = tour_fails(
+        &root,
+        &["add", &tour, ONE_TRY, "--body-file", "-", "--from", "s3"],
+        "x.\n",
+    );
+    assert_eq!(status, 2, "{err}");
+
+    // import: the same, with its place in the document
+    let doc = json!({"title": "t", "stops": [
+        {"node": RETRY, "text": "A.", "stops": [
+            {"node": REFUND, "text": "B."}]}]});
+    let out = import_doc(&root, &doc, &[]);
+    assert_eq!(code(&out), 2);
+    let said = text(&out.stderr);
+    assert!(
+        said.contains("stops[0].stops[0].from: ") && said.contains("does not contain refund"),
+        "{said}"
+    );
+    let inside = json!({"title": "t", "stops": [
+        {"node": RETRY, "text": "A.", "stops": [
+            {"node": ONE_TRY, "text": "B."}]}]});
+    assert_eq!(code(&import_doc(&root, &inside, &[])), 0);
+
+    // each stop says its key in the tree, or none when it is planned
+    let shown = tour_json(&root, &["show", &tour]);
+    let keys: Vec<(String, Value)> = shown["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["id"].as_str().unwrap().to_string(), s["key"].clone()))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            ("s1".to_string(), json!("billing/charge.py::retry_charge")),
+            (
+                "s2".to_string(),
+                json!("billing/charge.py::retry_charge.<locals>.one_try")
+            ),
+            ("s3".to_string(), json!("billing/charge.py::refund")),
+            ("s4".to_string(), Value::Null),
+        ]
+    );
 }
 
 #[test]

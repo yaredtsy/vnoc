@@ -49,6 +49,7 @@
       ],
       "depth": 0,
       "id": "s1",
+      "key": "billing/charge.py::retry_charge",
       "kind": "function",
       "lines": [
         11,
@@ -99,6 +100,7 @@
       "blocks": [],
       "depth": 0,
       "id": "s2",
+      "key": "billing/invoice.py::Invoice.total",
       "kind": "function",
       "lines": [
         19,
@@ -128,6 +130,7 @@
       "depth": 1,
       "from": "s2",
       "id": "s3",
+      "key": "billing/tax.py::apply_tax",
       "kind": "function",
       "line": 21,
       "lines": [

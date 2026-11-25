@@ -4,7 +4,7 @@
 //! step). The values are structs that serialize (`--json`), and the text is made from the same values, so the two cannot differ.
 
 use serde::Serialize;
-use vnoc_domain::NodeKind;
+use vnoc_domain::{LocationKey, NodeKind};
 
 use super::check::{Answer, BlockState, Recorded, Source, StopState};
 use super::fold::{State, Tour, TourBlock, TourStop, Unreadable, steps_in_order};
@@ -168,6 +168,9 @@ pub struct StopView {
     pub name: String,
     pub path: String,
     pub qualname: String,
+    /// the node's key in the index's tree, `Node::id` as `vnoc/structure` gives it (a path, or `path::qualname#n`), from what the stop wrote, as `on::Map`
+    /// finds a node (no code is read): a page can set the selection with it. `null` for a planned stop, and for a stop a check found gone
+    pub key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lines: Option<[u32; 2]>,
     /// the node's ID, when it had one when the stop was written
@@ -303,6 +306,19 @@ fn blocks_of(blocks: &[TourBlock], parent: Option<StepId>, depth: usize, out: &m
     }
 }
 
+/// A written stop's key in the index's tree: its path for a file or a folder, its location key for a def. `None` for a planned stop.
+fn tree_key(stop: &TourStop) -> Option<String> {
+    if !stop.written {
+        return None;
+    }
+    if stop.qualname.is_empty() {
+        return Some(stop.path.to_string());
+    }
+    LocationKey::new(stop.path.clone(), stop.qualname.clone(), stop.occurrence)
+        .ok()
+        .map(|key| key.to_string())
+}
+
 fn stop_view(number: usize, stop: &TourStop) -> StopView {
     let mut blocks = Vec::new();
     if stop.written {
@@ -335,6 +351,7 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
         name: stop_label(stop),
         path: stop.path.to_string(),
         qualname: stop.qualname.clone(),
+        key: tree_key(stop),
         lines: stop.lines.map(|l| [l.first, l.last]),
         node: stop.node.map(|n| n.to_string()),
         steps: steps_in_order(stop).len(),
@@ -428,6 +445,9 @@ pub fn mark(view: &mut TourView, answer: &Answer) {
         stop.now = recorded.now.get(&id).cloned();
         if !stop.planned {
             mark_steps(stop, id, recorded);
+        }
+        if recorded.stop(id) == StopState::Gone {
+            stop.key = None;
         }
         stop.check = match recorded.stop(id) {
             StopState::Gone => Some("gone"),

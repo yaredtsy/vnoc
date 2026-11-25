@@ -62,6 +62,7 @@
       ],
       "depth": 0,
       "id": "s1",
+      "key": "billing/charge.py::retry_charge",
       "kind": "function",
       "lines": [
         11,

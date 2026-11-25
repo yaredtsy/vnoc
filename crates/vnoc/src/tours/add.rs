@@ -206,6 +206,49 @@ fn check_line(
     }
 }
 
+/// Whether `node` is inside `outer`, and not `outer` itself: a file or folder in a folder, a def in a file, a def in a class (nested defs too).
+fn inside(outer: &Node, node: &Node) -> bool {
+    outer.id != node.id && outer.find(&node.id).is_some()
+}
+
+/// The sentence of `--from` with no `--line` on a node that is not inside the `--from` stop's node (TR14e): the one thing it says is how to say what
+/// the agent meant. `what` is how the stop is named, `node` the new stop's node.
+fn not_inside_sentence(what: &str, node: &str) -> String {
+    format!(
+        "{what} does not contain {node}: --from without --line is for something inside that stop. \
+         If it is called there, add --line <the line of the call>; otherwise leave --from out."
+    )
+}
+
+/// The same for a document, which has `from` and `line` as keys, and a label for a stop (`what` is the label and the node's name).
+fn not_inside_document(label: &str, outer: &str, node: &str) -> String {
+    format!(
+        "{label} ({outer}) does not contain {node}: from without line is for something inside that stop. \
+         If it is called there, give a line (the line of the call); otherwise leave from out."
+    )
+}
+
+/// `--from` with no `--line`: the new stop's `node` must be inside the `--from` stop's node as it is now. A stop that is not found now contains nothing.
+fn check_inside(
+    out: &mut Vec<Refusal>,
+    index: &Index,
+    project: &Project,
+    tree: &Node,
+    from: &TourStop,
+    node: &Node,
+) {
+    if find(index, project, tree, from).is_some_and(|outer| inside(outer, node)) {
+        return;
+    }
+    out.push(refusal(
+        "--from",
+        not_inside_sentence(
+            &format!("{} ({})", from.id, stop_name(from)),
+            &name_of(node),
+        ),
+    ));
+}
+
 /// The records of one `add`, or every refusal of the call together (D9).
 ///
 /// `node` is a node of `tree` (the index's tree: `index.tree(..)`), as `Lookup::resolve` found it. `tour` is the tour as it was **just now**: the
@@ -312,6 +355,12 @@ pub fn plan_stop(
         None => planned_for(tour, index, project, tree, node),
         Some(_) => None,
     };
+    // `--from` with no line is containment. A planned stop filled with the `--from` it was planned with keeps the plan's line: no new claim
+    if let (Some(from), None) = (from, options.line)
+        && !filling.is_some_and(|plan| plan.from == Some(from.id) && plan.line.is_some())
+    {
+        check_inside(&mut refusals, index, project, tree, from, node);
+    }
     if let (Some(id), Some(filled)) = (options.from, filling)
         && (id == filled.id || nested_in(tour, id, filled.id))
     {
@@ -441,6 +490,12 @@ pub fn plan_route(
                     stop.id
                 ),
             ));
+        }
+    }
+    if let (Some(stop), None) = (from_stop, line) {
+        // `--from` with no line: every planned node is inside that stop's node; one refusal per node that is not
+        for node in nodes {
+            check_inside(&mut refusals, index, project, tree, stop, node);
         }
     }
     let total = tour.stops.len() + nodes.len();
@@ -1072,6 +1127,23 @@ pub fn plan_tour<'t>(
                 )),
             }
         }
+        if let (Some(from), None) = (stop.from, stop.line)
+            && let Some(Some(above)) = nodes.get(from)
+            && !inside(above, node)
+        {
+            refusals.push(refusal(
+                at_key(&stop.place, "from"),
+                format!(
+                    "{}.from: {}",
+                    stop.place,
+                    not_inside_document(
+                        flat.stops[from].id.as_deref().unwrap_or("that stop"),
+                        &name_of(above),
+                        &name_of(node)
+                    )
+                ),
+            ));
+        }
         if let Some(same) = stop.same_as
             && let Some(Some(other)) = nodes.get(same)
             && other.id != node.id
@@ -1317,6 +1389,7 @@ mod tests {
                             def("Box", "", DefKind::Class, 13, 23, None),
                             def("Box.one", "Box", DefKind::Function, 14, 16, Some(ONE_ID)),
                             def("Box.two", "Box", DefKind::Function, 17, 23, None),
+                            def("Box.two.inner", "Box.two", DefKind::Function, 19, 20, None),
                         ],
                     ),
                     (
@@ -1640,21 +1713,128 @@ mod tests {
             (stop.from, stop.line, stop.same_as),
             (Some(s1), Some(7), Some(s2))
         );
-        // `--from` alone is containment: no line
+        // `--from` alone is containment: no line (the file `a.py`, s3, has `Box` in it)
+        let tour = tour_of(&[
+            stop_line(1, "alpha", ""),
+            stop_line(2, "helper", r#","from":"s1","line":5"#),
+            stop_line(3, "", ""),
+        ]);
+        let s3 = StopId::parse("s3").unwrap();
         let records = f
             .plan(
                 &tour,
                 "a.py::Box",
                 "A class.\n",
                 AddOptions {
-                    from: Some(s1),
+                    from: Some(s3),
                     ..AddOptions::default()
                 },
             )
             .unwrap();
         assert_eq!(
             (stop_of(&records).from, stop_of(&records).line),
-            (Some(s1), None)
+            (Some(s3), None)
+        );
+    }
+
+    /// `--from` with no `--line` is taken only for a node inside the `--from` stop's node: a file or a folder in a folder, a def in a file, a def in a
+    /// class, a def in a def (TR14e).
+    #[test]
+    fn from_with_no_line_is_for_what_is_inside_that_stop() {
+        let f = Fixture::new("contain");
+        let stop = |n: u32, path: &str, qualname: &str, kind: &str| {
+            format!(
+                r#"{{"type":"stop","id":"s{n}","path":"{path}","qualname":"{qualname}","kind":"{kind}","text":"t"}}"#
+            )
+        };
+        let tour = tour_of(&[
+            stop(1, "sub", "", "folder"),
+            stop(2, "a.py", "", "file"),
+            stop(3, "a.py", "Box", "class"),
+            stop(4, "a.py", "Box.two", "function"),
+            stop(5, "a.py", "helper", "function"),
+        ]);
+        let from = |n: u32| AddOptions {
+            from: Some(StopId::new(n).unwrap()),
+            ..AddOptions::default()
+        };
+        // inside: a file in a folder, a def in a file, a def in a class, a nested def in a def, and in a class and a file too
+        for (stop, node) in [
+            (1, "sub/z.py"),
+            (1, "sub/z.py::z"),
+            (2, "a.py::helper"),
+            (2, "a.py::Box.two.inner"),
+            (3, "a.py::Box.one"),
+            (3, "a.py::Box.two.inner"),
+            (4, "a.py::Box.two.inner"),
+        ] {
+            let records = f
+                .plan(&tour, node, "Intro.\n", from(stop))
+                .unwrap_or_else(|r| {
+                    panic!("s{stop} contains {node}: {:?}", texts(&r));
+                });
+            assert_eq!(stop_of(&records).line, None, "{node}");
+        }
+        // not inside: its own node, a parent, a sibling, a node in another folder or file
+        for (stop, node, outer) in [
+            (4, "a.py::Box.two", "Box.two"),
+            (4, "a.py::Box", "Box.two"),
+            (4, "a.py::Box.one", "Box.two"),
+            (5, "a.py::Box", "helper"),
+            (3, "a.py::helper", "Box"),
+            (1, "a.py", "sub/"),
+            (2, "sub/z.py", "a.py"),
+            (2, "a.py", "a.py"),
+        ] {
+            let refused = f.plan(&tour, node, "Intro.\n", from(stop)).unwrap_err();
+            let name = node.rsplit("::").next().unwrap();
+            assert_eq!(
+                texts(&refused),
+                [format!(
+                    "s{stop} ({outer}) does not contain {name}: --from without --line is for something inside that stop. \
+                          If it is called there, add --line <the line of the call>; otherwise leave --from out."
+                )],
+                "s{stop} {node}"
+            );
+            assert_eq!(refused[0].place, "--from");
+        }
+        // with a line it is the call that is said, and nothing is asked of containment
+        let with_line = AddOptions {
+            line: Some(11),
+            ..from(5)
+        };
+        assert!(f.plan(&tour, "a.py::Box", "Intro.\n", with_line).is_ok());
+    }
+
+    /// A planned stop filled with another `--from` is a new claim and is checked; with the `--from` it was planned with, the plan's line carries over.
+    #[test]
+    fn a_planned_stop_filled_with_another_from_is_checked_like_any() {
+        let f = Fixture::new("contain-plan");
+        let tour = tour_of(&[
+            stop_line(1, "alpha", ""),
+            stop_line(2, "", ""),
+            r#"{"type":"plan","stops":[{"id":"s3","path":"a.py","qualname":"helper","from":"s1","line":5},{"id":"s4","path":"a.py","qualname":"Box","from":"s2"}]}"#
+                .to_string(),
+        ]);
+        let from = |n: u32| AddOptions {
+            from: Some(StopId::new(n).unwrap()),
+            ..AddOptions::default()
+        };
+        // planned from s1 at line 5, filled with s1 and no line: the plan's line carries over
+        assert_eq!(
+            stop_of(&f.plan(&tour, "a.py::helper", "x.\n", from(1)).unwrap()).line,
+            Some(5)
+        );
+        // another `--from` and no line: `helper` is in the file s2
+        assert_eq!(
+            stop_of(&f.plan(&tour, "a.py::helper", "x.\n", from(2)).unwrap()).line,
+            None
+        );
+        // and a `--from` that does not contain it is refused
+        let refused = f.plan(&tour, "a.py::Box", "x.\n", from(1)).unwrap_err();
+        assert_eq!(
+            texts(&refused),
+            [not_inside_sentence("s1 (alpha)", "Box").as_str()]
         );
     }
 
@@ -1992,7 +2172,8 @@ mod tests {
             (stop_of(&records).from, stop_of(&records).line),
             (Some(s1), Some(7))
         );
-        let records = replace(
+        // `--from` and no line: the call's own, and containment: `alpha` does not contain `helper`
+        let refused = replace(
             s2,
             "a.py::helper",
             "Again.\n",
@@ -2001,11 +2182,10 @@ mod tests {
                 ..AddOptions::default()
             },
         )
-        .unwrap();
+        .unwrap_err();
         assert_eq!(
-            (stop_of(&records).from, stop_of(&records).line),
-            (Some(s1), None),
-            "the call's own: no line"
+            texts(&refused),
+            [not_inside_sentence("s1 (alpha)", "helper").as_str()]
         );
         // a replacement is no new stop: a full tour can be mended
         let lines: Vec<String> = (1..=40).map(|n| stop_line(n, "alpha", "")).collect();
@@ -2047,6 +2227,7 @@ mod tests {
             refused(AddOptions {
                 replace: Some(id(1)),
                 from: Some(id(1)),
+                line: Some(1),
                 ..AddOptions::default()
             }),
             ["--from s1: s1 is being replaced, and s1 is s1 or inside it"]
@@ -2055,6 +2236,7 @@ mod tests {
             refused(AddOptions {
                 replace: Some(id(1)),
                 from: Some(id(2)),
+                line: Some(11),
                 ..AddOptions::default()
             }),
             ["--from s2: s1 is being replaced, and s2 is s1 or inside it"]

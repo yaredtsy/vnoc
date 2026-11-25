@@ -1,0 +1,3 @@
+error: not written: 1 problem
+  fix them, then send the whole stop again
+    s1 (retry_charge) does not contain refund: --from without --line is for something inside that stop. If it is called there, add --line <the line of the call>; otherwise leave --from out.

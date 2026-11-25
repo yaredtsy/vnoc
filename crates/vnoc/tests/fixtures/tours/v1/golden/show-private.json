@@ -27,6 +27,7 @@
       "blocks": [],
       "depth": 0,
       "id": "s1",
+      "key": "billing/tax.py::rate_for",
       "kind": "function",
       "lines": [
         6,
