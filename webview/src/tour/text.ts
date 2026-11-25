@@ -1,28 +1,89 @@
-// The renderer of a step's `title` and `text` (docs/26-tours/05-on-screen.md §7). They are a model's output, or came by `git pull`: this knows two things, a
-// `code` span and *emphasis*, and everything else is text. It returns pieces for React to draw as text; it never makes HTML, so a `<b>` is the characters
-// `<b>`. It is not the docs panel's Markdown pipeline.
+// The renderer of a step's text (docs/26-tours/05-on-screen.md §7). A step is Markdown, written by a model or pulled with `git pull`: it is untrusted. markdown-it with
+// `html: false` (no tag of the text is ever HTML), links go to the host (`data-href`: the click is the page's, nothing navigates), images are their alt text, a code fence
+// is highlighted by the cards' Shiki highlighter when it is there (else plain), and a ` ```mermaid ` fence is a placeholder the page fills with a diagram, lazily.
+// Everything it returns is the renderer's own output: text is escaped by markdown-it, and the highlighter's HTML is Shiki's, made from escaped tokens. Pure, so it is
+// tested without a browser. It is not the docs panel's pipeline: the docs panel has headings and images; a step has neither (the core refuses them).
 
-export type Piece = { kind: "text" | "code" | "em"; text: string };
+import MarkdownIt from "markdown-it";
 
-// a code span: backticks around something that is not empty and has no backtick in it. Emphasis: one `*` not touching another, around text that does not start or
-// end with a space and has no `*`; `**x**` and a lone `*` (`a * b`) are text.
-const PIECE = /`([^`\n]+)`|(?<!\*)\*(?!\*)(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g;
+/** The HTML of a text, and the sources of its diagrams in order (a placeholder `data-diagram="n"` stands for `diagrams[n]`). */
+export interface Rendered {
+  html: string;
+  diagrams: string[];
+}
 
-export function pieces(text: string): Piece[] {
-  const out: Piece[] = [];
-  let from = 0;
-  const push = (kind: Piece["kind"], s: string) => {
-    if (s === "") return;
-    const last = out[out.length - 1];
-    if (last && last.kind === kind && kind === "text") last.text += s;
-    else out.push({ kind, text: s });
-  };
-  for (const m of text.matchAll(PIECE)) {
-    push("text", text.slice(from, m.index));
-    if (m[1] !== undefined) push("code", m[1]);
-    else push("em", m[2]);
-    from = m.index + m[0].length;
+/** Highlights `code` as `lang` (an id the highlighter has) into HTML, or null for plain. Given by the page once the highlighter is loaded. */
+export type Highlight = (code: string, lang: string) => string | null;
+
+/** What a render is for: the highlighter, and the languages it has (to tell a fence's language from a name it has not got). */
+export type Env = {
+  diagrams: string[];
+  highlight?: Highlight;
+  /** the languages the highlighter has loaded; a fence in another is plain */
+  languages?: readonly string[];
+  /** the name of a fence's language as an id: `py` is `python` */
+  fenceLanguage?: (info: string, loaded: readonly string[]) => string | null;
+};
+
+const md = new MarkdownIt({ html: false, linkify: true });
+
+// an image is its alt text: a step has none (the core refuses them), but a tour from a pull may
+md.renderer.rules.image = (tokens, i) => `<span class="tour-image">${md.utils.escapeHtml(tokens[i].content || "image")}</span>`;
+
+// a link is not followed inside the webview: the click goes to the host. The target travels in `data-href`
+md.renderer.rules.link_open = (tokens, i) => `<a href="#" data-href="${md.utils.escapeHtml(String(tokens[i].attrGet("href") ?? ""))}">`;
+
+// a table scrolls sideways inside the pane when it is wide
+md.renderer.rules.table_open = () => '<div class="tour-table"><table>';
+md.renderer.rules.table_close = () => "</table></div>";
+
+md.renderer.rules.fence = (tokens, i, _options, rawEnv) => {
+  const env = rawEnv as Env;
+  const token = tokens[i];
+  const info = token.info.trim();
+  if (info.split(/\s+/)[0]?.toLowerCase() === "mermaid") {
+    env.diagrams.push(token.content);
+    return `<div class="tour-diagram" data-diagram="${env.diagrams.length - 1}" role="img" aria-label="diagram"><pre class="tour-fence"><code>${md.utils.escapeHtml(token.content)}</code></pre></div>\n`;
   }
-  push("text", text.slice(from));
-  return out;
+  const lang = env.fenceLanguage && env.languages ? env.fenceLanguage(info, env.languages) : null;
+  const coloured = lang && env.highlight ? env.highlight(token.content, lang) : null;
+  return coloured ? `<div class="tour-fence-box">${coloured}</div>\n` : `<pre class="tour-fence"><code>${md.utils.escapeHtml(token.content)}</code></pre>\n`;
+};
+
+/** Renders a step's text. The diagrams' placeholders hold the source as plain code until the page draws them (or when it cannot). */
+export function renderText(text: string, env: Partial<Env> = {}): Rendered {
+  const full: Env = { diagrams: [], ...env };
+  const html = md.render(text, full);
+  return { html, diagrams: full.diagrams };
+}
+
+/**
+ * Draws a diagram: `load` brings Mermaid in (a dynamic import, called only when there is a diagram to draw), `source` is the fence, `id` is unique in the page, `theme` is
+ * Mermaid's own (`dark` or `default`). The answer is the SVG Mermaid made (with `securityLevel: "strict"` it is sanitised), or why not: a diagram that does not parse is
+ * never a blank or an exception, the page shows its source and the note.
+ */
+export interface MermaidLike {
+  initialize(config: { startOnLoad: boolean; securityLevel: "strict"; theme: string }): void;
+  render(id: string, source: string): Promise<{ svg: string }>;
+}
+
+export type Drawn = { ok: true; svg: string } | { ok: false; note: string };
+
+export async function drawDiagram(load: () => Promise<MermaidLike>, source: string, id: string, theme: string): Promise<Drawn> {
+  try {
+    const mermaid = await load();
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme });
+    const { svg } = await mermaid.render(id, source);
+    return svg.trim() === "" ? { ok: false, note: "This diagram could not be drawn." } : { ok: true, svg };
+  } catch {
+    return { ok: false, note: "This diagram could not be drawn: the source is shown instead." };
+  }
+}
+
+/** Mermaid's theme for VS Code's: `dark` on a dark theme, `default` on a light one (the cards choose theirs the same way: `currentTheme` in `lib/highlighter.ts`). */
+export const mermaidTheme = (shikiTheme: string): string => (shikiTheme.endsWith("light") ? "default" : "dark");
+
+/** The target of a click on a link of a text: only an `http(s)` address goes to the host; a relative path or anything else goes nowhere. */
+export function linkTarget(href: string | null): string | null {
+  return href !== null && /^https?:\/\//i.test(href) ? href : null;
 }

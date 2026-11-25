@@ -1,13 +1,13 @@
 import type { StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
 import type { Look } from "../layout.ts";
-import { Rich } from "./Rich.tsx";
+import { Rich, type TextDrawn } from "./Rich.tsx";
 
 /**
  * The text pane (design 03 §2.3), before the foot: a detail's parent in one dim line, the title, the paragraph (the lead size for an intro), and what a step of this
  * kind adds under it: the grey bars of a stop that is not written, `⇢ Explained at stop N`, the mark of a step that changed. The words are the core's; the
  * sentences of a stop that is not written are the design's.
  */
-export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; parent: StepView | null; look: Look; onJump: (stop: string) => void }) {
+export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; parent: StepView | null; look: Look; onJump: (stop: string) => void; onTextDrawn?: (d: TextDrawn) => void }) {
   const { view, stop, step, look } = p;
   const writing = view.writing === stop.id;
   const on = view.writing === null ? null : view.stops.find((s) => s.id === view.writing);
@@ -36,9 +36,7 @@ export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; pa
           </p>
         </>
       ) : (
-        <p className={look.lead ? "stage-lead" : "stage-paragraph"}>
-          <Rich text={step.text} />
-        </p>
+        <Rich text={step.text} className={look.lead ? "stage-lead" : "stage-paragraph"} onDrawn={p.onTextDrawn} />
       )}
       {look.explained && explained && (
         <p className="stage-explained">

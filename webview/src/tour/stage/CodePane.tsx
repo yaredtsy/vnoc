@@ -1,8 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ThemedToken } from "shiki/core";
 
 import { type CodeLook, type LineLook, lineLook } from "../layout.ts";
 import { type PaneView, moreLit, nextPage, scrollTarget } from "../scroll.ts";
 import type { Shown } from "./useCode.ts";
+import { useHighlighter, useThemeName, useTokens } from "./useHighlight.ts";
+import { languageOf } from "../../lib/highlighter.ts";
 
 /** One row of the code is this high (px): the scroll rule counts in lines. */
 export const LINE_H = 18;
@@ -11,12 +14,15 @@ export interface CodeDrawn {
   scrolledTo: number;
   lit: number[];
   thin: number[];
+  /** how many tokens were drawn in a colour (0: plain) */
+  coloured: number;
 }
 
 /**
  * The code pane (design 03 §2.2): the node's code, as it is now, with its real line numbers. The step's lines are lit and the rest dim (the look of each line is
- * `lineLook`); it scrolls by itself by the rule of `scroll.ts` and otherwise only by hand. Long lines are not wrapped. No syntax colours: the editor's font and colours
- * only (a gap, said in the report).
+ * `lineLook`); it scrolls by itself by the rule of `scroll.ts` and otherwise only by hand. Long lines are not wrapped. The syntax colours are the cards' (Shiki, the same
+ * highlighter and themes), under the marks: a lit line is coloured and has its background and bar, a dim one is the same colours at less strength. A file whose language the
+ * highlighter does not have is drawn plain, as before.
  */
 export function CodePane(p: {
   code: Shown;
@@ -26,6 +32,8 @@ export function CodePane(p: {
   parentLit: readonly [number, number] | null;
   /** the step's own mark says the code changed after it was written: the lit lines get a dashed bar and no background */
   changed: boolean;
+  /** the node's file, for its language */
+  path: string | null;
   stopId: string;
   stepId: string;
   gone: boolean;
@@ -39,6 +47,9 @@ export function CodePane(p: {
   const previous = useRef<string | null>(null);
   const [view, setView] = useState<PaneView>({ top: 0, rows: 9 });
   const shown = p.code && "lines" in p.code ? p.code : null;
+  const hl = useHighlighter();
+  const theme = useThemeName();
+  const tokens = useTokens(hl, shown?.text ?? null, p.path ? languageOf(p.path) : "plaintext", theme);
   const first = shown?.first ?? 1;
   const litIndex = p.lit ? ([p.lit[0] - first, p.lit[1] - first] as const) : null;
 
@@ -60,9 +71,10 @@ export function CodePane(p: {
   }, [p.stopId, p.stepId, shown?.text]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const looks: LineLook[] = shown ? shown.lines.map((_, i) => lineLook(p.look, first + i, first, p.lit, p.parentLit)) : [];
+  const coloured = shown && tokens ? tokens.reduce((n, line, i) => (line.map((t) => t.content).join("") === shown.lines[i] ? n + line.filter((t) => t.color).length : n), 0) : 0;
   useEffect(() => {
-    p.onDrawn({ scrolledTo: view.top, lit: looks.flatMap((l, i) => (l === "lit" ? [first + i] : [])), thin: looks.flatMap((l, i) => (l === "thin" ? [first + i] : [])) });
-  }, [shown?.text, p.look, p.lit?.[0], p.lit?.[1], p.parentLit?.[0], p.parentLit?.[1], view.top]); // eslint-disable-line react-hooks/exhaustive-deps
+    p.onDrawn({ scrolledTo: view.top, lit: looks.flatMap((l, i) => (l === "lit" ? [first + i] : [])), thin: looks.flatMap((l, i) => (l === "thin" ? [first + i] : [])), coloured });
+  }, [shown?.text, p.look, p.lit?.[0], p.lit?.[1], p.parentLit?.[0], p.parentLit?.[1], view.top, coloured]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (p.gone) return <div className="stage-code stage-empty">This is no longer in the code.</div>;
   if (p.code === null) return <div className="stage-code stage-empty">Reading the code…</div>;
@@ -74,7 +86,7 @@ export function CodePane(p: {
         {shown!.lines.map((text, i) => (
           <div key={i} className={`stage-line stage-${looks[i]}${p.changed && looks[i] === "lit" ? " stage-changed" : ""}`} data-line={first + i}>
             <span className="stage-gutter">{first + i}</span>
-            <span className="stage-text">{text === "" ? " " : text}</span>
+            <span className="stage-text">{text === "" ? " " : <Tokens text={text} tokens={tokens?.[i]} />}</span>
             {p.calls.has(first + i) && (
               <button type="button" className="stage-callto" title={`A stop of this tour: ${p.calls.get(first + i)!.name}`} onClick={() => p.onCall(p.calls.get(first + i)!.id)}>
                 ⇢ stop {p.calls.get(first + i)!.number}
@@ -89,5 +101,23 @@ export function CodePane(p: {
         </button>
       )}
     </div>
+  );
+}
+
+/** One line's tokens, each in its colour (`ThemedToken`: `fontStyle` 1 is italic, 2 bold, 4 underline); the text itself when the line has none. */
+function Tokens({ text, tokens }: { text: string; tokens: ThemedToken[] | undefined }) {
+  if (!tokens || tokens.length === 0 || tokens.map((t) => t.content).join("") !== text) return <>{text}</>;
+  return (
+    <>
+      {tokens.map((t, i) => (
+        <span
+          key={i}
+          className="stage-token"
+          style={{ color: t.color, fontStyle: t.fontStyle && t.fontStyle & 1 ? "italic" : undefined, fontWeight: t.fontStyle && t.fontStyle & 2 ? 700 : undefined, textDecoration: t.fontStyle && t.fontStyle & 4 ? "underline" : undefined }}
+        >
+          {t.content}
+        </span>
+      ))}
+    </>
   );
 }

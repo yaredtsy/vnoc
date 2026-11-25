@@ -25,6 +25,7 @@
 .stage-line { display: flex; height: 18px; white-space: pre; position: relative; }
 .stage-gutter { flex: none; width: 4ch; padding-right: 1.5ch; text-align: right; color: var(--vscode-editorLineNumber-foreground, var(--muted-foreground)); user-select: none; box-sizing: content-box; }
 .stage-text { padding-right: 16px; }
+.stage-token { white-space: pre; }
 .stage-line::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
 .stage-lit { background: var(--vscode-editor-rangeHighlightBackground, color-mix(in srgb, var(--card-selected) 14%, transparent)); }
 .stage-lit::before { background: var(--card-selected); }
@@ -51,6 +52,40 @@
 .stage-paragraph, .stage-lead, .stage-sentence, .stage-explained, .stage-mark-note { margin: 0 0 6px; max-width: 46ch; line-height: 1.55; font-size: 13px; }
 .stage-lead { font-size: 14px; }
 .stage-paragraph code, .stage-lead code, .stage-sentence code { font-family: var(--editor-font); background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+
+/* a step's text is Markdown (`text.ts`, `stage/Rich.tsx`): paragraphs, lists, tables, quotes, fences, one diagram. No headings and no images: the core refuses them */
+.tour-md.stage-paragraph, .tour-md.stage-lead { max-width: none; }
+.tour-md > :first-child { margin-top: 0; }
+.tour-md > :last-child { margin-bottom: 0; }
+.tour-md p { margin: 0 0 6px; }
+.tour-md ul, .tour-md ol { margin: 0 0 6px; padding-left: 20px; }
+.tour-md ul { list-style: disc; }
+.tour-md ol { list-style: decimal; }
+.tour-md ul ul { list-style: circle; }
+.tour-md li { margin: 0 0 2px; }
+.tour-md li > p { margin: 0; }
+.tour-md a { color: var(--link); text-decoration: none; }
+.tour-md a:hover { text-decoration: underline; }
+.tour-md blockquote { margin: 0 0 6px; padding: 0 0 0 10px; border-left: 2px solid var(--vscode-textBlockQuote-border, var(--border)); color: var(--muted-foreground); }
+.tour-md code { font-family: var(--editor-font); background: var(--code-bg); padding: 0 3px; border-radius: 3px; font-size: 0.92em; }
+.tour-md .tour-image { color: var(--muted-foreground); font-style: italic; }
+.tour-table { overflow-x: auto; margin: 0 0 8px; max-width: 100%; }
+.tour-table table { border-collapse: collapse; font-size: 12px; line-height: 1.4; }
+.tour-table th, .tour-table td { border: 1px solid var(--vscode-panel-border, var(--border)); padding: 2px 8px; text-align: left; vertical-align: top; }
+.tour-table th { background: var(--code-bg); font-weight: 600; }
+.tour-fence, .tour-fence-box pre { margin: 0 0 8px; padding: 6px 8px; overflow-x: auto; border-radius: 4px; background: var(--vscode-textCodeBlock-background, var(--code-bg)) !important; font-family: var(--editor-font); font-size: 12px; line-height: 1.45; white-space: pre; }
+.tour-fence code, .tour-fence-box code { background: none; padding: 0; font-size: inherit; }
+.tour-diagram { margin: 0 0 8px; }
+.tour-diagram-drawn { display: flex; justify-content: center; padding: 6px; border: 1px solid var(--vscode-panel-border, var(--border)); border-radius: 4px; cursor: zoom-in; }
+.tour-diagram-drawn:hover, .tour-diagram-drawn:focus-visible { border-color: var(--card-selected); outline: none; }
+.tour-diagram-drawn svg { max-width: 100%; height: auto; }
+.tour-diagram-note { margin: 0; color: var(--muted-foreground); font-size: 11px; }
+.tour-diagram-failed .tour-fence { margin-bottom: 4px; }
+.tour-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 32px; background: color-mix(in srgb, var(--vscode-editor-background, #000) 82%, transparent); cursor: zoom-out; }
+.tour-overlay-body { max-width: 100%; max-height: 100%; overflow: auto; padding: 16px; border-radius: 6px; background: var(--vscode-editor-background, var(--background)); border: 1px solid var(--vscode-panel-border, var(--border)); cursor: default; }
+.tour-overlay-body svg { max-width: none; width: auto; height: auto; min-width: min(80vw, 900px); }
+.tour-overlay-close { position: absolute; top: 10px; right: 14px; border: 0; background: none; color: var(--foreground); font-size: 16px; cursor: pointer; }
+
 .stage-mark-note, .stage-explained, .stage-sentence { color: var(--muted-foreground); }
 .stage-link { background: none; border: 0; padding: 0; color: var(--link); cursor: pointer; font: inherit; }
 .stage-link:hover { text-decoration: underline; }

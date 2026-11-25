@@ -654,3 +654,64 @@ suite("the tour's bar", () => {
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
 });
+
+const MARKDOWN = `checkout runs the sale in three moves.
+
+- check the stock, and refuse an order that cannot be filled
+- hold the units, then charge
+- give the units back on a timeout
+
+| move | what it touches |
+| --- | --- |
+| \`has_stock\` | reads the count |
+| \`reserve\` | takes units out |
+
+\`\`\`mermaid
+flowchart LR
+  order --> has_stock
+  has_stock --> reserve
+  reserve --> charge
+\`\`\`
+`;
+
+const BROKEN = `has_stock answers one question about the count.
+
+\`\`\`mermaid
+flowchart LR
+  a -->
+\`\`\`
+`;
+
+suite("a step's text is Markdown", () => {
+  let md = "";
+  suiteSetup(async function () {
+    this.timeout(90_000);
+    await sleep(1100); // told apart by the second they were started in
+    md = JSON.parse(tourCmd(["start", "--title", "Markdown in a step", "--author", "the suite", "--json"])).tour;
+    // made by the built `vnoc tour add`, as an agent writes it: the core accepts the list, the table and the diagram
+    tourCmd(["add", md, "tourdemo/shop.py::checkout", "--body-file", "-"], MARKDOWN);
+    tourCmd(["add", md, "tourdemo/shop.py::has_stock", "--body-file", "-"], BROKEN);
+    tourCmd(["finish", md, "--no-ids"]);
+    await sectionShows("the new tour in the list", (d) => d.list.some((r) => r.id === md), 30_000);
+    api.toursClick("key:Escape");
+    api.toursClick(`row:${md}`);
+    await until("the Markdown tour's context", () => api.session().active === `tour:${md}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 10_000, md);
+  });
+
+  test("a list, a table and a Mermaid flowchart are drawn, and the code pane has syntax colours", async () => {
+    api.stageClick("start");
+    const d = await stageShows("the step drawn with its diagram", (x) => x.step === "s1" && x.markdown.diagrams === 1 && x.markdown.drawn === 1, 30_000, md);
+    assert.deepStrictEqual(d.markdown, { lists: 1, tables: 1, fences: 0, diagrams: 1, drawn: 1, failed: 0 });
+    assert.ok(d.coloured > 10, `the code pane drew ${d.coloured} coloured tokens`);
+    assert.strictEqual(d.text, MARKDOWN.trim(), "the stage has the core's text, with its lines");
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+
+  test("a diagram that does not parse shows its source and one line, and the next step is drawn", async () => {
+    api.stageClick("next");
+    const d = await stageShows("the broken diagram's note", (x) => x.step === "s2" && x.markdown.diagrams === 1 && x.markdown.failed === 1, 30_000, md);
+    assert.deepStrictEqual(d.markdown, { lists: 0, tables: 0, fences: 0, diagrams: 1, drawn: 0, failed: 1 });
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});

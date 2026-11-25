@@ -16,6 +16,7 @@ import { Contents } from "./stage/Contents.tsx";
 import { Cover, End } from "./stage/Cover.tsx";
 import { Foot } from "./stage/Foot.tsx";
 import { Header } from "./stage/Header.tsx";
+import type { TextDrawn } from "./stage/Rich.tsx";
 import { TextPane } from "./stage/TextPane.tsx";
 import { useCode } from "./stage/useCode.ts";
 import "./stage.css";
@@ -52,7 +53,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const height = useView((v) => v.stageHeight);
   const textWidth = useView((v) => v.stageText);
   const folded = useView((v) => v.stageFolded);
-  const [drawn, setDrawn] = useState<CodeDrawn>({ scrolledTo: 0, lit: [], thin: [] });
+  const [drawn, setDrawn] = useState<CodeDrawn>({ scrolledTo: 0, lit: [], thin: [], coloured: 0 });
+  const [textDrawn, setTextDrawn] = useState<TextDrawn>({ lists: 0, tables: 0, fences: 0, diagrams: 0, drawn: 0, failed: 0 });
 
   useEffect(() => {
     let wanted = true;
@@ -159,8 +161,10 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       lit: wantsCode ? drawn.lit : [],
       thin: wantsCode ? drawn.thin : [],
       scrolledTo: wantsCode ? drawn.scrolledTo : 0,
+      coloured: wantsCode ? drawn.coloured : 0,
+      markdown: textDrawn,
     });
-  }, [view, code, drawn.scrolledTo, drawn.lit.join(","), drawn.thin.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, code, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const style = { height: folded ? 30 : height };
   const grip = (
@@ -239,12 +243,13 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
                   lit={step.lines && (look.code === "lit" || look.code === "detail") ? step.lines : null}
                   parentLit={current!.parent?.lines ?? null}
                   changed={step.fresh === "changed"}
+                  path={node?.path ?? null}
                   stopId={stop.id}
                   stepId={step.id}
                   gone={node === null}
                   calls={callLines(view, stop.id)}
                   onCall={jump}
-                  onDrawn={(d) => setDrawn((old) => (old.scrolledTo === d.scrolledTo && old.lit.join() === d.lit.join() && old.thin.join() === d.thin.join() ? old : d))}
+                  onDrawn={(d) => setDrawn((old) => (old.scrolledTo === d.scrolledTo && old.lit.join() === d.lit.join() && old.thin.join() === d.thin.join() && old.coloured === d.coloured ? old : d))}
                 />
               )}
             </div>
@@ -253,7 +258,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
               drag(e, (dx) => setStageText(clamp(start - dx, TEXT_MIN, TEXT_MAX)));
             }} />
             <div className="stage-right" style={textWidth === null ? undefined : { width: textWidth }}>
-              <TextPane view={view} stop={stop} step={step} parent={current!.parent} look={look} onJump={jump} />
+              <TextPane view={view} stop={stop} step={step} parent={current!.parent} look={look} onJump={jump} onTextDrawn={(d) => setTextDrawn((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d))} />
               <Foot view={view} onJump={jump} onMove={(m) => act.current[m]()} />
             </div>
           </div>
