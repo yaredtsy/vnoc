@@ -436,6 +436,12 @@ file read (the recorded check); select a node → the second view lists its tour
 
 Commit: `tours TR21: a tour says what no longer matches, and shows it as written; the tours of the selected node`.
 
+**Cut in two** ([`05`](05-on-screen.md) §5, "Decided before TR21's prompt"): **TR21a** = TR20's review decisions (`quiet` and `of`
+on the view, the 30 s re-ask, W11, the `tour` suite five runs in a row, the `edit` flake), then *changed*, *gone*, **as written**,
+the cover's lines, the rows' check; commits `tours TR21a: what TR20's review decided` and `tours TR21a: a tour says what no longer
+matches, and shows it as written`. **TR21b** = the view **On the selected node**, its switch and empty state, `▶ N`, **Show Tours**,
+`+N calls not on this tour`. **Check All Tours** moves to TR22.
+
 ### TR22 The user's actions
 
 | Files | What |

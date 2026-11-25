@@ -286,6 +286,34 @@ words are in `shared/tourWriting.ts`. A diagram is drawn at no less than 80% and
   fail on this machine. Not a tours bug. The full Rust run is green only with it built (1.1 GB); build it once before the pull
   request, not per step.
 
+**Decided before TR21's prompt (2026-11-25).** TR21 is cut in two, to keep a prompt to two commits: **TR21a** (TR20's review
+decisions above; out of date and as written) and **TR21b** (the tours of the selected node, `▶ N`, **Show Tours**, `+N calls not on
+this tour`). The rest:
+- `of` on the view is `null` while the size is not known (being written, no plan), else `written + planned`. `sizeKnown` and
+  `sizeOf` in `shared/tourWriting.ts` go; `quietOf` goes (the view's own `quiet`).
+- The 30 s re-ask is of `vnoc/tour` for the open tour, and it replaces TR20's 30 s re-ask of the list: while a tour is open the
+  section draws its route, not the list.
+- W11 adds and activates a tour context only when the window has none open. With one open, TR20's rule stands (the open tour is not
+  replaced; the notification).
+- `vnoc/tourCode`'s answer gains `steps`: `{ <step id>: [first, last] }`, each block's lines at the commit and the intro's the stop's
+  lines. The stage lights the current step's lines and draws its parent's thin, as it does now. (An answer, not a file: allowed.)
+- **Now / As Written** is offered only on a changed or gone step of a pinned tour whose commit this repository has
+  (`pin_in_repository`, and `tourCode` not `null`). **As Written** is where such a step opens; the choice is not kept (leave the step
+  and come back: As Written again). Otherwise the not-pinned look (dashed; no code pane for a gone stop).
+- The cover in TR21a: `pinned at f4d6e15` (tooltip: the commit as the core gives it), `pinned at f4d6e15, a commit this repository
+  does not have`, or `not pinned`. **The reason after `not pinned`, and the offers, are TR22's** (they need `tourPin`'s reasons). The
+  first stop gone: design 05 §4's sentence. **Most of it changed** = `check.changed + check.gone` more than half of `written`: the
+  cover's sentence and, on a finished tour, the route's foot `7 of 10 stops changed since this was written` (one rule in `shared/`,
+  tested).
+- The route's and card's right-hand word: `writing…` > `gone` > `changed` > `⇢ 2`. A gone stop's row and card are struck through.
+  There is no `⚠`: the only `⚠` the design has is *fallback*, which is not built (§4).
+- The list asks a check for the rows it holds (`check: [ids]`); the first list in a window asks twice (plain, then with the ids).
+  **Check All Tours** goes to TR22 with the section's `⋯`.
+- The window suite says "no source file was read" with the view's `check.from` (`memory` or `record`, not `check`), reported in the
+  stage's test event.
+- The `edit` flake: no worktree of `main` (3.6 GiB free). TR21a runs `edit` five times here; a failure is read against
+  `git diff main..tours` of the files on its path, and fixed only if tours caused it.
+
 ## 6. Who draws what
 
 | | Does | Does not |
