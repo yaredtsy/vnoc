@@ -517,8 +517,28 @@ in the core's words (not *"Every stop already has an ID."*), and the shot script
   **Ask for a Tour…** everywhere (`＋`, the node menu, a row's **Ask for a New Tour**, the empty states' **Ask for One** and **Copy a
   Request**); **Open Tour…** from the bar's `⋯` through the host (`vnoc.openTour(id)`), the selected node's tours first; **Show Docs**.
 
+**As built (TR22b, `3eb6623`, `c3a469a`, `8263143`, `848dff5`; reviewed).** The cover: title, line, meta, **Start**, then the pin state,
+the offers (a reason with an offer said once, as it), the notes; reasons with no offer joined by ` · `. `tourIds`, `tourEdit`,
+`tourShare`, `tourDelete` answer `words`; Write IDs on lost markers says *"1 stop's ID is lost from the code: see Needs Attention."*.
+**Rename…**, **Share with the Project** / **Make Private Again** (not while written, not on the private copy of a shared tour), the end
+card's **Share…**, Delete with Undo (hover `🗑`, menu, `Delete`/`⌘⌫`; `■` Stop on a `writing` tour; the core refuses deleting one being
+written), a new `vnoc/tourDeleteFinished` (one token per tour, one Undo row). The Undo row is the core's words and an **Undo** button,
+six seconds, page-only (a reload loses it; the trash keeps the tour). Fixed on the way: a dry-pin test that compared seconds, a
+window test whose names matched another suite's node. Rust lib 563, lifecycle 75; TS 417 / 873 / 310; one full window run: Bend's 3
+and the Write IDs test (fixed after, not re-run in full). Screenshots `tools/media/out/tr22b/`: Start in view, no ID lost, no toast.
+
+**Decided at TR22b's review:**
+- The Undo row says *"Deleted the tour of checkout."* while the row it replaces said *How the shop checks out*: the words name the
+  tour by its **title** (*"Deleted “How the shop checks out”."*), the root only for a tour with no title. TR22c's first commit.
+- The row's menu lacks **Open**, **Start Again**, **Reveal Root in Main** (05 §3): TR22c adds them with **Open as JSON** and **Ask for
+  a New Tour**, so the menu is whole.
+- **Delete All Tours…** (design/07) is not built: 05 §3's `⋯` has **Delete Finished Tours** only (my pick, kept).
+- With two offers the second (**Commit and Pin…**) is below the stage's fold at the shot's size: TR23 (the narrow stage).
+- A coding session kills a stray core by pid, only a `target/debug/vnoc --stdio` with parent 1 (TR22b's `pkill` also killed the
+  installed extension's cores).
+
 **Next, in this order:**
-- **TR22b**, then **TR22c**, as cut above.
+- **TR22c**, as cut above, with the two review items first.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
