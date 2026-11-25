@@ -236,6 +236,20 @@ I skipped** (`place.first_unseen`) → **TR19's first commit**, from the core; h
 when a tour appears from outside, the splitter → TR20; `changed` and `⚠` on the route, the second view and its switch, the empty
 state "on node" → TR21; the section's `＋` / `⋯`, the row menu, Delete (also on an unreadable row), `Delete`/`⌘⌫` → TR22.
 
+**As built (TR19, `4b89724`, `8b1897e`, `e83a8fc`): phase 3's stop point reached.** A finished tour plays: list, route, map,
+stage, bar. The core gives a row's `when` (relative under a day, then `yesterday` or `12 Nov`, by **UTC** day: the core has no time
+zone; accepted) and `place.first_unseen`. The map is its own `TourCanvas`/`TourCard` on the cards' CSS (not draggable: the route is
+fixed); a call in the code pane is a `⇢ stop N` button at the end of its line (the view gives lines, not names); the camera moves for
+a new stop, not for a step inside one, and fits the route at the cover and the end. The bar's `←` is the core's `back`; `Esc` closes
+the context (an open menu first). "Moved by the agent" when `moved` or `at` changed from a command. Full `pnpm -r test`: every window
+suite, 148 passing; it found and fixed a render loop (React #185) in the bar, duplicate route row keys, the `tour` suite's setup
+leaking into other suites, and an old `cli` suite count of permissions. Looked at side by side with `design/mockup.html`.
+
+**Left out at TR19, and where each goes:** the writing dot, the bar's agent text (`writing 6/10 ■`, `stopping`, `stopped`, `no
+news`), the status bar item and the one notification, the route's foot line, cards being written → TR20; a card's `changed`, `+N
+calls not on this tour` → TR21; the section's `＋`/`⋯`, Show Docs in the card menu → TR22; the narrow bar → TR23. **Open Tour…** in
+the bar's `⋯` (the webview cannot run a palette command): the webview asks the host, which runs it — TR22.
+
 ## 6. Who draws what
 
 | | Does | Does not |
