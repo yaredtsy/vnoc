@@ -943,7 +943,7 @@ suite("a tour read while it is written", () => {
     await stageShows("the text where the bars were", (x) => x.step === "s1" && x.kind === "short", 10_000, quiet);
   });
 
-  test("a second tour that appears while one is open leaves the open one, and the list has it; with none open the section unfolds", async function () {
+  test("a second tour that appears while one is open leaves the open one, and the list has it", async function () {
     this.timeout(60_000);
     const open = api.session().active;
     assert.ok(open.startsWith("tour:"), open);
@@ -953,13 +953,41 @@ suite("a tour read while it is written", () => {
     await sectionShows("the list has the new tour", (d) => d.list.some((r) => r.id === next), 30_000);
     assert.strictEqual(api.session().active, open, "the open tour stays");
     assert.strictEqual(api.toursNoticed().length, before, "the canvas is showing a tour: no notification");
-    // no tour open and the section folded: a tour that appears unfolds it
+  });
+
+  test("W11: with the canvas visible and no tour open, a tour that appears and is being written becomes the tour context, at its cover", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await until("the canvas tab", () => canvasTabs().length > 0);
+    await until("MAIN active", () => api.session().active === "main");
+    const noticed = api.toursNoticed().length;
+    await sleep(1100);
+    const w11 = JSON.parse(tourCmd(["start", "--title", "Opened for you", "--author", "the suite", "--plan", node("has_stock"), node("release"), "--json"])).tour;
+    await until("the tour's context, active", () => api.session().active === `tour:${w11}`, 30_000);
+    const cover = await stageShows("the cover", (d) => d.mode === "cover", 20_000, w11);
+    assert.strictEqual(cover.beat, "writing");
+    assert.strictEqual(api.toursNoticed().length, noticed, "it was opened, not announced");
+    // a second tour while this one is open: not replaced, and nothing opens
+    await sleep(1100);
+    const other = JSON.parse(tourCmd(["start", "--title", "Not opened", "--author", "the suite", "--plan", node("release"), "--json"])).tour;
+    await sectionShows("the list has it", (d) => d.list.some((r) => r.id === other), 30_000);
+    assert.strictEqual(api.session().active, `tour:${w11}`, "the open tour is not replaced");
+  });
+
+  test("the canvas hidden and no tour open: a tour that appears unfolds the section, is announced, and nothing opens", async function () {
+    this.timeout(60_000);
     api.stageClick("closeTour");
     await dropTourContext();
     api.toursClick("fold");
     await sectionShows("folded", (d) => d.folded);
+    await closeCanvas();
+    const noticed = api.toursNoticed().length;
     await sleep(1100);
     const third = JSON.parse(tourCmd(["start", "--title", "A third one", "--author", "the suite", "--json"])).tour;
     await sectionShows("unfolded by the new tour", (d) => !d.folded && d.mode === "list" && d.list.some((r) => r.id === third), 30_000);
+    await until("the notification", () => api.toursNoticed().length === noticed + 1);
+    assert.ok(!Object.values(api.session().contexts).some((c) => c.kind === "tour"), "nothing was opened");
   });
 });

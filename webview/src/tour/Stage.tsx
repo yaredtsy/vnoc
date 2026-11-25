@@ -20,7 +20,6 @@ import { Header } from "./stage/Header.tsx";
 import type { TextDrawn } from "./stage/Rich.tsx";
 import { TextPane } from "./stage/TextPane.tsx";
 import { useCode } from "./stage/useCode.ts";
-import { useQuiet } from "./writing.ts";
 import "./stage.css";
 
 /** The least the dock is (the header and five lines of code) and the most (45% of the canvas): design 03 §6. */
@@ -55,7 +54,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const height = useView((v) => v.stageHeight);
   const textWidth = useView((v) => v.stageText);
   const folded = useView((v) => v.stageFolded);
-  const [drawn, setDrawn] = useState<CodeDrawn>({ scrolledTo: 0, lit: [], thin: [], coloured: 0 });
+  const [drawn, setDrawn] = useState<CodeDrawn>({ scrolledTo: 0, lit: [], thin: [], coloured: 0, step: null, text: null });
   const [textDrawn, setTextDrawn] = useState<TextDrawn>({ lists: 0, tables: 0, fences: 0, diagrams: 0, drawn: 0, failed: 0 });
 
   useEffect(() => {
@@ -76,9 +75,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const wantsCode = !!node && look !== null && look.code !== "none" && look.code !== "rows";
   const code = useCode(node && wantsCode ? node.path : null, node?.range ?? null, wantsCode);
   // the agent: what it is doing (the tour's state, and no news), and whether `Next` has anywhere to go yet
-  const quiet = useQuiet(view);
-  const beat = view ? beatOf(view, quiet) : "finished";
-  const next = view ? nextState(view, quiet) : "ready";
+  const beat = view ? beatOf(view) : "finished";
+  const next = view ? nextState(view) : "ready";
   // the text of a step that was grey bars a moment ago fades in for a moment: the step is the same, its kind went from planned to a written one
   const before = useRef<Shown | null>(null);
   const [fadeStep, setFadeStep] = useState<string | null>(null);
@@ -161,9 +159,11 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     [],
   );
 
-  // what the suite reads of what was drawn
+  // what the suite reads of what was drawn: only a drawing that is whole. While the code is being read, and between a new step and the code pane's report of it, the page has not
+  // drawn the step yet (a drawing then would carry the lit lines of the step before)
+  const codeDrawn = !wantsCode || (code !== null && ("error" in code || (drawn.step === (step?.id ?? null) && drawn.text === code.text)));
   useEffect(() => {
-    if (!view || !current) return;
+    if (!view || !current || !codeDrawn) return;
     post({
       type: "stageDrawn",
       tour: view.id,
@@ -197,7 +197,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
         return { total: all.length, planned: all.filter((x) => x.planned).length, filled: all.filter((x) => x.filled).length };
       })(),
     });
-  }, [view, beat, next, fading, code, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const style = { height: folded ? 30 : height };
   const grip = (
@@ -282,7 +282,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
                   gone={node === null}
                   calls={callLines(view, stop.id)}
                   onCall={jump}
-                  onDrawn={(d) => setDrawn((old) => (old.scrolledTo === d.scrolledTo && old.lit.join() === d.lit.join() && old.thin.join() === d.thin.join() && old.coloured === d.coloured ? old : d))}
+                  onDrawn={(d) => setDrawn((old) => (old.scrolledTo === d.scrolledTo && old.lit.join() === d.lit.join() && old.thin.join() === d.thin.join() && old.coloured === d.coloured && old.step === d.step && old.text === d.text ? old : d))}
                 />
               )}
             </div>

@@ -3639,6 +3639,25 @@ fn an_answer_of_vnoc_tour_has_the_steps_the_place_and_what_the_row_says() {
     );
     assert_eq!(shown["place"]["at"], "cover");
     assert_eq!(shown["minutes"], 2);
+    // being written with no plan: the size is not known (`null`, not left out), and the file was just written: not quiet
+    assert_eq!(shown["of"], Value::Null);
+    assert_eq!(shown["quiet"], false);
+    // the file untouched for five minutes: the view says no news, and the row says the same
+    let file = std::fs::File::options()
+        .write(true)
+        .open(tour_file(&root, &id))
+        .unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(6 * 60))
+        .unwrap();
+    drop(file);
+    let shown = core.tour(&id);
+    assert_eq!(shown["quiet"], true, "{shown}");
+    let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
+    assert_eq!(row["quiet"], true);
+    assert!(
+        row["words"].as_str().unwrap().starts_with("no news"),
+        "{row}"
+    );
     let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
     assert_eq!(
         row["root"],

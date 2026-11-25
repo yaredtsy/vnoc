@@ -20,7 +20,7 @@ const stops = [
   stop(5, { depth: 2, from: "s3", planned: true, lines: undefined, reading: [step("s5", "planned")] }),
 ];
 const view = (at: string, over: Partial<TourView> = {}, p: Partial<Place> = {}): TourView => ({
-  id: "t-1", title: "T", detail: "normal", state: "writing", folder: "private", written: 4, planned: 1, steps: 6, minutes: 1, pinned: false, writing: "s5", offers: null, problems: [],
+  id: "t-1", title: "T", detail: "normal", state: "writing", folder: "private", written: 4, planned: 1, steps: 6, minutes: 1, pinned: false, writing: "s5", quiet: false, of: 5, offers: null, problems: [],
   place: place(at, p), stops, ...over,
 });
 
@@ -78,7 +78,7 @@ test("a chain of `from` that loops, or points at nothing, draws no edge it canno
 
 test("the badge of the stop the agent is on turns, unless the agent has been quiet; then the card says `no news`", () => {
   assert.deepEqual(mapOf(view("cover")).cards.map((c) => c.writing), [false, false, false, false, true]);
-  const quiet = mapOf(view("cover"), true).cards;
+  const quiet = mapOf(view("cover", { quiet: true })).cards;
   assert.deepEqual(quiet.map((c) => c.writing), [false, false, false, false, false], "no news: nothing turns");
   assert.equal(quiet[4].description, "no news");
   assert.equal(quiet[4].planned, true, "it is still not written");

@@ -1,14 +1,13 @@
 import { useEffect, useMemo } from "react";
 
 import { callFacts } from "@vnoc/shared/calls.ts";
-import { beatOf, quietOf } from "@vnoc/shared/tourWriting.ts";
+import { beatOf } from "@vnoc/shared/tourWriting.ts";
 import { Codicon } from "@/components/Codicon.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
 import { post } from "@/host.ts";
 import { useCalls } from "@/state/calls.ts";
 import { dispatch, useSession } from "@/state/session.ts";
 import { cn } from "@/lib/utils.ts";
-import { useTourList } from "../../sidebar/tours/store.ts";
 import { useTour } from "../../tour/store.ts";
 import { CHIP, filled, outlined } from "./chipStyle.ts";
 import { type ContextChip, chipsFor } from "./chipsFor.ts";
@@ -61,18 +60,17 @@ export function ContextChips({ width }: { width: number }) {
   // what the bar draws, for the extension's test suite: the contexts, and which one is active
   // a tour's chip has a writing dot while the tour is being written: it pulses unless the agent has gone quiet (the core's words: `state`, and the list's `quiet`)
   const held = useTour();
-  const rows = useTourList((s) => s.rows);
   const dots = useMemo(() => {
     const out: Record<string, "pulsing" | "still"> = {};
     for (const id of order) {
       const c = contexts[id];
       if (c.kind !== "tour" || held.id !== c.tour || !held.view || !("stops" in held.view)) continue;
-      const beat = beatOf(held.view, quietOf(rows, held.view));
+      const beat = beatOf(held.view);
       if (beat === "writing") out[id] = "pulsing";
       else if (beat === "quiet" || beat === "stopping") out[id] = "still";
     }
     return out;
-  }, [order, contexts, held, rows]);
+  }, [order, contexts, held]);
   const report = useMemo(() => (chips === null ? [] : (chips.mode === "one" ? chips.all : [...chips.shown, ...chips.folded]).map((c) => ({ id: c.id, label: c.label, active: c.active, ...(dots[c.id] ? { dot: dots[c.id] } : {}) }))), [chips, dots]);
   useEffect(() => post({ type: "chipsDrawn", chips: report }), [report]);
   if (!chips) return null;

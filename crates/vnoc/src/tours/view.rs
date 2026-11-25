@@ -289,6 +289,11 @@ pub struct TourView {
     pub stops: Vec<StopView>,
     /// the planned stop the agent is on: the first stop of the route that is planned and not written, while the tour is being written; else none
     pub writing: Option<String>,
+    /// being written (`writing` or `stopping`) and the tour's file untouched for [`QUIET_SECS`]: "no news". Said by the one that knows the file's time
+    /// (`serve::show_view`); false for a view made from the tour alone
+    pub quiet: bool,
+    /// the size of the route: `written + planned`; `null` while the tour is being written with no plan (the number is not known yet)
+    pub of: Option<usize>,
     /// where the reader is, as the tour is now (`place::settle`); the cover for a tour nobody has opened
     pub place: PlaceView,
     /// what the cover of a finished tour may offer, by the settings; `null` when there is nothing to offer, and for a tour that is not finished
@@ -516,6 +521,8 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
         writing: (tour.state == State::Writing)
             .then(|| stops.iter().find(|s| s.planned).map(|s| s.id.clone()))
             .flatten(),
+        quiet: false,
+        of: size_of(tour.state, size.written, size.planned),
         place: place_view(tour, Place::cover()),
         offers: None,
         stops,
@@ -1093,6 +1100,13 @@ pub fn root_of(tour: &Tour) -> Option<RootView> {
         kind: stop.kind.as_ref()?.as_str().to_string(),
         name: stop_label(stop),
     })
+}
+
+/// The size of the route, `written + planned`, when it is known: a tour being written (`writing` or `stopping`) with no plan has none yet. A finished or stopped
+/// tour will not grow, so its size is what it has.
+pub fn size_of(state: State, written: usize, planned: usize) -> Option<usize> {
+    let growing = matches!(state, State::Writing | State::Stopping);
+    (!growing || planned > 0).then_some(written + planned)
 }
 
 /// Whether a tour is quiet: being written, and its file last changed `age` seconds ago or more.
@@ -1910,6 +1924,31 @@ mod tests {
         assert!(!is_quiet(State::Stopped, Some(QUIET_SECS * 10)));
         assert!(!is_quiet(State::Finished, Some(QUIET_SECS * 10)));
         assert!(!is_quiet(State::Writing, None));
+    }
+
+    #[test]
+    fn the_view_says_the_size_of_the_route_unless_it_is_being_written_with_no_plan() {
+        let end = r#"{"type":"end","at":"2026-11-23T18:47:31Z"}"#.to_string();
+        let halt = r#"{"type":"halt"}"#.to_string();
+        let plan = r#"{"type":"plan","stops":[{"id":"s2","path":"a.py","qualname":"g"},{"id":"s3","path":"a.py","qualname":"h"}]}"#.to_string();
+        let of = |lines: &[String]| tour_view(&tour(lines), Where::Private).of;
+        // being written with a plan: written + planned
+        assert_eq!(of(&[stop(1, "a.py", "f", ""), plan.clone()]), Some(3));
+        // being written with no plan: not known
+        assert_eq!(of(&[stop(1, "a.py", "f", "")]), None);
+        // the halt is not yet answered: still growing, and with no plan still not known
+        assert_eq!(of(&[stop(1, "a.py", "f", ""), halt.clone()]), None);
+        assert_eq!(
+            of(&[stop(1, "a.py", "f", ""), plan.clone(), halt.clone()]),
+            Some(3)
+        );
+        // finished: what it has
+        assert_eq!(of(&[stop(1, "a.py", "f", ""), end.clone()]), Some(1));
+        assert_eq!(size_of(State::Stopped, 4, 0), Some(4));
+        assert_eq!(size_of(State::Writing, 4, 0), None);
+        assert_eq!(size_of(State::Writing, 4, 6), Some(10));
+        // a view made from the tour alone has no file to age: it is not quiet
+        assert!(!tour_view(&tour(&[stop(1, "a.py", "f", "")]), Where::Private).quiet);
     }
 
     fn stop_of_kind(

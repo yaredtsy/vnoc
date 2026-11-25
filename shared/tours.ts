@@ -244,6 +244,10 @@ export interface TourView {
   stops: TourStop[];
   /** the planned stop the agent is on, while the tour is being written */
   writing: StopId | null;
+  /** being written (`writing` or `stopping`) and the tour's file untouched for 5 minutes: "no news" */
+  quiet: boolean;
+  /** the size of the route, `written + planned`; null while the tour is being written with no plan (the number is not known yet) */
+  of: number | null;
   /** where the reader is: the core's, kept per tour */
   place: Place;
   offers: OffersView | null;

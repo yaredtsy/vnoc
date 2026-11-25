@@ -11,7 +11,6 @@ import { CENTER_TOUR_EVENT, cameraMove, centre } from "./camera.ts";
 import { mapOf, boxOf, type TourCardData } from "./map.ts";
 import { go, loadTour, useTour } from "./store.ts";
 import { TourCard } from "./TourCard.tsx";
-import { useQuiet } from "./writing.ts";
 
 const nodeTypes = { tourCard: TourCard };
 const FIT_OPTIONS = { maxZoom: 1 };
@@ -98,8 +97,7 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
       wanted = false;
     };
   }, [tourId]);
-  const quiet = useQuiet(view);
-  const map = useMemo(() => (view ? mapOf(view, quiet) : null), [view, quiet]);
+  const map = useMemo(() => (view ? mapOf(view) : null), [view]);
   const nodes = useMemo<Node<TourCardData>[]>(() => (map?.cards ?? []).map((c) => ({ id: c.id, type: "tourCard", position: { x: c.x, y: c.y }, data: c, width: CARD_W, height: CARD_H })), [map]);
   const edges = useMemo<Edge[]>(() => (map?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, className: [e.kind === "call" && "call", e.onPath && "on-path"].filter(Boolean).join(" ") || undefined })), [map]);
   const saved = useMemo(() => savedViewport(contextId, tourId), [contextId, tourId]);

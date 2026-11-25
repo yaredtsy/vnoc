@@ -13037,7 +13037,8 @@ fn frozen_tours_copy(label: &str) -> PathBuf {
 }
 
 /// A golden of the frozen fixtures: it lives beside them (`fixtures/tours/v1/golden/`) and is never rewritten. `VNOC_BLESS=1` only writes one that is not
-/// there yet; a changed answer is a changed format, and a new format adds a new folder.
+/// there yet; a changed answer is a changed format, and a new format adds a new folder. What is frozen is the files on disk (the fixtures); an answer of the core
+/// may gain a key (05 §5, decided at TR20's review): then the golden is deleted and blessed again, and the diff shows new keys only, no value changed.
 fn frozen_golden(name: &str, actual: &Value) {
     let path = tests_dir().join("fixtures/tours/v1/golden").join(name);
     if blessing() && !path.exists() {

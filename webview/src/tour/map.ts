@@ -62,7 +62,7 @@ function wayTo(view: TourView, current: string | null): Set<string> {
   return way;
 }
 
-export function mapOf(view: TourView, quiet = false): { cards: TourCardData[]; edges: TourEdgeData[] } {
+export function mapOf(view: TourView): { cards: TourCardData[]; edges: TourEdgeData[] } {
   const way = wayTo(view, view.place.stop);
   const cards = view.stops.map((stop, i): TourCardData => {
     const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
@@ -81,8 +81,8 @@ export function mapOf(view: TourView, quiet = false): { cards: TourCardData[]; e
       planned: stop.planned,
       callLine: stop.from != null && stop.line != null ? stop.line : null,
       from: stop.from ?? null,
-      writing: view.writing === stop.id && !quiet,
-      description: stopDescription(view, stop, quiet),
+      writing: view.writing === stop.id && !view.quiet,
+      description: stopDescription(view, stop),
       explainedAt: explained?.number ?? null,
       steps: !stop.planned && stop.steps > 1 ? stop.steps : null,
       key: stop.key,

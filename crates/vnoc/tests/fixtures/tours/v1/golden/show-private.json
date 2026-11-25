@@ -5,6 +5,7 @@
   "folder": "private",
   "id": "rate-for-yvzr",
   "minutes": 1,
+  "of": 1,
   "offers": null,
   "pinned": false,
   "place": {
@@ -22,6 +23,7 @@
   "planned": 0,
   "problems": [],
   "question": "where does the tax rate come from",
+  "quiet": false,
   "readable": true,
   "schema": 1,
   "state": "finished",

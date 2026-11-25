@@ -2,14 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Codicon } from "@/components/Codicon.tsx";
 import { cn } from "@/lib/utils.ts";
-import { footWords, sizeKnown, stoppable } from "@vnoc/shared/tourWriting.ts";
+import { footWords, stoppable } from "@vnoc/shared/tourWriting.ts";
 import type { TourRow, TourView } from "@vnoc/shared/tours.ts";
 import { on, post, request } from "../../host.ts";
 import { dispatch, useSession } from "../../state/session.ts";
 import { setToursFolded, setToursShare, useView } from "../../state/view.ts";
 import { goToStop } from "../../tour/goToCode.ts";
 import { go, halt, loadTour, useTour } from "../../tour/store.ts";
-import { useQuiet } from "../../tour/writing.ts";
 import { Splitter } from "../Splitter.tsx";
 import { appearedFromOutside } from "./appear.ts";
 import { DEFAULT_TOURS_SHARE, dragTours, toursShare } from "./split.ts";
@@ -34,7 +33,6 @@ export function ToursSection() {
   const tourActive = useSession((s) => tour !== null && s.active === tour.id);
   const held = useTour();
   const view: TourView | null = tourId !== null && held.id === tourId && held.view && "stops" in held.view ? held.view : null;
-  const quiet = useQuiet(view);
   const [showList, setShowList] = useState(false);
   const [cursor, setCursor] = useState(-1);
   const box = useRef<HTMLDivElement>(null);
@@ -75,11 +73,11 @@ export function ToursSection() {
   useEffect(() => {
     if (mode === "list" && !folded) void request("tours", undefined).then((r) => useTourList.setState({ rows: r }), () => {});
   }, [mode, folded]);
-  const route = useMemo(() => (view ? routeRows(view, quiet) : []), [view, quiet]);
+  const route = useMemo(() => (view ? routeRows(view) : []), [view]);
   // the route's foot (design 05 §1): what the agent is doing, with ■ Stop while it writes; and, for a tour with no plan, the one row under the last stop that says another may come
-  const foot = mode === "route" && view ? footWords(view, quiet) : null;
-  const canStop = view ? stoppable(view, quiet) : false;
-  const more = mode === "route" && view !== null && view.state === "writing" && !sizeKnown(view);
+  const foot = mode === "route" && view ? footWords(view) : null;
+  const canStop = view ? stoppable(view) : false;
+  const more = mode === "route" && view !== null && view.state === "writing" && view.of === null;
   const count = mode === "route" ? route.length : (rows?.length ?? 0);
 
   const openTour = (row: TourRow) => {

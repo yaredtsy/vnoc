@@ -2,7 +2,7 @@ import * as path from "path";
 
 import type { Events } from "@vnoc/shared/messages";
 import type { ContextId, ContextState, Intent, Session } from "@vnoc/shared/session.ts";
-import { isWriting, quietOf, statusBarText, toAnnounce } from "@vnoc/shared/tourWriting.ts";
+import { isWriting, statusBarText, toAnnounce } from "@vnoc/shared/tourWriting.ts";
 import type { Place, TourCoreRequests, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
 // The host's holder of tours (docs/26-tours/05-on-screen.md §5, §6). It asks the core, holds the open tour's `TourView` with its place, passes it to the pages, and sets
@@ -12,7 +12,7 @@ import type { Place, TourCoreRequests, TourHaltAnswer, TourId, TourMove, TourRow
 /** How often the open tour is asked for again when `.vnoc/` is above the opened folder (open check 11): the core answers from two files' lengths and times. */
 export const REREAD_MS = 2000;
 
-/** How often the list is asked for again while the open tour is being written: "no news" is the file's age, and nothing changes in a file nobody writes, so no `vnoc/toursChanged` says it. */
+/** How often the open tour is asked for again while it is being written: `quiet` ("no news") is the file's age, and nothing changes in a file nobody writes, so no `vnoc/toursChanged` says it. */
 export const QUIET_CHECK_MS = 30_000;
 
 /** What the holder needs from the host. */
@@ -31,10 +31,22 @@ export interface ToursDeps {
   log(text: string): void;
   /** the status bar item: its text, or null to hide it (`▶ Tour 3/10`, design 04 §6). A click on it shows the canvas */
   statusBar(text: string | null): void;
-  /** the one notification (W11): a tour started being written while the canvas was not showing a tour. It has **Open Tour**; nothing opens by itself */
+  /** the one notification (W11): a tour started being written and it was not opened for the reader. It has **Open Tour**; nothing opens by itself */
   announce(row: TourRow): void;
   /** the canvas is showing a tour: it is open, in front, and its active context is a tour */
   canvasShowsTour(): boolean;
+  /** the canvas is open and in front, whatever its active context is */
+  canvasVisible(): boolean;
+  /** makes the tour the window's tour context, active, at the cover (W11: the canvas is visible and the window has no tour open) */
+  open(row: TourRow): void;
+}
+
+/** What a tour that appears and is being written does (W11, design 02 frame 2): `open` its context when the canvas is visible and no tour is open; else `notify` once, except `none` when the canvas is already showing a tour (the open one stays, and the list has the new one). */
+export type Appearance = "open" | "notify" | "none";
+
+export function appearance(canvas: { visible: boolean; tourOpen: boolean; showsTour: boolean }): Appearance {
+  if (canvas.visible && !canvas.tourOpen) return "open";
+  return canvas.showsTour ? "none" : "notify";
 }
 
 // ── the decisions that need no host ──────────────────────────────────────────────────────────────────────────────────────
@@ -60,7 +72,7 @@ export function vnocIsAbove(openedFolder: string | undefined, gitRoot: string | 
 /** The open tour is asked for again every `REREAD_MS` only while one is open and the watcher cannot see its files. */
 export const shouldPoll = (open: boolean, vnocAbove: boolean): boolean => open && vnocAbove;
 
-/** The list is asked for again every `QUIET_CHECK_MS` only while the open tour is being written: that is when a tour can go quiet. */
+/** The open tour is asked for again every `QUIET_CHECK_MS` only while it is being written (`writing` or `stopping`): that is when a tour can go quiet. */
 export const shouldCheckQuiet = (openState: TourView["state"] | null): boolean => openState !== null && isWriting({ state: openState });
 
 /**
@@ -162,17 +174,24 @@ export class Tours {
     this.rows = tours;
     this.notice(tours);
     this.host.emit("tours", { tours });
-    this.showStatus(); // a row's `quiet` may have changed
     return tours;
   }
 
-  /** A tour that was not in the last list and is being written is announced once, unless the canvas is showing a tour (the list shows it, and the open tour stays). */
+  /**
+   * A tour that was not in the last list and is being written, once (W11): with the canvas visible and no tour open it becomes the window's tour context, at the cover; otherwise it is
+   * announced, unless the canvas is showing a tour (the list shows it, and the open tour stays). Nothing already open is replaced.
+   */
   private notice(tours: TourRow[]): void {
     const fresh = toAnnounce(tours, this.known, this.announced);
     this.known = new Set(tours.map((r) => r.id));
+    let tourOpen = tourContext(this.host.session()) !== undefined;
     for (const row of fresh) {
       this.announced.add(row.id);
-      if (!this.host.canvasShowsTour()) this.host.announce(row);
+      const what = appearance({ visible: this.host.canvasVisible(), tourOpen, showsTour: this.host.canvasShowsTour() });
+      if (what === "open") {
+        tourOpen = true; // the next one of this list finds a tour open
+        this.host.open(row);
+      } else if (what === "notify") this.host.announce(row);
     }
   }
 
@@ -180,17 +199,17 @@ export class Tours {
   private showStatus(): void {
     const open = this.open;
     const view = open?.view && "stops" in open.view ? open.view : null;
-    const text = open === null ? null : view === null ? "▶ Tour" : statusBarText(view, quietOf(this.rows, view));
+    const text = open === null ? null : view === null ? "▶ Tour" : statusBarText(view);
     if (text === this.status) return;
     this.status = text;
     this.host.statusBar(text);
   }
 
-  /** The list is asked for again every 30 s while the open tour is being written (see `QUIET_CHECK_MS`). */
+  /** The open tour is asked for again every 30 s while it is being written (see `QUIET_CHECK_MS`); the timer stops when it is finished or stopped, or closed. */
   private checkQuiet(): void {
     const view = this.open?.view;
     const want = shouldCheckQuiet(view && "stops" in view ? view.state : null);
-    if (want && !this.quietCheck) this.quietCheck = this.host.every(QUIET_CHECK_MS, () => void this.list().catch(() => {}));
+    if (want && !this.quietCheck) this.quietCheck = this.host.every(QUIET_CHECK_MS, () => (this.open ? void this.refresh(this.open.id) : undefined));
     if (!want && this.quietCheck) {
       this.quietCheck.stop();
       this.quietCheck = undefined;

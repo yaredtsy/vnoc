@@ -2922,6 +2922,7 @@ async fn show(global: &Global, args: &TourShowArgs) -> Result<(), Failure> {
                 &project,
                 tour,
                 read.place,
+                &read.path,
                 store::read_place(&vnoc_root, &tour_id).as_ref(),
             );
             let holds = tour.pin.as_ref().filter(|_| tour.pinned());

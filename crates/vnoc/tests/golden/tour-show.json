@@ -5,6 +5,7 @@
   "folder": "private",
   "id": "<tour>",
   "minutes": 2,
+  "of": 1,
   "offers": {
     "commit": [],
     "ids": 1
@@ -25,6 +26,7 @@
   "planned": 0,
   "problems": [],
   "question": "what happens when the gateway drops the call",
+  "quiet": false,
   "readable": true,
   "schema": 1,
   "state": "finished",

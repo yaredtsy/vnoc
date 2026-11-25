@@ -8,7 +8,7 @@ const intro = (id: string): StepView => ({ id, kind: "intro", depth: 0, parent: 
 const stop = (n: number, over: Partial<TourStop> = {}): TourStop => ({ number: n, id: `s${n}`, depth: 0, planned: false, kind: "function", name: `f${n}`, path: "a.py", qualname: `f${n}`, key: `a.py::f${n}`, steps: 1, blocks: [], reading: [intro(`s${n}`)], ...over });
 const place = (at: string, over: Partial<Place> = {}): Place => ({ at, seen: [], back: [], moved: "", by: "reader", open: true, stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, unseen: 0, first_unseen: null, ...over });
 const view = (at: string, over: Partial<Place> = {}, stops = [stop(1), stop(2, { from: "s1", line: 4 }), stop(3, { from: "s2" }), stop(4, { from: "s1" })]): TourView => ({
-  id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 4, planned: 0, steps: 4, minutes: 1, pinned: false, writing: null, offers: null, problems: [], place: place(at, over), stops,
+  id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 4, planned: 0, steps: 4, minutes: 1, pinned: false, writing: null, quiet: false, of: 4, offers: null, problems: [], place: place(at, over), stops,
 });
 
 test("the crumbs are the stops from the first down to the current one, by the stop each was reached from; the project is not one", () => {

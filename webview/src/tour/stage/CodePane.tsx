@@ -16,6 +16,9 @@ export interface CodeDrawn {
   thin: number[];
   /** how many tokens were drawn in a colour (0: plain) */
   coloured: number;
+  /** the step and the code text this was drawn for: the stage tells the suite what it drew only when these are the ones it holds, never a step behind */
+  step: string | null;
+  text: string | null;
 }
 
 /**
@@ -73,8 +76,8 @@ export function CodePane(p: {
   const looks: LineLook[] = shown ? shown.lines.map((_, i) => lineLook(p.look, first + i, first, p.lit, p.parentLit)) : [];
   const coloured = shown && tokens ? tokens.reduce((n, line, i) => (line.map((t) => t.content).join("") === shown.lines[i] ? n + line.filter((t) => t.color).length : n), 0) : 0;
   useEffect(() => {
-    p.onDrawn({ scrolledTo: view.top, lit: looks.flatMap((l, i) => (l === "lit" ? [first + i] : [])), thin: looks.flatMap((l, i) => (l === "thin" ? [first + i] : [])), coloured });
-  }, [shown?.text, p.look, p.lit?.[0], p.lit?.[1], p.parentLit?.[0], p.parentLit?.[1], view.top, coloured]); // eslint-disable-line react-hooks/exhaustive-deps
+    p.onDrawn({ scrolledTo: view.top, lit: looks.flatMap((l, i) => (l === "lit" ? [first + i] : [])), thin: looks.flatMap((l, i) => (l === "thin" ? [first + i] : [])), coloured, step: p.stepId, text: shown?.text ?? null });
+  }, [p.stepId, shown?.text, p.look, p.lit?.[0], p.lit?.[1], p.parentLit?.[0], p.parentLit?.[1], view.top, coloured]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (p.gone) return <div className="stage-code stage-empty">This is no longer in the code.</div>;
   if (p.code === null) return <div className="stage-code stage-empty">Reading the code…</div>;

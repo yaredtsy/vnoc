@@ -147,6 +147,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       const s = store.get();
       return panels.canvas?.visible === true && tourContext(s)?.id === s.active;
     },
+    canvasVisible: () => panels.canvas?.visible === true,
+    // W11: the canvas is visible and no tour is open: the tour opens at its cover. The suite sees it in the session
+    open: (row) => void commands.openTourById(row.id, row.title),
     session: () => store.get(),
     dispatch: (intent, context) => store.dispatch(intent, context),
     emit: (name, data) => panels.emit(name, data),

@@ -1115,6 +1115,7 @@ fn tour(
                     project,
                     &found,
                     row.place,
+                    &row.path,
                     store::read_place(&root, &row.id).as_ref(),
                 );
                 if let Some(answer) = &answer {

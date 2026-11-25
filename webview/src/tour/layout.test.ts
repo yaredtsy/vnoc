@@ -10,7 +10,7 @@ const stop = (id: string, reading: StepView[], over: Partial<TourStop> = {}): To
 });
 const place = (at: string, over: Partial<Place> = {}): Place => ({ at, seen: [], back: [], moved: "", by: "reader", open: true, stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, unseen: 0, first_unseen: null, ...over });
 const view = (at: string, over: Partial<TourView> = {}): TourView => ({
-  id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 3, planned: 0, steps: 6, minutes: 1, pinned: false, writing: null, offers: null, problems: [],
+  id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 3, planned: 0, steps: 6, minutes: 1, pinned: false, writing: null, quiet: false, of: 3, offers: null, problems: [],
   place: place(at),
   stops: [
     stop("s1", [step("s1", "intro"), step("s1.b1", "block", { lines: [3, 6] }), step("s1.b2", "detail", { parent: "s1.b1", lines: [4, 4] })]),
@@ -109,14 +109,14 @@ const writing = (at: string, over: Partial<TourView> = {}) => view(at, { state: 
 
 test("the position says `of` with a plan and the count so far without one; the segments get one dotted one after the stops of a tour with no plan", () => {
   const position = { stop: 2, of: 2, step: 1, steps: 1 };
-  const noPlan = view("s2", { state: "writing", written: 2, planned: 0, writing: null, place: place("s2", { position }), stops: view("s1").stops.slice(0, 2) });
+  const noPlan = view("s2", { state: "writing", written: 2, planned: 0, of: null, writing: null, place: place("s2", { position }), stops: view("s1").stops.slice(0, 2) });
   assert.equal(positionWords(noPlan), "stop 2 · 2 so far", "no plan, being written: no `of`");
   assert.deepEqual(segmentsOf(noPlan).map((s) => [s.stop, s.planned, s.adding ?? false]), [["s1", false, false], ["s2", false, false], ["", true, true]], "the stop the agent has not added yet");
   const planned = writing("s2", { place: place("s2", { position: { stop: 2, of: 3, step: 1, steps: 1 } }) });
   assert.equal(positionWords(planned), "stop 2 of 3", "a plan: the size is known");
   assert.equal(segmentsOf(planned).length, 3, "a plan has its stops, and no extra segment");
-  assert.equal(positionWords({ ...noPlan, state: "finished" }), "stop 2 of 2", "finished: of");
-  assert.equal(segmentsOf({ ...noPlan, state: "stopped" }).length, 2, "a stopped tour does not grow");
+  assert.equal(positionWords({ ...noPlan, state: "finished", of: 2 }), "stop 2 of 2", "finished: of");
+  assert.equal(segmentsOf({ ...noPlan, state: "stopped", of: 2 }).length, 2, "a stopped tour does not grow");
   assert.equal(positionWords({ ...noPlan, place: place("s2", { position: { ...position, steps: 3, step: 2 } }) }), "stop 2 · 2 so far · 2 of 3");
 });
 

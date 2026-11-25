@@ -16,7 +16,6 @@ import { CENTER_TOUR_EVENT } from "./camera.ts";
 import { goToStop } from "./goToCode.ts";
 import { currentOf } from "./layout.ts";
 import { go, halt, useTour } from "./store.ts";
-import { useQuiet } from "./writing.ts";
 
 /**
  * The bar's tour half (docs/26-tours/design/04-route-and-map.md §5), drawn in place of MAIN's focus crumbs while a tour is the active context: `←` back to where you were
@@ -32,9 +31,8 @@ export function TourBar({ tourId, contextId, width }: { tourId: string; contextI
   const before = useRef<Place | null>(null);
   const place = view?.place ?? null;
   // the agent: `writing 6/10 ■`, `stopping`, `stopped`, `no news`; nothing for a finished tour (design 04 §5 #4). The ■ is the only button here
-  const quiet = useQuiet(view);
-  const agent = view ? agentWords(view, quiet) : null;
-  const canStop = view ? stoppable(view, quiet) : false;
+  const agent = view ? agentWords(view) : null;
+  const canStop = view ? stoppable(view) : false;
 
   // a place that moved by a command shows `moved by the agent` for three seconds; the first place seen is nothing to say
   useEffect(() => {

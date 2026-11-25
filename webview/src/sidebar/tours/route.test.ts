@@ -17,7 +17,7 @@ const stops = [
   stop(5, { planned: true, reading: [step("s5", "planned")] }),
 ];
 const view = (at: string, over: Partial<TourView> = {}, p: Partial<Place> = {}): TourView => ({
-  id: "t-1", title: "T", detail: "normal", state: "writing", folder: "private", written: 4, planned: 1, steps: 6, minutes: 1, pinned: false, writing: "s5", offers: null, problems: [],
+  id: "t-1", title: "T", detail: "normal", state: "writing", folder: "private", written: 4, planned: 1, steps: 6, minutes: 1, pinned: false, writing: "s5", quiet: false, of: 5, offers: null, problems: [],
   place: place(at, p), stops, ...over,
 });
 
@@ -62,9 +62,9 @@ test("a stop's one word: writing…, changed, or the stop it is explained at; th
 });
 
 test("a stop being written says `no news` when the agent has been quiet", () => {
-  const words = (v: TourView, quiet: boolean) => routeRows(v, quiet).filter((r) => r.type === "stop").map((r) => r.type === "stop" && r.description);
-  assert.deepEqual(words(view("cover"), true), [null, null, "changed", "⇢ 2", "no news"]);
-  assert.deepEqual(words(view("cover"), false), [null, null, "changed", "⇢ 2", "writing…"]);
+  const words = (v: TourView) => routeRows(v).filter((r) => r.type === "stop").map((r) => r.type === "stop" && r.description);
+  assert.deepEqual(words(view("cover", { quiet: true })), [null, null, "changed", "⇢ 2", "no news"]);
+  assert.deepEqual(words(view("cover", { quiet: false })), [null, null, "changed", "⇢ 2", "writing…"]);
 });
 
 test("the header's place is the core's numbers, and nothing at the cover and the end", () => {
@@ -74,8 +74,8 @@ test("the header's place is the core's numbers, and nothing at the cover and the
 
 test("a tour with no plan that is being written has no `of` in the header", () => {
   const position = { stop: 2, of: 4, step: 1, steps: 1 };
-  assert.equal(headerPlace(view("s2", { planned: 0, writing: null }, { position })), "2 · 4 so far");
-  assert.equal(headerPlace(view("s2", { planned: 0, writing: null, state: "finished" }, { position })), "2 of 4");
+  assert.equal(headerPlace(view("s2", { planned: 0, of: null, writing: null }, { position })), "2 · 4 so far");
+  assert.equal(headerPlace(view("s2", { planned: 0, of: 4, writing: null, state: "finished" }, { position })), "2 of 4");
 });
 
 test("every row of the route has a key of its own: a stop and its intro step have the same id", () => {

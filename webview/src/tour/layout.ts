@@ -2,7 +2,7 @@
 // the core's, and nothing here walks the tour, counts stops or works out what comes next. The kind of a step is the core's word (`StepView.kind`); this table is
 // what each kind looks like.
 
-import { type Beat, type NextState, sizeKnown } from "@vnoc/shared/tourWriting.ts";
+import type { Beat, NextState } from "@vnoc/shared/tourWriting.ts";
 import type { StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
 
 /** Where the reader is, found in the view: the stop and the step `place` names (a lookup by id in what the core sent). The cover and the end have neither. */
@@ -115,7 +115,7 @@ export function segmentsOf(view: TourView): Segment[] {
     const current = s.id === view.place.stop;
     return { stop: s.id, name: s.name, filled: current || view.place.seen.includes(s.id), planned: s.planned, current };
   });
-  if (view.state === "writing" && !sizeKnown(view)) segments.push({ stop: "", name: "the next stop: the agent is adding it", filled: false, planned: true, current: false, adding: true });
+  if (view.state === "writing" && view.of === null) segments.push({ stop: "", name: "the next stop: the agent is adding it", filled: false, planned: true, current: false, adding: true });
   return segments;
 }
 
@@ -135,7 +135,7 @@ export function nextLabel(view: TourView, next: NextState = "ready"): "Start" | 
 export function positionWords(view: TourView): string {
   const p = view.place.position;
   if (p === null) return "";
-  const stop = sizeKnown(view) ? `stop ${p.stop} of ${p.of}` : `stop ${p.stop} · ${view.written} so far`;
+  const stop = view.of !== null ? `stop ${p.stop} of ${p.of}` : `stop ${p.stop} · ${view.written} so far`;
   return p.steps > 1 ? `${stop} · ${p.step} of ${p.steps}` : stop;
 }
 

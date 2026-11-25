@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { TreeNode } from "@vnoc/shared/messages";
 import { type Intent, MAIN, type Session, emptySession, reduce, tourContextId } from "@vnoc/shared/session.ts";
 import type { Place, TourRow, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import { QUIET_CHECK_MS, REREAD_MS, Tours, type ToursDeps, pickItem, selectionKey, shouldCheckQuiet, shouldPoll, tourContext, vnocIsAbove, whatToAsk } from "./tours.ts";
+import { QUIET_CHECK_MS, REREAD_MS, Tours, type ToursDeps, appearance, pickItem, selectionKey, shouldCheckQuiet, shouldPoll, tourContext, vnocIsAbove, whatToAsk } from "./tours.ts";
 
 // The decisions of the host's holder that need no VS Code: which notification asks again, when the 2-second re-read runs, what the selection is for a place.
 
@@ -22,7 +22,7 @@ const place = (at: string, over: Partial<Place> = {}): Place => ({
   stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, unseen: 0, first_unseen: null, ...over,
 });
 const view = (at: string, over: Partial<TourView> = {}): TourView => ({
-  id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 3, planned: 0, steps: 5, minutes: 1, pinned: false, writing: null, offers: null, problems: [],
+  id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 3, planned: 0, steps: 5, minutes: 1, pinned: false, writing: null, quiet: false, of: 3, offers: null, problems: [],
   place: place(at),
   stops: [stop("s1", "a.py::f", ["s1", "s1.b1"]), stop("s2", "a.py::g", ["s2"]), stop("s3", null, ["s3"])],
   ...over,
@@ -76,7 +76,7 @@ test("a row of Open Tour… says what the row says", () => {
 // ── the holder, with a host that is only a record ─────────────────────────────────────────────────────────────────────────
 
 /** A host: the core answers from `answers`, every request and event is kept, the session is a real one, and `every` is a clock the test turns. */
-function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; canvasShows?: boolean }) {
+function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; canvasShows?: boolean; canvasVisible?: boolean }) {
   let session: Session = emptySession();
   const requests: [string, unknown][] = [];
   const events: [string, unknown][] = [];
@@ -85,6 +85,8 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
   let answer = opts.answer ?? view("cover");
   let rows = opts.rows ?? [];
   let canvasShows = opts.canvasShows ?? false;
+  let canvasVisible = opts.canvasVisible ?? false;
+  const opened: string[] = [];
   const status: (string | null)[] = [];
   const announced: string[] = [];
   const host: ToursDeps = {
@@ -110,10 +112,17 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
     statusBar: (text) => void status.push(text),
     announce: (row) => void announced.push(row.id),
     canvasShowsTour: () => canvasShows,
+    canvasVisible: () => canvasVisible,
+    open: (row) => {
+      opened.push(row.id);
+      session = reduce(session, MAIN, { type: "tourOpen", id: row.id }, tree, calls);
+    },
   };
   return {
     status,
     announced,
+    opened,
+    setCanvasVisible: (visible: boolean) => (canvasVisible = visible),
     setRows: (r: TourRow[]) => (rows = r),
     setCanvasShows: (shows: boolean) => (canvasShows = shows),
     host,
@@ -341,26 +350,27 @@ test("the status bar item says `▶ Tour 3/10` from the place the core gave whil
   assert.equal(h.status.at(-1), null, "no tour open: the item is hidden");
 });
 
-test("the status bar item says what the agent is doing while it writes, and `no news` from the row that is the tour's", async () => {
-  const written = view("s2", { state: "writing", written: 2, planned: 8, writing: "s3", place: at("s2", 2, 10) });
-  const h = makeHost({ above: false, answer: written, rows: [row("t-1")] });
+test("the status bar item says what the agent is doing while it writes, and `no news` when the view says the file is quiet", async () => {
+  const written = view("s2", { state: "writing", written: 2, planned: 8, of: 10, writing: "s3", place: at("s2", 2, 10) });
+  const h = makeHost({ above: false, answer: written });
   const tours = new Tours(h.host);
-  await tours.list();
   h.openTour();
   tours.sync();
   await settle();
   assert.equal(h.status.at(-1), "▶ Tour 2/10 · writing 3/10");
-  h.setRows([row("t-1", { quiet: true })]);
-  await tours.list();
-  assert.equal(h.status.at(-1), "▶ Tour 2/10 · no news", "the list said the file was quiet");
+  h.setAnswer({ ...written, quiet: true });
+  tours.toursChanged(["t-1"]);
+  await settle();
+  assert.equal(h.status.at(-1), "▶ Tour 2/10 · no news", "the core said the file was quiet");
 });
 
-test("a tour that appears while the window is open is announced once, and only when the canvas is not showing a tour; nothing opens by itself", async () => {
+test("a tour that appears while the window is open is announced once, when it is not opened for the reader; nothing already open is replaced", async () => {
   const h = makeHost({ above: false, rows: [row("t-0", { state: "finished" })] });
   const tours = new Tours(h.host);
   tours.start();
   await settle();
   assert.deepEqual(h.announced, [], "the tours that were there are not announced");
+  // the canvas is hidden: the notification, and nothing opens
   h.setRows([row("t-1"), row("t-0", { state: "finished" })]);
   tours.toursChanged(["t-1"]);
   await settle();
@@ -369,19 +379,56 @@ test("a tour that appears while the window is open is announced once, and only w
   await settle();
   assert.deepEqual(h.announced, ["t-1"], "once per tour");
   assert.equal(tourContext(h.session()), undefined, "nothing was opened");
+  assert.deepEqual(h.opened, []);
   // a canvas that is showing a tour is not told: the list has the new one, and the open tour stays
+  h.openTour("t-0");
+  h.setCanvasVisible(true);
   h.setCanvasShows(true);
   h.setRows([row("t-2"), row("t-1"), row("t-0", { state: "finished" })]);
   tours.toursChanged(["t-2"]);
   await settle();
   assert.deepEqual(h.announced, ["t-1"]);
+  assert.deepEqual(h.opened, [], "a tour is open: the new one does not replace it");
   h.setCanvasShows(false);
   tours.toursChanged(["t-2"]);
   await settle();
   assert.deepEqual(h.announced, ["t-1"], "t-2 was seen while a tour was shown: that was its one chance");
 });
 
-test("the list is asked again every 30 seconds only while the open tour is being written", async () => {
+test("W11: the canvas visible and no tour open: a tour that appears and is being written becomes the tour context; with one open, or the canvas hidden, it is announced", async () => {
+  assert.equal(appearance({ visible: true, tourOpen: false, showsTour: false }), "open");
+  assert.equal(appearance({ visible: true, tourOpen: true, showsTour: false }), "notify", "a tour is open and the canvas shows something else");
+  assert.equal(appearance({ visible: true, tourOpen: true, showsTour: true }), "none", "the open tour is on screen: the list has the new one");
+  assert.equal(appearance({ visible: false, tourOpen: false, showsTour: false }), "notify");
+  assert.equal(appearance({ visible: false, tourOpen: true, showsTour: false }), "notify");
+  // through the holder
+  const h = makeHost({ above: false, rows: [row("t-0", { state: "finished" })], canvasVisible: true });
+  const tours = new Tours(h.host);
+  tours.start();
+  await settle();
+  h.setRows([row("t-1"), row("t-0", { state: "finished" })]);
+  tours.toursChanged(["t-1"]);
+  await settle();
+  assert.deepEqual(h.opened, ["t-1"]);
+  assert.deepEqual(h.announced, [], "opened, not announced");
+  assert.equal(tourContext(h.session())?.tour, "t-1");
+  h.setRows([row("t-2"), row("t-1"), row("t-0", { state: "finished" })]);
+  tours.toursChanged(["t-2"]);
+  await settle();
+  assert.deepEqual(h.opened, ["t-1"], "one is open now: it is not replaced");
+  assert.deepEqual(h.announced, ["t-2"]);
+  // two at once, none open: the first opens, the second is announced
+  const g = makeHost({ above: false, rows: [row("t-0", { state: "finished" })], canvasVisible: true });
+  const more = new Tours(g.host);
+  more.start();
+  await settle();
+  g.setRows([row("t-1"), row("t-2"), row("t-0", { state: "finished" })]);
+  more.toursChanged(["t-1", "t-2"]);
+  await settle();
+  assert.deepEqual([g.opened, g.announced], [["t-1"], ["t-2"]]);
+});
+
+test("the open tour is asked for again every 30 seconds only while it is being written", async () => {
   assert.equal(QUIET_CHECK_MS, 30_000);
   assert.deepEqual(["writing", "stopping", "stopped", "finished"].map((s) => shouldCheckQuiet(s as TourView["state"])), [true, true, false, false]);
   assert.equal(shouldCheckQuiet(null), false);
@@ -391,15 +438,29 @@ test("the list is asked again every 30 seconds only while the open tour is being
   tours.sync();
   await settle();
   assert.deepEqual(h.timers.map((t) => t.ms), [QUIET_CHECK_MS]);
-  const listed = h.asked("vnoc/tours");
+  const [tour, list] = [h.asked("vnoc/tour"), h.asked("vnoc/tours")];
   h.timers[0].run();
   await settle();
-  assert.equal(h.asked("vnoc/tours"), listed + 1, "a quiet tour changes no file: the list says it");
-  // the tour is finished: nothing to wait for
-  h.setAnswer(view("s1", { state: "finished" }));
+  assert.deepEqual([h.asked("vnoc/tour"), h.asked("vnoc/tours")], [tour + 1, list], "a quiet tour changes no file: the tour is asked, not the list");
+  // the core says it is quiet now: the pages are sent it
+  h.setAnswer(view("s1", { state: "writing", writing: "s3", quiet: true }));
+  h.timers[0].run();
+  await settle();
+  assert.equal(((h.events.at(-1)![1]) as { view: TourView }).view.quiet, true);
+  // the tour is stopped: nothing to wait for
+  h.setAnswer(view("s1", { state: "stopped" }));
   tours.toursChanged(["t-1"]);
   await settle();
   assert.equal(h.timers[0].stopped, true);
+  // and closed
+  const g = makeHost({ above: false, answer: view("s1", { state: "writing", writing: "s3" }) });
+  const other = new Tours(g.host);
+  g.openTour();
+  other.sync();
+  await settle();
+  g.closeTour();
+  other.sync();
+  assert.equal(g.timers[0].stopped, true);
 });
 
 test("■ Stop is the core's halt, and the tour is asked for again so that the state says stopping", async () => {

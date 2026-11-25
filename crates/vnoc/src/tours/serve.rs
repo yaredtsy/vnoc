@@ -415,26 +415,33 @@ pub fn list_rows<R: Borrow<Row>>(
         let row: &Row = row.borrow();
         let Ok(tour) = &row.tour else { continue };
         shown.offers = offers.next().flatten();
-        let age = std::fs::metadata(&row.path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-            .map(|d| d.as_secs());
-        shown.quiet = view::is_quiet(tour.state, age);
+        shown.quiet = view::is_quiet(tour.state, file_age(&row.path));
         shown.place = view::place_summary(tour, place_of(&row.id).as_ref());
         shown.words = view::row_words(shown, &view::when_word(&tour.at, &now));
     }
     out
 }
 
-/// The view of a tour as `show` and `vnoc/tour` have it, before a check is put on it: the pin (whether git has the commit), and the place as the tour is now.
+/// Seconds since a file was last written; none when it cannot be told.
+fn file_age(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .map(|d| d.as_secs())
+}
+
+/// The view of a tour as `show` and `vnoc/tour` have it, before a check is put on it: the pin (whether git has the commit), whether the tour is quiet (its file at
+/// `path`), and the place as the tour is now.
 pub fn show_view(
     project: &Project,
     tour: &Tour,
     folder: Where,
+    path: &Path,
     place: Option<&Place>,
 ) -> view::TourView {
     let mut shown = view::tour_view(tour, folder);
+    shown.quiet = view::is_quiet(tour.state, file_age(path));
     if let Some(pin) = tour.pin.as_ref().filter(|_| tour.pinned()) {
         shown.pin_in_repository = Some(pin::has_commit(project, &pin.commit));
     }
