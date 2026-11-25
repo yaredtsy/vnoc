@@ -378,6 +378,9 @@ asks only when what it reads really changed. Screenshots by Playwright: `tools/m
 - **The On view keeps the state word.** The row gains `state_word` from the core (the one word of design 07 §3: `writing 6/10`,
   `changed`, `stop 4/9`, `finished`, `new`, …, the word `words` starts with). The On view draws it at the right of line 1, line 2 is
   `on.words`. The All view stays as built (TR18).
+- **Seen in the screenshots** (`tools/media/out/tr21/06`): the `as written · <commit>` label covers the first code line in view (it
+  must sit on the pane's top edge, in its own strip, and push the code down); the **Now** / **As Written** switch does not show which
+  side is on (the chosen one is drawn pressed, `aria-pressed`, as VS Code's toggles are). Both in TR22a's first commit.
 - The action strip covering `▶ N` on a hovered row → TR23. **Open Tour…** with the selected node's tours first → TR22b.
 - The Bend failures: build the Bend driver once before the pull request (as decided at TR20); not per step.
 
