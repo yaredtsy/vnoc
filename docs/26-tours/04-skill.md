@@ -358,4 +358,33 @@ No user-only command was tried unasked in any run, either agent. A re-run batch 
 - *re-runs in TR14d:* Claude t4 ×3; Codex t2, t4, t6, t9, t10, t11 ×2; then the results table and the freeze. The unknown-key and
   unknown-type tests move forward into TR15a.
 
+### Results, TR14d (the last re-runs, 2026-11-25), and the trial closed
+
+Commits `6194253` (one `git status` per list; the schema 1 fixtures), `8eded86` (wording: `vnoc-tour` 6248 bytes, `vnoc` 4656, the
+guide 286 lines; harness). Claude `runs/batch-tours-claude-20261125-001625.md` (7 runs, $0.70): t1 yes; t4 one no (never loaded
+`vnoc-tour`, explained in the chat, 3012 characters), one judged (a clean tour; an end of 666 characters), one no (a line beside an
+add; an end of 803 characters in three bullets); t6 judged (halt at s3, the line; one progress line beside an add); t9 judged
+(`where` first); t10 judged (asked, file named; 340 characters, two questions). Codex, three batch files (`-002012`, `-100842`,
+`-101636`: a session restart killed the first): t2 one capped (an API stall), one no (ignored the pointer); t4 one yes, one no (a
+`--from` chain again, `Invoice --from s5` with no line); t6 ×2 judged (halt at s3: Stop now tested on Codex); t9 ×2 no (one ran the
+`vnoc tour` help before `where`, then answered about `parse_order`; one never ran `where`); t10 one judged, one no (asked to pin
+without naming the file); t11 one yes, one no (read first).
+
+**Decided (the trial is closed; no more wording rounds before the screen):**
+- **The chat rule, as it stands now (W12, softened):** nothing *explains* in the chat between start and finish. A short progress
+  line beside an `add` (100 characters or fewer) is noise, not a fail: counted, not failed. The end is the finish line, then at most
+  one line the tour cannot say, then the questions `finish` asked for, one line each. Ends of 340 – 803 characters were exactly that
+  (a "nothing calls one from another" line and the IDs question), so the scorer allows four lines. Not re-run: it changes no agent.
+- **`--from` without `--line` becomes a refusal** (TR14e, product): it is taken only when the stop's node is inside the `--from`
+  stop's node (a file in a folder, a def in a file or class). Otherwise `add` exits 2 with: `s5 (retry_charge) does not contain
+  Invoice: --from without --line is for something inside that stop. If it is called there, add --line <the line of the call>;
+  otherwise leave --from out.` The wording failed twice on Codex; a refusal teaches every agent the same way. It is an add-time
+  rule: a stored tour with such a stop still reads (the fixtures do not change).
+- **Accepted, recorded:** Codex does not follow pointers between skills (t2, t9), and Claude missed `vnoc-tour` once in 3 (t4).
+  The screen helps with t9 (the open tour is in view); a person's "explain this" in a chat with no tour named stays a known gap.
+  "As it goes" fails on Codex for small tours (t11): accepted; the plan gives the order anyway.
+- **Open check 9, last part, stays by hand** (that `pin --commit` is asked about in a normal session), with Codex's pin, which
+  its sandbox blocks in the trial.
+- **The formats are frozen at schema 1** (01 §11): `crates/vnoc/tests/fixtures/tours/v1/` must read the same forever.
+
 Next: [`05-on-screen.md`](05-on-screen.md)

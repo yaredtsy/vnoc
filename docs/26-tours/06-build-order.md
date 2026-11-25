@@ -325,7 +325,8 @@ and TR15's TypeScript rows move into TR16:
 - **TR15b:** `vnoc/tours { on }`, `vnoc/tourCode`, `vnoc/tourCounts` (03 §6's check) — TR21's Rust rows.
 - **TR15c:** `vnoc/tourPin`, `tourIds`, `tourEdit`, `tourShare`, `tourDelete`, `tourRestore`, `tourSettings`, `TourRow.offers` — TR22's
   Rust rows.
-- then TR14d; then TR16 with the TypeScript rows below (`shared/tours.ts`, `shared/messages.ts`, `extension/src/tours.ts`, `relay.ts`).
+- then TR14d (done: the trial closed, the formats frozen, 04 §6 "Results, TR14d"); **TR14e** (the `--from` containment refusal) as the
+  first commit of TR16's prompt; then TR16 with the TypeScript rows below (`shared/tours.ts`, `shared/messages.ts`, `extension/src/tours.ts`, `relay.ts`).
 
 | Files | What |
 |---|---|

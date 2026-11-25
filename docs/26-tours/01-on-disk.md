@@ -434,6 +434,11 @@ All of it is addition (`04-storage/04-growth-path.md` §2 and §3).
 No `format = 2`. The newest fixture of `04-growth-path.md` §5 gets one project tour and one private tour with its state file, so
 "opening it changes no byte" keeps being checked.
 
+**Frozen (TR14d, `6194253`).** Schema 1 is what `crates/vnoc/tests/fixtures/tours/v1/` holds: a shared tour with every record type
+of §4, a private tour with one unknown key and one unknown `type` (hand-made, as its README says), two state files, one export
+document. `tests/cli.rs` `tour_frozen_schema_1_…` reads them to committed goldens and checks that list, show, where and check change no
+`.jsonl` byte and no place. These files are never edited: a later format is a new folder beside them, and v1 still reads.
+
 ## 12. The settings (D21)
 
 ```toml
