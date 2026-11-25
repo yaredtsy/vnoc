@@ -14,6 +14,7 @@ import { on, request } from "./host.ts";
 import { useData } from "./state/data.ts";
 import { useSession } from "./state/session.ts";
 import { Stage } from "./tour/Stage.tsx";
+import { TourCanvas } from "./tour/TourCanvas.tsx";
 import "./state/draftFeed.ts"; // the canvas page tells the host its drafts, and takes the host's copy when it starts with none (9.5c)
 import { setDocsOpen, useView } from "./state/view.ts";
 import { useEffect } from "react";
@@ -43,7 +44,7 @@ export function App() {
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1" data-vscode-context={PANE_CONTEXT}>
               {/* nothing drawn yet: the message alone. Once cards are drawn they stay, whatever a later refresh says (the bar's ⚠ tells) */}
-              {body === "canvas" && laid ? <Canvas key={`${active}:${reloads}:${top?.id ?? ""}`} laid={laid} context={active} at={`${reloads}:${top?.id ?? ""}`} /> : <CanvasMessage status={body === "error" ? "error" : "loading"} message={message} />}
+              {tour !== null ? <TourCanvas key={active} tourId={tour} contextId={active} /> : body === "canvas" && laid ? <Canvas key={`${active}:${reloads}:${top?.id ?? ""}`} laid={laid} context={active} at={`${reloads}:${top?.id ?? ""}`} /> : <CanvasMessage status={body === "error" ? "error" : "loading"} message={message} />}
               {docsOpen && (
                 <DocPanel
                   node={subject.node}

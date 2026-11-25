@@ -29,6 +29,9 @@ export function CodePane(p: {
   stopId: string;
   stepId: string;
   gone: boolean;
+  /** the calls of this code that are later stops of the tour, by file line (`callLines`): the line gets a jump to that stop */
+  calls: ReadonlyMap<number, { id: string; number: number; name: string }>;
+  onCall: (stop: string) => void;
   onDrawn: (d: CodeDrawn) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -72,6 +75,11 @@ export function CodePane(p: {
           <div key={i} className={`stage-line stage-${looks[i]}${p.changed && looks[i] === "lit" ? " stage-changed" : ""}`} data-line={first + i}>
             <span className="stage-gutter">{first + i}</span>
             <span className="stage-text">{text === "" ? " " : text}</span>
+            {p.calls.has(first + i) && (
+              <button type="button" className="stage-callto" title={`A stop of this tour: ${p.calls.get(first + i)!.name}`} onClick={() => p.onCall(p.calls.get(first + i)!.id)}>
+                ⇢ stop {p.calls.get(first + i)!.number}
+              </button>
+            )}
           </div>
         ))}
       </div>

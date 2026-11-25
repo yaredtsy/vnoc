@@ -6,7 +6,9 @@ import type { TourRow, TourView } from "@vnoc/shared/tours.ts";
 import { on, post, request } from "../../host.ts";
 import { dispatch, useSession } from "../../state/session.ts";
 import { setToursFolded, useView } from "../../state/view.ts";
+import { goToStop } from "../../tour/goToCode.ts";
 import { go, loadTour, useTour } from "../../tour/store.ts";
+import { useData } from "../../state/data.ts";
 import { listItem } from "./list.ts";
 import { headerPlace, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
@@ -61,6 +63,12 @@ export function ToursSection() {
   const openTour = (row: TourRow) => {
     setShowList(false);
     dispatch({ type: "tourOpen", id: row.id, title: row.title });
+  };
+  const root = useData((s) => s.structure?.root ?? null);
+  // Go to Code for a stop of the route: the real file at the stop's first line (the hover `↗`, and a double-click on the row)
+  const goToCode = (id: string) => {
+    const stop = view?.stops.find((s) => s.id === id);
+    if (stop) goToStop(root, stop);
   };
   const jump = (id: string, current: boolean) => tourId !== null && !current && go(tourId, id);
   const closeTour = () => tour && dispatch({ type: "closeContext", id: tour.id }, tour.id);
@@ -187,7 +195,7 @@ export function ToursSection() {
                 rows.map((row, i) => <TourListRow key={`${row.id}:${row.folder}`} row={row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} onOpen={() => openTour(row)} />)
               )
             ) : view ? (
-              route.map((r, i) => <RouteRowView key={r.id} row={r} domId={`tours-route-${i}`} focused={cursor === i} onClick={() => jump(r.id, r.current)} />)
+              route.map((r, i) => <RouteRowView key={r.id} row={r} domId={`tours-route-${i}`} focused={cursor === i} onClick={() => jump(r.id, r.current)} onGoToCode={() => goToCode(r.id)} />)
             ) : (
               <p className="px-3 py-2 text-[12px] text-muted-foreground">Opening the tour…</p>
             )}

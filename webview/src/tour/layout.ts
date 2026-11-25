@@ -146,3 +146,13 @@ export function keyMove(key: string, mod: { ctrl: boolean; meta: boolean; alt: b
       return null;
   }
 }
+
+/**
+ * The calls of a stop's code that are stops of this tour, by file line: the stops reached from this one by a call (`from` is this stop, `line` the line of the call). The
+ * view says which stop a line leads to; nothing is matched by name. When two stops were reached from one line, the first on the route is the one.
+ */
+export function callLines(view: TourView, stopId: string): Map<number, TourStop> {
+  const calls = new Map<number, TourStop>();
+  for (const s of view.stops) if (s.from === stopId && s.line != null && !calls.has(s.line)) calls.set(s.line, s);
+  return calls;
+}

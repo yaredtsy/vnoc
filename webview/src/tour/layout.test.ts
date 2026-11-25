@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Place, StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import { currentOf, keyMove, lineLook, lookOf, nextLabel, positionWords, segmentsOf } from "./layout.ts";
+import { callLines, currentOf, keyMove, lineLook, lookOf, nextLabel, positionWords, segmentsOf } from "./layout.ts";
 
 const step = (id: string, kind: StepKind, over: Partial<StepView> = {}): StepView => ({ id, kind, depth: kind === "block" ? 1 : kind === "detail" ? 2 : 0, parent: null, title: null, text: "t", lines: null, ...over });
 const stop = (id: string, reading: StepView[], over: Partial<TourStop> = {}): TourStop => ({
@@ -83,4 +83,19 @@ test("the keys: → and Space are Next, ← is Prev, Home the cover, End the end
   assert.equal(keyMove("Enter", { ...none, meta: true }), "goToCode");
   assert.equal(keyMove("ArrowLeft", { ...none, alt: true }), null, "Alt+← is the canvas's own Back");
   assert.equal(keyMove("ArrowRight", { ...none, meta: true }), null);
+});
+
+test("the calls of a stop's code that are stops of the tour are the stops reached from it by a call, by line; nothing is matched by name", () => {
+  const stops = [
+    stop("s1", [step("s1", "intro")]),
+    stop("s2", [step("s2", "short")], { from: "s1", line: 6 }),
+    stop("s3", [step("s3", "short")], { from: "s1", line: 6 }),
+    stop("s4", [step("s4", "short")], { from: "s1", line: 9 }),
+    stop("s5", [step("s5", "short")], { from: "s1" }),
+    stop("s6", [step("s6", "short")], { from: "s2", line: 3 }),
+  ];
+  const calls = callLines(view("s1", { stops }), "s1");
+  assert.deepEqual([...calls].map(([line, s]) => [line, s.id]), [[6, "s2"], [9, "s4"]], "the first stop on the route for a line; a stop reached by containment is not a call");
+  assert.deepEqual([...callLines(view("s1", { stops }), "s2")].map(([line, s]) => [line, s.id]), [[3, "s6"]]);
+  assert.equal(callLines(view("s1", { stops }), "s4").size, 0);
 });

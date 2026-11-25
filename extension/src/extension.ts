@@ -48,6 +48,10 @@ const docsShownPosts: { pinned: string | null; node: string | null; doc: string 
 const searchFocusedPosts: { focused: boolean; text: string }[] = [];
 /** What the tour's stage drew, each time it changed (for the test suite). */
 const stagePosts: Extract<Notes, { type: "stageDrawn" }>[] = [];
+/** What the tour's map drew, each time it changed (for the test suite). */
+const mapPosts: Extract<Notes, { type: "mapDrawn" }>[] = [];
+/** The viewport each canvas last reported, by context (for the test suite). */
+const viewports: Record<string, { x: number; y: number; zoom: number }> = {};
 /** What the sidebar's TOURS section drew, each time it changed (for the test suite). */
 const toursPosts: Extract<Notes, { type: "toursDrawn" }>[] = [];
 /** What the cards drew of their code (for the test suite). */
@@ -285,6 +289,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** a key pressed in the tour's stage, and a click on one of its buttons (`next`, `prev`, `goToCode`, `start`, `closeTour`), as the page handles them: the suite cannot press keys or click in a webview */
     stageKey: (key: string) => panels.emit("viewCommand", { name: "stageKey", key }),
     stageClick: (button: string) => panels.emit("viewCommand", { name: "stageClick", key: button }),
+    /** every drawing of the tour's map, in order: its cards (badge, ring, call line) and its heavy edges */
+    mapDrawn: () => mapPosts,
+    /** the viewport each canvas last reported, by context id */
+    viewports: () => viewports,
+    /** a click on a stop's card of the tour's map */
+    mapClick: (stop: string) => panels.emit("viewCommand", { name: "mapClick", key: stop }),
+    /** sets the pan and zoom of the canvas that is on screen, as a drag and the wheel would: `x,y,zoom` */
+    setView: (text: string) => panels.emit("viewCommand", { name: "setView", text }),
     /** every drawing of the sidebar's TOURS section, in order */
     toursDrawn: () => toursPosts,
     /** a click in the TOURS section (`fold`, `unfold`, `row:<tour>`, `stop:<id>`, `step:<id>`, `back`, `close`, `key:<Key>`), as the page handles it */
@@ -395,6 +407,12 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "cardsDrawn":
       cardsDrawn(note.keys, note.onScreen);
+      break;
+    case "mapDrawn":
+      mapPosts.push(note);
+      break;
+    case "viewport":
+      viewports[note.context] = { x: note.x, y: note.y, zoom: note.zoom };
       break;
     case "toursDrawn":
       toursPosts.push(note);

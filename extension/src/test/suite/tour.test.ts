@@ -21,6 +21,11 @@ interface Api {
   stageClick(button: string): void;
   toursDrawn(): Extract<Notes, { type: "toursDrawn" }>[];
   toursClick(what: string): void;
+  mapDrawn(): Extract<Notes, { type: "mapDrawn" }>[];
+  mapClick(stop: string): void;
+  setView(text: string): void;
+  viewports(): Record<string, { x: number; y: number; zoom: number }>;
+  dispatch(intent: unknown, context?: string): void;
   sidebarOpen(): boolean;
   webviewErrors(): string[];
   cli: { binaryPath(): string | undefined; driverPaths(): string[] };
@@ -106,6 +111,9 @@ const stageShows = async (what: string, ready: (d: Drawn) => boolean, ms = 10_00
 const atStep = (step: string) => (d: Drawn) => d.step === step;
 const toCover = async (of = tour) => {
   api.stageClick("again");
+  // the core has the cover before the next click is sent: two moves sent together are two requests that may overtake each other (and when the stage already shows the cover
+  // there is nothing new to wait for on the page)
+  await until("the core's place to be the cover", () => JSON.parse(tourCmd(["where", of, "--json"])).at === "cover");
   await stageShows("the cover", (d) => d.mode === "cover", 10_000, of);
 };
 
@@ -325,9 +333,9 @@ suite("the TOURS section", () => {
     const list = await sectionShows("the list", (d) => !d.folded && d.mode === "list" && d.list.length >= 2);
     assert.deepStrictEqual(list.list.slice(0, 2).map((r) => r.id), [second, tour], "newest first");
     assert.strictEqual(list.list[0].title, "Is there stock?");
-    assert.strictEqual(list.list[0].words, "new · 1 stop", "never opened: new");
+    assert.match(list.list[0].words, /^new · 1 stop · (just now|\d+ min ago)$/, "never opened: new, the size, and when it was started");
     assert.strictEqual(list.list[1].question, "what happens when the payment times out");
-    assert.ok(list.list[1].words.endsWith(" · 4 stops"), list.list[1].words);
+    assert.ok(/ · 4 stops · /.test(list.list[1].words), list.list[1].words);
     assert.ok(list.count >= 2);
   });
 
@@ -357,7 +365,7 @@ suite("the TOURS section", () => {
     api.toursClick("close");
     await until("MAIN to be active", () => api.session().active === "main");
     const list = await sectionShows("the list with the tour's row on stop 3", (d) => d.mode === "list" && d.list.some((r) => r.id === tour && r.words.startsWith("stop 3 · ")));
-    assert.strictEqual(list.list.find((r) => r.id === tour)!.words, "stop 3 · 4 stops");
+    assert.match(list.list.find((r) => r.id === tour)!.words, /^stop 3 · 4 stops · (just now|\d+ min ago)$/);
     // a click on the row: the tour opens where it was left, not at the cover
     api.toursClick(`row:${tour}`);
     await until("the tour's context", () => api.session().active === `tour:${tour}`);
@@ -433,6 +441,93 @@ suite("the TOURS section", () => {
     assert.strictEqual(done.unseen, 0, "all seen");
     api.stageClick("closeTour");
     await until("MAIN to be active", () => api.session().active === "main");
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});
+
+// ── the tour on the map (docs/26-tours/design/04-route-and-map.md §2 – §4) ──────────────────────────────────────────────────────────────────
+
+const map = () => api.mapDrawn().filter((m) => m.tour === tour).at(-1);
+const mapShows = async (what: string, ready: (m: NonNullable<ReturnType<typeof map>>) => boolean, ms = 10_000) => {
+  try {
+    await until(what, () => {
+      const m = map();
+      return m !== undefined && ready(m);
+    }, ms);
+  } catch (e) {
+    throw new Error(`${(e as Error).message}; the map last drew ${JSON.stringify(map())}`);
+  }
+  return map()!;
+};
+const near = (a: { x: number; y: number; zoom: number } | undefined, x: number, y: number, zoom: number) => !!a && Math.abs(a.x - x) < 0.5 && Math.abs(a.y - y) < 0.5 && Math.abs(a.zoom - zoom) < 0.005;
+
+suite("the tour on the map", () => {
+  suiteSetup(async function () {
+    this.timeout(60_000);
+    api.toursClick("key:Escape"); // the list, if a route is shown
+    api.toursClick(`row:${tour}`);
+    await until("the tour's context", () => api.session().active === `tour:${tour}`);
+    await toCover();
+    for (let i = 0; i < 3; i++) api.stageClick("next");
+    await stageStep("s1.b2");
+  });
+
+  test("the map has one card for every stop, in the route's order, with the ring on the current one", async () => {
+    const m = await mapShows("the map at s1", (d) => d.cards.some((c) => c.here && c.id === "s1"));
+    assert.deepStrictEqual(m.cards.map((c) => [c.id, c.number]), [["s1", 1], ["s2", 2], ["s4", 3], ["s3", 4]]);
+    assert.deepStrictEqual(m.cards.filter((c) => c.here).map((c) => c.id), ["s1"], "one ring, on the stop the stage is on");
+    assert.ok(m.cards.every((c) => !c.planned), "a finished tour has no stop that is not written");
+    assert.strictEqual(m.cards.find((c) => c.id === "s1")!.mark, "here");
+  });
+
+  test("a stop reached by a call is a call card with its line, joined to its caller by a dashed edge; one with no caller has no edge", async () => {
+    const m = map()!;
+    assert.deepStrictEqual(m.cards.map((c) => [c.id, c.callLine]), [["s1", null], ["s2", 6], ["s4", 6], ["s3", null]]);
+    assert.deepStrictEqual([...m.edges].sort(), ["s1->s2:call", "s1->s4:call"]);
+    assert.strictEqual(m.cards.find((c) => c.id === "s4")!.description, "⇢ 2", "explained at stop 2");
+    assert.deepStrictEqual(m.heavy, [], "the current stop is the first: no way to it");
+  });
+
+  test("a click on a card is a jump to the stop: the stage moves, the ring moves, and the edges from the first stop are heavy", async () => {
+    api.mapClick("s4");
+    await stageStep("s4");
+    const m = await mapShows("the ring on s4", (d) => d.cards.some((c) => c.here && c.id === "s4"));
+    assert.deepStrictEqual(m.heavy, ["s1->s4"]);
+    assert.deepStrictEqual(m.cards.filter((c) => c.here).map((c) => c.id), ["s4"]);
+    api.mapClick("s1");
+    await stageStep("s1");
+  });
+
+  test("a call in the code that is a later stop of the tour is a jump to it", async () => {
+    assert.ok(last()!.calls.includes(6), `the code of checkout leads to the stops reached from line 6: ${JSON.stringify(last()!.calls)}`);
+    api.stageClick("callLine:6");
+    await stageStep("s2"); // the first stop on the route reached from that line
+    api.stageClick("jump:s1");
+    await stageStep("s1");
+  });
+
+  test("Main ⇄ tour keeps the step and both viewports", async () => {
+    const context = `tour:${tour}`;
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+    api.setView("120,60,0.8"); // the tour's own pan and zoom
+    await until("the tour's viewport", () => near(api.viewports()[context], 120, 60, 0.8));
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    await until("MAIN to be active", () => api.session().active === "main");
+    await sleep(600);
+    api.setView("40,30,0.6"); // MAIN's
+    await until("MAIN's viewport", () => near(api.viewports().main, 40, 30, 0.6));
+    delete api.viewports()[context];
+    delete api.viewports().main;
+    api.dispatch({ type: "activate", id: context }, context);
+    await until("the tour to be active again", () => api.session().active === context);
+    await until("the tour's viewport as it was", () => near(api.viewports()[context], 120, 60, 0.8));
+    await stageStep("s2");
+    assert.strictEqual(last()!.position, "stop 2 of 4", "the step is the one it was");
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    await until("MAIN's viewport as it was", () => near(api.viewports().main, 40, 30, 0.6));
+    api.dispatch({ type: "activate", id: context }, context);
+    await until("the tour again", () => api.session().active === context);
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
 });

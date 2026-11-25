@@ -2,7 +2,7 @@
 // `depth`, the mark from `place` (here: `place.stop`; seen: `place.seen`; not written: the stop's own `planned`), and under the stop you are in its steps, indented by
 // their `depth`. Nothing is counted, sorted or worked out.
 
-import type { TourView } from "@vnoc/shared/tours.ts";
+import type { TourStop, TourView } from "@vnoc/shared/tours.ts";
 
 /** `✓` seen · `●` here · `○` ahead · `◌` not written: four shapes, so they read without colour (§1.1). */
 export type Mark = "seen" | "here" | "ahead" | "planned";
@@ -40,11 +40,16 @@ export function markOf(view: TourView, stopId: string, planned: boolean): Mark {
   return view.place.seen.includes(stopId) ? "seen" : "ahead";
 }
 
+/** The one word a stop says, the first that applies: `writing…` · `changed` · `⇢ 2` (explained at stop 2). The route's row and the map's card say the same. */
+export function stopDescription(view: TourView, stop: TourStop): string | null {
+  const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
+  return view.writing === stop.id ? "writing…" : stop.check === "changed" ? "changed" : explained ? `⇢ ${explained.number}` : null;
+}
+
 export function routeRows(view: TourView): RouteRow[] {
   const rows: RouteRow[] = [];
   for (const stop of view.stops) {
-    const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
-    const description = view.writing === stop.id ? "writing…" : stop.check === "changed" ? "changed" : explained ? `⇢ ${explained.number}` : null;
+    const description = stopDescription(view, stop);
     const current = view.place.stop === stop.id;
     rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, mark: markOf(view, stop.id, stop.planned), current, description });
     // the steps are under the stop you are in, and only when it has more than one: leaving it folds them away (§1.2)

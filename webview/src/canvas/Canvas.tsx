@@ -10,7 +10,7 @@ import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
 import { checkKeys } from "../node-card/keyCheck.ts";
 import { cardRef, saveDraft, saveFile, typeIn } from "../state/edit.ts";
-import { rememberViewport, savedViewport } from "../state/viewports.ts";
+import { rememberViewport, reportViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
@@ -135,13 +135,18 @@ function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | n
 
 /** Menu commands (and the F key) that change only what this canvas draws: show or hide a card's code, fit the view, "Edit in Card" (the card shows its code and its editor takes the keyboard). */
 function ViewCommands({ laid }: { laid: Layout }) {
-  const { fitView } = useReactFlow();
+  const { fitView, setViewport } = useReactFlow();
   const cards = useRef(laid.nodes); // the latest layout, without listening again each time it changes
   cards.current = laid.nodes;
   useEffect(() => {
     const fit = () => void fitView({ duration: motionMs(300, prefersReducedMotion()) });
     const stop = on("viewCommand", ({ name, key, text }) => {
       if (name === "fitView") fit();
+      else if (name === "setView" && text) {
+        // the extension's test suite cannot drag the canvas: it sets the viewport as a person's pan and zoom would
+        const [x, y, zoom] = text.split(",").map(Number);
+        void setViewport({ x, y, zoom }, { duration: 0 });
+      }
       else if (name === "checkKeys") post({ type: "keysChecked", ...checkKeys() });
       else if (key && (name === "edit" || name === "setDraft" || name === "save" || name === "saveFile")) {
         const card = cards.current.find((p) => p.id === key);
@@ -162,7 +167,7 @@ function ViewCommands({ laid }: { laid: Layout }) {
       stop();
       window.removeEventListener(FIT_VIEW_EVENT, fit);
     };
-  }, [fitView]);
+  }, [fitView, setViewport]);
   return null;
 }
 
@@ -229,6 +234,7 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
       fitView={saved === null}
       fitViewOptions={FIT_OPTIONS}
       defaultViewport={saved ?? undefined}
+      onInit={(rf) => reportViewport(context, rf.getViewport())}
       onMoveEnd={(_, viewport) => rememberViewport(context, at, viewport)}
       className="min-w-0 flex-1"
       minZoom={0.02}

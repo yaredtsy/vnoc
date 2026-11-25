@@ -8,7 +8,8 @@ import { on, post, request } from "../host.ts";
 import { useData } from "../state/data.ts";
 import { dispatch } from "../state/session.ts";
 import { setStageFolded, setStageHeight, setStageText, useView } from "../state/view.ts";
-import { type Current, currentOf, keyMove, lookOf, positionWords } from "./layout.ts";
+import { type Current, callLines, currentOf, keyMove, lookOf, positionWords } from "./layout.ts";
+import { goToStop } from "./goToCode.ts";
 import { go, loadTour, useTour } from "./store.ts";
 import { CodePane, type CodeDrawn, LINE_H } from "./stage/CodePane.tsx";
 import { Contents } from "./stage/Contents.tsx";
@@ -73,6 +74,9 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
 
   // what a click or a key does: a move for the core, Go to Code, closing the tour
   const act = useRef<Record<string, () => void>>({});
+  /** the calls of the code on screen that lead to a later stop, by file line: what a click on one jumps to */
+  const callTo = useRef(new Map<number, { id: string }>());
+  callTo.current = view && stop ? callLines(view, stop.id) : new Map();
   act.current = {
     next: () => go(tourId, "next"),
     start: () => go(tourId, "next"),
@@ -87,12 +91,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       if (to != null) go(tourId, to);
     },
     closeTour: () => dispatch({ type: "closeContext", id: contextId }, contextId),
-    goToCode: () => {
-      if (!node) return;
-      if (node.kind === "folder") return void request("goToCode", { key: node.id }).catch(() => {});
-      const line = (step?.lines?.[0] ?? (node.range ? node.range.start.line + 1 : 1)) - 1;
-      void request("openAt", { path: node.path, range: { start: { line, character: 0 }, end: { line, character: 0 } } }).catch(() => {});
-    },
+    goToCode: () => stop && goToStop(structure?.root ?? null, stop, step),
   };
   const jump = useCallback((to: string) => go(tourId, to), [tourId]);
 
@@ -115,7 +114,16 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     () =>
       on("viewCommand", ({ name, key }) => {
         if (name === "stageKey" && key) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
-        if (name === "stageClick" && key) act.current[key]?.();
+        if (name === "stageClick" && key) {
+          // `jump:s2` and `callLine:6`: a jump to a stop, and a click on the call at that line of the code
+          const [what, arg] = key.split(":");
+          if (what === "jump") go(tourId, arg);
+          else if (what === "callLine") {
+            const target = callTo.current.get(Number(arg));
+            if (target) go(tourId, target.id);
+          }
+          else act.current[key]?.();
+        }
       }),
     [],
   );
@@ -136,6 +144,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       position: positionWords(view),
       next: view.place.at === "cover" ? "Start" : view.place.position && view.place.position.stop === view.place.position.of && view.place.position.step === view.place.position.steps ? "Finish" : "Next",
       unseen: view.place.unseen,
+      calls: stop ? [...callLines(view, stop.id).keys()] : [],
       code: code && "lines" in code ? { first: code.first, text: code.text } : null,
       // what the code pane drew: nothing when there is no code pane (the cover, the end, contents)
       lit: wantsCode ? drawn.lit : [],
@@ -224,6 +233,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
                   stopId={stop.id}
                   stepId={step.id}
                   gone={node === null}
+                  calls={callLines(view, stop.id)}
+                  onCall={jump}
                   onDrawn={(d) => setDrawn((old) => (old.scrolledTo === d.scrolledTo && old.lit.join() === d.lit.join() && old.thin.join() === d.thin.join() ? old : d))}
                 />
               )}
