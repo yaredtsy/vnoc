@@ -138,6 +138,8 @@ const stageShows = async (what: string, ready: (d: Drawn) => boolean, ms = 10_00
 };
 const atStep = (step: string) => (d: Drawn) => d.step === step;
 const toCover = async (of = tour) => {
+  // a tour that was just opened is at its cover already: a click on "again" would send a move to the cover that can land after the test's own next move (two requests overtake each other)
+  if (JSON.parse(tourCmd(["where", of, "--json"])).at === "cover" && last()?.tour === of && last()?.mode === "cover") return;
   api.stageClick("again");
   // the core has the cover before the next click is sent: two moves sent together are two requests that may overtake each other (and when the stage already shows the cover
   // there is nothing new to wait for on the page)
@@ -156,6 +158,8 @@ const tomlFile = () => path.join(workspace(), ".vnoc", "vnoc.toml");
 const stateDir = () => path.join(workspace(), ".vnoc", "local", "tour-state");
 /** What the workspace was when the first test of a suite began (after its `suiteSetup`, which may commit what the suite is about): the head, `shop.py` and `vnoc.toml` (null: there was none). */
 const starts = new Map<Mocha.Suite, { head: string; shop: string | null; toml: string | null }>();
+/** The suites before this one in a whole run leave `[ids] default = "none"` in `vnoc.toml` (their first attach writes it), and the tour tests are made for a project with none: the first test removes it. */
+let tomlCleared = false;
 const readOrNull = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
 
 /**
@@ -167,6 +171,10 @@ setup(async function (this: Mocha.Context) {
   if (test?.file !== __filename) return;
   this.timeout(30_000);
   const shop = path.join(workspace(), "tourdemo", "shop.py");
+  if (!tomlCleared) {
+    tomlCleared = true;
+    fs.rmSync(tomlFile(), { force: true });
+  }
   if (!starts.has(test.parent!)) starts.set(test.parent!, { head: gitIn("rev-parse", "HEAD").trim(), shop: readOrNull(shop), toml: readOrNull(tomlFile()) });
   const start = starts.get(test.parent!)!;
   api.answerTourMessages(null);
