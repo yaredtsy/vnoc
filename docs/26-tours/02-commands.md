@@ -128,6 +128,9 @@ uses) → make the id → take the lock → write the `tour` record with `create
 
 ## 4. `add`
 
+> **Changed (the user, 2026-11-25):** a step's text is Markdown, Mermaid included; the inline rule and the budgets below change in
+> TR19b as [`05`](05-on-screen.md) §7 says. Where this section and 05 §7 differ, 05 §7 wins.
+
 One stop per call. The node is read from the index as it is now: its kind, its lines, its ID if it has one. The text comes from
 `--body-file` (a file, or `-` for standard input), as `doc new` takes its body.
 

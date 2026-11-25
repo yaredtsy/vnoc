@@ -398,6 +398,12 @@ Main ⇄ tour keeps the step and both viewports; `Esc` closes the context and MA
 
 Commit: `tours TR19: the tour on the canvas: cards, the ring, the bar`.
 
+### TR19b Markdown and Mermaid in a step; colours in the code pane
+
+The user's change of 2026-11-25, as [`05`](05-on-screen.md) §7 says it: the rules and budgets of `add` (and `import`), the text kept
+with its lines, the skill and the guide, the Markdown renderer with Mermaid, Shiki in the code pane. A short Claude re-run (t4 ×2, t5)
+to see what agents write with it. Commit: `tours TR19b: …` (three, by part).
+
 ## 6. Phase 4: the screen, complete
 
 ### TR20 While it is written

@@ -254,4 +254,25 @@ two things: `` `code` `` becomes a code span, `*emphasis*` becomes emphasis. Eve
 Markdown pipeline and it never sets HTML. `vnoc tour add` already refuses anything more ([`02`](02-commands.md) §4), but a file from a
 pull was not written by this `add`.
 
+**Changed by the user (2026-11-25): Markdown everywhere, with Mermaid.** A step's text (intro, block, detail) is Markdown, drawn by
+a full renderer, and a ` ```mermaid ` fence is drawn as a diagram. Built in **TR19b** (after TR19, before TR20):
+- **What may be written** (02 §4 changes; the refusal sentences say each): paragraphs, `code`, *emphasis*, **strong**, lists,
+  tables, block quotes, code fences, a ` ```mermaid ` fence, links (a click goes to the host, as in the doc panel). Still refused: raw
+  HTML, images, and a Markdown heading inside a text (`#`…`######` at a line's start: the `##`/`###` lines are the stop's own block
+  structure, 02 §4). At most **one** Mermaid fence per step; a fence (code or Mermaid) is 30 lines or fewer.
+- **Budgets, loosened:** the prose (everything outside fences and tables) counts, at about one and a half times today's: intro
+  (240, 420, 720), block (240, 420, 900) for quick, normal, detailed; a `same_as` intro (180, 180, 240). Fences and tables do not count,
+  but are held by their own limits (30 lines; a table 12 rows or fewer). Titles stay at 60.
+- **The text keeps its lines.** Today `body.rs` joins a paragraph's lines; from TR19b the step's text is stored as written (its
+  newlines kept), because a list, a table and a fence need them. **No format change**: `text` is still a string (schema 1, frozen, 01
+  §11). A tour written before reads the same: one line of prose is Markdown too. An older V-NOC shows the Markdown source as text.
+- **The renderer** (`webview/src/tour/text.ts` becomes a Markdown renderer): markdown-it with `html: false`, as `docs/markdown.ts`
+  (links to the host, images as their alt text); code fences highlighted by the same Shiki highlighter the cards use; Mermaid loaded
+  only when a step has a diagram, `securityLevel: "strict"`, its theme from VS Code's light or dark; a diagram fits the text pane's
+  width and a click opens it large. Still never `innerHTML` from anything but the sanitised renderer's output.
+- **The skill** (04 §3): `say why, not what` stays; lists and tables when the point is a set of things; a Mermaid flowchart when the
+  point is a flow across stops or files (best in the first stop's intro of a cross-file tour); a code fence only for what is not on
+  screen (an example call, a payload), never the stop's own code.
+- **The stage's code pane gets syntax colours** in the same step (the cards' Shiki highlighter and themes), moved up from TR23.
+
 Next: [`06-build-order.md`](06-build-order.md)

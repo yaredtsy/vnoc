@@ -83,6 +83,7 @@ Add one stop per command, in the order the user should read them. Do not prepare
 - The line numbers are the file's, as `vnoc code` printed them.
 - Say **why**, not what: the code is on screen beside your text. Never retell it line by line.
 - A step is one short paragraph. No lists, no code blocks. `code` and *emphasis* are fine.
+  *(Changed by the user, 2026-11-25: Markdown everywhere, Mermaid included; the new lines are in 05 §7, built in TR19b.)*
 - A function under 8 lines is one step: the first paragraph only.
 - A stop reached by a call from an earlier stop: add `--from <that stop> --line <the call's line>`. A file of a folder you
   explained, a method of a class: `--from <that stop>`.
