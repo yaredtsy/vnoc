@@ -207,6 +207,21 @@ MAIN). The host's holder is `extension/src/tours.ts` (no `vscode` import, unit t
   finds it;
 - the holder sends `tourOpen {open: true}` again after a core restart.
 
+**As built (TR17, `1d9b864`, `ccf1b94`, `0a0275d`).** The stage is `webview/src/tour/Stage.tsx` + `stage/*`, the renderer
+`tour/text.ts`; the window suite `tour` (9 tests, 13 s) makes its tours with the built commands. The core gives `words`
+(`[shared ·] <state> · <size>`, the state word the first that applies of: no news, stopping, stopped, writing, changed, `stop N`,
+finished, new; else `seen N of M`), the view's `place` as `PlaceView` (`stop`, `position`; the state file keeps the plain place), each
+reading step's `kind`, and `key` for planned stops too (the stage reads their code) and after a check (`now` or `displaced`). The
+code pane finds the node by the stop's `key` in the structure (a file: the whole file). Stage height, text width and fold are in the
+window's view state. Two TR16 bugs found by the suite and fixed: a request with no params went out as `[null]`; **Open Tour…** did
+nothing with the canvas closed. Screenshots of every kind were looked at (cover, intro, block, detail, short, same_as, contents, end).
+
+**Left out of design 03 at TR17, and where each goes:** the line the stop was called from → the step holding it, and the end
+card's "all seen / N not seen" → **TR18's first commit** (the core gives them: `line_step` on a stop reached by a call, `unseen` on
+the place; the pages count nothing); `Next` dimmed with `◌` before a planned stop → TR20; a call in the code as a jump (design 03
+§2.2) → TR19; `↑ ↓` (next / previous stop), `Alt+←` (back), the contents' `+ N not on this tour` fold, the code pane's syntax colours
+(as a card's code view has them, if it does), the cover's title said twice → TR23.
+
 ## 6. Who draws what
 
 | | Does | Does not |
