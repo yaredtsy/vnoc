@@ -383,6 +383,8 @@ export class Commands {
     }
     const picked = await vscode.window.showQuickPick(tours.map(pickItem), { title: "Open Tour", placeHolder: "Pick a tour", matchOnDescription: true, matchOnDetail: true });
     if (!picked) return;
+    // the session checks its intents against the structure, and the host reads it only while a page asks: with the canvas closed there is none yet
+    if (!this.core.tree) await this.core.loadStructure();
     this.store.dispatch({ type: "tourOpen", id: picked.row.id, title: picked.row.title });
     await this.panels.showCanvas();
   }

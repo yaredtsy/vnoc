@@ -195,6 +195,8 @@ export class Core {
   /** `token`: cancelling it sends `$/cancelRequest` for this request, and the core stops the work under it. */
   async request<T>(method: string, params?: object, token?: vscode.CancellationToken): Promise<T> {
     await this.ready;
+    // no params is no params: `sendRequest(method, undefined)` goes out as `[null]`, which the core cannot read as "no parameters" (`vnoc/tours`, `vnoc/tourCounts`)
+    if (params === undefined) return token ? this.client!.sendRequest<T>(method, token) : this.client!.sendRequest<T>(method);
     return token ? this.client!.sendRequest<T>(method, params, token) : this.client!.sendRequest<T>(method, params);
   }
 
