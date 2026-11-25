@@ -2,7 +2,7 @@
   "command": "tour add",
   "refused": [
     {
-      "problem": "299 of 280 characters",
+      "problem": "499 of 420 characters",
       "where": "intro"
     },
     {
@@ -10,7 +10,7 @@
       "where": "block 1"
     },
     {
-      "problem": "a list. A step is one paragraph",
+      "problem": "an image. A text has no images: say it in words, or draw it as a Mermaid diagram",
       "where": "block 2 text"
     }
   ],

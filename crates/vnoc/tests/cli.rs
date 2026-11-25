@@ -6669,14 +6669,13 @@ fn every_tour_command_has_its_json_golden() {
 }
 
 /// An intro over its budget, a block outside the node, and a list in a text: three problems in one text.
-const THREE_PROBLEMS: &str = "TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG.
+const THREE_PROBLEMS: &str = "TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. TOO LONG. 
 
 ## 40-44 Outside the function
 It is not there.
 
-## 14-15 With a list
-- one
-- two
+## 14-15 With an image
+![the flow](flow.png)
 ";
 
 #[test]
@@ -6689,13 +6688,13 @@ fn a_text_with_three_problems_prints_all_three_exits_2_and_writes_nothing() {
     assert!(out.stdout.is_empty());
     let err = text(&out.stderr);
     assert!(err.contains("not written: 3 problems"), "{err}");
-    assert!(err.contains("intro: 299 of 280 characters"), "{err}");
+    assert!(err.contains("intro: 499 of 420 characters"), "{err}");
     assert!(
         err.contains("block 1: lines 40-44 are outside retry_charge (11-22)"),
         "{err}"
     );
     assert!(
-        err.contains("block 2 text: a list. A step is one paragraph"),
+        err.contains("block 2 text: an image. A text has no images: say it in words, or draw it as a Mermaid diagram"),
         "{err}"
     );
     golden_text(
@@ -10237,7 +10236,7 @@ fn replace_with_a_text_changed_a_stop_removed_and_one_added_keeps_the_ids_and_ne
 fn a_document_with_three_bad_stops_lists_all_three_with_their_places_and_writes_nothing() {
     let root = sample_copy("tour-import-refused");
     let before = list_tree(&root.join(".vnoc"));
-    let long = "x".repeat(400);
+    let long = "x".repeat(500);
     let doc = json!({"title": "bad", "stops": [
         {"node": "billing/charge.py::nope", "text": "There is no such function."},
         {"node": "billing/charge.py::refund", "text": long},
@@ -10252,7 +10251,7 @@ fn a_document_with_three_bad_stops_lists_all_three_with_their_places_and_writes_
     );
     for place in [
         "stops[0].node: ",
-        "stops[1].text: 400 of 280 characters",
+        "stops[1].text: 500 of 420 characters",
         "stops[2].blocks[0]: ",
     ] {
         assert!(said.contains(place), "{place} in {said}");
@@ -13219,6 +13218,162 @@ fn tour_from_without_line_is_refused_unless_the_node_is_inside_for_add_plan_and_
                 json!("billing/charge.py::retry_charge.<locals>.one_try")
             ),
         ]
+    );
+}
+
+/// A text of Markdown: a list, a table, a Mermaid diagram and a code fence with a `##` line in it.
+const MARKDOWN_INTRO: &str = "retry_charge tries again, but only for a dropped call:
+
+- it retries up to `MAX_ATTEMPTS` times
+- any other error leaves at once
+
+| error | retried? |
+|---|---|
+| ConnectionError | yes |
+| ValueError | no |
+
+```mermaid
+flowchart LR
+  call --> drop{dropped?}
+  drop -- yes --> call
+```
+";
+
+const MARKDOWN_BLOCK: &str = "A call looks like this, *not* like the code on screen:
+
+```text
+## 99-99 this is not a block
+order = Order(total=5)
+```
+
+> a quote, and **strong** words, and [a link](https://example.com).";
+
+#[test]
+fn tour_a_steps_text_is_markdown_and_keeps_its_lines_through_add_show_and_export() {
+    let root = sample_copy("tour-markdown");
+    let tour = tour_start(&root, "markdown");
+    let body = format!("{MARKDOWN_INTRO}\n## 14-15 One attempt\n{MARKDOWN_BLOCK}\n");
+    let out = tour_add(&root, &tour, RETRY, &[], &body);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    // one block: the `##` line inside the fence is the fence's, not a heading
+    let said = text(&out.stdout);
+    assert!(said.contains("s1 written"), "{said}");
+    // the file has the text as written, newlines included
+    let stored = tour_lines(&root, &tour);
+    let intro = stored.iter().find(|l| l["type"] == "stop").unwrap()["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(intro, MARKDOWN_INTRO.trim_end());
+    let step = stored.iter().find(|l| l["type"] == "step").unwrap();
+    assert_eq!(step["text"].as_str().unwrap(), MARKDOWN_BLOCK);
+    assert_eq!(stored.iter().filter(|l| l["type"] == "step").count(), 1);
+    // `show --json` says the same text, step by step
+    let shown = tour_json(&root, &["show", &tour]);
+    let reading = shown["stops"][0]["reading"].as_array().unwrap();
+    assert_eq!(
+        reading[0]["text"].as_str().unwrap(),
+        MARKDOWN_INTRO.trim_end()
+    );
+    assert_eq!(reading[1]["text"].as_str().unwrap(), MARKDOWN_BLOCK);
+    // `show --text` keeps the shape: the list, the table and the fence are each on their own lines
+    let printed = tour_ok(&root, &["show", &tour, "--text"]);
+    assert!(
+        printed.contains("      - it retries up to `MAX_ATTEMPTS` times\n"),
+        "{printed}"
+    );
+    assert!(
+        printed.contains("      | ConnectionError | yes |\n"),
+        "{printed}"
+    );
+    assert!(printed.contains("      ```mermaid\n"), "{printed}");
+    // finish, export, import --replace: the text comes back as it was
+    finish_ok(&root, &tour, &["--no-ids"]);
+    let exported = export_doc(&root, &tour);
+    assert_eq!(
+        exported["stops"][0]["text"].as_str().unwrap(),
+        MARKDOWN_INTRO.trim_end()
+    );
+    assert_eq!(
+        exported["stops"][0]["blocks"][0]["text"].as_str().unwrap(),
+        MARKDOWN_BLOCK
+    );
+    let imported = import_doc(&root, &exported, &[]);
+    let id = imported_id(&imported);
+    let again = tour_json(&root, &["show", &id]);
+    assert_eq!(
+        again["stops"][0]["reading"][0]["text"],
+        shown["stops"][0]["reading"][0]["text"]
+    );
+    assert_eq!(
+        again["stops"][0]["reading"][1]["text"],
+        shown["stops"][0]["reading"][1]["text"]
+    );
+}
+
+#[test]
+fn tour_the_new_inline_rule_refuses_html_images_headings_a_second_diagram_and_a_long_fence_or_table()
+ {
+    let root = sample_copy("tour-markdown-refused");
+    let tour = tour_start(&root, "refused");
+    let fence: String = (0..31).map(|i| format!("l{i}\n")).collect();
+    let table: String = (0..13).map(|i| format!("| {i} | x |\n")).collect();
+    let bad = format!(
+        "a <b>tag</b> and ![i](j)\n\n# A heading\n\n```mermaid\nflowchart LR\n A-->B\n```\n```mermaid\nflowchart LR\n C-->D\n```\n\n```\n{fence}```\n\n| a | b |\n|---|---|\n{table}"
+    );
+    let out = tour_add(&root, &tour, RETRY, &["--json"], &bad);
+    assert_eq!(code(&out), 2);
+    let json: Value = serde_json::from_slice(&out.stdout).unwrap();
+    // (the JSON says where in `where`, and the sentence after it in `problem`)
+    assert!(
+        json["refused"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["where"] == "intro")
+    );
+    let problems: Vec<&str> = json["refused"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["problem"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        problems,
+        [
+            "HTML. A text is Markdown: tags are not drawn, write the words",
+            "an image. A text has no images: say it in words, or draw it as a Mermaid diagram",
+            "a heading. `##` and `###` are the stop's blocks and details; inside a text there are no headings: use **bold** for a line of its own",
+            "a second Mermaid diagram. One diagram a step: the other goes in another step",
+            "a fence of 31 lines. The most is 30: show only the lines that matter",
+            "a table of 14 rows. The most is 12: keep the rows that matter",
+        ]
+    );
+    // nothing was written
+    assert_eq!(
+        tour_lines(&root, &tour)
+            .iter()
+            .filter(|l| l["type"] == "stop")
+            .count(),
+        0
+    );
+    // an imported document goes through the same rules, and says where in the document
+    let doc = json!({"title": "bad", "stops": [
+        {"node": RETRY, "text": "a <b>tag</b>", "blocks": [{"lines": [14, 15], "title": "T", "text": "# a heading\n![i](j)"}]}]});
+    let out = import_doc(&root, &doc, &[]);
+    assert_eq!(code(&out), 2, "{}", text(&out.stderr));
+    let said = text(&out.stderr);
+    assert!(
+        said.contains("stops[0].text: HTML. A text is Markdown"),
+        "{said}"
+    );
+    assert!(
+        said.contains("stops[0].blocks[0].text: an image."),
+        "{said}"
+    );
+    assert!(
+        said.contains("stops[0].blocks[0].text: a heading."),
+        "{said}"
     );
 }
 

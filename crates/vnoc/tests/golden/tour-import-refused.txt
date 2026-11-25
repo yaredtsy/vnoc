@@ -1,5 +1,5 @@
 error: not written: 3 problems
   fix them, then import the whole document again
     stops[0].node: no node at billing/charge.py::nope · charge.py has: billing/charge.py::ChargeError · billing/charge.py::retry_charge · billing/charge.py::retry_charge.<locals>.one_try · billing/charge.py::refund
-    stops[1].text: 400 of 280 characters
+    stops[1].text: 500 of 420 characters
     stops[2].blocks[0]: lines 40-50 are outside retry_charge (11-22)

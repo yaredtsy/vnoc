@@ -83,7 +83,7 @@ Lines of the first block.
 EOF
 error: not written: 2 problems
   fix them, then send the whole stop again
-    intro: there is none. Start with one paragraph on what this is for, before the first heading
+    intro: there is none. Start with a paragraph on what this is for, before the first heading
     blocks 1 and 3 both light line 16
 vnoc tour add orders-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'  # exit 2
 place parses, saves and returns.

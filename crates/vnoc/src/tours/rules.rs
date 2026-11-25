@@ -5,14 +5,18 @@
 //! **Not here, because they need the tour or the index (TR4):** `--from` is a stop of this tour; `--line` is inside that stop's node; `--same-as`
 //! names a written stop on the same node; at most 40 stops on the route; the node is in the index.
 //!
-//! **Characters.** A budget counts `chars().count()` of the paragraph after its lines are joined by a space. That is Unicode scalar values: an
-//! emoji written with a variation selector or as a family of joined emoji is more than one.
+//! **Characters.** A budget counts `chars().count()` of the **prose** of a text (what is outside its fences and its tables) after its lines are joined by
+//! a space. That is Unicode scalar values: an emoji written with a variation selector or as a family of joined emoji is more than one.
+//!
+//! **What a text may hold** (`05-on-screen.md` §7): paragraphs, `code`, *emphasis*, **strong**, lists, tables, block quotes, code fences, one Mermaid fence,
+//! links. Refused, each named once per part: raw HTML, images, a Markdown heading, a second Mermaid fence, a fence over [`MAX_FENCE`] lines, a table over
+//! [`MAX_TABLE_ROWS`] rows (and a fence that is never closed, which would swallow the blocks after it).
 
 use std::fmt;
 
 use vnoc_domain::NodeKind;
 
-use super::body::{Body, BodyBlock};
+use super::body::{self, Body, BodyBlock};
 use super::record::Detail;
 
 /// One thing wrong with the text, and where.
@@ -53,6 +57,10 @@ pub const SHORT: u32 = 8;
 /// Blocks in a stop, details counted.
 const MAX_BLOCKS: usize = 12;
 const TITLE_BUDGET: usize = 60;
+/// The most lines in one fence, code or Mermaid.
+pub const MAX_FENCE: usize = 30;
+/// The most rows in one table (its header counts).
+pub const MAX_TABLE_ROWS: usize = 12;
 
 /// (quick, normal, detailed)
 fn budget(by_detail: (usize, usize, usize), detail: Detail) -> usize {
@@ -75,17 +83,12 @@ pub fn check(body: &Body, node: &NodeLines, detail: Detail, options: Options) ->
     let mut out = Vec::new();
 
     let intro_budget = if options.same_as {
-        budget((120, 120, 160), detail)
+        budget((180, 180, 240), detail)
     } else {
-        budget((160, 280, 480), detail)
+        budget((240, 420, 720), detail)
     };
-    over(&mut out, "intro", &body.intro, intro_budget);
-    inline(
-        &mut out,
-        "intro",
-        &body.intro_lines,
-        "A step is one paragraph",
-    );
+    over(&mut out, "intro", &scan(&body.intro).prose, intro_budget);
+    markdown(&mut out, "intro", &body.intro);
 
     // the blocks, flat, in the order they were written, each with the block it is a detail of
     let mut flat: Vec<(&BodyBlock, Option<&BodyBlock>)> = Vec::new();
@@ -197,15 +200,10 @@ pub fn check(body: &Body, node: &NodeLines, detail: Detail, options: Options) ->
         over(
             &mut out,
             &text_place,
-            &block.text,
-            budget((160, 280, 600), detail),
+            &scan(&block.text).prose,
+            budget((240, 420, 900), detail),
         );
-        inline(
-            &mut out,
-            &text_place,
-            &block.text_lines,
-            "A step is one paragraph",
-        );
+        markdown(&mut out, &text_place, &block.text);
     }
     out
 }
@@ -218,6 +216,165 @@ fn over(out: &mut Vec<Refusal>, place: &str, text: &str, budget: usize) {
             place,
             format!("{place}: {length} of {budget} characters"),
         ));
+    }
+}
+
+/// What a text is made of, for the rules: its prose (outside fences and tables, the lines trimmed and joined by a space), everything outside fences (for
+/// the tags and images a table may hold), its fences and its tables.
+struct Scan {
+    prose: String,
+    outside_fences: String,
+    fences: Vec<FenceFound>,
+    tables: Vec<usize>,
+    heading: bool,
+}
+
+struct FenceFound {
+    mermaid: bool,
+    /// the lines between the opening and the closing line
+    lines: usize,
+    closed: bool,
+}
+
+/// A delimiter row of a table: `|---|:-:|`, `--- | ---`: dashes, colons, bars and spaces, with a dash and a bar.
+fn is_delimiter(line: &str) -> bool {
+    let line = line.trim();
+    line.contains('-')
+        && line.contains('|')
+        && line.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
+}
+
+fn scan(text: &str) -> Scan {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found = Scan {
+        prose: String::new(),
+        outside_fences: String::new(),
+        fences: Vec::new(),
+        tables: Vec::new(),
+        heading: false,
+    };
+    // which lines are in a fence, and which are in a table
+    let mut in_fence = vec![false; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        let Some(open) = body::opens(lines[i]) else {
+            i += 1;
+            continue;
+        };
+        let info = lines[i]
+            .trim_start()
+            .trim_start_matches(['`', '~'])
+            .trim()
+            .to_lowercase();
+        let mut end = i + 1;
+        while end < lines.len() && !body::closes(lines[end], open) {
+            end += 1;
+        }
+        let closed = end < lines.len();
+        found.fences.push(FenceFound {
+            mermaid: info.split_whitespace().next() == Some("mermaid"),
+            lines: end - i - 1,
+            closed,
+        });
+        for flag in &mut in_fence[i..(end + 1).min(lines.len())] {
+            *flag = true;
+        }
+        i = end + 1;
+    }
+    let mut in_table = vec![false; lines.len()];
+    let mut j = 1;
+    while j < lines.len() {
+        if !in_fence[j] && !in_fence[j - 1] && is_delimiter(lines[j]) && lines[j - 1].contains('|')
+        {
+            let mut end = j + 1;
+            while end < lines.len()
+                && !in_fence[end]
+                && lines[end].contains('|')
+                && !lines[end].trim().is_empty()
+            {
+                end += 1;
+            }
+            found.tables.push(end - (j - 1) - 1); // the header and the rows, not the delimiter
+            for flag in &mut in_table[j - 1..end] {
+                *flag = true;
+            }
+            j = end;
+        } else {
+            j += 1;
+        }
+    }
+    let mut prose = Vec::new();
+    let mut outside = Vec::new();
+    for (n, line) in lines.iter().enumerate() {
+        if in_fence[n] {
+            continue;
+        }
+        outside.push(line.trim());
+        if in_table[n] {
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        if is_heading(line) {
+            found.heading = true;
+        }
+        prose.push(line.trim());
+    }
+    found.prose = prose.join(" ");
+    found.outside_fences = outside.join(" ");
+    found
+}
+
+/// `#` to `######`, then a space or the end of the line: a Markdown heading. `#hashtag` is text.
+fn is_heading(line: &str) -> bool {
+    let line = line.trim_start();
+    let hashes = line.bytes().take_while(|b| *b == b'#').count();
+    (1..=6).contains(&hashes)
+        && line[hashes..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
+}
+
+/// The rule for what Markdown a text may hold: paragraphs, `code`, *emphasis*, **strong**, lists, tables, block quotes, links and fences (one of them
+/// Mermaid) pass. Refused, each named once per part, in this order: raw HTML, an image, a heading, a second Mermaid fence, a fence over [`MAX_FENCE`] lines, a
+/// table over [`MAX_TABLE_ROWS`] rows, a fence that is not closed. Inside a `code` span nothing is refused; inside a fence nothing is looked at but its length.
+fn markdown(out: &mut Vec<Refusal>, place: &str, text: &str) {
+    let found = scan(text);
+    let outside = outside_code_spans(&found.outside_fences);
+    let mut say = |problem: String| out.push(refusal(place, format!("{place}: {problem}")));
+    if has_html(&outside) {
+        say("HTML. A text is Markdown: tags are not drawn, write the words".to_string());
+    }
+    if outside.contains("![") {
+        say(
+            "an image. A text has no images: say it in words, or draw it as a Mermaid diagram"
+                .to_string(),
+        );
+    }
+    if found.heading {
+        say("a heading. `##` and `###` are the stop's blocks and details; inside a text there are no headings: use **bold** for a line of its own".to_string());
+    }
+    if found.fences.iter().filter(|f| f.mermaid).count() > 1 {
+        say(
+            "a second Mermaid diagram. One diagram a step: the other goes in another step"
+                .to_string(),
+        );
+    }
+    if let Some(long) = found.fences.iter().find(|f| f.lines > MAX_FENCE) {
+        say(format!(
+            "a fence of {} lines. The most is {MAX_FENCE}: show only the lines that matter",
+            long.lines
+        ));
+    }
+    if let Some(rows) = found.tables.iter().find(|r| **r > MAX_TABLE_ROWS) {
+        say(format!(
+            "a table of {rows} rows. The most is {MAX_TABLE_ROWS}: keep the rows that matter"
+        ));
+    }
+    if found.fences.iter().any(|f| !f.closed) {
+        say("a code fence that is not closed. Close it with ``` on a line of its own".to_string());
     }
 }
 
@@ -537,11 +694,11 @@ mod tests {
         // a short node with no blocks is fine
         assert!(normal("Just the intro.", &node("check_stock", 12, 15)).is_empty());
         // a short node still has its budgets and its text rules
-        let long = "x".repeat(300);
+        let long = "x".repeat(500);
         assert_eq!(
             normal(&format!("{long}\n## 1 T\nt"), &node("f", 1, 4)),
             [
-                "intro: 300 of 280 characters",
+                "intro: 500 of 420 characters",
                 "f is 4 lines: a stop this short is one step. Put it all in the first paragraph",
             ]
         );
@@ -625,10 +782,10 @@ mod tests {
     fn the_budgets_at_their_limit_and_one_over_by_the_detail_of_the_tour() {
         // (field, quick, normal, detailed)
         let rows: [(&str, [usize; 3]); 4] = [
-            ("intro", [160, 280, 480]),
-            ("block 1 text", [160, 280, 600]),
+            ("intro", [240, 420, 720]),
+            ("block 1 text", [240, 420, 900]),
             ("block 1 title", [60, 60, 60]),
-            ("same-as", [120, 120, 160]),
+            ("same-as", [180, 180, 240]),
         ];
         let details = [Detail::Quick, Detail::Normal, Detail::Detailed];
         for (field, budgets) in rows {
@@ -656,23 +813,23 @@ mod tests {
             }
         }
         // the numbers in the sentence are the lengths
-        let long = "x".repeat(412);
+        let long = "x".repeat(512);
         assert_eq!(
             normal(&format!("I.\n## 1-2 T\nok\n## 3-4 U\n{long}"), &big()),
-            ["block 2 text: 412 of 280 characters"]
+            ["block 2 text: 512 of 420 characters"]
         );
     }
 
     #[test]
     fn characters_are_counted_not_bytes() {
-        // `é` is two bytes, an emoji four: 280 of them are 280 characters
+        // `é` is two bytes, an emoji four: 420 of them are 420 characters
         for ch in ['é', '😀', '字'] {
-            let at = ch.to_string().repeat(280);
-            let over = ch.to_string().repeat(281);
+            let at = ch.to_string().repeat(420);
+            let over = ch.to_string().repeat(421);
             assert!(normal(&at, &big()).is_empty(), "{ch}");
             assert_eq!(
                 normal(&over, &big()),
-                ["intro: 281 of 280 characters"],
+                ["intro: 421 of 420 characters"],
                 "{ch}"
             );
             let title_at = ch.to_string().repeat(60);
@@ -686,19 +843,19 @@ mod tests {
                 "{ch}"
             );
         }
-        // the paragraph is counted joined: lines are trimmed and glued by one space
-        let line = "a".repeat(139);
+        // the prose is counted joined: lines are trimmed and glued by one space
+        let line = "a".repeat(209);
         assert!(
             normal(&format!("{line}\n{line}"), &big()).is_empty(),
-            "139 + 1 + 139 = 279"
+            "209 + 1 + 209 = 419"
         );
         assert_eq!(
             normal(&format!("{line}  \n   {line}bb"), &big()),
-            ["intro: 281 of 280 characters"]
+            ["intro: 421 of 420 characters"]
         );
         // an emoji with a variation selector is two scalar values: the count is of those
-        let heart = "\u{2764}\u{fe0f}".repeat(141);
-        assert_eq!(normal(&heart, &big()), ["intro: 282 of 280 characters"]);
+        let heart = "\u{2764}\u{fe0f}".repeat(211);
+        assert_eq!(normal(&heart, &big()), ["intro: 422 of 420 characters"]);
     }
 
     #[test]
@@ -734,63 +891,218 @@ mod tests {
         assert_eq!(said[0].place, "block 13");
     }
 
+    const HTML: &str = "HTML. A text is Markdown: tags are not drawn, write the words";
+    const IMAGE: &str =
+        "an image. A text has no images: say it in words, or draw it as a Mermaid diagram";
+    const HEADING: &str = "a heading. `##` and `###` are the stop's blocks and details; inside a text there are no headings: use **bold** for a line of its own";
+
     #[test]
-    fn the_inline_rule_names_what_it_refuses() {
-        let refused = |text: &str| normal(&format!("I.\n## 1-2 T\n{text}"), &big());
-        let cases: [(&str, &str); 14] = [
-            ("- one\n- two", "a list"),
-            ("fine\n* star", "a list"),
-            ("+ plus", "a list"),
-            ("1. first\n2. second", "a list"),
-            ("12. twelfth", "a list"),
-            ("| a | b |\n|---|---|", "a table"),
-            ("```\ncode\n```", "a code fence"),
-            ("see ![diagram](d.png) here", "an image"),
-            ("see [the docs](http://x) here", "a link"),
-            ("see [x](y) and `ok`", "a link"),
-            ("a <b>bold</b> word", "HTML"),
-            ("closing </div> only", "HTML"),
-            ("a <br/> break", "HTML"),
-            ("an <a href=x>anchor</a>", "HTML"),
+    fn every_construct_a_text_may_hold_passes() {
+        let allowed = [
+            "A paragraph.\n\nAnd a second one, with `code`, *emphasis* and **strong**.",
+            "- one\n- two\n  - nested\n\n1. first\n2. second\n\n+ plus\n* star",
+            "| a | b |\n|---|---|\n| 1 | 2 |",
+            "a | b\n--|--\n1 | 2",
+            "> a block quote\n> over two lines\n\n> and another",
+            "```python\nprint(1)\n```",
+            "~~~\ntilde fence\n~~~",
+            "```mermaid\nflowchart LR\n  A --> B\n```",
+            "see [the docs](https://example.com/a) and [x](y \"title\")",
+            "a longer fence holds a shorter one:\n````\n```\ninside\n```\n````",
+            "a fence holds what a text may not: \n```html\n<b>bold</b> ![i](j)\n# heading\n## 1-2 block\n- x\n```",
+            "---\n\na thematic break above",
         ];
-        for (text, what) in cases {
-            assert_eq!(
-                refused(text),
-                [format!("block 1 text: {what}. A step is one paragraph")],
-                "{text}"
-            );
+        for text in allowed {
+            for place in ["I.\n## 1-2 T\n", "I.\n## 1-9 T\nt\n### 1-2 D\n"] {
+                let got = normal(&format!("{place}{text}"), &big());
+                assert!(got.is_empty(), "{text}: {got:?}");
+            }
+            let got = normal(text, &big());
+            assert!(got.is_empty(), "as an intro: {text}: {got:?}");
         }
-        // the same words for the intro and for a title
-        assert_eq!(
-            normal("- a\n- b\n## 1-2 T\nt", &big()),
-            ["intro: a list. A step is one paragraph"]
+    }
+
+    #[test]
+    fn what_a_text_may_not_hold_is_named_once_per_part_with_its_own_sentence() {
+        let refused = |text: &str| normal(&format!("I.\n## 1-2 T\n{text}"), &big());
+        let at = |what: &str| vec![format!("block 1 text: {what}")];
+        // raw HTML, in every form
+        for text in [
+            "a <b>bold</b> word",
+            "closing </div> only",
+            "a <br/> break",
+            "an <a href=x>anchor</a>",
+            "<script>x</script>",
+        ] {
+            assert_eq!(refused(text), at(HTML), "{text}");
+        }
+        // an image, and an image is not also a link
+        assert_eq!(refused("see ![diagram](d.png) here"), at(IMAGE));
+        assert_eq!(refused("![a](b)"), at(IMAGE));
+        // a heading: `#` and `####` to `######` (a `##` or `###` line is a block, and never gets here)
+        for text in [
+            "# One",
+            "#### Four",
+            "##### Five",
+            "###### Six",
+            "text\n#\nmore",
+        ] {
+            assert_eq!(refused(text), at(HEADING), "{text}");
+        }
+        assert!(
+            refused("#hashtag and #1").is_empty(),
+            "a hash that is not a heading is text"
         );
+        // a second Mermaid fence, and one is fine
+        assert_eq!(
+            refused(
+                "```mermaid\nflowchart LR\n A-->B\n```\ntext\n```mermaid\nflowchart LR\n C-->D\n```"
+            ),
+            at("a second Mermaid diagram. One diagram a step: the other goes in another step")
+        );
+        assert!(
+            refused("```mermaid\nflowchart LR\n A-->B\n```\n```python\nx\n```\n```text\ny\n```")
+                .is_empty()
+        );
+        // a fence over 30 lines, code or Mermaid; 30 is fine
+        let lines = |n: usize| {
+            (0..n)
+                .map(|i| format!("l{i}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(refused(&format!("```\n{}\n```", lines(30))).is_empty());
+        assert_eq!(
+            refused(&format!("```\n{}\n```", lines(31))),
+            at("a fence of 31 lines. The most is 30: show only the lines that matter")
+        );
+        assert_eq!(
+            refused(&format!("```mermaid\n{}\n```", lines(45))),
+            at("a fence of 45 lines. The most is 30: show only the lines that matter")
+        );
+        // a table over 12 rows (its header counts); 12 is fine
+        let table = |rows: usize| {
+            format!(
+                "| a | b |\n|---|---|\n{}",
+                (1..rows)
+                    .map(|i| format!("| {i} | x |"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
+        assert!(refused(&table(12)).is_empty());
+        assert_eq!(
+            refused(&table(13)),
+            at("a table of 13 rows. The most is 12: keep the rows that matter")
+        );
+        // a fence that is never closed would swallow the blocks after it
+        assert_eq!(
+            refused("```python\nx = 1"),
+            at("a code fence that is not closed. Close it with ``` on a line of its own")
+        );
+        // each is named once per part, in a fixed order: HTML, image, heading, second diagram, long fence, long table, unclosed fence
+        let mermaid = "```mermaid\nflowchart LR\n A-->B\n```";
+        assert_eq!(
+            refused(&format!(
+                "<i>x</i> ![c](d)\n# H\n{mermaid}\n{mermaid}\n```\n{}\n```\n{}\n<b>y</b> ![e](f)\n```\nopen",
+                lines(40),
+                table(20)
+            )),
+            [
+                HTML,
+                IMAGE,
+                HEADING,
+                "a second Mermaid diagram. One diagram a step: the other goes in another step",
+                "a fence of 40 lines. The most is 30: show only the lines that matter",
+                "a table of 20 rows. The most is 12: keep the rows that matter",
+                "a code fence that is not closed. Close it with ``` on a line of its own"
+            ]
+            .map(|w| format!("block 1 text: {w}"))
+        );
+        // the same words for the intro and for a detail
+        assert_eq!(
+            normal("<i>x</i>\n## 1-2 T\nt", &big()),
+            [format!("intro: {HTML}")]
+        );
+        assert_eq!(
+            normal("I.\n## 1-9 T\nt\n### 1-2 D\n![a](b)", &big()),
+            [format!("block 2 text: {IMAGE}")]
+        );
+        // a title is a short phrase: HTML, an image, a link, a list are still refused there
         assert_eq!(
             normal("I.\n## 1-2 A <b>title</b>\nt", &big()),
             ["block 1 title: HTML. A title is a short phrase"]
         );
-        // each named once per part, in a fixed order: list, table, fence, image, link, HTML
+    }
+
+    #[test]
+    fn only_the_prose_is_counted_against_the_budget() {
+        let prose = "p".repeat(400);
+        // 400 characters of prose are inside the normal 420, whatever the fences and the tables hold
+        let fence = format!("```\n{}\n```", "x".repeat(2000));
+        let table = format!(
+            "| a | b |\n|---|---|\n{}",
+            (1..10)
+                .map(|i| format!("| {} | {} |", "y".repeat(50), i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert!(normal(&format!("{prose}\n\n{fence}\n\n{table}"), &big()).is_empty());
+        assert!(
+            normal(
+                &format!("I.\n## 1-2 T\n{prose}\n\n{fence}\n\n{table}"),
+                &big()
+            )
+            .is_empty()
+        );
+        // a diagram does not count either
+        assert!(
+            normal(
+                &format!(
+                    "{prose}\n```mermaid\nflowchart LR\n{}\n```",
+                    "A --> B\n".repeat(20)
+                ),
+                &big()
+            )
+            .is_empty()
+        );
+        // the prose does: 421 is one over, with the same fences around it
         assert_eq!(
-            refused("<i>x</i> [a](b) ![c](d) ``` | t |\n- item"),
-            [
-                "block 1 text: a list. A step is one paragraph",
-                "block 1 text: an image. A step is one paragraph",
-                "block 1 text: a link. A step is one paragraph",
-                "block 1 text: HTML. A step is one paragraph",
-            ]
+            normal(&format!("{prose}ppppp\n{fence}"), &big()),
+            ["intro: 405 of 420 characters"]
+                .iter()
+                .filter(|_| false)
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
         );
         assert_eq!(
-            refused("| t |\n```\n- x"),
-            [
-                "block 1 text: a list. A step is one paragraph",
-                "block 1 text: a table. A step is one paragraph",
-                "block 1 text: a code fence. A step is one paragraph",
-            ]
+            normal(&format!("{}\n{fence}", "p".repeat(421)), &big()),
+            ["intro: 421 of 420 characters"]
         );
-        // an image is not also a link
+        // the budget by detail: block (240, 420, 900), intro (240, 420, 720), same-as (180, 180, 240)
+        let text = format!("I.\n## 1-2 T\n{}", "b".repeat(241));
         assert_eq!(
-            refused("![a](b)"),
-            ["block 1 text: an image. A step is one paragraph"]
+            say(&text, &big(), Detail::Quick, Options::default()),
+            ["block 1 text: 241 of 240 characters"]
+        );
+        assert!(say(&text, &big(), Detail::Normal, Options::default()).is_empty());
+        assert_eq!(
+            say(
+                &"s".repeat(181),
+                &big(),
+                Detail::Normal,
+                Options { same_as: true }
+            ),
+            ["intro: 181 of 180 characters"]
+        );
+        assert!(
+            say(
+                &"s".repeat(240),
+                &big(),
+                Detail::Detailed,
+                Options { same_as: true }
+            )
+            .is_empty()
         );
     }
 
@@ -822,40 +1134,37 @@ mod tests {
         // a backtick that closes nothing is just a character
         assert_eq!(
             normal("I.\n## 1-2 T\nan open ` backtick then <b>tag</b>", &big()),
-            ["block 1 text: HTML. A step is one paragraph"]
+            [format!("block 1 text: {HTML}")]
         );
         // a span of two backticks is not closed by one
         assert_eq!(
             normal("I.\n## 1-2 T\n`` a ` <b> and more", &big()),
-            ["block 1 text: HTML. A step is one paragraph"]
+            [format!("block 1 text: {HTML}")]
         );
         // a span does not join what is around it into a link
         assert!(normal("I.\n## 1-2 T\n[`a`] and (`b`)", &big()).is_empty());
-        // a link is still refused when only part of it is in a span
-        assert_eq!(
-            normal("I.\n## 1-2 T\n[`a`](http://x)", &big()),
-            ["block 1 text: a link. A step is one paragraph"].map(String::from)
-        );
+        // a link is allowed, a span in it too
+        assert!(normal("I.\n## 1-2 T\n[`a`](http://x)", &big()).is_empty());
     }
 
     #[test]
     fn several_refusals_in_one_call_in_text_order() {
-        let long = "w".repeat(300);
+        let long = "w".repeat(500);
         let text = format!(
-            "- not a paragraph\n\n## 40-44 A title.\n{long}\n### 12-14 Detail\nd\n### 13-15 Other\n[x](y)\n## 2-3 Last <b>one</b>\nfine"
+            "<i>not text</i>\n\n## 40-44 A title.\n{long}\n### 12-14 Detail\nd\n### 13-15 Other\n![x](y)\n## 2-3 Last <b>one</b>\nfine"
         );
         let got = normal(&text, &node("reserve_stock", 11, 31));
         assert_eq!(
-            got,
+            got.iter().map(String::as_str).collect::<Vec<_>>(),
             [
-                "intro: a list. A step is one paragraph",
+                &format!("intro: {HTML}"),
                 "block 1: lines 40-44 are outside reserve_stock (11-31)",
                 "block 1 title ends with a full stop",
-                "block 1 text: 300 of 280 characters",
+                "block 1 text: 500 of 420 characters",
                 "block 2 (12-14) is not inside block 1 (40-44)",
                 "block 3 (13-15) is not inside block 1 (40-44)",
                 "blocks 2 and 3 both light line 13",
-                "block 3 text: a link. A step is one paragraph",
+                &format!("block 3 text: {IMAGE}"),
                 "block 4: lines 2-3 are outside reserve_stock (11-31)",
                 "block 4 title: HTML. A title is a short phrase",
             ]
@@ -864,24 +1173,32 @@ mod tests {
 
     #[test]
     fn the_refusals_of_the_shape_come_first_and_the_numbers_are_the_ones_the_agent_wrote() {
-        // heading 1 is a `####` and is refused; the `##` after it is block 2, in the shape's and in the rules' sentences alike
-        let long = "w".repeat(300);
+        // a `####` is no block: it stays in the intro, and a heading is refused there. The `##` after it is block 1
+        let long = "w".repeat(500);
         let text = format!("One.\n\ntwo.\n#### 1-2 X\nx\n## 90-91 Y\n{long}");
         let got = normal(&text, &node("f", 1, 30));
         assert_eq!(
             got,
             [
-                "intro: a blank line starts a second paragraph. A step is one paragraph",
-                "block 1: blocks nest two deep: make this a ### or its own ##",
-                "block 2: lines 90-91 are outside f (1-30)",
-                "block 2 text: 300 of 280 characters",
+                format!("intro: {HEADING}"),
+                "block 1: lines 90-91 are outside f (1-30)".to_string(),
+                "block 1 text: 500 of 420 characters".to_string(),
+            ]
+        );
+        // a bad heading of a block is the shape's, and comes before the rules'
+        let got = normal("One.\n## x T\nx\n## 1-2 Y\n<b>y</b>", &node("f", 1, 30));
+        assert_eq!(
+            got,
+            [
+                "block 1: the heading has no line numbers: write `## 11-24 Title` (`## 24 Title` for one line)".to_string(),
+                format!("block 2 text: {HTML}"),
             ]
         );
     }
 
     #[test]
     fn a_refusal_has_a_place_and_prints_as_its_sentence() {
-        let (body, _) = body::read("- x\n## 1-2 Bad.\n- y");
+        let (body, _) = body::read("<i>x</i>\n## 1-2 Bad.\n<b>y</b>");
         let said = check(&body, &node("f", 1, 30), Detail::Normal, Options::default());
         let places: Vec<&str> = said.iter().map(|r| r.place.as_str()).collect();
         assert_eq!(places, ["intro", "block 1 title", "block 1 text"]);

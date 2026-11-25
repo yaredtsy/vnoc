@@ -820,24 +820,31 @@ fn tail(stop: &StopView) -> String {
     tail
 }
 
-/// A text wrapped at [`WRAP`] columns after `indent`, every line indented by it. Words are not cut: a word longer than the line has a line of its own.
+/// A text wrapped at [`WRAP`] columns after `indent`, every line indented by it. A text is Markdown, kept with its lines: each line of it is wrapped by itself, so a
+/// list, a table and a fence keep their shape (a blank line stays a blank line). Words are not cut: a word longer than the line has a line of its own.
 fn wrapped(text: &str, indent: usize) -> String {
     let pad = " ".repeat(indent);
     let room = WRAP.saturating_sub(indent).max(20);
     let mut out = String::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > room {
-            out.push_str(&format!("{pad}{line}\n"));
-            line.clear();
+    for source in text.lines() {
+        if source.trim().is_empty() {
+            out.push('\n');
+            continue;
+        }
+        let mut line = String::new();
+        for word in source.split_whitespace() {
+            if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > room {
+                out.push_str(&format!("{pad}{line}\n"));
+                line.clear();
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
         }
         if !line.is_empty() {
-            line.push(' ');
+            out.push_str(&format!("{pad}{line}\n"));
         }
-        line.push_str(word);
-    }
-    if !line.is_empty() {
-        out.push_str(&format!("{pad}{line}\n"));
     }
     out
 }

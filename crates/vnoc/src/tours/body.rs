@@ -1,15 +1,19 @@
-//! The text an agent sends for a stop (`docs/26-tours/02-commands.md` §4): an intro, then `##` blocks, each with `###` details, every part one
-//! paragraph. This file reads the **shape** of the text and refuses what is wrong with it; the rules about the node and the budgets are `rules.rs`.
+//! The text an agent sends for a stop (`docs/26-tours/02-commands.md` §4): an intro, then `##` blocks, each with `###` details, every part a text of
+//! Markdown (`05-on-screen.md` §7). This file reads the **shape** of the text and refuses what is wrong with it; the rules about the node, the budgets
+//! and what Markdown may hold are `rules.rs`.
 //!
 //! ```text
-//! <the intro: one paragraph>
+//! <the intro: Markdown>
 //!
 //! ## 11-24 Hold the stock, then charge
-//! <one paragraph>
+//! <Markdown>
 //!
 //! ### 11-16 Check the stock, then hold it
-//! <one paragraph>
+//! <Markdown>
 //! ```
+//!
+//! A part's text is kept **as it was written**, newlines included (a list, a table and a fence need them); only the blank lines around it are nothing. A
+//! `##` or `###` line is a block heading unless it is inside a code or Mermaid fence.
 //!
 //! A [`Body`] is a tree because it is how a person wrote it; it is never stored (the records are flat, `record.rs`). Blocks are numbered in the order
 //! their headings are written, at any depth (`block 3` is the third heading), whether or not the heading was accepted: the numbers in a refusal are
@@ -28,20 +32,16 @@ pub struct BodyBlock {
     /// `[first, last]`, as the heading wrote them.
     pub lines: (u32, u32),
     pub title: String,
-    /// The text as one paragraph: its lines trimmed and joined by one space.
+    /// The text as it was written: its lines, newlines kept, without the blank lines around it.
     pub text: String,
-    /// The same text as the lines it was written in (trimmed, none blank): what a rule about the start of a line looks at.
-    pub text_lines: Vec<String>,
     pub details: Vec<BodyBlock>,
 }
 
 /// The parse of what an agent typed.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Body {
-    /// Everything before the first heading, as one paragraph.
+    /// Everything before the first heading, as it was written.
     pub intro: String,
-    /// The intro as the lines it was written in (trimmed, none blank).
-    pub intro_lines: Vec<String>,
     pub blocks: Vec<BodyBlock>,
 }
 
@@ -89,12 +89,25 @@ pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
     let mut refusals = Vec::new();
     let mut body = Body::default();
 
-    // the parts: the intro, then one part per heading
+    // the parts: the intro, then one part per `##` or `###` line that is not inside a fence
     let mut parts: Vec<(Option<Heading>, Vec<&str>)> = vec![(None, Vec::new())];
     let mut headings = 0;
+    let mut fence: Option<Fence> = None;
     for line in text.lines() {
+        if let Some(open) = fence {
+            if closes(line, open) {
+                fence = None;
+            }
+            parts.last_mut().expect("there is a part").1.push(line);
+            continue;
+        }
+        if let Some(open) = opens(line) {
+            fence = Some(open);
+            parts.last_mut().expect("there is a part").1.push(line);
+            continue;
+        }
         match heading(line) {
-            Some((hashes, rest)) => {
+            Some((hashes @ (2 | 3), rest)) => {
                 headings += 1;
                 parts.push((
                     Some(Heading {
@@ -105,7 +118,7 @@ pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
                     Vec::new(),
                 ));
             }
-            None => parts.last_mut().expect("there is a part").1.push(line),
+            _ => parts.last_mut().expect("there is a part").1.push(line),
         }
     }
 
@@ -122,9 +135,9 @@ pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
     let mut open = Open::Nothing;
     for (head, lines) in parts {
         let Some(head) = head else {
-            let (intro, intro_lines) = paragraph("intro", &lines, &mut refusals);
+            let intro = paragraph(&lines);
             if kind != Text::Stop {
-                if !intro_lines.is_empty() {
+                if !intro.is_empty() {
                     refusals.push(Refusal {
                         place: "intro".to_string(),
                         problem:
@@ -132,14 +145,13 @@ pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
                                 .to_string(),
                     });
                 }
-            } else if intro_lines.is_empty() {
+            } else if intro.is_empty() {
                 refusals.push(Refusal {
                     place: "intro".to_string(),
-                    problem: "intro: there is none. Start with one paragraph on what this is for, before the first heading".to_string(),
+                    problem: "intro: there is none. Start with a paragraph on what this is for, before the first heading".to_string(),
                 });
             }
             body.intro = intro;
-            body.intro_lines = intro_lines;
             continue;
         };
         let n = head.number;
@@ -180,13 +192,12 @@ pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
                         continue;
                     }
                 };
-                let (text, text_lines) =
-                    paragraph(&format!("block {n} text"), &lines, &mut refusals);
-                if text_lines.is_empty() {
+                let text = paragraph(&lines);
+                if text.is_empty() {
                     refusals.push(Refusal {
                         place: format!("block {n} text"),
                         problem: format!(
-                            "block {n} text: there is none. Every block is one paragraph on why those lines are there"
+                            "block {n} text: there is none. Every block says why those lines are there"
                         ),
                     });
                 }
@@ -195,7 +206,6 @@ pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
                     lines: lines_of,
                     title,
                     text,
-                    text_lines,
                     details: Vec::new(),
                 };
                 match (detail, &open) {
@@ -206,24 +216,42 @@ pub fn read_as(text: &str, kind: Text) -> (Body, Vec<Refusal>) {
                     }
                 }
             }
-            _ => refuse(
-                "blocks nest two deep: make this a ### or its own ##".to_string(),
-                &mut refusals,
-            ),
+            _ => unreachable!("only ## and ### start a part"),
         }
     }
     (body, refusals)
 }
 
-/// A text of a document (not read from a file of headings) as a paragraph: the lines joined by one space, and the lines. A blank line inside it is a
-/// second paragraph and is refused once, with `place`.
-pub fn paragraph_text(
-    place: &str,
-    text: &str,
-    refusals: &mut Vec<Refusal>,
-) -> (String, Vec<String>) {
+/// A text of a document (not read from a file of headings), as it is kept: its lines as written, without the blank lines around it.
+pub fn paragraph_text(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
-    paragraph(place, &lines, refusals)
+    paragraph(&lines)
+}
+
+/// An open fence: the character it is made of (a backtick or a tilde) and how many of them, at least three.
+#[derive(Clone, Copy)]
+pub(super) struct Fence {
+    mark: char,
+    length: usize,
+}
+
+/// A line that opens a fence: three or more backticks or tildes at its start (a backtick fence has no backtick after them: a run of three that closes
+/// on the line is a code span).
+pub(super) fn opens(line: &str) -> Option<Fence> {
+    let line = line.trim_start();
+    let mark = line.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let length = line.chars().take_while(|c| *c == mark).count();
+    if length < 3 || (mark == '`' && line[length..].contains('`')) {
+        return None;
+    }
+    Some(Fence { mark, length })
+}
+
+/// A line that closes the fence: as many marks or more, and nothing else.
+pub(super) fn closes(line: &str, open: Fence) -> bool {
+    let line = line.trim();
+    let length = line.chars().take_while(|c| *c == open.mark).count();
+    length >= open.length && line[length..].trim().is_empty()
 }
 
 struct Heading<'a> {
@@ -281,30 +309,16 @@ fn numbers_and_title(rest: &str, hashes: usize) -> Result<((u32, u32), String), 
     Ok(((first, last), title.to_string()))
 }
 
-/// The lines of one part as a paragraph: blank lines at its start and its end are nothing, a blank line inside it is a second paragraph (refused,
-/// once). Returns the lines joined by one space, and the lines (trimmed, none blank).
-fn paragraph(place: &str, lines: &[&str], refusals: &mut Vec<Refusal>) -> (String, Vec<String>) {
+/// The lines of one part, as written: the blank lines at its start and its end are nothing, everything between is kept, newlines too.
+fn paragraph(lines: &[&str]) -> String {
     let blank = |line: &&str| line.trim().is_empty();
-    let start = lines.iter().position(|l| !blank(l));
-    let end = lines.iter().rposition(|l| !blank(l));
-    let (Some(start), Some(end)) = (start, end) else {
-        return (String::new(), Vec::new());
+    let (Some(start), Some(end)) = (
+        lines.iter().position(|l| !blank(l)),
+        lines.iter().rposition(|l| !blank(l)),
+    ) else {
+        return String::new();
     };
-    let used = &lines[start..=end];
-    if used.iter().any(blank) {
-        refusals.push(Refusal {
-            place: place.to_string(),
-            problem: format!(
-                "{place}: a blank line starts a second paragraph. A step is one paragraph"
-            ),
-        });
-    }
-    let kept: Vec<String> = used
-        .iter()
-        .filter(|l| !blank(l))
-        .map(|l| l.trim().to_string())
-        .collect();
-    (kept.join(" "), kept)
+    lines[start..=end].join("\n")
 }
 
 #[cfg(test)]
@@ -328,10 +342,9 @@ mod tests {
         let body = parse("checkout_order turns an order into a sale.").unwrap();
         assert_eq!(body.intro, "checkout_order turns an order into a sale.");
         assert!(body.blocks.is_empty());
-        // the lines of a paragraph are joined by one space, each trimmed; the text around it is trimmed
+        // the text is kept as it was written, its lines too; only the blank lines around it are nothing
         let body = parse("\n\n  one two  \n\tthree\r\nfour   \n\n\n").unwrap();
-        assert_eq!(body.intro, "one two three four");
-        assert_eq!(body.intro_lines, ["one two", "three", "four"]);
+        assert_eq!(body.intro, "  one two  \n\tthree\nfour   ");
     }
 
     #[test]
@@ -346,12 +359,11 @@ mod tests {
             got,
             [
                 (1, (3, 5), "First", "Text one."),
-                (2, (7, 9), "Second", "Text two, in two lines."),
+                (2, (7, 9), "Second", "Text two,\nin two lines."),
                 (3, (10, 10), "Third", "Text three."),
             ]
         );
         assert!(body.blocks.iter().all(|b| b.details.is_empty()));
-        assert_eq!(body.blocks[1].text_lines, ["Text two,", "in two lines."]);
     }
 
     #[test]
@@ -379,8 +391,11 @@ mod tests {
             body.intro
                 .starts_with("checkout_order turns an order request")
         );
-        assert!(body.intro.ends_with("records the sale, in that order."));
-        assert!(!body.intro.contains('\n'));
+        // the text keeps its lines
+        assert!(
+            body.intro
+                .ends_with("and records\nthe sale, in that order.")
+        );
         assert_eq!(body.blocks.len(), 2, "two ## blocks");
         assert_eq!(
             body.blocks[0].details.len(),
@@ -394,7 +409,7 @@ mod tests {
         assert_eq!(body.blocks[1].lines, (26, 30));
         assert_eq!(
             body.blocks[0].details[0].text,
-            "check_stock only looks; reserve_stock takes the units out of the count, so a second buyer cannot get them while this payment runs."
+            "check_stock only looks; reserve_stock takes the units out of the count, so a second buyer cannot get them\nwhile this payment runs."
         );
         assert_eq!(
             body.blocks.iter().map(|b| b.number).collect::<Vec<_>>(),
@@ -424,38 +439,49 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_line_inside_a_part_is_a_second_paragraph() {
-        assert_eq!(
-            problems("One.\n\nTwo.\n## 1-2 T\nt"),
-            ["intro: a blank line starts a second paragraph. A step is one paragraph"]
-        );
-        assert_eq!(
-            problems("I.\n## 1-2 T\nfirst\n\nsecond"),
-            ["block 1 text: a blank line starts a second paragraph. A step is one paragraph"]
-        );
-        // a line with only white space is blank
-        assert_eq!(
-            problems("I.\n## 1-2 T\nfirst\n  \t \nsecond"),
-            ["block 1 text: a blank line starts a second paragraph. A step is one paragraph"]
-        );
+    fn a_blank_line_inside_a_part_is_part_of_its_text() {
+        // a text is Markdown: a blank line is a paragraph break, and the text keeps it
+        let body = parse("One.\n\nTwo.\n## 1-2 T\nfirst\n\nsecond\n  \t \nthird").unwrap();
+        assert_eq!(body.intro, "One.\n\nTwo.");
+        assert_eq!(body.blocks[0].text, "first\n\nsecond\n  \t \nthird");
         // a blank line between the heading and its text, or after the text, is nothing
         let body = parse("I.\n\n## 1-2 T\n\nthe text\n\n\n## 3-4 U\n\nmore\n\n").unwrap();
         assert_eq!(body.blocks[0].text, "the text");
         assert_eq!(body.blocks[1].text, "more");
-        // several parts with one: each is named, in text order
+    }
+
+    #[test]
+    fn a_heading_line_inside_a_fence_is_not_a_block() {
+        let text = "I.\n\n```python\n## 1-2 not a block\n### 3-4 nor this\n```\n\n## 5-6 Real\nt\n\n```mermaid\nflowchart LR\n## 9-9 x\n```\nafter";
+        let body = parse(text).unwrap();
         assert_eq!(
-            problems("a\n\nb\n## 1-2 T\nc\n\nd\n### 1-1 U\ne\n\nf").len(),
-            3
+            body.intro,
+            "I.\n\n```python\n## 1-2 not a block\n### 3-4 nor this\n```"
         );
+        assert_eq!(body.blocks.len(), 1);
+        assert_eq!(body.blocks[0].title, "Real");
+        assert_eq!(
+            body.blocks[0].text,
+            "t\n\n```mermaid\nflowchart LR\n## 9-9 x\n```\nafter"
+        );
+        // a tilde fence, and a longer fence that holds a shorter one
+        let body = parse("I.\n~~~\n## 1-2 x\n~~~\n## 3-4 T\nt").unwrap();
+        assert_eq!(body.blocks.len(), 1);
+        let body = parse("I.\n````\n```\n## 1-2 x\n```\n````\n## 3-4 T\nt").unwrap();
+        assert_eq!((body.blocks.len(), body.blocks[0].number), (1, 1));
+        // three backticks that close on their own line are a code span, not a fence
+        let body = parse("I. ```a``` and\n## 1-2 T\nt").unwrap();
+        assert_eq!(body.blocks.len(), 1);
+        // a fence that is never closed holds the rest of the text (the rules refuse it)
+        let body = parse("I.\n```\n## 1-2 T\nt").unwrap();
+        assert!(body.blocks.is_empty());
     }
 
     #[test]
     fn a_block_with_no_text_is_refused() {
         assert_eq!(
             problems("I.\n## 1-2 T\n## 3-4 U\nu"),
-            [
-                "block 1 text: there is none. Every block is one paragraph on why those lines are there"
-            ]
+            ["block 1 text: there is none. Every block says why those lines are there"]
         );
         assert_eq!(problems("I.\n## 1-2 T").len(), 1);
     }
@@ -474,30 +500,19 @@ mod tests {
     }
 
     #[test]
-    fn a_heading_that_nests_too_deep_or_not_at_all_is_refused() {
-        let sentence = "blocks nest two deep: make this a ### or its own ##";
-        assert_eq!(
-            problems("I.\n## 1-9 T\nt\n### 2-3 U\nu\n#### 2-2 V\nv"),
-            [format!("block 3: {sentence}")]
-        );
-        assert_eq!(
-            problems("I.\n##### 1-2 T\nt"),
-            [format!("block 1: {sentence}")]
-        );
-        assert_eq!(problems("I.\n# Title\nt"), [format!("block 1: {sentence}")]);
-        assert_eq!(
-            problems("# Title\nI.\n"),
-            [
-                "intro: there is none. Start with one paragraph on what this is for, before the first heading".to_string(),
-                format!("block 1: {sentence}"),
-            ]
-        );
-        // the text under a refused heading is not read as the block's: the block before keeps its text, and its details go on
+    fn only_two_and_three_hashes_are_block_headings_the_others_are_the_texts() {
+        // `#` and `####` and deeper are not the stop's structure: they stay in the text, and the rules refuse a heading there
+        let body = parse("I.\n## 1-9 T\nt\n### 2-3 U\nu\n#### 2-2 V\nv").unwrap();
+        assert_eq!(body.blocks[0].details[0].text, "u\n#### 2-2 V\nv");
+        let body = parse("I.\n# Title\nt").unwrap();
+        assert_eq!(body.intro, "I.\n# Title\nt");
+        assert_eq!(parse("# Title\nI.\n").unwrap().intro, "# Title\nI.");
+        // the text under a `####` is the text of the block before
         let (body, refusals) = read("I.\n## 1-9 T\nt\n#### 2-3 X\nx\n### 4-5 U\nu");
-        assert_eq!(refusals.len(), 1);
-        assert_eq!(body.blocks[0].text, "t");
+        assert!(refusals.is_empty());
+        assert_eq!(body.blocks[0].text, "t\n#### 2-3 X\nx");
         assert_eq!(body.blocks[0].details.len(), 1);
-        assert_eq!(body.blocks[0].details[0].number, 3);
+        assert_eq!(body.blocks[0].details[0].number, 2);
     }
 
     #[test]
@@ -581,18 +596,17 @@ mod tests {
 
     #[test]
     fn every_problem_of_the_shape_is_listed_in_text_order() {
-        let text = "One.\n\nTwo.\n## 1-2\nt\n### 3-4 U\nu\n\nv\n#### 5 X\nx\n## 24-11 Y\ny";
+        let text = "One.\n## 1-2\nt\n### 3-4 U\nu\n## x T\nx\n## 24-11 Y\ny";
         let got = problems(text);
         assert_eq!(
             got,
             [
-                "intro: a blank line starts a second paragraph. A step is one paragraph",
                 "block 1: the heading has no title: write `## 1-2 Title`",
-                "block 3: blocks nest two deep: make this a ### or its own ##",
+                "block 3: the heading has no line numbers: write `## 11-24 Title` (`## 24 Title` for one line)",
                 "block 4: lines 24-11 are backwards: the first line comes first",
             ]
         );
-        // the detail under the refused `## 1-2` is not read, so its own blank line is not listed
+        // the detail under the refused `## 1-2` is not read
     }
 
     #[test]
@@ -619,7 +633,7 @@ mod tests {
     #[test]
     fn crlf_and_a_byte_order_mark() {
         let body = parse("\u{feff}Intro line one\r\nline two\r\n\r\n## 1-2 T\r\ntext\r\n").unwrap();
-        assert_eq!(body.intro, "Intro line one line two");
+        assert_eq!(body.intro, "Intro line one\nline two");
         assert_eq!(body.blocks[0].text, "text");
     }
 
@@ -650,7 +664,7 @@ mod tests {
         assert_eq!(
             said("## 3-5 First\nIt starts.\n", Text::Stop),
             [
-                "intro: there is none. Start with one paragraph on what this is for, before the first heading"
+                "intro: there is none. Start with a paragraph on what this is for, before the first heading"
             ]
         );
         // nothing at all is no blocks and no refusal here: the caller says that

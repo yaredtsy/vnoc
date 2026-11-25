@@ -854,16 +854,15 @@ fn relabel(refusal: Refusal, stop_place: &str, blocks: &[String]) -> Refusal {
 /// block is numbered by its place in that order, so `block 3` of a refusal is `blocks[2]` of the list this returns.
 fn body_of(stop: &FlatStop, out: &mut Vec<Refusal>) -> (Body, Vec<String>) {
     let mut local = Vec::new();
-    let (intro, intro_lines) = body::paragraph_text("intro", &stop.text, &mut local);
-    if intro_lines.is_empty() {
+    let intro = body::paragraph_text(&stop.text);
+    if intro.is_empty() {
         local.push(refusal(
             "intro",
-            "intro: there is none. Start with one paragraph on what this is for",
+            "intro: there is none. Start with a paragraph on what this is for",
         ));
     }
     let mut body = Body {
         intro,
-        intro_lines,
         blocks: Vec::new(),
     };
     // for each flat block, its index in `body.blocks` when it is a top block
@@ -885,12 +884,13 @@ fn body_of(stop: &FlatStop, out: &mut Vec<Refusal>) -> (Body, Vec<String>) {
                 ),
             ));
         }
-        let (text, text_lines) =
-            body::paragraph_text(&format!("block {n} text"), &flat.text, &mut local);
-        if text_lines.is_empty() {
+        let text = body::paragraph_text(&flat.text);
+        if text.is_empty() {
             local.push(refusal(
                 format!("block {n} text"),
-                format!("block {n} text: there is none. Every block is one paragraph on why those lines are there"),
+                format!(
+                    "block {n} text: there is none. Every block says why those lines are there"
+                ),
             ));
         }
         let block = BodyBlock {
@@ -898,7 +898,6 @@ fn body_of(stop: &FlatStop, out: &mut Vec<Refusal>) -> (Body, Vec<String>) {
             lines: flat.lines,
             title: flat.title.trim().to_string(),
             text,
-            text_lines,
             details: Vec::new(),
         };
         match flat.parent {
@@ -1302,10 +1301,7 @@ fn block_records(
             })?,
             hash: hash_of(lines.0, lines.1),
             title: title.trim().to_string(),
-            text: {
-                let mut local = Vec::new();
-                body::paragraph_text("text", text, &mut local).0
-            },
+            text: body::paragraph_text(text),
         }));
     }
     let used = ids
