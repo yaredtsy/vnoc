@@ -14,6 +14,10 @@ interface Saved {
   minimap?: boolean;
   pinned?: string;
   panelShares?: Record<string, number>;
+  /** the tour's stage (docs/26-tours/design/03-stage.md §6): its height, the width of its text pane (null: 40%), and whether it is folded to the mini bar. Kept per window */
+  stageHeight?: number;
+  stageText?: number | null;
+  stageFolded?: boolean;
   /** the drafts of the cards being edited (docs/17 E6): in the one object, so the one `setState` below keeps them */
   drafts?: Drafts;
 }
@@ -38,6 +42,10 @@ interface View {
   minimap: boolean;
   /** the sidebar's EXPLORE panels: a share of the view's height, kept per depth (1 = an EXPLORE of MAIN, 2 = an EXPLORE of an EXPLORE; 06 §4.1) */
   panelShares: Readonly<Record<string, number>>;
+  /** the tour's stage: its height in px, the width of its text pane in px (null: 40% of the width, between 320 and 460), folded to the mini bar */
+  stageHeight: number;
+  stageText: number | null;
+  stageFolded: boolean;
   /** the docs tab: the node it is held on (a tab opened by "Show Docs" on a row or a card starts pinned; the page carries it, as a message could be lost) */
   pinned: string | null;
   // not saved: how the canvas points at things (docs/10-ui-rework/06-how-it-looks.md)
@@ -64,6 +72,9 @@ export const useView = create<View>(() => ({
   docWidth: saved.docWidth ?? 380,
   minimap: saved.minimap ?? false,
   panelShares: saved.panelShares ?? {},
+  stageHeight: saved.stageHeight ?? 215,
+  stageText: saved.stageText ?? null,
+  stageFolded: saved.stageFolded ?? false,
   pinned: document.getElementById("root")?.dataset.node ?? saved.pinned ?? null,
   hover: null,
   revealed: null,
@@ -124,6 +135,9 @@ export function toggleSites(id: string): void {
 
 export const setDocsOpen = (docsOpen: boolean) => useView.setState({ docsOpen });
 export const setMinimap = (minimap: boolean) => useView.setState({ minimap });
+export const setStageHeight = (stageHeight: number) => useView.setState({ stageHeight });
+export const setStageText = (stageText: number | null) => useView.setState({ stageText });
+export const setStageFolded = (stageFolded: boolean) => useView.setState({ stageFolded });
 export const setDocWidth = (docWidth: number) => useView.setState({ docWidth });
 export const pin = (pinned: string | null) => useView.setState({ pinned });
 /** Keeps the shares of the panels at these depths (a drag or a double-click on a splitter). */
@@ -131,8 +145,8 @@ export const setPanelShares = (shares: Record<string, number>) => useView.setSta
 
 // the one place the view is saved: the view and the drafts are one object, because `setState` keeps one object per webview (a second call would wipe this one)
 function save() {
-  const { codeOpen, docsOpen, docWidth, minimap, pinned, panelShares } = useView.getState();
-  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares, drafts: useDrafts.getState().drafts });
+  const { codeOpen, docsOpen, docWidth, minimap, pinned, panelShares, stageHeight, stageText, stageFolded } = useView.getState();
+  vscode.setState<Saved>({ codeOpen: [...codeOpen], docsOpen, docWidth, minimap, pinned: pinned ?? undefined, panelShares, stageHeight, stageText, stageFolded, drafts: useDrafts.getState().drafts });
 }
 useView.subscribe(save);
 useDrafts.subscribe(save);

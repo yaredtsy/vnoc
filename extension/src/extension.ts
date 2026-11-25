@@ -46,6 +46,8 @@ const searchDimPosts: { query: string; dimmed: string[] }[] = [];
 const docsShownPosts: { pinned: string | null; node: string | null; doc: string | null }[] = [];
 /** What the STRUCTURE view said when it handled `focusSearch`: whether the cursor is in the box, and what the box holds (for the test suite). */
 const searchFocusedPosts: { focused: boolean; text: string }[] = [];
+/** What the tour's stage drew, each time it changed (for the test suite). */
+const stagePosts: Extract<Notes, { type: "stageDrawn" }>[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
@@ -264,6 +266,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** the command line's setup: the core binary the extension runs, the context keys it set, and the one-time offer (the suite asks without showing it) */
     cli: {
       binaryPath: () => c.binaryPath,
+      driverPaths: () => c.driverPaths,
       context: (key: string) => cli.context(key),
       decideOffer: () => cli.decideOffer(),
       resetOffer: () => cli.resetOffer(),
@@ -275,6 +278,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     coreEpoch: () => c.epoch,
     /** what the tour holder holds: the open tour's view as the pages were last sent it (null: none open), and the plain list */
     tours: { open: () => tours.heldTour(), list: () => tours.list() },
+    /** every drawing of the tour's stage, in order: the step it shows, its words and its code, which lines are lit */
+    stageDrawn: () => stagePosts,
+    /** a key pressed in the tour's stage, and a click on one of its buttons (`next`, `prev`, `goToCode`, `start`, `closeTour`), as the page handles them: the suite cannot press keys or click in a webview */
+    stageKey: (key: string) => panels.emit("viewCommand", { name: "stageKey", key }),
+    stageClick: (button: string) => panels.emit("viewCommand", { name: "stageClick", key: button }),
     /** an intent, as a click on a card would send it */
     dispatch: (intent: Intent, context?: string) => store.dispatch(intent, context),
     /** a request to the core (the suite attaches docs through it, without the input boxes) */
@@ -380,6 +388,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "cardsDrawn":
       cardsDrawn(note.keys, note.onScreen);
+      break;
+    case "stageDrawn":
+      stagePosts.push(note);
       break;
     case "keysChecked":
       keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken, hosts: note.hosts });

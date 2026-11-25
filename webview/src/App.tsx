@@ -12,6 +12,8 @@ import { TopBar } from "./canvas/top-bar/TopBar.tsx";
 import { DocPanel } from "./docs/DocPanel.tsx";
 import { on, request } from "./host.ts";
 import { useData } from "./state/data.ts";
+import { useSession } from "./state/session.ts";
+import { Stage } from "./tour/Stage.tsx";
 import "./state/draftFeed.ts"; // the canvas page tells the host its drafts, and takes the host's copy when it starts with none (9.5c)
 import { setDocsOpen, useView } from "./state/view.ts";
 import { useEffect } from "react";
@@ -26,6 +28,8 @@ export function App() {
   const docsOpen = useView((v) => v.docsOpen);
   const { root, top, laid, selected, active, subject } = useFocusedView(structure);
   useCanvasKeys(laid, root, selected);
+  // a tour is the active context: the stage is the dock under the map (docs/26-tours/design/03-stage.md)
+  const tour = useSession((s) => (s.contexts[s.active]?.kind === "tour" ? s.contexts[s.active].tour : null));
   // the test suite cannot click the bar's ⓘ: this opens the doc panel the way it does
   useEffect(() => on("viewCommand", ({ name }) => name === "showDocPanel" && setDocsOpen(true)), []);
   useRenderedReport(laid, active);
@@ -36,18 +40,21 @@ export function App() {
       <ReactFlowProvider>
         <div className="flex h-screen flex-col">
           <TopBar structure={structure} status={status} message={message} cards={laid ? { drawn: laid.nodes.length, total: laid.total } : null} />
-          <div className="flex min-h-0 flex-1" data-vscode-context={PANE_CONTEXT}>
-            {/* nothing drawn yet: the message alone. Once cards are drawn they stay, whatever a later refresh says (the bar's ⚠ tells) */}
-            {body === "canvas" && laid ? <Canvas key={`${active}:${reloads}:${top?.id ?? ""}`} laid={laid} context={active} at={`${reloads}:${top?.id ?? ""}`} /> : <CanvasMessage status={body === "error" ? "error" : "loading"} message={message} />}
-            {docsOpen && (
-              <DocPanel
-                node={subject.node}
-                calledBy={subject.calledBy}
-                revision={structure?.revision ?? 0}
-                onAddDoc={(key) => void request("addDoc", { key }).catch(() => {})}
-                onClose={() => setDocsOpen(false)}
-              />
-            )}
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1" data-vscode-context={PANE_CONTEXT}>
+              {/* nothing drawn yet: the message alone. Once cards are drawn they stay, whatever a later refresh says (the bar's ⚠ tells) */}
+              {body === "canvas" && laid ? <Canvas key={`${active}:${reloads}:${top?.id ?? ""}`} laid={laid} context={active} at={`${reloads}:${top?.id ?? ""}`} /> : <CanvasMessage status={body === "error" ? "error" : "loading"} message={message} />}
+              {docsOpen && (
+                <DocPanel
+                  node={subject.node}
+                  calledBy={subject.calledBy}
+                  revision={structure?.revision ?? 0}
+                  onAddDoc={(key) => void request("addDoc", { key }).catch(() => {})}
+                  onClose={() => setDocsOpen(false)}
+                />
+              )}
+            </div>
+            {tour !== null && <Stage tourId={tour} contextId={active} />}
           </div>
         </div>
       </ReactFlowProvider>

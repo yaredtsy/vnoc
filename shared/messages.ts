@@ -400,7 +400,7 @@ export interface Events {
   /** the whole session, every time it changes: whole snapshots cannot get out of step, and `seq` drops one that arrives late */
   session: Session;
   /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view, start an edit of a card (it shows its code first). `checkKeys`, `setDraft` and `save` are for the extension's test suite: it cannot press keys in a webview. `saveFile` is the Save button of "Save `<file>` to edit here" on a card; `showDocPanel` opens the canvas's doc panel; `docEdit`, `docSetDraft` and `docSave` (`key`: the doc's path) are Edit, typing and Save in a doc panel, on whichever page shows that doc */
-  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave" | "saveFile" | "setSearch" | "focusSearch" | "searchKey"; key?: string; text?: string };
+  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave" | "saveFile" | "setSearch" | "focusSearch" | "searchKey" | "stageKey" | "stageClick"; key?: string; text?: string };
   /** a call tree arrived: the entry's card shows it in its "Calls" section */
   callTree: { key: string; result: CallTreeResult };
   /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
@@ -440,6 +440,7 @@ export type Notes =
   | { type: "docsShown"; pinned: string | null; node: string | null; doc: string | null } // the docs tab shows this: `pinned`: the node it is held on (a Missing node's carries `MISSING_PIN`), `node`: the node it draws, `doc`: the doc's path (null: none yet): the extension's test suite uses it
   | { type: "searchDim"; query: string; dimmed: string[] } // the canvas applied an answer of `searchCards` (`query`: the text it answers, `dimmed`: the ids of the cards it dimmed, the selected one never among them; a call card with no key is dimmed), and once with `dimmed: []` when the search ended: the extension's test suite uses it
   | { type: "searchFocused"; focused: boolean; text: string } // the STRUCTURE view handled the view command `focusSearch` (*V-NOC: Search…*): `focused`: the cursor is in the box now, `text`: what the box holds: the extension's test suite uses it
+  | { type: "stageDrawn"; tour: string; mode: "cover" | "step" | "end"; stop: string | null; step: string | null; kind: string | null; header: string; title: string | null; text: string | null; position: string; next: string; code: { first: number; text: string } | null; lit: number[]; thin: number[]; scrolledTo: number } // the tour's stage drew this (`header`: the header's words, `position`: "stop 3 of 10 · 2 of 5", `next`: the primary button's word, `code`: the pane's text and the file line it starts at, `lit` and `thin`: the file lines drawn lit and with the thin mark, `scrolledTo`: the line at the top of the pane, from 0): the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 
