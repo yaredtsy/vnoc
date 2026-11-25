@@ -250,6 +250,21 @@ news`), the status bar item and the one notification, the route's foot line, car
 calls not on this tour` → TR21; the section's `＋`/`⋯`, Show Docs in the card menu → TR22; the narrow bar → TR23. **Open Tour…** in
 the bar's `⋯` (the webview cannot run a palette command): the webview asks the host, which runs it — TR22.
 
+**As built (TR19b, `0a6619f`, `2139694`, `10a39a5`).** A step's text keeps its lines; the Markdown rules and their seven refusal
+sentences are in `rules.rs` (HTML, an image, a heading, a second Mermaid diagram, a fence over 30 lines, a table over 12 rows, a fence
+not closed); import uses them. The renderer is markdown-it (`html: false`) with fences coloured by the cards' Shiki highlighter (one
+shared `lib/highlighter.ts`) and Mermaid loaded lazily (57 chunks, 5.2 MB raw, not in the main chunk, which grew 6.5 kB). Vite's
+`modulePreload` is off for the canvas build: the CSP refused its preload tags (no nonce); a plain `import()` carries the nonce. Only
+`http(s)` links go to the host. Agents, given the choice (Claude t4 ×2, t5): one Mermaid flowchart in 22 steps, no list or table, no
+fence retelling code; none of the new refusals fired. Mermaid was installed through a mirror (npmjs stalled); the lockfile names no
+mirror and its integrity hash is npmjs's.
+
+**Decided at TR19b's review:** a diagram is drawn at a readable size: no smaller than 80% of its natural size, and a wide one
+scrolls sideways in the pane (a wide flowchart shrunk to 320 px was unreadable in the screenshots); the click still enlarges it.
+The scorer gets TR14d's softened chat rule, which was decided but never built (a progress line of 100 characters or fewer beside an
+`add` is counted, not failed; an end of up to four lines). The 5.2 MB of Mermaid in the package is weighed at the pull request
+(fewer diagram types if it matters). The overlay's duplicated SVG ids → TR23.
+
 ## 6. Who draws what
 
 | | Does | Does not |
