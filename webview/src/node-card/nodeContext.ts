@@ -54,3 +54,10 @@ export const paneContext = (surface: "canvas" | "sidebar"): string => JSON.strin
 /** A sidebar panel's header (08 §5): which context it is, and whether it is MAIN or an EXPLORE (only an EXPLORE has a Close). */
 export const panelContext = (panel: { id: ContextId; kind: "main" | "explore" }): string =>
   JSON.stringify({ surface: "sidebar", webviewSection: "context", preventDefaultContextMenuItems: true, contextId: panel.id, contextKind: panel.kind });
+
+/**
+ * What a stop of a tour tells VS Code about itself for its right-click menu (docs/26-tours/design/04-route-and-map.md §7): a tour card on the map and a stop's row in the
+ * route share one list, **Go to Code** and **Reveal in Main**. `nodeKey` is the structure node the stop is about (null for a stop whose node is gone).
+ */
+export const tourStopContext = (f: { tour: string; stop: string; nodeKey: string | null; surface: "canvas" | "sidebar" }): string =>
+  JSON.stringify({ surface: f.surface, webviewSection: "tourStop", preventDefaultContextMenuItems: true, tour: f.tour, stop: f.stop, nodeKey: f.nodeKey });

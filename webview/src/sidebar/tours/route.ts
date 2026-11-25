@@ -17,6 +17,8 @@ export type RouteRow =
       depth: number;
       kind: string | null;
       name: string;
+      /** the node's key in the structure, for the row's menu */
+      key: string | null;
       mark: Mark;
       /** the stop the reader is on */
       current: boolean;
@@ -51,7 +53,7 @@ export function routeRows(view: TourView): RouteRow[] {
   for (const stop of view.stops) {
     const description = stopDescription(view, stop);
     const current = view.place.stop === stop.id;
-    rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, mark: markOf(view, stop.id, stop.planned), current, description });
+    rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, key: stop.key, mark: markOf(view, stop.id, stop.planned), current, description });
     // the steps are under the stop you are in, and only when it has more than one: leaving it folds them away (§1.2)
     if (current && stop.reading.length > 1) {
       for (const step of stop.reading) rows.push({ type: "step", id: step.id, depth: stop.depth + step.depth, text: step.depth === 0 ? "what it is for" : (step.title ?? ""), current: step.id === view.place.at });
@@ -62,3 +64,8 @@ export function routeRows(view: TourView): RouteRow[] {
 
 /** The header's place: `3 of 10`, the core's numbers; nothing at the cover and the end. */
 export const headerPlace = (view: TourView): string => (view.place.position ? `${view.place.position.stop} of ${view.place.position.of}` : "");
+
+/**
+ * A row's React key: a stop and its own intro step share an id (`s1`), so the kind is part of it. Two rows with one key made the route draw a row of the tour before it.
+ */
+export const rowKey = (row: RouteRow): string => `${row.type}:${row.id}`;

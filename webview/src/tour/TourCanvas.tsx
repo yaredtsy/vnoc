@@ -1,10 +1,11 @@
-import { Background, Controls, type Edge, type Node, ReactFlow, useReactFlow, useStore, useStoreApi } from "@xyflow/react";
+import { Background, Controls, type Edge, MiniMap, type Node, ReactFlow, useReactFlow, useStore, useStoreApi } from "@xyflow/react";
 import { useEffect, useMemo, useRef } from "react";
 
 import { FIT_VIEW_EVENT } from "../canvas/keys.ts";
 import { CARD_H, CARD_W } from "../canvas/layout.ts";
 import { motionMs, prefersReducedMotion } from "../lib/motion.ts";
 import { on, post } from "../host.ts";
+import { useView } from "../state/view.ts";
 import { rememberViewport, reportViewport, savedViewport } from "../state/viewports.ts";
 import { CENTER_TOUR_EVENT, cameraMove, centre } from "./camera.ts";
 import { mapOf, boxOf, type TourCardData } from "./map.ts";
@@ -80,6 +81,7 @@ function TourCamera({ cards, stop, at, tourId }: { cards: TourCardData[]; stop: 
  */
 export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: string }) {
   const held = useTour();
+  const minimap = useView((v) => v.minimap);
   const view = held.id === tourId && held.view && "stops" in held.view ? held.view : null;
   useEffect(() => {
     let wanted = true;
@@ -123,6 +125,7 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
     >
       <Background />
       <Controls showInteractive={false} />
+      {minimap && <MiniMap pannable zoomable nodeColor={(node) => (node.id === view.place.stop ? "var(--card-selected)" : "var(--muted-foreground)")} />}
       <TourCamera cards={map.cards} stop={view.place.stop} at={at} tourId={tourId} />
     </ReactFlow>
   );

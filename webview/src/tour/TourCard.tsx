@@ -7,7 +7,9 @@ import type { Kind } from "@vnoc/shared/messages.ts";
 import { findNode } from "@vnoc/shared/tree.ts";
 import { CARD_H, CARD_W, FOOTER_H, HEADER_H, META_H } from "../canvas/layout.ts";
 import { KINDS } from "../node-card/kinds.ts";
+import { tourStopContext } from "../node-card/nodeContext.ts";
 import { useData } from "../state/data.ts";
+import { useView } from "../state/view.ts";
 import { goToStop } from "./goToCode.ts";
 import type { TourCardData } from "./map.ts";
 import { useTour } from "./store.ts";
@@ -26,6 +28,8 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  */
 export const TourCard = memo(function TourCard({ data }: NodeProps<Node<TourCardData>>) {
   const kind = KINDS[(data.kind && data.kind in KINDS ? data.kind : "function") as Kind];
+  // the pointer is over this stop's crumb: the card is pointed at (as the structure's cards are)
+  const highlighted = useView((v) => v.hover === data.id);
   const docs = useData((s) => (s.structure && data.key ? (findNode(s.structure.root, data.key)?.docs ?? 0) : 0));
   const where = data.callLine !== null ? null : data.kind === "folder" ? `${data.path}/` : data.line !== null ? `${fileName(data.path)}:${data.line}` : data.path;
   const goToCode = (e: React.MouseEvent) => {
@@ -36,10 +40,11 @@ export const TourCard = memo(function TourCard({ data }: NodeProps<Node<TourCard
   };
   return (
     <div
-      className={cn("node-card tour-card", data.callLine !== null && "call", data.here && "selected", data.planned && "tour-planned", data.mark === "seen" && "tour-seen")}
+      className={cn("node-card tour-card", data.callLine !== null && "call", data.here && "selected", highlighted && !data.here && "highlighted", data.planned && "tour-planned", data.mark === "seen" && "tour-seen")}
       style={{ width: CARD_W, height: CARD_H, borderLeftColor: kind.color }}
       data-stop={data.id}
       data-mark={data.mark}
+      data-vscode-context={tourStopContext({ tour: useTour.getState().id ?? "", stop: data.id, nodeKey: data.key, surface: "canvas" })}
       aria-current={data.here ? "step" : undefined}
       aria-label={`Stop ${data.number}: ${data.name}${data.here ? ", you are here" : ""}`}
     >

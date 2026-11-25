@@ -81,8 +81,11 @@ test("the keys: → and Space are Next, ← is Prev, Home the cover, End the end
   assert.deepEqual(["ArrowRight", " ", "ArrowLeft", "Home", "End", "x", "Enter"].map((k) => keyMove(k, none)), ["next", "next", "prev", "cover", "end", null, null]);
   assert.equal(keyMove("Enter", { ...none, ctrl: true }), "goToCode");
   assert.equal(keyMove("Enter", { ...none, meta: true }), "goToCode");
-  assert.equal(keyMove("ArrowLeft", { ...none, alt: true }), null, "Alt+← is the canvas's own Back");
+  assert.equal(keyMove("ArrowLeft", { ...none, alt: true }), "history", "Alt+← is back to where you were");
+  assert.equal(keyMove("Escape", none), "closeTour");
+  assert.equal(keyMove("ArrowRight", { ...none, alt: true }), null);
   assert.equal(keyMove("ArrowRight", { ...none, meta: true }), null);
+  assert.equal(keyMove("Escape", { ...none, ctrl: true }), null);
 });
 
 test("the calls of a stop's code that are stops of the tour are the stops reached from it by a call, by line; nothing is matched by name", () => {

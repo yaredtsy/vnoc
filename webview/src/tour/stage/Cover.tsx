@@ -29,7 +29,7 @@ export function Cover(p: { view: TourView; onStart: () => void }) {
 }
 
 /** The end card (design 02 frame 9): the counts the core gave, and three buttons. */
-export function End(p: { view: TourView; onBack: () => void; onAgain: () => void; onClose: () => void }) {
+export function End(p: { view: TourView; onBack: () => void; onSkipped: () => void; onAgain: () => void; onClose: () => void }) {
   const { view } = p;
   return (
     <div className="stage-one" data-part="end">
@@ -41,9 +41,16 @@ export function End(p: { view: TourView; onBack: () => void; onAgain: () => void
         {` · ${view.place.unseen === 0 ? "all seen" : `${view.place.unseen} not seen`}`}
       </p>
       <div className="stage-buttons">
-        <button type="button" className="stage-btn stage-secondary" onClick={p.onBack}>
-          ‹ Back to the last step
-        </button>
+        {/* the core says which stop was skipped first (`first_unseen`): with one, that is the first button (design 02 frame 9) */}
+        {view.place.first_unseen !== null ? (
+          <button type="button" className="stage-btn stage-secondary" onClick={p.onSkipped}>
+            Go to the first one I skipped
+          </button>
+        ) : (
+          <button type="button" className="stage-btn stage-secondary" onClick={p.onBack}>
+            ‹ Back to the last step
+          </button>
+        )}
         <button type="button" className="stage-btn stage-secondary" onClick={p.onAgain}>
           Start Again
         </button>

@@ -82,6 +82,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     start: () => go(tourId, "next"),
     prev: () => go(tourId, "prev"),
     back: () => go(tourId, "prev"),
+    history: () => go(tourId, "back"),
+    skipped: () => view?.place.first_unseen != null && go(tourId, view.place.first_unseen),
     cover: () => go(tourId, "cover"),
     again: () => go(tourId, "cover"),
     end: () => go(tourId, "end"),
@@ -102,6 +104,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       if (target?.closest(TEXT_FIELD)) return;
       const move = keyMove(e.key, { ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey });
       if (!move || (e.key === " " && target?.closest("button, a"))) return; // Space on a button is the button's
+      if (move === "closeTour" && document.querySelector('[role="menu"], [role="dialog"]')) return; // Esc closes a menu first
       e.preventDefault();
       e.stopImmediatePropagation();
       act.current[move]?.();
@@ -113,7 +116,12 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   useEffect(
     () =>
       on("viewCommand", ({ name, key }) => {
-        if (name === "stageKey" && key) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+        if (name === "stageKey" && key) {
+          // `Alt+ArrowLeft`: the modifiers, then the key
+          const parts = key.length > 1 && key.includes("+") ? key.split("+") : [key];
+          const mods = parts.slice(0, -1);
+          document.body.dispatchEvent(new KeyboardEvent("keydown", { key: parts[parts.length - 1], altKey: mods.includes("Alt"), ctrlKey: mods.includes("Ctrl"), metaKey: mods.includes("Meta"), bubbles: true, cancelable: true }));
+        }
         if (name === "stageClick" && key) {
           // `jump:s2` and `callLine:6`: a jump to a stop, and a click on the call at that line of the code
           const [what, arg] = key.split(":");
@@ -144,6 +152,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       position: positionWords(view),
       next: view.place.at === "cover" ? "Start" : view.place.position && view.place.position.stop === view.place.position.of && view.place.position.step === view.place.position.steps ? "Finish" : "Next",
       unseen: view.place.unseen,
+      firstUnseen: view.place.first_unseen,
       calls: stop ? [...callLines(view, stop.id).keys()] : [],
       code: code && "lines" in code ? { first: code.first, text: code.text } : null,
       // what the code pane drew: nothing when there is no code pane (the cover, the end, contents)
@@ -258,7 +267,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
               <Codicon name="chevron-down" />
             </button>
           </div>
-          {current!.mode === "cover" ? <Cover view={view} onStart={() => act.current.start()} /> : <End view={view} onBack={() => act.current.back()} onAgain={() => act.current.again()} onClose={() => act.current.closeTour()} />}
+          {current!.mode === "cover" ? <Cover view={view} onStart={() => act.current.start()} /> : <End view={view} onBack={() => act.current.back()} onSkipped={() => act.current.skipped()} onAgain={() => act.current.again()} onClose={() => act.current.closeTour()} />}
         </>
       )}
     </div>

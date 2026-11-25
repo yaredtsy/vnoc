@@ -3,6 +3,8 @@ import { cn } from "@/lib/utils.ts";
 import type { Kind } from "@vnoc/shared/messages.ts";
 import type { TourRow } from "@vnoc/shared/tours.ts";
 import { KINDS } from "../../node-card/kinds.ts";
+import { tourStopContext } from "../../node-card/nodeContext.ts";
+import { useTour } from "../../tour/store.ts";
 import { isOpen, listItem } from "./list.ts";
 import type { RouteRow } from "./route.ts";
 
@@ -69,6 +71,7 @@ export function RouteRowView({ row, domId, focused, onClick, onGoToCode }: { row
       role="option"
       id={domId}
       data-stop={row.id}
+      data-vscode-context={tourStopContext({ tour: useTour.getState().id ?? "", stop: row.id, nodeKey: row.key, surface: "sidebar" })}
       aria-current={row.current ? "step" : undefined}
       className={cn("group/row flex h-[22px] flex-none cursor-pointer items-center gap-1.5 pr-2 text-[13px] hover:bg-[color:var(--list-hover-bg)]", focused && "group-focus-within:outline group-focus-within:outline-1 group-focus-within:-outline-offset-1 group-focus-within:outline-[color:var(--ring)]", row.mark === "planned" && "text-muted-foreground")}
       style={{ paddingLeft: 8 + row.depth * 12 }}

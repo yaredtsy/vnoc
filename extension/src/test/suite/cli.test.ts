@@ -216,18 +216,20 @@ suite("cli", () => {
       // true, and the default: V-NOC's read commands, and never a write
       const given = (await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true, permissions: true })) as SetUpResult;
       assert.ok(given.wrote.includes(".claude/settings.local.json"), String(given.wrote));
-      assert.ok(entries().includes("Bash(vnoc show *)") && entries().length === 15, String(entries()));
+      // V-NOC's read commands, and the tour commands an agent writes a tour with: how many there are is the core's list (it grew with the tours), not this test's
+      const count = entries().length;
+      assert.ok(entries().includes("Bash(vnoc show *)") && entries().includes("Bash(vnoc skill *)") && count >= 15 && entries().every((e) => e.startsWith("Bash(vnoc ")), String(entries()));
       assert.ok(!entries().some((e) => /agent|doc new|doc tag|relink|repair|init/.test(e)), "no write command is allowed");
       cleanUp();
       const byDefault = (await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true })) as SetUpResult;
       assert.ok(byDefault.wrote.includes(".claude/settings.local.json"), String(byDefault.wrote));
-      assert.strictEqual(entries().length, 15);
+      assert.strictEqual(entries().length, count);
 
       // the user's own entry stays when the setup runs again over it
       fs.writeFileSync(settings, JSON.stringify({ permissions: { allow: ["Bash(ls *)"] } }, null, 2));
       await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true });
       assert.strictEqual(entries()[0], "Bash(ls *)");
-      assert.strictEqual(entries().length, 16);
+      assert.strictEqual(entries().length, count + 1);
     } finally {
       cleanUp();
     }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Place, StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import { headerPlace, markOf, routeRows } from "./route.ts";
+import { headerPlace, markOf, rowKey, routeRows } from "./route.ts";
 
 const step = (id: string, kind: StepKind, over: Partial<StepView> = {}): StepView => ({ id, kind, depth: kind === "block" ? 1 : kind === "detail" ? 2 : 0, parent: null, title: null, text: "t", lines: null, ...over });
 const stop = (n: number, over: Partial<TourStop> = {}): TourStop => ({ number: n, id: `s${n}`, depth: 0, planned: false, kind: "function", name: `f${n}`, path: "a.py", qualname: `f${n}`, key: `a.py::f${n}`, steps: 1, blocks: [], reading: [step(`s${n}`, "intro")], ...over });
@@ -64,4 +64,11 @@ test("a stop's one word: writing…, changed, or the stop it is explained at; th
 test("the header's place is the core's numbers, and nothing at the cover and the end", () => {
   assert.equal(headerPlace(view("s2", {}, { position: { stop: 2, of: 5, step: 1, steps: 1 } })), "2 of 5");
   assert.equal(headerPlace(view("cover")), "");
+});
+
+test("every row of the route has a key of its own: a stop and its intro step have the same id", () => {
+  const rows = routeRows(view("s1.b1"));
+  assert.ok(rows.some((r) => r.type === "stop" && r.id === "s1") && rows.some((r) => r.type === "step" && r.id === "s1"), "both are in the route");
+  const keys = rows.map(rowKey);
+  assert.equal(new Set(keys).size, keys.length, keys.join(" "));
 });

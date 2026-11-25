@@ -128,9 +128,13 @@ export function positionWords(view: TourView): string {
   return p.steps > 1 ? `stop ${p.stop} of ${p.of} · ${p.step} of ${p.steps}` : `stop ${p.stop} of ${p.of}`;
 }
 
-/** What a key does in the stage: a move for the core, Go to Code, or nothing. Space and → are Next; ← Prev; Home the cover; End the end card. */
-export function keyMove(key: string, mod: { ctrl: boolean; meta: boolean; alt: boolean }): "next" | "prev" | "cover" | "end" | "goToCode" | null {
+/**
+ * What a key does in the stage: a move for the core, Go to Code, back to where you were (`Alt+←`: the core's history, not Prev), closing the tour (`Esc`), or nothing.
+ * Space and → are Next; ← Prev; Home the cover; End the end card.
+ */
+export function keyMove(key: string, mod: { ctrl: boolean; meta: boolean; alt: boolean }): "next" | "prev" | "cover" | "end" | "goToCode" | "history" | "closeTour" | null {
   if ((mod.ctrl || mod.meta) && key === "Enter") return "goToCode";
+  if (mod.alt && !mod.ctrl && !mod.meta && key === "ArrowLeft") return "history";
   if (mod.ctrl || mod.meta || mod.alt) return null;
   switch (key) {
     case "ArrowRight":
@@ -142,6 +146,8 @@ export function keyMove(key: string, mod: { ctrl: boolean; meta: boolean; alt: b
       return "cover";
     case "End":
       return "end";
+    case "Escape":
+      return "closeTour";
     default:
       return null;
   }

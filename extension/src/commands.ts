@@ -111,6 +111,12 @@ export class Commands {
       }),
       on("vnoc.goToCallSite", (arg) => this.goToCallSite(this.callFor(arg).node)),
       on("vnoc.openTour", () => this.openTour()),
+      // the menu of a tour's card and of a stop's row (design 04 §7): the real file, and MAIN on that node (the tour stays where it was)
+      on("vnoc.tourGoToCode", (arg) => this.goToCodeOf(this.tourNodeKey(arg))),
+      on("vnoc.tourRevealInMain", (arg) => {
+        this.store.dispatch({ type: "reveal", id: this.tourNodeKey(arg), canvas: true }, MAIN);
+        this.store.dispatch({ type: "activate", id: MAIN }, MAIN);
+      }),
       on("vnoc.closeContext", (arg) => this.closeContext(this.contextOf(arg))),
       on("vnoc.closeOtherContexts", (arg) => this.closeOtherContexts(this.contextOf(arg))),
       on("vnoc.expandAll", async (arg, selected) => this.expandAll(await this.nodeFor(arg, selected))),
@@ -387,6 +393,13 @@ export class Commands {
     if (!this.core.tree) await this.core.loadStructure();
     this.store.dispatch({ type: "tourOpen", id: picked.row.id, title: picked.row.title });
     await this.panels.showCanvas();
+  }
+
+  /** The structure node a tour's menu acts on: `nodeKey` of what the card or the row said. A stop whose node is gone has none. */
+  private tourNodeKey(arg: unknown): string {
+    const key = (arg as { nodeKey?: unknown } | null)?.nodeKey;
+    if (typeof key !== "string") throw new Error("That stop's code is not in the structure any more.");
+    return key;
   }
 
   private closeContext(id: ContextId): void {

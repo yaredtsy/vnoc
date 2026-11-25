@@ -324,6 +324,16 @@
         "title": "Search\u2026",
         "category": "V-NOC",
         "icon": "$(search)"
+      },
+      {
+        "command": "vnoc.tourGoToCode",
+        "title": "Go to Code",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourRevealInMain",
+        "title": "Reveal in Main",
+        "category": "V-NOC"
       }
     ],
     "menus": {
@@ -533,6 +543,14 @@
         {
           "command": "vnoc.closeOtherContexts",
           "when": "vnoc.activeIsExplore"
+        },
+        {
+          "command": "vnoc.tourGoToCode",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourRevealInMain",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -785,6 +803,16 @@
           "command": "vnoc.closeOtherContexts",
           "when": "webviewId == 'vnoc.structure' && webviewSection == 'context'",
           "group": "1_close@2"
+        },
+        {
+          "command": "vnoc.tourGoToCode",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourStop'",
+          "group": "1_tour@1"
+        },
+        {
+          "command": "vnoc.tourRevealInMain",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourStop'",
+          "group": "1_tour@2"
         }
       ],
       "explorer/context": [

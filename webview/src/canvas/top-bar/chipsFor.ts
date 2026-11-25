@@ -1,7 +1,7 @@
 // The context chips on the bar (docs/16-ui-redesign/02-top-bar.md §3 #2, §5). Pure, so the rules are tested; ContextChips only draws them.
 
 import { type CallFacts, type CallId, linesText } from "@vnoc/shared/calls.ts";
-import type { ContextId, Session } from "@vnoc/shared/session.ts";
+import type { ContextId, ContextState, Session } from "@vnoc/shared/session.ts";
 
 /** Below this width the chips become one chip with the active context's name and a menu. */
 export const ONE_CHIP = 360;
@@ -13,8 +13,10 @@ export interface ContextChip {
   label: string;
   tip: string;
   active: boolean;
-  /** an EXPLORE chip has a ✕; MAIN stays */
+  /** an EXPLORE chip and a tour's chip have a ✕; MAIN stays */
   closable: boolean;
+  /** `tour`: `▶ title` (docs/26-tours/design/04-route-and-map.md §5 #2); it never folds into `+N` */
+  kind: ContextState["kind"];
 }
 
 export type Chips =
@@ -33,11 +35,11 @@ export function chipsFor(session: Pick<Session, "contexts" | "order" | "active">
   const chips = session.order.map<ContextChip>((id) => {
     const c = session.contexts[id];
     const found = c.call === null ? null : facts(c.call);
-    const tip = c.kind === "main" ? "Main" : found ? `Explore: ${c.title}, from ${found.callerName} (${linesText(found.lines)})` : `Explore: ${c.title}`;
-    return { id, label: c.title, tip, active: id === session.active, closable: c.kind === "explore" };
+    const tip = c.kind === "main" ? "Main" : c.kind === "tour" ? `Tour of ${c.title}` : found ? `Explore: ${c.title}, from ${found.callerName} (${linesText(found.lines)})` : `Explore: ${c.title}`;
+    return { id, label: c.kind === "tour" ? `▶ ${c.title}` : c.title, tip, active: id === session.active, closable: c.kind !== "main", kind: c.kind };
   });
   if (width < ONE_CHIP) return { mode: "one", current: chips.find((c) => c.active) ?? chips[0], all: chips };
-  const explore = chips.filter((c) => c.closable);
+  const explore = chips.filter((c) => c.kind === "explore");
   let toFold = Math.max(0, explore.length - MAX_EXPLORE);
   const folded = new Set<ContextId>();
   for (const c of explore) {

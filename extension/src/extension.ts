@@ -50,6 +50,8 @@ const searchFocusedPosts: { focused: boolean; text: string }[] = [];
 const stagePosts: Extract<Notes, { type: "stageDrawn" }>[] = [];
 /** What the tour's map drew, each time it changed (for the test suite). */
 const mapPosts: Extract<Notes, { type: "mapDrawn" }>[] = [];
+/** What the bar said in a tour context (for the test suite). */
+const barPosts: Extract<Notes, { type: "tourBar" }>[] = [];
 /** The viewport each canvas last reported, by context (for the test suite). */
 const viewports: Record<string, { x: number; y: number; zoom: number }> = {};
 /** What the sidebar's TOURS section drew, each time it changed (for the test suite). */
@@ -291,6 +293,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     stageClick: (button: string) => panels.emit("viewCommand", { name: "stageClick", key: button }),
     /** every drawing of the tour's map, in order: its cards (badge, ring, call line) and its heavy edges */
     mapDrawn: () => mapPosts,
+    /** what the bar said in a tour context each time it changed: the crumbs, `moved by the agent`, whether `←` is enabled */
+    tourBar: () => barPosts,
     /** the viewport each canvas last reported, by context id */
     viewports: () => viewports,
     /** a click on a stop's card of the tour's map */
@@ -410,6 +414,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "mapDrawn":
       mapPosts.push(note);
+      break;
+    case "tourBar":
+      barPosts.push(note);
       break;
     case "viewport":
       viewports[note.context] = { x: note.x, y: note.y, zoom: note.zoom };

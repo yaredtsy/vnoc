@@ -10,7 +10,7 @@ import { goToStop } from "../../tour/goToCode.ts";
 import { go, loadTour, useTour } from "../../tour/store.ts";
 import { useData } from "../../state/data.ts";
 import { listItem } from "./list.ts";
-import { headerPlace, routeRows } from "./route.ts";
+import { headerPlace, rowKey, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
 import { useTourList } from "./store.ts";
 import { RouteRowView, TourListRow } from "./TourRows.tsx";
@@ -195,7 +195,7 @@ export function ToursSection() {
                 rows.map((row, i) => <TourListRow key={`${row.id}:${row.folder}`} row={row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} onOpen={() => openTour(row)} />)
               )
             ) : view ? (
-              route.map((r, i) => <RouteRowView key={r.id} row={r} domId={`tours-route-${i}`} focused={cursor === i} onClick={() => jump(r.id, r.current)} onGoToCode={() => goToCode(r.id)} />)
+              route.map((r, i) => <RouteRowView key={rowKey(r)} row={r} domId={`tours-route-${i}`} focused={cursor === i} onClick={() => jump(r.id, r.current)} onGoToCode={() => goToCode(r.id)} />)
             ) : (
               <p className="px-3 py-2 text-[12px] text-muted-foreground">Opening the tour…</p>
             )}

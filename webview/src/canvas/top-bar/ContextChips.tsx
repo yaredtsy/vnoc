@@ -15,7 +15,7 @@ function Chip({ chip }: { chip: ContextChip }) {
   return (
     <span className={cn(CHIP, "max-w-40 pr-1", chip.active ? filled : outlined, !chip.closable && "pr-1.5")} data-active={chip.active} data-context={chip.id}>
       <button type="button" className="flex min-w-0 items-center gap-1 outline-none" title={chip.tip} aria-pressed={chip.active} onClick={() => dispatch({ type: "activate", id: chip.id })}>
-        {chip.closable && <Codicon name="compass" className="flex-none text-[13px]" />}
+        {chip.kind === "explore" && <Codicon name="compass" className="flex-none text-[13px]" />}
         <span className="truncate">{chip.label}</span>
       </button>
       {chip.closable && (

@@ -22,6 +22,8 @@ interface Api {
   toursDrawn(): Extract<Notes, { type: "toursDrawn" }>[];
   toursClick(what: string): void;
   mapDrawn(): Extract<Notes, { type: "mapDrawn" }>[];
+  tourBar(): Extract<Notes, { type: "tourBar" }>[];
+  chips(): { id: string; label: string; active: boolean }[];
   mapClick(stop: string): void;
   setView(text: string): void;
   viewports(): Record<string, { x: number; y: number; zoom: number }>;
@@ -117,9 +119,12 @@ const toCover = async (of = tour) => {
   await stageShows("the cover", (d) => d.mode === "cover", 10_000, of);
 };
 
-suiteSetup(async function () {
-  this.timeout(120_000);
+suiteSetup(async () => {
   api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+});
+
+/** The code and the tours of this suite. Not a root hook: every suite of the run shares the window and its workspace, and the ones before this must not see these files. */
+async function makeTours() {
   // the code, in a folder of its own; the core reads it when the watcher says so
   const dir = path.join(workspace(), "tourdemo");
   fs.mkdirSync(dir, { recursive: true });
@@ -140,7 +145,7 @@ suiteSetup(async function () {
   add("tourdemo/shop.py", "shop.py is the whole shop: checkout runs the sale, and the four small functions under it each do one thing.\n");
   add("tourdemo/shop.py::has_stock", "Called again here: checkout does not trust its caller to have checked.\n", "--same-as", "s2", "--from", "s1", "--line", "6");
   tourCmd(["finish", tour, "--no-ids"]);
-});
+}
 
 /** Closes the code tabs and leaves the canvas: `closeAllEditors` would close the canvas with them. */
 const closeCodeTabs = async () => {
@@ -152,6 +157,11 @@ suiteTeardown(async () => {
 });
 
 suite("a tour on the canvas", () => {
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    await makeTours();
+  });
+
   test("Open Tour… lists the tour, and picking it opens the tour's context on the cover", async () => {
     const rows = await api.tours.list();
     assert.strictEqual(rows[0]?.id, tour, `the core lists the tour first (newest first): ${JSON.stringify(rows.map((r) => [r.id, r.words]))}`);
@@ -327,8 +337,9 @@ suite("the TOURS section", () => {
     await sectionShows("the section", () => true, 30_000);
   });
 
-  test("it is folded until a tour is opened; unfolded, the list shows the suite's tours newest first, in the core's words", async () => {
-    assert.strictEqual(section()!.folded, true, "folded by default");
+  test("it folds and unfolds; unfolded, the list shows the suite's tours newest first, in the core's words", async () => {
+    api.toursClick("fold"); // folded, it says its name and the count (it is unfolded when a tour was opened before: the page keeps it)
+    await sectionShows("the section folded", (d) => d.folded);
     api.toursClick("unfold");
     const list = await sectionShows("the list", (d) => !d.folded && d.mode === "list" && d.list.length >= 2);
     assert.deepStrictEqual(list.list.slice(0, 2).map((r) => r.id), [second, tour], "newest first");
@@ -423,7 +434,7 @@ suite("the TOURS section", () => {
     await until("a jump by the keys", () => last()!.stop !== "s3");
   });
 
-  test("the end card says how many stops were not seen: the core's count", async () => {
+  test("the end card says how many stops were not seen, and its first button goes to the first one skipped: the core's words", async () => {
     api.toursClick("key:Escape"); // the list
     await sectionShows("the list", (d) => d.mode === "list");
     api.toursClick(`row:${second}`); // never read: its one stop is not seen
@@ -432,13 +443,14 @@ suite("the TOURS section", () => {
     api.stageClick("end");
     const end = await stageShows("the end card", (d) => d.mode === "end", 10_000, second);
     assert.strictEqual(end.unseen, 1, "one written stop, not read to its last step");
-    api.stageClick("again");
-    await stageShows("the cover", (d) => d.mode === "cover", 10_000, second);
-    api.stageClick("next");
-    await stageShows("its only step", (d) => d.step === "s1", 10_000, second);
+    assert.strictEqual(end.firstUnseen, "s1", "the core names the first one skipped");
+    api.stageClick("skipped"); // the button: a jump to it
+    await stageShows("the stop that was skipped", (d) => d.step === "s1", 10_000, second);
     api.stageClick("end");
     const done = await stageShows("the end card, read", (d) => d.mode === "end" && d.unseen === 0, 10_000, second);
-    assert.strictEqual(done.unseen, 0, "all seen");
+    assert.strictEqual(done.firstUnseen, null, "all seen: nothing to go back to");
+    api.stageClick("again");
+    await stageShows("the cover", (d) => d.mode === "cover", 10_000, second);
     api.stageClick("closeTour");
     await until("MAIN to be active", () => api.session().active === "main");
     assert.deepStrictEqual(api.webviewErrors(), []);
@@ -528,6 +540,117 @@ suite("the tour on the map", () => {
     await until("MAIN's viewport as it was", () => near(api.viewports().main, 40, 30, 0.6));
     api.dispatch({ type: "activate", id: context }, context);
     await until("the tour again", () => api.session().active === context);
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});
+
+// ── the bar, the menus and Esc (docs/26-tours/design/04-route-and-map.md §5, §7) ────────────────────────────────────────────────────────────
+
+const bar = () => api.tourBar().at(-1);
+const barShows = async (what: string, ready: (b: NonNullable<ReturnType<typeof bar>>) => boolean, ms = 10_000) => {
+  try {
+    await until(what, () => {
+      const b = bar();
+      return b !== undefined && ready(b);
+    }, ms);
+  } catch (e) {
+    throw new Error(`${(e as Error).message}; the bar last said ${JSON.stringify(bar())}`);
+  }
+  return bar()!;
+};
+
+suite("the tour's bar", () => {
+  const context = () => `tour:${tour}`;
+  suiteSetup(async function () {
+    this.timeout(60_000);
+    api.toursClick("key:Escape");
+    api.toursClick(`row:${tour}`);
+    await until("the tour's context", () => api.session().active === context());
+    await toCover();
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+  });
+
+  test("the chip is `▶ title` and the crumbs are the stops from the first to the current one", async () => {
+    const chip = api.chips().find((c) => c.id === context());
+    assert.deepStrictEqual([chip?.label, chip?.active], ["▶ How the shop checks out", true]);
+    assert.deepStrictEqual((await barShows("the crumbs", (b) => b.crumbs.length === 2)).crumbs, ["checkout", "has_stock"], "s2 was reached from s1");
+    api.stageClick("jump:s3"); // reached from no stop: its own crumb
+    await stageStep("s3");
+    assert.deepStrictEqual((await barShows("one crumb", (b) => b.crumbs.length === 1)).crumbs, ["shop.py"]);
+    api.stageClick("jump:s4"); // from s1
+    await stageStep("s4");
+    assert.deepStrictEqual((await barShows("two crumbs", (b) => b.crumbs.length === 2)).crumbs, ["checkout", "has_stock"]);
+  });
+
+  test("← is back to where you were, Alt+← is the same, and it is disabled with nothing to go back to", async () => {
+    await toCover();
+    api.stageClick("jump:s2"); // a jump: the cover is where we were
+    await stageStep("s2");
+    await barShows("← enabled", (b) => b.back);
+    api.stageKey("Alt+ArrowLeft");
+    await stageShows("back at the cover", (d) => d.mode === "cover");
+    assert.strictEqual(api.session().active, context(), "back is the tour's own, not MAIN's focus");
+  });
+
+  test("`vnoc tour go` from a terminal says `moved by the agent` for a few seconds, and a click of the reader's does not", async () => {
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+    await sleep(500);
+    assert.strictEqual(bar()!.moved, false, "the reader moved it");
+    tourCmd(["go", tour, "s4"]);
+    await stageStep("s4");
+    await barShows("moved by the agent", (b) => b.moved);
+    await barShows("the words go", (b) => !b.moved, 8_000);
+  });
+
+  test("Start Again goes to the cover", async () => {
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+    api.stageClick("menuStartAgain");
+    await stageShows("the cover", (d) => d.mode === "cover");
+  });
+
+  test("the menus of a stop: Reveal in Main makes MAIN active on that node and the tour stays where it was; Go to Code opens the file", async () => {
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+    await vscode.commands.executeCommand("vnoc.tourRevealInMain", { nodeKey: "tourdemo/shop.py::has_stock" });
+    await until("MAIN to be active, on the node", () => api.session().active === "main" && api.session().contexts.main.selected === "tourdemo/shop.py::has_stock");
+    assert.ok(api.session().order.includes(context()), "the tour is still open");
+    api.dispatch({ type: "activate", id: context() }, context());
+    await stageStep("s2");
+    await closeCodeTabs();
+    await vscode.commands.executeCommand("vnoc.tourGoToCode", { nodeKey: "tourdemo/shop.py::has_stock" });
+    await until("the editor on has_stock", () => {
+      const e = vscode.window.activeTextEditor;
+      return !!e && e.document.uri.fsPath.endsWith(path.join("tourdemo", "shop.py")) && e.selection.active.line === 18;
+    });
+    await closeCodeTabs();
+    // the same entries from the bar's ⋯: Go to Code on the current stop, Reveal Root in Main
+    api.stageClick("menuGoToCode");
+    await until("the editor on the current stop", () => !!vscode.window.activeTextEditor?.document.uri.fsPath.endsWith(path.join("tourdemo", "shop.py")));
+    await closeCodeTabs();
+    api.stageClick("menuRevealRoot");
+    await until("MAIN on the first stop's node", () => api.session().active === "main" && api.session().contexts.main.selected === "tourdemo/shop.py::checkout");
+    api.dispatch({ type: "activate", id: context() }, context());
+    await until("the tour again", () => api.session().active === context());
+  });
+
+  test("Esc closes the tour's context and MAIN is as it was: its selection, its focus and its viewport", async () => {
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    await until("MAIN", () => api.session().active === "main");
+    await sleep(600);
+    api.setView("50,40,0.7");
+    await until("MAIN's viewport", () => near(api.viewports().main, 50, 40, 0.7));
+    const before = JSON.stringify(api.session().contexts.main);
+    api.dispatch({ type: "activate", id: context() }, context());
+    await until("the tour", () => api.session().active === context());
+    await stageStep(last()!.step!);
+    delete api.viewports().main;
+    api.stageKey("Escape");
+    await until("MAIN to be active, the tour closed", () => api.session().active === "main" && !api.session().order.some((id) => id.startsWith("tour:")));
+    assert.strictEqual(JSON.stringify(api.session().contexts.main), before, "MAIN is as it was");
+    await until("MAIN's viewport as it was", () => near(api.viewports().main, 50, 40, 0.7));
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
 });
