@@ -49,7 +49,7 @@ pub struct Options {
 }
 
 /// A node shorter than this many lines is one step (W9).
-const SHORT: u32 = 8;
+pub const SHORT: u32 = 8;
 /// Blocks in a stop, details counted.
 const MAX_BLOCKS: usize = 12;
 const TITLE_BUDGET: usize = 60;

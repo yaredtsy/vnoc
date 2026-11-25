@@ -13,7 +13,9 @@
     "by": "reader",
     "moved": "",
     "open": false,
-    "seen": []
+    "position": null,
+    "seen": [],
+    "stop": null
   },
   "planned": 0,
   "problems": [],
@@ -65,6 +67,7 @@
         {
           "depth": 0,
           "id": "s1",
+          "kind": "intro",
           "lines": null,
           "parent": null,
           "text": "retry_charge asks the gateway to charge an order and tries again when the call is dropped, up to `attempts` times, before it gives up with a ChargeError.",
@@ -73,6 +76,7 @@
         {
           "depth": 1,
           "id": "s1.b1",
+          "kind": "block",
           "lines": [
             20,
             25
@@ -84,6 +88,7 @@
         {
           "depth": 2,
           "id": "s1.b2",
+          "kind": "detail",
           "lines": [
             23,
             24
@@ -116,6 +121,7 @@
         {
           "depth": 0,
           "id": "s2",
+          "kind": "short",
           "lines": null,
           "parent": null,
           "text": "Invoice.total adds the amounts of the invoice lines and has the tax applied for the invoice's country. It is what the customer is charged.",
@@ -147,6 +153,7 @@
         {
           "depth": 0,
           "id": "s3",
+          "kind": "short",
           "lines": null,
           "parent": null,
           "text": "apply_tax raises an amount by the country's rate and rounds it to cents, so the total on the invoice is the amount that is charged.",

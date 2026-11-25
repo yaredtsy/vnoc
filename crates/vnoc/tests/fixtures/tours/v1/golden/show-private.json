@@ -13,7 +13,9 @@
     "by": "reader",
     "moved": "",
     "open": false,
-    "seen": []
+    "position": null,
+    "seen": [],
+    "stop": null
   },
   "planned": 0,
   "problems": [],
@@ -43,6 +45,7 @@
         {
           "depth": 0,
           "id": "s1",
+          "kind": "short",
           "lines": null,
           "parent": null,
           "text": "rate_for looks the country up in the RATES table and answers 0.0 for a country that is not there, so an unknown country pays no tax.",

@@ -13194,7 +13194,11 @@ fn tour_from_without_line_is_refused_unless_the_node_is_inside_for_add_plan_and_
                 json!("billing/charge.py::retry_charge.<locals>.one_try")
             ),
             ("s3".to_string(), json!("billing/charge.py::refund")),
-            ("s4".to_string(), Value::Null),
+            // a planned stop has its key too: where the plan says it will be
+            (
+                "s4".to_string(),
+                json!("billing/charge.py::retry_charge.<locals>.one_try")
+            ),
         ]
     );
 }

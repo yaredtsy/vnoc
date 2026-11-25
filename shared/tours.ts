@@ -20,6 +20,9 @@ export type TourDetail = "quick" | "normal" | "detailed";
 /** a kind of node as the tour wrote it; a kind this version does not know is a string too */
 export type TourNodeKind = "folder" | "file" | "class" | "function" | (string & {});
 
+/** What the stage draws for a step (design 03 §3, 05 §2). The core decides it; the cover and the end are places, not steps. */
+export type StepKind = "intro" | "block" | "detail" | "short" | "contents" | "same_as" | "planned";
+
 /** The first stop of a tour: the row's icon and name. */
 export interface RootView {
   kind: string;
@@ -85,9 +88,22 @@ export interface TourRow {
   /** null: nobody opened this tour here ("new") */
   place: PlaceSummary | null;
   offers: OffersView | null;
+  /** the row's second line, in the core's words: `shared · ` for a project tour, the one state word that applies, the size: `writing · 6 of 10 stops`, `stop 4 · 9 stops` */
+  words: string;
 }
 
-/** Where the reader is, as the core keeps it (the state file, 01 §9): `at` is `cover`, `end` or a step id. One place per tour per machine (D17). */
+/** The numbers of "stop 3 of 10 · 2 of 5", from the core (the same code `vnoc tour where` uses). */
+export interface PositionView {
+  /** the stop's place on the route, from 1 */
+  stop: number;
+  /** how many stops the route has */
+  of: number;
+  /** the step's place in its stop, from 1 (the intro is 1) */
+  step: number;
+  steps: number;
+}
+
+/** Where the reader is, as the core keeps it (the state file, 01 §9): `at` is `cover`, `end` or a step id. One place per tour per machine (D17). `stop` and `position` are made from the tour as it is now. */
 export interface Place {
   at: "cover" | "end" | StepId;
   /** the stops read to their last step, in the order they were */
@@ -99,6 +115,10 @@ export interface Place {
   by: "reader" | "command";
   /** a window is showing this tour (set by `vnoc/tourOpen`) */
   open: boolean;
+  /** the current stop's id; null at the cover and at the end */
+  stop: StopId | null;
+  /** null at the cover and at the end */
+  position: PositionView | null;
 }
 
 /** A changed or moved block or stop, where its node is now: a changed stop's `now`. */
@@ -129,6 +149,7 @@ export interface BlockView {
 /** One step of a stop in reading order: the intro first, then each block with its details. The stage plays these. */
 export interface StepView {
   id: StepId;
+  kind: StepKind;
   /** 0 the intro, 1 a block, 2 a detail */
   depth: number;
   /** the block a detail is in */
@@ -167,7 +188,7 @@ export interface TourStop {
   name: string;
   path: string;
   qualname: string;
-  /** the node's key in the structure (`TreeNode.id`: a path, or `path::qualname#n`), from what the stop wrote. null for a planned stop and for one a check found gone: the host sets the selection with it */
+  /** the node's key in the structure (`TreeNode.id`: a path, or `path::qualname#n`), from what the stop wrote (a planned stop's is where the plan says it will be). null for one a check found gone: the host sets the selection with it, the stage reads the node's code with it */
   key: string | null;
   lines?: [number, number];
   /** the node's permanent ID, when it had one when the stop was written */

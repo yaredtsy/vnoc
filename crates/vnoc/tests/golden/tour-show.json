@@ -16,7 +16,9 @@
     "by": "reader",
     "moved": "",
     "open": false,
-    "seen": []
+    "position": null,
+    "seen": [],
+    "stop": null
   },
   "planned": 0,
   "problems": [],
@@ -77,6 +79,7 @@
         {
           "depth": 0,
           "id": "s1",
+          "kind": "intro",
           "lines": null,
           "parent": null,
           "text": "retry_charge calls the gateway and tries again when the call drops, up to a fixed number of attempts, then gives up with an error that names the order.",
@@ -85,6 +88,7 @@
         {
           "depth": 1,
           "id": "s1.b1",
+          "kind": "block",
           "lines": [
             14,
             15
@@ -96,6 +100,7 @@
         {
           "depth": 2,
           "id": "s1.b2",
+          "kind": "detail",
           "lines": [
             15,
             15
@@ -107,6 +112,7 @@
         {
           "depth": 1,
           "id": "s1.b3",
+          "kind": "block",
           "lines": [
             17,
             22

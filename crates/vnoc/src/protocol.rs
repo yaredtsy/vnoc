@@ -683,7 +683,7 @@ pub struct TourGoParams {
 
 impl Request for TourGo {
     type Params = TourGoParams;
-    type Result = crate::tours::place::Place;
+    type Result = crate::tours::view::PlaceView;
     const METHOD: &'static str = "vnoc/tourGo";
 }
 
@@ -698,7 +698,7 @@ pub struct TourOpenParams {
 
 impl Request for TourOpen {
     type Params = TourOpenParams;
-    type Result = crate::tours::place::Place;
+    type Result = crate::tours::view::PlaceView;
     const METHOD: &'static str = "vnoc/tourOpen";
 }
 
@@ -898,7 +898,7 @@ pub enum TourPlaceChanged {}
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TourPlaceChangedParams {
     pub id: String,
-    pub place: crate::tours::place::Place,
+    pub place: crate::tours::view::PlaceView,
 }
 
 impl Notification for TourPlaceChanged {

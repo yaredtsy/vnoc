@@ -3473,9 +3473,21 @@ fn tour_go_writes_the_state_file_and_does_not_echo_but_another_process_does() {
         .unwrap();
     assert_eq!(place["at"], "s1");
     assert_eq!(place["by"], "reader");
+    // the answer has the current stop and the numbers of "stop 1 of N · 1 of M": made from the tour, not kept in the state file
+    assert_eq!(place["stop"], "s1");
+    assert_eq!(place["position"]["stop"], 1);
+    assert_eq!(place["position"]["step"], 1);
+    assert!(
+        place["position"]["of"].as_u64().unwrap() >= 1
+            && place["position"]["steps"].as_u64().unwrap() >= 1
+    );
     let written: Value =
         serde_json::from_slice(&std::fs::read(state_file(&root, &id)).unwrap()).unwrap();
     assert_eq!(written["place"]["at"], "s1");
+    assert!(
+        written["place"].get("stop").is_none() && written["place"].get("position").is_none(),
+        "the state file keeps the place only"
+    );
     // the watcher reports the write: it is the core's own, and not a move
     core.notify(
         "vnoc/filesChanged",
@@ -3495,6 +3507,8 @@ fn tour_go_writes_the_state_file_and_does_not_echo_but_another_process_does() {
     assert_eq!(moved["id"], json!(id));
     assert_eq!(moved["place"]["at"], "s1.b1");
     assert_eq!(moved["place"]["by"], "command");
+    assert_eq!(moved["place"]["stop"], "s1");
+    assert_eq!(moved["place"]["position"]["step"], 2);
 
     // the same state file rewritten for a check (a change to the stop's file, then the next ask) is no move: the place is the one told
     let source = root.join("billing/charge.py");
@@ -3516,7 +3530,21 @@ fn tour_go_writes_the_state_file_and_does_not_echo_but_another_process_does() {
     // and the view has the place the reader is at
     let shown = core.tour(&id);
     assert_eq!(shown["place"]["at"], "s1.b1");
+    assert_eq!(shown["place"]["stop"], "s1");
     assert_eq!(shown["writing"], Value::Null);
+    // the list says each row's second line, and `tourOpen` answers a place with its stop too
+    let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
+    assert!(
+        row["words"].as_str().unwrap().starts_with("writing · "),
+        "{row}"
+    );
+    let opened = core
+        .request("vnoc/tourOpen", json!({ "id": id, "open": true }))
+        .unwrap();
+    assert_eq!(
+        (opened["open"].clone(), opened["stop"].clone()),
+        (json!(true), json!("s1"))
+    );
     core.finish();
 }
 

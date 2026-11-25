@@ -3,7 +3,7 @@
 //! Nothing here looks at the code: no check, no find. A stop whose node is gone prints as it was written, and says nothing yet (that is the next
 //! step). The values are structs that serialize (`--json`), and the text is made from the same values, so the two cannot differ.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use vnoc_domain::{LocationKey, NodeKind};
 
 use super::check::{Answer, BlockState, Recorded, Source, StopState};
@@ -141,6 +141,9 @@ pub struct BlockView {
 #[derive(Debug, Clone, Serialize)]
 pub struct StepView {
     pub id: String,
+    /// what the stage draws (design 03 §3, 05 §2): `intro`, `block`, `detail`, `short` (a stop under 8 lines: its only step), `contents` (a folder, or a file with
+    /// no blocks: no code to light), `same_as` (explained before), `planned` (not written yet). The cover and the end are places, not steps
+    pub kind: &'static str,
     /// 0 the intro, 1 a block, 2 a detail
     pub depth: usize,
     /// the block a detail is in
@@ -169,7 +172,7 @@ pub struct StopView {
     pub path: String,
     pub qualname: String,
     /// the node's key in the index's tree, `Node::id` as `vnoc/structure` gives it (a path, or `path::qualname#n`), from what the stop wrote, as `on::Map`
-    /// finds a node (no code is read): a page can set the selection with it. `null` for a planned stop, and for a stop a check found gone
+    /// finds a node (no code is read): a page can set the selection with it and read the node's code. `null` for a stop a check found gone
     pub key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lines: Option<[u32; 2]>,
@@ -283,7 +286,7 @@ pub struct TourView {
     /// the planned stop the agent is on: the first stop of the route that is planned and not written, while the tour is being written; else none
     pub writing: Option<String>,
     /// where the reader is, as the tour is now (`place::settle`); the cover for a tour nobody has opened
-    pub place: Place,
+    pub place: PlaceView,
     /// what the cover of a finished tour may offer, by the settings; `null` when there is nothing to offer, and for a tour that is not finished
     pub offers: Option<OffersView>,
     /// the lines of the file that could not be read, `line 7: why`
@@ -306,17 +309,42 @@ fn blocks_of(blocks: &[TourBlock], parent: Option<StepId>, depth: usize, out: &m
     }
 }
 
-/// A written stop's key in the index's tree: its path for a file or a folder, its location key for a def. `None` for a planned stop.
+/// A stop's key in the index's tree: its path for a file or a folder, its location key for a def. A planned stop has one too: it is where the plan said it will
+/// be, and the stage shows its code while the text is not written (the tree may not have the node: then the key finds nothing).
 fn tree_key(stop: &TourStop) -> Option<String> {
-    if !stop.written {
-        return None;
+    key_of(stop.path.as_str(), &stop.qualname, stop.occurrence)
+}
+
+fn key_of(path: &str, qualname: &str, occurrence: u32) -> Option<String> {
+    if qualname.is_empty() {
+        return Some(path.to_string());
     }
-    if stop.qualname.is_empty() {
-        return Some(stop.path.to_string());
-    }
-    LocationKey::new(stop.path.clone(), stop.qualname.clone(), stop.occurrence)
+    let path = vnoc_domain::RepoPath::new(path).ok()?;
+    LocationKey::new(path, qualname, occurrence)
         .ok()
         .map(|key| key.to_string())
+}
+
+/// Where a check found a stop's node: its key follows it. The occurrence is the stop's own when the name did not change, else 1 (a check does not say).
+fn key_now(stop: &StopView, now: &super::check::Now) -> Option<String> {
+    if now.path == stop.path && now.qualname == stop.qualname {
+        return stop.key.clone();
+    }
+    key_of(&now.path, &now.qualname, 1)
+}
+
+/// What a stop's first step is (design 03 §3, as 05 §2 corrects it): not written, explained before, contents (a folder; a file with no blocks), short (a
+/// node under [`rules::SHORT`] lines, which is one step), else the intro of a stop that has blocks. A file with blocks is code, like a class.
+fn intro_kind(stop: &TourStop) -> &'static str {
+    let lines = stop.lines.map(|l| l.last.saturating_sub(l.first) + 1);
+    match stop.kind.as_ref() {
+        _ if !stop.written => "planned",
+        _ if stop.same_as.is_some() => "same_as",
+        Some(NodeKind::Folder) => "contents",
+        Some(NodeKind::File) if stop.blocks.is_empty() => "contents",
+        _ if stop.blocks.is_empty() && lines.is_some_and(|n| n < super::rules::SHORT) => "short",
+        _ => "intro",
+    }
 }
 
 fn stop_view(number: usize, stop: &TourStop) -> StopView {
@@ -326,6 +354,7 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
     }
     let mut reading = vec![StepView {
         id: StepId::intro(stop.id).to_string(),
+        kind: intro_kind(stop),
         depth: 0,
         parent: None,
         title: None,
@@ -335,6 +364,7 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
     }];
     reading.extend(blocks.iter().map(|b| StepView {
         id: b.id.clone(),
+        kind: if b.depth == 0 { "block" } else { "detail" },
         depth: b.depth + 1,
         parent: b.parent.clone(),
         title: Some(b.title.clone()),
@@ -364,6 +394,48 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
         as_written: None,
         blocks,
         reading,
+    }
+}
+
+/// The "stop 3 of 10 · 2 of 5" numbers of a place on a step (`place::position`, the code `where` uses): the stop's place on the route and how many stops there
+/// are, the step's place in its stop and how many steps it has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PositionView {
+    pub stop: usize,
+    pub of: usize,
+    pub step: usize,
+    pub steps: usize,
+}
+
+/// A place as the pages get it: the place itself (what the state file keeps), the current stop and the numbers. The state file does not have the last two: they
+/// are made from the tour as it is now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaceView {
+    #[serde(flatten)]
+    pub place: Place,
+    /// the current stop's id; `null` at the cover and at the end
+    pub stop: Option<String>,
+    /// `null` at the cover and at the end
+    pub position: Option<PositionView>,
+}
+
+/// The place for the pages: settled against the tour (a step the tour no longer has moves to the nearest one), with its stop and position.
+pub fn place_view(tour: &Tour, place: Place) -> PlaceView {
+    let place = place::settle(tour, &place);
+    let stop = match place.at {
+        At::Step(step) => Some(step.stop().to_string()),
+        At::Cover | At::End => None,
+    };
+    let position = place::position(tour, place.at).map(|p| PositionView {
+        stop: p.stop,
+        of: p.stops,
+        step: p.step,
+        steps: p.steps,
+    });
+    PlaceView {
+        place,
+        stop,
+        position,
     }
 }
 
@@ -403,7 +475,7 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
         writing: (tour.state == State::Writing)
             .then(|| stops.iter().find(|s| s.planned).map(|s| s.id.clone()))
             .flatten(),
-        place: Place::cover(),
+        place: place_view(tour, Place::cover()),
         offers: None,
         stops,
         problems: tour
@@ -443,6 +515,12 @@ pub fn mark(view: &mut TourView, answer: &Answer) {
             }
         }
         stop.now = recorded.now.get(&id).cloned();
+        // the key follows the check: a stop found at another name or path (changed, or only moved) is keyed by where it is now
+        if let Some(found) = recorded.now.get(&id).or(recorded.displaced.get(&id))
+            && stop.key.is_some()
+        {
+            stop.key = key_now(stop, found);
+        }
         if !stop.planned {
             mark_steps(stop, id, recorded);
         }
@@ -910,6 +988,8 @@ pub struct ListRowView {
     pub place: Option<PlaceSummary>,
     /// what the cover of a finished tour may offer, by the settings; `null` when there is nothing to offer, and for a tour that is not finished
     pub offers: Option<OffersView>,
+    /// the row's second line (design 07 §3): `shared ·` for a project tour, the one state word that applies, the size. See [`row_words`]
+    pub words: String,
     #[serde(skip)]
     pins: String,
 }
@@ -1062,6 +1142,7 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                         root: root_of(tour),
                         place: None,
                         offers: None,
+                        words: String::new(),
                         pins,
                     }
                 }
@@ -1089,11 +1170,49 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                     root: None,
                     place: None,
                     offers: None,
+                    words: "cannot be read".to_string(),
                     pins: String::new(),
                 },
             }
         })
         .collect()
+}
+
+/// The state word a row says (design 07 §3: one word, the first that applies, in this order): `writing`, `stopping` or `stopped` while the tour is not
+/// finished, `no news` for one that is being written and quiet, `changed` when a check says so, `stop 4` when the reader is on a stop (where you are),
+/// `finished` when every stop was read to its last step, `new` when nobody opened it here; else how many stops were read: `seen 2 of 9`.
+fn row_state_word(row: &ListRowView) -> String {
+    let written = row.written.unwrap_or(0);
+    match (row.state, &row.place) {
+        _ if row.quiet => "no news".to_string(),
+        (Some("stopping"), _) => "stopping".to_string(),
+        (Some("stopped"), _) => "stopped".to_string(),
+        (Some("writing"), _) => "writing".to_string(),
+        _ if row.check == Some("changed") => "changed".to_string(),
+        (_, Some(PlaceSummary { stop: Some(n), .. })) => format!("stop {n}"),
+        (_, Some(place)) if written > 0 && place.seen >= written => "finished".to_string(),
+        (_, None) => "new".to_string(),
+        (_, Some(place)) => format!("seen {} of {written}", place.seen),
+    }
+}
+
+/// The second line of a row, built from the pieces `list` prints: `shared · ` for a project tour (05 §3), the state word, the size (`stops_words`).
+/// `writing · 6 of 10 stops`, `stop 4 · 9 stops`, `finished · 9 stops`, `new · 1 stop`, `shared · changed · 3 stops`. A tour that cannot be read says so.
+/// It is made once the row has its `place` and `quiet` (`serve::list_rows`).
+pub fn row_words(row: &ListRowView) -> String {
+    if !row.readable {
+        return "cannot be read".to_string();
+    }
+    let mut parts = Vec::new();
+    if row.folder == "project" {
+        parts.push("shared".to_string());
+    }
+    parts.push(row_state_word(row));
+    parts.push(stops_words(
+        row.written.unwrap_or(0),
+        row.planned.unwrap_or(0),
+    ));
+    parts.join(" · ")
 }
 
 /// What `list` prints: a row a tour, in columns.
@@ -1708,5 +1827,275 @@ mod tests {
         assert!(!is_quiet(State::Stopped, Some(QUIET_SECS * 10)));
         assert!(!is_quiet(State::Finished, Some(QUIET_SECS * 10)));
         assert!(!is_quiet(State::Writing, None));
+    }
+
+    fn stop_of_kind(
+        id: u32,
+        path: &str,
+        qualname: &str,
+        kind: &str,
+        lines: &str,
+        extra: &str,
+    ) -> String {
+        format!(
+            r#"{{"type":"stop","id":"s{id}","path":"{path}","qualname":"{qualname}","kind":"{kind}"{lines}{extra},"text":"intro of s{id}"}}"#
+        )
+    }
+
+    #[test]
+    fn every_step_says_its_kind_as_the_stage_draws_it() {
+        let t = tour(&[
+            // s1: a function with a block and a detail of it
+            stop(1, "a.py", "f", ""),
+            step("s1.b1", 1, None, [12, 20]),
+            step("s1.b2", 1, Some("s1.b1"), [13, 14]),
+            // s2: a node of 4 lines is one step; s3 is a file with no blocks, s4 a folder, s5 explained before
+            stop_of_kind(2, "a.py", "g", "function", r#","lines":[40,43]"#, ""),
+            stop_of_kind(3, "b.py", "", "file", r#","lines":[1,60]"#, ""),
+            stop_of_kind(4, "app", "", "folder", "", ""),
+            stop(5, "a.py", "g", r#","same_as":"s2""#),
+            // s6: a file with blocks is code, like a class; a stop of 8 lines is not short
+            stop_of_kind(6, "c.py", "", "file", r#","lines":[1,60]"#, ""),
+            step("s6.b1", 6, None, [2, 9]),
+            stop_of_kind(7, "a.py", "h", "function", r#","lines":[50,57]"#, ""),
+            r#"{"type":"plan","stops":[{"id":"s8","path":"a.py","qualname":"later"}]}"#.to_string(),
+        ]);
+        let shown = tour_view(&t, Where::Private);
+        let kinds: Vec<(String, Vec<&str>)> = shown
+            .stops
+            .iter()
+            .map(|s| (s.id.clone(), s.reading.iter().map(|r| r.kind).collect()))
+            .collect();
+        let kinds: Vec<(&str, &[&str])> = kinds
+            .iter()
+            .map(|(i, k)| (i.as_str(), k.as_slice()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("s1", &["intro", "block", "detail"][..]),
+                ("s2", &["short"][..]),
+                ("s3", &["contents"][..]),
+                ("s4", &["contents"][..]),
+                ("s5", &["same_as"][..]),
+                ("s6", &["intro", "block"][..]),
+                ("s7", &["intro"][..]),
+                ("s8", &["planned"][..]),
+            ]
+        );
+    }
+
+    fn row_of(tour: Tour, place: Where) -> ListRowView {
+        list_rows(
+            &[row("checkout-order-7k2q", place, Ok(tour))],
+            &BTreeMap::new(),
+            false,
+            &|_| true,
+        )
+        .remove(0)
+    }
+
+    fn at(stop: Option<usize>, seen: usize) -> Option<PlaceSummary> {
+        Some(PlaceSummary {
+            stop,
+            at: if stop.is_some() { "step" } else { "cover" },
+            seen,
+        })
+    }
+
+    #[test]
+    fn a_rows_words_are_shared_then_the_one_state_word_that_applies_then_the_size() {
+        let writing = tour(&[
+            stop(1, "a.py", "f", ""),
+            r#"{"type":"plan","stops":[{"id":"s2","path":"a.py","qualname":"g"},{"id":"s3","path":"a.py","qualname":"h"}]}"#.to_string(),
+        ]);
+        let finished = tour(&[
+            stop(1, "a.py", "f", ""),
+            stop(2, "a.py", "g", ""),
+            r#"{"type":"end","at":"2026-11-23T18:47:31Z"}"#.to_string(),
+        ]);
+        let stopped = tour(&[
+            stop(1, "a.py", "f", ""),
+            r#"{"type":"plan","stops":[{"id":"s2","path":"a.py","qualname":"g"}]}"#.to_string(),
+            r#"{"type":"halt"}"#.to_string(),
+            r#"{"type":"halted"}"#.to_string(),
+        ]);
+        let stopping = tour(&[stop(1, "a.py", "f", ""), r#"{"type":"halt"}"#.to_string()]);
+
+        let words = |mut r: ListRowView, f: &dyn Fn(&mut ListRowView)| {
+            f(&mut r);
+            row_words(&r)
+        };
+        let nothing = |_: &mut ListRowView| {};
+        // in the order the design gives them: writing, stopped, no news, changed, stop N, finished, new
+        assert_eq!(
+            words(row_of(writing.clone(), Where::Private), &nothing),
+            "writing · 1 of 3 stops"
+        );
+        assert_eq!(
+            words(row_of(stopping, Where::Private), &nothing),
+            "stopping · 1 stop"
+        );
+        assert_eq!(
+            words(row_of(stopped, Where::Private), &nothing),
+            "stopped · 1 of 2 stops"
+        );
+        assert_eq!(
+            words(row_of(writing.clone(), Where::Private), &|r| r.quiet = true),
+            "no news · 1 of 3 stops"
+        );
+        assert_eq!(
+            words(row_of(finished.clone(), Where::Private), &|r| r.check =
+                Some("changed")),
+            "changed · 2 stops"
+        );
+        assert_eq!(
+            words(row_of(finished.clone(), Where::Private), &|r| r.place =
+                at(Some(2), 1)),
+            "stop 2 · 2 stops"
+        );
+        assert_eq!(
+            words(row_of(finished.clone(), Where::Private), &|r| r.place =
+                at(None, 2)),
+            "finished · 2 stops"
+        );
+        assert_eq!(
+            words(row_of(finished.clone(), Where::Private), &nothing),
+            "new · 2 stops"
+        );
+        assert_eq!(
+            words(row_of(finished.clone(), Where::Private), &|r| r.place =
+                at(None, 1)),
+            "seen 1 of 2 · 2 stops"
+        );
+        // the first that applies wins: changed over where you are, no news over writing, stopped over where you are
+        assert_eq!(
+            words(row_of(finished.clone(), Where::Private), &|r| {
+                r.check = Some("changed");
+                r.place = at(Some(1), 0)
+            }),
+            "changed · 2 stops"
+        );
+        assert_eq!(
+            words(row_of(writing.clone(), Where::Private), &|r| {
+                r.quiet = true;
+                r.place = at(Some(1), 0)
+            }),
+            "no news · 1 of 3 stops"
+        );
+        // a project tour is shared; one stop is "1 stop"
+        assert_eq!(
+            words(row_of(finished, Where::Project), &nothing),
+            "shared · new · 2 stops"
+        );
+        let one = tour(&[
+            stop(1, "a.py", "f", ""),
+            r#"{"type":"end","at":"2026-11-23T18:47:31Z"}"#.to_string(),
+        ]);
+        assert_eq!(words(row_of(one, Where::Private), &nothing), "new · 1 stop");
+        // a tour that cannot be read
+        let broken = list_rows(
+            &[row(
+                "broken-0000",
+                Where::Private,
+                Err(Unreadable {
+                    why: "x".into(),
+                    too_new: false,
+                }),
+            )],
+            &BTreeMap::new(),
+            false,
+            &|_| true,
+        );
+        assert_eq!(broken[0].words, "cannot be read");
+    }
+
+    #[test]
+    fn a_place_says_its_stop_and_its_position_the_numbers_of_stop_3_of_10_2_of_5() {
+        let t = tour(&[
+            stop(1, "a.py", "f", ""),
+            step("s1.b1", 1, None, [12, 20]),
+            step("s1.b2", 1, Some("s1.b1"), [13, 14]),
+            stop(2, "a.py", "g", ""),
+        ]);
+        let place = |at: &str| {
+            let mut p = Place::cover();
+            p.at = At::parse(at).unwrap();
+            place_view(&t, p)
+        };
+        let on = place("s1.b2");
+        assert_eq!(on.stop.as_deref(), Some("s1"));
+        assert_eq!(
+            on.position,
+            Some(PositionView {
+                stop: 1,
+                of: 2,
+                step: 3,
+                steps: 3
+            })
+        );
+        let second = place("s2");
+        assert_eq!(
+            (second.stop.as_deref(), second.position),
+            (
+                Some("s2"),
+                Some(PositionView {
+                    stop: 2,
+                    of: 2,
+                    step: 1,
+                    steps: 1
+                })
+            )
+        );
+        for at in ["cover", "end"] {
+            let p = place(at);
+            assert_eq!((p.stop, p.position), (None, None), "{at}");
+        }
+        // a step the tour has not got is moved to the nearest, and its stop is that one's
+        assert_eq!(place("s1.b9").stop.as_deref(), Some("s1"));
+        // on the wire it is the state file's place with two keys more
+        let json = serde_json::to_value(on).unwrap();
+        assert_eq!(json["at"], "s1.b2");
+        assert_eq!(json["stop"], "s1");
+        assert_eq!(
+            json["position"],
+            serde_json::json!({"stop": 1, "of": 2, "step": 3, "steps": 3})
+        );
+        assert!(json["open"].is_boolean() && json["seen"].is_array());
+    }
+
+    #[test]
+    fn a_stops_key_follows_where_a_check_found_it() {
+        use crate::tours::check::{Now, Recorded};
+        let t = tour(&[stop(1, "a.py", "f", ""), stop(2, "a.py", "g", "")]);
+        let mut shown = tour_view(&t, Where::Private);
+        assert_eq!(shown.stops[0].key.as_deref(), Some("a.py::f"));
+        let mut recorded = Recorded::empty(0);
+        recorded.now.insert(
+            t.stops[0].id,
+            Now {
+                qualname: "f2".into(),
+                path: "b.py".into(),
+                lines: Some([3, 9]),
+            },
+        );
+        // a stop found at the same place keeps its key
+        recorded.now.insert(
+            t.stops[1].id,
+            Now {
+                qualname: "g".into(),
+                path: "a.py".into(),
+                lines: Some([3, 9]),
+            },
+        );
+        mark(
+            &mut shown,
+            &Answer {
+                from: Source::Check,
+                recorded,
+            },
+        );
+        assert_eq!(shown.stops[0].key.as_deref(), Some("b.py::f2"));
+        assert_eq!(shown.stops[1].key.as_deref(), Some("a.py::g"));
     }
 }

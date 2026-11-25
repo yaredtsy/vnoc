@@ -28,6 +28,7 @@ function parseInterfaces(source: string): Map<string, { required: Set<string>; o
 /** The interface of each object a golden holds below the one named: which key holds which, and whether it is a list. */
 const NESTED: Record<string, Record<string, { type: string; list?: boolean }>> = {
   TourRow: { root: { type: "RootView" }, place: { type: "PlaceSummary" }, offers: { type: "OffersView" }, on: { type: "OnView" } },
+  Place: { position: { type: "PositionView" } },
   TourView: { stops: { type: "TourStop", list: true }, place: { type: "Place" }, offers: { type: "OffersView" }, check: { type: "CheckInfo" } },
   TourStop: { blocks: { type: "BlockView", list: true }, reading: { type: "StepView", list: true }, now: { type: "NowView" }, as_written: { type: "AsWritten" } },
 };
@@ -62,7 +63,7 @@ test("the parser reads what tours.ts declares", () => {
   assert.ok(declared.get("TourStop")!.required.has("key"), "a stop says its tree key");
   assert.ok(declared.get("TourStop")!.optional.has("as_written"));
   assert.ok(declared.get("TourRow")!.required.has("quiet") && !declared.get("TourRow")!.required.has("title"));
-  for (const name of ["TourRow", "TourView", "TourStop", "StepView", "BlockView", "Place", "OnView", "AsWritten", "OffersView", "PlaceSummary", "RootView", "CheckInfo", "NowView"]) assert.ok(declared.has(name), name);
+  for (const name of ["TourRow", "TourView", "TourStop", "StepView", "BlockView", "Place", "PositionView", "OnView", "AsWritten", "OffersView", "PlaceSummary", "RootView", "CheckInfo", "NowView"]) assert.ok(declared.has(name), name);
 });
 
 test("tour-show.json is a TourView", () => {

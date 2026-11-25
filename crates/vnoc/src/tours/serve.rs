@@ -421,6 +421,7 @@ pub fn list_rows<R: Borrow<Row>>(
             .map(|d| d.as_secs());
         shown.quiet = view::is_quiet(tour.state, age);
         shown.place = view::place_summary(tour, place_of(&row.id).as_ref());
+        shown.words = view::row_words(shown);
     }
     out
 }
@@ -436,7 +437,7 @@ pub fn show_view(
     if let Some(pin) = tour.pin.as_ref().filter(|_| tour.pinned()) {
         shown.pin_in_repository = Some(pin::has_commit(project, &pin.commit));
     }
-    shown.place = place::settle(tour, &place.cloned().unwrap_or_default());
+    shown.place = view::place_view(tour, place.cloned().unwrap_or_default());
     shown.offers = Offering::of(project).offers(project, tour);
     shown
 }
@@ -1034,6 +1035,18 @@ impl Tours {
             Ok((_, Ok(tour))) => place::settle(&tour, &written),
             _ => written,
         })
+    }
+
+    /// A place for the pages: with its stop and position, from the tour as it is held now. A tour that cannot be read has the place as written, with neither.
+    pub fn place_view(&self, vnoc_root: &Path, id: &TourId, place: Place) -> view::PlaceView {
+        match self.row(vnoc_root, id).map(|r| r.tour.clone()) {
+            Some(Ok(tour)) => view::place_view(&tour, place),
+            _ => view::PlaceView {
+                place,
+                stop: None,
+                position: None,
+            },
+        }
     }
 
     /// `vnoc/tourGo`: [`go`], and the place it wrote is noted so the watcher's word of the write is not an echo.

@@ -424,7 +424,10 @@ impl Core {
             let moved: Vec<_> = told
                 .places
                 .iter()
-                .filter_map(|id| Some((id.clone(), state.tours.place_moved(&vnoc_root, id)?)))
+                .filter_map(|id| {
+                    let place = state.tours.place_moved(&vnoc_root, id)?;
+                    Some((id.clone(), state.tours.place_view(&vnoc_root, id, place)))
+                })
                 .collect();
             Some((changed, moved))
         })
@@ -1130,7 +1133,7 @@ fn tour(
 fn tour_go(
     core: &mut Core,
     params: protocol::TourGoParams,
-) -> impl std::future::Future<Output = Result<crate::tours::place::Place, ResponseError>> + Send + use<>
+) -> impl std::future::Future<Output = Result<crate::tours::view::PlaceView, ResponseError>> + Send + use<>
 {
     let state = core.state.clone();
     timed("tourGo", async move {
@@ -1144,7 +1147,7 @@ fn tour_go(
                 GoError::Store(e) => tour_error(e),
                 GoError::NoSuch { .. } => bad_params(e),
             })?;
-        Ok(gone.place)
+        Ok(view::place_view(&gone.tour, gone.place))
     })
 }
 
@@ -1152,16 +1155,19 @@ fn tour_go(
 fn tour_open(
     core: &mut Core,
     params: protocol::TourOpenParams,
-) -> impl std::future::Future<Output = Result<crate::tours::place::Place, ResponseError>> + Send + use<>
+) -> impl std::future::Future<Output = Result<crate::tours::view::PlaceView, ResponseError>> + Send + use<>
 {
     let state = core.state.clone();
     timed("tourOpen", async move {
         let project = open_project(&state)?;
         let vnoc_root = store::vnoc_root(project.git_root());
         let id = parse_tour(&params.id)?;
-        blocking(move || state.tours.open(&vnoc_root, &id, params.open))
-            .await?
-            .map_err(tour_error)
+        blocking(move || {
+            let place = state.tours.open(&vnoc_root, &id, params.open)?;
+            Ok(state.tours.place_view(&vnoc_root, &id, place))
+        })
+        .await?
+        .map_err(tour_error)
     })
 }
 

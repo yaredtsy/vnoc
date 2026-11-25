@@ -217,7 +217,10 @@ export function activate(ctx: vscode.ExtensionContext) {
       tours.recheck(); // the git root is known now: is `.vnoc/` above the opened folder?
     }),
     // every call tree came from the old core, and its revisions mean nothing against the new one: drop them all, fetch what is open again
-    c.onRestarted(() => callTrees.restarted()),
+    c.onRestarted(() => {
+      callTrees.restarted();
+      tours.restarted(); // the new core does not know a window shows a tour
+    }),
     { dispose: () => tours.dispose() }, // the core is told the tour is not shown any more, before it is stopped
     { dispose: () => void c.stop() },
     { dispose: () => clearTimeout(startCheck) },

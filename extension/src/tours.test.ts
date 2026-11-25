@@ -14,9 +14,13 @@ const calls = () => undefined;
 
 const stop = (id: string, key: string | null, steps: string[]): TourStop => ({
   number: Number(id.slice(1)), id, depth: 0, planned: key === null, kind: key === null ? null : "function", name: id, path: "a.py", qualname: id, key, steps: steps.length, blocks: [],
-  reading: steps.map((step) => ({ id: step, depth: step.includes(".") ? 1 : 0, parent: null, title: null, text: "", lines: null })),
+  reading: steps.map((step) => ({ id: step, kind: "intro" as const, depth: step.includes(".") ? 1 : 0, parent: null, title: null, text: "", lines: null })),
 });
-const place = (at: string, over: Partial<Place> = {}): Place => ({ at, seen: [], back: [], moved: "", by: "reader", open: true, ...over });
+const place = (at: string, over: Partial<Place> = {}): Place => ({
+  at, seen: [], back: [], moved: "", by: "reader", open: true,
+  // what the core makes of `at` (the tests do not compute it: `s1.b1` is stop s1)
+  stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, ...over,
+});
 const view = (at: string, over: Partial<TourView> = {}): TourView => ({
   id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 3, planned: 0, steps: 5, minutes: 1, pinned: false, writing: null, offers: null, problems: [],
   place: place(at),
@@ -51,23 +55,22 @@ test("the re-read runs only while a tour is open and .vnoc/ is above the opened 
   assert.equal(shouldPoll(false, false), false);
 });
 
-test("the selection is the current stop's key: found by the step the place is at; at the cover or the end, the first stop's; none for a stop with no node", () => {
+test("the selection is the current stop's key, read from `place.stop`; at the cover or the end, the first stop's; none for a stop with no node", () => {
   assert.equal(selectionKey(view("cover")), "a.py::f");
   assert.equal(selectionKey(view("end")), "a.py::f");
   assert.equal(selectionKey(view("s1.b1")), "a.py::f");
   assert.equal(selectionKey(view("s2")), "a.py::g");
   assert.equal(selectionKey(view("s3")), null, "a planned stop has no node");
-  assert.equal(selectionKey(view("s9")), "a.py::f", "a step the view does not have: the first stop");
+  assert.equal(selectionKey(view("s1", { place: place("s1", { stop: "s2" }) })), "a.py::g", "the core's word is the stop, not the step id");
+  assert.equal(selectionKey(view("s9")), null, "a stop the view does not have selects nothing");
   assert.equal(selectionKey(view("cover", { stops: [] })), null, "a tour with no stop");
 });
 
 test("a row of Open Tour… says what the row says", () => {
-  const row: TourRow = { id: "t-1", folder: "private", readable: true, title: "Retry charge", question: "Why does it retry?", quiet: false, root: null, place: null, offers: null };
-  assert.deepEqual({ ...pickItem(row), row: undefined }, { label: "Retry charge", description: undefined, detail: "Why does it retry?", row: undefined });
-  const on: TourRow = { ...row, on: { how: "stops", stops: [3], inside: 0, first: "s3", of: 10, words: "stop 3 of 10" } };
-  assert.equal(pickItem(on).description, "stop 3 of 10");
-  const broken: TourRow = { id: "t-9", folder: "private", readable: false, problem: "line 1: not a tour", quiet: false, root: null, place: null, offers: null };
-  assert.deepEqual({ ...pickItem(broken), row: undefined }, { label: "t-9", description: undefined, detail: "line 1: not a tour", row: undefined });
+  const row: TourRow = { id: "t-1", folder: "private", readable: true, title: "Retry charge", question: "Why does it retry?", quiet: false, root: null, place: null, offers: null, words: "stop 4 · 9 stops" };
+  assert.deepEqual({ ...pickItem(row), row: undefined }, { label: "Retry charge", description: "stop 4 · 9 stops", detail: "Why does it retry?", row: undefined });
+  const broken: TourRow = { id: "t-9", folder: "private", readable: false, problem: "line 1: not a tour", quiet: false, root: null, place: null, offers: null, words: "cannot be read" };
+  assert.deepEqual({ ...pickItem(broken), row: undefined }, { label: "t-9", description: "cannot be read", detail: "line 1: not a tour", row: undefined });
 });
 
 // ── the holder, with a host that is only a record ─────────────────────────────────────────────────────────────────────────
@@ -263,6 +266,20 @@ test("the git root becoming known starts the re-read of a tour that was opened b
   assert.equal(h.timers.length, 1);
   tours.recheck();
   assert.equal(h.timers.length, 1, "once");
+});
+
+test("a core that started again is told the tour is shown, and asked for it again", async () => {
+  const h = makeHost({ above: false });
+  const tours = new Tours(h.host);
+  tours.restarted(); // nothing open: nothing to say
+  assert.equal(h.requests.length, 0);
+  h.openTour();
+  tours.sync();
+  await settle();
+  h.requests.length = 0;
+  tours.restarted();
+  await settle();
+  assert.deepEqual(h.requests, [["vnoc/tourOpen", { id: "t-1", open: true }], ["vnoc/tour", { id: "t-1" }]]);
 });
 
 test("the window going tells the core the tour is not shown and stops the re-read", async () => {

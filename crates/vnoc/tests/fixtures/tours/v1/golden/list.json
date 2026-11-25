@@ -22,6 +22,7 @@
       "state": "finished",
       "steps": 1,
       "title": "rate_for",
+      "words": "new · 1 stop",
       "written": 1
     },
     {
@@ -49,6 +50,7 @@
       "state": "finished",
       "steps": 5,
       "title": "retry_charge, then the invoice",
+      "words": "shared · stop 3 · 3 stops",
       "written": 3
     }
   ]

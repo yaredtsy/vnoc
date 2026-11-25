@@ -51,23 +51,20 @@ export function vnocIsAbove(openedFolder: string | undefined, gitRoot: string | 
 export const shouldPoll = (open: boolean, vnocAbove: boolean): boolean => open && vnocAbove;
 
 /**
- * The key of the node the tour context selects for a place the host holds: the current stop's, found as the stop whose steps include the place's step; at the cover or
- * at the end, the first stop's. `null` when that stop has no node in the tree (planned, or gone).
+ * The key of the node the tour context selects for a place the host holds: the current stop's (`place.stop`, the core's), the first stop's at the cover and at the end.
+ * `null` when that stop has no node in the tree (planned, or gone).
  */
 export function selectionKey(view: TourView): string | null {
-  const at = view.place.at;
-  const first = view.stops[0];
-  const stop = at === "cover" || at === "end" ? first : (view.stops.find((s) => s.reading.some((step) => step.id === at)) ?? first);
+  const stop = view.place.stop === null ? view.stops[0] : view.stops.find((s) => s.id === view.place.stop);
   return stop?.key ?? null;
 }
 
 /**
- * One row of Open Tour…'s QuickPick (design 02 frame 10), in the core's own words and in its order: the label is the tour's title (its id for a tour that cannot be read),
- * the description how the tour is on a node when the row says it, the detail the question the tour answers, or why it cannot be read. The core has no line 2 for a row
- * in `TourRow` yet (its `list` text has one: stops, when, where you are); until it does, the picker says no more than the row does.
+ * One row of Open Tour…'s QuickPick (design 02 frame 10), in the core's own words and in its order: the label is the tour's title (its id for a tour that cannot be
+ * read), the description the row's second line (`words`: the state word and the size), the detail the question the tour answers, or why it cannot be read.
  */
-export function pickItem(row: TourRow): { label: string; description?: string; detail?: string; row: TourRow } {
-  return { label: row.title ?? row.id, description: row.on?.words, detail: row.readable ? row.question : row.problem, row };
+export function pickItem(row: TourRow): { label: string; description: string; detail?: string; row: TourRow } {
+  return { label: row.title ?? row.id, description: row.words, detail: row.readable ? row.question : row.problem, row };
 }
 
 /** The context of the session that shows a tour: at most one. */
@@ -110,6 +107,13 @@ export class Tours {
       this.poll.stop();
       this.poll = undefined;
     }
+  }
+
+  /** The core started again: it does not know a window shows a tour. Told again, and the tour asked for again (the core's answer may differ: the files were read anew). */
+  restarted(): void {
+    const open = this.open;
+    if (!open) return;
+    void this.tell(open.id, true).then(() => this.refresh(open.id));
   }
 
   /** `vnoc/toursChanged`. */
