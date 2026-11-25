@@ -457,7 +457,8 @@ refusals; share, then Make Private Again; delete, then Undo.
 Commit: `tours TR22: pin, commit and pin, IDs, share, edit as JSON, delete with undo`.
 
 **Cut in two** ([`05`](05-on-screen.md) §5, "TR22 is cut in two"): **TR22a** pin and IDs (with TR21b's review fixes first),
-**TR22b** the rest. Each two commits.
+**TR22b** the rest. Each two commits. Between them, **TR22r** (the big files split, only moved) and **TR22s** (the window suites
+can be trusted): [`05`](05-on-screen.md) §5, "Next, in this order".
 
 ### TR23 Small canvases, keys, access
 

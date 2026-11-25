@@ -414,6 +414,33 @@ asks only when what it reads really changed. Screenshots by Playwright: `tools/m
 - **Tour Settings…** (the section's `⋯`, its only entry for now): a QuickPick of the two settings, then of the three values, written
   through `tourSettings`.
 
+**As built (TR22a, `27b9471`, `07ddea0`).** `tourCalls` always ends; the row's `state_word` (empty for an unreadable row); the label
+strip and the pressed switch. `vnoc/tourPin { dry }` (a new `Ask::Look`; with `commit` too: `INVALID_PARAMS`), reasons with `words`
+in the request's answers (the CLI already prints the words); **Pin** on uncommitted files answers `not_pinned`, and both answers offer
+**Commit and Pin…**. The cover's reason names the count; the files are in the dialog. The dialog, Write IDs with save-first ("Every
+stop already has an ID." when none was written; a failed save stops it), the section's `⋯` with **Tour Settings…**, and the palette
+command `vnoc.tourSettings`. The suite resets its workspace with `git reset --hard` to the head at its start and restores
+`vnoc.toml`. Rust 556 lib, 72 lifecycle; TS 865 / 295 / 417. No screenshots (the script `tools/media/out/tr22a-shots.mjs` was never
+run). The row's menu is right-click only (its hover `⋯` → TR23).
+
+**The window suites are not reliable** (TR22a's end): two full runs failed 15 and 5 (3 of them Bend), both at *"a function deleted…"*
+(it passed in TR21b's full run), and in the second the core stopped answering `vnoc/tours` (the hook's request never returned). Alone,
+`VNOC_SUITE=tour` failed about one run in three, before TR22a as after, under load (another session's job), each time as one test
+followed by a chain of failures. The core's index update has no time limit on its driver calls and holds `one_at_a_time`; a real check
+waits for it, and waiting requests fill the core's slots: one hung driver call can stop every request. Not proven.
+
+**Next, in this order:**
+- **TR22r: the big files split, only moved** (the user, 2026-11-25). `server.rs` (1,830 lines; 812 on `main`) becomes `server/`:
+  `mod.rs` (the core, the state, the request table, `files_changed`), `index.rs` (structure, search, update), `docs.rs` (attach,
+  relink, write ID, trash), `calls.rs`, `tours.rs` (every `vnoc/tour*`, `answers_for`, the count of calls). `cli/tour.rs` (3,165) becomes
+  `cli/tour/`: `mod.rs` (dispatch), `write.rs` (start, add, finish), `read.rs` (list, show, route, where, go), `act.rs` (the
+  rest). No behaviour, name or test changes; two commits. Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a
+  `tour` module; `tours/view.rs` types and text apart.
+- **TR22s: the suites can be trusted.** Find why the core stops answering in the full run (`sample` the core when `ping` does not
+  answer; a time limit on the update's driver calls), make every window test fail within about 10 s when the core does not answer,
+  start each `tour` test from a clean state (no context open, the workspace reset) so one failure does not chain, and drive **Open
+  Tour…** by its command, not the keyboard's focus. Then TR22a's screenshots. Then **TR22b**.
+
 ## 6. Who draws what
 
 | | Does | Does not |
