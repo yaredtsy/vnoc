@@ -25,18 +25,18 @@ One `vnoc tour` command per call, with the tour's id written out. No `T=…` or 
 newline: the host allows only a command it can read, and asks the user about anything else.
 
 ## The text of a stop
-    <one paragraph: what this function is for>
+    <what this function is for>
 
     ## 11-24 <a title: what this part does, as a phrase>
-    <one paragraph: why the code needs it>
+    <why the code needs it>
 
     ### 11-16 <a detail inside lines 11-24>
-    <one paragraph>
+    <text>
 
 - General first, then detail. Most stops need two or three `##` blocks and no `###`. Use `###` only to take a long part apart.
 - The line numbers are the file's, as `vnoc code` printed them.
 - Say **why**, not what: the code is on screen beside your text. Never retell it line by line.
-- A step is one short paragraph. No lists, no code blocks. `code` and *emphasis* are fine.
+- A step is short Markdown that says why. A set of things is a list or a table. A flow across stops or files is a ```` ```mermaid ```` flowchart, one per step, best in the first stop's intro of a tour across files. A code fence only for what is not on screen (an example call, a payload), never the stop's own code. No headings, HTML or images in a text.
 - A block's title says what the part does ("Retry only a dropped connection"), not the function's name.
 - No block for a line that only starts or returns.
 - A function under 8 lines is one step: the first paragraph only.
@@ -45,7 +45,7 @@ newline: the host allows only a command it can read, and asks the user about any
   A stop planned as a second visit (shown as `= s2` by `show` and `route`) takes `--same-as s2` too: the plan does not do it for you.
 
 ## When a command refuses
-It lists what is wrong (`block 2 text: 412 of 280 characters`). Fix exactly that and send the stop again.
+It lists what is wrong (`block 2 text: 512 of 420 characters`). Fix exactly that and send the stop again.
 If it says the user **stopped** the tour: add nothing more, say the one line it gives you.
 
 ## When the user talks about the tour

@@ -49,26 +49,27 @@ stop s1          a node: its intro, then its blocks
 - Ids are never used again: a dropped `s2` leaves `s2` empty for good.
 
 ## The text of a stop
-    <the intro: one paragraph, what this node is for>
+    <the intro: what this node is for>
 
     ## 15-17 <a title: a phrase, no full stop>
-    <one paragraph: why these lines are there>
+    <why these lines are there>
 
     ### 15-16 <a detail inside lines 15-17>
-    <one paragraph>
+    <text>
 
 The line numbers are the file's, as `vnoc code` printed them (`## 24` is one line). Budgets, in characters, by `--detail`
-(`quick`, `normal` the default, `detailed`; set at `start`):
+(`quick`, `normal` the default, `detailed`; set at `start`). Only the prose counts, not fences or tables:
 
 | | quick | normal | detailed |
 |---|---|---|---|
-| a stop's intro | 160 | 280 | 480 |
-| a block's text | 160 | 280 | 600 |
-| a `--same-as` sentence | 120 | 120 | 160 |
+| a stop's intro | 240 | 420 | 720 |
+| a block's text | 240 | 420 | 900 |
+| a `--same-as` sentence | 180 | 180 | 240 |
 | a title | 60 | 60 | 60 |
 
-At most 12 blocks in a stop (details count), 40 stops in a tour, 64 KB of text in a call. No list, table, code fence, image, link or
-HTML; `code` and *emphasis* are fine. Nothing is written when anything is wrong. Every problem is listed; fix them all, send the whole stop:
+At most 12 blocks in a stop (details count), 40 stops in a tour, 64 KB of text in a call. A text may hold paragraphs, `code`, *emphasis*,
+**strong**, lists, tables (12 rows), quotes, links, code fences (30 lines) and one ` ```mermaid ` fence. Refused: HTML, images, headings,
+a second diagram. Nothing is written when anything is wrong. Every problem is listed; fix them all, send the whole stop:
 ```
 vnoc tour start --title "orders"
 vnoc tour add orders-7k2q orders/models.py::Order --body-file - <<'EOF'  # exit 2
@@ -95,18 +96,14 @@ error: not written: 1 problem
   fix them, then send the whole stop again
     OrderService.place is 4 lines: a stop this short is one step. Put it all in the first paragraph
 ```
-Others you may meet: `intro: 533 of 280 characters` (a budget), `block 1 title ends with a full stop`, `block 2: lines 30-35 are outside Order (14-21)`,
-`--line 99 is outside OrderService.parse_order (10-13)`, `--from s7: this tour has no stops yet`, `no stop s9 in this tour` with the nearest ids.
-A refusal is a to-do list. Do not send the same text again.
+Others you may meet: `intro: 533 of 420 characters` (a budget), `block 1 title ends with a full stop`, `block 2: lines 30-35 are outside Order (14-21)`,
+`--line 99 is outside OrderService.parse_order (10-13)`, `--from s7: this tour has no stops yet`, `no stop s9 in this tour` with the nearest ids. A refusal is a to-do list: do not send the same text again.
 
 ## Writing well
 Say why, not what. The code is on screen beside the text.
 ```markdown
 bad:   It loops over the items and makes a Line for each one, then returns an Order.
 good:  Parsing and building are one step, so a half-built Order can never be seen by a caller.
-
-bad:   Title: "This block creates the lines of the order."
-good:  Title: "Build the lines"
 
 bad:   Title: "retry_charge" (the function's name, which the stop already has)
 good:  Title: "Retry only a dropped connection" (what the part does)
@@ -116,6 +113,22 @@ good:  three blocks for the three parts, and a ### inside the one part that need
 
 bad:   a second full stop on check_stock, retelling it
 good:  --same-as s2, one sentence: "Called again here, before the stock is taken."
+
+bad:   a list or a code fence that retells the stop's own lines (they are on screen)
+good:  a list for things to tell apart; a fence for what is not on screen: an example call, a payload
+```
+A flow across stops or files is a diagram: one ` ```mermaid ` flowchart a step, best in the first stop's intro of a tour across files.
+One that retells a function's body is the same bad fence; draw the files and the calls between them:
+```
+vnoc tour start --title "orders" --question "how does an order get saved" --author claude-code
+vnoc tour add orders-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'
+place is the front door of an order: raw input in, a saved Order out.
+
+```mermaid
+flowchart LR
+  raw[raw input] --> parse[OrderService.parse_order] --> order[Order] --> save[save]
+```
+EOF
 ```
 Most stops need two or three `##` blocks and no `###`. No block for a line that only starts or returns. A stop planned as a second visit (`= s2` in `show` and `route`) takes `--same-as s2` too;
 the plan does not do it for you.
