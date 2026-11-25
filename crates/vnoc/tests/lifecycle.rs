@@ -3901,6 +3901,53 @@ fn tour_counts_counts_tours_not_stops_by_the_key_of_structure_and_a_tour_write_n
     core.finish();
 }
 
+fn tour_calls(core: &mut Core, id: &str) -> Value {
+    core.request("vnoc/tourCalls", json!({ "id": id })).unwrap()
+}
+
+#[test]
+fn tour_calls_counts_the_callees_that_are_not_stops_once_each_and_keeps_the_answer_until_a_stop_file_changes()
+ {
+    let root = tour_git_project("calls");
+    let (mut core, _) = ready_core(&root);
+    // `place` calls `parse_order`; `parse_order` calls `Line` and `Order`
+    let alone = finished_tour(&root, "place alone", &[PLACE]);
+    let both = finished_tour(&root, "place then parse", &[PLACE, PARSE]);
+    let file = finished_tour(&root, "a file", &["orders/service.py"]);
+    for id in [&alone, &both, &file] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+    // the callee is not a stop: counted
+    let answer = tour_calls(&mut core, &alone);
+    println!("tourCalls: {answer}");
+    assert_eq!(answer, json!({ "off": { "s1": 1 } }));
+    // the callee is a stop of the tour: not counted; the stop that calls two more is
+    assert_eq!(tour_calls(&mut core, &both), json!({ "off": { "s2": 2 } }));
+    // a file is not a function or a class
+    assert_eq!(tour_calls(&mut core, &file), json!({ "off": {} }));
+    // an id that is not a tour
+    assert_eq!(
+        core.request("vnoc/tourCalls", json!({ "id": "t-nope" }))
+            .unwrap_err()["code"],
+        -32602
+    );
+
+    // a second ask is the core's memory: the source was edited behind its back, and the answer is the one it gave
+    let service = root.join("orders/service.py");
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(
+        &service,
+        text.replace("order = self.parse_order(raw)", "order = raw"),
+    )
+    .unwrap();
+    assert_eq!(tour_calls(&mut core, &alone), json!({ "off": { "s1": 1 } }));
+    // the editor says the file changed: the answer is dropped (and the tour is told of it), and asked anew
+    core.notify("vnoc/filesChanged", json!({ "paths": [service] }));
+    core.wait_for("vnoc/toursChanged");
+    assert_eq!(tour_calls(&mut core, &alone), json!({ "off": {} }));
+    core.finish();
+}
+
 #[test]
 fn tour_code_gives_the_old_lines_of_a_pinned_tour_and_null_when_there_are_none_to_give() {
     let root = tour_git_project("code");

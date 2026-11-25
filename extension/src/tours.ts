@@ -3,7 +3,7 @@ import * as path from "path";
 import type { Events } from "@vnoc/shared/messages";
 import type { ContextId, ContextState, Intent, Session } from "@vnoc/shared/session.ts";
 import { isWriting, statusBarText, toAnnounce } from "@vnoc/shared/tourWriting.ts";
-import type { AsWritten, Place, StopId, TourCoreRequests, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { AsWritten, Place, StopId, TourCallsAnswer, TourCoreRequests, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
 // The host's holder of tours (docs/26-tours/05-on-screen.md §5, §6). It asks the core, holds the open tour's `TourView` with its place, passes it to the pages, and sets
 // the tour context's selection from the place. It computes nothing about a tour (P1): which stop is current, what comes next, whether anything changed are the core's
@@ -33,20 +33,20 @@ export interface ToursDeps {
   statusBar(text: string | null): void;
   /** the one notification (W11): a tour started being written and it was not opened for the reader. It has **Open Tour**; nothing opens by itself */
   announce(row: TourRow): void;
-  /** the canvas is showing a tour: it is open, in front, and its active context is a tour */
-  canvasShowsTour(): boolean;
   /** the canvas is open and in front, whatever its active context is */
   canvasVisible(): boolean;
   /** makes the tour the window's tour context, active, at the cover (W11: the canvas is visible and the window has no tour open) */
   open(row: TourRow): void;
 }
 
-/** What a tour that appears and is being written does (W11, design 02 frame 2): `open` its context when the canvas is visible and no tour is open; else `notify` once, except `none` when the canvas is already showing a tour (the open one stays, and the list has the new one). */
-export type Appearance = "open" | "notify" | "none";
+/**
+ * What a tour that appears and is being written does (W11, design 02 frame 2, design 05 §5): `open` its context when the canvas is visible and no tour is open; else `notify`, once per
+ * tour, whatever the canvas shows (a second tour while one is open is announced, and the open tour stays).
+ */
+export type Appearance = "open" | "notify";
 
-export function appearance(canvas: { visible: boolean; tourOpen: boolean; showsTour: boolean }): Appearance {
-  if (canvas.visible && !canvas.tourOpen) return "open";
-  return canvas.showsTour ? "none" : "notify";
+export function appearance(canvas: { visible: boolean; tourOpen: boolean }): Appearance {
+  return canvas.visible && !canvas.tourOpen ? "open" : "notify";
 }
 
 /** The ids of the rows a list can ask the core to check: the ones that can be read, each once (a shared tour and its private copy are two rows with one id). */
@@ -203,9 +203,14 @@ export class Tours {
     return this.host.request("vnoc/tourCode", { id, stop });
   }
 
+  /** The page's `tourCalls`: the calls of the tour's written stops that are not on it (`vnoc/tourCalls`). */
+  async calls(id: TourId): Promise<TourCallsAnswer> {
+    return this.host.request("vnoc/tourCalls", { id });
+  }
+
   /**
    * A tour that was not in the last list and is being written, once (W11): with the canvas visible and no tour open it becomes the window's tour context, at the cover; otherwise it is
-   * announced, unless the canvas is showing a tour (the list shows it, and the open tour stays). Nothing already open is replaced.
+   * announced, whatever the canvas shows. Nothing already open is replaced.
    */
   private notice(tours: TourRow[]): void {
     const fresh = toAnnounce(tours, this.known, this.announced);
@@ -213,7 +218,7 @@ export class Tours {
     let tourOpen = tourContext(this.host.session()) !== undefined;
     for (const row of fresh) {
       this.announced.add(row.id);
-      const what = appearance({ visible: this.host.canvasVisible(), tourOpen, showsTour: this.host.canvasShowsTour() });
+      const what = appearance({ visible: this.host.canvasVisible(), tourOpen });
       if (what === "open") {
         tourOpen = true; // the next one of this list finds a tour open
         this.host.open(row);

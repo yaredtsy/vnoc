@@ -1,6 +1,6 @@
 import type { CallTreeResult, CodeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
-import type { AsWritten, Place, StopId, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { AsWritten, Place, StopId, TourCallsAnswer, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
 import type { Docs } from "./docs";
 
@@ -59,6 +59,7 @@ export interface Deps {
     go(id: TourId, move: TourMove): Promise<Place>;
     halt(id: TourId): Promise<TourHaltAnswer>;
     code(id: TourId, stop: StopId): Promise<AsWritten | null>;
+    calls(id: TourId): Promise<TourCallsAnswer>;
   };
 }
 
@@ -96,6 +97,7 @@ export function createHandlers(d: Deps): Handlers {
     tourGo: ({ id, move }) => d.tours.go(id, move),
     tourHalt: ({ id }) => d.tours.halt(id),
     tourCode: ({ id, stop }) => d.tours.code(id, stop),
+    tourCalls: ({ id }) => d.tours.calls(id),
   };
 }
 

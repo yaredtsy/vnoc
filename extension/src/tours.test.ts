@@ -76,7 +76,7 @@ test("a row of Open Tour… says what the row says", () => {
 // ── the holder, with a host that is only a record ─────────────────────────────────────────────────────────────────────────
 
 /** A host: the core answers from `answers`, every request and event is kept, the session is a real one, and `every` is a clock the test turns. */
-function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; canvasShows?: boolean; canvasVisible?: boolean }) {
+function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; canvasVisible?: boolean }) {
   let session: Session = emptySession();
   const requests: [string, unknown][] = [];
   const events: [string, unknown][] = [];
@@ -84,7 +84,6 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
   const timers: { ms: number; run: () => void; stopped: boolean }[] = [];
   let answer = opts.answer ?? view("cover");
   let rows = opts.rows ?? [];
-  let canvasShows = opts.canvasShows ?? false;
   let canvasVisible = opts.canvasVisible ?? false;
   const opened: string[] = [];
   const status: (string | null)[] = [];
@@ -111,7 +110,6 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
     log: () => {},
     statusBar: (text) => void status.push(text),
     announce: (row) => void announced.push(row.id),
-    canvasShowsTour: () => canvasShows,
     canvasVisible: () => canvasVisible,
     open: (row) => {
       opened.push(row.id);
@@ -125,7 +123,6 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
     setCanvasVisible: (visible: boolean) => (canvasVisible = visible),
     setRows: (r: TourRow[]) => (rows = r),
     rows: () => rows,
-    setCanvasShows: (shows: boolean) => (canvasShows = shows),
     host,
     requests,
     events,
@@ -381,27 +378,24 @@ test("a tour that appears while the window is open is announced once, when it is
   assert.deepEqual(h.announced, ["t-1"], "once per tour");
   assert.equal(tourContext(h.session()), undefined, "nothing was opened");
   assert.deepEqual(h.opened, []);
-  // a canvas that is showing a tour is not told: the list has the new one, and the open tour stays
+  // a canvas that is showing a tour is told too (design 05 §5): a second tour while one is open is announced, once; the open tour stays
   h.openTour("t-0");
   h.setCanvasVisible(true);
-  h.setCanvasShows(true);
   h.setRows([row("t-2"), row("t-1"), row("t-0", { state: "finished" })]);
   tours.toursChanged(["t-2"]);
   await settle();
-  assert.deepEqual(h.announced, ["t-1"]);
+  assert.deepEqual(h.announced, ["t-1", "t-2"]);
   assert.deepEqual(h.opened, [], "a tour is open: the new one does not replace it");
-  h.setCanvasShows(false);
   tours.toursChanged(["t-2"]);
   await settle();
-  assert.deepEqual(h.announced, ["t-1"], "t-2 was seen while a tour was shown: that was its one chance");
+  assert.deepEqual(h.announced, ["t-1", "t-2"], "once per tour");
 });
 
 test("W11: the canvas visible and no tour open: a tour that appears and is being written becomes the tour context; with one open, or the canvas hidden, it is announced", async () => {
-  assert.equal(appearance({ visible: true, tourOpen: false, showsTour: false }), "open");
-  assert.equal(appearance({ visible: true, tourOpen: true, showsTour: false }), "notify", "a tour is open and the canvas shows something else");
-  assert.equal(appearance({ visible: true, tourOpen: true, showsTour: true }), "none", "the open tour is on screen: the list has the new one");
-  assert.equal(appearance({ visible: false, tourOpen: false, showsTour: false }), "notify");
-  assert.equal(appearance({ visible: false, tourOpen: true, showsTour: false }), "notify");
+  assert.equal(appearance({ visible: true, tourOpen: false }), "open");
+  assert.equal(appearance({ visible: true, tourOpen: true }), "notify", "a tour is open, whether or not the canvas is showing it: the second tour is announced");
+  assert.equal(appearance({ visible: false, tourOpen: false }), "notify");
+  assert.equal(appearance({ visible: false, tourOpen: true }), "notify");
   // through the holder
   const h = makeHost({ above: false, rows: [row("t-0", { state: "finished" })], canvasVisible: true });
   const tours = new Tours(h.host);
@@ -500,4 +494,11 @@ test("■ Stop is the core's halt, and the tour is asked for again so that the s
   await tours.halt("t-1");
   assert.deepEqual(h.requests.filter(([m]) => m === "vnoc/tourHalt"), [["vnoc/tourHalt", { id: "t-1" }]]);
   assert.equal(((await tours.get("t-1")) as TourView).state, "stopping", "the pages are sent the state the core has now");
+});
+
+test("the page's tourCalls is the core's vnoc/tourCalls for that tour", async () => {
+  const h = makeHost({ above: false });
+  const tours = new Tours(h.host);
+  await tours.calls("t-1");
+  assert.deepEqual(h.requests.at(-1), ["vnoc/tourCalls", { id: "t-1" }]);
 });

@@ -273,6 +273,11 @@ export interface TourCountsAnswer {
   counts: Record<string, number>;
 }
 
+/** `vnoc/tourCalls`: for each written function or class stop of a tour, how many of the functions it calls are not a stop of the tour (the card's `+N`). A stop with none is not in it. */
+export interface TourCallsAnswer {
+  off: Record<StopId, number>;
+}
+
 export interface PinChanged {
   /** git's two-letter status: ` M`, `M `, `??` … */
   status: string;
@@ -413,6 +418,7 @@ export interface TourCoreRequests {
   "vnoc/tourRestore": { params: { token: string }; result: TourRestoreAnswer };
   "vnoc/tourSettings": { params: { ids?: SettingChoice; commit?: SettingChoice } | undefined; result: TourSettingsAnswer };
   "vnoc/tourCounts": { params: undefined; result: TourCountsAnswer };
+  "vnoc/tourCalls": { params: { id: TourId }; result: TourCallsAnswer };
 }
 
 /** The two notifications the core sends (03 §8). */

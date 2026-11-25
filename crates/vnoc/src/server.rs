@@ -48,6 +48,7 @@ use crate::tours::find;
 use crate::tours::on::{self, Query};
 use crate::tours::place::Move;
 use crate::tours::record::{StopId, TourId};
+use crate::tours::route;
 use crate::tours::serve::{self, Cannot, GoError, Touch, Tours};
 use crate::tours::settings::{Choice, Key};
 use crate::tours::store::{self, Halt, StoreError};
@@ -102,9 +103,9 @@ pub struct Core {
     state: Arc<State>,
 }
 
-impl Core {
-    fn new(client: ClientSocket) -> Core {
-        let state = State {
+impl State {
+    fn new() -> State {
+        State {
             project: OnceLock::new(),
             index: RwLock::default(),
             status: tokio::sync::watch::channel(Status::Building).0,
@@ -114,11 +115,16 @@ impl Core {
             corpus: Mutex::new(None),
             doc_index: Mutex::new(None),
             tours: Tours::default(),
-        };
+        }
+    }
+}
+
+impl Core {
+    fn new(client: ClientSocket) -> Core {
         Core {
             client,
             host: Arc::default(),
-            state: Arc::new(state),
+            state: Arc::new(State::new()),
         }
     }
 
@@ -244,6 +250,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<protocol::TourHalt, _>(tour_halt)
         .request::<protocol::TourCode, _>(tour_code)
         .request::<protocol::TourCounts, _>(tour_counts)
+        .request::<protocol::TourCalls, _>(tour_calls)
         .request::<protocol::TourPin, _>(tour_pin)
         .request::<protocol::TourIds, _>(tour_ids)
         .request::<protocol::TourEdit, _>(tour_edit)
@@ -988,39 +995,46 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(work).await.map_err(internal)
 }
 
-/// The answer for each of these tours: the core's memory, the recorded check, a check (03 §3). The index is waited for only when some tour needs a check, and
-/// the answer is asked for first with the index the core has, if its first build is done.
+/// The answer for each of these tours: the core's memory, the recorded check, a check (03 §3). The first two rungs need no index, so they are asked first with none:
+/// a tour whose answer is remembered or recorded is answered while the first build or an update is still running. Only a real check waits: for the first build, then
+/// for an update that is running (a check made against the index it is about to replace would record a stale answer), then it is made with the index.
 async fn answers_for(
     state: &Arc<State>,
     rows: Vec<Arc<store::Row>>,
 ) -> Result<std::collections::BTreeMap<TourId, Answer>, ResponseError> {
-    let mut with_index = matches!(*state.status.borrow(), Status::Ready);
-    loop {
-        // an update that is running is waited for: a check made against the index it is about to replace would record a stale answer
-        drop(state.one_at_a_time.lock().await);
-        let (held, rows) = (state.clone(), rows.clone());
-        let asked = blocking(move || {
-            let project = held.project.get().ok_or(Cannot::Store(StoreError::Refused(
-                "no folder is open".into(),
-            )))?;
-            let ask = serve::Ask {
-                vnoc_root: &store::vnoc_root(project.git_root()),
-                project,
-                index: with_index.then_some(&held.index),
-            };
-            held.tours.answers(&ask, &rows, Mode::default())
-        })
-        .await?;
-        match asked {
-            Ok(done) => return Ok(done),
-            Err(Cannot::Store(e)) => return Err(tour_error(e)),
-            Err(Cannot::NeedsIndex) if !with_index => {
-                ready_project(state).await?;
-                with_index = true;
-            }
-            Err(Cannot::NeedsIndex) => return Err(internal("the index is not ready")),
-        }
+    match ask_tours(state, &rows, false).await? {
+        Ok(done) => return Ok(done),
+        Err(Cannot::Store(e)) => return Err(tour_error(e)),
+        Err(Cannot::NeedsIndex) => {}
     }
+    ready_project(state).await?;
+    drop(state.one_at_a_time.lock().await);
+    match ask_tours(state, &rows, true).await? {
+        Ok(done) => Ok(done),
+        Err(Cannot::Store(e)) => Err(tour_error(e)),
+        Err(Cannot::NeedsIndex) => Err(internal("the index is not ready")),
+    }
+}
+
+/// One ask of the core's tours, with the index or without.
+async fn ask_tours(
+    state: &Arc<State>,
+    rows: &[Arc<store::Row>],
+    with_index: bool,
+) -> Result<Result<std::collections::BTreeMap<TourId, Answer>, Cannot>, ResponseError> {
+    let (held, rows) = (state.clone(), rows.to_vec());
+    blocking(move || {
+        let project = held.project.get().ok_or(Cannot::Store(StoreError::Refused(
+            "no folder is open".into(),
+        )))?;
+        let ask = serve::Ask {
+            vnoc_root: &store::vnoc_root(project.git_root()),
+            project,
+            index: with_index.then_some(&held.index),
+        };
+        held.tours.answers(&ask, &rows, Mode::default())
+    })
+    .await
 }
 
 /// The node `text` names, as the question `list --on` asks of the map. Waits for the first build. The root of the tree is every tour's: refused in the
@@ -1272,6 +1286,118 @@ fn tour_counts(
             .ok_or_else(|| internal("no folder is open"))?
         };
         Ok(serde_json::json!({ "counts": counts }))
+    })
+}
+
+/// `vnoc/tourCalls`: for each written function or class stop, how many of the functions it calls, one level down, are not a stop of this tour (design 04 §3: the
+/// card's `+N`). The callees are the ones `vnoc tour route` finds ([`route::from_calls`], one level, the same `known`), each counted once, by tree key. Kept in the
+/// core until the tour's file or a stop's file changes; waits for the first build.
+fn tour_calls(
+    core: &mut Core,
+    params: protocol::TourParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("tourCalls", async move {
+        let state = core.state.clone();
+        let project = ready_project(&state).await?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let row = {
+            let (state, vnoc_root, id) = (state.clone(), vnoc_root.clone(), id.clone());
+            blocking(move || state.tours.row(&vnoc_root, &id)).await?
+        }
+        .ok_or_else(|| bad_params(StoreError::NotFound(id.clone())))?;
+        let found = row.tour.as_ref().map_err(|e| {
+            bad_params(StoreError::Unreadable {
+                id: id.clone(),
+                why: e.why.clone(),
+                too_new: e.too_new,
+            })
+        })?;
+        if let Some(off) = state.tours.calls_kept(&id) {
+            return Ok(serde_json::json!({ "off": off }));
+        }
+        // the stops as the view has them: where each is now (a check moved its key), which are written, which are gone
+        let answer = answers_for(&state, vec![row.clone()]).await?.remove(&id);
+        let shown = {
+            let (state, row, found) = (state.clone(), row.clone(), found.clone());
+            blocking(move || {
+                let project = state.project.get()?;
+                let root = store::vnoc_root(project.git_root());
+                let mut shown = serve::show_view(
+                    project,
+                    &found,
+                    row.place,
+                    &row.path,
+                    store::read_place(&root, &row.id).as_ref(),
+                );
+                if let Some(answer) = &answer {
+                    view::mark(&mut shown, answer);
+                }
+                Some(shown)
+            })
+            .await?
+            .ok_or_else(|| internal("no folder is open"))?
+        };
+        let revision = state.index.read().unwrap().revision();
+        let tree = {
+            let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+            index.tree(&project.name(), project.prefix())
+        };
+        let stops_of_the_tour: std::collections::BTreeSet<&str> =
+            shown.stops.iter().filter_map(|s| s.key.as_deref()).collect();
+        let known = |target: &vnoc_driver_protocol::CallTarget| {
+            let location = vnoc_domain::LocationKey::new(
+                project.repo_path(target.file.as_deref()?).ok()?,
+                target.qualname.clone(),
+                target.occurrence,
+            )
+            .ok()?;
+            tree.find(&location.to_string()).and_then(route::known_of)
+        };
+        let mut off = std::collections::BTreeMap::new();
+        for stop in &shown.stops {
+            let (Some(key), Some("function" | "class")) = (stop.key.as_deref(), stop.kind.as_deref())
+            else {
+                continue;
+            };
+            if stop.planned || stop.check == Some("gone") {
+                continue;
+            }
+            let Some(root) = tree.find(key).and_then(route::known_of) else {
+                continue;
+            };
+            let asked = calls::ask(project, &state.index, &core.host, key, Some(1)).await;
+            let answered = match asked {
+                Ok(answered) => answered,
+                // a driver with no call trees has no calls to count; a node the driver cannot start a tree at counts none
+                Err(CallsError::MissingCapability(_)) => break,
+                Err(CallsError::Invalid(_)) => continue,
+                Err(e) => return Err(calls_error(e)),
+            };
+            let item = route::from_calls(&calls::merge(&answered.root), root, 1, &known);
+            let outside: std::collections::BTreeSet<&str> = item
+                .children
+                .iter()
+                .map(|c| c.known.id.as_str())
+                .filter(|callee| !stops_of_the_tour.contains(callee))
+                .collect();
+            if !outside.is_empty() {
+                off.insert(stop.id.clone(), outside.len());
+            }
+        }
+        let files: std::collections::BTreeSet<String> = shown
+            .stops
+            .iter()
+            .flat_map(|s| {
+                std::iter::once(s.path.clone()).chain(s.now.as_ref().map(|n| n.path.clone()))
+            })
+            .collect();
+        // not kept when the index moved while the calls were asked: they were made against one that is gone
+        if state.index.read().unwrap().revision() == revision {
+            state.tours.keep_calls(&row, off.clone(), files);
+        }
+        Ok(serde_json::json!({ "off": off }))
     })
 }
 
@@ -1534,4 +1660,70 @@ fn tour_settings(
         };
         serde_json::to_value(shown).map_err(internal)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tours::check::Source;
+    use crate::tours::record::Detail;
+    use std::time::Duration;
+
+    /// A state with a folder open and no index: the first build has not happened (`Status::Building`), and a tour with no stop in it.
+    fn state_with_a_tour(label: &str) -> (Arc<State>, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("vnoc-server-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
+        std::fs::create_dir_all(dir.join(".vnoc")).unwrap();
+        store::start(
+            &dir,
+            store::StartParams {
+                title: "T".into(),
+                question: None,
+                author: None,
+                detail: Detail::Normal,
+            },
+        )
+        .unwrap();
+        (opened(&dir), dir)
+    }
+
+    fn opened(dir: &std::path::Path) -> Arc<State> {
+        let state = Arc::new(State::new());
+        assert!(state.project.set(Project::open(dir).unwrap()).is_ok());
+        state
+    }
+
+    fn rows_of(state: &State, dir: &std::path::Path) -> Vec<Arc<store::Row>> {
+        let rows = state.tours.sync(&dir.join(".vnoc")).0;
+        assert_eq!(rows.len(), 1);
+        rows
+    }
+
+    #[tokio::test]
+    async fn a_tour_whose_record_is_valid_is_answered_while_an_update_holds_the_lock_and_the_first_build_is_not_done()
+     {
+        let (state, dir) = state_with_a_tour("no-wait");
+        // the first ask records the tour (it has no written stop: nothing to check)
+        let rows = rows_of(&state, &dir);
+        let first = answers_for(&state, rows).await.unwrap();
+        assert_eq!(first.values().next().unwrap().from, Source::Check);
+
+        // an update is running (it holds `one_at_a_time`) and there is no index: the memory answers
+        let running = state.one_at_a_time.lock().await;
+        let rows = rows_of(&state, &dir);
+        let asked = tokio::time::timeout(Duration::from_secs(5), answers_for(&state, rows))
+            .await
+            .expect("the answer did not wait for the update");
+        assert_eq!(asked.unwrap().values().next().unwrap().from, Source::Memory);
+
+        // a core that has just started has no memory, but the record on disk is valid: the record answers
+        let fresh = opened(&dir);
+        let rows = rows_of(&fresh, &dir);
+        let asked = tokio::time::timeout(Duration::from_secs(5), answers_for(&fresh, rows))
+            .await
+            .expect("the answer did not wait for the update");
+        assert_eq!(asked.unwrap().values().next().unwrap().from, Source::Record);
+        drop(running);
+    }
 }

@@ -732,6 +732,17 @@ impl Request for TourCounts {
     const METHOD: &'static str = "vnoc/tourCounts";
 }
 
+/// `vnoc/tourCalls`: for each written function or class stop of the tour, how many of the functions it calls (one level down, as `vnoc tour route` finds them, each counted
+/// once) are not a stop of this tour: `{ "off": { "<stop id>": n } }`. A stop with none, or of another kind, is left out. Kept in the core per tour until the tour's file or a
+/// stop's file changes, as the answers are; waits for the first build. The page draws it as `+N` on the stop's card.
+pub enum TourCalls {}
+
+impl Request for TourCalls {
+    type Params = TourParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourCalls";
+}
+
 /// `vnoc/tourHalt`: the reader pressed Stop. Writes `halt` (what `vnoc tour halt` writes); the agent's next write is refused.
 pub enum TourHalt {}
 

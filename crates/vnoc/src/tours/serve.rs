@@ -759,10 +759,18 @@ struct Remembered {
     files: BTreeSet<String>,
 }
 
+/// What `vnoc/tourCalls` answered for a tour (`off`, by stop id), with the files it was true of: dropped as an answer is, when the tour's file or one of those changes.
+struct KeptCalls {
+    off: BTreeMap<String, usize>,
+    files: BTreeSet<String>,
+}
+
 #[derive(Default)]
 struct Held {
     kept: BTreeMap<(TourId, Where), Kept>,
     answers: BTreeMap<TourId, Remembered>,
+    /// the calls not on a tour, per tour
+    calls: BTreeMap<TourId, KeptCalls>,
     /// the place of each tour as this core last wrote it or told the editor of it: a state file is a move only when its place is not this
     placed: BTreeMap<TourId, Place>,
     /// the checks (rung 3) made, for the tests
@@ -772,6 +780,12 @@ struct Held {
 }
 
 impl Held {
+    /// What was answered about a tour (its freshness, its calls) is no longer true: its file is not the one answered for.
+    fn drop_of(&mut self, id: &TourId) {
+        self.answers.remove(id);
+        self.calls.remove(id);
+    }
+
     /// A tour replayed: kept, and put in the map of nodes in place of what it was.
     fn keep(&mut self, key: (TourId, Where), row: Arc<Row>, stamp: Option<Stamp>) {
         self.on.set(key.clone(), row.tour.as_ref().ok());
@@ -873,7 +887,7 @@ impl Tours {
             }
         }
         for id in &changed {
-            held.answers.remove(id);
+            held.drop_of(id);
         }
         let mut rows: Vec<Arc<Row>> = held.kept.values().map(|k| k.row.clone()).collect();
         store::sort_rows(&mut rows);
@@ -896,7 +910,7 @@ impl Tours {
         for place in [Where::Private, Where::Project] {
             held.forget(&(id.clone(), place));
         }
-        held.answers.remove(id);
+        held.drop_of(id);
         for (place, path) in found {
             let stamp = stamp_of(&path);
             let row = Arc::new(store::row_at(id.clone(), place, path));
@@ -912,7 +926,7 @@ impl Tours {
                 for place in [Where::Private, Where::Project] {
                     held.forget(&(id.clone(), place));
                 }
-                held.answers.remove(id);
+                held.drop_of(id);
                 return None;
             }
             store::Located::Private(path) => (Where::Private, path),
@@ -929,7 +943,7 @@ impl Tours {
             return Some(k.row.clone());
         }
         let row = Arc::new(store::row_at(id.clone(), place, path));
-        held.answers.remove(id);
+        held.drop_of(id);
         held.keep((id.clone(), place), row.clone(), stamp);
         Some(row)
     }
@@ -1019,17 +1033,42 @@ impl Tours {
     }
 
     /// `vnoc/filesChanged` named these files of the project (repo paths, `/`): the answers of the tours that read any of them are dropped. The ids.
+    /// The calls kept for a tour (`vnoc/tourCalls`) go with them.
     pub fn drop_answers_reading(&self, paths: &[String]) -> Vec<TourId> {
         let mut held = self.held();
-        let mut dropped = Vec::new();
+        let mut dropped = BTreeSet::new();
         held.answers.retain(|id, r| {
             let reads = paths.iter().any(|p| r.files.contains(p));
             if reads {
-                dropped.push(id.clone());
+                dropped.insert(id.clone());
             }
             !reads
         });
-        dropped
+        held.calls.retain(|id, k| {
+            let reads = paths.iter().any(|p| k.files.contains(p));
+            if reads {
+                dropped.insert(id.clone());
+            }
+            !reads
+        });
+        dropped.into_iter().collect()
+    }
+
+    /// The calls not on the tour, as `vnoc/tourCalls` answered them and nothing has changed since.
+    pub fn calls_kept(&self, id: &TourId) -> Option<BTreeMap<String, usize>> {
+        self.held().calls.get(id).map(|k| k.off.clone())
+    }
+
+    /// Keeps an answer of `vnoc/tourCalls`, with the files it is true of; not when the tour was replayed while it was being made.
+    pub fn keep_calls(&self, row: &Arc<Row>, off: BTreeMap<String, usize>, files: BTreeSet<String>) {
+        let mut held = self.held();
+        let current = held
+            .kept
+            .get(&(row.id.clone(), row.place))
+            .is_some_and(|k| Arc::ptr_eq(&k.row, row));
+        if current {
+            held.calls.insert(row.id.clone(), KeptCalls { off, files });
+        }
     }
 
     /// This core wrote (or announced) the place of a tour: a state file with this place is not a move.

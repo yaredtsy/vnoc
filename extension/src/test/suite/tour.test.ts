@@ -953,7 +953,7 @@ suite("a tour read while it is written", () => {
     await stageShows("the text where the bars were", (x) => x.step === "s1" && x.kind === "short", 10_000, quiet);
   });
 
-  test("a second tour that appears while one is open leaves the open one, and the list has it", async function () {
+  test("a second tour that appears while one is open leaves the open one, the list has it, and one notification says so", async function () {
     this.timeout(60_000);
     const open = api.session().active;
     assert.ok(open.startsWith("tour:"), open);
@@ -962,7 +962,8 @@ suite("a tour read while it is written", () => {
     const next = JSON.parse(tourCmd(["start", "--title", "A second one", "--author", "the suite", "--plan", node("release"), "--json"])).tour;
     await sectionShows("the list has the new tour", (d) => d.list.some((r) => r.id === next), 30_000);
     assert.strictEqual(api.session().active, open, "the open tour stays");
-    assert.strictEqual(api.toursNoticed().length, before, "the canvas is showing a tour: no notification");
+    await until("the notification for the second tour", () => api.toursNoticed().includes(next));
+    assert.strictEqual(api.toursNoticed().length, before + 1, "one notification, though the canvas is showing a tour");
   });
 
   test("W11: with the canvas visible and no tour open, a tour that appears and is being written becomes the tour context, at its cover", async function () {
@@ -984,6 +985,7 @@ suite("a tour read while it is written", () => {
     const other = JSON.parse(tourCmd(["start", "--title", "Not opened", "--author", "the suite", "--plan", node("release"), "--json"])).tour;
     await sectionShows("the list has it", (d) => d.list.some((r) => r.id === other), 30_000);
     assert.strictEqual(api.session().active, `tour:${w11}`, "the open tour is not replaced");
+    await until("its one notification", () => api.toursNoticed().includes(other));
   });
 
   test("the canvas hidden and no tour open: a tour that appears unfolds the section, is announced, and nothing opens", async function () {

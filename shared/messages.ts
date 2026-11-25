@@ -2,7 +2,7 @@
 // (docs/10-ui-rework/01-state.md §4). Types only: nothing here runs, so any side can import it.
 
 import type { ContextId, Intent, Session } from "./session";
-import type { AsWritten, Place, StopId, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "./tours";
+import type { AsWritten, Place, StopId, TourCallsAnswer, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "./tours";
 
 export type Kind = "folder" | "file" | "class" | "function";
 
@@ -393,6 +393,8 @@ export interface Requests {
   tourGo: { params: { id: TourId; move: TourMove }; result: Place };
   /** One stop of a pinned tour as it was written (`vnoc/tourCode`): its code at the pinned commit, and the lines of each of its steps there. `null` when the tour is not pinned, the commit is not in this repository, or the stop has no code. The page keeps it per (tour, stop) until the next `tour` event */
   tourCode: { params: { id: TourId; stop: StopId }; result: AsWritten | null };
+  /** The calls of a tour's written stops that are not on the tour (`vnoc/tourCalls`): the card's `+N`. The core keeps it until the tour's file or a stop's file changes; the page asks when the tour's map is drawn and on each `tour` event */
+  tourCalls: { params: { id: TourId }; result: TourCallsAnswer };
   /** ■ Stop (`vnoc tour halt`'s act): the core writes the halt; the agent answers it at its next command. The host asks for the tour again, and the state says `stopping`, then `stopped` */
   tourHalt: { params: { id: TourId }; result: TourHaltAnswer };
 }

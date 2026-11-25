@@ -143,10 +143,6 @@ export function activate(ctx: vscode.ExtensionContext) {
       noticed.push({ id: row.id, open });
       void vscode.window.showInformationMessage(`A tour is being written: “${row.title ?? row.id}”.`, "Open Tour").then((pick) => (pick === "Open Tour" ? open() : undefined));
     },
-    canvasShowsTour: () => {
-      const s = store.get();
-      return panels.canvas?.visible === true && tourContext(s)?.id === s.active;
-    },
     canvasVisible: () => panels.canvas?.visible === true,
     // W11: the canvas is visible and no tour is open: the tour opens at its cover. The suite sees it in the session
     open: (row) => void commands.openTourById(row.id, row.title),
