@@ -53,6 +53,12 @@ function makeWorkspace(tmp: string, name: string): string {
   return workspace;
 }
 
+/**
+ * A window that another application covers (or that is in the background) is a hidden page to Chromium: a webview in it gets no animation frames, React Flow's fit never ends, and a reveal that waits for it
+ * never does (the suites' "timed out waiting for the canvas to do the reveal"). The suite is run from a terminal, with other work going on, so these windows are not throttled.
+ */
+const NO_THROTTLING = ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-features=CalculateNativeWinOcclusion"];
+
 /** The suites that run in a window of their own, with a core whose first build is held past the time a request may wait (`suite/waits.test.ts`). */
 const HELD = ["waits"];
 
@@ -60,11 +66,12 @@ const HELD = ["waits"];
 async function window(tmp: string, name: string, env: Record<string, string>): Promise<void> {
   const root = path.resolve(__dirname, "../..");
   const workspace = makeWorkspace(tmp, `ws-${name}`);
+  const userData = path.join(tmp, `user-${name}`);
   await runTests({
     vscodeExecutablePath: await vscodeExecutable(),
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(root, "out/test/suite/index"),
-    launchArgs: [workspace, "--disable-extensions", `--user-data-dir=${path.join(tmp, `user-${name}`)}`, `--extensions-dir=${path.join(tmp, `ext-${name}`)}`, "--disable-workspace-trust"],
+    launchArgs: [workspace, ...NO_THROTTLING, "--disable-extensions", `--user-data-dir=${userData}`, `--extensions-dir=${path.join(tmp, `ext-${name}`)}`, "--disable-workspace-trust"],
     // the `cli` suite installs the `vnoc` command: into this folder, never the real ~/.local/bin (and nothing of the user's PATH)
     extensionTestsEnv: { VNOC_TEST_WORKSPACE: workspace, VNOC_CLI_DIR: path.join(tmp, `cli-bin-${name}`), ...env },
   });

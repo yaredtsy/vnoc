@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
-import { guarded } from "./util";
+import { guarded, soft } from "./util";
 
 // The command line's two commands in a real window (docs/21-agent-cli/07-install.md §3): *Install `vnoc` Command in PATH* with `VNOC_CLI_DIR` set to a temporary folder (`runTest.ts`
 // sets it: **never the real ~/.local/bin**, and on Windows, where an install writes the user PATH in the registry, only the refusal of a foreign file is run), and *Set Up Coding
@@ -23,6 +23,9 @@ interface SetUpResult {
   wrote: string[];
   left: string[];
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 
 const workspace = () => vscode.workspace.workspaceFolders![0].uri.fsPath;

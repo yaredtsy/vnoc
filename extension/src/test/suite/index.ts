@@ -72,7 +72,8 @@ function guardTheCore(mocha: Mocha) {
 }
 
 export function run(): Promise<void> {
-  const mocha = new Mocha({ ui: "tdd", timeout: 60_000, color: false });
+  // `VNOC_GREP=text` runs only the tests whose full title has that text (a test that needs an earlier one of its suite fails by itself: say so)
+  const mocha = new Mocha({ ui: "tdd", timeout: 60_000, color: false, grep: process.env.VNOC_GREP || undefined });
   guardTheCore(mocha);
   for (const name of chosen()) mocha.addFile(path.resolve(__dirname, `${name}.test.js`));
   return new Promise((resolve, reject) => mocha.run((failures) => (failures ? reject(new Error(`${failures} tests failed`)) : resolve())));

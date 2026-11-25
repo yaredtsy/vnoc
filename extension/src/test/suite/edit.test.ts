@@ -8,7 +8,7 @@ import type { CodeResult, Draft, EditSaveParams, EditSaveResult, EditStartParams
 import { callId } from "@vnoc/shared/calls.ts";
 import type { Intent, Session } from "@vnoc/shared/session.ts";
 import { allNodes } from "@vnoc/shared/tree";
-import { canvasTabs, closeCanvas, guarded, sleep, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, guarded, sleep, soft, until, waitFor } from "./util";
 
 // Editing in the canvas (docs/17-edit-in-canvas.md), step 9.1: a card that shows the code of a file with unsaved changes says so. The suite cannot see the
 // page, so it listens to what the page posts (`codeShown`: each time a card drew the code it read, and whether it showed the mark).
@@ -37,6 +37,9 @@ interface Api {
   dispatch(intent: Intent): void;
   webviewErrors(): string[];
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 
 /**

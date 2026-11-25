@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 
 import type { StructureResult, TreeNode } from "@vnoc/shared/messages";
 import { allNodes } from "@vnoc/shared/tree";
-import { guarded, waitFor } from "./util";
+import { guarded, soft, waitFor } from "./util";
 
 // THE PROMISE OF 0.1 in a real window (docs/13-harden-and-publish.md §4): "the doc is still there after a rename". The core's tests prove it with files
 // the test writes; this suite does what a person does: an edit in VS Code, a rename in the Explorer, a `git mv` in a terminal.
@@ -17,6 +17,9 @@ interface Api {
   request<T>(method: string, params?: object): Promise<T>;
   webviewErrors(): string[];
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 let workspace: string;
 

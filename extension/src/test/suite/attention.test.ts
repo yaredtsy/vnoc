@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 
 import type { Problem, StructureResult } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
-import { guarded, sleep, until, waitFor } from "./util";
+import { guarded, sleep, soft, until, waitFor } from "./util";
 
 // NEEDS ATTENTION in a real window (docs/11-missing-relink-remove.md §6): a deleted function shows under Missing and leaves when it is back;
 // a problem on a folder is revealed, not opened; a node whose ID line was deleted shows under ID lost, and Write ID on its row puts the line back. The suite reads the view's rows through the extension's test API: it cannot see the tree itself.
@@ -20,6 +20,9 @@ interface Api {
   moveAllToTrash(ids: string[]): Promise<number>;
   restoreEntry(entry: string): Promise<void>;
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 let folder: string;
 

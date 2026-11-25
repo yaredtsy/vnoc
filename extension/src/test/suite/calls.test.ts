@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import { callNodesIn } from "@vnoc/shared/calls.ts";
 import type { CallTreeResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import { type Intent, type Session, openOf } from "@vnoc/shared/session.ts";
-import { canvasTabs, guarded, sleep, until } from "./util";
+import { canvasTabs, guarded, sleep, soft, until } from "./util";
 
 // Show Calls in a real window (docs/16-ui-redesign/05-calls-as-nodes.md §2, §5, §7): the host fetches the call trees of what is open, cancels what stops
 // being wanted, fetches a stale tree again by itself, and starts over when the core restarts. The suite reads the host's own log of what happened.
@@ -27,6 +27,9 @@ interface Api {
   callProbes(): Record<string, { revision: number; count: number }>;
   docsShown(): { pinned: string | null; node: string | null; doc: string | null }[];
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 
 const LIB = "def leaf():\n    return 1\n\n\ndef twice():\n    leaf()\n    leaf()\n";

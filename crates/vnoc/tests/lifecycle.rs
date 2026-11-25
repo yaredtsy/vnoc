@@ -164,6 +164,19 @@ impl Core {
     }
 
     /// Panics if stdout holds anything but frames: the core's stdout IS the protocol.
+    /// The next frame, or None when the core's output ended.
+    fn read_frame_or_end(&mut self) -> Option<Value> {
+        let mut line = String::new();
+        if self.out.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        let len: usize = line.strip_prefix("Content-Length:")?.trim().parse().ok()?;
+        self.out.read_line(&mut String::new()).ok()?;
+        let mut buf = vec![0u8; len];
+        self.out.read_exact(&mut buf).ok()?;
+        serde_json::from_slice(&buf).ok()
+    }
+
     fn read_frame(&mut self) -> Value {
         let mut line = String::new();
         self.out.read_line(&mut line).unwrap();
@@ -3911,6 +3924,61 @@ fn tour_counts_counts_tours_not_stops_by_the_key_of_structure_and_a_tour_write_n
     assert_eq!(core.saw("vnoc/indexChanged"), 0, "a tour is not the index");
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
     assert_eq!(structure["revision"].as_u64().unwrap(), revision);
+    core.finish();
+}
+
+/// More requests waiting than the core has request slots: every one is answered, and so is a `vnoc/ping` sent after them. (The editor's pages ask for many things at once while the first
+/// build runs.) With `async-lsp`'s `ConcurrencyLayer` at its default, the request that finds every slot taken waits for a free one in a place where the requests already running are not polled
+/// and nothing is read from the editor: the slots never free, the core answers nothing more, and it does not even see its editor go away.
+#[test]
+fn more_requests_waiting_than_there_are_request_slots_are_all_answered_and_so_is_a_ping() {
+    let root = tour_git_project("flood");
+    let mut core = Core::start_with_env(
+        Some(driver_path()),
+        &root,
+        &[
+            ("VNOC_WAIT_LIMIT_MS", "1500"),
+            ("VNOC_HOLD_FIRST_BUILD_MS", "3000"),
+        ],
+    );
+    // a core that is stuck is killed after 40 s, so that the test fails instead of hanging
+    let pid = core.child.id().to_string();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watch = {
+        let done = done.clone();
+        std::thread::spawn(move || {
+            for _ in 0..80 {
+                if done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let _ = Command::new("kill").arg(&pid).status();
+        })
+    };
+    let slots = std::thread::available_parallelism().map_or(8, |n| n.get());
+    let asked = slots * 4;
+    for i in 0..asked {
+        core.send(json!({ "jsonrpc": "2.0", "id": 1000 + i, "method": "vnoc/tourCounts" }));
+    }
+    core.send(json!({ "jsonrpc": "2.0", "id": 9999, "method": "vnoc/ping" }));
+    let mut answered = std::collections::BTreeSet::new();
+    while answered.len() < asked + 1 {
+        let frame = core.read_frame_or_end();
+        let Some(frame) = frame else { break };
+        if frame["method"].is_null() {
+            answered.insert(frame["id"].as_u64().unwrap());
+        }
+    }
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    watch.join().unwrap();
+    assert!(
+        answered.contains(&9999),
+        "the ping was never answered ({} of {} were)",
+        answered.len(),
+        asked + 1
+    );
+    assert_eq!(answered.len(), asked + 1, "every request is answered");
     core.finish();
 }
 

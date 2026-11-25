@@ -171,13 +171,22 @@ fn main() {
     });
 }
 
+/// How many requests the core runs at once. `ConcurrencyLayer`'s default is the number of CPUs, and at its limit it is not a queue but a deadlock: the request that finds every slot taken waits
+/// for one inside the main loop, where the requests already running are not polled and nothing is read from the editor (not even the editor going away), so the slots never free
+/// (`tests/lifecycle.rs`, `more_requests_waiting_than_there_are_request_slots_are_all_answered_and_so_is_a_ping`). A limit nobody reaches (the pages ask for tens of things at once, not
+/// thousands) leaves the core answering. The work that is heavy is not limited here: it is offloaded (`spawn_blocking`), and a driver does one thing at a time.
+const REQUESTS_AT_ONCE: usize = 4096;
+
 async fn serve() {
+    vnoc::watchdog::report_slow_requests();
     let (server, _client) = MainLoop::new_server(|client| {
         ServiceBuilder::new()
             .layer(TracingLayer::default())
             .layer(LifecycleLayer::default())
             .layer(CatchUnwindLayer::default()) // a panicking handler becomes an error response, not a dead core
-            .layer(ConcurrencyLayer::default())
+            .layer(ConcurrencyLayer::new(
+                std::num::NonZeroUsize::new(REQUESTS_AT_ONCE).expect("not zero"),
+            ))
             .service(vnoc::server::router(client))
     });
 

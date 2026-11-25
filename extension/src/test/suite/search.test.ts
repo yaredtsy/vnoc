@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import type { SearchResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
 import { MISSING_PIN } from "@vnoc/shared/tree";
-import { canvasTabs, closeCanvas, guarded, sleep, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, guarded, sleep, soft, until, waitFor } from "./util";
 
 // Search in a real window (docs/20-search/06-build-order.md S3): the STRUCTURE view's box asks the core and draws what it answers, and *V-NOC: Search…* puts the cursor in that box (a QuickPick re-sorted the core's order: S3b).
 // The suite cannot type in a webview, so `setSearch` puts text in the box as typing would, and the page says what it drew (`searchDrawn`). What a query finds, and in what
@@ -37,6 +37,9 @@ interface Api {
   sidebarVisible(): boolean;
   webviewErrors(): string[];
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 /** how many answers had been drawn before this suite began: the timing at its end counts only its own */
 let drawnAtStart = 0;
