@@ -19,7 +19,7 @@ const stop = (id: string, key: string | null, steps: string[]): TourStop => ({
 const place = (at: string, over: Partial<Place> = {}): Place => ({
   at, seen: [], back: [], moved: "", by: "reader", open: true,
   // what the core makes of `at` (the tests do not compute it: `s1.b1` is stop s1)
-  stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, unseen: 0, ...over,
+  stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, unseen: 0, first_unseen: null, ...over,
 });
 const view = (at: string, over: Partial<TourView> = {}): TourView => ({
   id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 3, planned: 0, steps: 5, minutes: 1, pinned: false, writing: null, offers: null, problems: [],

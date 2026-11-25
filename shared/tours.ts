@@ -88,7 +88,7 @@ export interface TourRow {
   /** null: nobody opened this tour here ("new") */
   place: PlaceSummary | null;
   offers: OffersView | null;
-  /** the row's second line, in the core's words: `shared · ` for a project tour, the one state word that applies, the size: `writing · 6 of 10 stops`, `stop 4 · 9 stops` */
+  /** the row's second line, in the core's words: `shared · ` for a project tour, the one state word that applies, the size, and when it was started (`2 h ago`, `yesterday`, `12 Nov`): `writing · 6 of 10 stops · 2 h ago`, `stop 4 · 9 stops · 2 h ago` */
   words: string;
 }
 
@@ -121,6 +121,8 @@ export interface Place {
   position: PositionView | null;
   /** how many written stops were not read to their last step: the end card says "all seen" or "N not seen" */
   unseen: number;
+  /** the first written stop on the route that was not read to its last step; null when every written stop was: the end card's "Go to the first one I skipped" */
+  first_unseen: StopId | null;
 }
 
 /** A changed or moved block or stop, where its node is now: a changed stop's `now`. */

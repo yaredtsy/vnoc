@@ -1057,7 +1057,25 @@ fn error_of(cwd: &Path, args: &[&str]) -> String {
         .to_string()
 }
 
+/// A row's `words` end with when the tour was started (`2 h ago`, `yesterday`, `12 Nov`): it changes with the clock, so a golden keeps `<when>` in its place.
+fn mask_when(value: &mut Value) {
+    let Some(rows) = value.get_mut("tours").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for row in rows {
+        let Some(words) = row.get("words").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(at) = words.rfind(" · ") {
+            row["words"] = json!(format!("{} · <when>", &words[..at]));
+        }
+    }
+}
+
 fn golden(name: &str, actual: &Value) {
+    let mut masked = actual.clone();
+    mask_when(&mut masked);
+    let actual = &masked;
     let path = tests_dir().join("golden").join(name);
     if blessing() {
         std::fs::write(&path, serde_json::to_string_pretty(actual).unwrap() + "\n").unwrap();
@@ -13066,6 +13084,7 @@ fn frozen_json(root: &Path, args: &[&str], made: Option<&str>) -> Value {
     if value.get("moved_ago").is_some() {
         value["moved_ago"] = json!("<ago>");
     }
+    mask_when(&mut value);
     value
 }
 

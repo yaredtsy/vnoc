@@ -6,7 +6,7 @@ import { headerPlace, markOf, routeRows } from "./route.ts";
 
 const step = (id: string, kind: StepKind, over: Partial<StepView> = {}): StepView => ({ id, kind, depth: kind === "block" ? 1 : kind === "detail" ? 2 : 0, parent: null, title: null, text: "t", lines: null, ...over });
 const stop = (n: number, over: Partial<TourStop> = {}): TourStop => ({ number: n, id: `s${n}`, depth: 0, planned: false, kind: "function", name: `f${n}`, path: "a.py", qualname: `f${n}`, key: `a.py::f${n}`, steps: 1, blocks: [], reading: [step(`s${n}`, "intro")], ...over });
-const place = (at: string, over: Partial<Place> = {}): Place => ({ at, seen: [], back: [], moved: "", by: "reader", open: true, stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, unseen: 0, ...over });
+const place = (at: string, over: Partial<Place> = {}): Place => ({ at, seen: [], back: [], moved: "", by: "reader", open: true, stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, unseen: 0, first_unseen: null, ...over });
 
 // s1 (three steps: a block and a detail) · s2 reached from s1 · s3 reached from s2 · s4 explained at s2 · s5 not written
 const stops = [

@@ -440,6 +440,8 @@ pub struct PlaceView {
     pub position: Option<PositionView>,
     /// how many written stops the reader has not read to their last step (not in `seen`): the end card says "all seen" or "N not seen"
     pub unseen: usize,
+    /// the first written stop on the route that is not in `seen`; `null` when every written stop is: the end card's "Go to the first one I skipped"
+    pub first_unseen: Option<String>,
 }
 
 /// The place for the pages: settled against the tour (a step the tour no longer has moves to the nearest one), with its stop and position.
@@ -460,11 +462,17 @@ pub fn place_view(tour: &Tour, place: Place) -> PlaceView {
         .iter()
         .filter(|s| s.written && !place.seen.contains(&s.id))
         .count();
+    let first_unseen = tour
+        .stops
+        .iter()
+        .find(|s| s.written && !place.seen.contains(&s.id))
+        .map(|s| s.id.to_string());
     PlaceView {
         place,
         stop,
         position,
         unseen,
+        first_unseen,
     }
 }
 
@@ -1232,7 +1240,7 @@ fn row_state_word(row: &ListRowView) -> String {
 /// The second line of a row, built from the pieces `list` prints: `shared · ` for a project tour (05 §3), the state word, the size (`stops_words`).
 /// `writing · 6 of 10 stops`, `stop 4 · 9 stops`, `finished · 9 stops`, `new · 1 stop`, `shared · changed · 3 stops`. A tour that cannot be read says so.
 /// It is made once the row has its `place` and `quiet` (`serve::list_rows`).
-pub fn row_words(row: &ListRowView) -> String {
+pub fn row_words(row: &ListRowView, when: &str) -> String {
     if !row.readable {
         return "cannot be read".to_string();
     }
@@ -1245,7 +1253,42 @@ pub fn row_words(row: &ListRowView) -> String {
         row.written.unwrap_or(0),
         row.planned.unwrap_or(0),
     ));
+    if !when.is_empty() {
+        parts.push(when.to_string());
+    }
     parts.join(" · ")
+}
+
+/// When a tour was started (`at`), in words, as of `now` (both `2026-11-23T18:40:02Z`): `just now` under a minute, `5 min ago` under an hour, `3 h ago` under a
+/// day; then by the UTC calendar day: `yesterday`, else the date, `12 Nov`, with the year when it is not this year. Nothing for a time that cannot be read. The
+/// relative words do not depend on a time zone (the file keeps UTC and the core has no zone); only `yesterday` and the date do.
+pub fn when_word(at: &str, now: &str) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let (Some(then), Some(now)) = (super::time::parse(at), super::time::parse(now)) else {
+        return String::new();
+    };
+    let age = now - then;
+    match age {
+        i64::MIN..=59 => "just now".to_string(),
+        60..=3599 => format!("{} min ago", age / 60),
+        3600..=86_399 => format!("{} h ago", age / 3600),
+        _ => {
+            let (day, today) = (then.div_euclid(86_400), now.div_euclid(86_400));
+            if today - day == 1 {
+                return "yesterday".to_string();
+            }
+            let (year, month, date) = super::time::civil_from_days(day);
+            let (this_year, ..) = super::time::civil_from_days(today);
+            let name = MONTHS[(month as usize).saturating_sub(1).min(11)];
+            if year == this_year {
+                format!("{date} {name}")
+            } else {
+                format!("{date} {name} {year}")
+            }
+        }
+    }
 }
 
 /// What `list` prints: a row a tour, in columns.
@@ -1957,7 +2000,7 @@ mod tests {
 
         let words = |mut r: ListRowView, f: &dyn Fn(&mut ListRowView)| {
             f(&mut r);
-            row_words(&r)
+            row_words(&r, "")
         };
         let nothing = |_: &mut ListRowView| {};
         // in the order the design gives them: writing, stopped, no news, changed, stop N, finished, new
@@ -2200,5 +2243,95 @@ mod tests {
         );
         let json = serde_json::to_value(place_view(&t, Place::cover())).unwrap();
         assert_eq!(json["unseen"], 2);
+    }
+
+    #[test]
+    fn a_tour_says_when_it_was_started_by_the_boundaries_of_the_words() {
+        let now = "2026-11-25T12:00:00Z";
+        let at = |when: &str| when_word(when, now);
+        assert_eq!(at("2026-11-25T12:00:00Z"), "just now");
+        assert_eq!(at("2026-11-25T11:59:01Z"), "just now", "59 seconds");
+        assert_eq!(at("2026-11-25T11:59:00Z"), "1 min ago", "a minute");
+        assert_eq!(at("2026-11-25T11:01:00Z"), "59 min ago");
+        assert_eq!(at("2026-11-25T11:00:00Z"), "1 h ago", "an hour");
+        assert_eq!(
+            at("2026-11-24T12:00:01Z"),
+            "23 h ago",
+            "23 h 59 min 59 s is still hours"
+        );
+        assert_eq!(
+            at("2026-11-25T13:00:00Z"),
+            "just now",
+            "a clock that moved is not in the future"
+        );
+        // a day or more: by the calendar day (UTC): yesterday, else the date; the year when it is not this year
+        assert_eq!(
+            at("2026-11-24T12:00:00Z"),
+            "yesterday",
+            "exactly a day, on the day before"
+        );
+        assert_eq!(at("2026-11-24T00:00:00Z"), "yesterday");
+        assert_eq!(at("2026-11-23T23:59:59Z"), "23 Nov", "two days of calendar");
+        assert_eq!(at("2026-11-01T08:00:00Z"), "1 Nov");
+        assert_eq!(at("2026-01-02T08:00:00Z"), "2 Jan");
+        assert_eq!(at("2025-12-31T23:00:00Z"), "31 Dec 2025");
+        // after midnight the same age reads as a day; yesterday across a month end
+        assert_eq!(
+            when_word("2026-10-31T09:00:00Z", "2026-11-01T10:00:00Z"),
+            "yesterday"
+        );
+        assert_eq!(
+            when_word("2026-11-25T09:00:00Z", "2026-11-26T08:00:00Z"),
+            "23 h ago",
+            "under a day is hours, even across midnight"
+        );
+        // a time that cannot be read says nothing
+        assert_eq!(at("yesterday"), "");
+        assert_eq!(when_word(now, "now"), "");
+    }
+
+    #[test]
+    fn a_rows_words_end_with_when_and_say_nothing_more_when_there_is_no_time() {
+        let t = tour(&[
+            stop(1, "a.py", "f", ""),
+            r#"{"type":"end","at":"2026-11-23T18:47:31Z"}"#.to_string(),
+        ]);
+        let r = row_of(t, Where::Project);
+        assert_eq!(row_words(&r, "2 h ago"), "shared · new · 1 stop · 2 h ago");
+        assert_eq!(row_words(&r, ""), "shared · new · 1 stop");
+    }
+
+    #[test]
+    fn a_place_names_the_first_written_stop_not_seen_in_route_order() {
+        let t = tour(&[
+            stop(1, "a.py", "f", ""),
+            stop(2, "a.py", "g", r#","from":"s1","line":14"#),
+            stop(3, "a.py", "h", ""),
+            r#"{"type":"plan","stops":[{"id":"s4","path":"a.py","qualname":"i"}]}"#.to_string(),
+        ]);
+        let first = |seen: &[u32]| {
+            let mut p = Place::cover();
+            p.seen = seen
+                .iter()
+                .map(|n| crate::tours::record::StopId::new(*n).unwrap())
+                .collect();
+            place_view(&t, p).first_unseen
+        };
+        // the route order is s1, s2 (under s1), s3: not the order they were written in
+        assert_eq!(first(&[]).as_deref(), Some("s1"), "none seen");
+        assert_eq!(first(&[1]).as_deref(), Some("s2"));
+        assert_eq!(
+            first(&[1, 3]).as_deref(),
+            Some("s2"),
+            "skipped one in the middle"
+        );
+        assert_eq!(first(&[2, 3]).as_deref(), Some("s1"));
+        assert_eq!(
+            first(&[1, 2, 3]),
+            None,
+            "all seen: the planned stop is not written, so it is not skipped"
+        );
+        let json = serde_json::to_value(place_view(&t, Place::cover())).unwrap();
+        assert_eq!(json["first_unseen"], "s1");
     }
 }

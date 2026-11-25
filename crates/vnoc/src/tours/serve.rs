@@ -405,6 +405,7 @@ pub fn list_rows<R: Borrow<Row>>(
         pin::has_commit(project, commit)
     });
     let offering = Offering::of(project);
+    let now = time::now();
     let readable: Vec<&Tour> = rows
         .iter()
         .filter_map(|row| row.borrow().tour.as_ref().ok())
@@ -421,7 +422,7 @@ pub fn list_rows<R: Borrow<Row>>(
             .map(|d| d.as_secs());
         shown.quiet = view::is_quiet(tour.state, age);
         shown.place = view::place_summary(tour, place_of(&row.id).as_ref());
-        shown.words = view::row_words(shown);
+        shown.words = view::row_words(shown, &view::when_word(&tour.at, &now));
     }
     out
 }
@@ -1046,6 +1047,7 @@ impl Tours {
                 stop: None,
                 position: None,
                 unseen: 0,
+                first_unseen: None,
             },
         }
     }
