@@ -487,8 +487,27 @@ selects and reveals on the canvas"* fails 3 of 3 on the old code too; `session` 
 - **For TR23** (the list): in the TOURS section, the first stop row is drawn under the sticky header (`Tours ▶ Pinned shop 1 of 3`) in
   shots 05 and 06.
 
+**As built (TR22t, `96d0f49`, `7a6a3e7`; reviewed, the two full runs still to come).** **The core hang is found**, and it was
+never slow slots: in `async-lsp` 0.2.4 `MainLoop::dispatch_message` awaits `ConcurrencyLayer::poll_ready` while `self.tasks` (the
+requests already running) is not polled and stdin is not read. With every slot taken (one per CPU by default) the slots never free:
+a permanent deadlock, no `ping`, and the core never sees its editor go (the orphaned `vnoc --stdio` cores with parent 1). Fix:
+`ConcurrencyLayer::new(4096)` (`main.rs` `REQUESTS_AT_ONCE`); lifecycle test `more_requests_waiting_than_there_are_request_slots_…`
+(0 of 33 answered before, 2.3 s after). A watchdog thread logs requests running ≥ 10 s. **The released 0.3.1 has the same layer**
+(`main` `21df5fc`, `ConcurrencyLayer::default()`). The `sidebar`/`session` failures: a test window covered by another app is hidden to
+Chromium (no animation frames, React Flow's fit never ends): `runTest.ts` starts it with `--disable-backgrounding-occluded-windows`,
+`--disable-renderer-backgrounding`, `--disable-features=CalculateNativeWinOcclusion`. Asking again: `data.askAgain` on both refusals,
+the host's `askUntilAnswered(ask, stillWanted, …)` (a closure), `toursWaiting`, `indexChanged` always asks the counts; the map keeps its
+loop. Debug-only `VNOC_WAIT_LIMIT_MS` and `VNOC_HOLD_FIRST_BUILD_MS` (`cfg!(debug_assertions)`), a `waits` suite in its own window,
+`VNOC_GREP`. Write IDs on stops that never had an ID: both IDs, Needs Attention empty. TR22a's "ID lost (2)" was the shot script (IDs
+written earlier, markers reset away). Rust lib 563, lifecycle 74; TS 305 / 865.
+
+**Decided at TR22t's review:** the fix is right (read in `async-lsp` 0.2.4 `lib.rs` and `concurrency.rs`) and the 8 s waits stay (a page
+should still not sit on a long wait). The TOURS section does not exist while the structure loads, so its quiet line is seen only on a
+slow update: kept, unit-tested. For TR22b's first commit: Write IDs on stops whose IDs are recorded but whose markers are gone says so
+in the core's words (not *"Every stop already has an ID."*), and the shot script uses a fresh file. The 0.3.1 hotfix is the user's call.
+
 **Next, in this order:**
-- **TR22t: answers that wait are asked again; the full window run passes apart from Bend.** Two commits, above.
+- **TR22t's proof:** the two full `pnpm -r test` runs, each failing only the 3 Bend tests.
 - **TR22b** (unchanged list above), its first commit: the screenshot fixes just decided.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
