@@ -1060,7 +1060,12 @@ impl Tours {
     }
 
     /// Keeps an answer of `vnoc/tourCalls`, with the files it is true of; not when the tour was replayed while it was being made.
-    pub fn keep_calls(&self, row: &Arc<Row>, off: BTreeMap<String, usize>, files: BTreeSet<String>) {
+    pub fn keep_calls(
+        &self,
+        row: &Arc<Row>,
+        off: BTreeMap<String, usize>,
+        files: BTreeSet<String>,
+    ) {
         let mut held = self.held();
         let current = held
             .kept

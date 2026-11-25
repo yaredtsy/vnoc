@@ -1365,7 +1365,9 @@ async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseE
     // an update that is running goes first: it needs the driver too, and the calls are of the index it is about to give
     drop(state.one_at_a_time.lock().await);
     // the stops as the view has them: where each is now (a check moved its key), which are written, which are gone
-    let answer = answers_for(&state, vec![row.clone()]).await?.remove(&row.id);
+    let answer = answers_for(&state, vec![row.clone()])
+        .await?
+        .remove(&row.id);
     let shown = {
         let (state, row) = (state.clone(), row.clone());
         blocking(move || {

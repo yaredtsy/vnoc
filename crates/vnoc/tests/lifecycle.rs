@@ -3906,7 +3906,11 @@ fn tour_calls(core: &mut Core, id: &str) -> Value {
     for _ in 0..40 {
         match core.request("vnoc/tourCalls", json!({ "id": id })) {
             Ok(answer) => return answer,
-            Err(e) if e["message"].as_str().is_some_and(|m| m.ends_with("ask again")) => {
+            Err(e)
+                if e["message"]
+                    .as_str()
+                    .is_some_and(|m| m.ends_with("ask again")) =>
+            {
                 std::thread::sleep(std::time::Duration::from_millis(100))
             }
             Err(e) => panic!("tourCalls: {e}"),
