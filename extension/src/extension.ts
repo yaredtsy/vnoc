@@ -157,6 +157,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     dispatch: (intent, context) => store.dispatch(intent, context),
     emit: (name, data) => panels.emit(name, data),
     vnocAbove: () => vnocIsAbove(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, c.gitRoot),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     every: (ms, run) => {
       const timer = setInterval(run, ms);
       return { stop: () => clearInterval(timer) };

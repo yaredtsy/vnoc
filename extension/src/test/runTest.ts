@@ -34,11 +34,11 @@ function crlfAll(dir: string): void {
   }
 }
 
-async function main() {
+/** A copy of the fixtures, as a git repository: one window's folder. */
+function makeWorkspace(tmp: string, name: string): string {
   const root = path.resolve(__dirname, "../..");
   const repo = path.resolve(root, "..");
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-ext-"));
-  const workspace = path.join(tmp, "ws");
+  const workspace = path.join(tmp, name);
   fs.mkdirSync(workspace);
   fs.cpSync(path.join(repo, "crates/vnoc-domain/tests/fixtures"), workspace, { recursive: true });
   // a small project in a second language, beside the first (its own folder: the domain crate's fixtures are golden-tested and must not change)
@@ -50,14 +50,36 @@ async function main() {
   git("init", "-q");
   git("add", "-A");
   git("commit", "-q", "-m", "fixture");
+  return workspace;
+}
+
+/** The suites that run in a window of their own, with a core whose first build is held past the time a request may wait (`suite/waits.test.ts`). */
+const HELD = ["waits"];
+
+/** One window, one run of its suites. `env` is for the suites and, through the extension, for the core. */
+async function window(tmp: string, name: string, env: Record<string, string>): Promise<void> {
+  const root = path.resolve(__dirname, "../..");
+  const workspace = makeWorkspace(tmp, `ws-${name}`);
   await runTests({
     vscodeExecutablePath: await vscodeExecutable(),
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(root, "out/test/suite/index"),
-    launchArgs: [workspace, "--disable-extensions", `--user-data-dir=${path.join(tmp, "user")}`, `--extensions-dir=${path.join(tmp, "ext")}`, "--disable-workspace-trust"],
+    launchArgs: [workspace, "--disable-extensions", `--user-data-dir=${path.join(tmp, `user-${name}`)}`, `--extensions-dir=${path.join(tmp, `ext-${name}`)}`, "--disable-workspace-trust"],
     // the `cli` suite installs the `vnoc` command: into this folder, never the real ~/.local/bin (and nothing of the user's PATH)
-    extensionTestsEnv: { VNOC_TEST_WORKSPACE: workspace, VNOC_CLI_DIR: path.join(tmp, "cli-bin") },
+    extensionTestsEnv: { VNOC_TEST_WORKSPACE: workspace, VNOC_CLI_DIR: path.join(tmp, `cli-bin-${name}`), ...env },
   });
+}
+
+async function main() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-ext-"));
+  const asked = (process.env.VNOC_SUITE ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const main = asked.length === 0 || asked.some((s) => !HELD.includes(s));
+  const held = asked.length === 0 || asked.some((s) => HELD.includes(s));
+  const failed: unknown[] = [];
+  // the ordinary window first (all its suites); then the one whose core is held. A failure in the first does not stop the second
+  if (main) await window(tmp, "main", {}).catch((e) => failed.push(e));
+  if (held) await window(tmp, "held", { VNOC_WINDOW: "held", VNOC_WAIT_LIMIT_MS: "2000", VNOC_HOLD_FIRST_BUILD_MS: "12000" }).catch((e) => failed.push(e));
+  if (failed.length > 0) throw failed[0];
 }
 main().catch((e) => {
   console.error(e);

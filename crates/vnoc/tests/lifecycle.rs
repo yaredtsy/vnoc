@@ -59,11 +59,21 @@ struct Core {
 impl Core {
     /// Starts the core on `root`. `driver`: the path to put in `initializationOptions.driverPath` (None = leave it out).
     fn start(driver: Option<PathBuf>, root: &std::path::Path) -> Core {
+        Core::start_with_env(driver, root, &[])
+    }
+
+    /// As `start`, with environment variables set for the core (the debug-only switches for tests).
+    fn start_with_env(
+        driver: Option<PathBuf>,
+        root: &std::path::Path,
+        env: &[(&str, &str)],
+    ) -> Core {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .env_remove("VNOC_DRIVER");
+            .env_remove("VNOC_DRIVER")
+            .envs(env.iter().copied());
         let mut child = cmd.spawn().unwrap();
         let (stdin, out) = (
             child.stdin.take().unwrap(),
@@ -3901,6 +3911,44 @@ fn tour_counts_counts_tours_not_stops_by_the_key_of_structure_and_a_tour_write_n
     assert_eq!(core.saw("vnoc/indexChanged"), 0, "a tour is not the index");
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
     assert_eq!(structure["revision"].as_u64().unwrap(), revision);
+    core.finish();
+}
+
+/// A request that waits for a first build longer than the wait limit is refused with the words and `data.askAgain`; once the build is done the same request is
+/// answered on its merits, and that refusal (an id that is not a tour) has no flag.
+#[test]
+fn a_request_that_waits_too_long_for_the_first_build_is_refused_with_the_ask_again_flag() {
+    let root = tour_git_project("ask-again");
+    let mut core = Core::start_with_env(
+        Some(driver_path()),
+        &root,
+        &[
+            ("VNOC_WAIT_LIMIT_MS", "300"),
+            ("VNOC_HOLD_FIRST_BUILD_MS", "2500"),
+        ],
+    );
+    let refused = core
+        .request("vnoc/tourCalls", json!({ "id": "t-nope" }))
+        .unwrap_err();
+    println!("refusal: {refused}");
+    assert_eq!(refused["code"], -32803, "{refused}");
+    assert_eq!(refused["data"], json!({ "askAgain": true }), "{refused}");
+    assert!(refused["message"].as_str().unwrap().ends_with("ask again"));
+    let mut answered = None;
+    for _ in 0..40 {
+        match core.request("vnoc/tourCalls", json!({ "id": "t-nope" })) {
+            Err(e) if e["data"]["askAgain"] == json!(true) => {
+                std::thread::sleep(std::time::Duration::from_millis(100))
+            }
+            other => {
+                answered = Some(other);
+                break;
+            }
+        }
+    }
+    let e = answered.expect("the build ended").unwrap_err();
+    assert_eq!(e["code"], -32602, "{e}");
+    assert!(e.get("data").is_none() || e["data"].is_null(), "{e}");
     core.finish();
 }
 

@@ -89,9 +89,18 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
   const opened: string[] = [];
   const status: (string | null)[] = [];
   const announced: string[] = [];
+  /** how many more times the core refuses each method with "ask again" (`data.askAgain`), as it does while its first build is held */
+  const refusals = new Map<string, number>();
+  let slept = 0;
   const host: ToursDeps = {
+    sleep: async () => void slept++,
     request: (async (method: string, params: unknown) => {
       requests.push([method, params]);
+      const left = refusals.get(method) ?? 0;
+      if (left > 0) {
+        refusals.set(method, left - 1);
+        throw Object.assign(new Error("the index is being read and is not ready yet: ask again"), { code: -32803, data: { askAgain: true } });
+      }
       if (method === "vnoc/tour") return answer;
       if (method === "vnoc/tours") return { tours: rows };
       if (method === "vnoc/tourCounts") return { counts };
@@ -132,6 +141,8 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
     dispatched,
     timers,
     setAnswer: (v: TourView) => (answer = v),
+    refuse: (method: string, times: number) => void refusals.set(method, times),
+    slept: () => slept,
     session: () => session,
     openTour: (id = "t-1") => void (session = reduce(session, MAIN, { type: "tourOpen", id }, tree, calls)),
     closeTour: (id = "t-1") => void (session = reduce(session, MAIN, { type: "closeContext", id: tourContextId(id) }, tree, calls)),
@@ -532,13 +543,83 @@ test("▶ N: the counts are asked at the start, again on toursChanged and on ind
   assert.equal(asked(), 4);
 });
 
-test("a page that asks for the counts before any were asked gets the core's answer; the index changing before that asks nothing", async () => {
+test("a page that asks for the counts before any were asked gets the core's answer; the index changing before that asks for them", async () => {
   const h = makeHost({ above: false, counts: { "a.py::f": 3 } });
   const tours = new Tours(h.host);
   tours.indexChanged();
   await settle();
-  assert.equal(h.requests.length, 0);
+  assert.equal(h.asked("vnoc/tourCounts"), 1, "none were held, and they are asked for");
   assert.deepEqual(await tours.countsOf(), { counts: { "a.py::f": 3 } });
+});
+
+// ── what the core says to ask again ──
+
+test("the list, asked while the first build is held, is asked again until it is answered; the pages are given the core's words and then none", async () => {
+  const h = makeHost({ above: false, rows: [{ id: "t-1", folder: "private", readable: false, problem: "x", quiet: false, root: null, place: null, offers: null, words: "w", state_word: "" }] });
+  h.refuse("vnoc/tours", 3);
+  const tours = new Tours(h.host);
+  const rows = await tours.list();
+  assert.equal(rows.length, 1);
+  assert.equal(h.asked("vnoc/tours"), 4);
+  assert.equal(h.slept(), 3);
+  const waiting = h.events.filter(([n]) => n === "toursWaiting").map(([, d]) => (d as { words: string | null }).words);
+  assert.deepEqual(waiting, [...Array(3).fill("the index is being read and is not ready yet: ask again"), null]);
+});
+
+test("start asks the list and the counts again until the core answers, and holds them", async () => {
+  const h = makeHost({ above: false, rows: [], counts: { "a.py::f": 1 } });
+  h.refuse("vnoc/tours", 2);
+  h.refuse("vnoc/tourCounts", 5);
+  const tours = new Tours(h.host);
+  tours.start();
+  for (let i = 0; i < 20; i++) await settle();
+  assert.equal(h.asked("vnoc/tours"), 3);
+  assert.equal(h.asked("vnoc/tourCounts"), 6);
+  assert.deepEqual(await tours.countsOf(), { counts: { "a.py::f": 1 } });
+  assert.equal(h.asked("vnoc/tourCounts"), 6, "held");
+});
+
+test("the open tour is asked for again while the core says to, and no more once it is closed", async () => {
+  const h = makeHost({ above: false });
+  h.refuse("vnoc/tour", 1_000_000);
+  h.host.sleep = async () => void (await settle()); // one turn of the event loop for each wait: the test can look in between
+  const tours = new Tours(h.host);
+  h.openTour();
+  tours.sync();
+  for (let i = 0; i < 5; i++) await settle();
+  assert.ok(h.asked("vnoc/tour") > 2, "asked again");
+  assert.equal(tours.heldTour(), null, "no refusal is shown as the tour");
+  assert.equal(h.events.some(([n]) => n === "tour"), false);
+  h.closeTour();
+  tours.sync();
+  await settle();
+  const asked = h.asked("vnoc/tour");
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(h.asked("vnoc/tour"), asked, "not wanted any more: nothing more is asked");
+});
+
+test("tourCode and a dry tourPin are asked again; a pin with a commit is asked once", async () => {
+  const h = makeHost({ above: false });
+  const tours = new Tours(h.host);
+  h.refuse("vnoc/tourCode", 2);
+  await tours.code("t-1", "s1");
+  assert.equal(h.asked("vnoc/tourCode"), 3);
+  h.refuse("vnoc/tourPin", 2);
+  await tours.pin({ id: "t-1", dry: true });
+  assert.equal(h.asked("vnoc/tourPin"), 3);
+  h.refuse("vnoc/tourPin", 1);
+  await assert.rejects(tours.pin({ id: "t-1", commit: {} }), /ask again/);
+  assert.equal(h.asked("vnoc/tourPin"), 4);
+});
+
+test("a failure that is not an ask again is the caller's, as before", async () => {
+  const h = makeHost({ above: false });
+  const tours = new Tours(h.host);
+  h.host.request = (async () => {
+    throw new Error("no tour t-9");
+  }) as ToursDeps["request"];
+  await assert.rejects(tours.code("t-9", "s1"), /no tour t-9/);
+  assert.equal(h.slept(), 0);
 });
 
 test("Commit and Pin… chosen in the host is told to the pages and held for one that starts later, taken once", () => {

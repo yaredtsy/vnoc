@@ -117,6 +117,16 @@ pub struct Core {
     state: Arc<State>,
 }
 
+/// A duration from the environment, for tests of the editor against a slow core. Read in debug builds only: a release build ignores it.
+pub(crate) fn test_millis(name: &str) -> Option<Duration> {
+    if cfg!(debug_assertions) {
+        let millis = std::env::var(name).ok()?.parse().ok()?;
+        Some(Duration::from_millis(millis))
+    } else {
+        None
+    }
+}
+
 impl State {
     fn new() -> State {
         State {
@@ -129,7 +139,7 @@ impl State {
             everything_pending: AtomicBool::new(false),
             needs_everything: AtomicBool::new(false),
             update_limit: UPDATE_LIMIT,
-            wait_limit: WAIT_LIMIT,
+            wait_limit: test_millis("VNOC_WAIT_LIMIT_MS").unwrap_or(WAIT_LIMIT),
             corpus: Mutex::new(None),
             doc_index: Mutex::new(None),
             tours: Tours::default(),
@@ -425,12 +435,17 @@ impl Core {
     }
 }
 
-/// The answer of a request that waited as long as it may for the index: the request was fine, the index was not free. Said in words, as `vnoc/tourCalls` says it.
+/// The answer of a request that waited as long as it may for the index: the request was fine, the index was not free. The words are for people; `data.askAgain` is
+/// what the editor and the pages test (no other refusal carries it).
 fn ask_again() -> ResponseError {
-    ResponseError::new(
-        ErrorCode::REQUEST_FAILED,
-        "the index is being read and is not ready yet: ask again",
-    )
+    ask_again_with("the index is being read and is not ready yet: ask again")
+}
+
+/// A refusal that says to ask again: `words` and the flag. Both of the core's ask-again answers are made here.
+fn ask_again_with(words: &str) -> ResponseError {
+    let mut e = ResponseError::new(ErrorCode::REQUEST_FAILED, words);
+    e.data = Some(serde_json::json!({ "askAgain": true }));
+    e
 }
 
 /// Runs `wait` for at most the state's wait limit; past it, "ask again". Nothing a request waits for may take a slot for longer.
@@ -505,7 +520,14 @@ mod tests {
     }
 
     fn says_ask_again(e: &ResponseError) -> bool {
-        e.code == ErrorCode::REQUEST_FAILED && e.message.contains("ask again")
+        e.code == ErrorCode::REQUEST_FAILED
+            && e.data == Some(serde_json::json!({ "askAgain": true }))
+    }
+
+    #[test]
+    fn no_other_refusal_carries_the_flag() {
+        assert!(internal("x").data.is_none());
+        assert!(bad_params("x").data.is_none());
     }
 
     #[tokio::test]

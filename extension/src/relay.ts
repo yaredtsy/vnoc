@@ -1,7 +1,8 @@
 import type { CallTreeResult, CodeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
-import type { AsWritten, Place, StopId, TourCallsAnswer, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { AsWritten, Place, StopId, TourCallsAnswer, TourHaltAnswer, TourId, TourMove, TourPinAnswer, TourPinParams, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
+import { asksAgain } from "./askAgain.ts";
 import type { Docs } from "./docs";
 
 // What a webview may ask of the extension: one handler per request in `shared/messages.ts`. Leave one out and TypeScript says which.
@@ -61,6 +62,8 @@ export interface Deps {
     code(id: TourId, stop: StopId): Promise<AsWritten | null>;
     calls(id: TourId): Promise<TourCallsAnswer>;
     countsOf(): Promise<{ counts: Record<string, number> }>;
+    /** `vnoc/tourPin`: a dry one is asked again while the core says to; one with `commit` is asked once */
+    pin(params: TourPinParams): Promise<TourPinAnswer>;
     /** the tour **Commit and Pin…** was chosen for in the host, once (see `Requests.tourDialogTake`) */
     takeDialog(): { id: TourId; title: string | null } | null;
   };
@@ -108,7 +111,7 @@ export function createHandlers(d: Deps): Handlers {
     tourCode: ({ id, stop }) => d.tours.code(id, stop),
     tourCalls: ({ id }) => d.tours.calls(id),
     tourCounts: () => d.tours.countsOf(),
-    tourPin: (params) => d.core("vnoc/tourPin", params),
+    tourPin: (params) => d.tours.pin(params),
     tourSettings: (params) => d.core("vnoc/tourSettings", params),
     tourWriteIds: async ({ id }) => void (await d.tourActions.writeIds(id)),
     tourDialogTake: async () => d.tours.takeDialog(),
@@ -125,7 +128,8 @@ export async function serve(handlers: Handlers, message: RequestMessage): Promis
     if (!handler) throw new Error(`unknown request ${String(message.method)}`);
     return { type: "res", id: message.id, result: await handler(message.params) };
   } catch (e) {
-    return { type: "res", id: message.id, error: String((e as Error).message ?? e) };
+    const error = String((e as Error).message ?? e);
+    return asksAgain(e) ? { type: "res", id: message.id, error, askAgain: true } : { type: "res", id: message.id, error };
   }
 }
 

@@ -10,6 +10,7 @@ import { footWords, stoppable } from "@vnoc/shared/tourWriting.ts";
 import type { TourRow, TourView } from "@vnoc/shared/tours.ts";
 import { on, post, request } from "../../host.ts";
 import { useCalls } from "../../state/calls.ts";
+import { useToursWaiting } from "../../state/toursWaiting.ts";
 import { dispatch, useSession } from "../../state/session.ts";
 import { setToursFolded, setToursShare, useView } from "../../state/view.ts";
 import { goToStop } from "../../tour/goToCode.ts";
@@ -32,6 +33,7 @@ import { RouteRowView, TourListRow } from "./TourRows.tsx";
  */
 export function ToursSection() {
   const rows = useTourList((s) => s.rows);
+  const waiting = useToursWaiting((s) => s.words);
   const folded = useView((v) => v.toursFolded);
   const share = useView((v) => v.toursShare);
   const tour = useSession((s) => s.order.map((id) => s.contexts[id]).find((c) => c.kind === "tour") ?? null);
@@ -225,9 +227,10 @@ export function ToursSection() {
       }),
       foot: foot === null ? null : { text: foot, stop: canStop },
       more,
+      waiting: rows === null ? waiting : null,
       route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, struck: r.type === "stop" && r.struck, depth: r.depth })),
     });
-  }, [shown, listView, buttons.map((b) => b.text).join("|"), emptyOnText, route, folded, mode, count, tourId, view?.title, foot, canStop, more]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shown, listView, buttons.map((b) => b.text).join("|"), emptyOnText, route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section
@@ -299,7 +302,13 @@ export function ToursSection() {
             }}
           >
             {mode === "list" ? (
-              rows === null ? null : rows.length === 0 ? (
+              rows === null ? (
+                waiting === null ? null : (
+                  <p data-part="waiting" className="px-3 py-2 text-[12px] text-muted-foreground">
+                    {waiting}
+                  </p>
+                )
+              ) : rows.length === 0 ? (
                 <p className="px-3 py-2 text-[12px] text-muted-foreground">No tours yet. A tour is your agent explaining a piece of the code, step by step.</p>
               ) : (
                 <>

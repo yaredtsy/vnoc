@@ -4,6 +4,7 @@ import { wantedCalls, wantedOnScreen } from "@vnoc/shared/calls.ts";
 import { CallScheduler } from "@vnoc/shared/callScheduler.ts";
 import type { CallTreeResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
+import { askUntilAnswered } from "./askAgain.ts";
 import type { Core } from "./core";
 
 /** What happened to the call trees, for the window suite (`callTreeLog`): a state change, a tree, a reset. */
@@ -60,7 +61,7 @@ export class CallTrees {
         const cancel = () => source.cancel(); // `$/cancelRequest`: the core stops the work under it
         signal.addEventListener("abort", cancel);
         try {
-          const result = await core.request<CallTreeResult>("vnoc/callTree", { key }, source.token);
+          const result = await this.untilAnswered(() => core.request<CallTreeResult>("vnoc/callTree", { key }, source.token), signal);
           return { ...result, epoch: core.epoch };
         } finally {
           signal.removeEventListener("abort", cancel);
@@ -72,7 +73,7 @@ export class CallTrees {
         const cancel = () => source.cancel();
         signal.addEventListener("abort", cancel);
         try {
-          return await core.request<{ revision: number; count: number }>("vnoc/hasCalls", { key }, source.token);
+          return await this.untilAnswered(() => core.request<{ revision: number; count: number }>("vnoc/hasCalls", { key }, source.token), signal);
         } finally {
           signal.removeEventListener("abort", cancel);
           source.dispose();
@@ -108,6 +109,11 @@ export class CallTrees {
         this.events.reset();
       },
     });
+  }
+
+  /** A request that is asked again while the core says to (the first build is still running) and the entry is still wanted (`signal` has not fired): the spinner stays, no failure is drawn. */
+  private untilAnswered<T>(ask: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    return askUntilAnswered(ask, () => !signal.aborted, { sleep: (ms) => sleep(ms, signal) });
   }
 
   all(): Record<string, CallTreeResult> {

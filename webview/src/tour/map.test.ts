@@ -106,8 +106,8 @@ test("the calls are asked again when the stops change, not when the reader moves
 
 test("the calls are asked again, every 2 s with no cap, only when the core said to ask again", () => {
   assert.equal(ASK_AGAIN_MS, 2000);
-  assert.equal(saysAskAgain("the calls of this tour are being counted: ask again"), true);
-  assert.equal(saysAskAgain(new Error("the calls of this tour are being counted: ask again")), true);
-  assert.equal(saysAskAgain("no tour t-nope"), false, "any other failure is not asked again");
+  assert.equal(saysAskAgain(Object.assign(new Error("the calls of this tour are being counted: ask again"), { askAgain: true })), true);
+  assert.equal(saysAskAgain(new Error("the calls of this tour are being counted: ask again")), false, "the words alone are not the flag");
+  assert.equal(saysAskAgain(new Error("no tour t-nope")), false, "any other failure is not asked again");
   assert.equal(saysAskAgain(undefined), false);
 });

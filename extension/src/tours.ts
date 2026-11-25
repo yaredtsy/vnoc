@@ -3,7 +3,9 @@ import * as path from "path";
 import type { Events } from "@vnoc/shared/messages";
 import type { ContextId, ContextState, Intent, Session } from "@vnoc/shared/session.ts";
 import { isWriting, statusBarText, toAnnounce } from "@vnoc/shared/tourWriting.ts";
-import type { AsWritten, Place, StopId, TourCallsAnswer, TourCoreRequests, TourHaltAnswer, TourId, TourMove, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { AsWritten, Place, StopId, TourCallsAnswer, TourCoreRequests, TourHaltAnswer, TourId, TourMove, TourPinAnswer, TourPinParams, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+
+import { askUntilAnswered } from "./askAgain.ts";
 
 // The host's holder of tours (docs/26-tours/05-on-screen.md §5, §6). It asks the core, holds the open tour's `TourView` with its place, passes it to the pages, and sets
 // the tour context's selection from the place. It computes nothing about a tour (P1): which stop is current, what comes next, whether anything changed are the core's
@@ -23,9 +25,11 @@ export interface ToursDeps {
   /** an intent for a context of the session */
   dispatch(intent: Intent, context: ContextId): void;
   /** to every open page */
-  emit<E extends "tours" | "tour" | "tourCounts" | "tourDialog">(name: E, data: Events[E]): void;
+  emit<E extends "tours" | "tour" | "tourCounts" | "tourDialog" | "toursWaiting">(name: E, data: Events[E]): void;
   /** `.vnoc/` is above the opened folder (`vnocIsAbove`): the host's file watcher cannot see it */
   vnocAbove(): boolean;
+  /** waits `ms` (the host's timer) */
+  sleep(ms: number): Promise<void>;
   /** runs `run` every `ms` until stopped */
   every(ms: number, run: () => void): { stop(): void };
   log(text: string): void;
@@ -123,9 +127,21 @@ export class Tours {
   private status: string | null | undefined;
 
   private readonly host: ToursDeps;
+  private disposed = false;
 
   constructor(host: ToursDeps) {
     this.host = host;
+  }
+
+  /**
+   * A request to the core that is asked again, every 2 s with no cap, while the core says to ask again and `wanted` holds (`askAgain.ts`). While it waits the pages are given the
+   * core's words (`toursWaiting`), to draw as a quiet line.
+   */
+  private ask<M extends keyof TourCoreRequests>(method: M, params: TourCoreRequests[M]["params"], wanted: () => boolean = () => true): Promise<TourCoreRequests[M]["result"]> {
+    return askUntilAnswered(() => this.host.request(method, params), () => !this.disposed && wanted(), {
+      sleep: (ms) => this.host.sleep(ms),
+      waiting: (words) => this.host.emit("toursWaiting", { words }),
+    });
   }
 
   /** The tour the window shows now, from the session; the pages and the core are told when it changed. Called after every change of the session, and once at the start. */
@@ -177,15 +193,15 @@ export class Tours {
     return { counts: this.counts?.counts ?? {} };
   }
 
-  /** `vnoc/indexChanged`: the structure's keys moved, and the counts are by key. */
+  /** `vnoc/indexChanged`: the structure's keys moved, and the counts are by key. Asked also when none are held yet (the first ask may still be waiting for the first build). */
   indexChanged(): void {
-    if (this.counts !== null) void this.askCounts();
+    void this.askCounts();
   }
 
   /** Asks the core for the counts; the pages are told only when the answer is not the one they have. A failure keeps what was held (the core is restarting, or not ready). */
   private async askCounts(): Promise<void> {
     try {
-      const answer = await this.host.request("vnoc/tourCounts", undefined);
+      const answer = await this.ask("vnoc/tourCounts", undefined);
       const raw = JSON.stringify(answer.counts);
       if (raw === this.counts?.raw) return;
       this.counts = { counts: answer.counts, raw };
@@ -223,9 +239,9 @@ export class Tours {
    * structure key) it is the tours on that node, and nothing is held.
    */
   async list(params?: { on?: string; check?: TourId[] }): Promise<TourRow[]> {
-    if (params?.on !== undefined) return (await this.host.request("vnoc/tours", { on: params.on, ...(params.check ? { check: params.check } : {}) })).tours;
+    if (params?.on !== undefined) return (await this.ask("vnoc/tours", { on: params.on, ...(params.check ? { check: params.check } : {}) })).tours;
     const checked = new Set(params?.check ?? readableIds(this.rows ?? []));
-    const ask = async (ids: Set<TourId>) => (await this.host.request("vnoc/tours", ids.size > 0 ? { check: [...ids] } : undefined)).tours;
+    const ask = async (ids: Set<TourId>) => (await this.ask("vnoc/tours", ids.size > 0 ? { check: [...ids] } : undefined)).tours;
     let tours = await ask(checked);
     const unchecked = readableIds(tours).filter((id) => !checked.has(id));
     if (unchecked.length > 0) {
@@ -244,7 +260,12 @@ export class Tours {
 
   /** The page's `tourCode`: one stop as it was written (`vnoc/tourCode`), `null` when the core has none to give. */
   async code(id: TourId, stop: StopId): Promise<AsWritten | null> {
-    return this.host.request("vnoc/tourCode", { id, stop });
+    return this.ask("vnoc/tourCode", { id, stop });
+  }
+
+  /** The page's `tourPin`: a dry one (why the tour is not pinned) is asked again while the core says to; a commit is asked once and its refusal is the user's. */
+  async pin(params: TourPinParams): Promise<TourPinAnswer> {
+    return params.dry ? this.ask("vnoc/tourPin", params) : this.host.request("vnoc/tourPin", params);
   }
 
   /** The page's `tourCalls`: the calls of the tour's written stops that are not on it (`vnoc/tourCalls`). */
@@ -301,7 +322,7 @@ export class Tours {
   /** The page's `tour`: what the host holds when that is the open tour, else the core's answer. */
   async get(id: TourId): Promise<Answer> {
     if (this.open?.id === id && this.open.view) return this.open.view;
-    return this.host.request("vnoc/tour", { id });
+    return this.ask("vnoc/tour", { id });
   }
 
   /** The page's `tourGo`: the core makes the move; the place it answers is taken as the place. */
@@ -318,6 +339,7 @@ export class Tours {
 
   /** The window is going: the core is told the tour is not shown any more. */
   dispose(): void {
+    this.disposed = true;
     this.poll?.stop();
     this.poll = undefined;
     this.quietCheck?.stop();
@@ -341,7 +363,7 @@ export class Tours {
   private async refresh(id: TourId): Promise<void> {
     let answer: Answer;
     try {
-      answer = await this.host.request("vnoc/tour", { id });
+      answer = await this.ask("vnoc/tour", { id }, () => this.open?.id === id);
     } catch (e) {
       answer = { unreadable: String((e as Error).message ?? e) };
     }

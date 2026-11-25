@@ -5,6 +5,8 @@ import { CORE_STOPPED, core, forgetUnanswered, markStopped, noAnswer } from "./u
 
 // The window suites, in the order they run. `bar` stops the core on purpose and restarts it: the suites after it prove it came back.
 const SUITES = ["skeleton", "bar", "session", "sidebar", "attention", "refactor", "calls", "edit", "search", "cli", "bend", "tour"];
+/** Suites that need a window of their own, with a core that is slow on purpose (`runTest.ts` starts it with `VNOC_WINDOW=held`): in no other window, and no other suite in that one. */
+const HELD = ["waits"];
 
 /**
  * Suites that do not pass alone, and what they need first (found by running each suite alone). `attention` and `calls` wait for the host to read the structure,
@@ -18,11 +20,13 @@ const NEEDS: Record<string, string[]> = { attention: ["session"], calls: ["sessi
  * error, not an empty run.
  */
 function chosen(): string[] {
+  if (process.env.VNOC_WINDOW === "held") return HELD;
   const asked = (process.env.VNOC_SUITE ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const unknown = asked.filter((s) => !SUITES.includes(s));
-  if (unknown.length > 0) throw new Error(`VNOC_SUITE names no suite: ${unknown.join(", ")} (they are ${SUITES.join(", ")})`);
+  const unknown = asked.filter((s) => !SUITES.includes(s) && !HELD.includes(s));
+  if (unknown.length > 0) throw new Error(`VNOC_SUITE names no suite: ${unknown.join(", ")} (they are ${[...SUITES, ...HELD].join(", ")})`);
+  if (asked.length > 0 && asked.every((s) => HELD.includes(s))) return [];
   if (asked.length === 0) return SUITES;
-  const wanted = new Set(asked.flatMap((s) => [s, ...(NEEDS[s] ?? [])]));
+  const wanted = new Set(asked.filter((s) => !HELD.includes(s)).flatMap((s) => [s, ...(NEEDS[s] ?? [])]));
   return SUITES.filter((s) => wanted.has(s));
 }
 

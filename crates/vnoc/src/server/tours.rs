@@ -384,14 +384,16 @@ pub(super) fn tour_calls(
             }
             let running = state.calls_running.lock().unwrap().contains(&id);
             if !running || tokio::time::Instant::now() >= deadline {
-                return Err(ResponseError::new(
-                    ErrorCode::REQUEST_FAILED,
-                    "the calls of this tour are being counted: ask again",
-                ));
+                return Err(being_counted());
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     })
+}
+
+/// The refusal of `vnoc/tourCalls` while the count goes on: in words, and as `data.askAgain`.
+fn being_counted() -> ResponseError {
+    super::ask_again_with("the calls of this tour are being counted: ask again")
 }
 
 /// What a stop's driver ask came to, for the count of `vnoc/tourCalls`.
@@ -811,6 +813,14 @@ mod tests {
             Asked::NoDriver
         ));
         assert!(matches!(of_the_ask(Ok(Ok(7u8))), Asked::Calls(7)));
+    }
+
+    #[test]
+    fn the_refusal_while_the_calls_are_counted_says_ask_again_in_words_and_in_data() {
+        let e = being_counted();
+        assert_eq!(e.code, ErrorCode::REQUEST_FAILED);
+        assert!(e.message.ends_with("ask again"), "{e:?}");
+        assert_eq!(e.data, Some(serde_json::json!({ "askAgain": true })));
     }
 
     /// A state with a folder open and no index: the first build has not happened (`Status::Building`), and a tour with no stop in it.

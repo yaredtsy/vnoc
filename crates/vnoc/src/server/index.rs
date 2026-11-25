@@ -42,6 +42,9 @@ impl Core {
         let built = matches!(*self.state.status.borrow(), Status::Ready);
         let first = !built || self.state.needs_everything.load(Ordering::Acquire);
         let limit = self.state.update_limit;
+        if !built && let Some(hold) = super::test_millis("VNOC_HOLD_FIRST_BUILD_MS") {
+            tokio::time::sleep(hold).await; // for the window tests: a first build that takes longer than a request may wait
+        }
         // the whole update is bounded: past the limit it is dropped where it stands (it holds no lock across a driver call), `one_at_a_time` goes with this scope, and the
         // driver is told to cancel the call that was running
         let result = tokio::time::timeout(limit, async {

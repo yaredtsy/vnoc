@@ -5,6 +5,7 @@ import { FIT_VIEW_EVENT } from "../canvas/keys.ts";
 import { CARD_H, CARD_W } from "../canvas/layout.ts";
 import { motionMs, prefersReducedMotion } from "../lib/motion.ts";
 import { on, post, request } from "../host.ts";
+import { useToursWaiting } from "../state/toursWaiting.ts";
 import { useView } from "../state/view.ts";
 import { rememberViewport, reportViewport, savedViewport } from "../state/viewports.ts";
 import { CENTER_TOUR_EVENT, cameraMove, centre } from "./camera.ts";
@@ -89,6 +90,7 @@ function TourCamera({ cards, stop, at, tourId }: { cards: TourCardData[]; stop: 
  */
 export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: string }) {
   const held = useTour();
+  const waiting = useToursWaiting((s) => s.words);
   const minimap = useView((v) => v.minimap);
   const view = held.id === tourId && held.view && "stops" in held.view ? held.view : null;
   useEffect(() => {
@@ -134,7 +136,7 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
     post({ type: "mapDrawn", tour: tourId, cards: map.cards.map((c) => ({ id: c.id, number: c.number, mark: c.mark, here: c.here, callLine: c.callLine, description: c.description, struck: c.struck, planned: c.planned, writing: c.writing, off: c.off })), heavy: map.edges.filter((e) => e.onPath).map((e) => e.id), edges: map.edges.map((e) => `${e.id}:${e.kind}`) });
   }, [map, tourId]);
 
-  if (!view || !map) return <div className="flex min-w-0 flex-1 items-center justify-center text-[12px] text-muted-foreground">Opening the tour…</div>;
+  if (!view || !map) return <div className="flex min-w-0 flex-1 items-center justify-center text-[12px] text-muted-foreground">{waiting ?? "Opening the tour…"}</div>;
   return (
     <ReactFlow
       nodes={nodes}
