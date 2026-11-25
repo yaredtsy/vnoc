@@ -12,7 +12,7 @@ const kindOf = (kind: string | null): Kind => (kind && kind in KINDS ? (kind as 
 const MARKS = { seen: "✓", here: "●", ahead: "○", planned: "◌" } as const;
 
 /** One tour's row in the list (design 07 §3): the kind's icon and the title, then the core's words and the question. 40 px. */
-export function TourListRow({ row, domId, open, focused, onOpen }: { row: TourRow; domId: string; open: string | null; focused: boolean; onOpen: () => void }) {
+export function TourListRow({ row, domId, open, focused, line2, onOpen }: { row: TourRow; domId: string; open: string | null; focused: boolean; /** the row's second line in this view: its own words, or in the second view how it is on the node */ line2: string; onOpen: () => void }) {
   const item = listItem(row);
   const kind = KINDS[kindOf(item.kind)];
   return (
@@ -40,7 +40,7 @@ export function TourListRow({ row, domId, open, focused, onOpen }: { row: TourRo
         <span className={cn("min-w-0 truncate", isOpen(row, open) && "font-bold")}>{item.title}</span>
       </div>
       <div className="flex min-w-0 gap-1 pl-[20px] text-[11px] text-muted-foreground">
-        <span className="flex-none">{item.words}</span>
+        <span className="flex-none">{line2}</span>
         {item.question !== null && <span className="min-w-0 truncate">· “{item.question}”</span>}
       </div>
     </div>

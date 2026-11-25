@@ -334,6 +334,11 @@
         "command": "vnoc.tourRevealInMain",
         "title": "Reveal in Main",
         "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.showTours",
+        "title": "Show Tours",
+        "category": "V-NOC"
       }
     ],
     "menus": {
@@ -550,6 +555,10 @@
         },
         {
           "command": "vnoc.tourRevealInMain",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.showTours",
           "when": "false"
         }
       ],
@@ -803,6 +812,11 @@
           "command": "vnoc.closeOtherContexts",
           "when": "webviewId == 'vnoc.structure' && webviewSection == 'context'",
           "group": "1_close@2"
+        },
+        {
+          "command": "vnoc.showTours",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node && tours > 0",
+          "group": "6_tours@1"
         },
         {
           "command": "vnoc.tourGoToCode",

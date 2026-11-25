@@ -2,18 +2,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Codicon } from "@/components/Codicon.tsx";
 import { cn } from "@/lib/utils.ts";
+import { callFacts } from "@vnoc/shared/calls.ts";
+import { findNode } from "@vnoc/shared/tree.ts";
 import { footWords, stoppable } from "@vnoc/shared/tourWriting.ts";
 import type { TourRow, TourView } from "@vnoc/shared/tours.ts";
 import { on, post, request } from "../../host.ts";
+import { useCalls } from "../../state/calls.ts";
 import { dispatch, useSession } from "../../state/session.ts";
 import { setToursFolded, setToursShare, useView } from "../../state/view.ts";
 import { goToStop } from "../../tour/goToCode.ts";
-import { go, halt, loadTour, useTour } from "../../tour/store.ts";
+import { go, goThen, halt, loadTour, useTour } from "../../tour/store.ts";
 import { Splitter } from "../Splitter.tsx";
 import { appearedFromOutside } from "./appear.ts";
 import { DEFAULT_TOURS_SHARE, dragTours, toursShare } from "./split.ts";
 import { useData } from "../../state/data.ts";
 import { listItem } from "./list.ts";
+import { emptyOn, lineTwo, opensAt, selectionOf, showAll, viewButtons, viewKey, viewOf, type ListView } from "./onView.ts";
 import { headerPlace, rowKey, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
 import { useTourList } from "./store.ts";
@@ -21,7 +25,7 @@ import { RouteRowView, TourListRow } from "./TourRows.tsx";
 
 /**
  * The TOURS section (docs/26-tours/design/07-tour-list.md §2, 04 §1): under the context panels. Folded it says its name and how many tours there are; open it is
- * the list of tours (the **All** view), or, while a tour is open, that tour's route, with `‹ Tours` to go back to the list (the tour stays open). It draws the
+ * the list of tours (the **All** view, or **On the selected node**: the tours through the active context's selection, each saying how), or, while a tour is open, that tour's route, with `‹ Tours` to go back to the list (the tour stays open). It draws the
  * core's `TourRow`s and the open tour's `TourView` as they come, and every click is a request: open a tour (`tourOpen`), jump to a stop or a step (`tourGo`).
  */
 export function ToursSection() {
@@ -33,6 +37,17 @@ export function ToursSection() {
   const tourActive = useSession((s) => tour !== null && s.active === tour.id);
   const held = useTour();
   const view: TourView | null = tourId !== null && held.id === tourId && held.view && "stops" in held.view ? held.view : null;
+  // the second view follows the active context's selection (a selected call is its callee); with none the list is All
+  const saved = useSession((s) => s.tourList.view);
+  const contexts = useSession((s) => s.contexts);
+  const active = useSession((s) => s.active);
+  const tree = useData((s) => s.structure?.root ?? null);
+  const trees = useCalls((s) => s.trees);
+  const selection = useMemo(() => selectionOf({ contexts, active }, tree, (call) => callFacts(trees, call)), [contexts, active, tree, trees]);
+  const selectionName = selection !== null && tree ? (findNode(tree, selection)?.name ?? null) : null;
+  const listView: ListView = viewOf(saved, selection);
+  // the core's tours through the selection, asked when the selection changes and whenever the list does (a tour changed): plain first, then with the ids it answered, as the host's list does
+  const [onRows, setOnRows] = useState<{ key: string; rows: TourRow[] } | null>(null);
   const [showList, setShowList] = useState(false);
   const [cursor, setCursor] = useState(-1);
   const box = useRef<HTMLDivElement>(null);
@@ -73,6 +88,33 @@ export function ToursSection() {
   useEffect(() => {
     if (mode === "list" && !folded) void request("tours", undefined).then((r) => useTourList.setState({ rows: r }), () => {});
   }, [mode, folded]);
+  // asked only when the selection or what the list holds really changed (the ids and words of the rows, not the array: the list is drawn again for many reasons). In **All** the ask is plain
+  // (the button's count); in the second view the rows are asked with `check` too, as the host asks the list
+  const rowsSignature = rows === null ? null : rows.map((r) => `${r.id}/${r.folder}/${r.words}`).join("|");
+  const asking = selection !== null && mode === "list" && !folded && rowsSignature !== null;
+  const checking = listView === "on";
+  useEffect(() => {
+    if (!asking) return;
+    let wanted = true;
+    const ask = (check: string[]) => request("tours", check.length > 0 ? { on: selection, check } : { on: selection });
+    ask([]).then(
+      (first) => {
+        if (!wanted) return;
+        setOnRows((held) => (held?.key === selection && JSON.stringify(held.rows) === JSON.stringify(first) ? held : { key: selection, rows: first }));
+        const ids = [...new Set(first.filter((r) => r.readable).map((r) => r.id))];
+        if (checking && ids.length > 0) void ask(ids).then((checked) => wanted && setOnRows((held) => (held?.key === selection && JSON.stringify(held.rows) === JSON.stringify(checked) ? held : { key: selection, rows: checked })), () => {});
+      },
+      () => wanted && setOnRows(null),
+    );
+    return () => {
+      wanted = false;
+    };
+  }, [asking, selection, rowsSignature, checking]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onShown = selection !== null && onRows?.key === selection ? onRows.rows : null;
+  const shown = listView === "on" ? onShown : rows;
+  const buttons = viewButtons(listView, rows?.length ?? 0, selectionName === null ? null : { name: selectionName }, onShown?.length ?? null);
+  const emptyOnText = listView === "on" && onShown !== null && onShown.length === 0 && selectionName !== null ? emptyOn(selectionName) : null;
+  const switchView = (to: ListView) => dispatch({ type: "tourView", view: to === "on" ? "onSelection" : "all" });
   const route = useMemo(() => (view ? routeRows(view) : []), [view]);
   // the route's foot (design 05 §1): what the agent is doing, with ■ Stop while it writes; and, for a tour with no plan, the one row under the last stop that says another may come
   const foot = mode === "route" && view ? footWords(view) : null;
@@ -82,7 +124,11 @@ export function ToursSection() {
 
   const openTour = (row: TourRow) => {
     setShowList(false);
-    dispatch({ type: "tourOpen", id: row.id, title: row.title });
+    const open = () => dispatch({ type: "tourOpen", id: row.id, title: row.title });
+    // from the second view a tour opens where it is on the node: the cover for a tour that starts there, else at its stop (the core's `on.first`); from All, where it was left
+    const at = opensAt(row, listView);
+    if (at === null) open();
+    else goThen(row.id, at, open);
   };
   const root = useData((s) => s.structure?.root ?? null);
   // Go to Code for a stop of the route: the real file at the stop's first line (the hover `↗`, and a double-click on the row)
@@ -95,7 +141,7 @@ export function ToursSection() {
   // the row's action, for a click and for Enter: one function
   const act = (index: number) => {
     if (mode === "list") {
-      const row = rows?.[index];
+      const row = shown?.[index];
       if (row && listItem(row).clickable) openTour(row);
     } else {
       const r = route[index];
@@ -114,7 +160,7 @@ export function ToursSection() {
   }, [mode, currentAt, folded]);
 
   const key = (k: string) => {
-    const move = tourKey(k, cursor, mode === "list" ? (rows?.length ?? 0) : route.length, mode);
+    const move = tourKey(k, cursor, mode === "list" ? (shown?.length ?? 0) : route.length, mode);
     if (!move) return false;
     if (move.type === "focus") setCursor(move.index);
     else if (move.type === "open") act(cursor);
@@ -124,11 +170,17 @@ export function ToursSection() {
 
   // the extension's test suite cannot click in a webview: it sends the click
   const stopWriting = () => tourId !== null && canStop && halt(tourId);
-  const latest = useRef({ openTour, jump, closeTour, key, rows, route, stopWriting });
-  latest.current = { openTour, jump, closeTour, key, rows, route, stopWriting };
+  const latest = useRef({ openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null });
+  latest.current = { openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null };
   useEffect(
     () =>
       on("viewCommand", ({ name, key: what }) => {
+        // **Show Tours** and a click on `▶ N` (the host did the selecting and the switching): the section is shown, as the list
+        if (name === "showTours") {
+          setToursFolded(false);
+          setShowList(true);
+          return;
+        }
         if (name !== "toursClick" || !what) return;
         const l = latest.current;
         const [kind, id] = [what.split(":")[0], what.slice(what.indexOf(":") + 1)];
@@ -137,6 +189,12 @@ export function ToursSection() {
         else if (what === "back") setShowList(true);
         else if (what === "close") l.closeTour();
         else if (what === "stop") l.stopWriting();
+        else if (what === "view:all" || what === "view:on") l.switchView(what === "view:on" ? "on" : "all");
+        else if (what === "showAll") l.switchView("all");
+        else if (what.startsWith("viewkey:")) {
+          const to = viewKey(what.slice("viewkey:".length), l.listView, l.canOn);
+          if (to) l.switchView(to);
+        }
         else if (kind === "row") {
           const row = l.rows?.find((r) => r.id === id);
           if (row) l.openTour(row);
@@ -156,15 +214,18 @@ export function ToursSection() {
       mode,
       count,
       header: view && mode === "route" ? `‹ Tours ▶ ${view.title} ${headerPlace(view)}`.trim() : "TOURS",
-      list: (rows ?? []).map((r) => {
+      view: listView,
+      buttons: buttons.map((b) => b.text),
+      empty: emptyOnText,
+      list: (shown ?? []).map((r) => {
         const item = listItem(r);
-        return { id: item.id, title: item.title, words: item.words, question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable };
+        return { id: item.id, title: item.title, words: item.words, line2: lineTwo(r, listView), question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable };
       }),
       foot: foot === null ? null : { text: foot, stop: canStop },
       more,
       route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, struck: r.type === "stop" && r.struck, depth: r.depth })),
     });
-  }, [rows, route, folded, mode, count, tourId, view?.title, foot, canStop, more]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shown, listView, buttons.map((b) => b.text).join("|"), emptyOnText, route, folded, mode, count, tourId, view?.title, foot, canStop, more]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section
@@ -232,7 +293,42 @@ export function ToursSection() {
               rows === null ? null : rows.length === 0 ? (
                 <p className="px-3 py-2 text-[12px] text-muted-foreground">No tours yet. A tour is your agent explaining a piece of the code, step by step.</p>
               ) : (
-                rows.map((row, i) => <TourListRow key={`${row.id}:${row.folder}`} row={row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} onOpen={() => openTour(row)} />)
+                <>
+                  <div role="group" aria-label="Which tours" data-part="views" className="flex flex-none items-center gap-1 px-2 py-1">
+                    {buttons.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        data-view={b.id}
+                        aria-pressed={b.pressed}
+                        disabled={b.disabled}
+                        title={b.tip ?? undefined}
+                        className={cn("min-w-0 truncate rounded-sm border px-2 py-0.5 text-[11px]", b.pressed ? "border-[color:var(--ring)] bg-[color:var(--list-hover-bg)] text-foreground" : "border-border text-muted-foreground hover:text-foreground", b.disabled && "opacity-50")}
+                        onClick={() => switchView(b.id)}
+                        onKeyDown={(e) => {
+                          const to = viewKey(e.key, listView, selection !== null);
+                          if (!to) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          switchView(to);
+                          e.currentTarget.parentElement?.querySelector<HTMLElement>(`[data-view=${to}]`)?.focus();
+                        }}
+                      >
+                        {b.text}
+                      </button>
+                    ))}
+                  </div>
+                  {emptyOnText !== null ? (
+                    <div data-part="empty-on" className="px-3 py-2 text-[12px] text-muted-foreground">
+                      <p>{emptyOnText}</p>
+                      <button type="button" className="mt-1.5 rounded-sm border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-toolbar-hover" onClick={() => switchView("all")}>
+                        {showAll(rows.length)}
+                      </button>
+                    </div>
+                  ) : (
+                    (shown ?? []).map((row, i) => <TourListRow key={`${row.id}:${row.folder}`} row={row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} line2={lineTwo(row, listView)} onOpen={() => openTour(row)} />)
+                  )}
+                </>
               )
             ) : view ? (
               <>

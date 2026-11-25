@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { Place, StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
 import { CARD_H, CARD_W, COL_W, ROW_H } from "../canvas/layout.ts";
-import { boxOf, mapOf } from "./map.ts";
+import { boxOf, callsShape, mapOf } from "./map.ts";
 
 const step = (id: string, kind: StepKind): StepView => ({ id, kind, depth: 0, parent: null, title: null, text: "t", lines: null });
 const stop = (n: number, over: Partial<TourStop> = {}): TourStop => ({
@@ -42,6 +42,11 @@ test("a stop explained before says `⇢ explained at N`, and a stop being writte
   assert.deepEqual([cards[3].description, cards[3].explainedAt], ["⇢ 2", 2]);
   assert.deepEqual([cards[4].description, cards[4].explainedAt], ["writing…", null]);
   assert.equal(cards[0].description, null);
+});
+
+test("a card's +N is the core's tourCalls answer for its stop, 0 for a stop it does not name", () => {
+  assert.deepEqual(mapOf(view("cover"), { s1: 2, s3: 1 }).cards.map((c) => c.off), [2, 0, 1, 0, 0]);
+  assert.deepEqual(mapOf(view("cover")).cards.map((c) => c.off), [0, 0, 0, 0, 0], "nothing asked yet");
 });
 
 test("a stop reached by a call is a call card with its line; one reached by containment is not; the first has neither", () => {
@@ -89,4 +94,12 @@ test("the badge of the stop the agent is on turns, unless the agent has been qui
   assert.deepEqual(quiet.map((c) => c.writing), [false, false, false, false, false], "no news: nothing turns");
   assert.equal(quiet[4].description, "no news");
   assert.equal(quiet[4].planned, true, "it is still not written");
+});
+
+test("the calls are asked again when the stops change, not when the reader moves", () => {
+  const at = (where: string) => callsShape(view(where));
+  assert.strictEqual(at("cover"), at("s2"), "a move is not a change of the stops");
+  assert.notStrictEqual(callsShape(view("cover")), callsShape(view("cover", { stops: [...stops.slice(0, 4), stop(5, { depth: 2, from: "s3" })] })), "a stop written");
+  assert.notStrictEqual(callsShape(view("cover")), callsShape(view("cover", { stops: stops.map((s, i) => (i === 1 ? { ...s, check: "changed" as const } : s)) })), "a check said changed");
+  assert.notStrictEqual(callsShape(view("cover")), callsShape(view("cover", { stops: stops.map((s, i) => (i === 1 ? { ...s, key: "b.py::g" } : s)) })), "a stop found elsewhere");
 });

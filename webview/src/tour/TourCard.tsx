@@ -10,6 +10,7 @@ import { KINDS } from "../node-card/kinds.ts";
 import { tourStopContext } from "../node-card/nodeContext.ts";
 import { useData } from "../state/data.ts";
 import { useView } from "../state/view.ts";
+import { offChipText, offChipTip } from "../sidebar/tours/onView.ts";
 import { goToStop } from "./goToCode.ts";
 import type { TourCardData } from "./map.ts";
 import { useTour } from "./store.ts";
@@ -82,6 +83,12 @@ export const TourCard = memo(function TourCard({ data }: NodeProps<Node<TourCard
       <div className="flex flex-none items-center gap-2 pr-2 pl-[30px] text-[11px] text-muted-foreground" style={{ height: FOOTER_H }}>
         {data.steps !== null && <span>{plural(data.steps, "step", "steps")}</span>}
         {docs > 0 && <span>{plural(docs, "doc", "docs")}</span>}
+        {/* the calls of this stop that are not on the tour (the core counts them): a dim fact, no click */}
+        {data.off > 0 && (
+          <span className="opacity-60" data-part="off" title={offChipTip(data.off)}>
+            {offChipText(data.off)}
+          </span>
+        )}
         <span className="ml-auto">{data.explainedAt !== null ? `⇢ explained at ${data.explainedAt}` : data.description}</span>
       </div>
       <Handle type="source" position={Position.Right} isConnectable={false} />

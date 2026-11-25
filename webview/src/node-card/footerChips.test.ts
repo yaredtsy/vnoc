@@ -91,3 +91,10 @@ test("the +N of a held-back card says why, and what a click does (03 §6.1)", ()
   assert.equal(plus({ ...base, heldBack: true, call: { callerName: "f", lines: [1] } }), "Not drawn: the canvas shows at most 200 cards. Click to explore it.");
   assert.equal(plus({ ...base, heldBack: false }), "3 hidden: open to see them");
 });
+
+test("▶ N after the docs when the node is on tours, with its tooltip; none for 0", () => {
+  assert.deepEqual(footerChips({ ...base, docs: 1 }, none, 3).map((c) => [c.kind, c.text]), [["docs", "1"], ["tours", "▶ 3"]]);
+  assert.equal(footerChips(base, none, 3)[0].tip, "on 3 tours: click to see them");
+  assert.equal(footerChips(base, none, 1)[0].tip, "on 1 tour: click to see it");
+  assert.deepEqual(footerChips(base, none, 0), []);
+});

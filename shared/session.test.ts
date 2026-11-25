@@ -774,6 +774,16 @@ test("opening a tour adds its context under MAIN and makes it the active one; MA
   assert.equal(emptySession().tourList.view, "all");
 });
 
+test("the TOURS section's view is one switch for the window: it moves seq only when it changes, and is kept in what is saved", () => {
+  const s = emptySession();
+  const on = run(s, { type: "tourView", view: "onSelection" });
+  assert.equal(on.tourList.view, "onSelection");
+  assert.equal(on.seq, s.seq + 1);
+  assert.equal(run(on, { type: "tourView", view: "onSelection" }), on, "the same view: nothing changes");
+  assert.equal(restoreSession(JSON.parse(JSON.stringify(toSaved(on)))).tourList.view, "onSelection");
+  assert.equal(run(on, { type: "tourView", view: "all" }).tourList.view, "all");
+});
+
 test("a tour with no title is called by its id, and `at` selects the key it names when the tree has it", () => {
   assert.equal(ctx(run(emptySession(), { type: "tourOpen", id: "t-1" }), T1).title, "t-1");
   assert.equal(ctx(run(emptySession(), { type: "tourOpen", id: "t-1", at: "g" }), T1).selected, "g");

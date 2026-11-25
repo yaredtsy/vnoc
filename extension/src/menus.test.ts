@@ -153,8 +153,8 @@ test("08 §9.2: every call entry tests `surface == canvas`, and names the canvas
   }
 });
 
-test("08 §1: the groups, in this order everywhere: 1_nav · 2_open · 3_calls · 4_code · 5_docs · 9_copy", () => {
-  const ORDER = ["1_nav", "2_open", "3_calls", "4_code", "5_docs", "9_copy"];
+test("08 §1: the groups, in this order everywhere: 1_nav · 2_open · 3_calls · 4_code · 5_docs · 6_tours · 9_copy", () => {
+  const ORDER = ["1_nav", "2_open", "3_calls", "4_code", "5_docs", "6_tours", "9_copy"];
   for (const [name, menu] of [["node", nodeMenu], ["call", callMenu]] as const) {
     for (const e of menu) assert.ok(ORDER.includes(e.group!.split("@")[0]), `${name} entry ${e.command}: group ${e.group}`);
   }
@@ -198,6 +198,16 @@ test("08 §1: a node has the same menu on a row and on its card, in every state,
       }
     }
   }
+});
+
+test("Show Tours is in a node's menu on a card and on a row, only when the node is on tours; a call card does not have it", () => {
+  const withTours = (surface: "canvas" | "sidebar", node: ReturnType<typeof facts>, tours: number) => ({ ...JSON.parse(nodeContext({ node, contextId: "main", isFocusRoot: false, surface, tours })), ...noKeys, webviewId: VIEW[surface] });
+  for (const surface of ["canvas", "sidebar"] as const) {
+    assert.equal(shown(nodeMenu, withTours(surface, facts("function"), 3)).includes("showTours"), true, `${surface}: on 3 tours`);
+    assert.equal(shown(nodeMenu, withTours(surface, facts("function"), 0)).includes("showTours"), false, `${surface}: on none`);
+    assert.equal(shown(nodeMenu, context(surface, facts("function"))).includes("showTours"), false, `${surface}: no count given`);
+  }
+  assert.equal(shown(nodeMenu, withTours("canvas", facts("function", { id: 'call:["a.py::f","b.py::g"]', key: "b.py::g", role: "call", call: { sites: [{}] } }), 3)).includes("showTours"), false, "a call card");
 });
 
 test("08 §2: Write ID is on a card and on a row, and both only show it for a node found by name", () => {

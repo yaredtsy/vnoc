@@ -56,6 +56,8 @@ const barPosts: Extract<Notes, { type: "tourBar" }>[] = [];
 const viewports: Record<string, { x: number; y: number; zoom: number }> = {};
 /** What the sidebar's TOURS section drew, each time it changed (for the test suite). */
 const toursPosts: Extract<Notes, { type: "toursDrawn" }>[] = [];
+/** The nodes that showed `▶ N`, by surface, as each page last said (for the test suite). */
+const tourChipPosts: Extract<Notes, { type: "tourChips" }>[] = [];
 /** What the cards drew of their code (for the test suite). */
 const codeShownPosts: { key: string; dirty: boolean; text: string }[] = [];
 /** What the cards said about their edit state (for the test suite). */
@@ -87,6 +89,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   const indexChanged = (revision: number) => {
     callTrees.indexChanged(revision); // stale trees are fetched again 800 ms after the last change
     panels.emit("indexChanged", { revision });
+    tours.indexChanged(); // `▶ N` is by the structure's keys
   };
   /** What the session has open or selected, or a tree that arrived, changes which call trees are wanted. */
   const wantCalls = () => {
@@ -186,6 +189,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     reportIssue: async () => void (await vscode.commands.executeCommand("vnoc.reportIssue")),
     retryCalls: async (key) => callTrees.retry(key),
     rowClick: (context, id) => commands.rowClick(context, id),
+    showTours: (key, context) => commands.showToursOf(key, context),
     showDoc: (params) => commands.showDoc(params),
     command: async (name) => void (await (name === "openFolder" ? vscode.commands.executeCommand("workbench.action.files.openFolder") : vscode.commands.executeCommand("vnoc.refreshStructure"))),
     tours,
@@ -339,7 +343,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     setView: (text: string) => panels.emit("viewCommand", { name: "setView", text }),
     /** every drawing of the sidebar's TOURS section, in order */
     toursDrawn: () => toursPosts,
-    /** a click in the TOURS section (`fold`, `unfold`, `row:<tour>`, `stop:<id>`, `step:<id>`, `back`, `close`, `key:<Key>`), as the page handles it */
+    /** every report of the nodes that show `▶ N` (the cards of the canvas, the rows of the structure that are drawn): the node's id, its count and the chip's tooltip */
+    tourChips: () => tourChipPosts,
+    /** a click on a node's `▶ N`, as the page's request makes it (the same function as the node menu's **Show Tours**) */
+    showTours: (key: string, context: string) => commands.showToursOf(key, context),
+    /** a click in the TOURS section (`fold`, `view:all`, `view:on`, `viewkey:<Arrow>`, `showAll`, `unfold`, `row:<tour>`, `stop:<id>`, `step:<id>`, `back`, `close`, `key:<Key>`), as the page handles it */
     toursClick: (what: string) => panels.emit("viewCommand", { name: "toursClick", key: what }),
     /** an intent, as a click on a card would send it */
     dispatch: (intent: Intent, context?: string) => store.dispatch(intent, context),
@@ -459,6 +467,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "toursDrawn":
       toursPosts.push(note);
+      break;
+    case "tourChips":
+      tourChipPosts.push(note);
       break;
     case "stageDrawn":
       stagePosts.push(note);

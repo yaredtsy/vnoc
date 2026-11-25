@@ -1,19 +1,20 @@
 import { Background, Controls, type Edge, MiniMap, type Node, ReactFlow, useReactFlow, useStore, useStoreApi } from "@xyflow/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FIT_VIEW_EVENT } from "../canvas/keys.ts";
 import { CARD_H, CARD_W } from "../canvas/layout.ts";
 import { motionMs, prefersReducedMotion } from "../lib/motion.ts";
-import { on, post } from "../host.ts";
+import { on, post, request } from "../host.ts";
 import { useView } from "../state/view.ts";
 import { rememberViewport, reportViewport, savedViewport } from "../state/viewports.ts";
 import { CENTER_TOUR_EVENT, cameraMove, centre } from "./camera.ts";
-import { mapOf, boxOf, type TourCardData } from "./map.ts";
+import { callsShape, mapOf, boxOf, type TourCardData } from "./map.ts";
 import { go, loadTour, useTour } from "./store.ts";
 import { TourCard } from "./TourCard.tsx";
 
 const nodeTypes = { tourCard: TourCard };
 const FIT_OPTIONS = { maxZoom: 1 };
+const NO_CALLS: Record<string, number> = {};
 
 /**
  * The camera of design 04 §4, inside `<ReactFlow>`: the current card is in view after every step and nothing else is promised. A new stop moves the map by the least that
@@ -97,7 +98,30 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
       wanted = false;
     };
   }, [tourId]);
-  const map = useMemo(() => (view ? mapOf(view) : null), [view]);
+  // the calls of each stop that are not on the tour (`+N`): asked when the map is drawn and when the tour's stops change (a `tour` event that only moved the reader asks nothing: the core would
+  // answer from memory, but every ask is a round trip through the host); the answer before it is drawn meanwhile. An answer that is the same as the one held changes nothing.
+  const [calls, setCalls] = useState<{ tour: string; off: Record<string, number> } | null>(null);
+  const shape = view ? callsShape(view) : null;
+  useEffect(() => {
+    if (shape === null) return;
+    let wanted = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // the core counts in the background and answers "ask again" when the count takes longer than a moment: asked again a few times, a second apart
+    const ask = (tries: number) =>
+      request("tourCalls", { id: tourId }).then(
+        ({ off }) => wanted && setCalls((held) => (held?.tour === tourId && JSON.stringify(held.off) === JSON.stringify(off) ? held : { tour: tourId, off })),
+        () => {
+          if (wanted && tries > 0) timer = setTimeout(() => ask(tries - 1), 1000);
+        },
+      );
+    void ask(8);
+    return () => {
+      wanted = false;
+      clearTimeout(timer);
+    };
+  }, [tourId, shape]);
+  const off = calls?.tour === tourId ? calls.off : NO_CALLS;
+  const map = useMemo(() => (view ? mapOf(view, off) : null), [view, off]);
   const nodes = useMemo<Node<TourCardData>[]>(() => (map?.cards ?? []).map((c) => ({ id: c.id, type: "tourCard", position: { x: c.x, y: c.y }, data: c, width: CARD_W, height: CARD_H })), [map]);
   const edges = useMemo<Edge[]>(() => (map?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, className: [e.kind === "call" && "call", e.onPath && "on-path"].filter(Boolean).join(" ") || undefined })), [map]);
   const saved = useMemo(() => savedViewport(contextId, tourId), [contextId, tourId]);
@@ -106,7 +130,7 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
   // what the suite reads of what was drawn
   useEffect(() => {
     if (!map) return;
-    post({ type: "mapDrawn", tour: tourId, cards: map.cards.map((c) => ({ id: c.id, number: c.number, mark: c.mark, here: c.here, callLine: c.callLine, description: c.description, struck: c.struck, planned: c.planned, writing: c.writing })), heavy: map.edges.filter((e) => e.onPath).map((e) => e.id), edges: map.edges.map((e) => `${e.id}:${e.kind}`) });
+    post({ type: "mapDrawn", tour: tourId, cards: map.cards.map((c) => ({ id: c.id, number: c.number, mark: c.mark, here: c.here, callLine: c.callLine, description: c.description, struck: c.struck, planned: c.planned, writing: c.writing, off: c.off })), heavy: map.edges.filter((e) => e.onPath).map((e) => e.id), edges: map.edges.map((e) => `${e.id}:${e.kind}`) });
   }, [map, tourId]);
 
   if (!view || !map) return <div className="flex min-w-0 flex-1 items-center justify-center text-[12px] text-muted-foreground">Opening the tour…</div>;

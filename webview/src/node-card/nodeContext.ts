@@ -21,9 +21,10 @@ export function fileExtname(key: string | null): string {
  * object to the command. One function, so a card and a row say the same things; `surface` says which one is asking.
  *
  * A call card is a `node` section like any card: its entries test `role == call` (and `surface == canvas`), so a node's entries never show on it. `nodeKey` is
- * the structure node it acts on (a call card's callee; null for a callee the project does not know), `id` and `callId` say which card it is.
+ * the structure node it acts on (a call card's callee; null for a callee the project does not know), `id` and `callId` say which card it is. `tours` is how many tours go
+ * through the node (the core's `vnoc/tourCounts`): **Show Tours** is in the menu when it is above 0.
  */
-export function nodeContext(f: { node: NodeFacts; contextId: ContextId; isFocusRoot: boolean; surface?: "canvas" | "sidebar" }): string {
+export function nodeContext(f: { node: NodeFacts; contextId: ContextId; isFocusRoot: boolean; surface?: "canvas" | "sidebar"; tours?: number }): string {
   const call = f.node.role === "call";
   return JSON.stringify({
     surface: f.surface ?? "canvas",
@@ -45,6 +46,7 @@ export function nodeContext(f: { node: NodeFacts; contextId: ContextId; isFocusR
     codeOpen: f.node.codeOpen,
     docs: f.node.docs,
     byName: f.node.link === "name",
+    tours: f.tours ?? 0,
   });
 }
 

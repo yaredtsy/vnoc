@@ -3901,8 +3901,18 @@ fn tour_counts_counts_tours_not_stops_by_the_key_of_structure_and_a_tour_write_n
     core.finish();
 }
 
+/// The count is made by a task of its own, and a request that is not answered in a moment says to ask again (it is not a failure): ask again.
 fn tour_calls(core: &mut Core, id: &str) -> Value {
-    core.request("vnoc/tourCalls", json!({ "id": id })).unwrap()
+    for _ in 0..40 {
+        match core.request("vnoc/tourCalls", json!({ "id": id })) {
+            Ok(answer) => return answer,
+            Err(e) if e["message"].as_str().is_some_and(|m| m.ends_with("ask again")) => {
+                std::thread::sleep(std::time::Duration::from_millis(100))
+            }
+            Err(e) => panic!("tourCalls: {e}"),
+        }
+    }
+    panic!("the calls of {id} were never counted")
 }
 
 #[test]

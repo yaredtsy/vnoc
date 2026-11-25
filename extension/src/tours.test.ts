@@ -76,7 +76,7 @@ test("a row of Open Tour… says what the row says", () => {
 // ── the holder, with a host that is only a record ─────────────────────────────────────────────────────────────────────────
 
 /** A host: the core answers from `answers`, every request and event is kept, the session is a real one, and `every` is a clock the test turns. */
-function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; canvasVisible?: boolean }) {
+function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; counts?: Record<string, number>; canvasVisible?: boolean }) {
   let session: Session = emptySession();
   const requests: [string, unknown][] = [];
   const events: [string, unknown][] = [];
@@ -84,6 +84,7 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
   const timers: { ms: number; run: () => void; stopped: boolean }[] = [];
   let answer = opts.answer ?? view("cover");
   let rows = opts.rows ?? [];
+  let counts: Record<string, number> = opts.counts ?? {};
   let canvasVisible = opts.canvasVisible ?? false;
   const opened: string[] = [];
   const status: (string | null)[] = [];
@@ -93,6 +94,7 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
       requests.push([method, params]);
       if (method === "vnoc/tour") return answer;
       if (method === "vnoc/tours") return { tours: rows };
+      if (method === "vnoc/tourCounts") return { counts };
       return place("cover");
     }) as ToursDeps["request"],
     session: () => session,
@@ -122,6 +124,7 @@ function makeHost(opts: { above: boolean; answer?: TourView; rows?: TourRow[]; c
     opened,
     setCanvasVisible: (visible: boolean) => (canvasVisible = visible),
     setRows: (r: TourRow[]) => (rows = r),
+    setCounts: (c: Record<string, number>) => (counts = c),
     rows: () => rows,
     host,
     requests,
@@ -501,4 +504,39 @@ test("the page's tourCalls is the core's vnoc/tourCalls for that tour", async ()
   const tours = new Tours(h.host);
   await tours.calls("t-1");
   assert.deepEqual(h.requests.at(-1), ["vnoc/tourCalls", { id: "t-1" }]);
+});
+
+test("▶ N: the counts are asked at the start, again on toursChanged and on indexChanged, and the pages are told only when the answer changed", async () => {
+  const h = makeHost({ above: false, counts: { "a.py::f": 2 } });
+  const tours = new Tours(h.host);
+  const countEvents = () => h.events.filter(([name]) => name === "tourCounts");
+  const asked = () => h.requests.filter(([m]) => m === "vnoc/tourCounts").length;
+  tours.start();
+  await settle();
+  assert.equal(asked(), 1);
+  assert.deepEqual(countEvents().map(([, d]) => d), [{ counts: { "a.py::f": 2 } }]);
+  tours.toursChanged(["t-9"]); // any tour may have come or gone
+  await settle();
+  assert.equal(asked(), 2);
+  assert.equal(countEvents().length, 1, "the same answer tells nobody");
+  h.setCounts({ "a.py::f": 1 });
+  tours.toursChanged(["t-9"]);
+  await settle();
+  assert.deepEqual(countEvents().at(-1)?.[1], { counts: { "a.py::f": 1 } });
+  h.setCounts({ "b.py::g": 1 }); // the structure's keys moved
+  tours.indexChanged();
+  await settle();
+  assert.equal(asked(), 4);
+  assert.deepEqual(countEvents().at(-1)?.[1], { counts: { "b.py::g": 1 } });
+  assert.deepEqual(await tours.countsOf(), { counts: { "b.py::g": 1 } }, "a page that starts later is given what the host holds, without asking again");
+  assert.equal(asked(), 4);
+});
+
+test("a page that asks for the counts before any were asked gets the core's answer; the index changing before that asks nothing", async () => {
+  const h = makeHost({ above: false, counts: { "a.py::f": 3 } });
+  const tours = new Tours(h.host);
+  tours.indexChanged();
+  await settle();
+  assert.equal(h.requests.length, 0);
+  assert.deepEqual(await tours.countsOf(), { counts: { "a.py::f": 3 } });
 });

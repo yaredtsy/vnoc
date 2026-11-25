@@ -60,7 +60,10 @@ export interface Deps {
     halt(id: TourId): Promise<TourHaltAnswer>;
     code(id: TourId, stop: StopId): Promise<AsWritten | null>;
     calls(id: TourId): Promise<TourCallsAnswer>;
+    countsOf(): Promise<{ counts: Record<string, number> }>;
   };
+  /** `▶ N` and **Show Tours**: the node is selected in its context, the TOURS section shows its tours */
+  showTours(key: string, context: ContextId): Promise<void>;
 }
 
 export function createHandlers(d: Deps): Handlers {
@@ -98,6 +101,8 @@ export function createHandlers(d: Deps): Handlers {
     tourHalt: ({ id }) => d.tours.halt(id),
     tourCode: ({ id, stop }) => d.tours.code(id, stop),
     tourCalls: ({ id }) => d.tours.calls(id),
+    tourCounts: () => d.tours.countsOf(),
+    showTours: ({ key, context }) => d.showTours(key, context),
   };
 }
 

@@ -92,7 +92,9 @@ export type Intent =
    */
   | { type: "tourOpen"; id: TourId; title?: string; at?: string | null }
   /** Sent by the host, to the tour context, when the place it holds changed: the selection is the current stop's key (null: none). Nothing else of the place is in the session. */
-  | { type: "tourSelect"; key: string | null };
+  | { type: "tourSelect"; key: string | null }
+  /** The TOURS section's view: every tour, or the ones through the active context's selection (design 07 §4). Kept with the session. */
+  | { type: "tourView"; view: Session["tourList"]["view"] };
 
 export const MAIN: ContextId = "main";
 
@@ -252,6 +254,9 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
     case "tourSelect":
       // only a tour context has a place to follow; a key the tree does not have selects nothing
       return c.kind === "tour" ? change(s, context, { selected: intent.key !== null && findNode(tree, intent.key) !== undefined ? intent.key : null }, { highlight: null }) : s;
+
+    case "tourView":
+      return s.tourList.view === intent.view ? s : { ...s, tourList: { view: intent.view }, seq: s.seq + 1 };
 
     case "treeChanged":
       return treeChanged(s, tree);

@@ -39,6 +39,8 @@ export type TourCardData = {
   /** how many steps it has, when it has more than one and is written (`3 steps`) */
   steps: number | null;
   key: string | null;
+  /** how many of the stop's calls are not on this tour (the core's `vnoc/tourCalls`): the footer's dim `+N`; 0 for none, and for a stop of another kind */
+  off: number;
 };
 
 export interface TourEdgeData {
@@ -64,7 +66,8 @@ function wayTo(view: TourView, current: string | null): Set<string> {
   return way;
 }
 
-export function mapOf(view: TourView): { cards: TourCardData[]; edges: TourEdgeData[] } {
+/** `off`: the core's `tourCalls` answer, by stop id (a stop it does not name has none). */
+export function mapOf(view: TourView, off: Readonly<Record<string, number>> = {}): { cards: TourCardData[]; edges: TourEdgeData[] } {
   const way = wayTo(view, view.place.stop);
   const cards = view.stops.map((stop, i): TourCardData => {
     const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
@@ -89,6 +92,7 @@ export function mapOf(view: TourView): { cards: TourCardData[]; edges: TourEdgeD
       explainedAt: explained?.number ?? null,
       steps: !stop.planned && stop.steps > 1 ? stop.steps : null,
       key: stop.key,
+      off: off[stop.id] ?? 0,
     };
   });
   const edges: TourEdgeData[] = view.stops.flatMap((stop) =>
@@ -98,6 +102,12 @@ export function mapOf(view: TourView): { cards: TourCardData[]; edges: TourEdgeD
   );
   return { cards, edges };
 }
+
+/**
+ * What the core's `tourCalls` answer depends on, as the page sees it: each stop, where it is (its key), whether it is written, and what a check said of it. Equal text, nothing to ask again:
+ * a move of the reader changes the view and not this.
+ */
+export const callsShape = (view: TourView): string => view.stops.map((s) => `${s.id}:${s.key ?? ""}:${s.planned ? "p" : "w"}:${s.check ?? ""}`).join("|");
 
 /** A card's box in the map's coordinates, for the camera. */
 export const boxOf = (card: Pick<TourCardData, "x" | "y">) => ({ x: card.x, y: card.y, width: CARD_W, height: CARD_H });

@@ -23,7 +23,7 @@ export interface ToursDeps {
   /** an intent for a context of the session */
   dispatch(intent: Intent, context: ContextId): void;
   /** to every open page */
-  emit<E extends "tours" | "tour">(name: E, data: Events[E]): void;
+  emit<E extends "tours" | "tour" | "tourCounts">(name: E, data: Events[E]): void;
   /** `.vnoc/` is above the opened folder (`vnocIsAbove`): the host's file watcher cannot see it */
   vnocAbove(): boolean;
   /** runs `run` every `ms` until stopped */
@@ -113,6 +113,8 @@ export class Tours {
   private known: Set<TourId> | null = null;
   /** the tours the notification was shown for: once per tour */
   private announced = new Set<TourId>();
+  /** how many tours pass through each node (`vnoc/tourCounts`), as the core last said; null until asked. Asked again on `toursChanged` and `indexChanged` (the keys are the structure's) */
+  private counts: { counts: Record<string, number>; raw: string } | null = null;
   private poll: { stop(): void } | undefined;
   private quietCheck: { stop(): void } | undefined;
   /** the last text given to the status bar item (undefined: none yet), so that it is told only what changed */
@@ -151,10 +153,36 @@ export class Tours {
   /** The list, asked once at the start so that tours that appear later are known as new (and `toursChanged` always has a list to ask again for). Nothing is announced for what is there. */
   start(): void {
     void this.list().catch((e) => this.host.log(`vnoc/tours: ${String((e as Error).message ?? e)}`));
+    void this.askCounts();
+  }
+
+  /** The page's `tourCounts`: what the host holds, asked for if nothing has been yet. */
+  async countsOf(): Promise<{ counts: Record<string, number> }> {
+    if (this.counts === null) await this.askCounts();
+    return { counts: this.counts?.counts ?? {} };
+  }
+
+  /** `vnoc/indexChanged`: the structure's keys moved, and the counts are by key. */
+  indexChanged(): void {
+    if (this.counts !== null) void this.askCounts();
+  }
+
+  /** Asks the core for the counts; the pages are told only when the answer is not the one they have. A failure keeps what was held (the core is restarting, or not ready). */
+  private async askCounts(): Promise<void> {
+    try {
+      const answer = await this.host.request("vnoc/tourCounts", undefined);
+      const raw = JSON.stringify(answer.counts);
+      if (raw === this.counts?.raw) return;
+      this.counts = { counts: answer.counts, raw };
+      this.host.emit("tourCounts", { counts: answer.counts });
+    } catch (e) {
+      this.host.log(`vnoc/tourCounts: ${String((e as Error).message ?? e)}`);
+    }
   }
 
   /** The core started again: it does not know a window shows a tour. Told again, and the tour asked for again (the core's answer may differ: the files were read anew). */
   restarted(): void {
+    if (this.counts !== null) void this.askCounts();
     const open = this.open;
     if (!open) return;
     void this.tell(open.id, true).then(() => this.refresh(open.id));
@@ -163,6 +191,7 @@ export class Tours {
   /** `vnoc/toursChanged`. */
   toursChanged(ids: readonly TourId[]): void {
     const ask = whatToAsk(ids, this.open?.id ?? null, this.rows !== null);
+    void this.askCounts(); // any tour may have gone or come: the counts are of all of them
     if (ask.tour && this.open) void this.refresh(this.open.id);
     if (ask.list) void this.list();
   }

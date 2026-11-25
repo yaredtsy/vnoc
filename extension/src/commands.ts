@@ -111,6 +111,8 @@ export class Commands {
       }),
       on("vnoc.goToCallSite", (arg) => this.goToCallSite(this.callFor(arg).node)),
       on("vnoc.openTour", () => this.openTour()),
+      // **Show Tours** in a node's menu (card and row), when the node is on tours: the same as a click on its `▶ N`
+      on("vnoc.showTours", async (arg, selected) => this.showToursOf((await this.nodeFor(arg, selected)).id, this.contextOf(arg))),
       // the menu of a tour's card and of a stop's row (design 04 §7): the real file, and MAIN on that node (the tour stays where it was)
       on("vnoc.tourGoToCode", (arg) => this.goToCodeOf(this.tourNodeKey(arg))),
       on("vnoc.tourRevealInMain", (arg) => {
@@ -398,6 +400,21 @@ export class Commands {
     if (!this.core.tree) await this.core.loadStructure();
     this.store.dispatch({ type: "tourOpen", id, title });
     await this.panels.showCanvas();
+  }
+
+  /**
+   * `▶ N` and **Show Tours** (design 07 §6): the node is selected in its own context (which becomes the active one: the list follows the active context's selection), the TOURS
+   * section is switched to **On the selected node** and shown. A tour context has no selection of this kind: the node is selected in MAIN instead.
+   */
+  async showToursOf(key: string, context: ContextId): Promise<void> {
+    if (!this.core.tree) await this.core.loadStructure();
+    const where = this.store.get().contexts[context]?.kind === "tour" || !this.store.get().contexts[context] ? MAIN : context;
+    this.store.dispatch({ type: "activate", id: where }, where);
+    this.store.dispatch({ type: "select", id: key }, where);
+    this.store.dispatch({ type: "tourView", view: "onSelection" }, where);
+    await this.showSidebar();
+    await this.panels.whenSidebarDrew(5000); // an event sent to a page that has not started is lost
+    this.panels.emit("viewCommand", { name: "showTours" });
   }
 
   /** The structure node a tour's menu acts on: `nodeKey` of what the card or the row said. A stop whose node is gone has none. */

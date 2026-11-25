@@ -31,6 +31,11 @@ export function go(id: TourId, move: string): void {
   moves = moves.then(() => request("tourGo", { id, move }).catch(() => {}));
 }
 
+/** A move first, then `then` (after the core has made it): a tour opened at a stop or at the cover (the second view of the TOURS list) is moved there before its context opens, so the view the host asks for is already there. */
+export function goThen(id: TourId, move: string, then: () => void): void {
+  moves = moves.then(() => request("tourGo", { id, move }).catch(() => {})).then(then);
+}
+
 /** ■ Stop: the core writes the halt (the agent answers it at its next command); the host asks for the tour again, and the view's state says `stopping`. */
 export function halt(id: TourId): void {
   void request("tourHalt", { id }).catch(() => {});

@@ -85,6 +85,8 @@ struct State {
     one_at_a_time: tokio::sync::Mutex<()>,
     /// One attach at a time: two at once could both pick the same ID.
     attaching: tokio::sync::Mutex<()>,
+    /// The tours whose calls (`vnoc/tourCalls`) are being counted now, each by a task of its own.
+    calls_running: Mutex<std::collections::BTreeSet<TourId>>,
     /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
     everything_pending: AtomicBool,
     /// The corpus `vnoc/search` reads, kept with the index revision and the doc-text generation it was made for (`search::kept`). Taken after the index
@@ -111,6 +113,7 @@ impl State {
             status: tokio::sync::watch::channel(Status::Building).0,
             one_at_a_time: tokio::sync::Mutex::new(()),
             attaching: tokio::sync::Mutex::new(()),
+            calls_running: Mutex::new(std::collections::BTreeSet::new()),
             everything_pending: AtomicBool::new(false),
             corpus: Mutex::new(None),
             doc_index: Mutex::new(None),
@@ -1289,9 +1292,16 @@ fn tour_counts(
     })
 }
 
+/// How long a `vnoc/tourCalls` request waits for the count: the core answers a request at a time per slot (`ConcurrencyLayer`: as many as there are cores), and a count asks the
+/// driver once for each stop. A count that takes longer goes on in the background and the request is answered with an error that says to ask again; the answer is kept when it is done.
+const CALLS_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
+/// How long the driver is given for one stop's calls.
+const CALLS_ASK: std::time::Duration = std::time::Duration::from_secs(4);
+
 /// `vnoc/tourCalls`: for each written function or class stop, how many of the functions it calls, one level down, are not a stop of this tour (design 04 §3: the
 /// card's `+N`). The callees are the ones `vnoc tour route` finds ([`route::from_calls`], one level, the same `known`), each counted once, by tree key. Kept in the
-/// core until the tour's file or a stop's file changes; waits for the first build.
+/// core until the tour's file or a stop's file changes; waits for the first build. The count is made by a task of its own (one at a time for a tour), so a driver that is slow
+/// holds no request: this one answers within [`CALLS_WAIT`], or says to ask again.
 fn tour_calls(
     core: &mut Core,
     params: protocol::TourParams,
@@ -1307,98 +1317,144 @@ fn tour_calls(
             blocking(move || state.tours.row(&vnoc_root, &id)).await?
         }
         .ok_or_else(|| bad_params(StoreError::NotFound(id.clone())))?;
-        let found = row.tour.as_ref().map_err(|e| {
-            bad_params(StoreError::Unreadable {
+        if let Err(e) = &row.tour {
+            return Err(bad_params(StoreError::Unreadable {
                 id: id.clone(),
                 why: e.why.clone(),
                 too_new: e.too_new,
-            })
-        })?;
+            }));
+        }
         if let Some(off) = state.tours.calls_kept(&id) {
             return Ok(serde_json::json!({ "off": off }));
         }
-        // the stops as the view has them: where each is now (a check moved its key), which are written, which are gone
-        let answer = answers_for(&state, vec![row.clone()]).await?.remove(&id);
-        let shown = {
-            let (state, row, found) = (state.clone(), row.clone(), found.clone());
-            blocking(move || {
-                let project = state.project.get()?;
-                let root = store::vnoc_root(project.git_root());
-                let mut shown = serve::show_view(
-                    project,
-                    &found,
-                    row.place,
-                    &row.path,
-                    store::read_place(&root, &row.id).as_ref(),
-                );
-                if let Some(answer) = &answer {
-                    view::mark(&mut shown, answer);
+        if state.calls_running.lock().unwrap().insert(id.clone()) {
+            let (core, row, id) = (core.clone(), row.clone(), id.clone());
+            tokio::spawn(async move {
+                if let Err(e) = count_calls(&core, &row).await {
+                    tracing::debug!("the calls of tour {id} were not counted: {}", e.message);
                 }
-                Some(shown)
-            })
-            .await?
-            .ok_or_else(|| internal("no folder is open"))?
-        };
-        let revision = state.index.read().unwrap().revision();
-        let tree = {
-            let index = state.index.read().unwrap_or_else(|e| e.into_inner());
-            index.tree(&project.name(), project.prefix())
-        };
-        let stops_of_the_tour: std::collections::BTreeSet<&str> =
-            shown.stops.iter().filter_map(|s| s.key.as_deref()).collect();
-        let known = |target: &vnoc_driver_protocol::CallTarget| {
-            let location = vnoc_domain::LocationKey::new(
-                project.repo_path(target.file.as_deref()?).ok()?,
-                target.qualname.clone(),
-                target.occurrence,
-            )
-            .ok()?;
-            tree.find(&location.to_string()).and_then(route::known_of)
-        };
-        let mut off = std::collections::BTreeMap::new();
-        for stop in &shown.stops {
-            let (Some(key), Some("function" | "class")) = (stop.key.as_deref(), stop.kind.as_deref())
-            else {
-                continue;
-            };
-            if stop.planned || stop.check == Some("gone") {
-                continue;
-            }
-            let Some(root) = tree.find(key).and_then(route::known_of) else {
-                continue;
-            };
-            let asked = calls::ask(project, &state.index, &core.host, key, Some(1)).await;
-            let answered = match asked {
-                Ok(answered) => answered,
-                // a driver with no call trees has no calls to count; a node the driver cannot start a tree at counts none
-                Err(CallsError::MissingCapability(_)) => break,
-                Err(CallsError::Invalid(_)) => continue,
-                Err(e) => return Err(calls_error(e)),
-            };
-            let item = route::from_calls(&calls::merge(&answered.root), root, 1, &known);
-            let outside: std::collections::BTreeSet<&str> = item
-                .children
-                .iter()
-                .map(|c| c.known.id.as_str())
-                .filter(|callee| !stops_of_the_tour.contains(callee))
-                .collect();
-            if !outside.is_empty() {
-                off.insert(stop.id.clone(), outside.len());
-            }
+                core.state.calls_running.lock().unwrap().remove(&id);
+            });
         }
-        let files: std::collections::BTreeSet<String> = shown
-            .stops
-            .iter()
-            .flat_map(|s| {
-                std::iter::once(s.path.clone()).chain(s.now.as_ref().map(|n| n.path.clone()))
-            })
-            .collect();
-        // not kept when the index moved while the calls were asked: they were made against one that is gone
-        if state.index.read().unwrap().revision() == revision {
-            state.tours.keep_calls(&row, off.clone(), files);
+        let deadline = tokio::time::Instant::now() + CALLS_WAIT;
+        loop {
+            if let Some(off) = state.tours.calls_kept(&id) {
+                return Ok(serde_json::json!({ "off": off }));
+            }
+            let running = state.calls_running.lock().unwrap().contains(&id);
+            if !running || tokio::time::Instant::now() >= deadline {
+                return Err(ResponseError::new(
+                    ErrorCode::REQUEST_FAILED,
+                    "the calls of this tour are being counted: ask again",
+                ));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        Ok(serde_json::json!({ "off": off }))
     })
+}
+
+/// The count of `vnoc/tourCalls` for one tour, kept when it is whole and the tour and the index are as they were when it started.
+async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseError> {
+    let state = core.state.clone();
+    let project = ready_project(&state).await?;
+    let found = row
+        .tour
+        .as_ref()
+        .map_err(|e| bad_params(e.why.clone()))?
+        .clone();
+    // an update that is running goes first: it needs the driver too, and the calls are of the index it is about to give
+    drop(state.one_at_a_time.lock().await);
+    // the stops as the view has them: where each is now (a check moved its key), which are written, which are gone
+    let answer = answers_for(&state, vec![row.clone()]).await?.remove(&row.id);
+    let shown = {
+        let (state, row) = (state.clone(), row.clone());
+        blocking(move || {
+            let project = state.project.get()?;
+            let root = store::vnoc_root(project.git_root());
+            let mut shown = serve::show_view(
+                project,
+                &found,
+                row.place,
+                &row.path,
+                store::read_place(&root, &row.id).as_ref(),
+            );
+            if let Some(answer) = &answer {
+                view::mark(&mut shown, answer);
+            }
+            Some(shown)
+        })
+        .await?
+        .ok_or_else(|| internal("no folder is open"))?
+    };
+    let revision = state.index.read().unwrap().revision();
+    let tree = {
+        let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+        index.tree(&project.name(), project.prefix())
+    };
+    let stops_of_the_tour: std::collections::BTreeSet<&str> = shown
+        .stops
+        .iter()
+        .filter_map(|s| s.key.as_deref())
+        .collect();
+    let known = |target: &vnoc_driver_protocol::CallTarget| {
+        let location = vnoc_domain::LocationKey::new(
+            project.repo_path(target.file.as_deref()?).ok()?,
+            target.qualname.clone(),
+            target.occurrence,
+        )
+        .ok()?;
+        tree.find(&location.to_string()).and_then(route::known_of)
+    };
+    let mut off = std::collections::BTreeMap::new();
+    let mut whole = true;
+    for stop in &shown.stops {
+        let (Some(key), Some("function" | "class")) = (stop.key.as_deref(), stop.kind.as_deref())
+        else {
+            continue;
+        };
+        if stop.planned || stop.check == Some("gone") {
+            continue;
+        }
+        let Some(root) = tree.find(key).and_then(route::known_of) else {
+            continue;
+        };
+        let asked = tokio::time::timeout(
+            CALLS_ASK,
+            calls::ask(project, &state.index, &core.host, key, Some(1)),
+        )
+        .await;
+        let answered = match asked {
+            Ok(Ok(answered)) => answered,
+            // a driver with no call trees has no calls to count; a node the driver cannot start a tree at counts none
+            Ok(Err(CallsError::MissingCapability(_))) => break,
+            Ok(Err(CallsError::Invalid(_))) => continue,
+            // the driver is slow or broke: this stop is left out, and the count is not kept (the next ask makes it again)
+            Ok(Err(_)) | Err(_) => {
+                whole = false;
+                continue;
+            }
+        };
+        let item = route::from_calls(&calls::merge(&answered.root), root, 1, &known);
+        let outside: std::collections::BTreeSet<&str> = item
+            .children
+            .iter()
+            .map(|c| c.known.id.as_str())
+            .filter(|callee| !stops_of_the_tour.contains(callee))
+            .collect();
+        if !outside.is_empty() {
+            off.insert(stop.id.clone(), outside.len());
+        }
+    }
+    let files: std::collections::BTreeSet<String> = shown
+        .stops
+        .iter()
+        .flat_map(|s| std::iter::once(s.path.clone()).chain(s.now.as_ref().map(|n| n.path.clone())))
+        .collect();
+    // not kept when the index moved while the calls were asked: they were made against one that is gone
+    if whole && state.index.read().unwrap().revision() == revision {
+        state.tours.keep_calls(row, off, files);
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------------ the user's actions
