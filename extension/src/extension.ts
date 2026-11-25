@@ -301,6 +301,17 @@ export function activate(ctx: vscode.ExtensionContext) {
     attentionTree,
     ...commands.register(),
     // the tour row's menu (`tourRow`): the arg is what the row said, `{ tour }`; a refusal is shown in the core's words by the action itself
+    // the row's first three entries (05 §3): the click, the cover again, and MAIN on the tour's root
+    vscode.commands.registerCommand("vnoc.tourOpen", (arg) => commands.openTourById(tourOfArg(arg), (arg as { title?: string | null }).title ?? undefined)),
+    vscode.commands.registerCommand("vnoc.tourStartAgain", async (arg) => {
+      const id = tourOfArg(arg);
+      await tours.go(id, "cover");
+      await commands.openTourById(id, (arg as { title?: string | null }).title ?? undefined);
+    }),
+    vscode.commands.registerCommand("vnoc.tourRevealRoot", async (arg) => {
+      const view = await tours.get(tourOfArg(arg));
+      await commands.revealTourRoot("stops" in view ? (view.stops[0]?.key ?? null) : null);
+    }),
     vscode.commands.registerCommand("vnoc.tourPin", (arg) => tourActions.pin(tourOfArg(arg))),
     vscode.commands.registerCommand("vnoc.tourCommitAndPin", (arg) => tourActions.commitAndPin(tourOfArg(arg))),
     vscode.commands.registerCommand("vnoc.tourWriteIds", (arg) => tourActions.writeIds(tourOfArg(arg))),

@@ -8,13 +8,17 @@ use crate::identity::{EditSink, Env};
 use crate::protocol;
 use crate::tours::act::{self, ActError};
 use crate::tours::check::{Answer, Mode};
+use crate::tours::doc;
+use crate::tours::document::{self, ImportError};
 use crate::tours::find;
+use crate::tours::finish::{self as finishing, Step};
 use crate::tours::on::{self, Query};
 use crate::tours::place::Move;
 use crate::tours::record::{StopId, TourId};
 use crate::tours::route;
+use crate::tours::rules::Refusal;
 use crate::tours::serve::{self, Cannot, GoError};
-use crate::tours::settings::{Choice, Key};
+use crate::tours::settings::{self, Choice, Key};
 use crate::tours::store::{self, Halt, StoreError};
 use crate::tours::view;
 use crate::watchdog::timed;
@@ -46,14 +50,23 @@ pub(super) async fn answers_for(
     state: &Arc<State>,
     rows: Vec<Arc<store::Row>>,
 ) -> Result<std::collections::BTreeMap<TourId, Answer>, ResponseError> {
-    match ask_tours(state, &rows, false).await? {
+    answers_with(state, rows, Mode::default()).await
+}
+
+/// [`answers_for`] with the mode of the ask: `Mode { again: true }` checks anew whatever is remembered or recorded (**Check All Tours**).
+pub(super) async fn answers_with(
+    state: &Arc<State>,
+    rows: Vec<Arc<store::Row>>,
+    mode: Mode,
+) -> Result<std::collections::BTreeMap<TourId, Answer>, ResponseError> {
+    match ask_tours(state, &rows, false, mode).await? {
         Ok(done) => return Ok(done),
         Err(Cannot::Store(e)) => return Err(tour_error(e)),
         Err(Cannot::NeedsIndex) => {}
     }
     // a request that cannot be answered in a moment says to ask again, it does not sit in a slot
     super::wait_for_index(state).await?;
-    match ask_tours(state, &rows, true).await? {
+    match ask_tours(state, &rows, true, mode).await? {
         Ok(done) => Ok(done),
         Err(Cannot::Store(e)) => Err(tour_error(e)),
         Err(Cannot::NeedsIndex) => Err(internal("the index is not ready")),
@@ -65,6 +78,7 @@ pub(super) async fn ask_tours(
     state: &Arc<State>,
     rows: &[Arc<store::Row>],
     with_index: bool,
+    mode: Mode,
 ) -> Result<Result<std::collections::BTreeMap<TourId, Answer>, Cannot>, ResponseError> {
     let (held, rows) = (state.clone(), rows.to_vec());
     blocking(move || {
@@ -76,7 +90,7 @@ pub(super) async fn ask_tours(
             project,
             index: with_index.then_some(&held.index),
         };
-        held.tours.answers(&ask, &rows, Mode::default())
+        held.tours.answers(&ask, &rows, mode)
     })
     .await
 }
@@ -114,7 +128,7 @@ pub(super) fn tours(
         };
         let to_check: Vec<_> = rows
             .iter()
-            .filter(|r| asked.contains(&r.id))
+            .filter(|r| params.check_all || asked.contains(&r.id))
             .cloned()
             .collect();
         let mut known = {
@@ -125,12 +139,16 @@ pub(super) fn tours(
             blocking(move || state.tours.remembered(&ids)).await?
         };
         if !to_check.is_empty() {
-            for (id, answer) in answers_for(&state, to_check).await? {
+            let mode = Mode {
+                again: params.check_all,
+            };
+            for (id, answer) in answers_with(&state, to_check, mode).await? {
                 known.insert(id, answer.recorded);
             }
         }
         // the node, if one was asked for: the one thing here that needs the index; found by what the tree says of it
-        let query = match params.on {
+        let first = params.on.is_none() && params.first_on.is_some();
+        let query = match params.on.or(params.first_on) {
             Some(text) => Some(node_query(&state, &text).await?),
             None => None,
         };
@@ -143,6 +161,9 @@ pub(super) fn tours(
                     store::read_place(&root, id)
                 });
                 Some(match &query {
+                    Some(query) if first => {
+                        serve::rows_first_on(shown, &rows, &state.tours.on(query))
+                    }
                     Some(query) => serve::rows_on(shown, &rows, &state.tours.on(query)),
                     None => shown,
                 })
@@ -767,15 +788,24 @@ pub(super) fn tour_delete(
     })
 }
 
-/// *"Deleted the tour of checkout_order."*: the tour's first stop is what it is of. A tour that cannot be read is named by its id.
-fn deleted_words(vnoc_root: &std::path::Path, id: &TourId) -> String {
-    match act::read_tour(vnoc_root, id)
-        .ok()
-        .and_then(|tour| view::root_of(&tour))
-    {
-        Some(root) => format!("Deleted the tour of {}.", root.name),
-        None => format!("Deleted the tour {id}."),
+/// What a sentence calls a tour: *“How the shop checks out”* by its title; *the tour of checkout_order* (its first stop) only when it has no title; *the tour
+/// checkout-order-7k2q* when it cannot be read. Read before the file goes.
+fn tour_name(vnoc_root: &std::path::Path, id: &TourId) -> String {
+    match act::read_tour(vnoc_root, id) {
+        Ok(tour) => match tour.title.trim() {
+            "" => match view::root_of(&tour) {
+                Some(root) => format!("the tour of {}", root.name),
+                None => format!("the tour {id}"),
+            },
+            title => format!("“{title}”"),
+        },
+        Err(_) => format!("the tour {id}"),
     }
+}
+
+/// *"Deleted “How the shop checks out”."*
+fn deleted_words(vnoc_root: &std::path::Path, id: &TourId) -> String {
+    format!("Deleted {}.", tour_name(vnoc_root, id))
 }
 
 /// `vnoc/tourDeleteFinished`: each private, finished, readable tour goes to the trash as `vnoc/tourDelete` does one. Not a tour that exists in both folders (the store refuses
@@ -807,10 +837,11 @@ pub(super) fn tour_delete_finished(
             let mut deleted = Vec::new();
             let mut trouble = None;
             for id in wanted {
+                let name = tour_name(&vnoc_root, &id);
                 match store::delete(&vnoc_root, &id) {
-                    Ok(gone) => deleted.push((id, gone.entry)),
+                    Ok(gone) => deleted.push((id, gone.entry, name)),
                     Err(e) => {
-                        trouble = Some((id, e));
+                        trouble = Some((name, e));
                         break;
                     }
                 }
@@ -818,22 +849,19 @@ pub(super) fn tour_delete_finished(
             (deleted, trouble)
         })
         .await?;
-        let mut words = match deleted.len() {
-            0 => "There are no finished tours of yours to delete.".to_string(),
-            1 => "Deleted 1 finished tour.".to_string(),
-            n => format!("Deleted {n} finished tours."),
+        let mut words = match deleted.as_slice() {
+            [] => "There are no finished tours of yours to delete.".to_string(),
+            [(_, _, name)] => format!("Deleted {name}."),
+            many => format!("Deleted {} finished tours.", many.len()),
         };
-        if let Some((id, e)) = trouble {
+        if let Some((name, e)) = trouble {
             if deleted.is_empty() {
                 return Err(tour_error(e));
             }
-            words.push_str(&format!(
-                " The tour {id} was not: {}",
-                tour_error(e).message
-            ));
+            words.push_str(&format!(" Not deleted: {name}: {}", tour_error(e).message));
         }
         Ok(serde_json::json!({
-            "deleted": deleted.iter().map(|(id, token)| serde_json::json!({ "id": id.to_string(), "token": token })).collect::<Vec<_>>(),
+            "deleted": deleted.iter().map(|(id, token, _)| serde_json::json!({ "id": id.to_string(), "token": token })).collect::<Vec<_>>(),
             "words": words,
         }))
     })
@@ -855,6 +883,245 @@ pub(super) fn tour_restore(
             "tour": back.id.to_string(),
             "folder": view::place_word(back.was),
         }))
+    })
+}
+
+/// `vnoc/tourExport`: [`document::export`], the function of `vnoc tour export`: the text the command prints.
+pub(super) fn tour_export(
+    core: &mut Core,
+    params: protocol::TourExportParams,
+) -> impl std::future::Future<Output = Result<protocol::TourExportResult, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourExport", async move {
+        let project = ready_project(&state).await?;
+        let id = parse_tour(&params.id)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let held = state.clone();
+        let text = blocking(move || {
+            let project = held
+                .project
+                .get()
+                .ok_or(ActError::Environment("no folder is open".into()))?;
+            let index = held.index.read().unwrap_or_else(|e| e.into_inner());
+            document::export(project, Some(&index), &vnoc_root, &id, false)
+        })
+        .await?
+        .map_err(act_error)?;
+        Ok(protocol::TourExportResult { text })
+    })
+}
+
+/// What an import that was refused answers: every refusal with its place in the text and, where it is known, its line.
+fn refused_answer(text: &str, refusals: &[Refusal]) -> serde_json::Value {
+    let problems = if refusals.len() == 1 {
+        "1 problem".to_string()
+    } else {
+        format!("{} problems", refusals.len())
+    };
+    serde_json::json!({
+        "refused": refusals
+            .iter()
+            .map(|r| {
+                let line = document::line_of(text, &r.place, &r.problem);
+                // the sentence carries its own place (`stops[0].text: 412 of 280 characters`): it is shown as it is, so a list of them reads as the command's does
+                serde_json::json!({ "place": r.place, "words": r.problem, "line": line })
+            })
+            .collect::<Vec<_>>(),
+        "words": format!("Not written: {problems}. Fix them, then import the whole document again."),
+    })
+}
+
+/// `vnoc/tourImport`: [`document::write_import`], the function of `vnoc tour import [--replace]`, and then what `finish` does after `end` (02 §5): the IDs and the pin,
+/// as the project's settings say. The project's write lock is first (the IDs and a commit touch more than the tours), then the tours lock: the order of every writer.
+pub(super) fn tour_import(
+    core: &mut Core,
+    params: protocol::TourImportParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("tourImport", async move {
+        let state = core.state.clone();
+        let project = ready_project(&state).await?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        // what needs no index: the document and its shape
+        let text = params.text;
+        let flat = match doc::parse(&text).and_then(|d| doc::flatten(&d)) {
+            Ok(flat) => flat,
+            Err(refusals) => return Ok(refused_answer(&text, &refusals)),
+        };
+        let replace = params.replace.as_deref().map(parse_tour).transpose()?;
+        let _one_at_a_time = state.attaching.lock().await;
+        let _one_writer = write_lock(project).await?;
+        let lock = match &replace {
+            Some(_) => Some(act::take_lock(&vnoc_root).await.map_err(act_error)?),
+            None => None,
+        };
+        let title = flat.title.trim().to_string();
+        let written = {
+            let (held, root, flat, replace) =
+                (state.clone(), vnoc_root.clone(), flat, replace.clone());
+            blocking(move || {
+                let project = held
+                    .project
+                    .get()
+                    .ok_or(ActError::Environment("no folder is open".into()))?;
+                let index = held.index.read().unwrap_or_else(|e| e.into_inner());
+                let tree = index.tree(&project.name(), project.prefix());
+                let resolve = |text: &str| document::resolve_node(&index, project, &tree, text);
+                document::write_import(
+                    project,
+                    &index,
+                    &root,
+                    &resolve,
+                    &flat,
+                    replace.as_ref().zip(lock.as_ref()),
+                )
+            })
+            .await?
+        };
+        let written = match written {
+            Ok(written) => written,
+            Err(ImportError::Refused(refusals)) => return Ok(refused_answer(&text, &refusals)),
+            Err(ImportError::Act(e)) => return Err(act_error(e)),
+        };
+        let mut words = {
+            let (root, id) = (vnoc_root.clone(), written.id.clone());
+            let stops = blocking(move || {
+                act::read_tour(&root, &id).map(|t| t.stops.iter().filter(|s| s.written).count())
+            })
+            .await?
+            .map_err(act_error)?;
+            document::import_words(&title, &written, stops)
+        };
+        for said in after_end(&core, project, &vnoc_root, &written.id).await {
+            words.push(' ');
+            words.push_str(&said);
+        }
+        Ok(serde_json::json!({ "id": written.id.to_string(), "words": words }))
+    })
+}
+
+/// Step 1 and step 2 of `finish` (02 §5) for an imported tour: the IDs when `[tours] ids` is `always`, then the pin, committing the files when `[tours] commit` is
+/// `always`. What `ask` and `never` leave is the cover's to offer, so it is not said here. A step that fails is said; the tour is written either way.
+async fn after_end(
+    core: &Core,
+    project: &crate::project::Project,
+    vnoc_root: &std::path::Path,
+    id: &TourId,
+) -> Vec<String> {
+    let mut said = Vec::new();
+    let read = match settings::read(vnoc_root) {
+        Ok(read) => read,
+        Err(e) => {
+            said.push(format!(
+                "Its settings could not be read, so nothing was done after it: {e}"
+            ));
+            return said;
+        }
+    };
+    let tour = match act::read_tour(vnoc_root, id) {
+        Ok(tour) => tour,
+        Err(e) => {
+            said.push(e.to_string());
+            return said;
+        }
+    };
+    // step 1: a stop whose node had an ID when it was written has nothing to give
+    let choice = finishing::effective(read.ids.value, false, false);
+    let writes_ids = act::project_writes_ids(project).unwrap_or(false);
+    let could = tour.stops.iter().any(|s| s.written && s.node.is_none());
+    if choice == Choice::Always && could && writes_ids {
+        let missing = finishing::missing(&act::picks_of(project, &core.state.index, &tour, &[]));
+        if finishing::step(choice, writes_ids, missing) == Step::Write {
+            let mut env = Env {
+                project,
+                index: &core.state.index,
+                host: &core.host,
+                edits: EditSink::Disk,
+            };
+            match act::write_ids(&mut env, vnoc_root, id, &[]).await {
+                Ok(written) => said.push(written.sentence()),
+                Err(e) => said.push(format!("IDs were not written: {e}")),
+            }
+        }
+    }
+    // step 2: the pin is always tried
+    let held = core.state.clone();
+    let (root, id, commit) = (vnoc_root.to_path_buf(), id.clone(), read.commit.value);
+    let pinned = blocking(move || {
+        let project = held
+            .project
+            .get()
+            .ok_or(ActError::Environment("no folder is open".into()))?;
+        let ask = act::Ask::Finish {
+            commit,
+            message: None,
+        };
+        match act::pin_begin(project, &root, &id, &ask)? {
+            act::Begun::Done(pinned) => Ok(pinned),
+            act::Begun::Check { measured, head } => {
+                act::pin_finish(project, &held.index, &root, &id, &ask, &measured, head)
+            }
+        }
+    })
+    .await;
+    match pinned {
+        Ok(Ok(pinned)) => {
+            if let Some(at) = pinned.at {
+                said.push(format!("Pinned at {at}."));
+            }
+        }
+        Ok(Err(e)) => said.push(format!("It could not be pinned: {e}")),
+        Err(e) => said.push(format!("It could not be pinned: {}", e.message)),
+    }
+    said
+}
+
+/// `vnoc/tourAsk`: the sentence for an agent (`tours::document::ask`), with the node's address; **Ask for a New Tour** gives the row's tour (`ask_again`). TypeScript makes
+/// neither the sentence nor the line that says what to do with it.
+pub(super) fn tour_ask(
+    core: &mut Core,
+    params: Option<protocol::TourAskParams>,
+) -> impl std::future::Future<Output = Result<protocol::TourAskResult, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourAsk", async move {
+        let params = params.unwrap_or_default();
+        let asked = if let Some(id) = &params.tour {
+            let project = open_project(&state)?;
+            let (root, id) = (store::vnoc_root(project.git_root()), parse_tour(id)?);
+            let held = state.clone();
+            blocking(move || {
+                let project = held
+                    .project
+                    .get()
+                    .ok_or(ActError::Environment("no folder is open".into()))?;
+                let tour = act::read_tour(&root, &id)?;
+                let address = tour
+                    .stops
+                    .iter()
+                    .find(|s| s.written)
+                    .map(|s| document::written_name(project, s));
+                Ok::<_, ActError>(document::ask_again(&tour, address.as_deref()))
+            })
+            .await?
+            .map_err(act_error)?
+        } else if let Some(key) = &params.key {
+            let project = ready_project(&state).await?;
+            let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+            let tree = index.tree(&project.name(), project.prefix());
+            let node = find::node_named(&index, project, &tree, key)
+                .ok_or_else(|| bad_params(format!("no node is named `{key}`")))?;
+            // the project's root is every tour's: a sentence about it names nothing
+            let address = node.location();
+            document::ask((address != ".").then_some(address.as_str()))
+        } else {
+            document::ask(None)
+        };
+        Ok(protocol::TourAskResult {
+            text: asked.text,
+            words: asked.words.to_string(),
+        })
     })
 }
 

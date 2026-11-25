@@ -424,6 +424,15 @@ export class Commands {
     this.panels.emit("viewCommand", { name: "showTours" });
   }
 
+  /** **Reveal Root in Main** on a tour's row: MAIN selects the tour's first stop and is the context the canvas draws. The tour stays where it was. A root with no node in the tree has nothing to reveal. */
+  async revealTourRoot(key: string | null): Promise<void> {
+    if (key === null) throw new Error("That tour's first stop is not in the structure any more.");
+    if (!this.core.tree) await this.core.loadStructure();
+    this.store.dispatch({ type: "reveal", id: key, canvas: true }, MAIN);
+    this.store.dispatch({ type: "activate", id: MAIN }, MAIN);
+    await this.panels.showCanvas();
+  }
+
   /** The structure node a tour's menu acts on: `nodeKey` of what the card or the row said. A stop whose node is gone has none. */
   private tourNodeKey(arg: unknown): string {
     const key = (arg as { nodeKey?: unknown } | null)?.nodeKey;

@@ -336,6 +336,21 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.tourOpen",
+        "title": "Open",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourStartAgain",
+        "title": "Start Again",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourRevealRoot",
+        "title": "Reveal Root in Main",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.tourPin",
         "title": "Pin",
         "category": "V-NOC"
@@ -599,6 +614,18 @@
         },
         {
           "command": "vnoc.showTours",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourOpen",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourStartAgain",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourRevealRoot",
           "when": "false"
         },
         {
@@ -897,19 +924,34 @@
           "group": "1_tour@2"
         },
         {
+          "command": "vnoc.tourOpen",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canOpen",
+          "group": "0_open@1"
+        },
+        {
+          "command": "vnoc.tourStartAgain",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canOpen",
+          "group": "0_open@2"
+        },
+        {
+          "command": "vnoc.tourRevealRoot",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canOpen",
+          "group": "0_open@3"
+        },
+        {
           "command": "vnoc.tourPin",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canPin",
-          "group": "2_pin@1"
+          "group": "1_edit@2"
         },
         {
           "command": "vnoc.tourCommitAndPin",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canCommitAndPin",
-          "group": "2_pin@2"
+          "group": "1_edit@3"
         },
         {
           "command": "vnoc.tourWriteIds",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canWriteIds",
-          "group": "2_pin@3"
+          "group": "1_edit@4"
         },
         {
           "command": "vnoc.tourRename",
@@ -919,12 +961,12 @@
         {
           "command": "vnoc.tourShare",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canShare",
-          "group": "2_pin@4"
+          "group": "1_edit@5"
         },
         {
           "command": "vnoc.tourMakePrivate",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canMakePrivate",
-          "group": "2_pin@5"
+          "group": "1_edit@6"
         },
         {
           "command": "vnoc.tourDelete",

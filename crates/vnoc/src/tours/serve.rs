@@ -575,6 +575,30 @@ pub fn rows_on<R: Borrow<Row>>(
         .collect()
 }
 
+/// **Open Tour…**'s order: every tour, those on the node first (each with its `on`), then the others, each group in the list's order.
+pub fn rows_first_on<R: Borrow<Row>>(
+    rows: Vec<view::ListRowView>,
+    tours: &[R],
+    found: &[On],
+) -> Vec<view::ListRowView> {
+    let (mut on, mut rest) = (Vec::new(), Vec::new());
+    for (mut shown, row) in rows.into_iter().zip(tours) {
+        let row: &Row = row.borrow();
+        match found
+            .iter()
+            .find(|on| on.tour == row.id && on.place == row.place)
+        {
+            Some(found) => {
+                shown.on = Some(view::OnView::of(found));
+                on.push(shown);
+            }
+            None => rest.push(shown),
+        }
+    }
+    on.extend(rest);
+    on
+}
+
 // ------------------------------------------------------------------------------------------------------------------------------------ a move
 
 /// Why a move was not made.

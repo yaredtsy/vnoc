@@ -162,9 +162,9 @@ test("Share says the core's words; a tour that is not pinned has Pin on the mess
 });
 
 test("Delete tells the pages the core's words and the token, closes the tour if it is the open one, asks no question; a refusal is a message and tells nothing", async () => {
-  const w = window({ ...core({ "vnoc/tourDelete": { token: "tok-1", words: "Deleted the tour of checkout_order." } }) });
+  const w = window({ ...core({ "vnoc/tourDelete": { token: "tok-1", words: "Deleted “How the shop checks out”." } }) });
   assert.equal(await w.actions.delete("t-1"), "deleted");
-  assert.deepEqual(w.events, [["close", "t-1"], ["deleted", ["t-1"], ["tok-1"], "Deleted the tour of checkout_order."], ["list"]]);
+  assert.deepEqual(w.events, [["close", "t-1"], ["deleted", ["t-1"], ["tok-1"], "Deleted “How the shop checks out”."], ["list"]]);
   assert.deepEqual(w.said, [], "no dialog, no message: the row says it");
   const refused = window({ ...core({ "vnoc/tourDelete": new Error("the tour t-1 is being written: stop it first") }) });
   assert.equal(await refused.actions.delete("t-1"), "refused");

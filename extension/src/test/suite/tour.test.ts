@@ -1895,7 +1895,7 @@ suite("rename, share and delete a tour", () => {
     api.toursClick(`delete:${id}`); // the row's 🗑
     const gone = await sectionShows("the row says it was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
     const tomb = gone.deleted.find((x) => x.ids.includes(id))!;
-    assert.strictEqual(tomb.words, "Deleted the tour of checkout.", "the core's words");
+    assert.strictEqual(tomb.words, "Deleted “Delete and undo”.", "the core's words: by the tour's title");
     assert.strictEqual(tomb.after, order[order.indexOf(id) - 1] ?? null, "in the place the row had");
     assert.strictEqual(row(gone, id), undefined, "the row is not drawn as a tour any more");
     assert.ok(!fs.existsSync(privateFile(id)) && !fs.existsSync(stateOf(id)), "the file and its state went");

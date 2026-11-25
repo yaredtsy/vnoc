@@ -397,7 +397,7 @@ export interface TourShareAnswer {
 /** `vnoc/tourDelete`: the trash entry `vnoc/tourRestore` takes. */
 export interface TourDeleteAnswer {
   token: string;
-  /** *"Deleted the tour of checkout_order."*: the row says it, with **Undo** after it */
+  /** *"Deleted “How the shop checks out”."*: the row says it, with **Undo** after it */
   words: string;
 }
 

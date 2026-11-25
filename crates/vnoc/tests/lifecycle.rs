@@ -4676,10 +4676,7 @@ fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_th
         .request("vnoc/tourDelete", json!({ "id": id }))
         .unwrap();
     let token = gone["token"].as_str().unwrap().to_string();
-    assert_eq!(
-        gone["words"], "Deleted the tour of OrderService.parse_order.",
-        "{gone}"
-    );
+    assert_eq!(gone["words"], "Deleted “How an order is parsed”.", "{gone}");
     assert!(!private.exists() && !state_file(&root, &id).exists());
     let restored = core
         .request("vnoc/tourRestore", json!({ "token": token }))
@@ -4890,5 +4887,369 @@ fn offers_are_the_ids_and_the_files_only_under_ask_and_only_for_a_finished_tour(
     );
     core.wait_for("vnoc/toursChanged");
     assert_eq!(offers(&mut core, &id), (Value::Null, Value::Null));
+    core.finish();
+}
+
+#[test]
+fn tour_delete_words_name_the_title_the_root_only_without_a_title_and_the_id_when_unreadable() {
+    let root = tour_git_project("delete-words");
+    let (mut core, _) = ready_core(&root);
+    let a = finished_tour(&root, "How the shop checks out", &[PARSE]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let b = finished_tour(&root, "Second", &[PLACE]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let unreadable = "zz-broken-0001";
+    std::fs::write(
+        root.join(format!(".vnoc/local/tours/{unreadable}.jsonl")),
+        "not a tour\n",
+    )
+    .unwrap();
+    for id in [&a, &b] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+    let gone = core.request("vnoc/tourDelete", json!({ "id": a })).unwrap();
+    assert_eq!(
+        gone["words"], "Deleted “How the shop checks out”.",
+        "{gone}"
+    );
+    let broken = core
+        .request("vnoc/tourDelete", json!({ "id": unreadable }))
+        .unwrap();
+    assert_eq!(
+        broken["words"],
+        format!("Deleted the tour {unreadable}."),
+        "{broken}"
+    );
+    // one finished tour left (`b`): named; the sentence for several is a count
+    let one = core
+        .request("vnoc/tourDeleteFinished", Value::Null)
+        .unwrap();
+    assert_eq!(one["words"], "Deleted “Second”.", "{one}");
+    core.finish();
+}
+
+#[test]
+fn tour_export_is_what_the_command_prints_and_import_replace_gives_the_same_tour_back() {
+    let root = tour_git_project("export-import");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "parse and place", &[PARSE, PLACE]);
+    tell_tour_changed(&mut core, &root, &id);
+    core.request("vnoc/tourGo", json!({ "id": id, "move": "s2" }))
+        .unwrap();
+
+    let exported = core
+        .request("vnoc/tourExport", json!({ "id": id }))
+        .unwrap();
+    let text = exported["text"].as_str().unwrap().to_string();
+    assert_eq!(text, vnoc_ok(&root, &["tour", "export", &id], ""));
+    println!("{}", text.lines().take(15).collect::<Vec<_>>().join("\n"));
+    assert!(text.starts_with("{\n  \"schema\": 1,\n  \"title\": \"parse and place\""));
+
+    // nothing edited: the same tour, with its ids, and the reader's place where it was
+    let before = core.tour(&id);
+    let same = core
+        .request("vnoc/tourImport", json!({ "text": text, "replace": id }))
+        .unwrap();
+    assert_eq!(same["id"], json!(id), "{same}");
+    assert!(
+        same["words"]
+            .as_str()
+            .unwrap()
+            .starts_with("Replaced “parse and place”: 2 stops (2 kept, 0 new, 0 gone)."),
+        "{same}"
+    );
+    assert_eq!(vnoc_ok(&root, &["tour", "export", &id], ""), text);
+    tell_tour_changed(&mut core, &root, &id);
+    let after = core.tour(&id);
+    assert_eq!(after["stops"], before["stops"]);
+    assert_eq!(after["place"], before["place"], "the place was kept");
+
+    // one text edited
+    let edited = text.replace("It does one small thing", "It does one SMALL thing");
+    assert_ne!(edited, text);
+    core.request("vnoc/tourImport", json!({ "text": edited, "replace": id }))
+        .unwrap();
+    assert!(vnoc_ok(&root, &["tour", "export", &id], "").contains("one SMALL thing"));
+
+    // the same document as a new tour: another id, the command reads it
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let new = core
+        .request("vnoc/tourImport", json!({ "text": text }))
+        .unwrap();
+    assert_ne!(new["id"], json!(id));
+    assert!(
+        new["words"]
+            .as_str()
+            .unwrap()
+            .starts_with("Imported “parse and place”: 2 stops."),
+        "{new}"
+    );
+    let new_id = new["id"].as_str().unwrap();
+    assert!(tour_file(&root, new_id).is_file());
+
+    // a tour that is not there, and one being written
+    assert_eq!(
+        core.request(
+            "vnoc/tourImport",
+            json!({ "text": text, "replace": "no-such-tour" })
+        )
+        .unwrap_err()["code"],
+        -32602
+    );
+    let writing = start_tour(&root);
+    let refused = core
+        .request(
+            "vnoc/tourImport",
+            json!({ "text": text, "replace": writing }),
+        )
+        .unwrap_err();
+    assert_eq!(refused["code"], -32602);
+    assert!(
+        refused["message"]
+            .as_str()
+            .unwrap()
+            .contains("is being written"),
+        "{refused}"
+    );
+    core.finish();
+}
+
+#[test]
+fn a_document_that_is_refused_answers_every_refusal_with_its_place_and_line_and_writes_nothing() {
+    let root = tour_git_project("import-refused");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    tell_tour_changed(&mut core, &root, &id);
+    let text = core
+        .request("vnoc/tourExport", json!({ "id": id }))
+        .unwrap()["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let file_before = std::fs::read(tour_file(&root, &id)).unwrap();
+
+    // a text too long and a title that is empty, in one document: both are said, each at its line
+    let long = "x".repeat(900);
+    let bad = text
+        .replace("It does one small thing", &long)
+        .replace("\"title\": \"parse\"", "\"title\": \"\"");
+    let answer = core
+        .request("vnoc/tourImport", json!({ "text": bad, "replace": id }))
+        .unwrap();
+    println!("{}", answer.to_string().replace(&long, "xxx…"));
+    let refused = answer["refused"].as_array().expect("refusals as data");
+    let places: Vec<&str> = refused
+        .iter()
+        .map(|r| r["place"].as_str().unwrap())
+        .collect();
+    assert!(
+        places.contains(&"title") && places.contains(&"stops[0].text"),
+        "{places:?}"
+    );
+    for (place, key) in [("title", "\"title\""), ("stops[0].text", "\"text\"")] {
+        let r = refused.iter().find(|r| r["place"] == place).unwrap();
+        let line = r["line"].as_u64().expect("the line is known") as usize;
+        assert!(
+            bad.lines().nth(line - 1).unwrap().contains(key),
+            "{place} at line {line}"
+        );
+    }
+    // and a node that is not there
+    let nowhere = text.replace(
+        "orders/service.py::OrderService.parse_order",
+        "orders/service.py::nowhere",
+    );
+    let answer = core
+        .request("vnoc/tourImport", json!({ "text": nowhere }))
+        .unwrap();
+    println!("{answer}");
+    let node = &answer["refused"][0];
+    assert_eq!(node["place"], "stops[0].node", "{answer}");
+    assert_eq!(
+        node["words"],
+        "stops[0].node: no node at orders/service.py::nowhere"
+    );
+    assert!(
+        nowhere
+            .lines()
+            .nth(node["line"].as_u64().unwrap() as usize - 1)
+            .unwrap()
+            .contains("\"node\"")
+    );
+    assert_eq!(std::fs::read(tour_file(&root, &id)).unwrap(), file_before);
+
+    // text that is not JSON: the parser's line
+    let broken = core
+        .request(
+            "vnoc/tourImport",
+            json!({ "text": "{\n  \"schema\": 1,\n  oops\n}" }),
+        )
+        .unwrap();
+    assert_eq!(broken["refused"][0]["place"], "document", "{broken}");
+    assert_eq!(broken["refused"][0]["line"], 3, "{broken}");
+    // the words are the command's: the same sentence for the same document
+    let by_command = vnoc_tour(&root, &["tour", "import", "-"], &bad);
+    let said = String::from_utf8_lossy(&by_command.stderr).to_string();
+    for r in refused {
+        assert!(said.contains(r["words"].as_str().unwrap()), "{said}");
+    }
+    core.finish();
+}
+
+#[test]
+fn check_all_checks_every_tour_anew_and_a_row_says_what_the_check_found() {
+    let root = tour_git_project("check-all");
+    let (mut core, _) = ready_core(&root);
+    let a = finished_tour(&root, "parse", &[PARSE]);
+    let b = finished_tour(&root, "place", &[PLACE]);
+    for id in [&a, &b] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+    let checks = |listed: &Value| -> Vec<(String, Value)> {
+        listed["tours"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["id"].as_str().unwrap().to_string(), r["check"].clone()))
+            .collect()
+    };
+    let plain = core.request("vnoc/tours", json!({})).unwrap();
+    assert!(
+        checks(&plain)
+            .iter()
+            .all(|(_, c)| c.is_null() || c == "fresh"),
+        "{plain}"
+    );
+    // the code of `parse_order` changes under the tour: the core is told, as the editor would
+    let service = root.join("orders/service.py");
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(
+        &service,
+        text.replace("def parse_order", "def parse_order_now"),
+    )
+    .unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [service] }));
+    core.wait_for("vnoc/indexChanged");
+    let all = core
+        .request("vnoc/tours", json!({ "check_all": true }))
+        .unwrap();
+    let found = checks(&all);
+    assert_eq!(found.len(), 2, "{all}");
+    let of = |id: &str| found.iter().find(|(i, _)| i == id).unwrap().1.clone();
+    assert_eq!(of(&a), "changed", "{all}");
+    assert_eq!(of(&b), "fresh", "{all}");
+    core.finish();
+}
+
+#[test]
+fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_asks_again() {
+    let root = tour_git_project("ask");
+    let (mut core, _) = ready_core(&root);
+    let with = core
+        .request("vnoc/tourAsk", json!({ "key": PARSE }))
+        .unwrap();
+    assert_eq!(
+        with,
+        json!({
+            "text": format!("Walk me through {PARSE}"),
+            "words": "Copied. Paste it to your agent.",
+        })
+    );
+    for params in [Value::Null, json!({})] {
+        let without = core.request("vnoc/tourAsk", params).unwrap();
+        assert_eq!(
+            without,
+            json!({ "text": "Walk me through ", "words": "Add what you want explained." })
+        );
+    }
+    // the tree's own key says the same as the reference
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    let file = structure["root"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "orders")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let folder = core
+        .request("vnoc/tourAsk", json!({ "key": file }))
+        .unwrap();
+    assert_eq!(folder["text"], "Walk me through orders", "{folder}");
+    assert_eq!(
+        core.request("vnoc/tourAsk", json!({ "key": "no/such.py" }))
+            .unwrap_err()["code"],
+        -32602
+    );
+    // a row's Ask for a New Tour: the root, the question, the depth
+    let out = vnoc_ok(
+        &root,
+        &[
+            "tour",
+            "start",
+            "--title",
+            "parse",
+            "--question",
+            "why twice?",
+            "--detail",
+            "quick",
+            "--json",
+        ],
+        "",
+    );
+    let id = serde_json::from_str::<Value>(&out).unwrap()["tour"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    vnoc_ok(
+        &root,
+        &["tour", "add", &id, PARSE, "--body-file", "-"],
+        ONE_STEP,
+    );
+    vnoc_ok(&root, &["tour", "finish", &id, "--no-ids"], "");
+    tell_tour_changed(&mut core, &root, &id);
+    let again = core.request("vnoc/tourAsk", json!({ "tour": id })).unwrap();
+    assert_eq!(
+        again["text"],
+        format!("Walk me through {PARSE}: why twice? (a quick tour)"),
+        "{again}"
+    );
+    core.finish();
+}
+
+#[test]
+fn tours_first_on_a_node_lists_every_tour_with_the_ones_on_it_first() {
+    let root = tour_git_project("first-on");
+    let (mut core, _) = ready_core(&root);
+    let first = finished_tour(&root, "elsewhere", &["billing/charge.py::refund"]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let second = finished_tour(&root, "parse", &[PARSE]);
+    for id in [&first, &second] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+    let plain: Vec<String> = core.request("vnoc/tours", json!({})).unwrap()["tours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(plain, [second.clone(), first.clone()], "newest first");
+    // the newest is the one on the node: the order shows nothing; the other way round it does
+    let rows = core
+        .request(
+            "vnoc/tours",
+            json!({ "first_on": "billing/charge.py::refund" }),
+        )
+        .unwrap();
+    let ids: Vec<&str> = rows["tours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [first.as_str(), second.as_str()], "{rows}");
+    assert!(rows["tours"][0]["on"]["words"].is_string());
+    assert!(rows["tours"][1]["on"].is_null());
     core.finish();
 }

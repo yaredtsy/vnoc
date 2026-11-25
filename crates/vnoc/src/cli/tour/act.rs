@@ -17,14 +17,14 @@ use crate::tours::act::{self, ActError, Ask, IdsWritten, PinOut, SettingShown, S
 use crate::tours::add::{MAX_STOPS, block_of, did_you_mean_stops, nested_in, plan_route};
 use crate::tours::check::{self, Recorded};
 use crate::tours::doc;
-use crate::tours::find::find;
+use crate::tours::document::{self, ImportError};
 use crate::tours::finish::{self as finishing, Step};
 use crate::tours::pin::{self, Pinnable};
-use crate::tours::record::{Bare, Detail, DropRecord, EndRecord, Record, StopId};
+use crate::tours::record::{Bare, DropRecord, Record, StopId};
 use crate::tours::serve::short_commit;
 use crate::tours::settings::{self, Choice, Key, Origin};
-use crate::tours::store::{self, Located, Row, StartParams, StoreError, Where};
-use crate::tours::{State, Tour, TourId, steps_in_order, time, view};
+use crate::tours::store::{self, Located, Row, StoreError, Where};
+use crate::tours::{State, Tour, TourId, steps_in_order, view};
 use crate::userdata::ToursLock;
 
 use super::{
@@ -902,49 +902,23 @@ pub(super) async fn settings(global: &Global, args: &TourSettingsArgs) -> Result
 
 // -------------------------------------------------------------------------------------------------------------- export, import
 
-/// A stop's name as the document says it, for a stop that is not found now: the name it was written with, in the opened folder's terms (the path is the
-/// repo's; a project opened below its git root shows paths without the prefix).
-fn written_name(project: &crate::project::Project, stop: &crate::tours::TourStop) -> String {
-    let name = doc::node_name(stop);
-    match project.prefix() {
-        "" => name,
-        prefix => name
-            .strip_prefix(prefix)
-            .and_then(|rest| rest.strip_prefix('/'))
-            .map(str::to_string)
-            .unwrap_or(name),
-    }
-}
-
 pub(super) async fn export(global: &Global, args: &TourExportArgs) -> Result<(), Failure> {
     let project = open_without_driver(global)?;
     let vnoc_root = store::vnoc_root(project.git_root());
     let id = resolve(global, "tour export", &vnoc_root, &args.tour)?;
-    if let Located::Both { .. } = store::locate(&vnoc_root, &id) {
-        return Err(store_failure(StoreError::InBoth(id)));
-    }
-    let tour = read_tour(&vnoc_root, &id)?;
-    // the name each stop has now where it is found (by its ID, else by its name); where it is not, or there is no driver, the name it was written with
-    let mut now: BTreeMap<crate::tours::StopId, String> = tour
-        .stops
-        .iter()
-        .filter(|s| s.written)
-        .map(|s| (s.id, written_name(&project, s)))
-        .collect();
-    match open_from(global).await {
+    // the name each stop has now where it is found; where it is not, or there is no driver, the name it was written with
+    let text = match open_from(global).await {
         Ok(opened) => {
             let index = opened.index.read().expect("the index lock is not poisoned");
-            let tree = index.tree(&project.name(), project.prefix());
-            for stop in tour.stops.iter().filter(|s| s.written) {
-                if let Some(node) = find(&index, &project, &tree, stop) {
-                    now.insert(stop.id, node.location());
-                }
-            }
+            document::export(&project, Some(&index), &vnoc_root, &id, args.flat)
         }
-        Err(Failure::Environment(_)) => {}
+        Err(Failure::Environment(_)) => {
+            document::export(&project, None, &vnoc_root, &id, args.flat)
+        }
         Err(e) => return Err(e),
     }
-    out::raw(&doc::print(&doc::nest(&tour, &now, args.flat)))
+    .map_err(|e| act_failure(e, &project))?;
+    out::raw(&text)
 }
 
 /// The document's text from a file or standard input: at most one megabyte and a byte are read, and over a megabyte it is refused by `doc::parse`.
@@ -1072,78 +1046,31 @@ pub(super) async fn import(global: &Global, args: &TourImportArgs) -> Result<(),
             .unwrap_or_else(|| Err(format!("{text} was not looked up")))
     };
 
-    let (tour_id, kept, replaced) = match replace_id {
-        Some(id) => {
-            // the lock for the rest: the ids come from the file read under it, and the new file is written under the same lock (01 §5)
-            let lock = take_lock(vnoc_root.clone()).await?;
-            let old = read_tour(&vnoc_root, &id)?;
-            if matches!(old.state, State::Writing | State::Stopping) {
-                return Err(store_failure(StoreError::Refused(format!(
-                    "the tour {id} is being written ({}): stop it or finish it first",
-                    old.state
-                ))));
-            }
-            let planned = {
-                let index = opened.index.read().expect("the index lock is not poisoned");
-                crate::tours::add::plan_tour(
-                    &index,
-                    &opened.project,
-                    &resolve_node,
-                    &flat,
-                    Some(&old),
-                )
-            };
-            let mut records = match planned {
-                Ok(records) => records,
-                Err(refusals) => {
-                    return refused_with_hint(global, "tour import", Some(&id), &refusals, hint);
-                }
-            };
-            records.push(Record::End(EndRecord { at: time::now() }));
-            store::replace_locked(&lock, &vnoc_root, &id, &records).map_err(store_failure)?;
-            drop(lock);
-            let kept_ids: Vec<crate::tours::StopId> = records
-                .iter()
-                .filter_map(|r| match r {
-                    Record::Stop(stop) if old.stop(stop.id).is_some_and(|o| o.written) => {
-                        Some(stop.id)
-                    }
-                    _ => None,
-                })
-                .collect();
-            let gone = old
-                .stops
-                .iter()
-                .filter(|s| s.written && !kept_ids.contains(&s.id))
-                .count();
-            (id, Some((kept_ids.len(), gone)), true)
-        }
-        None => {
-            let planned = {
-                let index = opened.index.read().expect("the index lock is not poisoned");
-                crate::tours::add::plan_tour(&index, &opened.project, &resolve_node, &flat, None)
-            };
-            let mut records = match planned {
-                Ok(records) => records,
-                Err(refusals) => {
-                    return refused_with_hint(global, "tour import", None, &refusals, hint);
-                }
-            };
-            records.push(Record::End(EndRecord { at: time::now() }));
-            let started = store::start(
-                project.git_root(),
-                StartParams {
-                    title: flat.title.trim().to_string(),
-                    question: flat.question.as_ref().map(|q| q.trim().to_string()),
-                    author: flat.author.clone(),
-                    detail: flat.detail.unwrap_or(Detail::Normal),
-                },
-            )
-            .map_err(store_failure)?;
-            store::append(&vnoc_root, &started.id, &records).map_err(store_failure)?;
-            (started.id, None, false)
-        }
+    let written = {
+        // with `--replace`, the lock for the rest: the ids come from the file read under it, and the new file is written under the same lock (01 §5)
+        let lock = match &replace_id {
+            Some(_) => Some(take_lock(vnoc_root.clone()).await?),
+            None => None,
+        };
+        let index = opened.index.read().expect("the index lock is not poisoned");
+        document::write_import(
+            &opened.project,
+            &index,
+            &vnoc_root,
+            &resolve_node,
+            &flat,
+            replace_id.as_ref().zip(lock.as_ref()),
+        )
     };
+    let written = match written {
+        Ok(written) => written,
+        Err(ImportError::Refused(refusals)) => {
+            return refused_with_hint(global, "tour import", replace_id.as_ref(), &refusals, hint);
+        }
+        Err(ImportError::Act(e)) => return Err(act_failure(e, &project)),
+    };
+    let (tour_id, replaced) = (written.id.clone(), written.replaced);
+    let kept = written.kept.zip(written.gone);
 
     // what was written, as the replay has it, and then what `finish` does after the end (02 §5)
     let tour = read_tour(&vnoc_root, &tour_id)?;

@@ -647,6 +647,13 @@ pub struct ToursParams {
     pub check: Vec<String>,
     #[serde(default)]
     pub on: Option<String>,
+    /// **Check All Tours**: every tour is checked anew (`vnoc tour check --again`), through the same rungs and the same wait (a request that cannot be answered
+    /// in a moment says `askAgain`). The rows say what the check found.
+    #[serde(default)]
+    pub check_all: bool,
+    /// a node, as `on` names one: every tour is listed, those on the node first (each with its `on`), the others after them in their order. The picker of **Open Tour…**
+    #[serde(default)]
+    pub first_on: Option<String>,
 }
 
 impl Request for Tours {
@@ -905,6 +912,69 @@ impl Request for TourSettings {
     type Params = Option<TourSettingsParams>;
     type Result = serde_json::Value;
     const METHOD: &'static str = "vnoc/tourSettings";
+}
+
+/// `vnoc/tourExport`: the tour as one nested document (`vnoc tour export`, 02 §10), as text: exactly what the command prints.
+pub enum TourExport {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourExportParams {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourExportResult {
+    pub text: String,
+}
+
+impl Request for TourExport {
+    type Params = TourExportParams;
+    type Result = TourExportResult;
+    const METHOD: &'static str = "vnoc/tourExport";
+}
+
+/// `vnoc/tourImport`: a document as a new tour, or (`replace`) as that tour made anew (`vnoc tour import [--replace]`, 02 §10). Answers `{ id, words }`.
+/// A document that is refused is **data**, not an error: `{ refused: [{ place, words, line? }], words }` with every refusal of the whole document (nothing was
+/// written): `place` is the JSON path in the text (`stops[0].blocks[0].text`), `words` the core's sentence, `line` the line of the text it is on when it is known.
+/// A tour that is being written, one that does not exist and the like are errors, in the command's words.
+pub enum TourImport {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourImportParams {
+    pub text: String,
+    #[serde(default)]
+    pub replace: Option<String>,
+}
+
+impl Request for TourImport {
+    type Params = TourImportParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourImport";
+}
+
+/// `vnoc/tourAsk`: the sentence to paste to an agent to ask for a tour, and the line that says so (**Ask for a Tour…**, design/07 §7). `key` is the node (as `vnoc/tours`'
+/// `on` names one); with none, the sentence is `Walk me through ` and the words say to add what is wanted. `tour` is a row's **Ask for a New Tour**: the sentence for
+/// that tour's root, with its question and its depth after it. Answers `{ text, words }`.
+pub enum TourAsk {}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct TourAskParams {
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub tour: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourAskResult {
+    pub text: String,
+    pub words: String,
+}
+
+impl Request for TourAsk {
+    type Params = Option<TourAskParams>;
+    type Result = TourAskResult;
+    const METHOD: &'static str = "vnoc/tourAsk";
 }
 
 /// `vnoc/toursChanged` (core → editor): these tours changed (a file of the tours store appeared, changed or went), or the answer the core gave about their

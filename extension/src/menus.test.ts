@@ -296,6 +296,13 @@ test("08 §5: a section shows only its own menu: a node never shows a pane's ent
   assert.ok(!shown(webviewMenu, { ...pane("canvas"), webviewId: "vnoc.docs" }).length, "another webview gets none of V-NOC's entries");
 });
 
+test("05 §3: a tour's row has its menu in this order; a row that cannot be read has only Delete", () => {
+  const row = (over: Record<string, unknown> = {}) => ({ ...JSON.parse(tourRowContext({ id: "t-1", title: "T", readable: true, state: "finished", pinned: false, folder: "private", ...over } as Parameters<typeof tourRowContext>[0])), webviewId: "vnoc.structure" });
+  assert.deepEqual(shown(webviewMenu, row()), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourPin", "tourCommitAndPin", "tourWriteIds", "tourShare", "tourDelete"]);
+  assert.deepEqual(shown(webviewMenu, row({ pinned: true, folder: "project" })), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourWriteIds", "tourMakePrivate", "tourDelete"]);
+  assert.deepEqual(shown(webviewMenu, row({ readable: false, state: undefined })), ["tourDelete"]);
+});
+
 test("every key a card's, a row's, a pane's or a header's `when` clause tests is a key those contexts write", () => {
   const written = new Set([
     ...Object.keys(JSON.parse(nodeContext({ node: facts("function"), contextId: "main", isFocusRoot: false }))),

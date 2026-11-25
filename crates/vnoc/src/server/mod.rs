@@ -20,9 +20,9 @@ use calls::{call_tree, has_calls};
 use docs::{attach, docs, locate, relink, restore_plan, trash, trash_info, trash_list, write_id};
 use index::{languages, project_info, search, search_cards, structure};
 use tours::{
-    tour, tour_calls, tour_code, tour_counts, tour_delete, tour_delete_finished, tour_edit,
-    tour_go, tour_halt, tour_ids, tour_open, tour_pin, tour_restore, tour_settings, tour_share,
-    tours,
+    tour, tour_ask, tour_calls, tour_code, tour_counts, tour_delete, tour_delete_finished,
+    tour_edit, tour_export, tour_go, tour_halt, tour_ids, tour_import, tour_open, tour_pin,
+    tour_restore, tour_settings, tour_share, tours,
 };
 
 use std::fmt::Display;
@@ -224,6 +224,9 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<protocol::TourDeleteFinished, _>(tour_delete_finished)
         .request::<protocol::TourRestore, _>(tour_restore)
         .request::<protocol::TourSettings, _>(tour_settings)
+        .request::<protocol::TourExport, _>(tour_export)
+        .request::<protocol::TourImport, _>(tour_import)
+        .request::<protocol::TourAsk, _>(tour_ask)
         .notification::<FilesChanged>(files_changed)
         .notification::<Rebuild>(|core, _| {
             core.spawn_update(Work::Everything);
