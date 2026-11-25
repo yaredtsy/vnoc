@@ -439,13 +439,59 @@ the helpers that call it (`read_tour`, `pin_tour`, `write_ids`, `picks_of`, `pla
 `ids_after_end`) live in `act.rs`; `plan` too. Git finds no rename (each new file is under half the old one): to follow a line, use
 `git blame -C -C`. `act.rs` is now the biggest file (1,285 lines); leave it until it hurts.
 
+**As built (TR22s, `baa1a98`, `4fd9eee`, `c0829bc`; reviewed).** The plan above was wrong on one point: each driver call already had its
+limit (10 s, 30 s for a call tree, `driver_host::timeout_of`); only their sum and the waiters were unbounded. The core hang was never
+reproduced (6 runs of `VNOC_SUITE=tour`; the one failure was the stage not drawn after a typed QuickPick, `sample` showed a core that
+answered), so **its cause is unproven**. Two bounds anyway: one update has at most 60 s (`UPDATE_LIMIT`), then it is dropped, the lock
+is free and the next one reads everything (`needs_everything`); the index is written in one place at the update's end, so a dropped
+update leaves it whole. A request that waits for the first build or a running update (`ready_project`, `wait_for_index`) waits at most
+8 s (`WAIT_LIMIT`), then answers `REQUEST_FAILED` *"the index is being read and is not ready yet: ask again"*. After a good first build a
+timed-out update keeps `Ready` and the old index (better than the brief's "failed" status: kept). Not bounded: the first-build waits of
+`structure`, `languages`, search, and `attaching`. Window tests: one guarded helper (`util.ts`), every core request ≤ 10 s, a 3 s `ping`
+before each test, and after one stall the suite's other tests fail at once (a frozen core: the whole `tour` suite ends in 22 s).
+`tour` tests start clean (git reset to the suite's start, `shop.py`, `vnoc.toml`, tour state) and open their own tour; **Open Tour…**
+takes a tour id (`vnoc.openTour(id)`, no pick). Rust lib 560, lifecycle 72; `tour` 58/58 three times. Full window run: 3 pin tests (fixed
+in `c0829bc`) and the 3 Bend ones; a second run had 9 failures (`session`, `sidebar` among them), not repeated. `sidebar` *"a click
+selects and reveals on the canvas"* fails 3 of 3 on the old code too; `session` *"canvas reveal"* 2 of 4. TR22a's screenshots ran:
+`tools/media/out/tr22a/`.
+
+**Decided at TR22s's review:**
+- **The 8 s wait broke what used to wait.** A request asked during a first build longer than 8 s (any real project) now fails, and
+  only the map's `tourCalls` is asked again. `tours.ts` `start()` asks the list once and only logs a failure; `askCounts` failing while
+  `counts` is null is never asked again (`indexChanged` asks only when counts are held); the open tour's answers, `tourCode`, call
+  trees and `hasCalls` show the refusal. Fix (TR22t's first commit):
+  - the core marks "ask again" in data, not only in words: `ResponseError.data = { "askAgain": true }` on the wait-limit refusal and
+    on `tourCalls`' "being counted" one. The host and pages test the field; `saysAskAgain` reads it (the text test goes);
+  - one host helper asks again every 2 s, no cap, while what asked is still wanted (the list held, the tour open, the tree shown),
+    as the map already does. The list, the counts (also when none were held), the open tour, `tourCode`, `tourPin { dry }`, call
+    trees and `hasCalls` use it. Meanwhile a page draws the core's words as a quiet line, not an error;
+  - a window test: a core whose first build is held past the wait limit (a slow-driver switch for tests, or `update_limit`/`wait_limit`
+    from env in debug builds only) still shows the TOURS list and a tour's cover once the build ends.
+- **The suites are not yet trusted.** TR22t makes the full window run pass apart from Bend: find and fix `sidebar`'s *"a click selects
+  and reveals on the canvas"* (3 of 3: a broken test or a broken product; say which) and `session`'s *"canvas reveal"*. Give the other
+  suites the `soft` hooks `tour` has. Proof: **two** full `pnpm -r test` runs, each failing only the 3 Bend tests.
+- **Needs Attention said "ID lost (2)" for checkout and has_stock** in shots 05 and 06, after Write IDs had written both IDs into
+  `shop.py` (`04-note.txt`). It may be the script (it resets files between shots), or Write IDs leaving records the index does not
+  match. TR22t checks it in a window test: Write IDs on a clean tour, then nothing in Needs Attention. If it fails, it is a product bug
+  and is fixed there.
+- **Seen in the screenshots, for TR22b's first commit:**
+  - the cover says *"1 file has changes that are not committed"* twice (the reason and its offer). A reason that has an offer is shown
+    once, as the offer; under `not pinned` only the reasons with no offer;
+  - with two offers, **Start** falls below the stage's fold: the cover draws title, line, meta, **Start**, then the pin state and
+    offers;
+  - Write IDs: *"IDs written into 1 file."* hides that 2 stops got IDs, and the host made that sentence. `tourIds`' answer gains
+    `words` (*"IDs written for 2 stops in 1 file."*), shown as is; the button becomes **Always Write IDs in This Project**;
+  - the dialog's check box: *Always commit and pin without asking in this project*. The dimmed cover behind the dialog is a normal
+    backdrop, not a fault;
+  - the script leaves the Write IDs toast over shots 05 and 06: the script closes notifications before each shot.
+- **For TR23** (the list): in the TOURS section, the first stop row is drawn under the sticky header (`Tours ▶ Pinned shop 1 of 3`) in
+  shots 05 and 06.
+
 **Next, in this order:**
+- **TR22t: answers that wait are asked again; the full window run passes apart from Bend.** Two commits, above.
+- **TR22b** (unchanged list above), its first commit: the screenshot fixes just decided.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
-- **TR22s: the suites can be trusted.** Find why the core stops answering in the full run (`sample` the core when `ping` does not
-  answer; a time limit on the update's driver calls), make every window test fail within about 10 s when the core does not answer,
-  start each `tour` test from a clean state (no context open, the workspace reset) so one failure does not chain, and drive **Open
-  Tour…** by its command, not the keyboard's focus. Then TR22a's screenshots. Then **TR22b**.
 
 ## 6. Who draws what
 
