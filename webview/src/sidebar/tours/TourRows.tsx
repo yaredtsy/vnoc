@@ -6,16 +6,23 @@ import { KINDS } from "../../node-card/kinds.ts";
 import { tourStopContext } from "../../node-card/nodeContext.ts";
 import { useTour } from "../../tour/store.ts";
 import { isOpen, listItem } from "./list.ts";
+import type { Tomb } from "./deleted.ts";
 import { tourRowContext } from "./menu.ts";
 import type { RouteRow } from "./route.ts";
 
 const kindOf = (kind: string | null): Kind => (kind && kind in KINDS ? (kind as Kind) : "function");
 const MARKS = { seen: "✓", here: "●", ahead: "○", planned: "◌" } as const;
 
-/** One tour's row in the list (design 07 §3): the kind's icon and the title, then the core's words and the question. 40 px. */
-export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpen }: { row: TourRow; domId: string; open: string | null; focused: boolean; /** the row's second line in this view: its own words, or in the second view how it is on the node */ line2: string; /** the state word at the right of line 1, in the second view */ stateWord: string | null; onOpen: () => void }) {
+/**
+ * One tour's row in the list (design 07 §3): the kind's icon and the title, then the core's words and the question. 40 px. On hover, at the right of line 1: `🗑` Delete, and on a tour being written
+ * `■ Stop` instead (a tour is not deleted under the agent). A row that cannot be read is dim and has only the delete.
+ */
+export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpen, onDelete, onStop }: { row: TourRow; domId: string; open: string | null; focused: boolean; /** the row's second line in this view: its own words, or in the second view how it is on the node */ line2: string; /** the state word at the right of line 1, in the second view */ stateWord: string | null; onOpen: () => void; onDelete: () => void; onStop: () => void }) {
   const item = listItem(row);
   const kind = KINDS[kindOf(item.kind)];
+  // `■ Stop` only while the agent can hear it (`writing`); a tour that is `stopping` has been asked already, and its delete is the core's to refuse in words
+  const stop = row.state === "writing";
+  const hover = "absolute top-1 right-1 flex h-[18px] flex-none items-center justify-center rounded-sm bg-[color:var(--list-hover-bg)] px-1 text-[11px] text-foreground opacity-0 group-hover/row:opacity-100 hover:bg-toolbar-hover focus-visible:opacity-100";
   return (
     <div
       role="option"
@@ -25,7 +32,7 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
       data-tour={item.id}
       data-vscode-context={tourRowContext(row)}
       className={cn(
-        "flex h-10 flex-none flex-col justify-center border-l-2 pr-2 pl-2 text-[13px] leading-[18px]",
+        "group/row relative flex h-10 flex-none flex-col justify-center border-l-2 pr-2 pl-2 text-[13px] leading-[18px]",
         isOpen(row, open) ? "border-l-[color:var(--ring)]" : "border-l-transparent",
         item.clickable ? "cursor-pointer hover:bg-[color:var(--list-hover-bg)]" : "opacity-60",
         focused && "group-focus-within:outline group-focus-within:outline-1 group-focus-within:-outline-offset-1 group-focus-within:outline-[color:var(--ring)]",
@@ -50,6 +57,54 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
         <span className="flex-none">{line2}</span>
         {item.question !== null && <span className="min-w-0 truncate">· “{item.question}”</span>}
       </div>
+      {stop ? (
+        <button
+          type="button"
+          data-part="row-stop"
+          title="Stop the agent: it finishes the stop it is on"
+          aria-label={`Stop: ${item.title}`}
+          className={hover}
+          onClick={(e) => {
+            e.stopPropagation();
+            onStop();
+          }}
+        >
+          ■ Stop
+        </button>
+      ) : (
+        <button
+          type="button"
+          data-part="row-delete"
+          title="Delete"
+          aria-label={`Delete: ${item.title}`}
+          className={cn(hover, "w-[18px] px-0")}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+        >
+          <Codicon name="trash" className="text-[13px]" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A tour that was deleted (design 07 §7): the core's words and **Undo**, in the row's place, for six seconds. No dialog. */
+export function DeletedRow({ tomb, domId, focused, onUndo }: { tomb: Tomb; domId: string; focused: boolean; onUndo: () => void }) {
+  return (
+    <div
+      role="option"
+      id={domId}
+      data-deleted={tomb.ids.join(",")}
+      className={cn("flex h-10 flex-none items-center gap-2 border-l-2 border-l-transparent pr-2 pl-2 text-[12px] text-muted-foreground", focused && "group-focus-within:outline group-focus-within:outline-1 group-focus-within:-outline-offset-1 group-focus-within:outline-[color:var(--ring)]")}
+    >
+      <span data-part="deleted-words" className="min-w-0 flex-1 truncate" title={tomb.words}>
+        {tomb.words}
+      </span>
+      <button type="button" data-part="undo" className="flex-none rounded-sm px-1 text-foreground underline hover:bg-toolbar-hover" onClick={onUndo}>
+        Undo
+      </button>
     </div>
   );
 }

@@ -32,11 +32,13 @@ test("the settings picks: the two settings with their value now, then the three 
 });
 
 /** the window, as the actions see it: the messages said (with the button each is answered with), the files saved, the requests made */
-function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; picks?: string[] } = {}) {
+function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; picks?: string[]; typed?: (string | undefined)[] } = {}) {
   const said: { level: string; text: string; buttons: string[] }[] = [];
   const asked: [string, unknown][] = [];
   const saved: string[][] = [];
   const dialogs: [string, string | null][] = [];
+  const events: unknown[] = [];
+  const typed = [...(over.typed ?? [])];
   const answers = [...(over.answers ?? [])];
   const picks = [...(over.picks ?? [])];
   const deps: ActionDeps = {
@@ -56,9 +58,13 @@ function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; 
     }) as ActionDeps["pick"],
     openDialog: (id, title) => void dialogs.push([id, title]),
     showChanges: () => void said.push({ level: "info", text: "(source control)", buttons: [] }),
+    input: async () => typed.shift(),
+    closeIfOpen: (id) => void events.push(["close", id]),
+    deleted: (ids, tokens, words) => void events.push(["deleted", ids, tokens, words]),
+    refreshList: () => void events.push(["list"]),
     ...over,
   };
-  return { actions: new TourActions(deps), said, asked, saved, dialogs };
+  return { actions: new TourActions(deps), said, asked, saved, dialogs, events };
 }
 
 test("Write IDs with a dirty stop file asks once, saves, writes, then says where; Cancel writes nothing", async () => {
@@ -115,4 +121,73 @@ test("a message of Write IDs is the core's words as they came, and a tour with n
   const w = window({ dirtyFiles: () => [], request: (async () => ({ changed: [], words: lost })) as ActionDeps["request"] });
   await w.actions.writeIds("t-1");
   assert.deepEqual(w.said, [{ level: "info", text: lost, buttons: [] }]);
+});
+
+/** a window whose core answers each request with `answers[method]` */
+const core = (answers: Record<string, unknown | Error>): Partial<ActionDeps> => ({
+  request: (async (method: string) => {
+    const answer = answers[method];
+    if (answer instanceof Error) throw answer;
+    return answer;
+  }) as ActionDeps["request"],
+});
+
+test("Rename… sends the title typed; an empty, unchanged or dismissed box sends nothing; the core's sentence is the message, its refusal too", async () => {
+  const w = window({ typed: ["  A better title  "], ...core({ "vnoc/tourEdit": { tour: "t-1", title: "A better title", question: null, words: "Renamed to “A better title”." } }) });
+  assert.equal(await w.actions.rename("t-1"), "renamed");
+  assert.deepEqual(w.said, [{ level: "info", text: "Renamed to “A better title”.", buttons: [] }]);
+  const asked: unknown[] = [];
+  const spy = (typed: (string | undefined)[]) => window({ typed, request: (async (...a: unknown[]) => void asked.push(a)) as ActionDeps["request"] });
+  for (const typed of [[""], ["   "], ["Checkout"], [undefined]]) assert.equal(await spy(typed).actions.rename("t-1"), "unchanged", String(typed[0]));
+  assert.deepEqual(asked, [], "nothing was sent");
+  const refused = window({ typed: ["two\nlines"], ...core({ "vnoc/tourEdit": new Error("a title is one line") }) });
+  assert.equal(await refused.actions.rename("t-1"), "refused");
+  assert.deepEqual(refused.said, [{ level: "error", text: "a title is one line", buttons: [] }]);
+});
+
+test("Share says the core's words; a tour that is not pinned has Pin on the message, and Make Private Again has none", async () => {
+  const sharedWords = "Moved to `.vnoc/tours/`. Commit it to share it. It is not pinned: teammates will see changed stops without the old code.";
+  const w = window({ answers: [BUTTONS.pin], ...core({ "vnoc/tourShare": { tour: "t-1", folder: "project", path: "x", pinned: false, words: sharedWords }, "vnoc/tourPin": { tour: "t-1", state: "pinned", commit: "f4d6e15aaa" } }) });
+  assert.equal(await w.actions.share("t-1", true), "moved");
+  assert.deepEqual(w.said.map((m) => [m.text, m.buttons]), [[sharedWords, [BUTTONS.pin]], ["Pinned at f4d6e15.", []]]);
+  const pinned = window({ ...core({ "vnoc/tourShare": { tour: "t-1", folder: "project", path: "x", pinned: true, words: "Moved to `.vnoc/tours/`. Commit it to share it." } }) });
+  await pinned.actions.share("t-1", true);
+  assert.deepEqual(pinned.said.map((m) => m.buttons), [[]], "pinned: no Pin");
+  const back = window({ ...core({ "vnoc/tourShare": { tour: "t-1", folder: "private", path: "x", pinned: false, words: "Moved to `.vnoc/local/tours/`. It is private again." } }) });
+  await back.actions.share("t-1", false);
+  assert.deepEqual(back.said.map((m) => [m.text, m.buttons]), [["Moved to `.vnoc/local/tours/`. It is private again.", []]]);
+  const refused = window({ ...core({ "vnoc/tourShare": new Error("finish it before moving it, or stop it") }) });
+  assert.equal(await refused.actions.share("t-1", true), "refused");
+  assert.equal(refused.said[0].text, "finish it before moving it, or stop it");
+});
+
+test("Delete tells the pages the core's words and the token, closes the tour if it is the open one, asks no question; a refusal is a message and tells nothing", async () => {
+  const w = window({ ...core({ "vnoc/tourDelete": { token: "tok-1", words: "Deleted the tour of checkout_order." } }) });
+  assert.equal(await w.actions.delete("t-1"), "deleted");
+  assert.deepEqual(w.events, [["close", "t-1"], ["deleted", ["t-1"], ["tok-1"], "Deleted the tour of checkout_order."], ["list"]]);
+  assert.deepEqual(w.said, [], "no dialog, no message: the row says it");
+  const refused = window({ ...core({ "vnoc/tourDelete": new Error("the tour t-1 is being written: stop it first") }) });
+  assert.equal(await refused.actions.delete("t-1"), "refused");
+  assert.deepEqual(refused.events, []);
+  assert.equal(refused.said[0].text, "the tour t-1 is being written: stop it first");
+});
+
+test("Delete Finished Tours is one event for all of them; nothing to delete is the core's words", async () => {
+  const w = window({ ...core({ "vnoc/tourDeleteFinished": { deleted: [{ id: "a", token: "ta" }, { id: "b", token: "tb" }], words: "Deleted 2 finished tours." } }) });
+  assert.equal(await w.actions.deleteFinished(), 2);
+  assert.deepEqual(w.events, [["close", "a"], ["close", "b"], ["deleted", ["a", "b"], ["ta", "tb"], "Deleted 2 finished tours."], ["list"]]);
+  const none = window({ ...core({ "vnoc/tourDeleteFinished": { deleted: [], words: "There are no finished tours of yours to delete." } }) });
+  assert.equal(await none.actions.deleteFinished(), 0);
+  assert.deepEqual([none.events, none.said.map((m) => m.text)], [[], ["There are no finished tours of yours to delete."]]);
+});
+
+test("Undo restores every token, in order, and asks the list again; a token the trash lost is the core's refusal", async () => {
+  const asked: string[] = [];
+  const w = window({ request: (async (method: string, params: { token: string }) => void asked.push(`${method} ${params.token}`)) as ActionDeps["request"] });
+  assert.equal(await w.actions.undo(["ta", "tb"]), true);
+  assert.deepEqual(asked, ["vnoc/tourRestore ta", "vnoc/tourRestore tb"]);
+  assert.deepEqual(w.events, [["list"]]);
+  const lost = window({ ...core({ "vnoc/tourRestore": new Error("`ta` is not in the trash") }) });
+  assert.equal(await lost.actions.undo(["ta"]), false);
+  assert.equal(lost.said[0].text, "`ta` is not in the trash");
 });

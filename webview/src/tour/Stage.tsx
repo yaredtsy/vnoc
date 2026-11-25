@@ -142,6 +142,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     // the cover's offers: **Write IDs** is the host's (it saves the stops' files first), **Commit and Pin…** opens the dialog
     writeIds: () => void request("tourWriteIds", { id: tourId }).catch(() => {}),
     commitAndPin: () => void openPinDialog(tourId, view?.title ?? null),
+    // the end card's **Share…**: the row's act; the host asks the core and says its words
+    share: () => void request("tourShare", { id: tourId }).catch(() => {}),
     goToCode: () => stop && goToStop(structure?.root ?? null, stop, step),
   };
   const jump = useCallback((to: string) => go(tourId, to), [tourId]);
@@ -340,7 +342,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
               <Codicon name="chevron-down" />
             </button>
           </div>
-          {current!.mode === "cover" ? <Cover view={view} beat={beat} pin={pinned!} onStart={() => act.current.start()} onOffer={(kind) => act.current[kind === "ids" ? "writeIds" : "commitAndPin"]()} /> : <End view={view} onBack={() => act.current.back()} onSkipped={() => act.current.skipped()} onAgain={() => act.current.again()} onClose={() => act.current.closeTour()} />}
+          {current!.mode === "cover" ? <Cover view={view} beat={beat} pin={pinned!} onStart={() => act.current.start()} onOffer={(kind) => act.current[kind === "ids" ? "writeIds" : "commitAndPin"]()} /> : <End view={view} onBack={() => act.current.back()} onSkipped={() => act.current.skipped()} onAgain={() => act.current.again()} onClose={() => act.current.closeTour()} onShare={() => act.current.share()} />}
         </>
       )}
     </div>

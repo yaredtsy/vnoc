@@ -68,7 +68,14 @@ export interface Deps {
     takeDialog(): { id: TourId; title: string | null } | null;
   };
   /** what the user does to a tour from a button (`tourActions.ts`): the host asks, saves, writes and says what happened */
-  tourActions: { writeIds(id: TourId): Promise<unknown>; settings(): Promise<unknown> };
+  tourActions: {
+    writeIds(id: TourId): Promise<unknown>;
+    settings(): Promise<unknown>;
+    delete(id: TourId): Promise<unknown>;
+    undo(tokens: readonly string[]): Promise<unknown>;
+    deleteFinished(): Promise<unknown>;
+    share(id: TourId, share: boolean): Promise<unknown>;
+  };
   /** a file's diff against HEAD (`git.openChange`), a link of the **Commit and Pin…** dialog */
   openChange(path: string): Promise<void>;
   /** `▶ N` and **Show Tours**: the node is selected in its context, the TOURS section shows its tours */
@@ -117,6 +124,10 @@ export function createHandlers(d: Deps): Handlers {
     tourDialogTake: async () => d.tours.takeDialog(),
     openChange: ({ path }) => d.openChange(path),
     tourSettingsPick: async () => void (await d.tourActions.settings()),
+    tourDelete: async ({ id }) => void (await d.tourActions.delete(id)),
+    tourUndo: async ({ tokens }) => void (await d.tourActions.undo(tokens)),
+    tourDeleteFinished: async () => void (await d.tourActions.deleteFinished()),
+    tourShare: async ({ id }) => void (await d.tourActions.share(id, true)),
     showTours: ({ key, context }) => d.showTours(key, context),
   };
 }

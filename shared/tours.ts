@@ -374,11 +374,12 @@ export interface TourSettingsAnswer {
   does_nothing?: string;
 }
 
-/** `vnoc/tourEdit`: what was set. */
+/** `vnoc/tourEdit`: what was set, and the core's sentence for it. */
 export interface TourEditAnswer {
   tour: TourId;
   title: string | null;
   question: string | null;
+  words: string;
 }
 
 /** `vnoc/tourShare`. */
@@ -387,11 +388,23 @@ export interface TourShareAnswer {
   folder: TourFolder;
   /** the file, relative to the git root */
   path: string;
+  /** the tour is pinned: a project tour that is not has no old code for teammates, and the message offers **Pin** */
+  pinned: boolean;
+  /** the core's sentence: *"Moved to `.vnoc/tours/`. Commit it to share it."* */
+  words: string;
 }
 
 /** `vnoc/tourDelete`: the trash entry `vnoc/tourRestore` takes. */
 export interface TourDeleteAnswer {
   token: string;
+  /** *"Deleted the tour of checkout_order."*: the row says it, with **Undo** after it */
+  words: string;
+}
+
+/** `vnoc/tourDeleteFinished`: each private finished tour that went to the trash, with its token; and the core's sentence for all of them. */
+export interface TourDeleteFinishedAnswer {
+  deleted: { id: TourId; token: string }[];
+  words: string;
 }
 
 /** `vnoc/tourRestore`. */
@@ -428,6 +441,7 @@ export interface TourCoreRequests {
   "vnoc/tourEdit": { params: { id: TourId; title?: string; question?: string }; result: TourEditAnswer };
   "vnoc/tourShare": { params: { id: TourId; share: boolean }; result: TourShareAnswer };
   "vnoc/tourDelete": { params: { id: TourId }; result: TourDeleteAnswer };
+  "vnoc/tourDeleteFinished": { params: undefined; result: TourDeleteFinishedAnswer };
   "vnoc/tourRestore": { params: { token: string }; result: TourRestoreAnswer };
   "vnoc/tourSettings": { params: { ids?: SettingChoice; commit?: SettingChoice } | undefined; result: TourSettingsAnswer };
   "vnoc/tourCounts": { params: undefined; result: TourCountsAnswer };

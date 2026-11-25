@@ -4603,6 +4603,17 @@ fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_th
         )
         .unwrap();
     assert_eq!(edited["title"], "How an order is parsed");
+    assert_eq!(
+        edited["words"], "Renamed to “How an order is parsed”, and its question was changed.",
+        "{edited}"
+    );
+    let only_title = core
+        .request("vnoc/tourEdit", json!({ "id": id, "title": "How an order is parsed" }))
+        .unwrap();
+    assert_eq!(
+        only_title["words"], "Renamed to “How an order is parsed”.",
+        "{only_title}"
+    );
     tell_tour_changed(&mut core, &root, &id);
     let row = &core.request("vnoc/tours", json!({})).unwrap()["tours"][0];
     assert_eq!(
@@ -4630,6 +4641,12 @@ fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_th
         .unwrap();
     assert_eq!(shared["folder"], "project");
     assert_eq!(shared["path"], format!(".vnoc/tours/{id}.jsonl"));
+    // pinned (the files were committed when it was finished): the short sentence
+    assert_eq!(shared["pinned"], true, "{shared}");
+    assert_eq!(
+        shared["words"], "Moved to `.vnoc/tours/`. Commit it to share it.",
+        "{shared}"
+    );
     assert!(!private.exists() && project_file.is_file());
     let refused = core
         .request("vnoc/tourShare", json!({ "id": id, "share": true }))
@@ -4639,6 +4656,10 @@ fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_th
         .request("vnoc/tourShare", json!({ "id": id, "share": false }))
         .unwrap();
     assert_eq!(back["folder"], "private");
+    assert_eq!(
+        back["words"], "Moved to `.vnoc/local/tours/`. It is private again.",
+        "{back}"
+    );
     assert!(private.is_file() && !project_file.exists());
 
     // delete, then restore: the same file, and its state with it
@@ -4650,6 +4671,10 @@ fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_th
         .request("vnoc/tourDelete", json!({ "id": id }))
         .unwrap();
     let token = gone["token"].as_str().unwrap().to_string();
+    assert_eq!(
+        gone["words"], "Deleted the tour of OrderService.parse_order.",
+        "{gone}"
+    );
     assert!(!private.exists() && !state_file(&root, &id).exists());
     let restored = core
         .request("vnoc/tourRestore", json!({ "token": token }))
@@ -4674,6 +4699,72 @@ fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_th
     assert_eq!(core.saw("vnoc/indexChanged"), 0);
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
     assert_eq!(structure["revision"].as_u64().unwrap(), revision);
+    core.finish();
+}
+
+#[test]
+fn tour_delete_finished_takes_the_private_finished_tours_only_and_each_comes_back_with_its_token() {
+    let root = tour_git_project("delete-finished");
+    let (mut core, _) = ready_core(&root);
+    let a = finished_tour(&root, "a", &[PARSE]);
+    std::thread::sleep(std::time::Duration::from_millis(1100)); // ids are made from the clock
+    let b = finished_tour(&root, "b", &[PLACE]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    // work that is not committed: this tour cannot be pinned, and sharing it says what teammates will see
+    let service = root.join("orders/service.py");
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(&service, format!("{text}\n# not committed\n")).unwrap();
+    let shared = finished_tour(&root, "shared", &[PARSE]);
+    let moved = core
+        .request("vnoc/tourShare", json!({ "id": shared, "share": true }))
+        .unwrap();
+    assert_eq!(moved["pinned"], false, "{moved}");
+    assert_eq!(
+        moved["words"],
+        "Moved to `.vnoc/tours/`. Commit it to share it. It is not pinned: teammates will see changed stops without the old code.",
+        "{moved}"
+    );
+    let writing = start_tour(&root);
+    tell_tour_changed(&mut core, &root, &a);
+
+    let done = core
+        .request("vnoc/tourDeleteFinished", Value::Null)
+        .unwrap();
+    assert_eq!(done["words"], "Deleted 2 finished tours.", "{done}");
+    let mut ids: Vec<String> = done["deleted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["id"].as_str().unwrap().to_string())
+        .collect();
+    ids.sort();
+    let mut want = vec![a.clone(), b.clone()];
+    want.sort();
+    assert_eq!(ids, want, "{done}");
+    assert!(!tour_file(&root, &a).exists() && !tour_file(&root, &b).exists());
+    assert!(
+        root.join(format!(".vnoc/tours/{shared}.jsonl")).is_file(),
+        "a shared tour stays"
+    );
+    assert!(tour_file(&root, &writing).is_file(), "a tour being written stays");
+
+    // one Undo for all: each token puts its tour back
+    for d in done["deleted"].as_array().unwrap() {
+        core.request("vnoc/tourRestore", json!({ "token": d["token"] }))
+            .unwrap();
+    }
+    assert!(tour_file(&root, &a).is_file() && tour_file(&root, &b).is_file());
+
+    // nothing left of that kind: said in words, nothing deleted
+    core.request("vnoc/tourDeleteFinished", Value::Null).unwrap();
+    let none = core
+        .request("vnoc/tourDeleteFinished", Value::Null)
+        .unwrap();
+    assert_eq!(none["deleted"], json!([]), "{none}");
+    assert_eq!(
+        none["words"], "There are no finished tours of yours to delete.",
+        "{none}"
+    );
     core.finish();
 }
 

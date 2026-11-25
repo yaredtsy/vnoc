@@ -28,3 +28,10 @@ test("Escape goes back to the list from the route, and is not ours in the list; 
   assert.deepEqual(tourKey("Escape", -1, 0, "route"), { type: "list" }, "an empty route still goes back");
   assert.equal(tourKey("ArrowDown", -1, 0, "list"), null);
 });
+
+test("Delete deletes the focused row of the list, and nothing in the route or with no focused row", () => {
+  assert.deepEqual(tourKey("Delete", 2, 4, "list"), { type: "delete" });
+  assert.equal(tourKey("Delete", -1, 4, "list"), null);
+  assert.equal(tourKey("Delete", 2, 4, "route"), null, "a stop is not deleted");
+  assert.equal(tourKey("Delete", 0, 0, "list"), null);
+});

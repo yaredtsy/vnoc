@@ -19,12 +19,13 @@ import { Splitter } from "../Splitter.tsx";
 import { appearedFromOutside } from "./appear.ts";
 import { DEFAULT_TOURS_SHARE, dragTours, toursShare } from "./split.ts";
 import { useData } from "../../state/data.ts";
+import { type Entry, addTomb, afterOf, removeTomb, useDeleted, withTombs } from "./deleted.ts";
 import { listItem } from "./list.ts";
 import { emptyOn, lineTwo, opensAt, selectionOf, showAll, stateWordOf, viewButtons, viewKey, viewOf, type ListView } from "./onView.ts";
 import { headerPlace, rowKey, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
 import { useTourList } from "./store.ts";
-import { RouteRowView, TourListRow } from "./TourRows.tsx";
+import { DeletedRow, RouteRowView, TourListRow } from "./TourRows.tsx";
 
 /**
  * The TOURS section (docs/26-tours/design/07-tour-list.md §2, 04 §1): under the context panels. Folded it says its name and how many tours there are; open it is
@@ -116,6 +117,9 @@ export function ToursSection() {
   }, [asking, selection, rowsSignature, checking]); // eslint-disable-line react-hooks/exhaustive-deps
   const onShown = selection !== null && onRows?.key === selection ? onRows.rows : null;
   const shown = listView === "on" ? onShown : rows;
+  // what the list draws: the core's rows, and a deleted tour's row (its words and Undo) in its place for six seconds
+  const tombs = useDeleted((s) => s.tombs);
+  const entries: Entry[] = useMemo(() => withTombs(shown ?? [], tombs), [shown, tombs]);
   const buttons = viewButtons(listView, rows?.length ?? 0, selectionName === null ? null : { name: selectionName }, onShown?.length ?? null);
   const emptyOnText = listView === "on" && onShown !== null && onShown.length === 0 && selectionName !== null ? emptyOn(selectionName) : null;
   const switchView = (to: ListView) => dispatch({ type: "tourView", view: to === "on" ? "onSelection" : "all" });
@@ -142,11 +146,16 @@ export function ToursSection() {
   };
   const jump = (id: string, current: boolean) => tourId !== null && !current && go(tourId, id);
   const closeTour = () => tour && dispatch({ type: "closeContext", id: tour.id }, tour.id);
+  // the delete and its Undo are the host's (it asks the core, closes the tour if it is the open one, and says a refusal in the core's words)
+  const deleteRow = (id: string) => void request("tourDelete", { id }).catch(() => {});
+  const stopRow = (id: string) => void request("tourHalt", { id }).catch(() => {});
+  const undo = (tomb: { key: string; tokens: string[] }) => void request("tourUndo", { tokens: tomb.tokens }).then(() => removeTomb(tomb.key), () => {});
   // the row's action, for a click and for Enter: one function
   const act = (index: number) => {
     if (mode === "list") {
-      const row = shown?.[index];
-      if (row && listItem(row).clickable) openTour(row);
+      const entry = entries[index];
+      if (entry?.type === "row" && listItem(entry.row).clickable) openTour(entry.row);
+      else if (entry?.type === "deleted") undo(entry.tomb);
     } else {
       const r = route[index];
       if (r) jump(r.id, r.current);
@@ -164,18 +173,23 @@ export function ToursSection() {
   }, [mode, currentAt, folded]);
 
   const key = (k: string) => {
-    const move = tourKey(k, cursor, mode === "list" ? (shown?.length ?? 0) : route.length, mode);
+    const move = tourKey(k, cursor, mode === "list" ? entries.length : route.length, mode);
     if (!move) return false;
     if (move.type === "focus") setCursor(move.index);
     else if (move.type === "open") act(cursor);
-    else setShowList(true);
+    else if (move.type === "delete") {
+      const entry = entries[cursor];
+      if (entry?.type === "row") deleteRow(entry.row.id);
+    } else setShowList(true);
     return true;
   };
 
   // the extension's test suite cannot click in a webview: it sends the click
   const stopWriting = () => tourId !== null && canStop && halt(tourId);
-  const latest = useRef({ openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null });
-  latest.current = { openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null };
+  const latest = useRef({ openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo });
+  latest.current = { openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo };
+  // the host deleted tours (this page's `🗑` or key, the row's menu, **Delete Finished Tours**): their place in the list is the row above them as it was drawn a moment ago
+  useEffect(() => on("tourDeleted", ({ ids, tokens, words }) => addTomb({ ids, tokens, words, after: afterOf(latest.current.rows ?? [], ids) })), []);
   useEffect(
     () =>
       on("viewCommand", ({ name, key: what }) => {
@@ -195,6 +209,12 @@ export function ToursSection() {
         else if (what === "stop") l.stopWriting();
         else if (what === "view:all" || what === "view:on") l.switchView(what === "view:on" ? "on" : "all");
         else if (what === "showAll") l.switchView("all");
+        else if (what === "deleteFinished") void request("tourDeleteFinished").catch(() => {});
+        else if (what === "undo") {
+          const last = useDeleted.getState().tombs.at(-1);
+          if (last) l.undo(last);
+        } else if (kind === "delete") l.deleteRow(id);
+        else if (kind === "rowstop") l.stopRow(id);
         else if (what.startsWith("viewkey:")) {
           const to = viewKey(what.slice("viewkey:".length), l.listView, l.canOn);
           if (to) l.switchView(to);
@@ -221,16 +241,19 @@ export function ToursSection() {
       view: listView,
       buttons: buttons.map((b) => b.text),
       empty: emptyOnText,
-      list: (shown ?? []).map((r) => {
+      list: entries.flatMap((e) => {
+        if (e.type !== "row") return [];
+        const r = e.row;
         const item = listItem(r);
-        return { id: item.id, title: item.title, words: item.words, line2: lineTwo(r, listView), stateWord: stateWordOf(r, listView), question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable };
+        return [{ id: item.id, title: item.title, words: item.words, line2: lineTwo(r, listView), stateWord: stateWordOf(r, listView), question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable }];
       }),
+      deleted: entries.flatMap((e) => (e.type === "deleted" ? [{ ids: e.tomb.ids, words: e.tomb.words, after: e.tomb.after }] : [])),
       foot: foot === null ? null : { text: foot, stop: canStop },
       more,
       waiting: rows === null ? waiting : null,
       route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, struck: r.type === "stop" && r.struck, depth: r.depth })),
     });
-  }, [shown, listView, buttons.map((b) => b.text).join("|"), emptyOnText, route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entries, listView, buttons.map((b) => b.text).join("|"), emptyOnText, route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section
@@ -263,11 +286,12 @@ export function ToursSection() {
           <span>Tours</span>
           {rows !== null && <span className="ml-1.5 rounded-full bg-[color:var(--card-badge-bg)] px-1.5 text-[10px] font-normal text-[color:var(--card-badge-fg)] normal-case">{rows.length}</span>}
         </button>
-        {/* the section's menu: **Tour Settings…** for now (TR22b adds the rest of 05 §3's list) */}
+        {/* the section's menu: **Tour Settings…** and **Delete Finished Tours** (TR22c adds the rest of 05 §3's list) */}
         <DropdownMenu>
           <DropdownMenuTrigger render={<BarButton icon="ellipsis" label="More Tour Actions" data-part="more" className="size-[18px] normal-case" />} />
           <DropdownMenuContent>
             <DropdownMenuItem onClick={() => void request("tourSettingsPick").catch(() => {})}>Tour Settings…</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void request("tourDeleteFinished").catch(() => {})}>Delete Finished Tours</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -294,6 +318,14 @@ export function ToursSection() {
             aria-activedescendant={cursor >= 0 ? `tours-${mode}-${cursor}` : undefined}
             className="group min-h-0 flex-1 overflow-y-auto outline-none"
             onKeyDown={(e) => {
+              // `⌘⌫` is `Delete`, in the list
+              if (e.metaKey && !e.altKey && !e.ctrlKey && e.key === "Backspace") {
+                if (key("Delete")) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+                return;
+              }
               if (e.altKey || e.ctrlKey || e.metaKey) return;
               if (key(e.key)) {
                 e.preventDefault();
@@ -308,7 +340,7 @@ export function ToursSection() {
                     {waiting}
                   </p>
                 )
-              ) : rows.length === 0 ? (
+              ) : rows.length === 0 && tombs.length === 0 ? (
                 <p className="px-3 py-2 text-[12px] text-muted-foreground">No tours yet. A tour is your agent explaining a piece of the code, step by step.</p>
               ) : (
                 <>
@@ -344,7 +376,13 @@ export function ToursSection() {
                       </button>
                     </div>
                   ) : (
-                    (shown ?? []).map((row, i) => <TourListRow key={`${row.id}:${row.folder}`} row={row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} line2={lineTwo(row, listView)} stateWord={stateWordOf(row, listView)} onOpen={() => openTour(row)} />)
+                    entries.map((e, i) =>
+                      e.type === "row" ? (
+                        <TourListRow key={`${e.row.id}:${e.row.folder}`} row={e.row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} line2={lineTwo(e.row, listView)} stateWord={stateWordOf(e.row, listView)} onOpen={() => openTour(e.row)} onDelete={() => deleteRow(e.row.id)} onStop={() => stopRow(e.row.id)} />
+                      ) : (
+                        <DeletedRow key={`deleted:${e.tomb.key}`} tomb={e.tomb} domId={`tours-list-${i}`} focused={cursor === i} onUndo={() => undo(e.tomb)} />
+                      ),
+                    )
                   )}
                 </>
               )

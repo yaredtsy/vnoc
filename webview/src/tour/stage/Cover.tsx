@@ -66,8 +66,8 @@ export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: (
   );
 }
 
-/** The end card (design 02 frame 9): the counts the core gave, and three buttons. */
-export function End(p: { view: TourView; onBack: () => void; onSkipped: () => void; onAgain: () => void; onClose: () => void }) {
+/** The end card (design 02 frame 9): the counts the core gave, and three buttons; a private, finished tour has a fourth, **Share…** (the row's **Share with the Project**: the host asks the core and says its words). */
+export function End(p: { view: TourView; onBack: () => void; onSkipped: () => void; onAgain: () => void; onClose: () => void; onShare: () => void }) {
   const { view } = p;
   return (
     <div className="stage-one" data-part="end">
@@ -92,6 +92,11 @@ export function End(p: { view: TourView; onBack: () => void; onSkipped: () => vo
         <button type="button" className="stage-btn stage-secondary" onClick={p.onAgain}>
           Start Again
         </button>
+        {view.folder === "private" && view.state === "finished" && (
+          <button type="button" className="stage-btn stage-secondary" data-part="share" onClick={p.onShare}>
+            Share…
+          </button>
+        )}
         <button type="button" className="stage-btn stage-primary" onClick={p.onClose}>
           Close Tour
         </button>

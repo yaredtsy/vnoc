@@ -21,7 +21,7 @@ use docs::{attach, docs, locate, relink, restore_plan, trash, trash_info, trash_
 use index::{languages, project_info, search, search_cards, structure};
 use tours::{
     tour, tour_calls, tour_code, tour_counts, tour_delete, tour_edit, tour_go, tour_halt, tour_ids,
-    tour_open, tour_pin, tour_restore, tour_settings, tour_share, tours,
+    tour_delete_finished, tour_open, tour_pin, tour_restore, tour_settings, tour_share, tours,
 };
 
 use std::fmt::Display;
@@ -220,6 +220,7 @@ pub fn router(client: ClientSocket) -> Router<Core> {
         .request::<protocol::TourEdit, _>(tour_edit)
         .request::<protocol::TourShare, _>(tour_share)
         .request::<protocol::TourDelete, _>(tour_delete)
+        .request::<protocol::TourDeleteFinished, _>(tour_delete_finished)
         .request::<protocol::TourRestore, _>(tour_restore)
         .request::<protocol::TourSettings, _>(tour_settings)
         .notification::<FilesChanged>(files_changed)

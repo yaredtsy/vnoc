@@ -45,6 +45,7 @@ interface Api {
   tourMessages(): { level: string; text: string; buttons: string[] }[];
   answerTourMessages(answers: (string | undefined)[] | null): void;
   answerTourPicks(labels: string[] | null): void;
+  answerTourInputs(answers: (string | undefined)[] | null): void;
   dirtyFiles(): string[];
 }
 let api: Api;
@@ -180,6 +181,7 @@ setup(async function (this: Mocha.Context) {
   const start = starts.get(test.parent!)!;
   api.answerTourMessages(null);
   api.answerTourPicks(null);
+  api.answerTourInputs(null);
   api.pinDialogClick("cancel");
   for (const c of Object.values(api.session().contexts).filter((c) => c.kind === "tour")) api.dispatch({ type: "closeContext", id: c.id }, c.id);
   await until("no tour context", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour"));
@@ -1563,9 +1565,10 @@ suite("pin and IDs by a click", () => {
     leaveWork();
     const id = finished("Uncommitted shop");
     await openTour(id);
-    const cover = await stageShows("not pinned, with its reason", (d) => d.mode === "cover" && d.pin === "not pinned" && d.reason !== null, 30_000, id);
-    assert.strictEqual(cover.reason, "1 file has changes that are not committed", "the core's words");
-    assert.deepStrictEqual(cover.offers, ["2 stops have no ID: the tour will not follow a rename. | Write IDs", "1 file has changes that are not committed. | Commit and Pin…"]);
+    const cover = await stageShows("not pinned, with its offers", (d) => d.mode === "cover" && d.pin === "not pinned" && d.offers.length === 2, 30_000, id);
+    await sleep(2000); // the dry pin's answer has come by now: its one reason is the files not committed, which has an offer, so it is said once
+    assert.strictEqual(last()!.reason, null, "a reason that has an offer is said once, as the offer");
+    assert.deepStrictEqual(last()!.offers, ["2 stops have no ID: the tour will not follow a rename. | Write IDs", "1 file has changes that are not committed. | Commit and Pin…"]);
     // the dry pin names the files, and wrote nothing
     const dry = await api.request<{ state: string; reasons: { code: string; files: { path: string }[]; words: string }[] }>("vnoc/tourPin", { id, dry: true });
     assert.deepStrictEqual(dry.reasons[0].files.map((f) => f.path), ["tourdemo/shop.py"]);
@@ -1765,5 +1768,243 @@ suite("pin and IDs by a click", () => {
     const after = fs.readFileSync(toml(), "utf8");
     assert.ok(/^ids = "never"$/m.test(after), after);
     assert.strictEqual((await api.request<{ ids: { value: string } }>("vnoc/tourSettings")).ids.value, "never");
+  });
+});
+
+// ── rename, share and delete (docs/26-tours/05-on-screen.md §3, design/07-tour-list.md §7) ────────────────────────────────────────────────────
+
+suite("rename, share and delete a tour", () => {
+  const privateFile = (id: string) => path.join(workspace(), ".vnoc", "local", "tours", `${id}.jsonl`);
+  const projectFile = (id: string) => path.join(workspace(), ".vnoc", "tours", `${id}.jsonl`);
+  const stateOf = (id: string) => path.join(stateDir(), `${id}.json`);
+  const trashed = (id: string) => (fs.existsSync(path.join(workspace(), ".vnoc", "local", "trash")) ? fs.readdirSync(path.join(workspace(), ".vnoc", "local", "trash")).filter((f) => f.includes(id)) : []);
+  /** a finished tour of the shop, in its own second (ids are made from the clock) */
+  const finished = async (title: string): Promise<string> => {
+    await sleep(1100);
+    const id = JSON.parse(tourCmd(["start", "--title", title, "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", id, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
+    tourCmd(["finish", id, "--no-ids"]);
+    return id;
+  };
+  const listShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof section>>) => boolean, ms = 30_000) => {
+    api.toursClick("back"); // a tour that appears while it is written opens by itself (W11): the list is `‹ Tours`
+    api.toursClick("fold");
+    api.toursClick("unfold");
+    return sectionShows(what, (d) => d.mode === "list" && ready(d), ms);
+  };
+  /** a tour that is being written opens by itself when the canvas is visible (W11): it is closed again, so that the section shows the list */
+  const closeWhenItOpens = async (id: string) => {
+    await until("the tour that is being written opens", () => api.session().contexts[`tour:${id}`] !== undefined, 30_000);
+    api.dispatch({ type: "closeContext", id: `tour:${id}` }, `tour:${id}`);
+    await until("it is closed", () => api.session().contexts[`tour:${id}`] === undefined);
+  };
+  const row = (d: NonNullable<ReturnType<typeof section>>, id: string) => d.list.find((r) => r.id === id);
+  /** every message the actions said from `n` on */
+  const said = (n: number) => api.tourMessages().slice(n);
+
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    if (tour === "") await makeTours(); // run alone (`VNOC_GREP`): the code the tours are about is made here
+    await dropTourContext();
+    await vscode.commands.executeCommand("vnoc.structure.focus"); // the sidebar's page, which holds the section
+    await until("the sidebar page", () => api.sidebarOpen());
+    await sectionShows("the section", () => true, 30_000);
+  });
+  setup(() => {
+    api.answerTourMessages([]);
+  });
+  teardown(() => {
+    api.answerTourMessages(null);
+    api.answerTourInputs(null);
+  });
+
+  test("Rename… sends the new title and says the core's words; an empty or unchanged title sends nothing; the core's refusal is a message", async function () {
+    this.timeout(90_000);
+    const id = await finished("Before the rename");
+    let from = api.tourMessages().length;
+    api.answerTourInputs(["  After the rename  "]);
+    await vscode.commands.executeCommand("vnoc.tourRename", { tour: id });
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Renamed to “After the rename”."]);
+    assert.strictEqual(JSON.parse(tourCmd(["show", id, "--json"])).title, "After the rename");
+    await listShows("the new title in the list", (d) => row(d, id)?.title === "After the rename");
+    // nothing typed, nothing changed, the box dismissed: nothing is sent, nothing is said
+    from = api.tourMessages().length;
+    api.answerTourInputs(["", "   ", "After the rename", undefined]);
+    for (let i = 0; i < 4; i++) await vscode.commands.executeCommand("vnoc.tourRename", { tour: id });
+    assert.deepStrictEqual(said(from), []);
+    assert.strictEqual(JSON.parse(tourCmd(["show", id, "--json"])).title, "After the rename");
+    // a title the core does not take: its words
+    api.answerTourInputs(["two\nlines"]);
+    await vscode.commands.executeCommand("vnoc.tourRename", { tour: id });
+    const refusal = said(from);
+    assert.strictEqual(refusal.length, 1, JSON.stringify(refusal));
+    assert.strictEqual(refusal[0].level, "error");
+    assert.ok(refusal[0].text.length > 0 && !refusal[0].text.startsWith("Renamed"), refusal[0].text);
+    assert.strictEqual(JSON.parse(tourCmd(["show", id, "--json"])).title, "After the rename");
+  });
+
+  test("Share with the Project moves the file and the row says shared ·; Make Private Again moves it back; the end card's Share… is the same act", async function () {
+    this.timeout(120_000);
+    const id = await finished("To share");
+    assert.ok(fs.existsSync(privateFile(id)) && !fs.existsSync(projectFile(id)));
+    let from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourShare", { tour: id });
+    assert.ok(!fs.existsSync(privateFile(id)) && fs.existsSync(projectFile(id)), "the file moved to .vnoc/tours/");
+    const sent = said(from);
+    assert.strictEqual(sent.length, 1, JSON.stringify(sent));
+    assert.ok(sent[0].text.startsWith("Moved to `.vnoc/tours/`. Commit it to share it."), sent[0].text);
+    // the core's own longer sentence, with Pin, when the tour is not pinned; the short one when it is
+    const pinned = JSON.parse(tourCmd(["show", id, "--json"])).pinned === true;
+    assert.deepStrictEqual(sent[0].buttons, pinned ? [] : ["Pin"], `pinned: ${pinned}`);
+    if (!pinned) assert.ok(sent[0].text.includes("It is not pinned: teammates will see changed stops without the old code."), sent[0].text);
+    const shared = await listShows("the row says shared ·", (d) => row(d, id)?.line2.startsWith("shared ·") === true);
+    assert.ok(row(shared, id)!.words.startsWith("shared ·"), row(shared, id)!.words);
+    // back
+    from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourMakePrivate", { tour: id });
+    assert.ok(fs.existsSync(privateFile(id)) && !fs.existsSync(projectFile(id)), "the file moved back");
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Moved to `.vnoc/local/tours/`. It is private again."]);
+    const back = await listShows("the row does not say shared", (d) => row(d, id) !== undefined && row(d, id)!.line2.startsWith("shared ·") === false);
+    assert.ok(!row(back, id)!.words.startsWith("shared"), row(back, id)!.words);
+    // the end card of a private finished tour: Share… is the same act
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 30_000, id);
+    api.stageClick("end");
+    await stageShows("the end card", (d) => d.mode === "end", 30_000, id);
+    from = api.tourMessages().length;
+    api.stageClick("share");
+    await until("the file moved by the end card's Share…", () => fs.existsSync(projectFile(id)) && !fs.existsSync(privateFile(id)), 30_000);
+    await until("the message", () => said(from).length === 1, 30_000);
+    assert.ok(said(from)[0].text.startsWith("Moved to `.vnoc/tours/`."), said(from)[0].text);
+  });
+
+  test("Delete: the row becomes the core's words and Undo for six seconds, Undo brings the tour and its state back to the same place, and no dialog is asked", async function () {
+    this.timeout(120_000);
+    const above = await finished("Delete above");
+    const id = await finished("Delete and undo");
+    const below = await finished("Delete below");
+    // a place: the state file that goes to the trash with the tour
+    tourCmd(["go", id, "s1"]);
+    await until("the state file", () => fs.existsSync(stateOf(id)));
+    const file = fs.readFileSync(privateFile(id));
+    const state = fs.readFileSync(stateOf(id));
+    const before = await listShows("the three rows", (d) => [above, id, below].every((x) => row(d, x) !== undefined));
+    const order = before.list.map((r) => r.id);
+    const from = api.tourMessages().length;
+    api.toursClick(`delete:${id}`); // the row's 🗑
+    const gone = await sectionShows("the row says it was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
+    const tomb = gone.deleted.find((x) => x.ids.includes(id))!;
+    assert.strictEqual(tomb.words, "Deleted the tour of checkout.", "the core's words");
+    assert.strictEqual(tomb.after, order[order.indexOf(id) - 1] ?? null, "in the place the row had");
+    assert.strictEqual(row(gone, id), undefined, "the row is not drawn as a tour any more");
+    assert.ok(!fs.existsSync(privateFile(id)) && !fs.existsSync(stateOf(id)), "the file and its state went");
+    assert.strictEqual(trashed(id).length > 0, true, "to the trash");
+    assert.deepStrictEqual(said(from), [], "no dialog, no message: the row is the message");
+    // Undo
+    api.toursClick("undo");
+    await until("the tour is back", () => fs.existsSync(privateFile(id)), 30_000);
+    assert.ok(fs.readFileSync(privateFile(id)).equals(file), "the same file");
+    assert.ok(fs.readFileSync(stateOf(id)).equals(state), "and its state");
+    const back = await listShows("the row is back and the deleted row gone", (d) => row(d, id) !== undefined && d.deleted.length === 0);
+    assert.deepStrictEqual(back.list.map((r) => r.id).filter((x) => order.includes(x)), order, "in the same place");
+  });
+
+  test("a deleted row goes after six seconds, and the file stays in the trash", async function () {
+    this.timeout(120_000);
+    const id = await finished("Delete and wait");
+    await listShows("the row", (d) => row(d, id) !== undefined);
+    api.toursClick(`delete:${id}`);
+    await sectionShows("the row says it was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
+    await sleep(6500);
+    const after = await sectionShows("the deleted row went", (d) => d.deleted.length === 0, 10_000);
+    assert.strictEqual(row(after, id), undefined, "and the tour does not come back");
+    assert.ok(!fs.existsSync(privateFile(id)));
+    assert.ok(trashed(id).length > 0, "its file is in the trash");
+    api.toursClick("undo"); // nothing is deleted any more: this is not an error
+    await sleep(500);
+  });
+
+  test("the Delete key deletes the focused row; deleting the open tour closes it", async function () {
+    this.timeout(120_000);
+    const id = await finished("Delete by key");
+    await listShows("the row", (d) => row(d, id) !== undefined);
+    // the newest tour is the first row
+    api.toursClick("key:ArrowDown");
+    api.toursClick("key:Delete");
+    await sectionShows("the first row, the newest, was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
+    assert.ok(!fs.existsSync(privateFile(id)));
+    api.toursClick("undo");
+    await until("the tour is back", () => fs.existsSync(privateFile(id)), 30_000);
+    // the open tour: its context closes
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await vscode.commands.executeCommand("vnoc.tourDelete", { tour: id });
+    await until("the tour's context closed", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour" && c.tour === id), 30_000);
+    assert.ok(!fs.existsSync(privateFile(id)));
+    api.toursClick("undo");
+    await until("the tour is back", () => fs.existsSync(privateFile(id)), 30_000);
+  });
+
+  test("a tour being written cannot be deleted: the core refuses in words and the row stays; ■ Stop on its row is the halt", async function () {
+    this.timeout(120_000);
+    await sleep(1100);
+    const id = JSON.parse(tourCmd(["start", "--title", "Still being written", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), "--json"])).tour;
+    tourCmd(["add", id, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await closeWhenItOpens(id);
+    await listShows("the row of the tour being written", (d) => row(d, id)?.stateWord === null && row(d, id)?.words.startsWith("writing") === true);
+    const from = api.tourMessages().length;
+    api.toursClick(`delete:${id}`);
+    await until("the refusal", () => said(from).length === 1, 30_000);
+    assert.strictEqual(said(from)[0].level, "error");
+    assert.ok(/stop it first|being written/.test(said(from)[0].text), said(from)[0].text);
+    assert.ok(fs.existsSync(privateFile(id)), "the file is still there");
+    assert.strictEqual(section()?.deleted.length, 0);
+    // ■ Stop on the row: the core's halt
+    api.toursClick(`rowstop:${id}`);
+    await until("the core's state", () => JSON.parse(tourCmd(["show", id, "--json"])).state === "stopping", 30_000);
+  });
+
+  test("a tour that cannot be read is dim and says so, and can be deleted", async function () {
+    this.timeout(120_000);
+    await sleep(1100);
+    const id = "broken-4dry";
+    fs.mkdirSync(path.dirname(privateFile(id)), { recursive: true });
+    fs.writeFileSync(privateFile(id), "this is not a tour\n");
+    const unreadable = await listShows("the row that cannot be read", (d) => row(d, id) !== undefined && row(d, id)!.clickable === false);
+    assert.ok(row(unreadable, id)!.words.startsWith("cannot be read"), row(unreadable, id)!.words);
+    api.toursClick(`delete:${id}`);
+    await sectionShows("it was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
+    assert.ok(!fs.existsSync(privateFile(id)));
+    api.toursClick("undo");
+    await until("it is back", () => fs.existsSync(privateFile(id)), 30_000);
+    fs.rmSync(privateFile(id), { force: true });
+  });
+
+  test("Delete Finished Tours takes the private finished ones with one Undo for all, and leaves a shared tour and one being written", async function () {
+    this.timeout(180_000);
+    const a = await finished("Finished one");
+    const b = await finished("Finished two");
+    const shared = await finished("Finished and shared");
+    tourCmd(["share", shared]);
+    await sleep(1100);
+    const writing = JSON.parse(tourCmd(["start", "--title", "Not finished", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), "--json"])).tour;
+    await closeWhenItOpens(writing);
+    await listShows("the rows", (d) => [a, b, shared, writing].every((x) => row(d, x) !== undefined));
+    const privateFinished = JSON.parse(tourCmd(["list", "--json"])).tours.filter((t: { folder: string; state: string }) => t.folder === "private" && t.state === "finished").map((t: { id: string }) => t.id);
+    assert.ok(privateFinished.includes(a) && privateFinished.includes(b) && !privateFinished.includes(shared) && !privateFinished.includes(writing), JSON.stringify(privateFinished));
+    api.toursClick("deleteFinished");
+    const gone = await sectionShows("one row for all of them", (d) => d.deleted.length === 1 && d.deleted[0].ids.includes(a) && d.deleted[0].ids.includes(b), 30_000);
+    assert.deepStrictEqual([...gone.deleted[0].ids].sort(), [...privateFinished].sort());
+    assert.strictEqual(gone.deleted[0].words, `Deleted ${privateFinished.length} finished tours.`, "the core's words");
+    assert.ok(!fs.existsSync(privateFile(a)) && !fs.existsSync(privateFile(b)));
+    assert.ok(fs.existsSync(projectFile(shared)), "a shared tour stays");
+    assert.ok(fs.existsSync(privateFile(writing)), "a tour being written stays");
+    // one Undo for all
+    api.toursClick("undo");
+    await until("all of them are back", () => privateFinished.every((id: string) => fs.existsSync(privateFile(id))), 30_000);
+    await sectionShows("no deleted row", (d) => d.deleted.length === 0);
+    // the project's folder is a repository's: what the test shared is not left there
+    tourCmd(["share", shared, "--private"]);
   });
 });

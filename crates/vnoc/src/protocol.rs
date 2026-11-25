@@ -809,7 +809,7 @@ impl Request for TourIds {
     const METHOD: &'static str = "vnoc/tourIds";
 }
 
-/// `vnoc/tourEdit`: the tour's title and question (`vnoc tour edit`), in the command's words when one is refused. Answers what was set.
+/// `vnoc/tourEdit`: the tour's title and question (`vnoc tour edit`), in the command's words when one is refused. Answers what was set, with `words`: the core's sentence for it.
 pub enum TourEdit {}
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -827,7 +827,8 @@ impl Request for TourEdit {
     const METHOD: &'static str = "vnoc/tourEdit";
 }
 
-/// `vnoc/tourShare`: moves the tour's file to the project's folder (`share: true`) or back to the private one. Answers `{ tour, folder, path }`.
+/// `vnoc/tourShare`: moves the tour's file to the project's folder (`share: true`) or back to the private one. Answers `{ tour, folder, path, pinned, words }`: `words` is the
+/// core's sentence (*"Moved to `.vnoc/tours/`. Commit it to share it."*, and when the tour is not pinned, what teammates will see), `pinned` says whether the page offers **Pin**.
 pub enum TourShare {}
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -842,7 +843,8 @@ impl Request for TourShare {
     const METHOD: &'static str = "vnoc/tourShare";
 }
 
-/// `vnoc/tourDelete`: the tour's file and state go to the trash (`vnoc tour delete`). Answers `{ token }`, the trash entry `vnoc/tourRestore` takes.
+/// `vnoc/tourDelete`: the tour's file and state go to the trash (`vnoc tour delete`). Answers `{ token, words }`: the trash entry `vnoc/tourRestore` takes, and the core's
+/// sentence (*"Deleted the tour of checkout_order."*), which the page shows with **Undo** after it. A tour being written is refused, in words.
 pub enum TourDelete {}
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -853,12 +855,24 @@ pub struct TourDeleteParams {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TourDeleteResult {
     pub token: String,
+    pub words: String,
 }
 
 impl Request for TourDelete {
     type Params = TourDeleteParams;
     type Result = TourDeleteResult;
     const METHOD: &'static str = "vnoc/tourDelete";
+}
+
+/// `vnoc/tourDeleteFinished`: **Delete Finished Tours**: every tour that is private, finished and readable goes to the trash, as `vnoc/tourDelete` does one. Answers
+/// `{ deleted: [{ id, token }], words }`: one `token` for each (the page restores them all with one Undo), and the core's sentence (*"Deleted 3 finished tours."*). A tour that is
+/// being written or stopped, and a shared one, is left.
+pub enum TourDeleteFinished {}
+
+impl Request for TourDeleteFinished {
+    type Params = serde_json::Value;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourDeleteFinished";
 }
 
 /// `vnoc/tourRestore`: Undo of a delete: the file and the state come back as they were. Answers `{ tour, folder }`.

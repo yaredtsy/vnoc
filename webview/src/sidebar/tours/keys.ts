@@ -1,10 +1,10 @@
 // The keys of the TOURS section (docs/26-tours/design/07-tour-list.md §8, 04 §1.3). Pure: what a key does to the row focus, and what the section does with it.
 
-export type Move = { type: "focus"; index: number } | { type: "open" } | { type: "list" } | null;
+export type Move = { type: "focus"; index: number } | { type: "open" } | { type: "list" } | { type: "delete" } | null;
 
 /**
  * `↑` `↓` move the row focus (never past the first or the last row), `Home` and `End` go to the ends, `Enter` and `Space` open the row (the list) or jump to it
- * (the route), `Escape` in the route goes back to the list. `length` is how many rows there are, `index` the one that has the focus (-1: none yet).
+ * (the route), `Escape` in the route goes back to the list. `Delete` (and `⌘⌫`, which the section sends as `Delete`) deletes the focused row of the list, with Undo. `length` is how many rows there are, `index` the one that has the focus (-1: none yet).
  */
 export function tourKey(key: string, index: number, length: number, mode: "list" | "route"): Move {
   if (length === 0) return key === "Escape" && mode === "route" ? { type: "list" } : null;
@@ -20,6 +20,8 @@ export function tourKey(key: string, index: number, length: number, mode: "list"
     case "Enter":
     case " ":
       return index >= 0 ? { type: "open" } : null;
+    case "Delete":
+      return mode === "list" && index >= 0 ? { type: "delete" } : null;
     case "Escape":
       return mode === "route" ? { type: "list" } : null;
     default:

@@ -668,10 +668,21 @@ pub(super) fn tour_edit(
             .await?
             .map_err(act_error)?;
         }
+        let (title, question) = (
+            params.title.as_deref().map(str::trim),
+            params.question.as_deref().map(str::trim),
+        );
+        let words = match (title, question) {
+            (Some(title), Some(_)) => format!("Renamed to “{title}”, and its question was changed."),
+            (Some(title), None) => format!("Renamed to “{title}”."),
+            (None, Some(_)) => "The question of the tour was changed.".to_string(),
+            (None, None) => "Nothing was changed.".to_string(),
+        };
         Ok(serde_json::json!({
             "tour": id.to_string(),
-            "title": params.title.as_deref().map(str::trim),
-            "question": params.question.as_deref().map(str::trim),
+            "title": title,
+            "question": question,
+            "words": words,
         }))
     })
 }
@@ -693,10 +704,26 @@ pub(super) fn tour_share(
             store::Where::Private
         };
         let moved = {
-            let id = id.clone();
+            let (id, vnoc_root) = (id.clone(), vnoc_root.clone());
             blocking(move || store::share(&vnoc_root, &id, to))
                 .await?
                 .map_err(tour_error)?
+        };
+        // whether it is pinned, for the sentence: a project tour that is not pinned shows changed stops without their old code
+        let pinned = {
+            let id = id.clone();
+            blocking(move || act::read_tour(&vnoc_root, &id).map(|t| t.pinned()))
+                .await?
+                .unwrap_or(false)
+        };
+        let words = match to {
+            store::Where::Project if pinned => {
+                "Moved to `.vnoc/tours/`. Commit it to share it.".to_string()
+            }
+            store::Where::Project => "Moved to `.vnoc/tours/`. Commit it to share it. It is not pinned: teammates will see changed stops without the old code.".to_string(),
+            store::Where::Private => {
+                "Moved to `.vnoc/local/tours/`. It is private again.".to_string()
+            }
         };
         let path = moved
             .strip_prefix(&root)
@@ -707,6 +734,8 @@ pub(super) fn tour_share(
             "tour": id.to_string(),
             "folder": view::place_word(to),
             "path": path,
+            "pinned": pinned,
+            "words": words,
         }))
     })
 }
@@ -722,10 +751,86 @@ pub(super) fn tour_delete(
         let project = open_project(&state)?;
         let id = parse_tour(&params.id)?;
         let vnoc_root = store::vnoc_root(project.git_root());
-        let gone = blocking(move || store::delete(&vnoc_root, &id))
-            .await?
-            .map_err(tour_error)?;
-        Ok(protocol::TourDeleteResult { token: gone.entry })
+        let gone = blocking(move || {
+            // the name the sentence says is read before the file goes
+            let of = deleted_words(&vnoc_root, &id);
+            store::delete(&vnoc_root, &id).map(|gone| (gone, of))
+        })
+        .await?
+        .map_err(tour_error)?;
+        Ok(protocol::TourDeleteResult {
+            token: gone.0.entry,
+            words: gone.1,
+        })
+    })
+}
+
+/// *"Deleted the tour of checkout_order."*: the tour's first stop is what it is of. A tour that cannot be read is named by its id.
+fn deleted_words(vnoc_root: &std::path::Path, id: &TourId) -> String {
+    match act::read_tour(vnoc_root, id)
+        .ok()
+        .and_then(|tour| view::root_of(&tour))
+    {
+        Some(root) => format!("Deleted the tour of {}.", root.name),
+        None => format!("Deleted the tour {id}."),
+    }
+}
+
+/// `vnoc/tourDeleteFinished`: each private, finished, readable tour goes to the trash as `vnoc/tourDelete` does one. Not a tour that exists in both folders (the store refuses
+/// it), nor one being written or stopped. A failure after the first delete ends the loop and is said in the words; before it, it is the answer.
+pub(super) fn tour_delete_finished(
+    core: &mut Core,
+    _params: serde_json::Value,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourDeleteFinished", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let rows = {
+            let (state, vnoc_root) = (state.clone(), vnoc_root.clone());
+            blocking(move || state.tours.sync(&vnoc_root).0).await?
+        };
+        let both = |id: &TourId| rows.iter().filter(|r| &r.id == id).count() > 1;
+        let wanted: Vec<TourId> = rows
+            .iter()
+            .filter(|r| r.place == store::Where::Private && !both(&r.id))
+            .filter(|r| {
+                r.tour
+                    .as_ref()
+                    .is_ok_and(|t| t.state == crate::tours::fold::State::Finished)
+            })
+            .map(|r| r.id.clone())
+            .collect();
+        let (deleted, trouble) = blocking(move || {
+            let mut deleted = Vec::new();
+            let mut trouble = None;
+            for id in wanted {
+                match store::delete(&vnoc_root, &id) {
+                    Ok(gone) => deleted.push((id, gone.entry)),
+                    Err(e) => {
+                        trouble = Some((id, e));
+                        break;
+                    }
+                }
+            }
+            (deleted, trouble)
+        })
+        .await?;
+        let mut words = match deleted.len() {
+            0 => "There are no finished tours of yours to delete.".to_string(),
+            1 => "Deleted 1 finished tour.".to_string(),
+            n => format!("Deleted {n} finished tours."),
+        };
+        if let Some((id, e)) = trouble {
+            if deleted.is_empty() {
+                return Err(tour_error(e));
+            }
+            words.push_str(&format!(" The tour {id} was not: {}", tour_error(e).message));
+        }
+        Ok(serde_json::json!({
+            "deleted": deleted.iter().map(|(id, token)| serde_json::json!({ "id": id.to_string(), "token": token })).collect::<Vec<_>>(),
+            "words": words,
+        }))
     })
 }
 

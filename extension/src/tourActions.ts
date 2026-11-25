@@ -23,9 +23,17 @@ export interface ActionDeps {
   openDialog(id: TourId, title: string | null): void;
   /** the source control view */
   showChanges(): void;
+  /** an input box with `value` in it: the text typed, or undefined when it was dismissed */
+  input(options: { title: string; prompt: string; value: string }): Promise<string | undefined>;
+  /** the tour is the window's open tour: its context closes (a tour that went to the trash cannot stay open) */
+  closeIfOpen(id: TourId): void;
+  /** tells the pages these tours went to the trash: they show one row in their place with `words` and **Undo** (`tourDeleted`) */
+  deleted(ids: TourId[], tokens: string[], words: string): void;
+  /** the list of tours is asked for again, so what an act changed is on the pages at once */
+  refreshList(): void;
 }
 
-export const BUTTONS = { commitAndPin: "Commit and Pin…", saveAndWrite: "Save and Write IDs", cancel: "Cancel", showChanges: "Show Changes", always: "Always Write IDs in This Project" } as const;
+export const BUTTONS = { commitAndPin: "Commit and Pin…", saveAndWrite: "Save and Write IDs", cancel: "Cancel", showChanges: "Show Changes", pin: "Pin", always: "Always Write IDs in This Project" } as const;
 
 const files = (n: number): string => (n === 1 ? "1 file" : `${n} files`);
 
@@ -126,6 +134,87 @@ export class TourActions {
       await this.refused(e);
       return "refused";
     }
+  }
+
+  /** **Rename…**: an input box with the title; an empty or unchanged one sends nothing. The core's refusal (a title it does not take) is shown in its words, its sentence after a rename is the message. */
+  async rename(id: TourId): Promise<"renamed" | "unchanged" | "refused"> {
+    try {
+      const title = (await this.titleOf(id)) ?? "";
+      const typed = await this.d.input({ title: "Rename the Tour", prompt: "The title of the tour", value: title });
+      const wanted = typed?.trim() ?? "";
+      if (wanted === "" || wanted === title) return "unchanged";
+      const set = await this.d.request("vnoc/tourEdit", { id, title: wanted });
+      this.d.refreshList();
+      await this.d.say("info", set.words, []);
+      return "renamed";
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
+  }
+
+  /**
+   * **Share with the Project** (`share`) and **Make Private Again**: `vnoc/tourShare`, then the core's sentence as the message. A tour that is not pinned has **Pin** on the message: teammates
+   * would see its changed stops without the old code.
+   */
+  async share(id: TourId, share: boolean): Promise<"moved" | "refused"> {
+    try {
+      const moved = await this.d.request("vnoc/tourShare", { id, share });
+      this.d.refreshList();
+      const pick = await this.d.say("info", moved.words, share && !moved.pinned ? [BUTTONS.pin] : []);
+      if (pick === BUTTONS.pin) await this.pin(id);
+      return "moved";
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
+  }
+
+  /** **Delete**: the tour and its state go to the trash; the pages show the core's words with **Undo**. No dialog. A tour being written is refused by the core, in words. The open tour closes. */
+  async delete(id: TourId): Promise<"deleted" | "refused"> {
+    try {
+      const gone = await this.d.request("vnoc/tourDelete", { id });
+      this.d.closeIfOpen(id);
+      this.d.deleted([id], [gone.token], gone.words);
+      this.d.refreshList();
+      return "deleted";
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
+  }
+
+  /** **Delete Finished Tours**: the core deletes the private finished ones; one **Undo** on the pages restores all of them. Nothing to delete is said in the core's words. */
+  async deleteFinished(): Promise<number> {
+    try {
+      const done = await this.d.request("vnoc/tourDeleteFinished", undefined);
+      if (done.deleted.length === 0) {
+        await this.d.say("info", done.words, []);
+        return 0;
+      }
+      for (const gone of done.deleted) this.d.closeIfOpen(gone.id);
+      this.d.deleted(done.deleted.map((g) => g.id), done.deleted.map((g) => g.token), done.words);
+      this.d.refreshList();
+      return done.deleted.length;
+    } catch (e) {
+      await this.refused(e);
+      return 0;
+    }
+  }
+
+  /** **Undo**: each token's tour comes back (its file and its state, where they were). A token the trash no longer has is the core's refusal, shown in its words. */
+  async undo(tokens: readonly string[]): Promise<boolean> {
+    let ok = true;
+    for (const token of tokens) {
+      try {
+        await this.d.request("vnoc/tourRestore", { token });
+      } catch (e) {
+        ok = false;
+        await this.refused(e);
+      }
+    }
+    this.d.refreshList();
+    return ok;
   }
 
   /** **Tour Settings…**: a QuickPick of the two settings, then of `always` / `ask` / `never` with the current one marked, written through `tourSettings`. */

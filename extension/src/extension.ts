@@ -169,6 +169,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   const messagesSaid: { level: Level; text: string; buttons: string[] }[] = [];
   let messageAnswers: (string | undefined)[] | null = null;
   let pickAnswers: string[] | null = null;
+  let inputAnswers: (string | undefined)[] | null = null;
   const tourActions = new TourActions({
     request: (method, params) => c.request(method, params as object | undefined),
     view: (id) => tours.get(id),
@@ -200,6 +201,14 @@ export function activate(ctx: vscode.ExtensionContext) {
       void panels.showCanvas();
     },
     showChanges: () => void vscode.commands.executeCommand("workbench.view.scm"),
+    input: async (options) => (inputAnswers !== null ? inputAnswers.shift() : vscode.window.showInputBox({ title: options.title, prompt: options.prompt, value: options.value })),
+    // a tour that went to the trash cannot stay open: its context closes
+    closeIfOpen: (id) => {
+      const open = tourContext(store.get());
+      if (open && open.tour === id) store.dispatch({ type: "closeContext", id: open.id }, open.id);
+    },
+    deleted: (ids, tokens, words) => panels.emit("tourDeleted", { ids, tokens, words }),
+    refreshList: () => void tours.list().catch((e) => output.appendLine(`vnoc/tours: ${String((e as Error).message ?? e)}`)),
   });
   /** The tour a row's menu was opened on (`tour` of what the row said), or a stop's tour */
   const tourOfArg = (arg: unknown): string => {
@@ -295,6 +304,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.tourPin", (arg) => tourActions.pin(tourOfArg(arg))),
     vscode.commands.registerCommand("vnoc.tourCommitAndPin", (arg) => tourActions.commitAndPin(tourOfArg(arg))),
     vscode.commands.registerCommand("vnoc.tourWriteIds", (arg) => tourActions.writeIds(tourOfArg(arg))),
+    vscode.commands.registerCommand("vnoc.tourRename", (arg) => tourActions.rename(tourOfArg(arg))),
+    vscode.commands.registerCommand("vnoc.tourShare", (arg) => tourActions.share(tourOfArg(arg), true)),
+    vscode.commands.registerCommand("vnoc.tourMakePrivate", (arg) => tourActions.share(tourOfArg(arg), false)),
+    vscode.commands.registerCommand("vnoc.tourDelete", (arg) => tourActions.delete(tourOfArg(arg))),
     vscode.commands.registerCommand("vnoc.tourSettings", () => tourActions.settings()),
     vscode.commands.registerCommand("vnoc.reportIssue", () => reportIssue(help)),
     vscode.commands.registerCommand("vnoc.help", () => helpAndFeedback(help)),
@@ -411,6 +424,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     answerTourMessages: (answers: (string | undefined)[] | null) => void (messageAnswers = answers),
     /** the QuickPicks of Tour Settings…, answered by the label of the item to pick; `null`: VS Code's own */
     answerTourPicks: (labels: string[] | null) => void (pickAnswers = labels),
+    answerTourInputs: (answers: (string | undefined)[] | null) => void (inputAnswers = answers),
     /** every drawing of the sidebar's TOURS section, in order */
     toursDrawn: () => toursPosts,
     /** every report of the nodes that show `▶ N` (the cards of the canvas, the rows of the structure that are drawn): the node's id, its count and the chip's tooltip */

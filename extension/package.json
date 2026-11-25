@@ -351,6 +351,26 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.tourRename",
+        "title": "Rename…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourShare",
+        "title": "Share with the Project",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourMakePrivate",
+        "title": "Make Private Again",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourDelete",
+        "title": "Delete",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.tourSettings",
         "title": "Tour Settings…",
         "category": "V-NOC"
@@ -591,6 +611,22 @@
         },
         {
           "command": "vnoc.tourWriteIds",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourRename",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourShare",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourMakePrivate",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourDelete",
           "when": "false"
         }
       ],
@@ -874,6 +910,26 @@
           "command": "vnoc.tourWriteIds",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canWriteIds",
           "group": "2_pin@3"
+        },
+        {
+          "command": "vnoc.tourRename",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canRename",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "vnoc.tourShare",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canShare",
+          "group": "2_pin@4"
+        },
+        {
+          "command": "vnoc.tourMakePrivate",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canMakePrivate",
+          "group": "2_pin@5"
+        },
+        {
+          "command": "vnoc.tourDelete",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow'",
+          "group": "9_delete@1"
         }
       ],
       "explorer/context": [
