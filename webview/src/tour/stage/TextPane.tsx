@@ -1,5 +1,6 @@
+import type { Beat, NextState } from "@vnoc/shared/tourWriting.ts";
 import type { StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import type { Look } from "../layout.ts";
+import { ADDING_LINE, type Look, notWrittenSentence } from "../layout.ts";
 import { Rich, type TextDrawn } from "./Rich.tsx";
 
 /**
@@ -7,10 +8,8 @@ import { Rich, type TextDrawn } from "./Rich.tsx";
  * kind adds under it: the grey bars of a stop that is not written, `⇢ Explained at stop N`, the mark of a step that changed. The words are the core's; the
  * sentences of a stop that is not written are the design's.
  */
-export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; parent: StepView | null; look: Look; onJump: (stop: string) => void; onTextDrawn?: (d: TextDrawn) => void }) {
+export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; parent: StepView | null; look: Look; beat: Beat; next: NextState; fade: boolean; onJump: (stop: string) => void; onTextDrawn?: (d: TextDrawn) => void }) {
   const { view, stop, step, look } = p;
-  const writing = view.writing === stop.id;
-  const on = view.writing === null ? null : view.stops.find((s) => s.id === view.writing);
   const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
   return (
     <div className="stage-textpane" data-part="text">
@@ -27,16 +26,20 @@ export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; pa
             <i />
             <i />
           </div>
-          <p className="stage-sentence">
-            {view.state === "stopped" || view.state === "stopping"
-              ? "Not written: the tour was stopped here. Ask the agent to continue it."
-              : writing
-                ? "The agent is writing this stop. You can read the code meanwhile."
-                : `Not written yet${on ? `: the agent is on stop ${on.number}.` : "."}`}
+          <p className="stage-sentence" data-part="not-written">
+            {notWrittenSentence(view, stop, p.beat)}
           </p>
         </>
       ) : (
-        <Rich text={step.text} className={look.lead ? "stage-lead" : "stage-paragraph"} onDrawn={p.onTextDrawn} />
+        // the text of a step that was not written a moment ago fades in where the grey bars were
+        <div className={p.fade ? "stage-fadein" : undefined} data-part="written" data-fade={p.fade}>
+          <Rich text={step.text} className={look.lead ? "stage-lead" : "stage-paragraph"} onDrawn={p.onTextDrawn} />
+        </div>
+      )}
+      {p.next === "adding" && (
+        <p className="stage-sentence" data-part="adding">
+          {ADDING_LINE}
+        </p>
       )}
       {look.explained && explained && (
         <p className="stage-explained">

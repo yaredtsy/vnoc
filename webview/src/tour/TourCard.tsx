@@ -40,10 +40,11 @@ export const TourCard = memo(function TourCard({ data }: NodeProps<Node<TourCard
   };
   return (
     <div
-      className={cn("node-card tour-card", data.callLine !== null && "call", data.here && "selected", highlighted && !data.here && "highlighted", data.planned && "tour-planned", data.mark === "seen" && "tour-seen")}
+      className={cn("node-card tour-card", data.callLine !== null && "call", data.here && "selected", highlighted && !data.here && "highlighted", data.planned && "tour-planned", data.writing && "tour-writing", data.mark === "seen" && "tour-seen")}
       style={{ width: CARD_W, height: CARD_H, borderLeftColor: kind.color }}
       data-stop={data.id}
       data-mark={data.mark}
+      data-writing={data.writing}
       data-vscode-context={tourStopContext({ tour: useTour.getState().id ?? "", stop: data.id, nodeKey: data.key, surface: "canvas" })}
       aria-current={data.here ? "step" : undefined}
       aria-label={`Stop ${data.number}: ${data.name}${data.here ? ", you are here" : ""}`}

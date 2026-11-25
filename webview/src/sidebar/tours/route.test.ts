@@ -61,9 +61,21 @@ test("a stop's one word: writing…, changed, or the stop it is explained at; th
   assert.deepEqual(words(view("cover", { writing: "s3" }))[2], "writing…", "writing comes before changed");
 });
 
+test("a stop being written says `no news` when the agent has been quiet", () => {
+  const words = (v: TourView, quiet: boolean) => routeRows(v, quiet).filter((r) => r.type === "stop").map((r) => r.type === "stop" && r.description);
+  assert.deepEqual(words(view("cover"), true), [null, null, "changed", "⇢ 2", "no news"]);
+  assert.deepEqual(words(view("cover"), false), [null, null, "changed", "⇢ 2", "writing…"]);
+});
+
 test("the header's place is the core's numbers, and nothing at the cover and the end", () => {
   assert.equal(headerPlace(view("s2", {}, { position: { stop: 2, of: 5, step: 1, steps: 1 } })), "2 of 5");
   assert.equal(headerPlace(view("cover")), "");
+});
+
+test("a tour with no plan that is being written has no `of` in the header", () => {
+  const position = { stop: 2, of: 4, step: 1, steps: 1 };
+  assert.equal(headerPlace(view("s2", { planned: 0, writing: null }, { position })), "2 · 4 so far");
+  assert.equal(headerPlace(view("s2", { planned: 0, writing: null, state: "finished" }, { position })), "2 of 4");
 });
 
 test("every row of the route has a key of its own: a stop and its intro step have the same id", () => {

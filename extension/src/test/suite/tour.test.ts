@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 
 import type { Notes, StructureResult } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
-import { canvasTabs, sleep, until } from "./util";
+import { canvasTabs, closeCanvas, sleep, until } from "./util";
 
 // A tour plays in a real window (docs/26-tours/06-build-order.md TR17). The tour is made by the built `vnoc tour` commands, so its hashes are real: a stop with blocks and
 // a detail, a short stop, a file with no blocks (contents), and a stop explained before. The suite cannot see the page, so it reads what the stage posts
@@ -23,7 +23,7 @@ interface Api {
   toursClick(what: string): void;
   mapDrawn(): Extract<Notes, { type: "mapDrawn" }>[];
   tourBar(): Extract<Notes, { type: "tourBar" }>[];
-  chips(): { id: string; label: string; active: boolean }[];
+  chips(): { id: string; label: string; active: boolean; dot?: "pulsing" | "still" }[];
   mapClick(stop: string): void;
   setView(text: string): void;
   viewports(): Record<string, { x: number; y: number; zoom: number }>;
@@ -32,6 +32,9 @@ interface Api {
   webviewErrors(): string[];
   cli: { binaryPath(): string | undefined; driverPaths(): string[] };
   tours: { open(): unknown; list(): Promise<{ id: string; words: string }[]> };
+  tourStatus(): string | null;
+  toursNoticed(): string[];
+  toursNoticeOpen(id: string): Promise<void> | undefined;
 }
 let api: Api;
 
@@ -713,5 +716,250 @@ suite("a step's text is Markdown", () => {
     const d = await stageShows("the broken diagram's note", (x) => x.step === "s2" && x.markdown.diagrams === 1 && x.markdown.failed === 1, 30_000, md);
     assert.deepStrictEqual(d.markdown, { lists: 0, tables: 0, fences: 0, diagrams: 1, drawn: 0, failed: 1 });
     assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});
+
+// ── a tour read while it is written (docs/26-tours/05-on-screen.md §3, design 02 frames 6 and 8, 04 §6) ────────────────────────────────────────────────────
+
+const dropTourContext = async () => {
+  const open = Object.values(api.session().contexts).find((c) => c.kind === "tour");
+  if (open) api.dispatch({ type: "closeContext", id: open.id }, open.id);
+  await until("no tour context", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour"));
+};
+const mapOfTour = (id: string) => api.mapDrawn().filter((m) => m.tour === id).at(-1);
+const aMapShows = async (id: string, what: string, ready: (m: NonNullable<ReturnType<typeof mapOfTour>>) => boolean) => {
+  await until(what, () => {
+    const m = mapOfTour(id);
+    return m !== undefined && ready(m);
+  });
+  return mapOfTour(id)!;
+};
+/** a short stop of the demo code: its text, and the node it is about */
+const SHORT = {
+  has_stock: "has_stock answers one question: are there enough units of this SKU in stock? It reads and never changes the count.\n",
+  reserve: "reserve takes the units out of the count, so a second buyer cannot take them while this one pays.\n",
+  charge: "charge is the one place money is taken; it returns what was paid, and raises nothing itself.\n",
+  release: "release puts the units back when the charge did not go through, so the count is the one it was.\n",
+};
+const node = (name: keyof typeof SHORT) => `tourdemo/shop.py::${name}`;
+
+suite("a tour read while it is written", () => {
+  let writer = "";
+  let bare = "";
+
+  suiteSetup(async function () {
+    this.timeout(60_000);
+    await dropTourContext();
+    api.dispatch({ type: "activate", id: "main" }, "main");
+  });
+
+  test("a tour that starts while the canvas is hidden opens nothing: one notification, once, and its Open Tour brings the tour up on the cover", async function () {
+    this.timeout(60_000);
+    await closeCanvas();
+    await sleep(1100);
+    writer = JSON.parse(tourCmd(["start", "--title", "Written as it goes", "--question", "what keeps the stock right", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), node("charge"), node("release"), "--json"])).tour;
+    await until("the notification for the new tour", () => api.toursNoticed().includes(writer));
+    assert.deepStrictEqual(canvasTabs().length, 0, "the canvas stayed closed");
+    assert.ok(!Object.values(api.session().contexts).some((c) => c.kind === "tour"), "no tour context was made");
+    assert.strictEqual(api.tourStatus(), null, "no tour is open: no status bar item");
+    tourCmd(["add", writer, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await sleep(800);
+    assert.strictEqual(api.toursNoticed().filter((id) => id === writer).length, 1, "once per tour: a second change says nothing");
+    await api.toursNoticeOpen(writer); // the button of the notification
+    await until("the tour's context", () => api.session().active === `tour:${writer}`);
+    await until("the canvas tab", () => canvasTabs().length > 0);
+    const cover = await stageShows("the cover", (d) => d.mode === "cover", 20_000, writer);
+    assert.strictEqual(cover.beat, "writing");
+  });
+
+  test("the stops of the plan are on the route and the map at once, not written; the bar, the foot, the chip and the status bar item say the agent is writing", async () => {
+    const route = await sectionShows("the route of the tour being written", (d) => d.mode === "route" && d.route.filter((r) => r.kind === "stop").length === 4);
+    assert.deepStrictEqual(route.route.filter((r) => r.kind === "stop").map((r) => [r.id, r.mark, r.description]), [["s1", "ahead", null], ["s2", "planned", "writing…"], ["s3", "planned", null], ["s4", "planned", null]], "stop 1 is written, the agent is on stop 2");
+    assert.deepStrictEqual(route.foot, { text: "writing 2 of 4", stop: true });
+    assert.strictEqual(route.more, false, "a plan: no row for more");
+    const map = await aMapShows(writer, "the four cards", (m) => m.cards.length === 4);
+    assert.deepStrictEqual(map.cards.map((c) => [c.id, c.planned, c.writing]), [["s1", false, false], ["s2", true, true], ["s3", true, false], ["s4", true, false]]);
+    await barShows("the agent's words and the ■", (b) => b.agent === "writing 2/4" && b.stop);
+    await until("the writing dot, pulsing", () => api.chips().find((c) => c.id === `tour:${writer}`)?.dot === "pulsing");
+    await until("the status bar item", () => api.tourStatus() === "▶ Tour · writing 2/4");
+    const cover = last()!;
+    assert.deepStrictEqual(cover.segments, { total: 4, planned: 3, filled: 0 }, "four segments, three dotted");
+  });
+
+  test("an add puts the stop on the route and the map with no reload, and the stage stays on the reader's step", async () => {
+    api.stageClick("start");
+    const one = await stageShows("stop 1", atStep("s1"), 10_000, writer);
+    assert.strictEqual(one.kind, "short");
+    assert.strictEqual(one.position, "stop 1 of 4");
+    assert.strictEqual(one.nextState, "planned", "the next stop is not written: Next is dim");
+    assert.strictEqual(one.nextLabel, "Next");
+    await until("the status bar item follows the place", () => api.tourStatus() === "▶ Tour 1/4 · writing 2/4");
+    // the agent adds stop 2 while the reader is on stop 1
+    tourCmd(["add", writer, node("reserve"), "--body-file", "-"], SHORT.reserve);
+    const map = await aMapShows(writer, "stop 2 written on the map", (m) => m.cards.find((c) => c.id === "s2")?.planned === false);
+    assert.deepStrictEqual(map.cards.map((c) => [c.id, c.planned, c.writing]), [["s1", false, false], ["s2", false, false], ["s3", true, true], ["s4", true, false]]);
+    const route = await sectionShows("stop 2 written on the route", (d) => d.route.find((r) => r.id === "s2")?.mark === "ahead");
+    assert.deepStrictEqual(route.foot, { text: "writing 3 of 4", stop: true });
+    const now = await stageShows("still on stop 1, Next lit", (d) => d.nextState === "ready", 10_000, writer);
+    assert.strictEqual(now.step, "s1", "the stage never jumps to the newest stop");
+    assert.strictEqual(now.position, "stop 1 of 4");
+    await barShows("the bar moved on", (b) => b.agent === "writing 3/4");
+  });
+
+  test("reading ahead onto a stop that is not written shows it being written, and its text fades in where the grey bars were when the agent adds it", async () => {
+    api.stageClick("jump:s3");
+    const ahead = await stageShows("stop 3, not written", atStep("s3"), 10_000, writer);
+    assert.strictEqual(ahead.kind, "planned");
+    assert.strictEqual(ahead.sentence, "The agent is writing this stop. You can read the code meanwhile.");
+    assert.strictEqual(ahead.text, "", "no text yet");
+    assert.ok(ahead.code !== null && ahead.code.text.includes("def charge"), "the code is readable meanwhile");
+    assert.strictEqual(ahead.nextState, "planned", "stop 4 is not written either");
+    assert.strictEqual(ahead.fade, false);
+    // a stop that is not the one being written says where the agent is
+    api.stageClick("jump:s4");
+    const further = await stageShows("stop 4, not written", atStep("s4"), 10_000, writer);
+    assert.strictEqual(further.sentence, "Not written yet: the agent is on stop 3.");
+    assert.strictEqual(further.nextLabel, "Finish", "the last stop of the route: nothing after it");
+    api.stageClick("jump:s3");
+    await stageShows("back on stop 3", atStep("s3"), 10_000, writer);
+    // the agent writes it: the same step now has the text, and it faded in
+    tourCmd(["add", writer, node("charge"), "--body-file", "-"], SHORT.charge);
+    const written = await stageShows("the text where the bars were", (d) => d.step === "s3" && d.kind === "short" && d.text === SHORT.charge.trim(), 10_000, writer);
+    assert.strictEqual(written.fade, true, "it fades in");
+    assert.strictEqual(written.sentence, null);
+    await stageShows("the fade is over", (d) => d.step === "s3" && !d.fade, 10_000, writer);
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+
+  test("■ on the bar is the core's halt: the bar, the foot and the stage say stopping until the agent answers, and stopped after its next add is refused", async () => {
+    api.stageClick("jump:s4");
+    await stageShows("stop 4", atStep("s4"), 10_000, writer);
+    api.stageClick("menuStop"); // the ■ on the bar
+    const stopping = await barShows("stopping", (b) => b.agent === "stopping" && !b.stop);
+    assert.strictEqual(stopping.agent, "stopping");
+    const d = await stageShows("the stage says it will stop", (x) => x.beat === "stopping", 10_000, writer);
+    assert.strictEqual(d.sentence, "Not written yet: the agent stops after the stop it is on.");
+    const route = await sectionShows("the foot says stopping", (x) => x.foot?.text.startsWith("stopping") === true);
+    assert.strictEqual(route.foot?.stop, false, "no ■ after it was pressed");
+    await until("the status bar item", () => api.tourStatus() === "▶ Tour 4/4 · stopping");
+    assert.strictEqual(JSON.parse(tourCmd(["show", writer, "--json"])).state, "stopping", "the core's state, not the page's guess");
+    // the agent's next command: refused, and that is when the tour is stopped
+    let refused: { status?: number; stdout?: string; stderr?: string } | undefined;
+    try {
+      tourCmd(["add", writer, node("release"), "--body-file", "-"], SHORT.release);
+    } catch (e) {
+      refused = e as typeof refused;
+    }
+    assert.ok(refused, "the add was refused: it exited with an error");
+    assert.strictEqual(refused.status, 1);
+    assert.match(`${refused.stdout}${refused.stderr}`, /^stopped: the reader stopped this tour/m, "the core says the tour was stopped");
+    await barShows("stopped", (b) => b.agent === "stopped");
+    const stopped = await stageShows("the stage says stopped", (x) => x.beat === "stopped", 10_000, writer);
+    assert.strictEqual(stopped.sentence, "Not written: the tour was stopped here. Ask the agent to continue it.");
+    assert.strictEqual(stopped.step, "s4", "the reader stays where they were");
+    const foot = await sectionShows("the foot says stopped", (x) => x.foot?.text.startsWith("stopped:") === true);
+    assert.deepStrictEqual(foot.foot, { text: "stopped: 3 of 4 written", stop: false });
+    await until("the status bar item", () => api.tourStatus() === "▶ Tour 4/4 · stopped");
+    await until("the dot is gone", () => api.chips().find((c) => c.id === `tour:${writer}`)?.dot === undefined);
+    api.stageClick("jump:s1");
+    await stageShows("stop 1 again", atStep("s1"), 10_000, writer);
+    assert.strictEqual(last()!.nextState, "ready", "the next stop is written");
+  });
+
+  test("a tour with no plan: the written count only, one dotted segment and a `◌ …` row, Next dim on the last written step, and it lights when the next stop is added", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await sleep(1100);
+    bare = JSON.parse(tourCmd(["start", "--title", "No plan", "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", bare, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await sectionShows("the list has it", (d) => d.list.some((r) => r.id === bare), 30_000);
+    api.toursClick(`row:${bare}`);
+    await until("the tour's context", () => api.session().active === `tour:${bare}`);
+    await toCover(bare);
+    const cover = await stageShows("the cover", (d) => d.mode === "cover", 10_000, bare);
+    assert.strictEqual(cover.beat, "writing");
+    api.stageClick("start");
+    const one = await stageShows("stop 1", atStep("s1"), 10_000, bare);
+    assert.strictEqual(one.position, "stop 1 · 1 so far", "no `of`");
+    assert.deepStrictEqual(one.segments, { total: 2, planned: 1, filled: 1 }, "the stop, and one dotted segment after it");
+    assert.strictEqual(one.nextState, "adding");
+    assert.strictEqual(one.nextLabel, "Next", "not Finish: the tour is not finished");
+    assert.strictEqual(one.adding, "The agent is adding the next stop.");
+    assert.strictEqual(one.text, SHORT.has_stock.trim(), "the step's words stay");
+    const route = await sectionShows("the route with its `◌ …` row", (d) => d.mode === "route" && d.more);
+    assert.deepStrictEqual(route.foot, { text: "writing · 1 stop so far", stop: true });
+    assert.ok(route.header.includes("1 · 1 so far"), route.header);
+    await barShows("the bar", (b) => b.agent === "writing · 1 so far" && b.stop);
+    api.stageClick("next"); // nowhere to go: it does nothing, and the core is not asked to take the reader to the end card
+    await sleep(600);
+    assert.strictEqual(last()!.step, "s1");
+    assert.strictEqual(JSON.parse(tourCmd(["where", bare, "--json"])).at, "s1");
+    // the next stop arrives: Next lights, and nothing moves by itself
+    tourCmd(["add", bare, node("reserve"), "--body-file", "-"], SHORT.reserve);
+    const lit = await stageShows("Next lit", (d) => d.nextState === "ready", 10_000, bare);
+    assert.strictEqual(lit.step, "s1");
+    assert.strictEqual(lit.position, "stop 1 · 2 so far");
+    assert.strictEqual(lit.adding, null);
+    // the tour is finished: the written count is the size, and the words about the agent go
+    tourCmd(["finish", bare, "--no-ids"]);
+    const done = await stageShows("finished", (d) => d.beat === "finished", 10_000, bare);
+    assert.strictEqual(done.position, "stop 1 of 2");
+    assert.strictEqual(done.segments.total, 2);
+    await barShows("nothing on the bar", (b) => b.agent === null && !b.stop);
+    const after = await sectionShows("no foot", (d) => d.foot === null && !d.more);
+    assert.strictEqual(after.foot, null);
+    await until("the status bar item says only the place", () => api.tourStatus() === "▶ Tour 1/2");
+  });
+
+  test("a tour with no news for five minutes says so, and the agent writing again takes the words back without a word", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await sleep(1100);
+    const quiet = JSON.parse(tourCmd(["start", "--title", "Gone quiet", "--author", "the suite", "--plan", node("has_stock"), node("release"), "--json"])).tour;
+    await sectionShows("the list has it", (d) => d.list.some((r) => r.id === quiet), 30_000);
+    api.toursClick(`row:${quiet}`);
+    await until("the tour's context", () => api.session().active === `tour:${quiet}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 10_000, quiet);
+    // the file's time says nothing was added for six minutes
+    const file = path.join(workspace(), ".vnoc", "local", "tours", `${quiet}.jsonl`);
+    const old = new Date(Date.now() - 6 * 60_000);
+    fs.utimesSync(file, old, old);
+    await barShows("no news", (b) => b.agent === "no news" && !b.stop, 40_000);
+    const d = await stageShows("the stage says it", (x) => x.beat === "quiet", 10_000, quiet);
+    assert.strictEqual(d.mode, "cover");
+    await until("the chip's dot stands still", () => api.chips().find((c) => c.id === `tour:${quiet}`)?.dot === "still");
+    await until("the status bar item", () => api.tourStatus() === "▶ Tour · no news");
+    const route = await sectionShows("the foot", (x) => x.foot?.text.startsWith("no news from the agent") === true);
+    assert.strictEqual(route.foot?.stop, false);
+    api.stageClick("start");
+    const planned = await stageShows("stop 1, not written", atStep("s1"), 10_000, quiet);
+    assert.strictEqual(planned.sentence, "Not written. The agent may have stopped: look at its terminal, or ask it to continue the tour.");
+    // the agent writes again: no news is gone, with nothing said
+    tourCmd(["add", quiet, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await barShows("writing again", (b) => b.agent?.startsWith("writing") === true && b.stop, 40_000);
+    await until("the dot pulses again", () => api.chips().find((c) => c.id === `tour:${quiet}`)?.dot === "pulsing");
+    await stageShows("the text where the bars were", (x) => x.step === "s1" && x.kind === "short", 10_000, quiet);
+  });
+
+  test("a second tour that appears while one is open leaves the open one, and the list has it; with none open the section unfolds", async function () {
+    this.timeout(60_000);
+    const open = api.session().active;
+    assert.ok(open.startsWith("tour:"), open);
+    const before = api.toursNoticed().length;
+    await sleep(1100);
+    const next = JSON.parse(tourCmd(["start", "--title", "A second one", "--author", "the suite", "--plan", node("release"), "--json"])).tour;
+    await sectionShows("the list has the new tour", (d) => d.list.some((r) => r.id === next), 30_000);
+    assert.strictEqual(api.session().active, open, "the open tour stays");
+    assert.strictEqual(api.toursNoticed().length, before, "the canvas is showing a tour: no notification");
+    // no tour open and the section folded: a tour that appears unfolds it
+    api.stageClick("closeTour");
+    await dropTourContext();
+    api.toursClick("fold");
+    await sectionShows("folded", (d) => d.folded);
+    await sleep(1100);
+    const third = JSON.parse(tourCmd(["start", "--title", "A third one", "--author", "the suite", "--json"])).tour;
+    await sectionShows("unfolded by the new tour", (d) => !d.folded && d.mode === "list" && d.list.some((r) => r.id === third), 30_000);
   });
 });

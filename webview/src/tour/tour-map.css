@@ -8,3 +8,7 @@
 .tour-badge-seen { color: var(--muted-foreground); }
 .tour-badge-ahead { color: var(--foreground); }
 .tour-badge-planned { color: var(--muted-foreground); border-style: dotted; }
+/* the stop the agent is writing now: its badge turns (it pulses), and only while the agent is heard from (no news stops it) */
+.tour-card.tour-writing .tour-badge { animation: tour-writing-pulse 1.4s ease-in-out infinite; }
+@keyframes tour-writing-pulse { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) { .tour-card.tour-writing .tour-badge { animation: none; } }

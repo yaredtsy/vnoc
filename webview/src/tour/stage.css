@@ -95,6 +95,10 @@
 .stage-bars i:nth-child(1) { width: 92%; } .stage-bars i:nth-child(2) { width: 100%; } .stage-bars i:nth-child(3) { width: 60%; }
 @keyframes stage-shimmer { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .stage-bars i { animation: none; } }
+/* the text of a stop written while the reader is on it: it fades in where the grey bars were (nothing moves; Reduce motion: it just appears) */
+.stage-fadein { animation: stage-fadein 450ms ease-out both; }
+@keyframes stage-fadein { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .stage-fadein { animation: none; } }
 
 /* the foot: segments, then Prev and Next */
 .stage-foot { display: flex; align-items: center; gap: 8px; flex: none; padding: 4px 12px 6px; }
@@ -106,6 +110,10 @@
 .stage-primary { background: var(--primary); color: var(--primary-foreground); }
 .stage-secondary { background: var(--vscode-button-secondaryBackground, var(--chip-active)); color: var(--vscode-button-secondaryForeground, var(--chip-active-foreground)); }
 .stage-btn:disabled { opacity: 0.5; cursor: default; }
+/* `Next ◌`: the next step is not written (still reachable) or not added yet (nowhere to go) */
+.stage-dimmed { opacity: 0.55; }
+.stage-dimmed[aria-disabled="true"] { cursor: default; }
+.stage-seg.stage-adding { display: block; }
 
 /* the cover and the end card: one column */
 .stage-one { flex: 1; min-height: 0; overflow: auto; padding: 10px 16px; display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--vscode-panel-border, var(--border)); }
@@ -115,3 +123,9 @@
 /* a line of the code that calls a later stop of this tour: a jump to that stop (design 03 §2.2) */
 .stage-callto { margin-left: 12px; padding: 0 6px; border: 0; border-radius: 3px; background: none; color: var(--link); font: inherit; font-family: var(--font); font-size: 11px; cursor: pointer; opacity: 0.8; }
 .stage-line:hover .stage-callto, .stage-callto:focus-visible { opacity: 1; text-decoration: underline; }
+
+/* the writing dot on a tour's chip: it pulses while the agent writes and is heard from; still when it is not (Reduce motion: it never pulses) */
+.tour-dot { display: inline-block; flex: none; width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: currentColor; opacity: 0.8; }
+.tour-dot-pulsing { animation: tour-dot-pulse 1.2s ease-in-out infinite; }
+@keyframes tour-dot-pulse { 50% { opacity: 0.2; } }
+@media (prefers-reduced-motion: reduce) { .tour-dot-pulsing { animation: none; } }

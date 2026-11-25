@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { BarButton } from "@/components/BarButton.tsx";
 import { Codicon } from "@/components/Codicon.tsx";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
+import { agentWords, stoppable } from "@vnoc/shared/tourWriting.ts";
 import type { Place } from "@vnoc/shared/tours.ts";
 import { CrumbButton } from "../canvas/top-bar/CrumbButton.tsx";
 import { FIT_VIEW_EVENT } from "../canvas/keys.ts";
@@ -14,7 +15,8 @@ import { MOVED_MS, canGoBack, crumbsOf, movedByAgent } from "./bar.ts";
 import { CENTER_TOUR_EVENT } from "./camera.ts";
 import { goToStop } from "./goToCode.ts";
 import { currentOf } from "./layout.ts";
-import { go, useTour } from "./store.ts";
+import { go, halt, useTour } from "./store.ts";
+import { useQuiet } from "./writing.ts";
 
 /**
  * The bar's tour half (docs/26-tours/design/04-route-and-map.md §5), drawn in place of MAIN's focus crumbs while a tour is the active context: `←` back to where you were
@@ -29,6 +31,10 @@ export function TourBar({ tourId, contextId, width }: { tourId: string; contextI
   const [moved, setMoved] = useState(false);
   const before = useRef<Place | null>(null);
   const place = view?.place ?? null;
+  // the agent: `writing 6/10 ■`, `stopping`, `stopped`, `no news`; nothing for a finished tour (design 04 §5 #4). The ■ is the only button here
+  const quiet = useQuiet(view);
+  const agent = view ? agentWords(view, quiet) : null;
+  const canStop = view ? stoppable(view, quiet) : false;
 
   // a place that moved by a command shows `moved by the agent` for three seconds; the first place seen is nothing to say
   useEffect(() => {
@@ -49,13 +55,15 @@ export function TourBar({ tourId, contextId, width }: { tourId: string; contextI
   const shown = width < 640 ? crumbs.slice(-1) : crumbs; // narrow: only the last stop (design 04 §5)
   // what the suite reads of the bar
   useEffect(() => {
-    post({ type: "tourBar", crumbs: crumbs.map((c) => c.label), moved, back: view ? canGoBack(view) : false });
-  }, [crumbs.map((c) => c.id).join(","), moved, view?.place.back.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    post({ type: "tourBar", crumbs: crumbs.map((c) => c.label), moved, back: view ? canGoBack(view) : false, agent, stop: canStop });
+  }, [crumbs.map((c) => c.id).join(","), moved, view?.place.back.length, agent, canStop]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const current = view ? currentOf(view) : null;
   const act = {
     menuStartAgain: () => go(tourId, "cover"),
     menuClose: () => dispatch({ type: "closeContext", id: contextId }, contextId),
+    // the ■ on the bar, as the suite presses it
+    menuStop: () => canStop && halt(tourId),
     menuGoToCode: () => current?.stop && goToStop(root, current.stop, current.step),
     menuRevealRoot: () => {
       const key = view?.stops[0]?.key;
@@ -90,6 +98,16 @@ export function TourBar({ tourId, contextId, width }: { tourId: string; contextI
       {moved && (
         <span className="flex-none text-[11px] whitespace-nowrap text-muted-foreground" role="status" data-part="moved">
           moved by the agent
+        </span>
+      )}
+      {agent && (
+        <span className="flex flex-none items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground" role="status" data-part="agent">
+          {agent}
+          {canStop && (
+            <button type="button" data-part="stop" aria-label="Stop writing" title="Stop the agent: it finishes the stop it is on" className="flex size-5 items-center justify-center rounded-sm text-foreground hover:bg-toolbar-hover" onClick={() => halt(tourId)}>
+              ■
+            </button>
+          )}
         </span>
       )}
     </>

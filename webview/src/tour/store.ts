@@ -27,3 +27,8 @@ export function loadTour(id: TourId, still: () => boolean): void {
 export function go(id: TourId, move: string): void {
   void request("tourGo", { id, move }).catch(() => {});
 }
+
+/** ■ Stop: the core writes the halt (the agent answers it at its next command); the host asks for the tour again, and the view's state says `stopping`. */
+export function halt(id: TourId): void {
+  void request("tourHalt", { id }).catch(() => {});
+}

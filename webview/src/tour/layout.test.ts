@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Place, StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import { callLines, currentOf, keyMove, lineLook, lookOf, nextLabel, positionWords, segmentsOf } from "./layout.ts";
+import { ADDING_LINE, becameWritten, callLines, currentOf, keyMove, lineLook, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf } from "./layout.ts";
 
 const step = (id: string, kind: StepKind, over: Partial<StepView> = {}): StepView => ({ id, kind, depth: kind === "block" ? 1 : kind === "detail" ? 2 : 0, parent: null, title: null, text: "t", lines: null, ...over });
 const stop = (id: string, reading: StepView[], over: Partial<TourStop> = {}): TourStop => ({
@@ -101,4 +101,52 @@ test("the calls of a stop's code that are stops of the tour are the stops reache
   assert.deepEqual([...calls].map(([line, s]) => [line, s.id]), [[6, "s2"], [9, "s4"]], "the first stop on the route for a line; a stop reached by containment is not a call");
   assert.deepEqual([...callLines(view("s1", { stops }), "s2")].map(([line, s]) => [line, s.id]), [[3, "s6"]]);
   assert.equal(callLines(view("s1", { stops }), "s4").size, 0);
+});
+
+// ── a tour being written (docs/26-tours/05-on-screen.md §3) ──────────────────────────────────────────────────────────────
+
+const writing = (at: string, over: Partial<TourView> = {}) => view(at, { state: "writing", written: 2, planned: 1, writing: "s3", ...over });
+
+test("the position says `of` with a plan and the count so far without one; the segments get one dotted one after the stops of a tour with no plan", () => {
+  const position = { stop: 2, of: 2, step: 1, steps: 1 };
+  const noPlan = view("s2", { state: "writing", written: 2, planned: 0, writing: null, place: place("s2", { position }), stops: view("s1").stops.slice(0, 2) });
+  assert.equal(positionWords(noPlan), "stop 2 · 2 so far", "no plan, being written: no `of`");
+  assert.deepEqual(segmentsOf(noPlan).map((s) => [s.stop, s.planned, s.adding ?? false]), [["s1", false, false], ["s2", false, false], ["", true, true]], "the stop the agent has not added yet");
+  const planned = writing("s2", { place: place("s2", { position: { stop: 2, of: 3, step: 1, steps: 1 } }) });
+  assert.equal(positionWords(planned), "stop 2 of 3", "a plan: the size is known");
+  assert.equal(segmentsOf(planned).length, 3, "a plan has its stops, and no extra segment");
+  assert.equal(positionWords({ ...noPlan, state: "finished" }), "stop 2 of 2", "finished: of");
+  assert.equal(segmentsOf({ ...noPlan, state: "stopped" }).length, 2, "a stopped tour does not grow");
+  assert.equal(positionWords({ ...noPlan, place: place("s2", { position: { ...position, steps: 3, step: 2 } }) }), "stop 2 · 2 so far · 2 of 3");
+});
+
+test("Next says Next, not Finish, when it is dim: the last written step of a tour that is not finished is not the last step", () => {
+  const position = { stop: 3, of: 3, step: 1, steps: 1 };
+  const v = view("s3", { place: place("s3", { position }) });
+  assert.equal(nextLabel(v), "Finish");
+  assert.equal(nextLabel(v, "adding"), "Next");
+  assert.equal(nextLabel(v, "planned"), "Next");
+  assert.equal(nextLabel(view("cover"), "planned"), "Start", "Start is never dim");
+});
+
+test("what a step that is not written says: being written, where the agent is, stopping, stopped, no news", () => {
+  const v = writing("s3", { writing: "s3" });
+  const s3 = { id: "s3" };
+  assert.equal(notWrittenSentence(v, s3, "writing"), "The agent is writing this stop. You can read the code meanwhile.");
+  assert.equal(notWrittenSentence({ ...v, writing: "s2" }, s3, "writing"), "Not written yet: the agent is on stop 2.", "a stop further on says where the agent is");
+  assert.equal(notWrittenSentence({ ...v, writing: null }, s3, "writing"), "Not written yet.");
+  assert.equal(notWrittenSentence(v, s3, "stopped"), "Not written: the tour was stopped here. Ask the agent to continue it.");
+  assert.equal(notWrittenSentence(v, s3, "quiet"), "Not written. The agent may have stopped: look at its terminal, or ask it to continue the tour.");
+  assert.equal(notWrittenSentence(v, s3, "stopping"), "Not written yet: the agent stops after the stop it is on.");
+  assert.equal(ADDING_LINE, "The agent is adding the next stop.");
+});
+
+test("the text fades in only where the grey bars were: the same step, planned before and written now", () => {
+  assert.equal(becameWritten({ id: "s3", kind: "planned" }, { id: "s3", kind: "intro" }), true);
+  assert.equal(becameWritten({ id: "s3", kind: "planned" }, { id: "s3", kind: "short" }), true);
+  assert.equal(becameWritten({ id: "s3", kind: "planned" }, { id: "s3", kind: "planned" }), false, "still not written");
+  assert.equal(becameWritten({ id: "s2", kind: "planned" }, { id: "s3", kind: "intro" }), false, "the reader moved to another step");
+  assert.equal(becameWritten({ id: "s3", kind: "intro" }, { id: "s3", kind: "intro" }), false);
+  assert.equal(becameWritten(null, { id: "s3", kind: "intro" }), false, "the first drawing");
+  assert.equal(becameWritten({ id: null, kind: null }, { id: "s3", kind: "intro" }), false);
 });

@@ -2,6 +2,7 @@
 // `depth`, the mark from `place` (here: `place.stop`; seen: `place.seen`; not written: the stop's own `planned`), and under the stop you are in its steps, indented by
 // their `depth`. Nothing is counted, sorted or worked out.
 
+import { sizeKnown } from "@vnoc/shared/tourWriting.ts";
 import type { TourStop, TourView } from "@vnoc/shared/tours.ts";
 
 /** `✓` seen · `●` here · `○` ahead · `◌` not written: four shapes, so they read without colour (§1.1). */
@@ -42,16 +43,19 @@ export function markOf(view: TourView, stopId: string, planned: boolean): Mark {
   return view.place.seen.includes(stopId) ? "seen" : "ahead";
 }
 
-/** The one word a stop says, the first that applies: `writing…` · `changed` · `⇢ 2` (explained at stop 2). The route's row and the map's card say the same. */
-export function stopDescription(view: TourView, stop: TourStop): string | null {
+/**
+ * The one word a stop says, the first that applies: `writing…` (`no news` when the agent has been quiet) · `changed` · `⇢ 2` (explained at stop 2). The route's row and the
+ * map's card say the same.
+ */
+export function stopDescription(view: TourView, stop: TourStop, quiet = false): string | null {
   const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
-  return view.writing === stop.id ? "writing…" : stop.check === "changed" ? "changed" : explained ? `⇢ ${explained.number}` : null;
+  return view.writing === stop.id ? (quiet ? "no news" : "writing…") : stop.check === "changed" ? "changed" : explained ? `⇢ ${explained.number}` : null;
 }
 
-export function routeRows(view: TourView): RouteRow[] {
+export function routeRows(view: TourView, quiet = false): RouteRow[] {
   const rows: RouteRow[] = [];
   for (const stop of view.stops) {
-    const description = stopDescription(view, stop);
+    const description = stopDescription(view, stop, quiet);
     const current = view.place.stop === stop.id;
     rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, key: stop.key, mark: markOf(view, stop.id, stop.planned), current, description });
     // the steps are under the stop you are in, and only when it has more than one: leaving it folds them away (§1.2)
@@ -62,8 +66,12 @@ export function routeRows(view: TourView): RouteRow[] {
   return rows;
 }
 
-/** The header's place: `3 of 10`, the core's numbers; nothing at the cover and the end. */
-export const headerPlace = (view: TourView): string => (view.place.position ? `${view.place.position.stop} of ${view.place.position.of}` : "");
+/** The header's place: `3 of 10`, the core's numbers (`3 · 6 so far` for a tour with no plan that is being written); nothing at the cover and the end. */
+export function headerPlace(view: TourView): string {
+  const p = view.place.position;
+  if (!p) return "";
+  return sizeKnown(view) ? `${p.stop} of ${p.of}` : `${p.stop} · ${view.written} so far`;
+}
 
 /**
  * A row's React key: a stop and its own intro step share an id (`s1`), so the kind is part of it. Two rows with one key made the route draw a row of the tour before it.

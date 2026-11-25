@@ -2,6 +2,7 @@
 // the core's, and nothing here walks the tour, counts stops or works out what comes next. The kind of a step is the core's word (`StepView.kind`); this table is
 // what each kind looks like.
 
+import { type Beat, type NextState, sizeKnown } from "@vnoc/shared/tourWriting.ts";
 import type { StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
 
 /** Where the reader is, found in the view: the stop and the step `place` names (a lookup by id in what the core sent). The cover and the end have neither. */
@@ -104,29 +105,64 @@ export interface Segment {
   /** not written: dotted */
   planned: boolean;
   current: boolean;
+  /** the one dotted segment after the stops of a tour with no plan that is being written: the stop the agent has not added yet. It leads nowhere */
+  adding?: boolean;
 }
 
+/** The foot's segments: one per stop, and (05 §3) one more, dotted, after the stops of a tour with no plan that is being written. */
 export function segmentsOf(view: TourView): Segment[] {
-  return view.stops.map((s) => {
+  const segments: Segment[] = view.stops.map((s) => {
     const current = s.id === view.place.stop;
     return { stop: s.id, name: s.name, filled: current || view.place.seen.includes(s.id), planned: s.planned, current };
   });
+  if (view.state === "writing" && !sizeKnown(view)) segments.push({ stop: "", name: "the next stop: the agent is adding it", filled: false, planned: true, current: false, adding: true });
+  return segments;
 }
 
-/** The words of the foot's primary button: `Start ›` on the cover, `Finish ›` on the last step, else `Next ›`. Never on the end card. */
-export function nextLabel(view: TourView): "Start" | "Next" | "Finish" {
+/** The words of the foot's primary button: `Start ›` on the cover, `Finish ›` on the last step, else `Next ›` (`Next ◌` when it is dim: the stage draws the ◌). Never on the end card. */
+export function nextLabel(view: TourView, next: NextState = "ready"): "Start" | "Next" | "Finish" {
   const at = view.place.at;
   if (at === "cover") return "Start";
+  if (next !== "ready") return "Next";
   const p = view.place.position;
   return p !== null && p.stop === p.of && p.step === p.steps ? "Finish" : "Next";
 }
 
-/** `stop 3 of 10 · 2 of 5`, as the header says it: the second part only when the stop has more than one step. Nothing at the cover and the end. */
+/**
+ * `stop 3 of 10 · 2 of 5`, as the header says it: the second part only when the stop has more than one step. Nothing at the cover and the end. A tour with no plan that is being
+ * written has no "of": `stop 3 · 6 so far` (05 §3).
+ */
 export function positionWords(view: TourView): string {
   const p = view.place.position;
   if (p === null) return "";
-  return p.steps > 1 ? `stop ${p.stop} of ${p.of} · ${p.step} of ${p.steps}` : `stop ${p.stop} of ${p.of}`;
+  const stop = sizeKnown(view) ? `stop ${p.stop} of ${p.of}` : `stop ${p.stop} · ${view.written} so far`;
+  return p.steps > 1 ? `${stop} · ${p.step} of ${p.steps}` : stop;
 }
+
+/**
+ * What a step that is not written says in the text pane's place (design 03 §3). `stopped`: the tour was stopped before it; `quiet`: no news; the stop the agent is on says it is being
+ * written; another says where the agent is. After ■ and before the agent has answered (`stopping`), it says the agent will stop.
+ */
+export function notWrittenSentence(view: TourView, stop: Pick<TourStop, "id">, beat: Beat): string {
+  if (beat === "stopped") return "Not written: the tour was stopped here. Ask the agent to continue it.";
+  if (beat === "quiet") return "Not written. The agent may have stopped: look at its terminal, or ask it to continue the tour.";
+  if (beat === "stopping") return "Not written yet: the agent stops after the stop it is on.";
+  if (view.writing === stop.id) return "The agent is writing this stop. You can read the code meanwhile.";
+  const on = view.writing === null ? undefined : view.stops.find((s) => s.id === view.writing);
+  return `Not written yet${on ? `: the agent is on stop ${on.number}.` : "."}`;
+}
+
+/** The line under the last written step of a tour with no plan that is being written (05 §3): the text pane keeps the step's words; this is added, and `Next` is dim. */
+export const ADDING_LINE = "The agent is adding the next stop.";
+
+/** What the text pane showed for a step: its id and its kind. */
+export interface Shown {
+  id: string | null;
+  kind: string | null;
+}
+
+/** The reader is on a stop that was `planned` a moment ago and is written now: the same step, its text appears where the grey bars were, and fades in. */
+export const becameWritten = (before: Shown | null, now: Shown): boolean => before !== null && before.id !== null && before.id === now.id && before.kind === "planned" && now.kind !== null && now.kind !== "planned";
 
 /**
  * What a key does in the stage: a move for the core, Go to Code, back to where you were (`Alt+←`: the core's history, not Prev), closing the tour (`Esc`), or nothing.

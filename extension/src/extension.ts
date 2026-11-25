@@ -18,7 +18,7 @@ import { CANVAS, DOCS, Surfaces } from "./surfaces";
 import { callLookup } from "@vnoc/shared/calls.ts";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
-import { Tours, vnocIsAbove } from "./tours";
+import { Tours, tourContext, vnocIsAbove } from "./tours";
 import { readingStarts, readingTheCode } from "./progress";
 import { registerSidebar } from "./sidebarView";
 import { moveAllToTrash, moveToTrash, restoreEntry } from "./trash";
@@ -67,7 +67,7 @@ const keysCheckedPosts: { found: boolean; target: string; taken: string[]; hosts
 type Warned = { level: "none" | "warning" | "error"; text: string };
 let warned: Warned | undefined;
 /** The context chips the bar last drew (for the test suite). */
-let chips: { id: string; label: string; active: boolean }[] = [];
+let chips: { id: string; label: string; active: boolean; dot?: "pulsing" | "still" }[] = [];
 const warnedWaiters: (() => void)[] = [];
 /** What the bar's "unsaved drafts" chip last said (for the test suite): the canvas page's last post, and `count` 0 (no chip) while no canvas page is open. */
 let draftsChip = { count: 0, label: "" };
@@ -120,8 +120,33 @@ export function activate(ctx: vscode.ExtensionContext) {
   const editStart = (p: EditStartParams) => (draftCopy.busy(p.path, p.page) ? Promise.resolve({ busy: true as const }) : commands.editStartDocOf(p.path, p.saveFirst === true));
   const store = new SessionStore(ctx.workspaceState, () => c.tree, (call) => callLookup(callTrees.all())(call));
   // the tours: the host asks the core, holds the open tour with its place, and sets the tour context's selection from it (`tours.ts`)
+  // the status bar item (design 04 §6): `▶ Tour 3/10` while a tour is open, and a click shows the canvas with the tour active
+  const tourItem = vscode.window.createStatusBarItem("vnoc.tour", vscode.StatusBarAlignment.Left, 50);
+  tourItem.name = "V-NOC Tour";
+  tourItem.command = "vnoc.showTour";
+  tourItem.tooltip = "Show the tour on the canvas";
+  // the one notification (W11): a tour started being written and the canvas is not showing a tour. Nothing opens by itself. The suite cannot click a button of a notification
+  const noticed: { id: string; open: () => Promise<void> }[] = [];
+  let statusText: string | null = null;
   const tours = new Tours({
     request: (method, params) => c.request(method, params as object | undefined),
+    statusBar: (text) => {
+      statusText = text;
+      if (text === null) tourItem.hide();
+      else {
+        tourItem.text = text;
+        tourItem.show();
+      }
+    },
+    announce: (row) => {
+      const open = () => commands.openTourById(row.id, row.title);
+      noticed.push({ id: row.id, open });
+      void vscode.window.showInformationMessage(`A tour is being written: “${row.title ?? row.id}”.`, "Open Tour").then((pick) => (pick === "Open Tour" ? open() : undefined));
+    },
+    canvasShowsTour: () => {
+      const s = store.get();
+      return panels.canvas?.visible === true && tourContext(s)?.id === s.active;
+    },
     session: () => store.get(),
     dispatch: (intent, context) => store.dispatch(intent, context),
     emit: (name, data) => panels.emit(name, data),
@@ -194,6 +219,13 @@ export function activate(ctx: vscode.ExtensionContext) {
 
   // Registered synchronously, before anything is awaited: on restart VS Code waits for these serializers (S1).
   ctx.subscriptions.push(
+    tourItem,
+    // a click on the status bar item: the canvas, with the tour that is open active
+    vscode.commands.registerCommand("vnoc.showTour", async () => {
+      const open = tourContext(store.get());
+      if (open) store.dispatch({ type: "activate", id: open.id }, open.id);
+      await panels.showCanvas();
+    }),
     vscode.window.registerWebviewPanelSerializer(CANVAS, { deserializeWebviewPanel: async (panel) => panels.restore("canvas", panel) }),
     vscode.window.registerWebviewPanelSerializer(DOCS, { deserializeWebviewPanel: async (panel) => panels.restore("docs", panel) }),
     // the STRUCTURE view: a webview view (registered here, synchronously, so a restored side bar finds its provider)
@@ -236,6 +268,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     { dispose: () => clearTimeout(startCheck) },
   );
   tours.sync(); // a tour context the session was restored with
+  tours.start(); // the list, so that a tour that appears later is known as new
 
   // the command in PATH follows this version, and `vnoc.cliInstalled` and `vnoc.agentsSetUp` are set (they wait for the core: they never hold up the start)
   void cli.activate();
@@ -286,6 +319,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     coreEpoch: () => c.epoch,
     /** what the tour holder holds: the open tour's view as the pages were last sent it (null: none open), and the plain list */
     tours: { open: () => tours.heldTour(), list: () => tours.list() },
+    /** the status bar item's text (null: hidden), the tours the notification was shown for, and a click on its **Open Tour** */
+    tourStatus: () => statusText,
+    toursNoticed: () => noticed.map((n) => n.id),
+    toursNoticeOpen: (id: string) => noticed.find((n) => n.id === id)?.open(),
     /** every drawing of the tour's stage, in order: the step it shows, its words and its code, which lines are lit */
     stageDrawn: () => stagePosts,
     /** a key pressed in the tour's stage, and a click on one of its buttons (`next`, `prev`, `goToCode`, `start`, `closeTour`), as the page handles them: the suite cannot press keys or click in a webview */

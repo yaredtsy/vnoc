@@ -11,6 +11,7 @@ import { CENTER_TOUR_EVENT, cameraMove, centre } from "./camera.ts";
 import { mapOf, boxOf, type TourCardData } from "./map.ts";
 import { go, loadTour, useTour } from "./store.ts";
 import { TourCard } from "./TourCard.tsx";
+import { useQuiet } from "./writing.ts";
 
 const nodeTypes = { tourCard: TourCard };
 const FIT_OPTIONS = { maxZoom: 1 };
@@ -49,6 +50,13 @@ function TourCamera({ cards, stop, at, tourId }: { cards: TourCardData[]; stop: 
     }
     if (before.stop !== stop) showCurrent(false);
   }, [stop, at]); // eslint-disable-line react-hooks/exhaustive-deps
+  // stops added while the reader is at the cover or the end card: the whole route is fitted again, so the new cards are in view. On a step the reader's place is the only thing the camera follows
+  const count = useRef(cards.length);
+  useEffect(() => {
+    const before = count.current;
+    count.current = cards.length;
+    if (before !== cards.length && previous.current && previous.current.at !== "step") void fitView({ duration: duration(), maxZoom: 1 });
+  }, [cards.length]); // eslint-disable-line react-hooks/exhaustive-deps
   // the pane changed size (the stage was dragged, folded, or unfolded): pan only if the current card is now covered
   useEffect(() => {
     if (previous.current && previous.current.at === "step") showCurrent(false);
@@ -90,7 +98,8 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
       wanted = false;
     };
   }, [tourId]);
-  const map = useMemo(() => (view ? mapOf(view) : null), [view]);
+  const quiet = useQuiet(view);
+  const map = useMemo(() => (view ? mapOf(view, quiet) : null), [view, quiet]);
   const nodes = useMemo<Node<TourCardData>[]>(() => (map?.cards ?? []).map((c) => ({ id: c.id, type: "tourCard", position: { x: c.x, y: c.y }, data: c, width: CARD_W, height: CARD_H })), [map]);
   const edges = useMemo<Edge[]>(() => (map?.edges ?? []).map((e) => ({ id: e.id, source: e.source, target: e.target, className: [e.kind === "call" && "call", e.onPath && "on-path"].filter(Boolean).join(" ") || undefined })), [map]);
   const saved = useMemo(() => savedViewport(contextId, tourId), [contextId, tourId]);
@@ -99,7 +108,7 @@ export function TourCanvas({ tourId, contextId }: { tourId: string; contextId: s
   // what the suite reads of what was drawn
   useEffect(() => {
     if (!map) return;
-    post({ type: "mapDrawn", tour: tourId, cards: map.cards.map((c) => ({ id: c.id, number: c.number, mark: c.mark, here: c.here, callLine: c.callLine, description: c.description, planned: c.planned })), heavy: map.edges.filter((e) => e.onPath).map((e) => e.id), edges: map.edges.map((e) => `${e.id}:${e.kind}`) });
+    post({ type: "mapDrawn", tour: tourId, cards: map.cards.map((c) => ({ id: c.id, number: c.number, mark: c.mark, here: c.here, callLine: c.callLine, description: c.description, planned: c.planned, writing: c.writing })), heavy: map.edges.filter((e) => e.onPath).map((e) => e.id), edges: map.edges.map((e) => `${e.id}:${e.kind}`) });
   }, [map, tourId]);
 
   if (!view || !map) return <div className="flex min-w-0 flex-1 items-center justify-center text-[12px] text-muted-foreground">Opening the tour…</div>;

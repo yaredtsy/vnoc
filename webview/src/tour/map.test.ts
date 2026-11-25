@@ -75,3 +75,11 @@ test("a chain of `from` that loops, or points at nothing, draws no edge it canno
   const { edges } = mapOf(view("s2", { stops: loop }));
   assert.deepEqual(edges.map((e) => e.id), ["s2->s1", "s1->s2"], "an edge to a stop the tour does not have is not drawn");
 });
+
+test("the badge of the stop the agent is on turns, unless the agent has been quiet; then the card says `no news`", () => {
+  assert.deepEqual(mapOf(view("cover")).cards.map((c) => c.writing), [false, false, false, false, true]);
+  const quiet = mapOf(view("cover"), true).cards;
+  assert.deepEqual(quiet.map((c) => c.writing), [false, false, false, false, false], "no news: nothing turns");
+  assert.equal(quiet[4].description, "no news");
+  assert.equal(quiet[4].planned, true, "it is still not written");
+});

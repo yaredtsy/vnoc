@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { beatOf, nextState } from "@vnoc/shared/tourWriting.ts";
 import { findNode } from "@vnoc/shared/tree.ts";
 import type { TourView } from "@vnoc/shared/tours.ts";
 import { Codicon } from "@/components/Codicon.tsx";
@@ -8,7 +9,7 @@ import { on, post, request } from "../host.ts";
 import { useData } from "../state/data.ts";
 import { dispatch } from "../state/session.ts";
 import { setStageFolded, setStageHeight, setStageText, useView } from "../state/view.ts";
-import { type Current, callLines, currentOf, keyMove, lookOf, positionWords } from "./layout.ts";
+import { type Current, type Shown, ADDING_LINE, becameWritten, callLines, currentOf, keyMove, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf } from "./layout.ts";
 import { goToStop } from "./goToCode.ts";
 import { go, loadTour, useTour } from "./store.ts";
 import { CodePane, type CodeDrawn, LINE_H } from "./stage/CodePane.tsx";
@@ -19,6 +20,7 @@ import { Header } from "./stage/Header.tsx";
 import type { TextDrawn } from "./stage/Rich.tsx";
 import { TextPane } from "./stage/TextPane.tsx";
 import { useCode } from "./stage/useCode.ts";
+import { useQuiet } from "./writing.ts";
 import "./stage.css";
 
 /** The least the dock is (the header and five lines of code) and the most (45% of the canvas): design 03 §6. */
@@ -73,6 +75,26 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const node = structure && stop?.key ? (findNode(structure.root, stop.key) ?? null) : null;
   const wantsCode = !!node && look !== null && look.code !== "none" && look.code !== "rows";
   const code = useCode(node && wantsCode ? node.path : null, node?.range ?? null, wantsCode);
+  // the agent: what it is doing (the tour's state, and no news), and whether `Next` has anywhere to go yet
+  const quiet = useQuiet(view);
+  const beat = view ? beatOf(view, quiet) : "finished";
+  const next = view ? nextState(view, quiet) : "ready";
+  // the text of a step that was grey bars a moment ago fades in for a moment: the step is the same, its kind went from planned to a written one
+  const before = useRef<Shown | null>(null);
+  const [fadeStep, setFadeStep] = useState<string | null>(null);
+  const shown: Shown = { id: step?.id ?? null, kind: step?.kind ?? null };
+  const justWritten = becameWritten(before.current, shown); // decided in the render that draws the text, so that it appears already fading
+  const fading = justWritten ? shown.id : fadeStep;
+  useEffect(() => {
+    before.current = shown;
+    if (!justWritten) return;
+    setFadeStep(shown.id);
+    const timer = setTimeout(() => setFadeStep(null), 800);
+    return () => {
+      clearTimeout(timer);
+      setFadeStep(null);
+    };
+  }, [shown.id, shown.kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // what a click or a key does: a move for the core, Go to Code, closing the tour
   const act = useRef<Record<string, () => void>>({});
@@ -80,7 +102,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const callTo = useRef(new Map<number, { id: string }>());
   callTo.current = view && stop ? callLines(view, stop.id) : new Map();
   act.current = {
-    next: () => go(tourId, "next"),
+    // a tour with no plan, on its last written step: there is no next step to go to yet, and the core would take the reader to the end card of a tour that is not finished
+    next: () => next !== "adding" && go(tourId, "next"),
     start: () => go(tourId, "next"),
     prev: () => go(tourId, "prev"),
     back: () => go(tourId, "prev"),
@@ -152,7 +175,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       title: current.mode === "step" ? (step?.title ?? null) : view.title,
       text: step?.text ?? null,
       position: positionWords(view),
-      next: view.place.at === "cover" ? "Start" : view.place.position && view.place.position.stop === view.place.position.of && view.place.position.step === view.place.position.steps ? "Finish" : "Next",
+      next: nextLabel(view, next),
       unseen: view.place.unseen,
       firstUnseen: view.place.first_unseen,
       calls: stop ? [...callLines(view, stop.id).keys()] : [],
@@ -163,8 +186,18 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       scrolledTo: wantsCode ? drawn.scrolledTo : 0,
       coloured: wantsCode ? drawn.coloured : 0,
       markdown: textDrawn,
+      beat,
+      nextState: next,
+      nextLabel: nextLabel(view, next),
+      sentence: step?.kind === "planned" ? notWrittenSentence(view, stop!, beat) : null,
+      adding: next === "adding" ? ADDING_LINE : null,
+      fade: fading !== null && fading === (step?.id ?? null),
+      segments: (() => {
+        const all = segmentsOf(view);
+        return { total: all.length, planned: all.filter((x) => x.planned).length, filled: all.filter((x) => x.filled).length };
+      })(),
     });
-  }, [view, code, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, beat, next, fading, code, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const style = { height: folded ? 30 : height };
   const grip = (
@@ -258,8 +291,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
               drag(e, (dx) => setStageText(clamp(start - dx, TEXT_MIN, TEXT_MAX)));
             }} />
             <div className="stage-right" style={textWidth === null ? undefined : { width: textWidth }}>
-              <TextPane view={view} stop={stop} step={step} parent={current!.parent} look={look} onJump={jump} onTextDrawn={(d) => setTextDrawn((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d))} />
-              <Foot view={view} onJump={jump} onMove={(m) => act.current[m]()} />
+              <TextPane view={view} stop={stop} step={step} parent={current!.parent} look={look} beat={beat} next={next} fade={fading !== null && fading === step.id} onJump={jump} onTextDrawn={(d) => setTextDrawn((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d))} />
+              <Foot view={view} next={next} onJump={jump} onMove={(m) => act.current[m]()} />
             </div>
           </div>
         </>
@@ -272,7 +305,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
               <Codicon name="chevron-down" />
             </button>
           </div>
-          {current!.mode === "cover" ? <Cover view={view} onStart={() => act.current.start()} /> : <End view={view} onBack={() => act.current.back()} onSkipped={() => act.current.skipped()} onAgain={() => act.current.again()} onClose={() => act.current.closeTour()} />}
+          {current!.mode === "cover" ? <Cover view={view} beat={beat} onStart={() => act.current.start()} /> : <End view={view} onBack={() => act.current.back()} onSkipped={() => act.current.skipped()} onAgain={() => act.current.again()} onClose={() => act.current.closeTour()} />}
         </>
       )}
     </div>

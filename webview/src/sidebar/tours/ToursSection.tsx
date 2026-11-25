@@ -2,12 +2,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Codicon } from "@/components/Codicon.tsx";
 import { cn } from "@/lib/utils.ts";
+import { footWords, sizeKnown, stoppable } from "@vnoc/shared/tourWriting.ts";
 import type { TourRow, TourView } from "@vnoc/shared/tours.ts";
 import { on, post, request } from "../../host.ts";
 import { dispatch, useSession } from "../../state/session.ts";
-import { setToursFolded, useView } from "../../state/view.ts";
+import { setToursFolded, setToursShare, useView } from "../../state/view.ts";
 import { goToStop } from "../../tour/goToCode.ts";
-import { go, loadTour, useTour } from "../../tour/store.ts";
+import { go, halt, loadTour, useTour } from "../../tour/store.ts";
+import { useQuiet } from "../../tour/writing.ts";
+import { Splitter } from "../Splitter.tsx";
+import { appearedFromOutside } from "./appear.ts";
+import { DEFAULT_TOURS_SHARE, dragTours, toursShare } from "./split.ts";
 import { useData } from "../../state/data.ts";
 import { listItem } from "./list.ts";
 import { headerPlace, rowKey, routeRows } from "./route.ts";
@@ -23,14 +28,18 @@ import { RouteRowView, TourListRow } from "./TourRows.tsx";
 export function ToursSection() {
   const rows = useTourList((s) => s.rows);
   const folded = useView((v) => v.toursFolded);
+  const share = useView((v) => v.toursShare);
   const tour = useSession((s) => s.order.map((id) => s.contexts[id]).find((c) => c.kind === "tour") ?? null);
   const tourId = tour?.tour ?? null;
   const tourActive = useSession((s) => tour !== null && s.active === tour.id);
   const held = useTour();
   const view: TourView | null = tourId !== null && held.id === tourId && held.view && "stops" in held.view ? held.view : null;
+  const quiet = useQuiet(view);
   const [showList, setShowList] = useState(false);
   const [cursor, setCursor] = useState(-1);
   const box = useRef<HTMLDivElement>(null);
+  const section = useRef<HTMLElement>(null);
+  const dragFrom = useRef(0);
 
   // the sidebar's own copy of the open tour: the host answers from what it holds, and sends it again whenever it changes
   useEffect(() => {
@@ -52,12 +61,25 @@ export function ToursSection() {
     seen.current = tourId;
   }, [tourId]);
 
+  // a tour that appeared from outside (the agent started one) while this window has none open unfolds the section: the list shows it
+  const listed = useRef<string[] | null>(null);
+  useEffect(() => {
+    if (rows === null) return;
+    const now = rows.map((r) => r.id);
+    if (appearedFromOutside(listed.current, now, tourId)) setToursFolded(false);
+    listed.current = now;
+  }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const mode: "list" | "route" = tourId !== null && !showList ? "route" : "list";
   // a row says where you are (`words`), and moving in a tour does not send `toursChanged`: the list is asked for again whenever it is shown
   useEffect(() => {
     if (mode === "list" && !folded) void request("tours", undefined).then((r) => useTourList.setState({ rows: r }), () => {});
   }, [mode, folded]);
-  const route = useMemo(() => (view ? routeRows(view) : []), [view]);
+  const route = useMemo(() => (view ? routeRows(view, quiet) : []), [view, quiet]);
+  // the route's foot (design 05 §1): what the agent is doing, with ■ Stop while it writes; and, for a tour with no plan, the one row under the last stop that says another may come
+  const foot = mode === "route" && view ? footWords(view, quiet) : null;
+  const canStop = view ? stoppable(view, quiet) : false;
+  const more = mode === "route" && view !== null && view.state === "writing" && !sizeKnown(view);
   const count = mode === "route" ? route.length : (rows?.length ?? 0);
 
   const openTour = (row: TourRow) => {
@@ -103,8 +125,9 @@ export function ToursSection() {
   };
 
   // the extension's test suite cannot click in a webview: it sends the click
-  const latest = useRef({ openTour, jump, closeTour, key, rows, route });
-  latest.current = { openTour, jump, closeTour, key, rows, route };
+  const stopWriting = () => tourId !== null && canStop && halt(tourId);
+  const latest = useRef({ openTour, jump, closeTour, key, rows, route, stopWriting });
+  latest.current = { openTour, jump, closeTour, key, rows, route, stopWriting };
   useEffect(
     () =>
       on("viewCommand", ({ name, key: what }) => {
@@ -115,6 +138,7 @@ export function ToursSection() {
         else if (what === "unfold") setToursFolded(false);
         else if (what === "back") setShowList(true);
         else if (what === "close") l.closeTour();
+        else if (what === "stop") l.stopWriting();
         else if (kind === "row") {
           const row = l.rows?.find((r) => r.id === id);
           if (row) l.openTour(row);
@@ -138,19 +162,37 @@ export function ToursSection() {
         const item = listItem(r);
         return { id: item.id, title: item.title, words: item.words, question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable };
       }),
+      foot: foot === null ? null : { text: foot, stop: canStop },
+      more,
       route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, depth: r.depth })),
     });
-  }, [rows, route, folded, mode, count, tourId, view?.title]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rows, route, folded, mode, count, tourId, view?.title, foot, canStop, more]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section
+      ref={section}
       aria-label="Tours"
       data-section="tours"
-      className={cn("relative flex min-h-0 flex-none flex-col border-t border-t-border", !folded && "min-h-[112px]")}
-      style={folded ? undefined : { height: "45%" }}
+      className={cn("relative flex min-h-0 flex-none flex-col border-t border-t-border", !folded && "min-h-[112px] max-h-[calc(100%-112px)]")}
+      style={folded ? undefined : { height: `${share * 100}%` }}
       // a press anywhere in the route while another context is active makes the tour's context the active one (04 §1.3)
       onPointerDown={() => tour && !tourActive && mode === "route" && dispatch({ type: "activate", id: tour.id }, tour.id)}
     >
+      {/* the splitter between the tree and the section: drag it, double-click for the default; its size is kept per window */}
+      {!folded && (
+        <Splitter
+          onStart={() => (dragFrom.current = section.current?.offsetHeight ?? 0)}
+          onMove={(dy) => {
+            const total = section.current?.parentElement?.clientHeight ?? 0;
+            if (section.current && total > 0) section.current.style.height = `${dragTours(total, dragFrom.current, dy)}px`;
+          }}
+          onEnd={(dy) => {
+            const total = section.current?.parentElement?.clientHeight ?? 0;
+            if (total > 0) setToursShare(toursShare(total, dragTours(total, dragFrom.current, dy)));
+          }}
+          onReset={() => setToursShare(DEFAULT_TOURS_SHARE)}
+        />
+      )}
       <div className="flex h-[22px] flex-none items-center gap-1 bg-[color:var(--section-header-bg)] pr-1 pl-1 text-[11px] font-bold tracking-wide text-[color:var(--section-header-fg)] uppercase">
         <button type="button" className="flex min-w-0 flex-1 items-center gap-0.5 text-left uppercase" aria-expanded={!folded} onClick={() => setToursFolded(!folded)}>
           <Codicon name={folded ? "chevron-right" : "chevron-down"} className="text-[16px]" />
@@ -195,11 +237,30 @@ export function ToursSection() {
                 rows.map((row, i) => <TourListRow key={`${row.id}:${row.folder}`} row={row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} onOpen={() => openTour(row)} />)
               )
             ) : view ? (
-              route.map((r, i) => <RouteRowView key={rowKey(r)} row={r} domId={`tours-route-${i}`} focused={cursor === i} onClick={() => jump(r.id, r.current)} onGoToCode={() => goToCode(r.id)} />)
+              <>
+                {route.map((r, i) => <RouteRowView key={rowKey(r)} row={r} domId={`tours-route-${i}`} focused={cursor === i} onClick={() => jump(r.id, r.current)} onGoToCode={() => goToCode(r.id)} />)}
+                {more && (
+                  <div className="flex h-[22px] flex-none items-center gap-1.5 pl-2 text-[13px] text-muted-foreground" data-part="route-more" aria-label="The agent may add more stops">
+                    <span className="w-3 flex-none text-center text-[11px]">◌</span>
+                    <span className="w-5 flex-none" />
+                    <span>…</span>
+                  </div>
+                )}
+              </>
             ) : (
               <p className="px-3 py-2 text-[12px] text-muted-foreground">Opening the tour…</p>
             )}
           </div>
+          {foot !== null && view && (
+            <div className="flex h-[22px] flex-none items-center gap-1 border-t border-t-border px-2 text-[11px] text-muted-foreground" data-part="route-foot" role="status">
+              <span className="min-w-0 flex-1 truncate">{foot}</span>
+              {canStop && (
+                <button type="button" data-part="stop" className="flex flex-none items-center gap-1 rounded-sm px-1 text-foreground hover:bg-toolbar-hover" title="Stop the agent: it finishes the stop it is on" onClick={stopWriting}>
+                  ■ Stop
+                </button>
+              )}
+            </div>
+          )}
         </>
       )}
     </section>

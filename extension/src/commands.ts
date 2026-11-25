@@ -389,9 +389,14 @@ export class Commands {
     }
     const picked = await vscode.window.showQuickPick(tours.map(pickItem), { title: "Open Tour", placeHolder: "Pick a tour", matchOnDescription: true, matchOnDetail: true });
     if (!picked) return;
+    await this.openTourById(picked.row.id, picked.row.title);
+  }
+
+  /** Opens a tour as the window's tour context (one that was open is replaced) and brings the canvas up: Open Tour… and the notification's **Open Tour** do the same. */
+  async openTourById(id: string, title: string | undefined): Promise<void> {
     // the session checks its intents against the structure, and the host reads it only while a page asks: with the canvas closed there is none yet
     if (!this.core.tree) await this.core.loadStructure();
-    this.store.dispatch({ type: "tourOpen", id: picked.row.id, title: picked.row.title });
+    this.store.dispatch({ type: "tourOpen", id, title });
     await this.panels.showCanvas();
   }
 
