@@ -359,6 +359,58 @@ other (bursts overtook each other); `stageDrawn` waits for the code pane. `tour`
   the tour's or a stop file's change, as the answers are. A stop with none, or not a function or class, has no key. The card's footer
   draws `+N` dim, tooltip *"2 calls are not on this tour"*, no click.
 
+**As built (TR21b, `2a17677`, `0379361`, `ccd0fc6`).** `answers_for` asks with no index first. `appearance(visible, tourOpen)`
+announces a second tour also while one is shown. `vnoc/tourCalls` counts function and class stops in a background task (each stop's
+driver ask bounded at 4 s; kept only when whole and the index revision did not move) and answers within 1.5 s or says "ask again";
+the page asks when the stops change and retries up to 8 times. The second view (intent `tourView`; nothing selected, a tour context or
+the root → All, the saved choice kept), its buttons and empty state; a click from it is `tourGo` then open. `▶ N` on cards and rows
+(`showTours` request, `vnoc.showTours`, context key `tours`, menu group `6_tours`); `+N` on tour cards. Test event `tourChips`.
+`tour` 50 tests; full `pnpm -r test` 162 passing, 3 failing (`skeleton` ×2, `bend`'s setup): the Bend driver is not built, as the 13
+Rust failures. **Found:** the core answers at most one request per CPU at once (`ConcurrencyLayer`); a page that re-asked `vnoc/tours
+{on, check}` on every list change filled the slots and `ping` hung. A handler must answer in about a second or say "ask again"; a page
+asks only when what it reads really changed. Screenshots by Playwright: `tools/media/out/tr21/`.
+
+**Decided at TR21b's review (TR22a's first commit):**
+- **`tourCalls` always ends.** A stop whose driver ask fails or times out is left out of `off`, and the count is still kept (as the
+  answers are, until the tour's or a stop's file changes): as built, a slow driver or an editing session (the revision moves) made it
+  count again on every ask and give up after 8. The page asks again every 2 s, with no cap, only while the tour's map is shown and the
+  answer says "ask again".
+- **The On view keeps the state word.** The row gains `state_word` from the core (the one word of design 07 §3: `writing 6/10`,
+  `changed`, `stop 4/9`, `finished`, `new`, …, the word `words` starts with). The On view draws it at the right of line 1, line 2 is
+  `on.words`. The All view stays as built (TR18).
+- The action strip covering `▶ N` on a hovered row → TR23. **Open Tour…** with the selected node's tours first → TR22b.
+- The Bend failures: build the Bend driver once before the pull request (as decided at TR20); not per step.
+
+**TR22 is cut in two**, as TR21 was:
+- **TR22a, pin and IDs:** TR21b's fixes above; the cover's `not pinned` and its reason; the offers; **Pin**, **Commit and Pin…** and
+  its dialog with *Always do this in this project*; **Write IDs for Its Stops** and its message; the section's `⋯` with **Tour
+  Settings…** only.
+- **TR22b, the rest:** **Rename…**; **Share with the Project** / **Make Private Again**, the end card's **Share…**; **Export as
+  JSON…**, **Open as JSON**, **Import into This Tour**, **Import a Tour from JSON…**; Delete with Undo (hover, menu, `Delete`/`⌘⌫`,
+  an unreadable row), **Delete Finished Tours**; **Check All Tours**; **Ask for a Tour…** everywhere it is (`＋`, the node menu, a
+  row's **Ask for a New Tour**, the empty states' **Ask for One** and **Copy a Request**); **Open Tour…** from the bar's `⋯` through
+  the host, with the selected node's tours first; **Show Docs** in the tour card's menu.
+
+**Decided for TR22a:**
+- **Why a tour is not pinned, without pinning it:** `vnoc/tourPin { id, dry: true }` answers as `tourPin` does and never writes a
+  record, a file or a commit. Each reason in an answer gains `words`, the core's sentence (`Reason::words`): the pages make no
+  sentence from a `code`.
+- **The cover** of a finished tour that is not pinned asks the dry pin when it is shown, and on each `tour` event; it says `not pinned`
+  and the first reason's `words` under it (05 §3). Then the offers (`offers`, by the settings): *"N stops have no ID: the tour will
+  not follow a rename."* **Write IDs** · *"N files have changes that are not committed."* **Commit and Pin…**. `"never"`: no offer.
+- **The row's menu** of a finished tour: **Pin** and **Commit and Pin…** when it is not pinned; **Write IDs for Its Stops** always.
+  Each runs, and a refusal is shown in the core's words in one message. **Pin** on a tour that only has uncommitted files answers
+  `ask`: its message offers **Commit and Pin…**.
+- **Commit and Pin…** is the one dialog (05 §3), drawn in the canvas page: the files from the dry pin's `uncommitted` reason and its
+  `node_files`, each a link that opens its diff against HEAD (`git.openChange`), the message (`Code for the tour "<title>"`,
+  editable), the check box *Always do this in this project* (`tourSettings { commit: "always" }`, sent only when the commit
+  succeeded), **Commit and Pin** / **Cancel**. A failed commit shows git's own message in the dialog.
+- **Write IDs:** before `tourIds`, if a file of the tour's stops is dirty, one message: *"Save N files first? The IDs are written into
+  them."* **Save and Write IDs** · **Cancel**. After: *"IDs written into N files."* with **Show Changes** (the source control view)
+  and **Always in This Project** (`tourSettings { ids: "always" }`). A project with `[ids] default = "none"`: the core's refusal.
+- **Tour Settings…** (the section's `⋯`, its only entry for now): a QuickPick of the two settings, then of the three values, written
+  through `tourSettings`.
+
 ## 6. Who draws what
 
 | | Does | Does not |
