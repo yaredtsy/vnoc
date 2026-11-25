@@ -298,9 +298,21 @@ test("08 §5: a section shows only its own menu: a node never shows a pane's ent
 
 test("05 §3: a tour's row has its menu in this order; a row that cannot be read has only Delete", () => {
   const row = (over: Record<string, unknown> = {}) => ({ ...JSON.parse(tourRowContext({ id: "t-1", title: "T", readable: true, state: "finished", pinned: false, folder: "private", ...over } as Parameters<typeof tourRowContext>[0])), webviewId: "vnoc.structure" });
-  assert.deepEqual(shown(webviewMenu, row()), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourPin", "tourCommitAndPin", "tourWriteIds", "tourShare", "tourDelete"]);
-  assert.deepEqual(shown(webviewMenu, row({ pinned: true, folder: "project" })), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourWriteIds", "tourMakePrivate", "tourDelete"]);
+  assert.deepEqual(shown(webviewMenu, row()), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourPin", "tourCommitAndPin", "tourWriteIds", "tourShare", "tourExportJson", "tourOpenJson", "tourAskAgain", "tourDelete"]);
+  assert.deepEqual(shown(webviewMenu, row({ pinned: true, folder: "project" })), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourWriteIds", "tourMakePrivate", "tourExportJson", "tourOpenJson", "tourAskAgain", "tourDelete"]);
   assert.deepEqual(shown(webviewMenu, row({ readable: false, state: undefined })), ["tourDelete"]);
+});
+
+test("TR22c: Ask for a Tour… is in a node's menu on a card and a row, with or without tours; a stop's menu has Show Docs; Import into This Tour is on a JSON tab's title bar only", () => {
+  for (const surface of ["canvas", "sidebar"] as const) {
+    assert.equal(shown(nodeMenu, context(surface, facts("function"))).filter((c) => c.startsWith("tour")).join(), "tourAsk", `${surface}: no tours`);
+    const withTours = { ...context(surface, facts("function")), tours: 2 };
+    assert.deepEqual(shown(nodeMenu, withTours).filter((c) => c === "showTours" || c === "tourAsk"), ["showTours", "tourAsk"], `${surface}: Show Tours first`);
+  }
+  const stop = { webviewSection: "tourStop", webviewId: "vnoc.canvas" };
+  assert.deepEqual(shown(webviewMenu, stop), ["tourGoToCode", "tourRevealInMain", "tourShowDocs"]);
+  const titleBar = menus["editor/title"] as Entry[];
+  assert.deepEqual(titleBar.filter((e) => e.command === "vnoc.tourImportInto").map((e) => whenOf(e)), ["vnoc.tourJson"]);
 });
 
 test("every key a card's, a row's, a pane's or a header's `when` clause tests is a key those contexts write", () => {
@@ -322,7 +334,7 @@ test("every key a card's, a row's, a pane's or a header's `when` clause tests is
 });
 
 test("the global keys a `when` tests are ones V-NOC sets", () => {
-  const known = new Set(["vnoc.extensions", "vnoc.callTreeExtensions", "vnoc.hasMissing", "vnoc.canvasOpen", "vnoc.focused", "vnoc.hasSelection", "vnoc.activeIsExplore", "vnoc.hasAttention"]);
+  const known = new Set(["vnoc.extensions", "vnoc.callTreeExtensions", "vnoc.hasMissing", "vnoc.canvasOpen", "vnoc.focused", "vnoc.hasSelection", "vnoc.activeIsExplore", "vnoc.hasAttention", "vnoc.tourJson"]);
   for (const e of Object.values(menus).flat()) for (const key of whenOf(e).match(/vnoc\.[A-Za-z]+/g) ?? []) assert.ok(known.has(key) || /^vnoc\.(canvas|structure|attention|editorMenu|explorerMenu)$/.test(key), `${e.command ?? e.submenu}: ${key}`);
 });
 

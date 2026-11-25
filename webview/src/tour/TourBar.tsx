@@ -7,7 +7,7 @@ import { agentWords, stoppable } from "@vnoc/shared/tourWriting.ts";
 import type { Place } from "@vnoc/shared/tours.ts";
 import { CrumbButton } from "../canvas/top-bar/CrumbButton.tsx";
 import { FIT_VIEW_EVENT } from "../canvas/keys.ts";
-import { on, post } from "../host.ts";
+import { on, post, request } from "../host.ts";
 import { dispatch } from "../state/session.ts";
 import { useData } from "../state/data.ts";
 import { setHover, setMinimap, useView } from "../state/view.ts";
@@ -20,7 +20,7 @@ import { go, halt, useTour } from "./store.ts";
 /**
  * The bar's tour half (docs/26-tours/design/04-route-and-map.md §5), drawn in place of MAIN's focus crumbs while a tour is the active context: `←` back to where you were
  * (the core's `back`), the crumbs (the stops from the first to the current one: a click jumps, the pointer over one points at its card), `moved by the agent` for three
- * seconds when another process moved the place, `⌖` (centre the current card) and `⋯` (Fit Route, Show Minimap, Start Again, Reveal Root in Main, Go to Code, Close
+ * seconds when another process moved the place, `⌖` (centre the current card) and `⋯` (Fit Route, Show Minimap, Start Again, Open Tour…, Reveal Root in Main, Go to Code, Close
  * Tour). The chip is the context chips'. Draws the view the host holds.
  */
 export function TourBar({ tourId, contextId, width }: { tourId: string; contextId: string; width: number }) {
@@ -59,6 +59,7 @@ export function TourBar({ tourId, contextId, width }: { tourId: string; contextI
   const current = view ? currentOf(view) : null;
   const act = {
     menuStartAgain: () => go(tourId, "cover"),
+    menuOpenTour: () => void request("openTour").catch(() => {}),
     menuClose: () => dispatch({ type: "closeContext", id: contextId }, contextId),
     // the ■ on the bar, as the suite presses it
     menuStop: () => canStop && halt(tourId),
@@ -138,6 +139,7 @@ export function TourBarButtons({ tourId, contextId }: { tourId: string; contextI
           </DropdownMenuCheckboxItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => go(tourId, "cover")}>Start Again</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void request("openTour").catch(() => {})}>Open Tour…</DropdownMenuItem>
           <DropdownMenuItem
             disabled={!view?.stops[0]?.key}
             onClick={() => {

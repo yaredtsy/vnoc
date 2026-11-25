@@ -386,6 +386,46 @@
         "category": "V-NOC"
       },
       {
+        "command": "vnoc.tourExportJson",
+        "title": "Export as JSON…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourOpenJson",
+        "title": "Open as JSON",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourImportInto",
+        "title": "Import into This Tour",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourImportFile",
+        "title": "Import a Tour from JSON…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourCheckAll",
+        "title": "Check All Tours",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourAsk",
+        "title": "Ask for a Tour…",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourAskAgain",
+        "title": "Ask for a New Tour",
+        "category": "V-NOC"
+      },
+      {
+        "command": "vnoc.tourShowDocs",
+        "title": "Show Docs",
+        "category": "V-NOC"
+      },
+      {
         "command": "vnoc.tourSettings",
         "title": "Tour Settings…",
         "category": "V-NOC"
@@ -653,6 +693,26 @@
           "when": "false"
         },
         {
+          "command": "vnoc.tourExportJson",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourOpenJson",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourAskAgain",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourShowDocs",
+          "when": "false"
+        },
+        {
+          "command": "vnoc.tourImportInto",
+          "when": "vnoc.tourJson"
+        },
+        {
           "command": "vnoc.tourDelete",
           "when": "false"
         }
@@ -701,6 +761,11 @@
         }
       ],
       "editor/title": [
+        {
+          "command": "vnoc.tourImportInto",
+          "group": "navigation@1",
+          "when": "vnoc.tourJson"
+        },
         {
           "command": "vnoc.showDocs",
           "group": "navigation",
@@ -914,6 +979,11 @@
           "group": "6_tours@1"
         },
         {
+          "command": "vnoc.tourAsk",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'node' && role == node",
+          "group": "6_tours@2"
+        },
+        {
           "command": "vnoc.tourGoToCode",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourStop'",
           "group": "1_tour@1"
@@ -922,6 +992,11 @@
           "command": "vnoc.tourRevealInMain",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourStop'",
           "group": "1_tour@2"
+        },
+        {
+          "command": "vnoc.tourShowDocs",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourStop'",
+          "group": "1_tour@3"
         },
         {
           "command": "vnoc.tourOpen",
@@ -969,9 +1044,24 @@
           "group": "1_edit@6"
         },
         {
+          "command": "vnoc.tourExportJson",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canOpen",
+          "group": "1_edit@7"
+        },
+        {
+          "command": "vnoc.tourOpenJson",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canOpen",
+          "group": "1_edit@8"
+        },
+        {
+          "command": "vnoc.tourAskAgain",
+          "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow' && canOpen",
+          "group": "9_delete@1"
+        },
+        {
           "command": "vnoc.tourDelete",
           "when": "webviewId =~ /^vnoc\\.(canvas|structure)$/ && webviewSection == 'tourRow'",
-          "group": "9_delete@1"
+          "group": "9_delete@2"
         }
       ],
       "explorer/context": [

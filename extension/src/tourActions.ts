@@ -1,4 +1,4 @@
-import type { SettingChoice, TourCoreRequests, TourId, TourIdsAnswer, TourPinAnswer, TourSettingsAnswer, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { SettingChoice, TourCoreRequests, TourId, TourIdsAnswer, TourPinAnswer, TourRefusal, TourSettingsAnswer, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
 // What the user does to a tour from a menu or a button: **Pin**, **Commit and Pin…**, **Write IDs for Its Stops**, **Tour Settings…** (docs/26-tours/05-on-screen.md §3, §5 "Decided for
 // TR22a"). The core does each (`vnoc/tourPin`, `vnoc/tourIds`, `vnoc/tourSettings`); the host asks, says what happened in a message, and saves the files the IDs go into. No `vscode`
@@ -31,6 +31,20 @@ export interface ActionDeps {
   deleted(ids: TourId[], tokens: string[], words: string): void;
   /** the list of tours is asked for again, so what an act changed is on the pages at once */
   refreshList(): void;
+  /** a save dialog with `suggested` as the file's name: the path the text was written to, or undefined when the dialog was dismissed */
+  saveJson(suggested: string, text: string): Promise<string | undefined>;
+  /** an untitled JSON editor tab with the tour's document in it; **Import into This Tour** on its title bar imports it back into this tour */
+  openJson(id: TourId, text: string): Promise<void>;
+  /** an open dialog for a JSON file: where it is (a handle that `showRefusals` takes) and its text, or undefined when the dialog was dismissed */
+  pickJson(): Promise<{ target: string; text: string } | undefined>;
+  /** the refusals as diagnostics on the editor that holds the text (`target` is the handle), in the Problems style: one for each, at its line when the core knew it; the editor is shown */
+  showRefusals(target: string, refusals: TourRefusal[]): Promise<void>;
+  /** the diagnostics of that editor go away: it imported */
+  clearRefusals(target: string): void;
+  /** every tour is checked anew, with a progress line, and the pages are given the rows the core answered */
+  checkAll(): Promise<void>;
+  /** the text goes to the clipboard */
+  copy(text: string): Promise<void>;
 }
 
 export const BUTTONS = { commitAndPin: "Commit and Pin…", saveAndWrite: "Save and Write IDs", cancel: "Cancel", showChanges: "Show Changes", pin: "Pin", always: "Always Write IDs in This Project" } as const;
@@ -215,6 +229,94 @@ export class TourActions {
     }
     this.d.refreshList();
     return ok;
+  }
+
+  /** **Export as JSON…**: the core's document (`vnoc/tourExport`, what `vnoc tour export` prints) is saved to a file the user chooses. A dismissed dialog saves nothing and says nothing. */
+  async exportJson(id: TourId): Promise<"saved" | "cancelled" | "refused"> {
+    try {
+      const { text } = await this.d.request("vnoc/tourExport", { id });
+      const saved = await this.d.saveJson(`${id}.json`, text);
+      if (saved === undefined) return "cancelled";
+      await this.d.say("info", `Saved the tour to ${saved}.`, []);
+      return "saved";
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
+  }
+
+  /** **Open as JSON**: the core's document in an untitled JSON editor tab. */
+  async openJson(id: TourId): Promise<"opened" | "refused"> {
+    try {
+      const { text } = await this.d.request("vnoc/tourExport", { id });
+      await this.d.openJson(id, text);
+      return "opened";
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
+  }
+
+  /**
+   * What an import said, for the two ways in. A document that was written: the core's words, the list asked again (the stage follows by itself: the core kept the place when its step is still there). A document
+   * that was refused: its refusals are diagnostics on the editor that holds it, and the core's words are said.
+   */
+  private async imported(answer: TourCoreRequests["vnoc/tourImport"]["result"], target: string): Promise<"imported" | "refused"> {
+    if (answer.refused !== undefined) {
+      await this.d.showRefusals(target, answer.refused);
+      await this.d.say("warn", answer.words, []);
+      return "refused";
+    }
+    this.d.clearRefusals(target);
+    this.d.refreshList();
+    await this.d.say("info", answer.words, []);
+    return "imported";
+  }
+
+  /** **Import into This Tour**, on the title bar of an **Open as JSON** tab: `import --replace` with the tab's text. */
+  async importInto(id: TourId, text: string, target: string): Promise<"imported" | "refused"> {
+    try {
+      return await this.imported(await this.d.request("vnoc/tourImport", { text, replace: id }), target);
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
+  }
+
+  /** **Import a Tour from JSON…**: a file the user chooses becomes a new tour (`import`). Its refusals are shown on the file. */
+  async importFile(): Promise<"imported" | "refused" | "cancelled"> {
+    try {
+      const file = await this.d.pickJson();
+      if (file === undefined) return "cancelled";
+      return await this.imported(await this.d.request("vnoc/tourImport", { text: file.text }), file.target);
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
+  }
+
+  /** **Check All Tours**: the host checks every tour anew with a progress line; each row says what was found. */
+  async checkAll(): Promise<"checked" | "refused"> {
+    try {
+      await this.d.checkAll();
+      return "checked";
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
+  }
+
+  /** **Ask for a Tour…** (and **Ask for a New Tour**, with `tour`): the core's sentence goes to the clipboard, and the core's words say what to do with it. */
+  async ask(params?: { key?: string; tour?: TourId }): Promise<"asked" | "refused"> {
+    try {
+      const answer = await this.d.request("vnoc/tourAsk", params && (params.key !== undefined || params.tour !== undefined) ? params : undefined);
+      await this.d.copy(answer.text);
+      await this.d.say("info", answer.words, []);
+      return "asked";
+    } catch (e) {
+      await this.refused(e);
+      return "refused";
+    }
   }
 
   /** **Tour Settings…**: a QuickPick of the two settings, then of `always` / `ask` / `never` with the current one marked, written through `tourSettings`. */

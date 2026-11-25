@@ -379,25 +379,53 @@ export class Commands {
   }
 
   /** Close (08 §5): an EXPLORE context goes with its children; MAIN stays. */
+  /** The QuickPick of **Open Tour…** (design/07 §8; `ignoreFocusOut`: from the bar's ⋯ the menu gives focus back to the page a moment after the picker opens, and a picker that closes with focus would be gone at once), the suite's way in: `pickAnswers` is the label to pick (`null`: VS Code's own), `picksShown` every list shown, as its lines (a line starting `— ` is a separator). */
+  readonly tourPick: { pickAnswers: string[] | null; picksShown: string[][] } = { pickAnswers: null, picksShown: [] };
+
+  /** The node selected in the window's active context (a tour's: the current stop's), if the tree has it. */
+  private selectedKey(): string | null {
+    const s = this.store.get();
+    const key = s.contexts[s.active]?.selected ?? null;
+    return key !== null && this.core.tree && findNode(this.core.tree, key) ? key : null;
+  }
+
+  /** **Ask for a Tour…** from a node's menu, the palette, a button: the node's key for `vnoc/tourAsk` (a menu names its node; the palette and the bar's buttons mean the selected one), or none. */
+  async askKeyOf(arg: unknown, selected?: unknown): Promise<string | undefined> {
+    const named = isTreeNode(arg) || (typeof arg === "object" && arg !== null && "nodeKey" in arg);
+    if (named) return (await this.nodeFor(arg, selected)).id;
+    return this.selectedKey() ?? undefined;
+  }
+
   /**
-   * Open Tour… (design 02 frame 10): the core's list as a QuickPick, in the core's order; the one picked becomes the window's tour context (a tour that was open is
-   * replaced) and the canvas comes up. The place is the core's: the tour opens where the reader was.
+   * **Open Tour…**. With a tour's id as its argument (`executeCommand("vnoc.openTour", id)`: the host's ⋯ and the suites) it opens that tour and asks nothing. Otherwise the core's list is a QuickPick in the
+   * core's order: with a node selected, the tours on it first under a line *"on reserve_stock"* (`vnoc/tours { first_on }`; the page sorts nothing), then the others.
    */
-  /** **Open Tour…**. With a tour's id as its argument (`executeCommand("vnoc.openTour", id)`: the host's ⋯ and the suites) it opens that tour and asks nothing. */
   private async openTour(id?: unknown): Promise<void> {
-    const { tours } = await this.request<ToursAnswer>("vnoc/tours");
     if (typeof id === "string" && id !== "") {
+      const { tours } = await this.request<ToursAnswer>("vnoc/tours");
       const row = tours.find((r) => r.id === id);
       if (!row) throw new Error(`There is no tour with the id ${id}.`);
       await this.openTourById(row.id, row.title);
       return;
     }
+    if (!this.core.tree) await this.core.loadStructure();
+    const key = this.selectedKey();
+    // a node the core refuses (the project's root is every tour's) is no node here: the plain list
+    const { tours } = await (key !== null ? this.request<ToursAnswer>("vnoc/tours", { first_on: key }).catch(() => this.request<ToursAnswer>("vnoc/tours")) : this.request<ToursAnswer>("vnoc/tours"));
     if (tours.length === 0) {
       void vscode.window.showInformationMessage("There are no tours yet. Ask your coding agent for one: “give me a tour of …”.");
       return;
     }
-    const picked = await vscode.window.showQuickPick(tours.map(pickItem), { title: "Open Tour", placeHolder: "Pick a tour", matchOnDescription: true, matchOnDetail: true });
-    if (!picked) return;
+    const on = tours.filter((r) => r.on !== undefined && r.on !== null);
+    const rest = tours.filter((r) => !on.includes(r));
+    const name = key !== null && this.core.tree ? (findNode(this.core.tree, key)?.name ?? key) : "";
+    const separator = (label: string): vscode.QuickPickItem => ({ label, kind: vscode.QuickPickItemKind.Separator });
+    const items: (vscode.QuickPickItem & { row?: ToursAnswer["tours"][number] })[] =
+      on.length > 0 ? [separator(`on ${name}`), ...on.map(pickItem), ...(rest.length > 0 ? [separator("other tours")] : []), ...rest.map(pickItem)] : tours.map(pickItem);
+    this.tourPick.picksShown.push(items.map((i) => (i.kind === vscode.QuickPickItemKind.Separator ? `— ${i.label}` : i.label)));
+    const want = this.tourPick.pickAnswers?.shift();
+    const picked = this.tourPick.pickAnswers !== null ? items.find((i) => i.row !== undefined && i.label === want) : await vscode.window.showQuickPick(items, { title: "Open Tour", placeHolder: "Pick a tour", matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
+    if (!picked?.row) return;
     await this.openTourById(picked.row.id, picked.row.title);
   }
 

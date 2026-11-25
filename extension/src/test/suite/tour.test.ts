@@ -1,6 +1,7 @@
 import * as assert from "assert";
 import { execFileSync } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 
@@ -46,6 +47,10 @@ interface Api {
   answerTourMessages(answers: (string | undefined)[] | null): void;
   answerTourPicks(labels: string[] | null): void;
   answerTourInputs(answers: (string | undefined)[] | null): void;
+  answerTourFiles(paths: (string | undefined)[] | null): void;
+  answerOpenTour(labels: string[] | null): void;
+  openTourPicks(): string[][];
+  docPanel(): { open: boolean; node: string | null }[];
   dirtyFiles(): string[];
 }
 let api: Api;
@@ -2006,5 +2011,260 @@ suite("rename, share and delete a tour", () => {
     await sectionShows("no deleted row", (d) => d.deleted.length === 0);
     // the project's folder is a repository's: what the test shared is not left there
     tourCmd(["share", shared, "--private"]);
+  });
+});
+
+suite("JSON, check all, ask for a tour, open tour, show docs", () => {
+  const folder = () => path.join(workspace(), "tourdemo");
+  const shop = () => path.join(folder(), "shop.py");
+  const privateFile = (id: string) => path.join(workspace(), ".vnoc", "local", "tours", `${id}.jsonl`);
+  /** a finished tour of the shop, in its own second (ids are made from the clock) */
+  const finished = async (title: string, node = "tourdemo/shop.py::checkout", body = CHECKOUT): Promise<string> => {
+    await sleep(1100);
+    const id = JSON.parse(tourCmd(["start", "--title", title, "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", id, node, "--body-file", "-"], body);
+    tourCmd(["finish", id, "--no-ids"]);
+    return id;
+  };
+  const row = (d: NonNullable<ReturnType<typeof section>>, id: string) => d.list.find((r) => r.id === id);
+  const listShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof section>>) => boolean, ms = 30_000) => {
+    api.toursClick("back");
+    api.toursClick("fold");
+    api.toursClick("unfold");
+    return sectionShows(what, (d) => d.mode === "list" && ready(d), ms);
+  };
+  const said = (n: number) => api.tourMessages().slice(n);
+  const edit = (from: string, to: string) => fs.writeFileSync(shop(), fs.readFileSync(shop(), "utf8").replace(from, to));
+  const jsonTab = async () => {
+    await until("an untitled JSON tab is the active editor", () => vscode.window.activeTextEditor?.document.isUntitled === true && vscode.window.activeTextEditor.document.languageId === "json", 30_000);
+    return vscode.window.activeTextEditor!;
+  };
+  const replaceAll = async (editor: vscode.TextEditor, text: string) => {
+    const doc = editor.document;
+    await editor.edit((b) => b.replace(new vscode.Range(0, 0, doc.lineCount, 0), text));
+  };
+  let temp = "";
+  let shop0 = "";
+
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    if (tour === "") await makeTours();
+    await dropTourContext();
+    await vscode.commands.executeCommand("vnoc.structure.focus");
+    await until("the sidebar page", () => api.sidebarOpen());
+    await sectionShows("the section", () => true, 30_000);
+    shop0 = fs.readFileSync(shop(), "utf8");
+    temp = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-tour-json-"));
+  });
+  suiteTeardown(() => fs.rmSync(temp, { recursive: true, force: true }));
+  setup(() => {
+    api.answerTourMessages([]);
+  });
+  teardown(async function () {
+    this.timeout(30_000);
+    api.answerTourMessages(null);
+    api.answerTourFiles(null);
+    api.answerOpenTour(null);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor").then(undefined, () => {});
+    if (fs.readFileSync(shop(), "utf8") !== shop0) fs.writeFileSync(shop(), shop0);
+  });
+
+  test("Open as JSON: change one text, Import into This Tour, and the stage shows it at the same step; a bad edit lists its refusals on the tab by line, and writes nothing", async function () {
+    this.timeout(180_000);
+    const id = await finished("JSON round trip");
+    tourCmd(["go", id, "s1.b1"]);
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    const before = await stageShows("the block it was left on", (d) => d.step === "s1.b1", 30_000, id);
+    assert.ok(before.text?.includes("so nothing is held for an order"), before.text ?? "");
+    // Open as JSON: an untitled JSON tab with the core's document, exactly what `vnoc tour export` prints
+    await vscode.commands.executeCommand("vnoc.tourOpenJson", { tour: id });
+    const tab = await jsonTab();
+    assert.strictEqual(tab.document.getText(), tourCmd(["export", id]));
+    // one text changed, imported into this tour: the core's words, and the stage shows it at the same step
+    const text = tab.document.getText();
+    await replaceAll(tab, text.replace("so nothing is held for an order", "so nothing at all is held for an order"));
+    const from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourImportInto");
+    await until("the core's words", () => said(from).length === 1, 30_000);
+    assert.strictEqual(said(from)[0].level, "info");
+    assert.ok(said(from)[0].text.startsWith("Replaced “JSON round trip”: 1 stop (1 kept, 0 new, 0 gone)."), said(from)[0].text);
+    const after = await stageShows("the new text at the same step", (d) => d.step === "s1.b1" && d.text?.includes("so nothing at all is held") === true, 30_000, id);
+    assert.strictEqual(after.title, before.title);
+    assert.strictEqual(JSON.parse(tourCmd(["where", id, "--json"])).step.id, "s1.b1", "the place is kept");
+    assert.strictEqual(vscode.languages.getDiagnostics(tab.document.uri).length, 0);
+    // a bad edit: a text over its budget (line N of the text) and a title that is empty
+    const good = tab.document.getText();
+    await replaceAll(tab, good.replace("so nothing at all is held for an order that cannot be filled.", "x".repeat(900)).replace('"title": "JSON round trip"', '"title": ""'));
+    const file = fs.readFileSync(privateFile(id));
+    const mark = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourImportInto");
+    await until("the refusal said", () => said(mark).length === 1, 30_000);
+    assert.strictEqual(said(mark)[0].level, "warn");
+    assert.ok(said(mark)[0].text.startsWith("Not written: 2 problems."), said(mark)[0].text);
+    const problems = vscode.languages.getDiagnostics(tab.document.uri);
+    assert.strictEqual(problems.length, 2, JSON.stringify(problems.map((d) => d.message)));
+    for (const d of problems) {
+      assert.strictEqual(d.severity, vscode.DiagnosticSeverity.Error);
+      assert.strictEqual(d.source, "V-NOC");
+      const lineText = tab.document.lineAt(d.range.start.line).text;
+      const key = d.code === "title" ? '"title"' : '"text"';
+      assert.ok(lineText.includes(key), `${String(d.code)} is on its line: ${lineText.slice(0, 60)}`);
+    }
+    assert.deepStrictEqual(problems.map((d) => d.code).sort(), ["stops[0].blocks[0].text", "title"]);
+    assert.ok(problems.find((d) => d.code === "title")!.message.includes("title"), "the core's words");
+    assert.ok(fs.readFileSync(privateFile(id)).equals(file), "nothing was written");
+    // editing the text again takes the marks off: they pointed at lines that moved
+    await replaceAll(tab, good);
+    await until("the marks are gone", () => vscode.languages.getDiagnostics(tab.document.uri).length === 0);
+  });
+
+  test("Export as JSON… writes the file the dialog chose, with the text `vnoc tour export` prints; a dismissed dialog writes nothing", async function () {
+    this.timeout(90_000);
+    const id = await finished("To export");
+    const file = path.join(temp, "export.json");
+    let from = api.tourMessages().length;
+    api.answerTourFiles([file, undefined]);
+    await vscode.commands.executeCommand("vnoc.tourExportJson", { tour: id });
+    assert.strictEqual(fs.readFileSync(file, "utf8"), tourCmd(["export", id]));
+    assert.deepStrictEqual(said(from).map((m) => m.text), [`Saved the tour to ${file}.`]);
+    from = api.tourMessages().length;
+    fs.rmSync(file);
+    await vscode.commands.executeCommand("vnoc.tourExportJson", { tour: id });
+    assert.ok(!fs.existsSync(file) && said(from).length === 0, "a dismissed dialog writes and says nothing");
+  });
+
+  test("Import a Tour from JSON… makes a new tour and a new row; a file with a fault has its refusals on the file", async function () {
+    this.timeout(120_000);
+    const id = await finished("To copy");
+    const doc = JSON.parse(tourCmd(["export", id]));
+    doc.title = "Imported copy";
+    const file = path.join(temp, "import.json");
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    const from = api.tourMessages().length;
+    api.answerTourFiles([file]);
+    await vscode.commands.executeCommand("vnoc.tourImportFile");
+    await until("the core's words", () => said(from).length === 1, 30_000);
+    assert.strictEqual(said(from)[0].text, "Imported “Imported copy”: 1 stop.");
+    const list = await listShows("a row for the imported tour", (d) => d.list.some((r) => r.title === "Imported copy"));
+    const made = row(list, list.list.find((r) => r.title === "Imported copy")!.id)!;
+    assert.notStrictEqual(made.id, id);
+    assert.ok(fs.existsSync(privateFile(made.id)));
+    // a fault: a node that is not there, at its line of the file
+    doc.title = "Never written";
+    doc.stops[0].node = "tourdemo/shop.py::nowhere";
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    const mark = api.tourMessages().length;
+    api.answerTourFiles([file]);
+    await vscode.commands.executeCommand("vnoc.tourImportFile");
+    await until("the refusal said", () => said(mark).length === 1, 30_000);
+    assert.strictEqual(said(mark)[0].level, "warn");
+    const problems = vscode.languages.getDiagnostics(vscode.Uri.file(file));
+    assert.strictEqual(problems.length, 1, JSON.stringify(problems.map((d) => d.message)));
+    assert.strictEqual(problems[0].code, "stops[0].node");
+    assert.ok(vscode.window.activeTextEditor!.document.lineAt(problems[0].range.start.line).text.includes('"node"'));
+    assert.ok(!(await api.tours.list()).some((r) => r.words.includes("Never written")));
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  });
+
+  test("Check All Tours checks every tour and the row says what it found", async function () {
+    this.timeout(120_000);
+    const id = await finished("To check", "tourdemo/shop.py::has_stock", SHORT.has_stock);
+    await listShows("the row is fresh", (d) => row(d, id) !== undefined && !row(d, id)!.words.includes("changed"));
+    edit("    return stock.get(order[\"sku\"], 0) >= order[\"qty\"]", "    return stock.get(order[\"sku\"], 0) > order[\"qty\"]");
+    const from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourCheckAll");
+    const changed = await listShows("the row says changed", (d) => row(d, id)?.words.includes("changed") === true, 60_000);
+    assert.ok(row(changed, id)!.words.includes("changed"), row(changed, id)!.words);
+    assert.deepStrictEqual(said(from), [], "the rows are the answer: no message");
+  });
+
+  test("Ask for a Tour… copies the core's sentence with the node's address and says its words; with no node it copies the start of a sentence; a row asks for a new tour of its root", async function () {
+    this.timeout(120_000);
+    const id = JSON.parse(tourCmd(["start", "--title", "Asked again", "--question", "why this order?", "--detail", "quick", "--json"])).tour;
+    tourCmd(["add", id, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
+    tourCmd(["finish", id, "--no-ids"]);
+    let from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourAsk", { nodeKey: "tourdemo/shop.py::checkout", contextId: "main" });
+    assert.strictEqual(await vscode.env.clipboard.readText(), "Walk me through tourdemo/shop.py::checkout");
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Copied. Paste it to your agent."]);
+    // the palette means the selected node: none selected, the start of a sentence
+    api.dispatch({ type: "select", id: null }, "main");
+    from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourAsk");
+    assert.strictEqual(await vscode.env.clipboard.readText(), "Walk me through ");
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Add what you want explained."]);
+    // the section's `＋` means the selected node too
+    api.dispatch({ type: "select", id: "tourdemo/shop.py::reserve" }, "main");
+    from = api.tourMessages().length;
+    api.toursClick("ask");
+    await waitFor("the sentence is copied", async () => (await vscode.env.clipboard.readText()) === "Walk me through tourdemo/shop.py::reserve", 30_000);
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Copied. Paste it to your agent."]);
+    // a function no tour passes through: the second view is empty, and its empty state asks for one
+    const quiet = path.join(folder(), "quiet.py");
+    fs.writeFileSync(quiet, "def quiet():\n    return None\n");
+    for (let waited = 0; ; waited += 500) {
+      const file = (await api.structure()).root.children.find((c) => c.id === "tourdemo")?.children.find((c) => c.id === "tourdemo/quiet.py");
+      if (file?.children.length) break;
+      assert.ok(waited < 30_000, "the structure never held tourdemo/quiet.py");
+      await sleep(500);
+    }
+    await vscode.commands.executeCommand("vnoc.showTours", { nodeKey: "tourdemo/quiet.py::quiet", contextId: "main" });
+    const empty = await sectionShows("the empty state with its button", (d) => d.view === "on" && d.empty !== null && d.asks.length > 0, 30_000);
+    assert.deepStrictEqual(empty.asks, ["Ask for One"]);
+    from = api.tourMessages().length;
+    api.toursClick("ask");
+    await waitFor("the sentence for quiet", async () => (await vscode.env.clipboard.readText()) === "Walk me through tourdemo/quiet.py::quiet", 30_000);
+    api.toursClick("view:all");
+    fs.rmSync(quiet);
+    // a row's Ask for a New Tour: the root, the question, the depth
+    from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourAskAgain", { tour: id });
+    assert.strictEqual(await vscode.env.clipboard.readText(), "Walk me through tourdemo/shop.py::checkout: why this order? (a quick tour)");
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Copied. Paste it to your agent."]);
+    api.dispatch({ type: "select", id: null }, "main");
+  });
+
+  test("Open Tour… in the bar's ⋯ asks which, with the selected node's tours first, and opens the one picked", async function () {
+    this.timeout(120_000);
+    const onCheckout = await finished("On checkout again");
+    const elsewhere = await finished("Elsewhere", "tourdemo/shop.py::release", SHORT.release);
+    await vscode.commands.executeCommand("vnoc.openTour", elsewhere);
+    await until("the tour's context", () => api.session().active === `tour:${elsewhere}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 30_000, elsewhere);
+    // the bar's ⋯ → Open Tour… (the suite sends the entry's name): the picker is the host's, and the core orders it
+    const shown = api.openTourPicks().length;
+    api.answerOpenTour(["On checkout again"]);
+    api.dispatch({ type: "select", id: "tourdemo/shop.py::checkout" }, "main");
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await sleep(500);
+    await vscode.commands.executeCommand("vnoc.openTour");
+    const picks = api.openTourPicks()[shown];
+    assert.ok(picks, "a list was shown");
+    assert.strictEqual(picks[0], "— on checkout", `the node's tours come first: ${JSON.stringify(picks)}`);
+    assert.ok(picks.indexOf("On checkout again") < picks.indexOf("— other tours") && picks.indexOf("— other tours") < picks.indexOf("Elsewhere"), JSON.stringify(picks));
+    await until("the picked tour is open", () => api.session().active === `tour:${onCheckout}`, 30_000);
+    // from a tour's bar: the same request, through the bar's own entry
+    const second = api.openTourPicks().length;
+    api.answerOpenTour(["Elsewhere"]);
+    api.stageClick("menuOpenTour");
+    await until("the bar asked", () => api.openTourPicks().length > second, 30_000);
+    await until("the picked tour is open", () => api.session().active === `tour:${elsewhere}`, 30_000);
+  });
+
+  test("Show Docs in a stop's menu opens the docs panel, as the bar's ⓘ does", async function () {
+    this.timeout(90_000);
+    const id = await finished("For docs");
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 30_000, id);
+    const from = api.docPanel().length;
+    await vscode.commands.executeCommand("vnoc.tourShowDocs", { tour: id, stop: "s1", nodeKey: "tourdemo/shop.py::checkout" });
+    await until("the docs panel is open", () => api.docPanel().slice(from).some((d) => d.open), 30_000);
+    assert.strictEqual(api.docPanel().at(-1)!.node, "tourdemo/shop.py::checkout", "for the tour's current stop: the selection");
+    api.dispatch({ type: "closeContext", id: `tour:${id}` }, `tour:${id}`);
   });
 });

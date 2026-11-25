@@ -4,6 +4,7 @@ import { BarButton } from "@/components/BarButton.tsx";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
 import { motionMs, prefersReducedMotion } from "@/lib/motion.ts";
 import { refresh } from "@/state/data.ts";
+import { request } from "../../host.ts";
 import { dispatch, useSession } from "@/state/session.ts";
 import { pulse, setMinimap, useView } from "@/state/view.ts";
 
@@ -33,6 +34,7 @@ export function MoreMenu() {
           Show Minimap
         </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => void request("openTour").catch(() => {})}>Open Tour…</DropdownMenuItem>
         <DropdownMenuItem onClick={() => refresh()}>Refresh Structure</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

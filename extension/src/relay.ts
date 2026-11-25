@@ -75,7 +75,12 @@ export interface Deps {
     undo(tokens: readonly string[]): Promise<unknown>;
     deleteFinished(): Promise<unknown>;
     share(id: TourId, share: boolean): Promise<unknown>;
+    importFile(): Promise<unknown>;
+    checkAll(): Promise<unknown>;
+    ask(params?: { key?: string; tour?: TourId }): Promise<unknown>;
   };
+  /** the bar's **Open Tour…**: the command `vnoc.openTour`, which asks which tour */
+  openTour(): Promise<void>;
   /** a file's diff against HEAD (`git.openChange`), a link of the **Commit and Pin…** dialog */
   openChange(path: string): Promise<void>;
   /** `▶ N` and **Show Tours**: the node is selected in its context, the TOURS section shows its tours */
@@ -128,6 +133,10 @@ export function createHandlers(d: Deps): Handlers {
     tourUndo: async ({ tokens }) => void (await d.tourActions.undo(tokens)),
     tourDeleteFinished: async () => void (await d.tourActions.deleteFinished()),
     tourShare: async ({ id }) => void (await d.tourActions.share(id, true)),
+    tourAsk: async (params) => void (await d.tourActions.ask(params ?? undefined)),
+    tourImportFile: async () => void (await d.tourActions.importFile()),
+    tourCheckAll: async () => void (await d.tourActions.checkAll()),
+    openTour: () => d.openTour(),
     showTours: ({ key, context }) => d.showTours(key, context),
   };
 }

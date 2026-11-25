@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { TreeNode } from "@vnoc/shared/messages.ts";
 import { type ContextState, MAIN, emptySession } from "@vnoc/shared/session.ts";
 import type { TourRow } from "@vnoc/shared/tours.ts";
-import { emptyOn, lineTwo, offChipText, offChipTip, opensAt, selectionOf, showAll, stateWordOf, toursChipText, toursChipTip, viewButtons, viewKey, viewOf } from "./onView.ts";
+import { ASK_FOR_ONE, copyRequest, emptyOn, lineTwo, offChipText, offChipTip, opensAt, selectionOf, showAll, stateWordOf, toursChipText, toursChipTip, viewButtons, viewKey, viewOf } from "./onView.ts";
 
 const row = (on?: TourRow["on"]): TourRow => ({ id: "t-1", folder: "private", readable: true, quiet: false, root: null, place: null, offers: null, words: "finished · 6 stops · today", state_word: "finished", ...(on ? { on } : {}) });
 const node = (id: string, children: TreeNode[] = []): TreeNode => ({ id, name: id, kind: "function", children, docs: 0 }) as unknown as TreeNode;
@@ -85,4 +85,10 @@ test("▶ N and +N: their text and tooltips, one and many", () => {
   assert.equal(offChipText(2), "+2");
   assert.equal(offChipTip(2), "2 calls are not on this tour");
   assert.equal(offChipTip(1), "1 call is not on this tour");
+});
+
+test("the empty states' buttons that ask for a tour: Ask for One; Copy a Request for the selection, or none", () => {
+  assert.equal(ASK_FOR_ONE, "Ask for One");
+  assert.equal(copyRequest("reserve_stock"), "Copy a Request for reserve_stock");
+  assert.equal(copyRequest(null), "Copy a Request");
 });

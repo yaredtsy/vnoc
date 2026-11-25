@@ -76,6 +76,9 @@ export function opensAt(row: TourRow, view: ListView): "cover" | StopId | null {
 /** The empty state of the second view (design 07 §8). */
 export const emptyOn = (name: string): string => `No tour goes through ${name}.`;
 export const showAll = (n: number): string => `Show All ${n}`;
+/** The empty state's buttons that ask for a tour (design 07 §8): **Ask for One** where the second view is empty; where there is no tour at all **Copy a Request for `name`** (the selection), or **Copy a Request**. Each copies the core's sentence. */
+export const ASK_FOR_ONE = "Ask for One";
+export const copyRequest = (name: string | null): string => (name === null ? "Copy a Request" : `Copy a Request for ${name}`);
 
 // ── on a node ──
 

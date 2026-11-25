@@ -252,6 +252,13 @@ export class Tours {
     return tours;
   }
 
+  /** **Check All Tours**: every tour is checked anew (`vnoc/tours { check_all }`, asked again while the core says to), and the rows it answered are what the pages draw. */
+  async checkAll(): Promise<TourRow[]> {
+    const tours = (await this.ask("vnoc/tours", { check_all: true })).tours;
+    this.publish(tours);
+    return tours;
+  }
+
   private publish(tours: TourRow[]): void {
     this.rows = tours;
     this.notice(tours);

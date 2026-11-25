@@ -21,7 +21,7 @@ import { DEFAULT_TOURS_SHARE, dragTours, toursShare } from "./split.ts";
 import { useData } from "../../state/data.ts";
 import { type Entry, addTomb, afterOf, removeTomb, useDeleted, withTombs } from "./deleted.ts";
 import { listItem } from "./list.ts";
-import { emptyOn, lineTwo, opensAt, selectionOf, showAll, stateWordOf, viewButtons, viewKey, viewOf, type ListView } from "./onView.ts";
+import { ASK_FOR_ONE, copyRequest, emptyOn, lineTwo, opensAt, selectionOf, showAll, stateWordOf, viewButtons, viewKey, viewOf, type ListView } from "./onView.ts";
 import { headerPlace, rowKey, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
 import { useTourList } from "./store.ts";
@@ -122,6 +122,9 @@ export function ToursSection() {
   const entries: Entry[] = useMemo(() => withTombs(shown ?? [], tombs), [shown, tombs]);
   const buttons = viewButtons(listView, rows?.length ?? 0, selectionName === null ? null : { name: selectionName }, onShown?.length ?? null);
   const emptyOnText = listView === "on" && onShown !== null && onShown.length === 0 && selectionName !== null ? emptyOn(selectionName) : null;
+  const noTours = rows !== null && rows.length === 0 && tombs.length === 0;
+  // the buttons of an empty state that ask for a tour: where the second view is empty, **Ask for One**; where there is no tour at all, **Copy a Request** (for the selection, when there is one)
+  const asks = emptyOnText !== null ? [ASK_FOR_ONE] : noTours ? [copyRequest(selectionName)] : [];
   const switchView = (to: ListView) => dispatch({ type: "tourView", view: to === "on" ? "onSelection" : "all" });
   const route = useMemo(() => (view ? routeRows(view) : []), [view]);
   // the route's foot (design 05 §1): what the agent is doing, with ■ Stop while it writes; and, for a tour with no plan, the one row under the last stop that says another may come
@@ -149,6 +152,8 @@ export function ToursSection() {
   // the delete and its Undo are the host's (it asks the core, closes the tour if it is the open one, and says a refusal in the core's words)
   const deleteRow = (id: string) => void request("tourDelete", { id }).catch(() => {});
   const stopRow = (id: string) => void request("tourHalt", { id }).catch(() => {});
+  // **Ask for a Tour…**: the host asks the core for the sentence (with the selected node's address, or none), copies it and says the core's words
+  const ask = () => void request("tourAsk", selection === null ? undefined : { key: selection }).catch(() => {});
   const undo = (tomb: { key: string; tokens: string[] }) => void request("tourUndo", { tokens: tomb.tokens }).then(() => removeTomb(tomb.key), () => {});
   // the row's action, for a click and for Enter: one function
   const act = (index: number) => {
@@ -186,8 +191,8 @@ export function ToursSection() {
 
   // the extension's test suite cannot click in a webview: it sends the click
   const stopWriting = () => tourId !== null && canStop && halt(tourId);
-  const latest = useRef({ openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo });
-  latest.current = { openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo };
+  const latest = useRef({ ask, openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo });
+  latest.current = { ask, openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo };
   // the host deleted tours (this page's `🗑` or key, the row's menu, **Delete Finished Tours**): their place in the list is the row above them as it was drawn a moment ago
   useEffect(() => on("tourDeleted", ({ ids, tokens, words }) => addTomb({ ids, tokens, words, after: afterOf(latest.current.rows ?? [], ids) })), []);
   useEffect(
@@ -210,6 +215,9 @@ export function ToursSection() {
         else if (what === "view:all" || what === "view:on") l.switchView(what === "view:on" ? "on" : "all");
         else if (what === "showAll") l.switchView("all");
         else if (what === "deleteFinished") void request("tourDeleteFinished").catch(() => {});
+        else if (what === "ask") l.ask();
+        else if (what === "importFile") void request("tourImportFile").catch(() => {});
+        else if (what === "checkAll") void request("tourCheckAll").catch(() => {});
         else if (what === "undo") {
           const last = useDeleted.getState().tombs.at(-1);
           if (last) l.undo(last);
@@ -241,6 +249,7 @@ export function ToursSection() {
       view: listView,
       buttons: buttons.map((b) => b.text),
       empty: emptyOnText,
+      asks,
       list: entries.flatMap((e) => {
         if (e.type !== "row") return [];
         const r = e.row;
@@ -253,7 +262,7 @@ export function ToursSection() {
       waiting: rows === null ? waiting : null,
       route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, struck: r.type === "stop" && r.struck, depth: r.depth })),
     });
-  }, [entries, listView, buttons.map((b) => b.text).join("|"), emptyOnText, route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entries, listView, buttons.map((b) => b.text).join("|"), emptyOnText, asks.join("|"), route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section
@@ -286,11 +295,15 @@ export function ToursSection() {
           <span>Tours</span>
           {rows !== null && <span className="ml-1.5 rounded-full bg-[color:var(--card-badge-bg)] px-1.5 text-[10px] font-normal text-[color:var(--card-badge-fg)] normal-case">{rows.length}</span>}
         </button>
-        {/* the section's menu: **Tour Settings…** and **Delete Finished Tours** (TR22c adds the rest of 05 §3's list) */}
+        {/* `＋` Ask for a Tour… (design 07 §7): it copies a sentence for the agent, with the selected node's address */}
+        <BarButton icon="add" label="Ask for a Tour…" data-part="ask" className="size-[18px] normal-case" onClick={ask} />
+        {/* the section's menu (05 §3) */}
         <DropdownMenu>
           <DropdownMenuTrigger render={<BarButton icon="ellipsis" label="More Tour Actions" data-part="more" className="size-[18px] normal-case" />} />
           <DropdownMenuContent>
             <DropdownMenuItem onClick={() => void request("tourSettingsPick").catch(() => {})}>Tour Settings…</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void request("tourImportFile").catch(() => {})}>Import a Tour from JSON…</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void request("tourCheckAll").catch(() => {})}>Check All Tours</DropdownMenuItem>
             <DropdownMenuItem onClick={() => void request("tourDeleteFinished").catch(() => {})}>Delete Finished Tours</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -340,8 +353,13 @@ export function ToursSection() {
                     {waiting}
                   </p>
                 )
-              ) : rows.length === 0 && tombs.length === 0 ? (
-                <p className="px-3 py-2 text-[12px] text-muted-foreground">No tours yet. A tour is your agent explaining a piece of the code, step by step.</p>
+              ) : noTours ? (
+                <div data-part="empty-none" className="px-3 py-2 text-[12px] text-muted-foreground">
+                  <p>No tours yet. A tour is your agent explaining a piece of the code, step by step.</p>
+                  <button type="button" data-part="ask-empty" className="mt-1.5 rounded-sm border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-toolbar-hover" onClick={ask}>
+                    {copyRequest(selectionName)}
+                  </button>
+                </div>
               ) : (
                 <>
                   <div role="group" aria-label="Which tours" data-part="views" className="flex flex-none items-center gap-1 px-2 py-1">
@@ -371,9 +389,14 @@ export function ToursSection() {
                   {emptyOnText !== null ? (
                     <div data-part="empty-on" className="px-3 py-2 text-[12px] text-muted-foreground">
                       <p>{emptyOnText}</p>
-                      <button type="button" className="mt-1.5 rounded-sm border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-toolbar-hover" onClick={() => switchView("all")}>
-                        {showAll(rows.length)}
-                      </button>
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        <button type="button" data-part="ask-empty" className="rounded-sm border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-toolbar-hover" onClick={ask}>
+                          {ASK_FOR_ONE}
+                        </button>
+                        <button type="button" className="rounded-sm border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-toolbar-hover" onClick={() => switchView("all")}>
+                          {showAll(rows.length)}
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     entries.map((e, i) =>

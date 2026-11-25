@@ -421,6 +421,26 @@ export interface ToursParams {
   on?: string;
   /** the tours to check now */
   check?: TourId[];
+  /** **Check All Tours**: every tour is checked anew; the rows say what the check found */
+  check_all?: boolean;
+  /** a tree key (or a reference): every tour, the ones on that node first, each with `on` (**Open Tour…**'s order) */
+  first_on?: string;
+}
+
+/** One thing wrong with an imported document: its place as a JSON path (`stops[0].blocks[1].text`), the core's sentence, and the line of the text when the core knows it. */
+export interface TourRefusal {
+  place: string;
+  words: string;
+  line: number | null;
+}
+
+/** `vnoc/tourImport`: the tour that was written, or every refusal of the document (nothing was written); `words` is the core's sentence either way. */
+export type TourImportAnswer = { id: TourId; words: string; refused?: undefined } | { refused: TourRefusal[]; words: string; id?: undefined };
+
+/** `vnoc/tourAsk`: the sentence for the agent, and the line that says what to do with it. */
+export interface TourAskAnswer {
+  text: string;
+  words: string;
 }
 
 export interface ToursAnswer {
@@ -444,6 +464,9 @@ export interface TourCoreRequests {
   "vnoc/tourDeleteFinished": { params: undefined; result: TourDeleteFinishedAnswer };
   "vnoc/tourRestore": { params: { token: string }; result: TourRestoreAnswer };
   "vnoc/tourSettings": { params: { ids?: SettingChoice; commit?: SettingChoice } | undefined; result: TourSettingsAnswer };
+  "vnoc/tourExport": { params: { id: TourId }; result: { text: string } };
+  "vnoc/tourImport": { params: { text: string; replace?: TourId }; result: TourImportAnswer };
+  "vnoc/tourAsk": { params: { key?: string; tour?: TourId } | undefined; result: TourAskAnswer };
   "vnoc/tourCounts": { params: undefined; result: TourCountsAnswer };
   "vnoc/tourCalls": { params: { id: TourId }; result: TourCallsAnswer };
 }

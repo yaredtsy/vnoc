@@ -32,7 +32,7 @@ test("the settings picks: the two settings with their value now, then the three 
 });
 
 /** the window, as the actions see it: the messages said (with the button each is answered with), the files saved, the requests made */
-function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; picks?: string[]; typed?: (string | undefined)[] } = {}) {
+function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; picks?: string[]; typed?: (string | undefined)[]; files?: (string | undefined)[]; replies?: Record<string, unknown> } = {}) {
   const said: { level: string; text: string; buttons: string[] }[] = [];
   const asked: [string, unknown][] = [];
   const saved: string[][] = [];
@@ -41,9 +41,11 @@ function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; 
   const typed = [...(over.typed ?? [])];
   const answers = [...(over.answers ?? [])];
   const picks = [...(over.picks ?? [])];
+  const files = [...(over.files ?? [])];
   const deps: ActionDeps = {
     request: (async (method: string, params: unknown) => {
       asked.push([method, params]);
+      if (over.replies && method in over.replies) return over.replies[method];
       if (method === "vnoc/tourIds") return { changed: ["shop.py", "util.py"], words: "IDs written for 3 stops in 2 files." };
       if (method === "vnoc/tourSettings") return { ids: { value: "ask", from: "file" }, commit: { value: "ask", from: "file" } };
       return { tour: "t-1", state: "pinned", commit: "f4d6e15aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
@@ -62,6 +64,16 @@ function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; 
     closeIfOpen: (id) => void events.push(["close", id]),
     deleted: (ids, tokens, words) => void events.push(["deleted", ids, tokens, words]),
     refreshList: () => void events.push(["list"]),
+    saveJson: async (suggested, text) => (events.push(["save", suggested, text]), files.shift()),
+    openJson: async (id, text) => void events.push(["open", id, text]),
+    pickJson: async () => {
+      const path = files.shift();
+      return path === undefined ? undefined : { target: `file://${path}`, text: `{"title":"from ${path}"}` };
+    },
+    showRefusals: async (target, refusals) => void events.push(["problems", target, refusals.map((r) => [r.place, r.line])]),
+    clearRefusals: (target) => void events.push(["clear", target]),
+    checkAll: async () => void events.push(["checkAll"]),
+    copy: async (text) => void events.push(["copy", text]),
     ...over,
   };
   return { actions: new TourActions(deps), said, asked, saved, dialogs, events };
@@ -190,4 +202,61 @@ test("Undo restores every token, in order, and asks the list again; a token the 
   const lost = window({ ...core({ "vnoc/tourRestore": new Error("`ta` is not in the trash") }) });
   assert.equal(await lost.actions.undo(["ta"]), false);
   assert.equal(lost.said[0].text, "`ta` is not in the trash");
+});
+
+// ── TR22c: JSON, check all, ask ──────────────────────────────────────────────────────────────────────────────────────────
+
+const refusal = { refused: [{ place: "stops[0].text", words: "stops[0].text: 412 of 280 characters", line: 7 }, { place: "title", words: "title: is empty", line: null }], words: "Not written: 2 problems. Fix them, then import the whole document again." };
+
+test("Export as JSON… saves the core's text where the dialog says, and a dismissed dialog saves nothing and says nothing", async () => {
+  const w = window({ replies: { "vnoc/tourExport": { text: "{\n  \"schema\": 1\n}\n" } }, files: ["/tmp/shop.json", undefined] });
+  assert.equal(await w.actions.exportJson("t-1"), "saved");
+  assert.deepEqual(w.asked, [["vnoc/tourExport", { id: "t-1" }]]);
+  assert.deepEqual(w.events, [["save", "t-1.json", "{\n  \"schema\": 1\n}\n"]]);
+  assert.deepEqual(w.said.map((m) => m.text), ["Saved the tour to /tmp/shop.json."]);
+  assert.equal(await w.actions.exportJson("t-1"), "cancelled");
+  assert.equal(w.said.length, 1);
+});
+
+test("Open as JSON gives the core's text to a tab for this tour", async () => {
+  const w = window({ replies: { "vnoc/tourExport": { text: "{}" } } });
+  assert.equal(await w.actions.openJson("t-1"), "opened");
+  assert.deepEqual(w.events, [["open", "t-1", "{}"]]);
+});
+
+test("Import into This Tour is import --replace with the text; success is the core's words and the list again, refusals are diagnostics and the core's words", async () => {
+  const written = window({ replies: { "vnoc/tourImport": { id: "t-1", words: "Replaced “Retry”: 3 stops (3 kept, 0 new, 0 gone)." } } });
+  assert.equal(await written.actions.importInto("t-1", "{...}", "untitled:1"), "imported");
+  assert.deepEqual(written.asked, [["vnoc/tourImport", { text: "{...}", replace: "t-1" }]]);
+  assert.deepEqual(written.events, [["clear", "untitled:1"], ["list"]]);
+  assert.deepEqual(written.said, [{ level: "info", text: "Replaced “Retry”: 3 stops (3 kept, 0 new, 0 gone).", buttons: [] }]);
+  const refused = window({ replies: { "vnoc/tourImport": refusal } });
+  assert.equal(await refused.actions.importInto("t-1", "{...}", "untitled:1"), "refused");
+  assert.deepEqual(refused.events, [["problems", "untitled:1", [["stops[0].text", 7], ["title", null]]]], "no list again: nothing was written");
+  assert.deepEqual(refused.said, [{ level: "warn", text: refusal.words, buttons: [] }]);
+});
+
+test("Import a Tour from JSON… makes a new tour from a file; a refused file has its refusals on the file; a dismissed dialog does nothing", async () => {
+  const w = window({ replies: { "vnoc/tourImport": { id: "t-9", words: "Imported “Retry”: 3 stops." } }, files: ["/tmp/a.json", undefined] });
+  assert.equal(await w.actions.importFile(), "imported");
+  assert.deepEqual(w.asked, [["vnoc/tourImport", { text: '{"title":"from /tmp/a.json"}' }]], "no `replace`: a new tour");
+  assert.equal(await w.actions.importFile(), "cancelled");
+  assert.equal(w.asked.length, 1);
+  const bad = window({ replies: { "vnoc/tourImport": refusal }, files: ["/tmp/b.json"] });
+  assert.equal(await bad.actions.importFile(), "refused");
+  assert.deepEqual(bad.events[0], ["problems", "file:///tmp/b.json", [["stops[0].text", 7], ["title", null]]]);
+});
+
+test("Check All Tours asks the host to check every tour; Ask for a Tour… copies the core's sentence and says the core's words", async () => {
+  const w = window({ replies: { "vnoc/tourAsk": { text: "Walk me through a.py::f", words: "Copied. Paste it to your agent." } } });
+  assert.equal(await w.actions.checkAll(), "checked");
+  assert.deepEqual(w.events, [["checkAll"]]);
+  assert.equal(await w.actions.ask({ key: "a.py::f" }), "asked");
+  assert.deepEqual(w.asked, [["vnoc/tourAsk", { key: "a.py::f" }]]);
+  assert.deepEqual(w.events.slice(1), [["copy", "Walk me through a.py::f"]]);
+  assert.deepEqual(w.said, [{ level: "info", text: "Copied. Paste it to your agent.", buttons: [] }]);
+  // with no node nothing is sent but the question; a row asks by its tour
+  await w.actions.ask();
+  await w.actions.ask({ tour: "t-1" });
+  assert.deepEqual(w.asked.slice(1), [["vnoc/tourAsk", undefined], ["vnoc/tourAsk", { tour: "t-1" }]]);
 });

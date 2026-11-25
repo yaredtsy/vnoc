@@ -45,6 +45,7 @@ const searchDrawnPosts: { query: string; ids: string[]; docs: string[]; total: n
 /** What the canvas said it dimmed for the sidebar's search (for the test suite). */
 const searchDimPosts: { query: string; dimmed: string[] }[] = [];
 /** What the docs tab said it shows (for the test suite). */
+const docPanelPosts: { open: boolean; node: string | null }[] = [];
 const docsShownPosts: { pinned: string | null; node: string | null; doc: string | null }[] = [];
 /** What the STRUCTURE view said when it handled `focusSearch`: whether the cursor is in the box, and what the box holds (for the test suite). */
 const searchFocusedPosts: { focused: boolean; text: string }[] = [];
@@ -170,6 +171,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   let messageAnswers: (string | undefined)[] | null = null;
   let pickAnswers: string[] | null = null;
   let inputAnswers: (string | undefined)[] | null = null;
+  let fileAnswers: (string | undefined)[] | null = null;
   const tourActions = new TourActions({
     request: (method, params) => c.request(method, params as object | undefined),
     view: (id) => tours.get(id),
@@ -209,7 +211,60 @@ export function activate(ctx: vscode.ExtensionContext) {
     },
     deleted: (ids, tokens, words) => panels.emit("tourDeleted", { ids, tokens, words }),
     refreshList: () => void tours.list().catch((e) => output.appendLine(`vnoc/tours: ${String((e as Error).message ?? e)}`)),
+    // the files of **Export as JSON…** and **Import a Tour from JSON…**: the suite cannot answer a native dialog, it queues the path (`answerTourFiles`: undefined is a dismissed dialog)
+    saveJson: async (suggested, text) => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+      const chosen = fileAnswers !== null ? fileAnswers.shift() : (await vscode.window.showSaveDialog({ title: "Export the Tour as JSON", defaultUri: folder && vscode.Uri.joinPath(folder, suggested), filters: { JSON: ["json"] } }))?.fsPath;
+      if (chosen === undefined) return undefined;
+      await vscode.workspace.fs.writeFile(vscode.Uri.file(chosen), new TextEncoder().encode(text));
+      return chosen;
+    },
+    openJson: async (id, text) => {
+      const doc = await vscode.workspace.openTextDocument({ language: "json", content: text });
+      jsonTabs.set(doc.uri.toString(), { id, doc });
+      await vscode.window.showTextDocument(doc, { preview: false, ...(panels.canvas?.active ? { viewColumn: vscode.ViewColumn.Beside } : {}) });
+      void markJsonTab();
+    },
+    pickJson: async () => {
+      const chosen = fileAnswers !== null ? fileAnswers.shift() : (await vscode.window.showOpenDialog({ title: "Import a Tour from JSON", canSelectMany: false, filters: { JSON: ["json"] } }))?.[0]?.fsPath;
+      if (chosen === undefined) return undefined;
+      const uri = vscode.Uri.file(chosen);
+      return { target: uri.toString(), text: new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)) };
+    },
+    showRefusals: async (target, refusals) => {
+      const doc = jsonTabs.get(target)?.doc ?? (await vscode.workspace.openTextDocument(vscode.Uri.parse(target)));
+      await vscode.window.showTextDocument(doc, { preview: false, ...(panels.canvas?.active ? { viewColumn: vscode.ViewColumn.Beside } : {}) });
+      refusalMarks.set(
+        doc.uri,
+        refusals.map((r) => {
+          // the line's own text, not its indentation
+          const line = doc.lineAt(Math.max(0, Math.min((r.line ?? 1) - 1, doc.lineCount - 1)));
+          const diagnostic = new vscode.Diagnostic(new vscode.Range(line.lineNumber, line.firstNonWhitespaceCharacterIndex, line.lineNumber, line.text.length), r.words, vscode.DiagnosticSeverity.Error);
+          diagnostic.source = "V-NOC";
+          diagnostic.code = r.place;
+          return diagnostic;
+        }),
+      );
+    },
+    clearRefusals: (target) => refusalMarks.delete(vscode.Uri.parse(target)),
+    checkAll: async () => void (await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Checking tours…" }, () => tours.checkAll())),
+    copy: (text) => Promise.resolve(vscode.env.clipboard.writeText(text)),
   });
+  /** the untitled tabs **Open as JSON** made: each is the document of one tour, which **Import into This Tour** (on the tab's title bar) imports back into it */
+  const jsonTabs = new Map<string, { id: string; doc: vscode.TextDocument }>();
+  const refusalMarks = vscode.languages.createDiagnosticCollection("V-NOC tour");
+  ctx.subscriptions.push(refusalMarks);
+  /** the title bar's **Import into This Tour** is on the tabs of `jsonTabs` only: `vnoc.tourJson` says whether the active editor is one */
+  const markJsonTab = () => vscode.commands.executeCommand("setContext", "vnoc.tourJson", jsonTabs.has(vscode.window.activeTextEditor?.document.uri.toString() ?? ""));
+  ctx.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(() => void markJsonTab()),
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      jsonTabs.delete(doc.uri.toString());
+      refusalMarks.delete(doc.uri);
+    }),
+    // a refusal points at a line of the text as it was imported: an edit makes the marks stale, so they go
+    vscode.workspace.onDidChangeTextDocument((e) => e.contentChanges.length > 0 && refusalMarks.delete(e.document.uri)),
+  );
   /** The tour a row's menu was opened on (`tour` of what the row said), or a stop's tour */
   const tourOfArg = (arg: unknown): string => {
     const id = (arg as { tour?: unknown } | null)?.tour;
@@ -248,6 +303,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     rowClick: (context, id) => commands.rowClick(context, id),
     showTours: (key, context) => commands.showToursOf(key, context),
     tourActions,
+    openTour: async () => void (await vscode.commands.executeCommand("vnoc.openTour")),
     openChange: async (file) => {
       const root = c.gitRoot ?? (await c.loadStructure()).git_root;
       const uri = vscode.Uri.file(path.join(root, file));
@@ -320,6 +376,24 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.tourMakePrivate", (arg) => tourActions.share(tourOfArg(arg), false)),
     vscode.commands.registerCommand("vnoc.tourDelete", (arg) => tourActions.delete(tourOfArg(arg))),
     vscode.commands.registerCommand("vnoc.tourSettings", () => tourActions.settings()),
+    vscode.commands.registerCommand("vnoc.tourExportJson", (arg) => tourActions.exportJson(tourOfArg(arg))),
+    vscode.commands.registerCommand("vnoc.tourOpenJson", (arg) => tourActions.openJson(tourOfArg(arg))),
+    vscode.commands.registerCommand("vnoc.tourImportInto", () => {
+      const doc = vscode.window.activeTextEditor?.document;
+      const tab = doc && jsonTabs.get(doc.uri.toString());
+      if (!doc || !tab) throw new Error("Open a tour as JSON first: its title bar has Import into This Tour.");
+      return tourActions.importInto(tab.id, doc.getText(), doc.uri.toString());
+    }),
+    vscode.commands.registerCommand("vnoc.tourImportFile", () => tourActions.importFile()),
+    vscode.commands.registerCommand("vnoc.tourCheckAll", () => tourActions.checkAll()),
+    // **Ask for a Tour…**: the node it was chosen on (a menu names it; the palette and the buttons mean the selected one), else none; a row's **Ask for a New Tour** names the tour
+    vscode.commands.registerCommand("vnoc.tourAsk", async (arg, selected) => tourActions.ask({ key: await commands.askKeyOf(arg, selected) })),
+    vscode.commands.registerCommand("vnoc.tourAskAgain", (arg) => tourActions.ask({ tour: tourOfArg(arg) })),
+    // **Show Docs** in a stop's menu: the docs panel, as the bar's `ⓘ` opens it
+    vscode.commands.registerCommand("vnoc.tourShowDocs", async () => {
+      await panels.showCanvas();
+      panels.emit("viewCommand", { name: "showDocPanel" });
+    }),
     vscode.commands.registerCommand("vnoc.reportIssue", () => reportIssue(help)),
     vscode.commands.registerCommand("vnoc.help", () => helpAndFeedback(help)),
     watchFiles(c, (fsPath) => docs.changed(fsPath)),
@@ -436,6 +510,13 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** the QuickPicks of Tour Settings…, answered by the label of the item to pick; `null`: VS Code's own */
     answerTourPicks: (labels: string[] | null) => void (pickAnswers = labels),
     answerTourInputs: (answers: (string | undefined)[] | null) => void (inputAnswers = answers),
+    /** the files of the two JSON dialogs, by their path (`undefined`: a dismissed dialog); `null`: VS Code's own */
+    answerTourFiles: (paths: (string | undefined)[] | null) => void (fileAnswers = paths),
+    /** **Open Tour…**'s QuickPick: the label to pick (`null`: VS Code's own), and every list it showed (a line that starts with `— ` is a separator) */
+    answerOpenTour: (labels: string[] | null) => void (commands.tourPick.pickAnswers = labels),
+    openTourPicks: () => commands.tourPick.picksShown,
+    /** every state of the canvas's doc panel (the bar's `ⓘ`), in order */
+    docPanel: () => docPanelPosts,
     /** every drawing of the sidebar's TOURS section, in order */
     toursDrawn: () => toursPosts,
     /** every report of the nodes that show `▶ N` (the cards of the canvas, the rows of the structure that are drawn): the node's id, its count and the chip's tooltip */
@@ -586,6 +667,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "searchDim":
       searchDimPosts.push({ query: note.query, dimmed: note.dimmed });
+      break;
+    case "docPanel":
+      docPanelPosts.push({ open: note.open, node: note.node });
       break;
     case "docsShown":
       docsShownPosts.push({ pinned: note.pinned, node: note.node, doc: note.doc });

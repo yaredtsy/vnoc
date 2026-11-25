@@ -10,7 +10,7 @@ import { Canvas } from "./canvas/Canvas.tsx";
 import { CanvasMessage } from "./canvas/CanvasMessage.tsx";
 import { TopBar } from "./canvas/top-bar/TopBar.tsx";
 import { DocPanel } from "./docs/DocPanel.tsx";
-import { on, request } from "./host.ts";
+import { on, post, request } from "./host.ts";
 import { useData } from "./state/data.ts";
 import { useSession } from "./state/session.ts";
 import { PinDialog } from "./tour/PinDialog.tsx";
@@ -34,6 +34,8 @@ export function App() {
   const tour = useSession((s) => (s.contexts[s.active]?.kind === "tour" ? s.contexts[s.active].tour : null));
   // the test suite cannot click the bar's ⓘ: this opens the doc panel the way it does
   useEffect(() => on("viewCommand", ({ name }) => name === "showDocPanel" && setDocsOpen(true)), []);
+  // the extension's test suite reads whether the doc panel (the bar's ⓘ) is open, and for which node
+  useEffect(() => post({ type: "docPanel", open: docsOpen, node: docsOpen ? (subject.node?.id ?? null) : null }), [docsOpen, subject.node?.id]);
   useRenderedReport(laid, active);
   const body = pageBody(status, laid !== null);
 
