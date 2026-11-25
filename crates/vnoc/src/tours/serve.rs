@@ -1045,6 +1045,7 @@ impl Tours {
                 place,
                 stop: None,
                 position: None,
+                unseen: 0,
             },
         }
     }

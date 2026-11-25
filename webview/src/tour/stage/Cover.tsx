@@ -38,6 +38,7 @@ export function End(p: { view: TourView; onBack: () => void; onAgain: () => void
       </h3>
       <p className="stage-paragraph stage-dimtext">
         {view.state === "stopped" ? `End of what was written: ${view.written} of ${view.written + view.planned} stops.` : `${view.written} ${view.written === 1 ? "stop" : "stops"} · ${view.steps} ${view.steps === 1 ? "step" : "steps"}`}
+        {` · ${view.place.unseen === 0 ? "all seen" : `${view.place.unseen} not seen`}`}
       </p>
       <div className="stage-buttons">
         <button type="button" className="stage-btn stage-secondary" onClick={p.onBack}>

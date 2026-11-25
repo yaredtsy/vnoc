@@ -8,7 +8,7 @@ const step = (id: string, kind: StepKind, over: Partial<StepView> = {}): StepVie
 const stop = (id: string, reading: StepView[], over: Partial<TourStop> = {}): TourStop => ({
   number: Number(id.slice(1)), id, depth: 0, planned: false, kind: "function", name: id, path: "a.py", qualname: id, key: `a.py::${id}`, steps: reading.length, blocks: [], reading, ...over,
 });
-const place = (at: string, over: Partial<Place> = {}): Place => ({ at, seen: [], back: [], moved: "", by: "reader", open: true, stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, ...over });
+const place = (at: string, over: Partial<Place> = {}): Place => ({ at, seen: [], back: [], moved: "", by: "reader", open: true, stop: at === "cover" || at === "end" ? null : at.split(".")[0], position: null, unseen: 0, ...over });
 const view = (at: string, over: Partial<TourView> = {}): TourView => ({
   id: "t-1", title: "T", detail: "normal", state: "finished", folder: "private", written: 3, planned: 0, steps: 6, minutes: 1, pinned: false, writing: null, offers: null, problems: [],
   place: place(at),

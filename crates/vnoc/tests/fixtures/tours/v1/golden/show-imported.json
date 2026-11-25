@@ -15,7 +15,8 @@
     "open": false,
     "position": null,
     "seen": [],
-    "stop": null
+    "stop": null,
+    "unseen": 3
   },
   "planned": 0,
   "problems": [],
@@ -139,6 +140,7 @@
       "key": "billing/tax.py::apply_tax",
       "kind": "function",
       "line": 21,
+      "line_step": "s2",
       "lines": [
         10,
         12

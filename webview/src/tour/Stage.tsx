@@ -202,7 +202,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
             position={position}
             onGoToCode={() => act.current.goToCode()}
             onFold={() => setStageFolded(true)}
-            onCalledFrom={() => stop.from != null && jump(stop.from)}
+            onCalledFrom={() => (stop.line_step ?? stop.from) != null && jump((stop.line_step ?? stop.from)!)}
           />
           <div className="stage-body">
             <div className="stage-left">

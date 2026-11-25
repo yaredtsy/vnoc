@@ -18,7 +18,8 @@
     "open": false,
     "position": null,
     "seen": [],
-    "stop": null
+    "stop": null,
+    "unseen": 1
   },
   "planned": 0,
   "problems": [],

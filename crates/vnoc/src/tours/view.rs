@@ -185,6 +185,10 @@ pub struct StopView {
     pub from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+    /// for a stop reached by a call (`from` and `line`): the step of the `from` stop whose lines hold that line (the deepest one), else that stop's intro. "Called on
+    /// line N" jumps there
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_step: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub same_as: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -333,6 +337,22 @@ fn key_now(stop: &StopView, now: &super::check::Now) -> Option<String> {
     key_of(&now.path, &now.qualname, 1)
 }
 
+/// The step of the `from` stop that holds the line a stop was reached from: the deepest block whose lines (as written, as the line was) contain it, else the intro.
+/// `None` for a stop that was not reached by a call, or whose `from` the tour does not have.
+fn line_step(tour: &Tour, stop: &TourStop) -> Option<String> {
+    let (from, line) = (stop.from?, stop.line?);
+    let outer = tour.stop(from)?;
+    let mut blocks = Vec::new();
+    if outer.written {
+        blocks_of(&outer.blocks, None, 0, &mut blocks);
+    }
+    let deepest = blocks
+        .iter()
+        .filter(|b| b.lines[0] <= line && line <= b.lines[1])
+        .max_by_key(|b| b.depth);
+    Some(deepest.map_or_else(|| StepId::intro(from).to_string(), |b| b.id.clone()))
+}
+
 /// What a stop's first step is (design 03 §3, as 05 §2 corrects it): not written, explained before, contents (a folder; a file with no blocks), short (a
 /// node under [`rules::SHORT`] lines, which is one step), else the intro of a stop that has blocks. A file with blocks is code, like a class.
 fn intro_kind(stop: &TourStop) -> &'static str {
@@ -387,6 +407,7 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
         steps: steps_in_order(stop).len(),
         from: stop.from.map(|f| f.to_string()),
         line: stop.line,
+        line_step: None,
         same_as: stop.same_as.map(|s| s.to_string()),
         text: stop.text.clone(),
         check: None,
@@ -417,6 +438,8 @@ pub struct PlaceView {
     pub stop: Option<String>,
     /// `null` at the cover and at the end
     pub position: Option<PositionView>,
+    /// how many written stops the reader has not read to their last step (not in `seen`): the end card says "all seen" or "N not seen"
+    pub unseen: usize,
 }
 
 /// The place for the pages: settled against the tour (a step the tour no longer has moves to the nearest one), with its stop and position.
@@ -432,10 +455,16 @@ pub fn place_view(tour: &Tour, place: Place) -> PlaceView {
         step: p.step,
         steps: p.steps,
     });
+    let unseen = tour
+        .stops
+        .iter()
+        .filter(|s| s.written && !place.seen.contains(&s.id))
+        .count();
     PlaceView {
         place,
         stop,
         position,
+        unseen,
     }
 }
 
@@ -445,7 +474,11 @@ pub fn tour_view(tour: &Tour, place: Where) -> TourView {
         .stops
         .iter()
         .enumerate()
-        .map(|(i, stop)| stop_view(i + 1, stop))
+        .map(|(i, stop)| {
+            let mut view = stop_view(i + 1, stop);
+            view.line_step = line_step(tour, stop);
+            view
+        })
         .collect();
     let size = tour.size();
     let steps = stops.iter().filter(|s| !s.planned).map(|s| s.steps).sum();
@@ -2097,5 +2130,75 @@ mod tests {
         );
         assert_eq!(shown.stops[0].key.as_deref(), Some("b.py::f2"));
         assert_eq!(shown.stops[1].key.as_deref(), Some("a.py::g"));
+    }
+
+    #[test]
+    fn a_stop_reached_by_a_call_says_the_step_of_its_caller_that_holds_the_line() {
+        let t = tour(&[
+            stop(1, "a.py", "f", ""),
+            step("s1.b1", 1, None, [12, 20]),
+            step("s1.b2", 1, Some("s1.b1"), [14, 15]),
+            // inside a detail, inside a block (not in the detail), outside every block, on the block's first and last lines
+            stop(2, "a.py", "g", r#","from":"s1","line":14"#),
+            stop(3, "a.py", "h", r#","from":"s1","line":17"#),
+            stop(4, "a.py", "i", r#","from":"s1","line":25"#),
+            stop(5, "a.py", "j", r#","from":"s1","line":12"#),
+            stop(6, "a.py", "k", r#","from":"s1","line":20"#),
+            // reached by containment: no line, no step; a planned caller has only its intro
+            stop(7, "a.py", "l", r#","from":"s1""#),
+            r#"{"type":"plan","stops":[{"id":"s8","path":"a.py","qualname":"m"},{"id":"s9","path":"a.py","qualname":"n","from":"s8","line":3}]}"#.to_string(),
+        ]);
+        let shown = tour_view(&t, Where::Private);
+        let steps: Vec<(&str, Option<&str>)> = shown
+            .stops
+            .iter()
+            .map(|s| (s.id.as_str(), s.line_step.as_deref()))
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                ("s1", None),
+                ("s2", Some("s1.b2")),
+                ("s3", Some("s1.b1")),
+                ("s4", Some("s1")),
+                ("s5", Some("s1.b1")),
+                ("s6", Some("s1.b1")),
+                ("s7", None),
+                ("s8", None),
+                ("s9", Some("s8")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_place_says_how_many_written_stops_are_not_seen_yet() {
+        let t = tour(&[
+            stop(1, "a.py", "f", ""),
+            stop(2, "a.py", "g", ""),
+            r#"{"type":"plan","stops":[{"id":"s3","path":"a.py","qualname":"h"}]}"#.to_string(),
+        ]);
+        let with = |seen: &[u32]| {
+            let mut p = Place::cover();
+            p.seen = seen
+                .iter()
+                .map(|n| crate::tours::record::StopId::new(*n).unwrap())
+                .collect();
+            place_view(&t, p).unseen
+        };
+        assert_eq!(
+            with(&[]),
+            2,
+            "at the start, every written stop; the planned one is not counted"
+        );
+        assert_eq!(with(&[1]), 1);
+        assert_eq!(with(&[1, 2]), 0, "at the end of a tour read in full");
+        assert_eq!(with(&[2]), 1, "visiting out of order");
+        assert_eq!(
+            with(&[1, 2, 9]),
+            0,
+            "a stop the tour has not got is dropped by settling"
+        );
+        let json = serde_json::to_value(place_view(&t, Place::cover())).unwrap();
+        assert_eq!(json["unseen"], 2);
     }
 }

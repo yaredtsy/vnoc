@@ -119,6 +119,8 @@ export interface Place {
   stop: StopId | null;
   /** null at the cover and at the end */
   position: PositionView | null;
+  /** how many written stops were not read to their last step: the end card says "all seen" or "N not seen" */
+  unseen: number;
 }
 
 /** A changed or moved block or stop, where its node is now: a changed stop's `now`. */
@@ -197,6 +199,8 @@ export interface TourStop {
   steps: number;
   from?: StopId;
   line?: number;
+  /** for a stop reached by a call: the step of the `from` stop that holds the line (the deepest block, else its intro): "called on line N" jumps there */
+  line_step?: StepId;
   same_as?: StopId;
   text?: string;
   /** with a check: `changed`, `gone`, or `moved`; a fresh stop says nothing */

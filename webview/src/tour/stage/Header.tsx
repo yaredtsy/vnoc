@@ -10,7 +10,7 @@ export function Header(p: {
   position: string;
   onGoToCode: () => void;
   onFold: () => void;
-  /** a jump to the stop this one was reached from */
+  /** a jump to the step of the stop this one was reached from that holds the line (`line_step`) */
   onCalledFrom: () => void;
 }) {
   const { stop } = p;
@@ -29,7 +29,7 @@ export function Header(p: {
         {p.where}
       </button>
       {stop.line != null && stop.from != null && (
-        <button type="button" className="stage-called" title={`Go to the stop this was called from (${stop.from})`} onClick={p.onCalledFrom}>
+        <button type="button" className="stage-called" title={`Go to the step of ${stop.from} that holds line ${stop.line}`} onClick={p.onCalledFrom}>
           <Codicon name="call-outgoing" className="text-[12px]" /> called on line {stop.line}
         </button>
       )}
