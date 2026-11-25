@@ -314,6 +314,50 @@ this tour`). The rest:
 - The `edit` flake: no worktree of `main` (3.6 GiB free). TR21a runs `edit` five times here; a failure is read against
   `git diff main..tours` of the files on its path, and fixed only if tours caused it.
 
+**As built (TR21a, `6337ec3`, `e61dc06`).** The view has `quiet` and `of`; `writing.ts`, `sizeKnown`, `sizeOf`, `quietOf` are gone.
+W11 is `appearance(visible, tourOpen, showsTour)`. `tourCode` answers `steps` (a stop with no blocks: its intro only); the page keeps
+the answer per (tour, stop) and asks again on each `tour` event, showing the old one meanwhile; a pending answer draws nothing, an
+error or `null` falls back to the dashed look (`webview/src/tour/written.ts`). A gone stop shown as written has no switch and no `↗`.
+The cover's pin line is not drawn while the tour is written. The list asks plain, then with the readable ids, and again when a new tour
+appears. **The core:** a file change that is both a tour's and the index's tells the tours after the index update, and `answers_for`
+waits for a running update (a deleted function had been recorded `changed` from the old index). The page sends moves one after the
+other (bursts overtook each other); `stageDrawn` waits for the code pane. `tour` 45 tests, five runs green twice; `edit` five green
+(the flake did not come back). No screenshots: the terminal has no Screen Recording permission.
+
+**Decided at TR21a's review:**
+- **`answers_for` waits too often.** As built, every tour answer, a memory or a recorded one too, waits for a running update, the first
+  full build included: opening a tour or the list on a big project waits for the whole build, which 03 §3 says only a real check may
+  do. Fix (TR21b's first commit): ask first with no index (rungs 1 and 2 need none); only on `NeedsIndex`, wait for the first build,
+  then for a running update, then ask with the index. A recorded check whose file changed is not valid, so it reaches the wait: the
+  stale-record bug stays fixed.
+- **A second tour appearing while one is open** (design 05 §5): the notification of W11, once, also when the canvas shows a tour (as
+  built it says nothing then). The status bar's `▶ New tour: …` is left out: the notification and the list are enough.
+- **The `sidebar` failure** ("first read has the progress line") depends on the order of suites (`session` before it), and fails with
+  tours switched off: not tours. The end-of-step window run uses the default order of `pnpm -r test`'s suites, where it passes (TR19's
+  full run). Fixing the order dependence is not tours' work.
+- The three rare flakes TR21a could not catch (cover not leaving at `s1.b2`, the end card's unseen count, the Open Tour… QuickPick not
+  taking the keyboard) wait for TR24's full runs; one seen again in a step's end run is fixed in that step.
+- A gone file or folder stop keeps the contents look with its sentence: no as written for rows.
+- Screenshots: the user gives the terminal Screen Recording permission, or the pictures are TR24's by-hand look.
+
+**Decided for TR21b:**
+- **On the selected node** is the list's second view. It follows the selection of the **active context** (a selected call counts as
+  its callee, as the docs panel does), so it shows in MAIN and in an explore context; in a tour context the section shows the route,
+  as built. It asks `vnoc/tours { on: <selection's tree key>, check }` when the selection changes, and on `toursChanged`. Line 2 is
+  `on.words`; a click opens at the cover for `how: "starts"`, else at `on.first`. The buttons: `All <n>` · `On <name> <n>` (the lengths
+  of the two lists the core gave); with nothing selected `On selection`, disabled, tooltip *"Select a node to see its tours"*. The
+  choice is `tourList.view`, already saved. `←` `→` on the two buttons switch.
+- Its empty state: *"No tour goes through `<name>`."* and **Show All <n>**. **Ask for One** comes with TR22's **Ask for a Tour…**.
+- **`▶ N`** on a card's footer and on a structure row's right side, from `vnoc/tourCounts` by the node's tree key. The host holds the
+  counts and asks again on `toursChanged` and on `indexChanged` (the keys are the structure's). Tooltip *"on 3 tours: click to see
+  them"*; a click selects the node, unfolds TOURS and switches to **On the selected node**. **Show Tours** in the node menu (card and
+  row), only when the count is above 0, does the same.
+- **`+N calls not on this tour`** comes from the core: a new request `vnoc/tourCalls { id }` → `{ off: { <stop id>: n } }`, for the
+  written function and class stops: the callees `vnoc tour route` would see one level down (`route::from_calls` with `levels = 1`),
+  counted once each, that are not a stop of this tour (by tree key). Asked when a tour's map is drawn, kept in the core per tour until
+  the tour's or a stop file's change, as the answers are. A stop with none, or not a function or class, has no key. The card's footer
+  draws `+N` dim, tooltip *"2 calls are not on this tour"*, no click.
+
 ## 6. Who draws what
 
 | | Does | Does not |
