@@ -20,8 +20,9 @@ use calls::{call_tree, has_calls};
 use docs::{attach, docs, locate, relink, restore_plan, trash, trash_info, trash_list, write_id};
 use index::{languages, project_info, search, search_cards, structure};
 use tours::{
-    tour, tour_calls, tour_code, tour_counts, tour_delete, tour_edit, tour_go, tour_halt, tour_ids,
-    tour_delete_finished, tour_open, tour_pin, tour_restore, tour_settings, tour_share, tours,
+    tour, tour_calls, tour_code, tour_counts, tour_delete, tour_delete_finished, tour_edit,
+    tour_go, tour_halt, tour_ids, tour_open, tour_pin, tour_restore, tour_settings, tour_share,
+    tours,
 };
 
 use std::fmt::Display;

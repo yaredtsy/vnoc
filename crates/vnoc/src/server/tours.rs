@@ -673,7 +673,9 @@ pub(super) fn tour_edit(
             params.question.as_deref().map(str::trim),
         );
         let words = match (title, question) {
-            (Some(title), Some(_)) => format!("Renamed to “{title}”, and its question was changed."),
+            (Some(title), Some(_)) => {
+                format!("Renamed to “{title}”, and its question was changed.")
+            }
             (Some(title), None) => format!("Renamed to “{title}”."),
             (None, Some(_)) => "The question of the tour was changed.".to_string(),
             (None, None) => "Nothing was changed.".to_string(),
@@ -825,7 +827,10 @@ pub(super) fn tour_delete_finished(
             if deleted.is_empty() {
                 return Err(tour_error(e));
             }
-            words.push_str(&format!(" The tour {id} was not: {}", tour_error(e).message));
+            words.push_str(&format!(
+                " The tour {id} was not: {}",
+                tour_error(e).message
+            ));
         }
         Ok(serde_json::json!({
             "deleted": deleted.iter().map(|(id, token)| serde_json::json!({ "id": id.to_string(), "token": token })).collect::<Vec<_>>(),

@@ -4374,6 +4374,8 @@ fn a_dry_tour_pin_on_uncommitted_work_names_the_files_in_the_cores_words_and_sta
         .request("vnoc/tourPin", json!({ "id": id, "dry": true }))
         .unwrap();
     println!("tourPin dry: {dry}");
+    // a dry pin writes nothing: no file of `.vnoc` changed (the real pin below does write: it records its check, with the second it was made in)
+    assert_eq!(vnoc_files(&root), before);
     // the same answer as the real one (`tourPin` with no commit says `not_pinned`: `ask` is the answer of a `finish` that is to ask), with each reason in words
     let real = core.request("vnoc/tourPin", json!({ "id": id })).unwrap();
     assert_eq!(dry["state"], real["state"]);
@@ -4393,7 +4395,6 @@ fn a_dry_tour_pin_on_uncommitted_work_names_the_files_in_the_cores_words_and_sta
     assert_eq!(git_out(&root, &["diff", "--cached", "--name-only"]), "");
     assert_eq!(git_out(&root, &["status", "--porcelain"]), status);
     assert_eq!(git_out(&root, &["log", "--oneline"]).lines().count(), 1);
-    assert_eq!(vnoc_files(&root), before);
     core.finish();
 }
 
@@ -4530,7 +4531,8 @@ fn tour_ids_writes_the_id_lines_and_the_tour_stays_fresh_because_the_edit_rebase
 }
 
 #[test]
-fn tour_ids_on_stops_whose_ids_are_recorded_and_whose_lines_are_gone_says_so_not_that_every_stop_has_one() {
+fn tour_ids_on_stops_whose_ids_are_recorded_and_whose_lines_are_gone_says_so_not_that_every_stop_has_one()
+ {
     let root = tour_git_project("ids-lost");
     let (mut core, _) = ready_core(&root);
     let id = finished_tour(&root, "lost lines", &[PLACE]);
@@ -4608,7 +4610,10 @@ fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_th
         "{edited}"
     );
     let only_title = core
-        .request("vnoc/tourEdit", json!({ "id": id, "title": "How an order is parsed" }))
+        .request(
+            "vnoc/tourEdit",
+            json!({ "id": id, "title": "How an order is parsed" }),
+        )
         .unwrap();
     assert_eq!(
         only_title["words"], "Renamed to “How an order is parsed”.",
@@ -4746,7 +4751,10 @@ fn tour_delete_finished_takes_the_private_finished_tours_only_and_each_comes_bac
         root.join(format!(".vnoc/tours/{shared}.jsonl")).is_file(),
         "a shared tour stays"
     );
-    assert!(tour_file(&root, &writing).is_file(), "a tour being written stays");
+    assert!(
+        tour_file(&root, &writing).is_file(),
+        "a tour being written stays"
+    );
 
     // one Undo for all: each token puts its tour back
     for d in done["deleted"].as_array().unwrap() {
@@ -4756,7 +4764,8 @@ fn tour_delete_finished_takes_the_private_finished_tours_only_and_each_comes_bac
     assert!(tour_file(&root, &a).is_file() && tour_file(&root, &b).is_file());
 
     // nothing left of that kind: said in words, nothing deleted
-    core.request("vnoc/tourDeleteFinished", Value::Null).unwrap();
+    core.request("vnoc/tourDeleteFinished", Value::Null)
+        .unwrap();
     let none = core
         .request("vnoc/tourDeleteFinished", Value::Null)
         .unwrap();

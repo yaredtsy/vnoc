@@ -483,7 +483,8 @@ impl IdsWritten {
     /// What was done, in one sentence for a message (`vnoc/tourIds`' `words`; the pages make none): *"IDs written for 2 stops in 1 file."*, and what could not be
     /// done: *"1 stop's ID is lost from the code: see Needs Attention."* When nothing at all was to do: *"Every stop already has an ID."*
     pub fn sentence(&self) -> String {
-        let count = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let count =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
         let state = |what: &str| self.stops.iter().filter(|s| s.state == what).count();
         let (written, gone) = (state("written"), state("gone"));
         let mut parts = Vec::new();
