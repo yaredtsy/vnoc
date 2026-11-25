@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 
 import type { Problem, StructureResult } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
-import { sleep, until, waitFor } from "./util";
+import { guarded, sleep, until, waitFor } from "./util";
 
 // NEEDS ATTENTION in a real window (docs/11-missing-relink-remove.md §6): a deleted function shows under Missing and leaves when it is back;
 // a problem on a folder is revealed, not opened; a node whose ID line was deleted shows under ID lost, and Write ID on its row puts the line back. The suite reads the view's rows through the extension's test API: it cannot see the tree itself.
@@ -26,7 +26,7 @@ let folder: string;
 const textTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputText);
 
 suiteSetup(async () => {
-  api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+  api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
   folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
 });
 

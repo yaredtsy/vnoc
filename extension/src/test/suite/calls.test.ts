@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import { callNodesIn } from "@vnoc/shared/calls.ts";
 import type { CallTreeResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import { type Intent, type Session, openOf } from "@vnoc/shared/session.ts";
-import { canvasTabs, sleep, until } from "./util";
+import { canvasTabs, guarded, sleep, until } from "./util";
 
 // Show Calls in a real window (docs/16-ui-redesign/05-calls-as-nodes.md §2, §5, §7): the host fetches the call trees of what is open, cancels what stops
 // being wanted, fetches a stale tree again by itself, and starts over when the core restarts. The suite reads the host's own log of what happened.
@@ -40,7 +40,7 @@ suite("show calls", () => {
   let twice: TreeNode;
 
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     const folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
     fs.writeFileSync(path.join(folder, "calls_lib.py"), LIB);
     fs.writeFileSync(path.join(folder, "calls_app.py"), APP);

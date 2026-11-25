@@ -1,5 +1,6 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
+import { guarded } from "./util";
 
 const WS = process.env.VNOC_TEST_WORKSPACE!;
 let api: { ping(): Promise<any>; reportFacts(): { extension: string; core: string | undefined }; logTail(): string; structure(): Promise<any>; waitRendered(ms: number): Promise<{ visible: number; hidden: number; callCards: number; chevrons: number }> };
@@ -7,7 +8,7 @@ let api: { ping(): Promise<any>; reportFacts(): { extension: string; core: strin
 suiteSetup(async () => {
   const ext = vscode.extensions.getExtension("vnoc.vnoc")!;
   assert.ok(ext, "the extension is installed in the test host");
-  api = await ext.activate();
+  api = guarded(await ext.activate());
 });
 
 suite("walking skeleton: extension host -> core -> Python driver -> structure -> webview", () => {

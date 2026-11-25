@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import { canvasTabs, until } from "./util";
+import { canvasTabs, guarded, until } from "./util";
 
 // The canvas's bar in a real window (docs/16-ui-redesign/02-top-bar.md §3 #4, §4). The suite cannot see the page, so it listens to what the page
 // posts (`warned`, `rendered`), as the skeleton suite does. The second suite stops the core on purpose and starts it again in its teardown, so it can sit anywhere.
@@ -24,7 +24,7 @@ let api: {
 };
 
 suiteSetup(async () => {
-  api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+  api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
 });
 
 const openCanvas = async () => {

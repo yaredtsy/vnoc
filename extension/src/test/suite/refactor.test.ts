@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 
 import type { StructureResult, TreeNode } from "@vnoc/shared/messages";
 import { allNodes } from "@vnoc/shared/tree";
-import { waitFor } from "./util";
+import { guarded, waitFor } from "./util";
 
 // THE PROMISE OF 0.1 in a real window (docs/13-harden-and-publish.md §4): "the doc is still there after a rename". The core's tests prove it with files
 // the test writes; this suite does what a person does: an edit in VS Code, a rename in the Explorer, a `git mv` in a terminal.
@@ -56,7 +56,7 @@ suite("refactor: the doc is still there after a rename or a move", () => {
   let before: string | null;
 
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     workspace = vscode.workspace.workspaceFolders![0].uri.fsPath;
     // IDs on (an earlier suite wrote `[ids] default = "none"` here); put back at the end
     before = fs.existsSync(settings()) ? fs.readFileSync(settings(), "utf8") : null;

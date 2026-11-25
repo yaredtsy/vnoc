@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import type { SearchResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
 import { MISSING_PIN } from "@vnoc/shared/tree";
-import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, guarded, sleep, until, waitFor } from "./util";
 
 // Search in a real window (docs/20-search/06-build-order.md S3): the STRUCTURE view's box asks the core and draws what it answers, and *V-NOC: Search…* puts the cursor in that box (a QuickPick re-sorted the core's order: S3b).
 // The suite cannot type in a webview, so `setSearch` puts text in the box as typing would, and the page says what it drew (`searchDrawn`). What a query finds, and in what
@@ -71,7 +71,7 @@ async function showSidebar(): Promise<void> {
 
 suite("search", () => {
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     // the box is in the STRUCTURE view: its page must exist and have drawn the tree before it can be typed in
     await showSidebar();
     await until("the STRUCTURE page to exist", () => api.sidebarOpen(), 30_000);

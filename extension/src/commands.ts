@@ -110,7 +110,7 @@ export class Commands {
         this.store.dispatch({ type: "explore", call: call.id, activate: true }, call.context);
       }),
       on("vnoc.goToCallSite", (arg) => this.goToCallSite(this.callFor(arg).node)),
-      on("vnoc.openTour", () => this.openTour()),
+      on("vnoc.openTour", (arg) => this.openTour(arg)),
       // **Show Tours** in a node's menu (card and row), when the node is on tours: the same as a click on its `▶ N`
       on("vnoc.showTours", async (arg, selected) => this.showToursOf((await this.nodeFor(arg, selected)).id, this.contextOf(arg))),
       // the menu of a tour's card and of a stop's row (design 04 §7): the real file, and MAIN on that node (the tour stays where it was)
@@ -383,8 +383,15 @@ export class Commands {
    * Open Tour… (design 02 frame 10): the core's list as a QuickPick, in the core's order; the one picked becomes the window's tour context (a tour that was open is
    * replaced) and the canvas comes up. The place is the core's: the tour opens where the reader was.
    */
-  private async openTour(): Promise<void> {
+  /** **Open Tour…**. With a tour's id as its argument (`executeCommand("vnoc.openTour", id)`: the host's ⋯ and the suites) it opens that tour and asks nothing. */
+  private async openTour(id?: unknown): Promise<void> {
     const { tours } = await this.request<ToursAnswer>("vnoc/tours");
+    if (typeof id === "string" && id !== "") {
+      const row = tours.find((r) => r.id === id);
+      if (!row) throw new Error(`There is no tour with the id ${id}.`);
+      await this.openTourById(row.id, row.title);
+      return;
+    }
     if (tours.length === 0) {
       void vscode.window.showInformationMessage("There are no tours yet. Ask your coding agent for one: “give me a tour of …”.");
       return;

@@ -1,5 +1,7 @@
 import * as path from "path";
 import Mocha from "mocha";
+import * as vscode from "vscode";
+import { CORE_STOPPED, core, forgetUnanswered, markStopped, noAnswer } from "./util";
 
 // The window suites, in the order they run. `bar` stops the core on purpose and restarts it: the suites after it prove it came back.
 const SUITES = ["skeleton", "bar", "session", "sidebar", "attention", "refactor", "calls", "edit", "search", "cli", "bend", "tour"];
@@ -24,8 +26,50 @@ function chosen(): string[] {
   return SUITES.filter((s) => wanted.has(s));
 }
 
+/** How long the check before each test waits for `vnoc/ping`. */
+const PING_MS = 3_000;
+
+/**
+ * A core that stops answering must be ONE failure, not a chain of 60 s ones. Before every test one `ping` is asked (3 s); a core that does not answer fails that test and, with every
+ * request a test makes (`util.core`), the rest of the suite's tests: each of them fails at once with "the core stopped answering earlier in this suite" (not skipped). A core that is not
+ * running (a request fails at once: `bar` stops it on purpose) is not a core that stopped answering: the test goes on.
+ */
+function guardTheCore(mocha: Mocha) {
+  const stopped = new Set<string>();
+  const failAtOnce = (test: Mocha.Test, why: string) => {
+    test.fn = () => {
+      throw new Error(why);
+    };
+  };
+  mocha.suite.beforeEach(async function () {
+    const test = this.currentTest!;
+    const file = test.file ?? "";
+    if (stopped.has(file)) return failAtOnce(test, CORE_STOPPED);
+    const api: { ping(): Promise<unknown> } = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    try {
+      await core("vnoc/ping", () => api.ping(), PING_MS);
+    } catch (e) {
+      const said = (e as Error).message;
+      forgetUnanswered(); // this bundle's copy of the latch is not a suite's
+      if (said === noAnswer("vnoc/ping", PING_MS)) {
+        stopped.add(file);
+        markStopped(file); // the suite's own bundle: its hooks and its waits fail at once from here
+        failAtOnce(test, said);
+      }
+    }
+  });
+  mocha.suite.afterEach(function () {
+    const test = this.currentTest!;
+    if (test.state === "failed" && test.err?.message?.startsWith("the core did not answer ")) {
+      stopped.add(test.file ?? "");
+      markStopped(test.file ?? "");
+    }
+  });
+}
+
 export function run(): Promise<void> {
   const mocha = new Mocha({ ui: "tdd", timeout: 60_000, color: false });
+  guardTheCore(mocha);
   for (const name of chosen()) mocha.addFile(path.resolve(__dirname, `${name}.test.js`));
   return new Promise((resolve, reject) => mocha.run((failures) => (failures ? reject(new Error(`${failures} tests failed`)) : resolve())));
 }

@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 
 import type { Notes, StructureResult } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
-import { canvasTabs, closeCanvas, sleep, until } from "./util";
+import { canvasTabs, closeCanvas, guarded, sleep, soft, until, waitFor } from "./util";
 
 // A tour plays in a real window (docs/26-tours/06-build-order.md TR17). The tour is made by the built `vnoc tour` commands, so its hashes are real: a stop with blocks and
 // a detail, a short stop, a file with no blocks (contents), and a stop explained before. The suite cannot see the page, so it reads what the stage posts
@@ -47,6 +47,10 @@ interface Api {
   dirtyFiles(): string[];
 }
 let api: Api;
+
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+const setup = (fn: (this: Mocha.Context) => unknown) => globalThis.setup(soft(fn));
 
 const workspace = () => vscode.workspace.workspaceFolders![0].uri.fsPath;
 
@@ -142,8 +146,62 @@ const toCover = async (of = tour) => {
 };
 
 suiteSetup(async () => {
-  api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+  api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
 });
+
+// ── every test starts clean ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+const gitIn = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace(), encoding: "utf8" });
+const tomlFile = () => path.join(workspace(), ".vnoc", "vnoc.toml");
+const stateDir = () => path.join(workspace(), ".vnoc", "local", "tour-state");
+/** What the workspace was when the first test of a suite began (after its `suiteSetup`, which may commit what the suite is about): the head, `shop.py` and `vnoc.toml` (null: there was none). */
+const starts = new Map<Mocha.Suite, { head: string; shop: string | null; toml: string | null }>();
+const readOrNull = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
+
+/**
+ * Before each test of this file (and only this file's: a root hook is every suite's): no tour context is open, MAIN is active, the workspace is as it was when the suite began (`git reset --hard` to
+ * the head then, `shop.py` and `vnoc.toml` as they were), and no tour has a place or a "seen" mark (the state files are gone). A test that needs more (a tour open, a place) sets it up itself.
+ */
+setup(async function (this: Mocha.Context) {
+  const test = this.currentTest;
+  if (test?.file !== __filename) return;
+  this.timeout(30_000);
+  const shop = path.join(workspace(), "tourdemo", "shop.py");
+  if (!starts.has(test.parent!)) starts.set(test.parent!, { head: gitIn("rev-parse", "HEAD").trim(), shop: readOrNull(shop), toml: readOrNull(tomlFile()) });
+  const start = starts.get(test.parent!)!;
+  api.answerTourMessages(null);
+  api.answerTourPicks(null);
+  api.pinDialogClick("cancel");
+  for (const c of Object.values(api.session().contexts).filter((c) => c.kind === "tour")) api.dispatch({ type: "closeContext", id: c.id }, c.id);
+  await until("no tour context", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour"));
+  if (api.session().active !== "main") api.dispatch({ type: "activate", id: "main" }, "main");
+  gitIn("reset", "--hard", start.head);
+  if (start.shop !== null && readOrNull(shop) !== start.shop) {
+    fs.mkdirSync(path.dirname(shop), { recursive: true });
+    fs.writeFileSync(shop, start.shop);
+  }
+  if (start.toml === null) fs.rmSync(tomlFile(), { force: true });
+  else if (readOrNull(tomlFile()) !== start.toml) fs.writeFileSync(tomlFile(), start.toml);
+  for (const f of fs.existsSync(stateDir()) ? fs.readdirSync(stateDir()) : []) fs.rmSync(path.join(stateDir(), f), { force: true });
+});
+
+/**
+ * Opens a tour by **Open Tour…**'s command with the tour's id (it asks nothing: no QuickPick, no keyboard focus), and waits for its context and the canvas. The core must know the tour (an
+ * agent's command just wrote it): that is waited for first.
+ */
+const openByCommand = async (id = tour) => {
+  await waitFor(`the core to list tour ${id}`, async () => (await api.tours.list()).some((r) => r.id === id), 30_000);
+  await vscode.commands.executeCommand("vnoc.openTour", id);
+  await until(`the context of tour ${id}`, () => api.session().active === `tour:${id}`);
+  await until("the canvas tab", () => canvasTabs().length > 0);
+};
+/** {@link openByCommand}, then the stage's own drawing of the cover: one drawn after this call, not a stale one of an earlier test. */
+const openAtCover = async (id = tour) => {
+  const drawn = api.stageDrawn().length;
+  await openByCommand(id);
+  await until("the core's place to be the cover", () => JSON.parse(tourCmd(["where", id, "--json"])).at === "cover");
+  await until("the cover drawn anew", () => api.stageDrawn().slice(drawn).some((d) => d.tour === id && d.mode === "cover"), 30_000);
+};
 
 /** The code and the tours of this suite. Not a root hook: every suite of the run shares the window and its workspace, and the ones before this must not see these files. */
 async function makeTours() {
@@ -184,21 +242,13 @@ suite("a tour on the canvas", () => {
     await makeTours();
   });
 
-  test("Open Tour… lists the tour, and picking it opens the tour's context on the cover", async () => {
+  test("Open Tour… lists the tour, and its command with the tour's id opens the tour's context on the cover", async () => {
     const rows = await api.tours.list();
     assert.strictEqual(rows[0]?.id, tour, `the core lists the tour first (newest first): ${JSON.stringify(rows.map((r) => [r.id, r.words]))}`);
     assert.ok(rows[0].words.startsWith("new · 4 stops"), `a row says its words: ${rows[0].words}`);
-    const open = vscode.commands.executeCommand("vnoc.openTour"); // waits for the pick
-    // the QuickPick is shown when the core's list has arrived: accept the first row (newest first, and ours is the newest) until the context is there
-    for (let waited = 0; api.session().active !== `tour:${tour}`; waited += 600) {
-      assert.ok(waited < 20_000, `the tour's context never opened: ${JSON.stringify(api.session().order)}`);
-      await sleep(600);
-      // the list's first row is the active one when it opens; Next then Previous makes sure the picker has the keyboard
-      await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
-      await vscode.commands.executeCommand("workbench.action.quickOpenSelectPrevious");
-      await vscode.commands.executeCommand("workbench.action.acceptSelectedQuickOpenItem");
-    }
-    await open;
+    assert.strictEqual(api.session().active, "main", "no tour is open when the test starts");
+    await vscode.commands.executeCommand("vnoc.openTour", tour); // the command with the id: no pick
+    await until("the tour's context", () => api.session().active === `tour:${tour}`);
     await until("the canvas tab", () => canvasTabs().length > 0);
     const cover = await stageShows("the cover", (d) => d.mode === "cover");
     assert.strictEqual(cover.title, "How the shop checks out");
@@ -206,6 +256,12 @@ suite("a tour on the canvas", () => {
     assert.strictEqual(cover.code, null, "the cover is one column");
     assert.strictEqual(api.session().contexts[`tour:${tour}`].tour, tour);
     assert.strictEqual(api.session().contexts[`tour:${tour}`].selected, "tourdemo/shop.py::checkout", "the first stop is the selection at the cover");
+  });
+
+  suite("on the open tour", () => {
+  setup(async function () {
+    this.timeout(60_000);
+    await openAtCover();
   });
 
   test("Next walks to the end card through a block and its details, and Prev walks back", async () => {
@@ -327,6 +383,7 @@ suite("a tour on the canvas", () => {
     api.stageClick("closeTour");
     await until("MAIN to be active", () => api.session().active === "main" && api.session().order.length >= 1 && !api.session().order.some((id) => id.startsWith("tour:")));
   });
+  });
 });
 
 // ── the TOURS section of the sidebar (docs/26-tours/design/07-tour-list.md §2, 04 §1) ─────────────────────────────────────────────────────────
@@ -406,7 +463,19 @@ suite("the TOURS section", () => {
     assert.strictEqual(back.position, "stop 3 of 4");
   });
 
+  /** the tour open from its row, with the route in the section (a click on a row is what the reader does) */
+  const openFromItsRow = async (id = tour) => {
+    await sectionShows("the list", (d) => d.mode === "list" && d.list.some((r) => r.id === id), 30_000);
+    api.toursClick(`row:${id}`);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await toCover(id);
+    await sectionShows("the route", (d) => d.mode === "route");
+  };
+
   test("‹ Tours shows the list and the tour stays open; its row has the bar and a click on it brings the route back", async () => {
+    await openFromItsRow();
+    for (let i = 0; i < 6; i++) api.stageClick("next"); // s1, s1.b1, s1.b2, s1.b3, s2, s4
+    await stageStep("s4");
     api.toursClick("back");
     const list = await sectionShows("the list", (d) => d.mode === "list" && !d.folded);
     assert.strictEqual(list.list.find((r) => r.id === tour)!.active, true, "the open tour's row is the active one");
@@ -419,6 +488,7 @@ suite("the TOURS section", () => {
   });
 
   test("a click on a stop of the route moves the stage, and on a step of the stop you are in", async () => {
+    await openFromItsRow();
     api.toursClick("stop:s2");
     await stageStep("s2");
     api.toursClick("stop:s1");
@@ -436,6 +506,7 @@ suite("the TOURS section", () => {
   });
 
   test("“called on line N” jumps to the step of its caller that holds the line", async () => {
+    await openFromItsRow();
     api.toursClick("stop:s2"); // reached from s1 at line 6, which block s1.b1 (6-7) holds
     await stageStep("s2");
     api.stageClick("calledFrom");
@@ -444,6 +515,7 @@ suite("the TOURS section", () => {
   });
 
   test("the keys: ↓ ↑ move the focus, Enter opens or jumps, Escape in the route goes back to the list", async () => {
+    await openFromItsRow();
     api.toursClick("key:Escape"); // the route: back to the list
     await sectionShows("the list", (d) => d.mode === "list");
     api.toursClick("key:ArrowDown"); // the first row (the newest)
@@ -496,12 +568,9 @@ const mapShows = async (what: string, ready: (m: NonNullable<ReturnType<typeof m
 const near = (a: { x: number; y: number; zoom: number } | undefined, x: number, y: number, zoom: number) => !!a && Math.abs(a.x - x) < 0.5 && Math.abs(a.y - y) < 0.5 && Math.abs(a.zoom - zoom) < 0.005;
 
 suite("the tour on the map", () => {
-  suiteSetup(async function () {
+  setup(async function () {
     this.timeout(60_000);
-    api.toursClick("key:Escape"); // the list, if a route is shown
-    api.toursClick(`row:${tour}`);
-    await until("the tour's context", () => api.session().active === `tour:${tour}`);
-    await toCover();
+    await openAtCover();
     for (let i = 0; i < 3; i++) api.stageClick("next");
     await stageStep("s1.b2");
   });
@@ -583,12 +652,9 @@ const barShows = async (what: string, ready: (b: NonNullable<ReturnType<typeof b
 
 suite("the tour's bar", () => {
   const context = () => `tour:${tour}`;
-  suiteSetup(async function () {
+  setup(async function () {
     this.timeout(60_000);
-    api.toursClick("key:Escape");
-    api.toursClick(`row:${tour}`);
-    await until("the tour's context", () => api.session().active === context());
-    await toCover();
+    await openAtCover();
     api.stageClick("jump:s2");
     await stageStep("s2");
   });
@@ -717,10 +783,11 @@ suite("a step's text is Markdown", () => {
     tourCmd(["add", md, "tourdemo/shop.py::has_stock", "--body-file", "-"], BROKEN);
     tourCmd(["finish", md, "--no-ids"]);
     await sectionShows("the new tour in the list", (d) => d.list.some((r) => r.id === md), 30_000);
-    api.toursClick("key:Escape");
-    api.toursClick(`row:${md}`);
-    await until("the Markdown tour's context", () => api.session().active === `tour:${md}`);
-    await stageShows("the cover", (d) => d.mode === "cover", 10_000, md);
+  });
+
+  setup(async function () {
+    this.timeout(60_000);
+    await openAtCover(md);
   });
 
   test("a list, a table and a Mermaid flowchart are drawn, and the code pane has syntax colours", async () => {
@@ -733,6 +800,8 @@ suite("a step's text is Markdown", () => {
   });
 
   test("a diagram that does not parse shows its source and one line, and the next step is drawn", async () => {
+    api.stageClick("start");
+    await stageShows("stop 1", atStep("s1"), 30_000, md);
     api.stageClick("next");
     const d = await stageShows("the broken diagram's note", (x) => x.step === "s2" && x.markdown.diagrams === 1 && x.markdown.failed === 1, 30_000, md);
     assert.deepStrictEqual(d.markdown, { lists: 0, tables: 0, fences: 0, diagrams: 1, drawn: 0, failed: 1 });
@@ -774,6 +843,15 @@ suite("a tour read while it is written", () => {
     api.dispatch({ type: "activate", id: "main" }, "main");
   });
 
+  /** A tour being written, the way the tests after the first need it: the plan of four stops, `n` of them written (in the plan's order), and the tour open on its cover. */
+  const writing = async (n: 1 | 2 | 3): Promise<string> => {
+    await sleep(1100); // told apart by the second they were started in
+    const id = JSON.parse(tourCmd(["start", "--title", "Written as it goes", "--question", "what keeps the stock right", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), node("charge"), node("release"), "--json"])).tour;
+    for (const name of (["has_stock", "reserve", "charge"] as const).slice(0, n)) tourCmd(["add", id, node(name), "--body-file", "-"], SHORT[name]);
+    await openAtCover(id);
+    return id;
+  };
+
   test("a tour that starts while the canvas is hidden opens nothing: one notification, once, and its Open Tour brings the tour up on the cover", async function () {
     this.timeout(60_000);
     await closeCanvas();
@@ -793,7 +871,9 @@ suite("a tour read while it is written", () => {
     assert.strictEqual(cover.beat, "writing");
   });
 
-  test("the stops of the plan are on the route and the map at once, not written; the bar, the foot, the chip and the status bar item say the agent is writing", async () => {
+  test("the stops of the plan are on the route and the map at once, not written; the bar, the foot, the chip and the status bar item say the agent is writing", async function () {
+    this.timeout(60_000);
+    writer = await writing(1);
     const route = await sectionShows("the route of the tour being written", (d) => d.mode === "route" && d.route.filter((r) => r.kind === "stop").length === 4);
     assert.deepStrictEqual(route.route.filter((r) => r.kind === "stop").map((r) => [r.id, r.mark, r.description]), [["s1", "ahead", null], ["s2", "planned", "writing…"], ["s3", "planned", null], ["s4", "planned", null]], "stop 1 is written, the agent is on stop 2");
     assert.deepStrictEqual(route.foot, { text: "writing 2 of 4", stop: true });
@@ -807,7 +887,9 @@ suite("a tour read while it is written", () => {
     assert.deepStrictEqual(cover.segments, { total: 4, planned: 3, filled: 0 }, "four segments, three dotted");
   });
 
-  test("an add puts the stop on the route and the map with no reload, and the stage stays on the reader's step", async () => {
+  test("an add puts the stop on the route and the map with no reload, and the stage stays on the reader's step", async function () {
+    this.timeout(60_000);
+    writer = await writing(1);
     api.stageClick("start");
     const one = await stageShows("stop 1", atStep("s1"), 10_000, writer);
     assert.strictEqual(one.kind, "short");
@@ -827,7 +909,9 @@ suite("a tour read while it is written", () => {
     await barShows("the bar moved on", (b) => b.agent === "writing 3/4");
   });
 
-  test("reading ahead onto a stop that is not written shows it being written, and its text fades in where the grey bars were when the agent adds it", async () => {
+  test("reading ahead onto a stop that is not written shows it being written, and its text fades in where the grey bars were when the agent adds it", async function () {
+    this.timeout(60_000);
+    writer = await writing(2);
     api.stageClick("jump:s3");
     const ahead = await stageShows("stop 3, not written", atStep("s3"), 10_000, writer);
     assert.strictEqual(ahead.kind, "planned");
@@ -852,7 +936,9 @@ suite("a tour read while it is written", () => {
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
 
-  test("■ on the bar is the core's halt: the bar, the foot and the stage say stopping until the agent answers, and stopped after its next add is refused", async () => {
+  test("■ on the bar is the core's halt: the bar, the foot and the stage say stopping until the agent answers, and stopped after its next add is refused", async function () {
+    this.timeout(60_000);
+    writer = await writing(3);
     api.stageClick("jump:s4");
     await stageShows("stop 4", atStep("s4"), 10_000, writer);
     api.stageClick("menuStop"); // the ■ on the bar
@@ -966,6 +1052,7 @@ suite("a tour read while it is written", () => {
 
   test("a second tour that appears while one is open leaves the open one, the list has it, and one notification says so", async function () {
     this.timeout(60_000);
+    writer = await writing(1); // a tour is open
     const open = api.session().active;
     assert.ok(open.startsWith("tour:"), open);
     const before = api.toursNoticed().length;

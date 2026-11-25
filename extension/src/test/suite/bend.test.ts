@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 
 import type { CallTreeResult, LanguageInfo, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
-import { canvasTabs, closeCanvas, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, guarded, until, waitFor } from "./util";
 
 // A second language in the same window: the opened folder holds a Python file and `bend/` (runTest.ts copies it from src/test/fixtures/bend). Nothing here is
 // written for Bend alone: it is what the extension does for a language it was never told about, which is every driver the core reports.
@@ -33,7 +33,7 @@ suite("a second language", () => {
   let docsBefore: string[] = [];
 
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     folder = vscode.workspace.workspaceFolders![0].uri.fsPath;
     original = fs.readFileSync(mainFile(), "utf8");
     settingsBefore = fs.existsSync(settings()) ? fs.readFileSync(settings(), "utf8") : null;

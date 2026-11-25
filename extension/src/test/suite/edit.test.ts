@@ -8,7 +8,7 @@ import type { CodeResult, Draft, EditSaveParams, EditSaveResult, EditStartParams
 import { callId } from "@vnoc/shared/calls.ts";
 import type { Intent, Session } from "@vnoc/shared/session.ts";
 import { allNodes } from "@vnoc/shared/tree";
-import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, guarded, sleep, until, waitFor } from "./util";
 
 // Editing in the canvas (docs/17-edit-in-canvas.md), step 9.1: a card that shows the code of a file with unsaved changes says so. The suite cannot see the
 // page, so it listens to what the page posts (`codeShown`: each time a card drew the code it read, and whether it showed the mark).
@@ -83,7 +83,7 @@ async function restoreFixture(file: string, original: string): Promise<void> {
 
 suite("reading: a card marks a file with unsaved changes", () => {
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     discardOnClose();
   });
 
@@ -153,7 +153,7 @@ suite("reading: a card marks a file with unsaved changes", () => {
 
 suite("editing: typing in a card's code starts a draft (docs/17-edit-in-canvas.md steps 9.2, 9.7)", () => {
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     discardOnClose();
   });
 
@@ -312,7 +312,7 @@ suite("saving: Save writes the draft into the file (docs/17-edit-in-canvas.md st
   let eol: string;
 
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     discardOnClose();
     original = fs.readFileSync(file(), "utf8");
     eol = eolOf(original);
@@ -695,7 +695,7 @@ suite("one draft per function: the bar counts the drafts (docs/17-edit-in-canvas
   const CALLER = "edit_calls.py::caller";
 
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     discardOnClose();
     fs.writeFileSync(file(), SOURCE);
   });
@@ -770,7 +770,7 @@ suite("Save asks before it removes a function's ID (docs/17-edit-in-canvas.md st
   let node: TreeNode;
 
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     discardOnClose();
     fs.writeFileSync(file(), SOURCE);
     await waitFor("the index to have the function", async () => {
@@ -885,7 +885,7 @@ suite("a doc's Markdown saves through the same rows (docs/17-edit-in-canvas.md s
   let madeVnoc = false;
 
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     discardOnClose();
     const root = (await api.structure()).git_root;
     madeVnoc = !fs.existsSync(path.join(root, ".vnoc"));
@@ -1088,7 +1088,7 @@ suite("editing a doc in the doc panel, on the canvas and in the docs tab (docs/1
 
   suiteSetup(async function () {
     this.timeout(90_000);
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     discardOnClose();
     const { root, git_root } = { root: (await api.structure()).root, git_root: (await api.structure()).git_root };
     vnoc = path.join(git_root, ".vnoc");
