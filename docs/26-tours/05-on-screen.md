@@ -537,8 +537,30 @@ and the Write IDs test (fixed after, not re-run in full). Screenshots `tools/med
 - A coding session kills a stray core by pid, only a `target/debug/vnoc --stdio` with parent 1 (TR22b's `pkill` also killed the
   installed extension's cores).
 
+**As built (TR22c, `fe25c46`, `3ae704f`, `7832225`; reviewed).** `tours/document.rs` holds export, the import write, the line finder
+and the ask sentence; the CLI calls it. Requests: `vnoc/tourExport { id }` → `{ text }` (as `vnoc tour export` prints it);
+`vnoc/tourImport { text, replace? }` → `{ id, words }` or `{ refused: [{ place, line, words }], words }` (data, nothing written); the
+import does what `finish` does after the end (IDs by the setting, the pin), new or `--replace`, as the CLI always did;
+`vnoc/tours { check_all }` (a real check of every tour, the same rungs and wait), `{ first_on: key }` (the node's tours first, each with
+`on`); `vnoc/tourAsk { key? | tour? }` → `{ text, words }` (for a row: its question and depth too). The screen: the row's menu whole
+(05 §3's order, with **Export as JSON…** beside **Open as JSON**); the JSON tab's **Import into This Tour** with refusals as
+diagnostics by line (cleared on edit); the section's `⋯`; **Ask for a Tour…** in every place; **Open Tour…** in the bar's `⋯` (tour and
+MAIN), a picker with `on <name>` then `other tours`, `ignoreFocusOut`; **Show Docs** as the bar's `ⓘ`. Rust lib 567, lifecycle 82; TS
+874 / 317. **The full window run was not clean:** Bend's 3; the import test (words, fixed in `7832225`); **Open Tour…** timed out at 120 s
+(passes alone, twice); the `waits` window timed out (passes alone); a later `tour` run's *"the tour's bar"* hook timed out at s2. The disk
+fell to 544 MB during that run (the session removed `target/debug/incremental`, 2.1 GB, to go on): a likely cause, not proven.
+
+**Decided at TR22c's review:**
+- The window suites are owed one full clean run on a disk with room (≥ 5 GB free), before anything is given to a person to try.
+- **Show Docs** from a card's menu opens the docs of that card's stop, not the current one; the picker's rows show `on.words`; Check
+  All Tours ends with the core's one sentence (how many changed). TR23.
+- Everything else as built.
+
+**The user, 2026-11-26** asked how far a prototype is. My proposal (awaiting their yes): **TR22p** next, a pre-release VSIX to try by
+hand (TR24's by-hand pass moved ahead), then TR23 shaped by what that pass finds, then the rest of TR24.
+
 **Next, in this order:**
-- **TR22c**, as cut above, with the two review items first.
+- **TR22p** (if the user agrees): `cargo clean`, the owed full window run, the pre-release VSIX, a smoke test of it; else **TR23**.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
