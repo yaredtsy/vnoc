@@ -559,8 +559,52 @@ fell to 544 MB during that run (the session removed `target/debug/incremental`, 
 **The user, 2026-11-26** asked how far a prototype is. My proposal (awaiting their yes): **TR22p** next, a pre-release VSIX to try by
 hand (TR24's by-hand pass moved ahead), then TR23 shaped by what that pass finds, then the rest of TR24.
 
+**As built (TR22p, `1311ded`).** The owed full run is clean (only Bend's failures); 0.4.0 pre-release VSIX (19.7 MB, Bend inside) and
+CLI archive; notices regenerated (`elkjs`, through mermaid: EPL-2.0 chosen of its two, fine beside Apache-2.0). `vnoc --version` still
+says 0.3.1. `tours` is now rebased on `origin/main` (`a9dfd32`, with Bend's canvas PR #25) and has an upstream `origin/tours`.
+
+**The user's by-hand pass on the 0.4.0 VSIX (2026-11-26)**, and what is decided for each:
+- **Tour Settings… closes itself at once.** The same fault as TR22c's Open Tour… picker: a QuickPick or InputBox opened from a page's
+  menu loses focus to the page. Every QuickPick and InputBox the extension opens gets `ignoreFocusOut` (Tour Settings…, Rename…,
+  Open Tour…, any other), and a window test opens each from its menu and finds it still open after 1 s.
+- **Nothing shows that an agent is writing a tour, and Stop is hard to find.** Stop was only `■` on a row's hover. Now:
+  - a row being written: a live mark (a pulsing dot, still under reduced motion) and `writing 6/10`, and a **Stop** button always
+    shown on the row, not only on hover;
+  - the TOURS section's header, when any tour is being written: `● writing` (with the count when more than one) and, for one,
+    **Stop**; the open tour's route header the same;
+  - the status bar item (`▶ Tour 3/10 · writing 6/10`): its click offers **Stop Writing**;
+  - after Stop the row says `stopping` until the agent's next command sees it, then `stopped` (the core's states, as now).
+- **The lit lines are not noticeable.** design/03 §2 asks for a 3 px gutter bar, a background, and **every other line at 55%**. Make the
+  contrast plain in both themes: other lines at 40%, the lit lines' background from the theme's
+  `editor.rangeHighlightBackground` (or `editor.findMatchHighlightBackground`), at full strength, and the gutter bar in the focus
+  colour. Checked in a light and a dark screenshot.
+- **`＋` should open a prompt builder.** design/07's W18 (a click copies a sentence) stays, but the sentence is built in a small form
+  first. `＋`, the node menu's **Ask for a Tour…**, a row's **Ask for a New Tour**, and the empty states' **Ask for One** / **Copy a
+  Request** all open it, filled in; it sits at the top of the TOURS section, above the list, and Esc or **Cancel** closes it:
+  - **About:** the selected node (a chip; empty: "anything: say it in the question");
+  - **Question:** *What do you want to understand?* (optional, one or two lines);
+  - **How far:** *Let the agent decide* (default) · *Only this* · *And what it calls* · *Two levels of calls*;
+  - **Detail:** *Let the agent decide* (default) · *Quick* · *Normal* · *Detailed*;
+  - the prompt as it will be copied (the core's text, live), and **Copy Prompt**, then *"Copied. Paste it to your agent."*.
+  The core builds the text: `vnoc/tourAsk { key?, question?, reach?, detail? }`, e.g. *"Walk me through
+  orders/service.py::OrderService.parse_order: why does it retry twice? Cover it and what it calls. Make it a quick tour."*
+- **How the depth is controlled now** (the user did not know): the agent decides; above ~12 stops it asks a sizing question. `detail`
+  exists (`start --detail quick|normal|detailed`, the text budgets) but the skill never says to use it. The skill gains: *when the
+  request names a reach or a detail, use them (`--detail`, the route depth); otherwise choose the detail from the question: a quick
+  look → quick, learning or an onboarding → detailed, else normal.*
+- **Tour titles look like file paths.** The skill says `--title "<what it is of>"`, which an agent reads as the node's path. The skill
+  says instead: *a phrase that says what the tour explains, as a person would name it ("How checkout survives a payment timeout"),
+  never a path or a function's name*. The core refuses a title that is only a node address or a path (`title: say what the tour
+  explains, not where it is`) with its own example. Old tours keep theirs (Rename…).
+- **The version:** the Cargo version goes to 0.4.0 with the extension, and the skill's `vnoc-version`.
+
+**TR23 is re-cut:** **TR23a** = the by-hand pass above (two commits: the core and skill, then the screen). **TR23b** = the old TR23 list:
+narrow stage, mini bar, keys (↑↓, Alt+←), labels, the contents' fold, the cover title said twice, duplicate SVG ids in the Mermaid
+overlay, the row's hover `⋯`, the action strip over `▶ N`, the sticky header over the first stop row, the second offer below the fold,
+the code pane's long lines (no wrap), **Show Docs** from a right-clicked card, the picker's `on.words`, Check All Tours' sentence.
+
 **Next, in this order:**
-- **TR22p** (if the user agrees): `cargo clean`, the owed full window run, the pre-release VSIX, a smoke test of it; else **TR23**.
+- **TR23a**, then a new VSIX for the user, then **TR23b**, then TR24.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
