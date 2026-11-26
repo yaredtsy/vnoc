@@ -259,4 +259,18 @@ test("Check All Tours asks the host to check every tour; Ask for a Tour… copie
   await w.actions.ask();
   await w.actions.ask({ tour: "t-1" });
   assert.deepEqual(w.asked.slice(1), [["vnoc/tourAsk", undefined], ["vnoc/tourAsk", { tour: "t-1" }]]);
+  // the form's parts go to the core as they are: it makes the sentence
+  await w.actions.ask({ key: "a.py::f", question: "why?", reach: "calls", detail: "quick" });
+  assert.deepEqual(w.asked.at(-1), ["vnoc/tourAsk", { key: "a.py::f", question: "why?", reach: "calls", detail: "quick" }]);
+  // parts that are all undefined are nothing
+  await w.actions.ask({ key: undefined });
+  assert.deepEqual(w.asked.at(-1), ["vnoc/tourAsk", undefined]);
+});
+
+test("the status bar item's click offers Show Tour and Stop Playing, and Stop Writing only while the agent writes", async () => {
+  const offered: string[][] = [];
+  const w = window({ pick: (async (items: { label: string }[]) => void offered.push(items.map((i) => i.label))) as ActionDeps["pick"] });
+  await w.actions.statusPick(false);
+  await w.actions.statusPick(true);
+  assert.deepEqual(offered, [["Show Tour", "Stop Playing"], ["Show Tour", "Stop Writing", "Stop Playing"]]);
 });

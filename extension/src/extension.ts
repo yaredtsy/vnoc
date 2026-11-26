@@ -19,6 +19,7 @@ import { callLookup } from "@vnoc/shared/calls.ts";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
 import { Tours, tourContext, vnocIsAbove } from "./tours";
+import { stoppable } from "@vnoc/shared/tourWriting.ts";
 import { type Level, TourActions } from "./tourActions";
 import * as path from "path";
 import { readingStarts, readingTheCode } from "./progress";
@@ -131,8 +132,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   // the status bar item (design 04 §6): `▶ Tour 3/10` while a tour is open, and a click shows the canvas with the tour active
   const tourItem = vscode.window.createStatusBarItem("vnoc.tour", vscode.StatusBarAlignment.Left, 50);
   tourItem.name = "V-NOC Tour";
-  tourItem.command = "vnoc.showTour";
-  tourItem.tooltip = "Show the tour on the canvas";
+  tourItem.command = "vnoc.tourStatus";
+  tourItem.tooltip = "The tour: show it, stop writing it, or stop playing it";
   // the one notification (W11): a tour started being written and the canvas is not showing a tour. Nothing opens by itself. The suite cannot click a button of a notification
   const noticed: { id: string; open: () => Promise<void> }[] = [];
   let statusText: string | null = null;
@@ -195,7 +196,7 @@ export function activate(ctx: vscode.ExtensionContext) {
         const want = pickAnswers.shift();
         return items.find((i) => i.label === want);
       }
-      return vscode.window.showQuickPick(items, { title: options.title, placeHolder: options.placeHolder });
+      return vscode.window.showQuickPick(items, { title: options.title, placeHolder: options.placeHolder, ignoreFocusOut: true });
     },
     // the dialog is the canvas page's: the host tells it, and the canvas comes up if it was not open
     openDialog: (id, title) => {
@@ -203,7 +204,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       void panels.showCanvas();
     },
     showChanges: () => void vscode.commands.executeCommand("workbench.view.scm"),
-    input: async (options) => (inputAnswers !== null ? inputAnswers.shift() : vscode.window.showInputBox({ title: options.title, prompt: options.prompt, value: options.value })),
+    input: async (options) => (inputAnswers !== null ? inputAnswers.shift() : vscode.window.showInputBox({ title: options.title, prompt: options.prompt, value: options.value, ignoreFocusOut: true })),
     // a tour that went to the trash cannot stay open: its context closes
     closeIfOpen: (id) => {
       const open = tourContext(store.get());
@@ -345,6 +346,17 @@ export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(
     tourItem,
     // a click on the status bar item: the canvas, with the tour that is open active
+    // a click on the status bar item (TR23a): what can be done to the open tour; **Show Tour** is the click it was
+    vscode.commands.registerCommand("vnoc.tourStatus", async () => {
+      const open = tourContext(store.get());
+      if (!open) return;
+      const held = tours.heldTour();
+      const writing = held !== null && "stops" in held && stoppable(held);
+      const chosen = await tourActions.statusPick(writing);
+      if (chosen === "show") await vscode.commands.executeCommand("vnoc.showTour");
+      else if (chosen === "stopWriting" && open.tour) await tours.halt(open.tour).catch((e) => output.appendLine(`vnoc/tourHalt: ${String((e as Error).message ?? e)}`));
+      else if (chosen === "stopPlaying") store.dispatch({ type: "closeContext", id: open.id }, open.id);
+    }),
     vscode.commands.registerCommand("vnoc.showTour", async () => {
       const open = tourContext(store.get());
       if (open) store.dispatch({ type: "activate", id: open.id }, open.id);
@@ -387,8 +399,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.tourImportFile", () => tourActions.importFile()),
     vscode.commands.registerCommand("vnoc.tourCheckAll", () => tourActions.checkAll()),
     // **Ask for a Tour…**: the node it was chosen on (a menu names it; the palette and the buttons mean the selected one), else none; a row's **Ask for a New Tour** names the tour
-    vscode.commands.registerCommand("vnoc.tourAsk", async (arg, selected) => tourActions.ask({ key: await commands.askKeyOf(arg, selected) })),
-    vscode.commands.registerCommand("vnoc.tourAskAgain", (arg) => tourActions.ask({ tour: tourOfArg(arg) })),
+    vscode.commands.registerCommand("vnoc.tourAsk", async (arg, selected) => commands.askForTour({ key: await commands.askKeyOf(arg, selected) })),
+    vscode.commands.registerCommand("vnoc.tourAskAgain", (arg) => commands.askForTour({ tour: tourOfArg(arg) })),
     // **Show Docs** in a stop's menu: the docs panel, as the bar's `ⓘ` opens it
     vscode.commands.registerCommand("vnoc.tourShowDocs", async () => {
       await panels.showCanvas();

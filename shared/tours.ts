@@ -437,10 +437,25 @@ export interface TourRefusal {
 /** `vnoc/tourImport`: the tour that was written, or every refusal of the document (nothing was written); `words` is the core's sentence either way. */
 export type TourImportAnswer = { id: TourId; words: string; refused?: undefined } | { refused: TourRefusal[]; words: string; id?: undefined };
 
-/** `vnoc/tourAsk`: the sentence for the agent, and the line that says what to do with it. */
+/** How far the form's tour goes from its node: `agent` says nothing in the sentence. */
+export type AskReach = "agent" | "only" | "calls" | "calls2";
+/** How much each step says: `agent` says nothing in the sentence. */
+export type AskDetail = "agent" | "quick" | "normal" | "detailed";
+
+/** The parts of the sentence for an agent, as the form of **Ask for a Tour…** has them (`vnoc/tourAsk`): the core makes the sentence from them. With `tour`, that tour's root, question and detail fill what the others do not give. */
+export interface TourAskParams {
+  key?: string;
+  question?: string;
+  reach?: AskReach;
+  detail?: AskDetail;
+  tour?: TourId;
+}
+
+/** `vnoc/tourAsk`: the sentence for the agent, and the line that says what to do with it. With `tour`, `filled` is what that tour gave the form: its root's address, its question, its detail. */
 export interface TourAskAnswer {
   text: string;
   words: string;
+  filled?: { key?: string; question?: string; detail: AskDetail };
 }
 
 export interface ToursAnswer {
@@ -466,7 +481,7 @@ export interface TourCoreRequests {
   "vnoc/tourSettings": { params: { ids?: SettingChoice; commit?: SettingChoice } | undefined; result: TourSettingsAnswer };
   "vnoc/tourExport": { params: { id: TourId }; result: { text: string } };
   "vnoc/tourImport": { params: { text: string; replace?: TourId }; result: TourImportAnswer };
-  "vnoc/tourAsk": { params: { key?: string; tour?: TourId } | undefined; result: TourAskAnswer };
+  "vnoc/tourAsk": { params: TourAskParams | undefined; result: TourAskAnswer };
   "vnoc/tourCounts": { params: undefined; result: TourCountsAnswer };
   "vnoc/tourCalls": { params: { id: TourId }; result: TourCallsAnswer };
 }

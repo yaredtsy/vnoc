@@ -1,6 +1,6 @@
 import type { CallTreeResult, CodeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
-import type { AsWritten, Place, StopId, TourCallsAnswer, TourHaltAnswer, TourId, TourMove, TourPinAnswer, TourPinParams, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { AsWritten, Place, StopId, TourAskParams, TourCallsAnswer, TourHaltAnswer, TourId, TourMove, TourPinAnswer, TourPinParams, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
 import { asksAgain } from "./askAgain.ts";
 import type { Docs } from "./docs";
@@ -77,7 +77,7 @@ export interface Deps {
     share(id: TourId, share: boolean): Promise<unknown>;
     importFile(): Promise<unknown>;
     checkAll(): Promise<unknown>;
-    ask(params?: { key?: string; tour?: TourId }): Promise<unknown>;
+    ask(params?: TourAskParams): Promise<unknown>;
   };
   /** the bar's **Open Tour…**: the command `vnoc.openTour`, which asks which tour */
   openTour(): Promise<void>;
@@ -134,6 +134,7 @@ export function createHandlers(d: Deps): Handlers {
     tourDeleteFinished: async () => void (await d.tourActions.deleteFinished()),
     tourShare: async ({ id }) => void (await d.tourActions.share(id, true)),
     tourAsk: async (params) => void (await d.tourActions.ask(params ?? undefined)),
+    tourAskText: (params) => d.core("vnoc/tourAsk", params ?? undefined),
     tourImportFile: async () => void (await d.tourActions.importFile()),
     tourCheckAll: async () => void (await d.tourActions.checkAll()),
     openTour: () => d.openTour(),

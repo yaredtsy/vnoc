@@ -9,19 +9,27 @@ import { isOpen, listItem } from "./list.ts";
 import type { Tomb } from "./deleted.ts";
 import { tourRowContext } from "./menu.ts";
 import type { RouteRow } from "./route.ts";
+import { rowMarks } from "./writing.ts";
 
 const kindOf = (kind: string | null): Kind => (kind && kind in KINDS ? (kind as Kind) : "function");
 const MARKS = { seen: "✓", here: "●", ahead: "○", planned: "◌" } as const;
 
+/** The live dot of a tour being written: it pulses (still under reduced motion). */
+function LiveDot({ mode }: { mode: "pulse" | "still" }) {
+  return <span data-part="live-dot" data-live={mode} aria-hidden="true" className={cn("inline-block size-[7px] flex-none rounded-full bg-[color:var(--ring)]", mode === "pulse" && "motion-safe:animate-pulse")} />;
+}
+
 /**
- * One tour's row in the list (design 07 §3): the kind's icon and the title, then the core's words and the question. 40 px. On hover, at the right of line 1: `🗑` Delete, and on a tour being written
- * `■ Stop` instead (a tour is not deleted under the agent). A row that cannot be read is dim and has only the delete.
+ * One tour's row in the list (design 07 §3): the kind's icon and the title, then the core's words and the question. 40 px. A tour being written has a live dot and the core's word at the right of line 1,
+ * and **■ Stop** at the right of line 2, always shown; the open tour says `▶ playing` and has **Stop Playing**, always shown. On hover, at the right of line 1: `🗑` Delete (not on a tour being written:
+ * it is not deleted under the agent). A row that cannot be read is dim and has only the delete.
  */
-export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpen, onDelete, onStop }: { row: TourRow; domId: string; open: string | null; focused: boolean; /** the row's second line in this view: its own words, or in the second view how it is on the node */ line2: string; /** the state word at the right of line 1, in the second view */ stateWord: string | null; onOpen: () => void; onDelete: () => void; onStop: () => void }) {
+export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpen, onDelete, onStop, onStopPlaying }: { row: TourRow; domId: string; open: string | null; focused: boolean; /** the row's second line in this view: its own words, or in the second view how it is on the node */ line2: string; /** the state word at the right of line 1, in the second view */ stateWord: string | null; onOpen: () => void; onDelete: () => void; onStop: () => void; onStopPlaying: () => void }) {
   const item = listItem(row);
   const kind = KINDS[kindOf(item.kind)];
   // `■ Stop` only while the agent can hear it (`writing`); a tour that is `stopping` has been asked already, and its delete is the core's to refuse in words
-  const stop = row.state === "writing";
+  const marks = rowMarks(row, open);
+  const stop = marks.stop;
   const hover = "absolute top-1 right-1 flex h-[18px] flex-none items-center justify-center rounded-sm bg-[color:var(--list-hover-bg)] px-1 text-[11px] text-foreground opacity-0 group-hover/row:opacity-100 hover:bg-toolbar-hover focus-visible:opacity-100";
   return (
     <div
@@ -47,31 +55,59 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
           </span>
         )}
         <span className={cn("min-w-0 truncate", isOpen(row, open) && "font-bold")}>{item.title}</span>
-        {stateWord !== null && (
-          <span data-state-word className="ml-auto flex-none pl-2 text-[11px] text-muted-foreground">
-            {stateWord}
+        {(marks.playing || marks.word !== null || stateWord !== null) && (
+          <span data-part="row-state" className="ml-auto flex flex-none items-center gap-1.5 pl-2 text-[11px] text-muted-foreground">
+            {marks.playing && <span data-part="row-playing">▶ playing</span>}
+            {marks.word !== null ? (
+              <span data-part="row-live" className="flex items-center gap-1">
+                {marks.dot !== null && <LiveDot mode={marks.dot} />}
+                {marks.word}
+              </span>
+            ) : (
+              stateWord !== null && <span data-state-word>{stateWord}</span>
+            )}
           </span>
         )}
       </div>
-      <div className="flex min-w-0 gap-1 pl-[20px] text-[11px] text-muted-foreground">
-        <span className="flex-none">{line2}</span>
-        {item.question !== null && <span className="min-w-0 truncate">· “{item.question}”</span>}
+      <div className="flex min-w-0 items-center gap-1 pl-[20px] text-[11px] text-muted-foreground">
+        <span className={cn("min-w-0 truncate", item.question === null && "flex-1")}>{line2}</span>
+        {item.question !== null && <span className="min-w-0 flex-1 truncate">· “{item.question}”</span>}
+        {(stop || marks.playing) && (
+          <span className="ml-auto flex flex-none items-center gap-1 pl-1">
+            {stop && (
+              <button
+                type="button"
+                data-part="row-stop"
+                title="Stop the agent: it finishes the stop it is on"
+                aria-label={`Stop: ${item.title}`}
+                className="flex h-4 items-center rounded-sm border border-border px-1 text-[11px] text-foreground hover:bg-toolbar-hover"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStop();
+                }}
+              >
+                ■ Stop
+              </button>
+            )}
+            {marks.playing && (
+              <button
+                type="button"
+                data-part="row-stop-playing"
+                title="Close the tour. The place is kept"
+                aria-label={`Stop Playing: ${item.title}`}
+                className="flex h-4 items-center rounded-sm border border-border px-1 text-[11px] text-foreground hover:bg-toolbar-hover"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStopPlaying();
+                }}
+              >
+                Stop Playing
+              </button>
+            )}
+          </span>
+        )}
       </div>
-      {stop ? (
-        <button
-          type="button"
-          data-part="row-stop"
-          title="Stop the agent: it finishes the stop it is on"
-          aria-label={`Stop: ${item.title}`}
-          className={hover}
-          onClick={(e) => {
-            e.stopPropagation();
-            onStop();
-          }}
-        >
-          ■ Stop
-        </button>
-      ) : (
+      {!stop && (
         <button
           type="button"
           data-part="row-delete"

@@ -6,7 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { cn } from "@/lib/utils.ts";
 import { callFacts } from "@vnoc/shared/calls.ts";
 import { findNode } from "@vnoc/shared/tree.ts";
-import { footWords, stoppable } from "@vnoc/shared/tourWriting.ts";
+import { agentWords, footWords, isWriting, stoppable } from "@vnoc/shared/tourWriting.ts";
 import type { TourRow, TourView } from "@vnoc/shared/tours.ts";
 import { on, post, request } from "../../host.ts";
 import { useCalls } from "../../state/calls.ts";
@@ -26,6 +26,9 @@ import { headerPlace, rowKey, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
 import { useTourList } from "./store.ts";
 import { DeletedRow, RouteRowView, TourListRow } from "./TourRows.tsx";
+import { AskFormView } from "./AskForm.tsx";
+import { ASK_DEBOUNCE_MS, type AskForm, formFor, formFromTour, paramsOf, shortName } from "./ask.ts";
+import { rowMarks, stripOf } from "./writing.ts";
 
 /**
  * The TOURS section (docs/26-tours/design/07-tour-list.md §2, 04 §1): under the context panels. Folded it says its name and how many tours there are; open it is
@@ -130,8 +133,59 @@ export function ToursSection() {
   // the route's foot (design 05 §1): what the agent is doing, with ■ Stop while it writes; and, for a tour with no plan, the one row under the last stop that says another may come
   const foot = mode === "route" && view ? footWords(view) : null;
   const canStop = view ? stoppable(view) : false;
+  // what is being written, and the open tour while the list is shown (TR23a): the line under the section's header; the route header says the open tour's own
+  const strip = rows === null ? null : stripOf(rows, tourId !== null && view !== null ? { id: tourId, title: view.title } : null, mode);
+  const headerWords = view ? agentWords(view) : null;
   const more = mode === "route" && view !== null && view.state === "writing" && view.of === null;
   const count = mode === "route" ? route.length : (rows?.length ?? 0);
+
+  // the prompt builder (TR23a): opened from `＋`, a node's menu, a row's **Ask for a New Tour** and the empty states; its sentence is the core's, asked again 300 ms after the last change
+  const [form, setForm] = useState<AskForm | null>(null);
+  const [prompt, setPrompt] = useState("");
+  const [lastWords, setLastWords] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const openForm = (from: { key?: string | null; tour?: string }) => {
+    setToursFolded(false);
+    setCopied(null);
+    const tourFrom = from.tour;
+    if (tourFrom === undefined) {
+      setForm(formFor(from.key ?? null));
+      return;
+    }
+    void request("tourAskText", { tour: tourFrom }).then(
+      (answer) => {
+        setForm(formFromTour(tourFrom, answer.filled));
+        setPrompt(answer.text);
+        setLastWords(answer.words);
+      },
+      () => {},
+    );
+  };
+  const formKey = form === null ? null : JSON.stringify(paramsOf(form));
+  useEffect(() => {
+    if (form === null) return;
+    let wanted = true;
+    const timer = setTimeout(() => {
+      void request("tourAskText", paramsOf(form)).then(
+        (answer) => {
+          if (!wanted) return;
+          setPrompt(answer.text);
+          setLastWords(answer.words);
+        },
+        () => {},
+      );
+    }, ASK_DEBOUNCE_MS);
+    return () => {
+      wanted = false;
+      clearTimeout(timer);
+    };
+  }, [formKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const change = (part: Partial<AskForm>) => {
+    setCopied(null);
+    setForm((f) => (f === null ? f : { ...f, ...part }));
+  };
+  const copyPrompt = () => form !== null && void request("tourAsk", paramsOf(form)).then(() => setCopied(lastWords), () => {});
+  const chip = form === null || form.about === null ? null : { label: form.tour !== null ? shortName(form.about) : ((tree ? findNode(tree, form.about)?.name : null) ?? shortName(form.about)), title: form.about };
 
   const openTour = (row: TourRow) => {
     setShowList(false);
@@ -152,8 +206,8 @@ export function ToursSection() {
   // the delete and its Undo are the host's (it asks the core, closes the tour if it is the open one, and says a refusal in the core's words)
   const deleteRow = (id: string) => void request("tourDelete", { id }).catch(() => {});
   const stopRow = (id: string) => void request("tourHalt", { id }).catch(() => {});
-  // **Ask for a Tour…**: the host asks the core for the sentence (with the selected node's address, or none), copies it and says the core's words
-  const ask = () => void request("tourAsk", selection === null ? undefined : { key: selection }).catch(() => {});
+  // **Ask for a Tour…** opens the prompt builder, with the selected node in it (or none)
+  const ask = () => openForm({ key: selection });
   const undo = (tomb: { key: string; tokens: string[] }) => void request("tourUndo", { tokens: tomb.tokens }).then(() => removeTomb(tomb.key), () => {});
   // the row's action, for a click and for Enter: one function
   const act = (index: number) => {
@@ -191,17 +245,22 @@ export function ToursSection() {
 
   // the extension's test suite cannot click in a webview: it sends the click
   const stopWriting = () => tourId !== null && canStop && halt(tourId);
-  const latest = useRef({ ask, openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo });
-  latest.current = { ask, openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo };
+  const now = { ask, openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo, openForm, change, copyPrompt, closeForm: () => setForm(null), stripStop: strip?.stop ?? null };
+  const latest = useRef(now);
+  latest.current = now;
   // the host deleted tours (this page's `🗑` or key, the row's menu, **Delete Finished Tours**): their place in the list is the row above them as it was drawn a moment ago
   useEffect(() => on("tourDeleted", ({ ids, tokens, words }) => addTomb({ ids, tokens, words, after: afterOf(latest.current.rows ?? [], ids) })), []);
   useEffect(
     () =>
-      on("viewCommand", ({ name, key: what }) => {
+      on("viewCommand", ({ name, key: what, text }) => {
         // **Show Tours** and a click on `▶ N` (the host did the selecting and the switching): the section is shown, as the list
         if (name === "showTours") {
           setToursFolded(false);
           setShowList(true);
+          return;
+        }
+        if (name === "askForTour") {
+          latest.current.openForm({ key: what ?? null, tour: text });
           return;
         }
         if (name !== "toursClick" || !what) return;
@@ -212,6 +271,20 @@ export function ToursSection() {
         else if (what === "back") setShowList(true);
         else if (what === "close") l.closeTour();
         else if (what === "stop") l.stopWriting();
+        else if (what === "stopplaying") l.closeTour();
+        else if (what === "stripstop") l.stripStop !== null && l.stopRow(l.stripStop);
+        else if (what === "backtoroute") setShowList(false);
+        else if (what.startsWith("askform:")) {
+          // the suite cannot click in a webview: `askform:question:<text>`, `askform:reach:<value>`, `askform:detail:<value>`, `askform:about:remove`, `askform:copy`, `askform:cancel`
+          const [, part, ...rest] = what.split(":");
+          const value = rest.join(":");
+          if (part === "question") l.change({ question: value });
+          else if (part === "reach") l.change({ reach: value as AskForm["reach"] });
+          else if (part === "detail") l.change({ detail: value as AskForm["detail"] });
+          else if (part === "about") l.change({ about: null, tour: null });
+          else if (part === "copy") l.copyPrompt();
+          else if (part === "cancel") l.closeForm();
+        }
         else if (what === "view:all" || what === "view:on") l.switchView(what === "view:on" ? "on" : "all");
         else if (what === "showAll") l.switchView("all");
         else if (what === "deleteFinished") void request("tourDeleteFinished").catch(() => {});
@@ -254,15 +327,19 @@ export function ToursSection() {
         if (e.type !== "row") return [];
         const r = e.row;
         const item = listItem(r);
-        return [{ id: item.id, title: item.title, words: item.words, line2: lineTwo(r, listView), stateWord: stateWordOf(r, listView), question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable }];
+        const marks = rowMarks(r, tourId);
+        return [{ id: item.id, title: item.title, words: item.words, line2: lineTwo(r, listView), stateWord: stateWordOf(r, listView), question: item.question, active: r.id === tourId && !r.private_copy, clickable: item.clickable, mark: marks.playing ? ("playing" as const) : marks.word !== null ? ("writing" as const) : null, stop: marks.stop, stopPlaying: marks.playing }];
       }),
       deleted: entries.flatMap((e) => (e.type === "deleted" ? [{ ids: e.tomb.ids, words: e.tomb.words, after: e.tomb.after }] : [])),
       foot: foot === null ? null : { text: foot, stop: canStop },
       more,
       waiting: rows === null ? waiting : null,
+      strip: strip === null ? null : { writing: strip.writing, stop: strip.stop !== null, playing: strip.playing, stopPlaying: strip.playing !== null },
+      routeHeader: view && mode === "route" ? { writing: isWriting(view) || view.state === "stopped" ? headerWords : null, stop: canStop, stopPlaying: true } : null,
+      form: form === null ? null : { about: chip?.label ?? null, question: form.question, reach: form.reach, detail: form.detail, prompt, words: copied },
       route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, struck: r.type === "stop" && r.struck, depth: r.depth })),
     });
-  }, [entries, listView, buttons.map((b) => b.text).join("|"), emptyOnText, asks.join("|"), route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entries, listView, buttons.map((b) => b.text).join("|"), emptyOnText, asks.join("|"), route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null, strip?.writing, strip?.stop, strip?.playing, headerWords, form, prompt, copied, chip?.label]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section
@@ -310,6 +387,33 @@ export function ToursSection() {
       </div>
       {!folded && (
         <>
+          {/* what is being written, and the open tour while the list is shown: **Stop** stops the agent, **Stop Playing** closes the tour (its place is kept) */}
+          {strip !== null && (
+            <div data-part="strip" className="flex h-[22px] flex-none items-center gap-2 px-2 text-[11px]">
+              {strip.writing !== null && (
+                <span data-part="strip-writing" className="flex flex-none items-center gap-1 text-muted-foreground">
+                  <span aria-hidden="true" className="inline-block size-[7px] flex-none rounded-full bg-[color:var(--ring)] motion-safe:animate-pulse" />
+                  {strip.writing.replace("● ", "")}
+                  {strip.stop !== null && (
+                    <button type="button" data-part="strip-stop" title="Stop the agent: it finishes the stop it is on" className="ml-1 flex h-4 items-center rounded-sm border border-border px-1 text-foreground hover:bg-toolbar-hover" onClick={() => stopRow(strip.stop!)}>
+                      ■ Stop
+                    </button>
+                  )}
+                </span>
+              )}
+              {strip.playing !== null && (
+                <span className="flex min-w-0 flex-1 items-center gap-1">
+                  <button type="button" data-part="strip-playing" title="Back to the tour's route" className="min-w-0 truncate text-left font-bold hover:underline" onClick={() => setShowList(false)}>
+                    {strip.playing}
+                  </button>
+                  <button type="button" data-part="strip-stop-playing" title="Close the tour. The place is kept" className="ml-auto flex h-4 flex-none items-center rounded-sm border border-border px-1 text-foreground hover:bg-toolbar-hover" onClick={closeTour}>
+                    Stop Playing
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+          {form !== null && <AskFormView form={form} chip={chip} prompt={prompt} words={copied} onChange={change} onCopy={copyPrompt} onCancel={() => setForm(null)} />}
           {mode === "route" && view && (
             <div className={cn("flex h-[22px] flex-none items-center gap-1 border-l-2 pr-1 pl-1 text-[12px]", tourActive ? "border-l-[color:var(--ring)]" : "border-l-transparent")} data-part="route-header">
               <button type="button" className="flex flex-none items-center text-muted-foreground hover:text-foreground" title="Back to the list of tours (the tour stays open)" onClick={() => setShowList(true)}>
@@ -318,8 +422,19 @@ export function ToursSection() {
               </button>
               <span className="min-w-0 flex-1 truncate font-bold">▶ {view.title}</span>
               <span className="flex-none text-[11px] text-muted-foreground">{headerPlace(view)}</span>
-              <button type="button" aria-label="Close Tour" title="Close Tour" className="flex size-4 flex-none items-center justify-center rounded-sm hover:bg-toolbar-hover" onClick={closeTour}>
-                <Codicon name="close" className="text-[14px]" />
+              {(isWriting(view) || view.state === "stopped") && headerWords !== null && (
+                <span data-part="route-writing" className="flex flex-none items-center gap-1 text-[11px] text-muted-foreground">
+                  {isWriting(view) && <span aria-hidden="true" className={cn("inline-block size-[7px] flex-none rounded-full bg-[color:var(--ring)]", canStop && "motion-safe:animate-pulse")} />}
+                  {headerWords}
+                  {canStop && (
+                    <button type="button" data-part="route-stop" title="Stop the agent: it finishes the stop it is on" className="ml-0.5 flex h-4 items-center rounded-sm border border-border px-1 text-foreground hover:bg-toolbar-hover" onClick={stopWriting}>
+                      ■ Stop
+                    </button>
+                  )}
+                </span>
+              )}
+              <button type="button" data-part="stop-playing" title="Close the tour. The place is kept" className="flex h-4 flex-none items-center rounded-sm border border-border px-1 text-[11px] hover:bg-toolbar-hover" onClick={closeTour}>
+                Stop Playing
               </button>
             </div>
           )}
@@ -401,7 +516,7 @@ export function ToursSection() {
                   ) : (
                     entries.map((e, i) =>
                       e.type === "row" ? (
-                        <TourListRow key={`${e.row.id}:${e.row.folder}`} row={e.row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} line2={lineTwo(e.row, listView)} stateWord={stateWordOf(e.row, listView)} onOpen={() => openTour(e.row)} onDelete={() => deleteRow(e.row.id)} onStop={() => stopRow(e.row.id)} />
+                        <TourListRow key={`${e.row.id}:${e.row.folder}`} row={e.row} domId={`tours-list-${i}`} open={tourId} focused={cursor === i} line2={lineTwo(e.row, listView)} stateWord={stateWordOf(e.row, listView)} onOpen={() => openTour(e.row)} onDelete={() => deleteRow(e.row.id)} onStop={() => stopRow(e.row.id)} onStopPlaying={closeTour} />
                       ) : (
                         <DeletedRow key={`deleted:${e.tomb.key}`} tomb={e.tomb} domId={`tours-list-${i}`} focused={cursor === i} onUndo={() => undo(e.tomb)} />
                       ),

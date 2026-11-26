@@ -192,7 +192,7 @@ export class CliSetup {
       detail: "Only the commands that read; writes (doc new, doc tag, relink, repair, init) still ask. Added to your own settings, not committed. Untick it to be asked each time.",
       picked: true,
     };
-    const picked = await vscode.window.showQuickPick([item], { canPickMany: true, title: "Set Up Coding Agents: permissions", placeHolder: "Enter to continue with it ticked, Space to untick it, Esc to stop" });
+    const picked = await vscode.window.showQuickPick([item], { canPickMany: true, title: "Set Up Coding Agents: permissions", placeHolder: "Enter to continue with it ticked, Space to untick it, Esc to stop", ignoreFocusOut: true });
     return picked === undefined ? undefined : picked.length > 0;
   }
 
@@ -212,7 +212,7 @@ export class CliSetup {
     const rows = parseList(await this.answer(["agent", "list", "--json"]));
     let agents = given?.agents;
     if (!agents) {
-      const picked = await vscode.window.showQuickPick(pickItems(rows), { canPickMany: true, title: "Set Up Coding Agents", placeHolder: "Pick the coding agents the people of this project use" });
+      const picked = await vscode.window.showQuickPick(pickItems(rows), { canPickMany: true, title: "Set Up Coding Agents", placeHolder: "Pick the coding agents the people of this project use", ignoreFocusOut: true });
       if (!picked) return undefined;
       if (picked.length === 0) {
         void vscode.window.showInformationMessage("V-NOC: Pick at least one agent, or press Esc to stop.");

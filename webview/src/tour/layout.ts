@@ -72,7 +72,7 @@ const NONE: Look = { code: "none", title: false, lead: false, parentLine: false,
 /** The look of the place: the cover and the end are one column; a step is by its kind. */
 export const lookOf = (current: Current): Look => (current.mode === "step" && current.step ? LOOKS[current.step.kind] : NONE);
 
-/** How one line of the code pane is drawn: `lit` (the bar and the background), `dim` (55%), `thin` (the mark `▏`, not dimmed), `plain`. */
+/** How one line of the code pane is drawn: `lit` (the bar and the background), `dim` (40%), `thin` (the mark `▏`, not dimmed), `plain`. */
 export type LineLook = "lit" | "dim" | "thin" | "plain";
 
 /**

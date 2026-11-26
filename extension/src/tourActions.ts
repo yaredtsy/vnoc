@@ -1,4 +1,4 @@
-import type { SettingChoice, TourCoreRequests, TourId, TourIdsAnswer, TourPinAnswer, TourRefusal, TourSettingsAnswer, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
+import type { SettingChoice, TourAskParams, TourCoreRequests, TourId, TourIdsAnswer, TourPinAnswer, TourRefusal, TourSettingsAnswer, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
 // What the user does to a tour from a menu or a button: **Pin**, **Commit and Pin…**, **Write IDs for Its Stops**, **Tour Settings…** (docs/26-tours/05-on-screen.md §3, §5 "Decided for
 // TR22a"). The core does each (`vnoc/tourPin`, `vnoc/tourIds`, `vnoc/tourSettings`); the host asks, says what happened in a message, and saves the files the IDs go into. No `vscode`
@@ -307,9 +307,9 @@ export class TourActions {
   }
 
   /** **Ask for a Tour…** (and **Ask for a New Tour**, with `tour`): the core's sentence goes to the clipboard, and the core's words say what to do with it. */
-  async ask(params?: { key?: string; tour?: TourId }): Promise<"asked" | "refused"> {
+  async ask(params?: TourAskParams): Promise<"asked" | "refused"> {
     try {
-      const answer = await this.d.request("vnoc/tourAsk", params && (params.key !== undefined || params.tour !== undefined) ? params : undefined);
+      const answer = await this.d.request("vnoc/tourAsk", params && Object.values(params).some((v) => v !== undefined) ? params : undefined);
       await this.d.copy(answer.text);
       await this.d.say("info", answer.words, []);
       return "asked";
@@ -317,6 +317,20 @@ export class TourActions {
       await this.refused(e);
       return "refused";
     }
+  }
+
+  /**
+   * The status bar item's click: what can be done to the open tour. **Show Tour** is what the click did before; **Stop Writing** only while the agent writes it (it stops the agent); **Stop Playing**
+   * closes the tour and keeps the place. The two stops are different words for different things.
+   */
+  async statusPick(canStopWriting: boolean): Promise<"show" | "stopWriting" | "stopPlaying" | null> {
+    const items = [
+      { label: "Show Tour", detail: "Show it on the canvas", pick: "show" as const },
+      ...(canStopWriting ? [{ label: "Stop Writing", detail: "Stop the agent: it finishes the stop it is on", pick: "stopWriting" as const }] : []),
+      { label: "Stop Playing", detail: "Close the tour. The place is kept", pick: "stopPlaying" as const },
+    ];
+    const picked = await this.d.pick(items, { title: "Tour", placeHolder: "What do you want to do with the tour?" });
+    return picked?.pick ?? null;
   }
 
   /** **Tour Settings…**: a QuickPick of the two settings, then of `always` / `ask` / `never` with the current one marked, written through `tourSettings`. */

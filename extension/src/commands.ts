@@ -358,6 +358,7 @@ export class Commands {
     const items = await Promise.all(sites.map(async (site) => ({ site, ...siteChoice({ ...site.range, path: site.path }, null, await lineText(site.path, site.range.start.line)) })));
     const pick = vscode.window.createQuickPick<(typeof items)[number]>();
     pick.title = "Go to Call Site";
+    pick.ignoreFocusOut = true;
     pick.matchOnDetail = true;
     pick.items = items;
     pick.onDidChangeActive(([item]) => item && void this.openAt(item.site.path, item.site.range, { preserveFocus: true }).catch(() => {}));
@@ -450,6 +451,16 @@ export class Commands {
     await this.showSidebar();
     await this.panels.whenSidebarDrew(5000); // an event sent to a page that has not started is lost
     this.panels.emit("viewCommand", { name: "showTours" });
+  }
+
+  /**
+   * **Ask for a Tour…** from a node's menu or the palette, and a row's **Ask for a New Tour**: the TOURS section's prompt builder opens at the top of the section, filled in from where it
+   * was opened (`key`: a node; `tour`: that tour's root, question and detail). The sentence is the core's, made in the form.
+   */
+  async askForTour(from: { key?: string; tour?: string }): Promise<void> {
+    await this.showSidebar();
+    await this.panels.whenSidebarDrew(5000); // an event sent to a page that has not started is lost
+    this.panels.emit("viewCommand", { name: "askForTour", key: from.key, text: from.tour });
   }
 
   /** **Reveal Root in Main** on a tour's row: MAIN selects the tour's first stop and is the context the canvas draws. The tour stays where it was. A root with no node in the tree has nothing to reveal. */

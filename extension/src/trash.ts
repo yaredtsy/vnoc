@@ -92,7 +92,7 @@ export async function restoreRemoved(core: Link): Promise<boolean> {
   }
   const picked = await vscode.window.showQuickPick(
     entries.map((e) => ({ label: e.name, description: `${e.docs} ${e.docs === 1 ? "doc" : "docs"} · removed ${e.removed_at.replace("T", " ").replace("Z", " UTC")}`, entry: e })),
-    { title: "Restore Removed Doc", placeHolder: "Which one?", matchOnDescription: true },
+    { title: "Restore Removed Doc", placeHolder: "Which one?", matchOnDescription: true, ignoreFocusOut: true },
   );
   if (!picked) return false;
   await restoreEntry(core, picked.entry.entry);

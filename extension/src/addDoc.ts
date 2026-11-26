@@ -45,7 +45,7 @@ export async function addDoc(request: Request, gitRoot: string, node: TreeNode, 
     // the node's own name, from the core's outline; the key's last dot only when the node has none
     const name = nodeName(key, node.name);
 
-    const title = await vscode.window.showInputBox({ title: "Add doc", prompt: `Title of the new doc for ${name}`, value: existingDocs === 0 ? "Overview" : "", validateInput: (t) => (t.trim() ? undefined : "A doc needs a title") });
+    const title = await vscode.window.showInputBox({ title: "Add doc", prompt: `Title of the new doc for ${name}`, value: existingDocs === 0 ? "Overview" : "", validateInput: (t) => (t.trim() ? undefined : "A doc needs a title"), ignoreFocusOut: true });
     if (title === undefined) return false; // Esc: nothing has been written
 
     // the one time V-NOC edits the user's code without being asked in so many words

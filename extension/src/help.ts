@@ -55,6 +55,7 @@ export async function helpAndFeedback(d: HelpDeps): Promise<void> {
   const licence = String(d.ctx.extension.packageJSON.license);
   const pick = vscode.window.createQuickPick<vscode.QuickPickItem & { entry: HelpEntry }>();
   pick.title = helpTitle(version, d.coreVersion(), licence);
+  pick.ignoreFocusOut = true;
   pick.placeholder = "Report a problem, ask a question, or read more";
   pick.items = helpEntries(version, licence).map((entry) => ({ entry, label: entry.label, description: entry.description, detail: entry.detail }));
   const chosen = await new Promise<HelpEntry | undefined>((resolve) => {
