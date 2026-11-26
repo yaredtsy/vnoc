@@ -8079,7 +8079,7 @@ fn list_on_a_function_a_class_a_file_and_a_folder_says_how_each_tour_is_on_it() 
     let root = sample_copy("tour-list-on");
     let tour = loop_tour(&root);
     // a second tour: through the class `OrderService` and two of its methods
-    let b = tour_start(&root, "orders");
+    let b = tour_start(&root, "orders tour");
     for (node, body) in [
         (
             "orders/service.py::OrderService.parse_order",
@@ -9496,7 +9496,7 @@ fn list_tree(dir: &Path) -> Vec<(String, u64)> {
 #[test]
 fn a_folder_stop_gets_a_vnoc_id_file_and_the_tour_is_fresh() {
     let root = sample_copy("tour-ids-folder");
-    let tour = tour_start(&root, "billing");
+    let tour = tour_start(&root, "billing tour");
     let out = tour_add(
         &root,
         &tour,
@@ -10035,6 +10035,47 @@ fn export_of_the_loop_tour_is_the_nested_document_and_flat_is_the_other_shape() 
     // the stdout is the document and nothing else; `--json` changes nothing
     let json = run(vnoc(&root, &["--json", "tour", "export", &tour]));
     assert_eq!(text(&json.stdout), nested);
+}
+
+const WHERE_NOT_WHAT: &str =
+    "say what the tour explains, not where it is (\"How checkout survives a payment timeout\")";
+
+#[test]
+fn tour_title_that_is_only_a_place_is_refused_by_start_edit_and_import_with_one_sentence() {
+    let root = sample_copy("tour-title-place");
+    let before = listing(&root);
+    // start: a node's address, a file, a folder that exists
+    for title in [
+        "billing/tax.py::rate_for",
+        "billing/tax.py",
+        "billing",
+        "orders/",
+    ] {
+        let (status, _, err) = tour_fails(&root, &["start", "--title", title], "");
+        assert_eq!(status, 2, "{title}");
+        assert!(
+            err.contains(&format!("--title: {WHERE_NOT_WHAT}")),
+            "{title}: {err}"
+        );
+    }
+    assert_eq!(listing(&root), before, "nothing was written");
+    // a phrase that names code is a title
+    let tour = tour_start(&root, "How billing/tax.py::rate_for picks a rate");
+    // edit says the same
+    let (status, _, err) = tour_fails(&root, &["edit", &tour, "--title", "billing/tax.py"], "");
+    assert_eq!(status, 2);
+    assert!(err.contains(&format!("--title: {WHERE_NOT_WHAT}")), "{err}");
+    // import says it with its own prefix, under `title`
+    let finished = finished_loop_tour(&root);
+    let mut doc = serde_json::from_str::<Value>(&export_text(&root, &finished, false)).unwrap();
+    doc["title"] = json!("billing/tax.py::rate_for");
+    let out = import_doc(&root, &doc, &[]);
+    assert_ne!(code(&out), 0);
+    assert!(
+        text(&out.stderr).contains(&format!("title: {WHERE_NOT_WHAT}")),
+        "{}",
+        text(&out.stderr)
+    );
 }
 
 #[test]

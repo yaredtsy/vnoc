@@ -2,7 +2,7 @@
 name: vnoc-tour
 description: Builds a guided tour of code that the user plays step by step on the V-NOC canvas, with stops on functions, classes, files or folders, each with lit lines and one short paragraph. Use when the user asks to be walked through code or for a tour ("walk me through checkout_order", "give me a tour of app/", "explain step by step how a request reaches the database", "show me what you changed"); when a tour is open and the user says "this", "here", "explain that more" or "take me to …"; and when asked to continue, extend, pin or bring up to date an existing tour. Needs the vnoc command.
 metadata:
-  vnoc-version: "0.3.1"
+  vnoc-version: "0.4.0"
 ---
 # V-NOC tours
 
@@ -10,13 +10,17 @@ A tour is your explanation, cut into steps the user reads beside the code. You w
 user's canvas the moment you add it. **The tour is the answer.**
 
 ## The loop
-1. `vnoc tour start --title "<what it is of>" --question "<what the user asked>" --author <your name>` prints the tour's id.
+1. `vnoc tour start --title "<what the tour explains>" --question "<what the user wants to understand>" --author <your name>` prints the tour's id.
    Then say one line: `Tour started: <title>. It is on the V-NOC canvas.`
 2. For each stop: read the code (a function with `vnoc code <node>`, a file or a folder with `vnoc show <node>`), then add the stop
    with its text as a heredoc: `vnoc tour add <id> <node> --body-file - <<'EOF'`, the text, and `EOF` on a line of its own.
    Search and read between stops as you need. Say nothing in the chat from start to finish, not even a short line beside an add.
 3. Run `finish` on its own, after the last `add` printed "written": `vnoc tour finish <id>`. Then one line: `Tour finished: <title> · <n> stops.`
    After it, at most one more line, and only for what the user must know that the tour cannot say.
+
+`--title` is a phrase a person would name the tour by ("How checkout survives a payment timeout"), never a path or a function's name.
+`--question` is optional: what the user wants to understand. A request that only names code ("walk me through app/x.py") has none: leave `--question` out, never copy the request into it.
+If the request names a reach ("only this", "and what it calls", "two levels") or a detail ("a quick tour", "a detailed tour"), use it: `--route <node> --depth 0|1|2` and `--detail quick|detailed`. Otherwise pick `--detail` from the question: a quick look → quick; learning or onboarding → detailed; else normal.
 
 Add one stop per command, in the order the user should read them. Send one `add` at a time and read its answer before the next: never several in one message. The answer may be a refusal to fix, or Stop.
 For a tour across files (a question, not one function's call tree), find the route first, then start with `--plan <the nodes in reading order>` and fill it with `add`, in that order:
@@ -36,7 +40,7 @@ newline: the host allows only a command it can read, and asks the user about any
 - General first, then detail. Most stops need two or three `##` blocks and no `###`. Use `###` only to take a long part apart.
 - The line numbers are the file's, as `vnoc code` printed them.
 - Say **why**, not what: the code is on screen beside your text. Never retell it line by line.
-- A step is short Markdown that says why. A set of things is a list or a table. A flow across stops or files is a ```` ```mermaid ```` flowchart, one per step, best in the first stop's intro of a tour across files. A code fence only for what is not on screen (an example call, a payload), never the stop's own code. No headings, HTML or images in a text.
+- A step's text is a full paragraph of 2-4 sentences: why this part exists, what depends on it or would break without it, and anything surprising (a bug, a trap, a default). A quick tour: one sentence. A detailed tour: use its larger budget for the reasoning. Markdown: a set of things is a list or a table. A flow across stops or files is a ```` ```mermaid ```` flowchart, one per step, best in the first stop's intro of a tour across files. A code fence only for what is not on screen (an example call, a payload), never the stop's own code. No headings, HTML or images in a text.
 - A block's title says what the part does ("Retry only a dropped connection"), not the function's name.
 - No block for a line that only starts or returns.
 - A function under 8 lines is one step: the first paragraph only.

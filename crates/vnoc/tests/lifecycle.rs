@@ -4630,6 +4630,20 @@ fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_th
         .request("vnoc/tourEdit", json!({ "id": id, "title": "two\nlines" }))
         .unwrap_err();
     assert_eq!(bad["code"], -32602);
+    // and a title that is only where the tour is
+    let place = core
+        .request(
+            "vnoc/tourEdit",
+            json!({ "id": id, "title": "orders/service.py::OrderService.parse_order" }),
+        )
+        .unwrap_err();
+    assert_eq!(place["code"], -32602);
+    assert!(
+        place["message"].as_str().unwrap().contains(
+            "--title: say what the tour explains, not where it is (\"How checkout survives a payment timeout\")"
+        ),
+        "{place}"
+    );
     let by_command = vnoc_tour(&root, &["tour", "edit", &id, "--title", "two\nlines"], "");
     let said = String::from_utf8_lossy(&by_command.stderr).to_string();
     assert!(
@@ -5177,6 +5191,52 @@ fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_as
         .request("vnoc/tourAsk", json!({ "key": file }))
         .unwrap();
     assert_eq!(folder["text"], "Walk me through orders", "{folder}");
+    // the form's parts: the node, a question, how far, how much
+    let parts = core
+        .request(
+            "vnoc/tourAsk",
+            json!({
+                "key": PARSE,
+                "question": "why does it retry twice?",
+                "reach": "calls",
+                "detail": "quick",
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        parts,
+        json!({
+            "text": format!("Walk me through {PARSE}: why does it retry twice? Cover it and what it calls. Make it a quick tour."),
+            "words": "Copied. Paste it to your agent.",
+        })
+    );
+    // a question alone, and nothing at all (the reach and the detail have nothing to be about)
+    let only_question = core
+        .request(
+            "vnoc/tourAsk",
+            json!({ "question": "how does checkout end?" }),
+        )
+        .unwrap();
+    assert_eq!(
+        only_question,
+        json!({ "text": "Walk me through how does checkout end?", "words": "Copied. Paste it to your agent." })
+    );
+    let nothing = core
+        .request(
+            "vnoc/tourAsk",
+            json!({ "reach": "only", "detail": "quick" }),
+        )
+        .unwrap();
+    assert_eq!(
+        nothing,
+        json!({ "text": "Walk me through ", "words": "Add what you want explained." })
+    );
+    // a word that is not a reach is a bad request
+    assert_eq!(
+        core.request("vnoc/tourAsk", json!({ "key": PARSE, "reach": "far" }))
+            .unwrap_err()["code"],
+        -32602
+    );
     assert_eq!(
         core.request("vnoc/tourAsk", json!({ "key": "no/such.py" }))
             .unwrap_err()["code"],
@@ -5212,9 +5272,37 @@ fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_as
     let again = core.request("vnoc/tourAsk", json!({ "tour": id })).unwrap();
     assert_eq!(
         again["text"],
-        format!("Walk me through {PARSE}: why twice? (a quick tour)"),
+        format!("Walk me through {PARSE}: why twice? Make it a quick tour."),
         "{again}"
     );
+    // what the tour gave, for the form to show
+    assert_eq!(
+        again["filled"],
+        json!({ "key": PARSE, "question": "why twice?", "detail": "quick" }),
+        "{again}"
+    );
+    // the other keys override the tour's: a question of its own, a reach, a detail
+    let changed = core
+        .request(
+            "vnoc/tourAsk",
+            json!({ "tour": id, "question": "why retry", "reach": "calls", "detail": "detailed" }),
+        )
+        .unwrap();
+    assert_eq!(
+        changed["text"],
+        format!(
+            "Walk me through {PARSE}: why retry. Cover it and what it calls. Make it a detailed tour."
+        ),
+        "{changed}"
+    );
+    // `agent` says nothing, even where the tour said quick; an empty question takes the tour's away
+    let plain = core
+        .request(
+            "vnoc/tourAsk",
+            json!({ "tour": id, "question": "", "detail": "agent" }),
+        )
+        .unwrap();
+    assert_eq!(plain["text"], format!("Walk me through {PARSE}"), "{plain}");
     core.finish();
 }
 

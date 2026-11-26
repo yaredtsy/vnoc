@@ -77,7 +77,14 @@ pub(super) async fn start(global: &Global, args: &TourStartArgs) -> Result<(), F
         author: args.author.as_ref().map(|a| a.trim().to_string()),
         detail: detail_of(args.detail),
     };
-    let problems = store::check_start(&params);
+    // what the title is compared with comes from the project when there is one; with none, the rest of the command says so
+    let known = open_without_driver(global).ok();
+    let root = known.as_ref().map(|p| p.name()).unwrap_or_default();
+    let named = store::Named {
+        dir: known.as_ref().map(|p| p.open_dir()),
+        root: &root,
+    };
+    let problems = store::check_start(&params, &named);
     if !problems.is_empty() {
         return Err(Failure::Usage(problems.join("\n  ")));
     }

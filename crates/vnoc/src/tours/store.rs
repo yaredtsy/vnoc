@@ -635,7 +635,7 @@ pub fn restore(vnoc_root: &Path, entry: &str) -> Result<Trashed, StoreError> {
 
 /// What is wrong with the arguments of `edit`: the title and the question as `start` has them, and a question is never empty (it can be changed, not taken
 /// away).
-pub fn check_edit(title: Option<&str>, question: Option<&str>) -> Vec<String> {
+pub fn check_edit(title: Option<&str>, question: Option<&str>, named: &Named) -> Vec<String> {
     let params = |title: &str, question: Option<&str>| StartParams {
         title: title.to_string(),
         question: question.map(String::from),
@@ -644,21 +644,65 @@ pub fn check_edit(title: Option<&str>, question: Option<&str>) -> Vec<String> {
     };
     let mut problems = Vec::new();
     if let Some(title) = title {
-        problems.extend(check_start(&params(title, None)));
+        problems.extend(check_start(&params(title, None), named));
     }
     match question {
         Some(q) if q.trim().is_empty() => problems.push(
             "--question is empty: a tour's question can be changed, not taken away".to_string(),
         ),
-        Some(q) => problems.extend(check_start(&params("t", Some(q)))),
+        Some(q) => problems.extend(check_start(&params("t", Some(q)), &Named::nowhere())),
         None => {}
     }
     problems
 }
 
+/// What a title is compared with to know it is a place and not a phrase: the folder the paths of the project are relative to, and the root's name.
+pub struct Named<'a> {
+    pub dir: Option<&'a Path>,
+    pub root: &'a str,
+}
+
+impl Named<'_> {
+    /// Nothing to compare with: only what a title says by itself (`::`, a source file's extension) is known.
+    pub const fn nowhere() -> Named<'static> {
+        Named {
+            dir: None,
+            root: "",
+        }
+    }
+}
+
+/// The extensions of the files a project holds, without the dot: a title that ends in one is a file's name.
+const SOURCE_EXTENSIONS: &[&str] = &[
+    "py", "pyi", "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "java", "kt", "kts", "c", "h",
+    "cc", "cpp", "hpp", "cs", "rb", "php", "swift", "scala", "lua", "sh", "bend",
+];
+
+/// A title that says where a tour is and not what it explains: one word (no space) that is a node's address (`orders.py::parse`), a path that exists in the
+/// project or ends in a source file's extension, or the root's name.
+fn title_is_a_place(title: &str, named: &Named) -> bool {
+    if title.contains(char::is_whitespace) {
+        return false;
+    }
+    if title.contains("::") || (!named.root.is_empty() && title == named.root) {
+        return true;
+    }
+    let path = title.trim_end_matches('/');
+    let ends_in_source = path
+        .rsplit_once('.')
+        .is_some_and(|(stem, ext)| !stem.is_empty() && SOURCE_EXTENSIONS.contains(&ext));
+    ends_in_source
+        || named.dir.is_some_and(|dir| {
+            !path.is_empty()
+                && !path.starts_with('/')
+                && !path.contains("..")
+                && dir.join(path).exists()
+        })
+}
+
 /// What is wrong with the arguments of `start`, one sentence each: a title is one line of 1 to 60 characters, a question one line of at most
 /// 200, an author one line (02 §3).
-pub fn check_start(params: &StartParams) -> Vec<String> {
+pub fn check_start(params: &StartParams, named: &Named) -> Vec<String> {
     fn one_line(text: &str) -> bool {
         !text.contains(['\n', '\r'])
     }
@@ -673,6 +717,11 @@ pub fn check_start(params: &StartParams) -> Vec<String> {
             "--title is {} characters: the most it takes is 60",
             title.chars().count()
         ));
+    } else if title_is_a_place(title, named) {
+        problems.push(
+            "--title: say what the tour explains, not where it is (\"How checkout survives a payment timeout\")"
+                .to_string(),
+        );
     }
     if let Some(question) = &params.question {
         let question = question.trim();
@@ -2166,8 +2215,48 @@ mod tests {
     }
 
     #[test]
+    fn a_title_that_is_only_a_place_is_refused_with_an_example() {
+        let dir = std::env::temp_dir().join(format!("vnoc-title-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("orders")).unwrap();
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        let named = Named {
+            dir: Some(&dir),
+            root: "minicart",
+        };
+        let refused = [
+            "orders/service.py::OrderService.parse_order", // a node's address
+            "service.py::parse_order",
+            "Order::parse",      // `::` in one word
+            "orders/service.py", // a source file
+            "service.rs",
+            "orders", // a folder that exists
+            "orders/",
+            "notes.txt", // a file that exists, with no known extension
+            "minicart",  // the root's name
+        ];
+        let said = "--title: say what the tour explains, not where it is (\"How checkout survives a payment timeout\")";
+        for title in refused {
+            assert_eq!(check_start(&params(title), &named), [said], "{title}");
+        }
+        for title in [
+            "How checkout survives a payment timeout",
+            "Why parse_order::retry runs twice", // a phrase may name code
+            "Notes on service.py",
+            "checkout_order",
+            "billing",
+            "v1.2 plan",
+        ] {
+            assert!(check_start(&params(title), &named).is_empty(), "{title}");
+        }
+        // an edit says the same, and a question may be anything
+        assert_eq!(check_edit(Some("orders/service.py"), None, &named), [said]);
+        assert!(check_edit(None, Some("orders/service.py"), &named).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_arguments_of_start_are_one_line_of_the_right_size() {
-        let ok = |title: &str| check_start(&params(title));
+        let ok = |title: &str| check_start(&params(title), &Named::nowhere());
         assert!(ok("checkout_order").is_empty());
         assert!(
             ok(&"é".repeat(60)).is_empty(),
@@ -2186,7 +2275,7 @@ mod tests {
         p.question = Some("q".repeat(201));
         p.author = Some("a\nb".to_string());
         assert_eq!(
-            check_start(&p),
+            check_start(&p, &Named::nowhere()),
             [
                 "--question is 201 characters: the most it takes is 200",
                 "--author is not one line of text"
@@ -2194,7 +2283,10 @@ mod tests {
         );
         p.question = Some("q".repeat(200));
         p.author = Some("  ".to_string());
-        assert_eq!(check_start(&p), ["--author is not one line of text"]);
+        assert_eq!(
+            check_start(&p, &Named::nowhere()),
+            ["--author is not one line of text"]
+        );
     }
 
     #[test]
@@ -2474,18 +2566,22 @@ mod tests {
 
     #[test]
     fn the_arguments_of_edit_are_checked_like_start_and_a_question_is_never_taken_away() {
-        assert!(check_edit(Some("A title"), Some("A question")).is_empty());
-        assert!(check_edit(None, None).is_empty());
+        assert!(check_edit(Some("A title"), Some("A question"), &Named::nowhere()).is_empty());
+        assert!(check_edit(None, None, &Named::nowhere()).is_empty());
         assert_eq!(
-            check_edit(Some(&"x".repeat(61)), None),
+            check_edit(Some(&"x".repeat(61)), None, &Named::nowhere()),
             ["--title is 61 characters: the most it takes is 60"]
         );
         assert_eq!(
-            check_edit(None, Some("  ")),
+            check_edit(None, Some("  "), &Named::nowhere()),
             ["--question is empty: a tour's question can be changed, not taken away"]
         );
         assert_eq!(
-            check_edit(Some("two\nlines"), Some(&"q".repeat(201))),
+            check_edit(
+                Some("two\nlines"),
+                Some(&"q".repeat(201)),
+                &Named::nowhere()
+            ),
             [
                 "--title is not one line",
                 "--question is 201 characters: the most it takes is 200"

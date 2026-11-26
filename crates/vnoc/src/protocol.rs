@@ -952,9 +952,11 @@ impl Request for TourImport {
     const METHOD: &'static str = "vnoc/tourImport";
 }
 
-/// `vnoc/tourAsk`: the sentence to paste to an agent to ask for a tour, and the line that says so (**Ask for a Tour…**, design/07 §7). `key` is the node (as `vnoc/tours`'
-/// `on` names one); with none, the sentence is `Walk me through ` and the words say to add what is wanted. `tour` is a row's **Ask for a New Tour**: the sentence for
-/// that tour's root, with its question and its depth after it. Answers `{ text, words }`.
+/// `vnoc/tourAsk`: the sentence to paste to an agent to ask for a tour, and the line that says so (**Ask for a Tour…**, design/07 §7), built from the form's
+/// parts. `key` is the node (as `vnoc/tours`' `on` names one); `question` is what the person wants to understand; `reach` is `agent` (says nothing), `only`,
+/// `calls` or `calls2`; `detail` is `agent` (says nothing), `quick`, `normal` or `detailed`. With no node and no question the sentence is `Walk me through ` and
+/// the words say to add what is wanted. `tour` is a row's **Ask for a New Tour**: that tour's root, question and detail fill what the other keys do not give
+/// (a `question` of `""` takes the tour's away), and `filled` answers with them, for the form to show. Answers `{ text, words, filled? }`.
 pub enum TourAsk {}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -962,13 +964,31 @@ pub struct TourAskParams {
     #[serde(default)]
     pub key: Option<String>,
     #[serde(default)]
+    pub question: Option<String>,
+    #[serde(default)]
+    pub reach: Option<crate::tours::document::Reach>,
+    #[serde(default)]
+    pub detail: Option<crate::tours::document::AskDetail>,
+    #[serde(default)]
     pub tour: Option<String>,
+}
+
+/// What a tour gave the form: the address of its root (none when no stop is written), its question, its detail as a choice.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourAskFilled {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+    pub detail: crate::tours::document::AskDetail,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TourAskResult {
     pub text: String,
     pub words: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filled: Option<TourAskFilled>,
 }
 
 impl Request for TourAsk {

@@ -905,7 +905,13 @@ fn the_tour_id_suffix_is_for_tests_and_an_invalid_one_is_ignored() {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
         cmd.current_dir(&root)
             .env_remove("VNOC_TOUR_ID_SUFFIX")
-            .args(["tour", "start", "--title", "orders", "--json"])
+            .args([
+                "tour",
+                "start",
+                "--title",
+                "How an order is parsed",
+                "--json",
+            ])
             .stdin(Stdio::null());
         if let Some(suffix) = suffix {
             cmd.env("VNOC_TOUR_ID_SUFFIX", suffix);
@@ -916,13 +922,13 @@ fn the_tour_id_suffix_is_for_tests_and_an_invalid_one_is_ignored() {
         let _ = std::fs::remove_dir_all(&root);
         json["tour"].as_str().unwrap().to_string()
     };
-    assert_eq!(start(Some("7k2q")), "orders-7k2q");
+    assert_eq!(start(Some("7k2q")), "how-an-order-is-parsed-7k2q");
     for bad in ["", "7k2", "7k2q9", "ilou", "7K2Q", "7k-q"] {
         let id = start(Some(bad));
         assert!(
-            id.starts_with("orders-")
-                && id.len() == "orders-7k2q".len()
-                && id != format!("orders-{bad}"),
+            id.starts_with("how-an-order-is-parsed-")
+                && id.len() == "how-an-order-is-parsed-7k2q".len()
+                && id != format!("how-an-order-is-parsed-{bad}"),
             "{bad:?} -> {id}"
         );
     }

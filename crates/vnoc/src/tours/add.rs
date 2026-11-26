@@ -953,20 +953,31 @@ pub fn plan_tour<'t>(
         .unwrap_or(super::record::Detail::Normal);
 
     // the tour's own words, as `start` checks them
-    for problem in store::check_start(&store::StartParams {
-        title: flat.title.clone(),
-        question: flat.question.clone(),
-        author: flat.author.clone(),
-        detail,
-    }) {
-        let key = problem
-            .strip_prefix("--")
-            .and_then(|rest| rest.split(' ').next())
+    let root = project.name();
+    let named = store::Named {
+        dir: Some(project.open_dir()),
+        root: &root,
+    };
+    for problem in store::check_start(
+        &store::StartParams {
+            title: flat.title.clone(),
+            question: flat.question.clone(),
+            author: flat.author.clone(),
+            detail,
+        },
+        &named,
+    ) {
+        let rest = problem.strip_prefix("--").unwrap_or(&problem);
+        let key = rest
+            .split([' ', ':'])
+            .next()
+            .filter(|k| !k.is_empty())
             .unwrap_or("title")
             .to_string();
-        let said = problem
-            .strip_prefix(&format!("--{key} "))
-            .unwrap_or(&problem)
+        let said = rest
+            .strip_prefix(key.as_str())
+            .map(|r| r.trim_start_matches(':').trim_start())
+            .unwrap_or(rest)
             .to_string();
         refusals.push(refusal(key.clone(), format!("{key}: {said}")));
     }

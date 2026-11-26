@@ -718,15 +718,27 @@ impl Render for Edited {
 pub(super) async fn edit(global: &Global, args: &TourEditArgs) -> Result<(), Failure> {
     let title = args.title.as_deref().map(str::trim);
     let question = args.question.as_deref().map(str::trim);
-    let problems = store::check_edit(title, question);
+    let project = open_without_driver(global)?;
+    let root = project.name();
+    let named = store::Named {
+        dir: Some(project.open_dir()),
+        root: &root,
+    };
+    let problems = store::check_edit(title, question, &named);
     if !problems.is_empty() {
         return Err(Failure::Usage(problems.join("\n  ")));
     }
-    let project = open_without_driver(global)?;
     let vnoc_root = store::vnoc_root(project.git_root());
     let id = resolve(global, "tour edit", &vnoc_root, &args.tour)?;
-    act::edit(&vnoc_root, &id, title, question, args.detail.map(detail_of))
-        .map_err(|e| act_failure(e, &project))?;
+    act::edit(
+        &vnoc_root,
+        &id,
+        title,
+        question,
+        args.detail.map(detail_of),
+        &named,
+    )
+    .map_err(|e| act_failure(e, &project))?;
     out::render(
         &Edited {
             schema: 1,

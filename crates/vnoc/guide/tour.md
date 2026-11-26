@@ -10,15 +10,16 @@ One `vnoc tour` command per call, with the tour's id written out: no `T=…` or 
 The host allows only a command it can read, and asks the user about anything else. Run `finish` on its own, after the last `add` printed `written`.
 Read a function with `vnoc code <node>`, a file or a folder with `vnoc show <node>`. Quote a node with `<` or `>` in it: `'a.py::f.<locals>.g'`.
 Send one `add` at a time and read its answer before the next: never several in one message. The answer may be a refusal to fix, or Stop.
+`--title` is a phrase that says what the tour explains, as a person would name it, never a path or a function's name: `start` refuses `orders/service.py::parse_order`. `--question` is optional.
 ```
-vnoc tour start --title "orders" --question "how does an order get parsed" --author claude-code
-started orders-7k2q   private   .vnoc/local/tours/orders-7k2q.jsonl
-next: vnoc tour add orders-7k2q <node> --body-file -   (vnoc guide tour)
-vnoc tour add orders-7k2q orders/service.py::OrderService.parse_order --body-file - <<'EOF'
+vnoc tour start --title "How an order is parsed" --question "how does an order get parsed" --author claude-code
+started how-an-order-is-parsed-7k2q   private   .vnoc/local/tours/how-an-order-is-parsed-7k2q.jsonl
+next: vnoc tour add how-an-order-is-parsed-7k2q <node> --body-file -   (vnoc guide tour)
+vnoc tour add how-an-order-is-parsed-7k2q orders/service.py::OrderService.parse_order --body-file - <<'EOF'
 parse_order is where raw input becomes an Order: it builds a Line for each item, then wraps them with the number.
 EOF
 s1 written   stop 1   ƒ OrderService.parse_order   orders/service.py:10-13   1 step   · 1 stop written
-vnoc tour add orders-7k2q orders/models.py::Order --from s1 --line 13 --body-file - <<'EOF'
+vnoc tour add how-an-order-is-parsed-7k2q orders/models.py::Order --from s1 --line 13 --body-file - <<'EOF'
 An Order is its number and its lines. Nothing is checked on the way in, and the total is worked out when it is asked for.
 
 ## 15-17 Two fields and nothing else
@@ -30,9 +31,9 @@ EOF
 s2 written   stop 2   ◆ Order   orders/models.py:14-21   3 steps   · 2 stops written
   s2.b1  15-17   def __init__(self, number, lines):
   s2.b2  19-21   @property
-vnoc tour finish orders-7k2q
+vnoc tour finish how-an-order-is-parsed-7k2q
 finished: 2 stops, 4 steps
-ask the user  1 stop has no ID: the tour will not follow a rename.        vnoc tour ids orders-7k2q
+ask the user  1 stop has no ID: the tour will not follow a rename.        vnoc tour ids how-an-order-is-parsed-7k2q
 not pinned: this is not a git repository
 ```
 `add` answers with the first line of each block it lit. If a first line is not the one you meant, the numbers were wrong: `--replace` the stop.
@@ -71,8 +72,8 @@ At most 12 blocks in a stop (details count), 40 stops in a tour, 64 KB of text i
 **strong**, lists, tables (12 rows), quotes, links, code fences (30 lines) and one ` ```mermaid ` fence. Refused: HTML, images, headings,
 a second diagram. Nothing is written when anything is wrong. Every problem is listed; fix them all, send the whole stop:
 ```
-vnoc tour start --title "orders"
-vnoc tour add orders-7k2q orders/models.py::Order --body-file - <<'EOF'  # exit 2
+vnoc tour start --title "How an order is parsed"
+vnoc tour add how-an-order-is-parsed-7k2q orders/models.py::Order --body-file - <<'EOF'  # exit 2
 ## 15-17 Two fields
 The constructor keeps what it is given.
 
@@ -86,7 +87,7 @@ error: not written: 2 problems
   fix them, then send the whole stop again
     intro: there is none. Start with a paragraph on what this is for, before the first heading
     blocks 1 and 3 both light line 16
-vnoc tour add orders-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'  # exit 2
+vnoc tour add how-an-order-is-parsed-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'  # exit 2
 place parses, saves and returns.
 
 ## 16-17 Parse, then save
@@ -120,8 +121,8 @@ good:  a list for things to tell apart; a fence for what is not on screen: an ex
 A flow across stops or files is a diagram: one ` ```mermaid ` flowchart a step, best in the first stop's intro of a tour across files.
 One that retells a function's body is the same bad fence; draw the files and the calls between them:
 ```
-vnoc tour start --title "orders" --question "how does an order get saved" --author claude-code
-vnoc tour add orders-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'
+vnoc tour start --title "How an order is parsed" --question "how does an order get saved" --author claude-code
+vnoc tour add how-an-order-is-parsed-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'
 place is the front door of an order: raw input in, a saved Order out.
 
 ```mermaid
@@ -159,21 +160,21 @@ Depth 0 is the node alone; 6 is the most. A function that is called twice is one
 with `= k` (the first stop on it) that is not walked again. A call to code the index does not know is not a stop. For a class, a file or a folder,
 depth is containment. `vnoc tour start --title "<title>" --route <node> --depth 2` plans exactly that outline; `--plan` and `--route` do not go together.
 ```
-vnoc tour start --title "orders" --route orders/service.py::OrderService.place --depth 2
-started orders-7k2q   private   .vnoc/local/tours/orders-7k2q.jsonl
+vnoc tour start --title "How an order is parsed" --route orders/service.py::OrderService.place --depth 2
+started how-an-order-is-parsed-7k2q   private   .vnoc/local/tours/how-an-order-is-parsed-7k2q.jsonl
 planned 4 stops
   s1  ◌ OrderService.place   orders/service.py
   s2  ◌ OrderService.parse_order   orders/service.py  ← s1 line 16
   s3  ◌ Line   orders/models.py                       ← s2 line 12
   s4  ◌ Order   orders/models.py                      ← s2 line 13
-next: vnoc tour add orders-7k2q <node> --body-file -   (vnoc guide tour)
-vnoc tour add orders-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'
+next: vnoc tour add how-an-order-is-parsed-7k2q <node> --body-file -   (vnoc guide tour)
+vnoc tour add how-an-order-is-parsed-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'
 place is the front door: it turns the raw request into an order, then keeps it.
 EOF
 s1 written (it was planned)   stop 1   ƒ OrderService.place   orders/service.py:15-18   1 step   · 1 of 4 stops written
-vnoc tour finish orders-7k2q
+vnoc tour finish how-an-order-is-parsed-7k2q
 finished: 1 stop, 1 step · 3 planned stops left the route
-ask the user  1 stop has no ID: the tour will not follow a rename.        vnoc tour ids orders-7k2q
+ask the user  1 stop has no ID: the tour will not follow a rename.        vnoc tour ids how-an-order-is-parsed-7k2q
 not pinned: this is not a git repository
 ```
 
@@ -194,11 +195,11 @@ and what is in those   6 stops   about 4 min      --depth 2
 ## Where the reader is
 When the user says "explain this more" or "why is that there" while a tour is open, run `vnoc tour where` first. It prints the step they are on.
 ```
-vnoc tour start --title "orders" --question "how does an order get parsed" --author claude-code
-vnoc tour add orders-7k2q orders/service.py::OrderService.parse_order --body-file - <<'EOF'
+vnoc tour start --title "How an order is parsed" --question "how does an order get parsed" --author claude-code
+vnoc tour add how-an-order-is-parsed-7k2q orders/service.py::OrderService.parse_order --body-file - <<'EOF'
 parse_order is where raw input becomes an Order.
 EOF
-vnoc tour add orders-7k2q orders/models.py::Order --from s1 --line 13 --body-file - <<'EOF'
+vnoc tour add how-an-order-is-parsed-7k2q orders/models.py::Order --from s1 --line 13 --body-file - <<'EOF'
 An Order is its number and its lines.
 
 ## 15-17 Two fields and nothing else
@@ -210,7 +211,7 @@ EOF
 vnoc tour where
 no tour has been opened or moved yet
 name one: vnoc tour where <tour>
-vnoc tour go orders-7k2q s2.b2 | tail -n +2
+vnoc tour go how-an-order-is-parsed-7k2q s2.b2 | tail -n +2
 stop 2 of 2 · step 3 of 3     s2.b2
 ◆ Order   orders/models.py:19-21
   The total is a sum, not a stored number
@@ -219,11 +220,11 @@ stop 2 of 2 · step 3 of 3     s2.b2
   > 20      def total(self):
   > 21          return sum(line.amount() for line in self.lines)
 before: s2.b1 "Two fields and nothing else" · after: end
-vnoc tour go orders-7k2q back | tail -n +2
+vnoc tour go how-an-order-is-parsed-7k2q back | tail -n +2
 cover · 2 stops · 4 steps
   "how does an order get parsed"
 after: s1 (intro)
-vnoc tour go orders-7k2q back | head -1
+vnoc tour go how-an-order-is-parsed-7k2q back | head -1
 nothing to go back to
 ```
 The first line (cut off above, it has the time) says the tour, whether it is open on a canvas, and how long ago the reader moved: `moved 12 s ago`
@@ -239,11 +240,11 @@ returns there; `next` and `prev` remember nothing.
 - `vnoc tour drop <id> <stop>` takes a stop (and what is nested in it) or a block off. Ids are not reused.
 - After the user stopped the tour: add nothing more, say the one line it gives you. `vnoc tour resume <id>` only when the user says to go on.
 ```
-vnoc tour start --title "orders" --question "how does an order get parsed" --author claude-code
-vnoc tour add orders-7k2q orders/service.py::OrderService.parse_order --body-file - <<'EOF'
+vnoc tour start --title "How an order is parsed" --question "how does an order get parsed" --author claude-code
+vnoc tour add how-an-order-is-parsed-7k2q orders/service.py::OrderService.parse_order --body-file - <<'EOF'
 parse_order is where raw input becomes an Order.
 EOF
-vnoc tour add orders-7k2q orders/models.py::Order --from s1 --line 13 --body-file - <<'EOF'
+vnoc tour add how-an-order-is-parsed-7k2q orders/models.py::Order --from s1 --line 13 --body-file - <<'EOF'
 An Order is its number and its lines.
 
 ## 15-17 Two fields and nothing else
@@ -252,8 +253,8 @@ The constructor only keeps what it is given.
 ## 19-21 The total is a sum, not a stored number
 It adds up the amount of each line every time.
 EOF
-vnoc tour show orders-7k2q --text
-orders   "how does an order get parsed"
+vnoc tour show how-an-order-is-parsed-7k2q --text
+How an order is parsed   "how does an order get parsed"
 private · writing · 2 stops · 4 steps · by claude-code · not pinned (being written)
  1  s1  ƒ OrderService.parse_order  orders/service.py:10-13  1 step
       parse_order is where raw input becomes an Order.
@@ -265,7 +266,7 @@ private · writing · 2 stops · 4 steps · by claude-code · not pinned (being 
       It adds up the amount of each line every time.
 vnoc tour check | tail -n 1
 1 tour · all fresh
-vnoc tour drop orders-7k2q s2.b2
+vnoc tour drop how-an-order-is-parsed-7k2q s2.b2
 dropped s2.b2
 ```
 

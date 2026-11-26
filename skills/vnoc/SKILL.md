@@ -2,7 +2,7 @@
 name: vnoc
 description: Reads and writes V-NOC notes (the "why" attached to functions, classes, files and folders, such as constraints, decisions, history and plans) and shows Python code by structure, with one function's exact code and its notes, a tree of a folder with signatures, search by name or by a word in a note, and call trees. Use when the project has a .vnoc/ folder; when code has "ID:" docstring lines, "# FileID:" comments or .vnoc-id files; before changing a function that may have notes; when asked to document, explain the reason for, or plan a change to specific code; and when asked how the code is organised. For a step-by-step walk-through or a tour of code, use the vnoc-tour skill.
 metadata:
-  vnoc-version: "0.3.1"
+  vnoc-version: "0.4.0"
 ---
 # V-NOC
 

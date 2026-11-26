@@ -679,9 +679,10 @@ pub fn edit(
     title: Option<&str>,
     question: Option<&str>,
     detail: Option<Detail>,
+    named: &store::Named,
 ) -> Result<(), ActError> {
     let (title, question) = (title.map(str::trim), question.map(str::trim));
-    let problems = store::check_edit(title, question);
+    let problems = store::check_edit(title, question, named);
     if !problems.is_empty() {
         return Err(ActError::Usage(problems.join("\n  ")));
     }

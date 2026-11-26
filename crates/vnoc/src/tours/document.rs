@@ -7,6 +7,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use super::act::{self, ActError};
 use super::doc;
 use super::find::find;
@@ -455,42 +457,104 @@ pub struct Asked {
     pub words: &'static str,
 }
 
-/// *"Walk me through app/inventory.py::reserve_stock"* with the node's address, and *"Copied. Paste it to your agent."*; with no node, `Walk me through ` and
-/// *"Add what you want explained."* (design/07 §7).
-pub fn ask(address: Option<&str>) -> Asked {
-    match address {
-        Some(address) => Asked {
-            text: format!("Walk me through {address}"),
-            words: "Copied. Paste it to your agent.",
-        },
-        None => Asked {
-            text: "Walk me through ".to_string(),
-            words: "Add what you want explained.",
-        },
+/// How far a tour goes from its node, as the person chose it in the form (`vnoc/tourAsk`'s `reach`). `Agent` says nothing: the agent decides.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Reach {
+    #[default]
+    Agent,
+    Only,
+    Calls,
+    Calls2,
+}
+
+/// How much each step says, as the person chose it (`vnoc/tourAsk`'s `detail`). `Agent` says nothing: the agent chooses from the question.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AskDetail {
+    #[default]
+    Agent,
+    Quick,
+    Normal,
+    Detailed,
+}
+
+impl AskDetail {
+    /// A tour's own detail as a choice: `normal` is what nobody chose, so it is the agent's.
+    pub fn of_tour(detail: Detail) -> AskDetail {
+        match detail {
+            Detail::Quick => AskDetail::Quick,
+            Detail::Normal => AskDetail::Agent,
+            Detail::Detailed => AskDetail::Detailed,
+        }
     }
 }
 
-/// A row's **Ask for a New Tour**: the same sentence for the root of a tour that is, with that tour's question and depth after it (for a changed tour: "make
-/// this again").
-pub fn ask_again(tour: &Tour, address: Option<&str>) -> Asked {
-    let mut asked = ask(address);
-    if address.is_none() {
-        return asked;
-    }
-    if let Some(question) = tour
+/// What the form of **Ask for a Tour** has: every part may be empty.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Parts<'a> {
+    pub address: Option<&'a str>,
+    pub question: Option<&'a str>,
+    pub reach: Reach,
+    pub detail: AskDetail,
+}
+
+/// The sentence from its parts (design/07 §7, TR23a): `Walk me through orders/service.py::OrderService.parse_order: why does it retry twice? Cover it and
+/// what it calls. Make it a quick tour.`, and *"Copied. Paste it to your agent."*. With no node, the question alone follows `Walk me through `; with neither,
+/// the text is `Walk me through ` and the words say *"Add what you want explained."* (a reach and a detail have nothing to be about, so they are not added).
+/// Whitespace in the question is one space, so the sentence is one line.
+pub fn ask(parts: &Parts) -> Asked {
+    let address = parts.address.map(str::trim).filter(|a| !a.is_empty());
+    let question = parts
         .question
-        .as_deref()
-        .map(str::trim)
-        .filter(|q| !q.is_empty())
-    {
-        asked.text.push_str(&format!(": {question}"));
+        .map(|q| q.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|q| !q.is_empty());
+    let subject = match (address, &question) {
+        (Some(a), Some(q)) => format!("{a}: {q}"),
+        (Some(a), None) => a.to_string(),
+        (None, Some(q)) => q.clone(),
+        (None, None) => {
+            return Asked {
+                text: "Walk me through ".to_string(),
+                words: "Add what you want explained.",
+            };
+        }
+    };
+    let mut text = format!("Walk me through {subject}");
+    let reach = match parts.reach {
+        Reach::Agent => None,
+        Reach::Only => Some("Cover only that, not what it calls."),
+        Reach::Calls => Some("Cover it and what it calls."),
+        Reach::Calls2 => Some("Cover it, what it calls, and what those call."),
+    };
+    let detail = match parts.detail {
+        AskDetail::Agent => None,
+        AskDetail::Quick => Some("Make it a quick tour."),
+        AskDetail::Normal => Some("Make it a normal tour."),
+        AskDetail::Detailed => Some("Make it a detailed tour."),
+    };
+    for sentence in reach.into_iter().chain(detail) {
+        if !text.ends_with(['.', '?', '!']) {
+            text.push('.');
+        }
+        text.push(' ');
+        text.push_str(sentence);
     }
-    match tour.detail {
-        Detail::Quick => asked.text.push_str(" (a quick tour)"),
-        Detail::Detailed => asked.text.push_str(" (a detailed tour)"),
-        Detail::Normal => {}
+    Asked {
+        text,
+        words: "Copied. Paste it to your agent.",
     }
-    asked
+}
+
+/// A row's **Ask for a New Tour**: what that tour is of (the address of its root), its question and its detail, as the form's first values (for a changed
+/// tour: "make this again").
+pub fn of_tour<'a>(tour: &'a Tour, address: Option<&'a str>) -> Parts<'a> {
+    Parts {
+        address,
+        question: tour.question.as_deref(),
+        reach: Reach::Agent,
+        detail: AskDetail::of_tour(tour.detail),
+    }
 }
 
 #[cfg(test)]
@@ -525,13 +589,145 @@ mod tests {
         assert_eq!(line_of("{\n\n\n\n\n\n  x", "document", said), Some(7));
     }
 
+    fn said(
+        address: Option<&str>,
+        question: Option<&str>,
+        reach: Reach,
+        detail: AskDetail,
+    ) -> String {
+        ask(&Parts {
+            address,
+            question,
+            reach,
+            detail,
+        })
+        .text
+    }
+
     #[test]
     fn the_ask_sentence_has_the_address_or_waits_for_one() {
-        let with = ask(Some("app/inventory.py::reserve_stock"));
+        let with = ask(&Parts {
+            address: Some("app/inventory.py::reserve_stock"),
+            ..Parts::default()
+        });
         assert_eq!(with.text, "Walk me through app/inventory.py::reserve_stock");
         assert_eq!(with.words, "Copied. Paste it to your agent.");
-        let without = ask(None);
+        let without = ask(&Parts::default());
         assert_eq!(without.text, "Walk me through ");
         assert_eq!(without.words, "Add what you want explained.");
+        // blanks are nothing
+        assert_eq!(
+            ask(&Parts {
+                address: Some("  "),
+                question: Some(" \n "),
+                ..Parts::default()
+            }),
+            without
+        );
+    }
+
+    #[test]
+    fn the_question_follows_the_address_after_a_colon_on_one_line() {
+        let at = Some("orders/service.py::OrderService.parse_order");
+        assert_eq!(
+            said(
+                at,
+                Some("why does it retry twice?"),
+                Reach::Agent,
+                AskDetail::Agent
+            ),
+            "Walk me through orders/service.py::OrderService.parse_order: why does it retry twice?"
+        );
+        assert_eq!(
+            said(at, Some("  why\n  twice  "), Reach::Agent, AskDetail::Agent),
+            "Walk me through orders/service.py::OrderService.parse_order: why twice"
+        );
+    }
+
+    #[test]
+    fn with_no_node_the_question_alone_follows_walk_me_through() {
+        let asked = ask(&Parts {
+            question: Some("how does checkout end?"),
+            ..Parts::default()
+        });
+        assert_eq!(asked.text, "Walk me through how does checkout end?");
+        assert_eq!(asked.words, "Copied. Paste it to your agent.");
+        // a reach and a detail are about a subject: with neither node nor question they are not added
+        assert_eq!(
+            said(None, None, Reach::Calls, AskDetail::Quick),
+            "Walk me through "
+        );
+        // with only a question they are
+        assert_eq!(
+            said(None, Some("why twice?"), Reach::Calls, AskDetail::Quick),
+            "Walk me through why twice? Cover it and what it calls. Make it a quick tour."
+        );
+    }
+
+    #[test]
+    fn each_reach_says_its_own_sentence_and_the_agents_says_nothing() {
+        let at = Some("a.py::f");
+        let reach = |r| said(at, None, r, AskDetail::Agent);
+        assert_eq!(reach(Reach::Agent), "Walk me through a.py::f");
+        assert_eq!(
+            reach(Reach::Only),
+            "Walk me through a.py::f. Cover only that, not what it calls."
+        );
+        assert_eq!(
+            reach(Reach::Calls),
+            "Walk me through a.py::f. Cover it and what it calls."
+        );
+        assert_eq!(
+            reach(Reach::Calls2),
+            "Walk me through a.py::f. Cover it, what it calls, and what those call."
+        );
+    }
+
+    #[test]
+    fn each_detail_says_its_own_sentence_and_the_agents_says_nothing() {
+        let at = Some("a.py::f");
+        let detail = |d| said(at, Some("why?"), Reach::Agent, d);
+        assert_eq!(detail(AskDetail::Agent), "Walk me through a.py::f: why?");
+        assert_eq!(
+            detail(AskDetail::Quick),
+            "Walk me through a.py::f: why? Make it a quick tour."
+        );
+        assert_eq!(
+            detail(AskDetail::Normal),
+            "Walk me through a.py::f: why? Make it a normal tour."
+        );
+        assert_eq!(
+            detail(AskDetail::Detailed),
+            "Walk me through a.py::f: why? Make it a detailed tour."
+        );
+    }
+
+    #[test]
+    fn a_full_stop_is_added_only_where_the_sentence_has_none() {
+        assert_eq!(
+            said(
+                Some("a.py::f"),
+                Some("why retry"),
+                Reach::Calls,
+                AskDetail::Detailed
+            ),
+            "Walk me through a.py::f: why retry. Cover it and what it calls. Make it a detailed tour."
+        );
+        assert_eq!(
+            said(
+                Some("a.py::f"),
+                Some("why retry?"),
+                Reach::Calls2,
+                AskDetail::Quick
+            ),
+            "Walk me through a.py::f: why retry? Cover it, what it calls, and what those call. Make it a quick tour."
+        );
+    }
+
+    #[test]
+    fn a_tours_detail_is_a_choice_and_normal_is_the_agents() {
+        assert_eq!(AskDetail::of_tour(Detail::Quick), AskDetail::Quick);
+        assert_eq!(AskDetail::of_tour(Detail::Normal), AskDetail::Agent);
+        assert_eq!(AskDetail::of_tour(Detail::Detailed), AskDetail::Detailed);
     }
 }

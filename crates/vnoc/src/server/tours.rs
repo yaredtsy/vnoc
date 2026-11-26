@@ -683,8 +683,20 @@ pub(super) fn tour_edit(
         let (title, question) = (params.title.clone(), params.question.clone());
         {
             let id = id.clone();
+            let (dir, root) = (project.open_dir().to_path_buf(), project.name());
             blocking(move || {
-                act::edit(&vnoc_root, &id, title.as_deref(), question.as_deref(), None)
+                let named = store::Named {
+                    dir: Some(&dir),
+                    root: &root,
+                };
+                act::edit(
+                    &vnoc_root,
+                    &id,
+                    title.as_deref(),
+                    question.as_deref(),
+                    None,
+                    &named,
+                )
             })
             .await?
             .map_err(act_error)?;
@@ -1077,8 +1089,8 @@ async fn after_end(
     said
 }
 
-/// `vnoc/tourAsk`: the sentence for an agent (`tours::document::ask`), with the node's address; **Ask for a New Tour** gives the row's tour (`ask_again`). TypeScript makes
-/// neither the sentence nor the line that says what to do with it.
+/// `vnoc/tourAsk`: the sentence for an agent from the form's parts (`tours::document::ask`); **Ask for a New Tour** gives the row's tour for what the parts
+/// leave out, and `filled` says what it gave. TypeScript makes neither the sentence nor the line that says what to do with it.
 pub(super) fn tour_ask(
     core: &mut Core,
     params: Option<protocol::TourAskParams>,
@@ -1087,26 +1099,40 @@ pub(super) fn tour_ask(
     let state = core.state.clone();
     timed("tourAsk", async move {
         let params = params.unwrap_or_default();
-        let asked = if let Some(id) = &params.tour {
+        // a row's tour: its root, question and detail, which the other keys override
+        let given = if let Some(id) = &params.tour {
             let project = open_project(&state)?;
             let (root, id) = (store::vnoc_root(project.git_root()), parse_tour(id)?);
             let held = state.clone();
-            blocking(move || {
-                let project = held
-                    .project
-                    .get()
-                    .ok_or(ActError::Environment("no folder is open".into()))?;
-                let tour = act::read_tour(&root, &id)?;
-                let address = tour
-                    .stops
-                    .iter()
-                    .find(|s| s.written)
-                    .map(|s| document::written_name(project, s));
-                Ok::<_, ActError>(document::ask_again(&tour, address.as_deref()))
-            })
-            .await?
-            .map_err(act_error)?
-        } else if let Some(key) = &params.key {
+            Some(
+                blocking(move || {
+                    let project = held
+                        .project
+                        .get()
+                        .ok_or(ActError::Environment("no folder is open".into()))?;
+                    let tour = act::read_tour(&root, &id)?;
+                    let address = tour
+                        .stops
+                        .iter()
+                        .find(|s| s.written)
+                        .map(|s| document::written_name(project, s));
+                    Ok::<_, ActError>((
+                        address,
+                        tour.question
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|q| !q.is_empty())
+                            .map(String::from),
+                        document::AskDetail::of_tour(tour.detail),
+                    ))
+                })
+                .await?
+                .map_err(act_error)?,
+            )
+        } else {
+            None
+        };
+        let address = if let Some(key) = params.key.as_ref().filter(|k| !k.trim().is_empty()) {
             let project = ready_project(&state).await?;
             let index = state.index.read().unwrap_or_else(|e| e.into_inner());
             let tree = index.tree(&project.name(), project.prefix());
@@ -1114,13 +1140,32 @@ pub(super) fn tour_ask(
                 .ok_or_else(|| bad_params(format!("no node is named `{key}`")))?;
             // the project's root is every tour's: a sentence about it names nothing
             let address = node.location();
-            document::ask((address != ".").then_some(address.as_str()))
+            (address != ".").then_some(address)
         } else {
-            document::ask(None)
+            given.as_ref().and_then(|(address, _, _)| address.clone())
         };
+        let question = match &params.question {
+            Some(q) => Some(q.clone()),
+            None => given.as_ref().and_then(|(_, q, _)| q.clone()),
+        };
+        let detail = params
+            .detail
+            .or(given.as_ref().map(|(_, _, d)| *d))
+            .unwrap_or_default();
+        let asked = document::ask(&document::Parts {
+            address: address.as_deref(),
+            question: question.as_deref(),
+            reach: params.reach.unwrap_or_default(),
+            detail,
+        });
         Ok(protocol::TourAskResult {
             text: asked.text,
             words: asked.words.to_string(),
+            filled: given.map(|(key, question, detail)| protocol::TourAskFilled {
+                key,
+                question,
+                detail,
+            }),
         })
     })
 }
