@@ -2,7 +2,7 @@
   "name": "vnoc",
   "displayName": "V-NOC",
   "description": "Browse code as a tree and a canvas, and attach docs that stay with the code when it is renamed or moved. Python and Bend.",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publisher": "vnoc",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
