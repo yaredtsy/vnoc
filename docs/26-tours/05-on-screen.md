@@ -605,6 +605,14 @@ says 0.3.1. `tours` is now rebased on `origin/main` (`a9dfd32`, with Bend's canv
   says instead: *a phrase that says what the tour explains, as a person would name it ("How checkout survives a payment timeout"),
   never a path or a function's name*. The core refuses a title that is only a node address or a path (`title: say what the tour
   explains, not where it is`) with its own example. Old tours keep theirs (Rename…).
+- **The steps read as one-liners** (the user's tour of `base_resource.py`: intros and blocks of 60–250 characters). Not a limit: the
+  budgets are 420 (normal) and 720/900 (detailed), and no text came near them. It is the skill: *"a step is short Markdown that says
+  why"*, *"never retell it"*, and every tour `normal` because the skill never sets `--detail`. The skill now asks for a full
+  paragraph: *2–4 sentences: why this part exists, what depends on it or would break without it, and anything surprising (a bug,
+  a trap, a default)*; quick tours keep one sentence; detailed tours use their larger budget for the reasoning. Still never a
+  retelling of the code. The same tour also shows two other skill faults, both fixed with the title rule: its title was the path
+  (`knowledge_base/base_resource.py`) and its `question` was the copied request (`Walk me through app/api/…`). The skill: *the
+  question is what the user wants to understand; a request that only names code has none: leave `--question` out*.
 - **The version:** the Cargo version goes to 0.4.0 with the extension, and the skill's `vnoc-version`.
 
 **TR23 is re-cut:** **TR23a** = the by-hand pass above (two commits: the core and skill, then the screen). **TR23b** = the old TR23 list:
