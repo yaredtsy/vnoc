@@ -2147,7 +2147,8 @@ suite("JSON, check all, ask for a tour, open tour, show docs", () => {
     api.answerTourFiles([file]);
     await vscode.commands.executeCommand("vnoc.tourImportFile");
     await until("the core's words", () => said(from).length === 1, 30_000);
-    assert.strictEqual(said(from)[0].text, "Imported “Imported copy”: 1 stop.");
+    // then what finish does after the end: in a repository the tour is pinned, and the words say so
+    assert.ok(said(from)[0].text.startsWith("Imported “Imported copy”: 1 stop."), said(from)[0].text);
     const list = await listShows("a row for the imported tour", (d) => d.list.some((r) => r.title === "Imported copy"));
     const made = row(list, list.list.find((r) => r.title === "Imported copy")!.id)!;
     assert.notStrictEqual(made.id, id);
