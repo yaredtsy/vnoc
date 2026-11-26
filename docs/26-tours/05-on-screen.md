@@ -620,8 +620,30 @@ narrow stage, mini bar, keys (↑↓, Alt+←), labels, the contents' fold, the 
 overlay, the row's hover `⋯`, the action strip over `▶ N`, the sticky header over the first stop row, the second offer below the fold,
 the code pane's long lines (no wrap), **Show Docs** from a right-clicked card, the picker's `on.words`, Check All Tours' sentence.
 
+**As built (TR23a, `4660181`, `029018e`; reviewed).** `vnoc/tourAsk { key?, question?, reach?, detail?, tour? }` (with `tour`, `filled`
+prefills the form); the title check (a title with no whitespace that is an address, a path, a folder or the root's name is refused,
+in `start`, `edit`, `tourEdit` and import); the skill's title, question, reach/detail (`start --route <node> --depth N`, `--detail`) and
+full-paragraph rules; 0.4.0 in every crate, both drivers and the skills; guide examples renamed (*How an order is parsed*).
+`ignoreFocusOut` on every picker and input box. Writing: `● writing` + **Stop** on the row and in a strip under the TOURS header;
+playing: `▶ playing` on the row, `▶ <title>` in the strip, **Stop Playing** in the route header; the status bar item's pick (Show Tour ·
+Stop Writing · Stop Playing). The lit block: others at 40%, the theme's range highlight, a `focusBorder` bar. The prompt builder at the top
+of TOURS (native selects). Rust lib 574, lifecycle 82, cli 275; TS 417 / 896 / 318; window 189 + Bend's 3 + one not reproduced (*"Esc closes
+the tour's context and MAIN is as it was"*, MAIN's viewport). The disk fell to 843 MB again (debug info): prompts set
+`CARGO_INCREMENTAL=0` and `CARGO_PROFILE_DEV_DEBUG=line-tables-only` for every cargo call from now on.
+
+**Decided at TR23a's review** (for TR23b):
+- **Dark themes:** Dark Modern's range highlight is ~4% white, so the lit block shows mostly by the dimming. The lit lines' background
+  gets a tint of the bar's colour on top of the theme's (`color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent)`), in every
+  theme.
+- **`writing` is said twice on a writing row** (line 1 `● writing`, line 2 `writing · 1 of 3 stops`): the core's line 2 leaves the state
+  out when line 1 says it, and the title gets the room.
+- **The route header is too narrow** for `How t…` beside `1 of 2` and **Stop Playing**: at a narrow width **Stop Playing** is an icon
+  button (`■`, the label in its tooltip). Part of TR23b's narrow-width work.
+- The playing row was not photographed: TR23b's shots include it.
+- The unreproduced window failure: watched in TR23b's full run; if it recurs it is fixed there.
+
 **Next, in this order:**
-- **TR23a**, then a new VSIX for the user, then **TR23b**, then TR24.
+- **A new 0.4.0 VSIX** for the user (only the package; nothing else), then **TR23b**, then TR24.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
