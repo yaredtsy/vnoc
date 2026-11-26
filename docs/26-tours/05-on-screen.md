@@ -574,6 +574,15 @@ says 0.3.1. `tours` is now rebased on `origin/main` (`a9dfd32`, with Bend's canv
     **Stop**; the open tour's route header the same;
   - the status bar item (`▶ Tour 3/10 · writing 6/10`): its click offers **Stop Writing**;
   - after Stop the row says `stopping` until the agent's next command sees it, then `stopped` (the core's states, as now).
+- **Nothing in the sidebar says which tour is playing, nor how to stop it** (the user, the same day). Only the route view's header
+  and the status bar say it. Now:
+  - in the list (All, On the selected node), the open tour's row is marked `▶ playing · stop 2/5` (the core's place) and has a
+    **Stop Playing** button, always shown;
+  - the TOURS header, while the list is shown and a tour is open: `▶ <title>` (click: back to its route) and **Stop Playing**;
+  - the route header's `×` becomes a labelled **Stop Playing** button (tooltip: *the place is kept*);
+  - the status bar item's click offers **Stop Playing** too;
+  - **Stop Playing** closes the tour as `×` does now: the stage closes, the place is kept, the row says `stop 2/5` after. Different
+    from **Stop** on a tour being written, which stops the agent: the two words stay apart.
 - **The lit lines are not noticeable.** design/03 §2 asks for a 3 px gutter bar, a background, and **every other line at 55%**. Make the
   contrast plain in both themes: other lines at 40%, the lit lines' background from the theme's
   `editor.rangeHighlightBackground` (or `editor.findMatchHighlightBackground`), at full strength, and the gutter bar in the focus
