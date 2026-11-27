@@ -707,6 +707,36 @@ wraps mid-word, no colour, nothing says which tour is being written or read). Th
   (red) — and the outcome in words; then the details indented, labels dim, ids cyan, titles bold. `show` and `route` as an indented
   outline (stops numbered, blocks under them with their lines dim). States everywhere: writing yellow `●`, last read green `▶`,
   stopped red `■`, `changed` yellow, `pinned at <hash>` green, `not pinned` dim.
+- **Not `list` only** (the user: *"check and the others are not styled"*): no tour command uses `style` today
+  (`cli/tour/*.rs`: 0 calls, where `show`, `find`, `status` have 12–29). Mocks for the others:
+  ```
+  $ vnoc tour check
+  ! 1 of 3 tours changed
+
+   ● changed     Creating a knowledge base                creating-a-knowledge-base-j8f6
+                 2  KnowledgeBasesResource.put     lines 99–148 changed
+                 3  KnowledgeBasesQueriesResource  gone: not in the code now
+     up to date  knowledge_base/base_resource.py          knowledge-base-base-resource-py-4xre
+
+  $ vnoc tour show knowledgebase-init-cw6v
+  How a stock hold is released                       finished · 3 stops · pinned at 704027a
+  knowledgebase-init-cw6v · private · “why does init call the loader twice?”
+
+   1  KnowledgeBase.__init__              app/kb.py:12
+        12–30  Load the settings
+        31–44  Hold the stock
+   2  └ Loader.load                       app/loader.py:5    from 1, line 20
+   3  └ Loader.close  = 2                 app/loader.py:40   from 1, line 41
+
+  $ vnoc tour finish knowledgebase-init-cw6v
+  ✓ finished: 3 stops, 7 steps · pinned at 704027a
+
+  $ vnoc tour add knowledgebase-init-cw6v app/kb.py::KnowledgeBase.load --body-file -
+  ✗ not written: 2 problems
+    block 2 text: 512 of 420 characters
+    intro: there is none. Start with one paragraph on what this is for, before the first heading
+  ```
+  The words are today's; only the mark, the colour, the order and the indent are new.
 - **Width:** a terminal's width is kept: long text is cut with `…`, never wrapped mid-column. A pipe gets the same layout with no colour
   and nothing cut.
 - **What does not change:** `--json`; and the words of every line the skill quotes or an agent acts on (`written`, `finished: …`, the
