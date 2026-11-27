@@ -39,3 +39,6 @@ export function movedByAgent(before: Place | null, now: Place): boolean {
 
 /** The tooltip of the bar's `←`: back to where you were before the last jump. Disabled with nothing to go back to. */
 export const canGoBack = (view: TourView): boolean => view.place.back.length > 0;
+
+/** The agent's words on a narrow bar (design 04 §5): `writing 6/10` is `6/10`, `writing · 6 so far` is `6 so far`; the others (`stopping`, `stopped`, `no news`) are as they are. */
+export const narrowAgent = (words: string): string => words.replace(/^writing (?:· )?/, "");

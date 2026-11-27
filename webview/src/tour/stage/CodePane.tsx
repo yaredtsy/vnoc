@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ThemedToken } from "shiki/core";
 
 import { type CodeLook, type LineLook, lineLook } from "../layout.ts";
-import { type PaneView, moreLit, nextPage, scrollTarget } from "../scroll.ts";
+import { type PaneView, moreLit, nextPage, scrollTarget, viewOf } from "../scroll.ts";
 import type { Shown } from "./useCode.ts";
 import { useHighlighter, useThemeName, useTokens } from "./useHighlight.ts";
 import { languageOf } from "../../lib/highlighter.ts";
@@ -23,7 +23,8 @@ export interface CodeDrawn {
 
 /**
  * The code pane (design 03 §2.2): the node's code, as it is now, with its real line numbers. The step's lines are lit and the rest dim (the look of each line is
- * `lineLook`); it scrolls by itself by the rule of `scroll.ts` and otherwise only by hand. Long lines are not wrapped. The syntax colours are the cards' (Shiki, the same
+ * `lineLook`); it scrolls by itself by the rule of `scroll.ts` and otherwise only by hand. A long line wraps (soft wrap) and the wrapped part is indented two columns past the
+ * line's own indent, so nothing is cut off at the pane's edge and the code still reads as code; the scroll rule counts lines, and a wrapped one is one line. The syntax colours are the cards' (Shiki, the same
  * highlighter and themes), under the marks: a lit line is coloured and has its background and bar, a dim one is the same colours at less strength. A file whose language the
  * highlighter does not have is drawn plain, as before.
  */
@@ -58,20 +59,40 @@ export function CodePane(p: {
   const first = shown?.first ?? 1;
   const litIndex = p.lit ? ([p.lit[0] - first, p.lit[1] - first] as const) : null;
 
+  /** the lines' places in the pane, from its own top (a wrapped line is taller than `LINE_H`): what is in view is counted in lines, not in pixels */
+  const lines = (el: HTMLElement) => {
+    const rows = Array.from(el.querySelectorAll<HTMLElement>(".stage-line"));
+    const origin = el.getBoundingClientRect().top - el.scrollTop;
+    const boxes = rows.map((row) => row.getBoundingClientRect());
+    return { rows, tops: boxes.map((b) => b.top - origin), heights: boxes.map((b) => b.height) };
+  };
   const measure = () => {
     const el = box.current;
-    if (el) setView({ top: Math.round(el.scrollTop / LINE_H), rows: Math.max(1, Math.floor(el.clientHeight / LINE_H)) });
+    if (!el) return;
+    const { tops, heights } = lines(el);
+    setView((old) => {
+      const now = viewOf(tops, heights, el.scrollTop, el.clientHeight);
+      return old.top === now.top && old.rows === now.rows ? old : now;
+    });
   };
+  // the pane changes its width (the stage stacks, a divider is dragged): lines wrap differently, and what is in view is measured again
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const watch = new ResizeObserver(() => measure());
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [shown?.text]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // a new step: the rule of scroll.ts, once the code of this stop is there
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || !shown) return;
-    const rows = Math.max(1, Math.floor(el.clientHeight / LINE_H));
-    const top = Math.round(el.scrollTop / LINE_H);
-    const target = scrollTarget({ newStop: previous.current !== p.stopId, lit: p.look === "lit" || p.look === "detail" ? litIndex : null, view: { top, rows }, pointerOver: pointerOver.current });
+    const { rows: els, tops, heights } = lines(el);
+    const now = viewOf(tops, heights, el.scrollTop, el.clientHeight);
+    const target = scrollTarget({ newStop: previous.current !== p.stopId, lit: p.look === "lit" || p.look === "detail" ? litIndex : null, view: now, pointerOver: pointerOver.current });
     previous.current = p.stopId;
-    if (target !== null) el.scrollTop = target * LINE_H;
+    if (target !== null) el.scrollTop = els[target] ? tops[target] : target * LINE_H;
     measure();
   }, [p.stopId, p.stepId, shown?.text]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -99,7 +120,9 @@ export function CodePane(p: {
         {shown!.lines.map((text, i) => (
           <div key={i} className={`stage-line stage-${looks[i]}${p.changed && looks[i] === "lit" ? " stage-changed" : ""}`} data-line={first + i}>
             <span className="stage-gutter">{first + i}</span>
-            <span className="stage-text">{text === "" ? " " : <Tokens text={text} tokens={tokens?.[i]} />}</span>
+            <span className="stage-text" style={{ "--lead": text.length - text.trimStart().length } as React.CSSProperties}>
+              {text === "" ? " " : <Tokens text={text} tokens={tokens?.[i]} />}
+            </span>
             {p.calls.has(first + i) && (
               <button type="button" className="stage-callto" title={`A stop of this tour: ${p.calls.get(first + i)!.name}`} onClick={() => p.onCall(p.calls.get(first + i)!.id)}>
                 ⇢ stop {p.calls.get(first + i)!.number}
@@ -109,7 +132,13 @@ export function CodePane(p: {
         ))}
       </div>
       {more > 0 && (
-        <button type="button" className="stage-more" onClick={() => box.current && (box.current.scrollTop = nextPage(view, shown!.lines.length) * LINE_H)}>
+        <button type="button" className="stage-more" onClick={() => {
+            const el = box.current;
+            if (!el) return;
+            const { tops } = lines(el);
+            const page = nextPage(view, shown!.lines.length);
+            el.scrollTop = tops[page] ?? page * LINE_H;
+          }}>
           ▾ {more} more lit {more === 1 ? "line" : "lines"}
         </button>
       )}

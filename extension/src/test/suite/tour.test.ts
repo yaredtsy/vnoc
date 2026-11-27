@@ -20,6 +20,7 @@ interface Api {
   stageDrawn(): Drawn[];
   stageKey(key: string): void;
   stageClick(button: string): void;
+  canvasWidth(px: number | null): void;
   toursDrawn(): Extract<Notes, { type: "toursDrawn" }>[];
   toursClick(what: string): void;
   mapDrawn(): Extract<Notes, { type: "mapDrawn" }>[];
@@ -52,6 +53,7 @@ interface Api {
   answerTourFiles(paths: (string | undefined)[] | null): void;
   answerOpenTour(labels: string[] | null): void;
   openTourPicks(): string[][];
+  openTourPickWords(): string[][];
   docPanel(): { open: boolean; node: string | null }[];
   dirtyFiles(): string[];
 }
@@ -70,7 +72,7 @@ const SHOP = `"""The shop, for the tour suite."""
 def checkout(order, stock):
     """Hold the stock, then charge."""
     if not has_stock(stock, order):
-        raise ValueError("out of stock")
+        raise ValueError(f"Not enough stock for {order['sku']}: wanted {order['qty']}, the warehouse has {stock.get(order['sku'], 0)} left, try a smaller order")
 
     reserve(stock, order)
     try:
@@ -354,6 +356,95 @@ suite("a tour on the canvas", () => {
     await stageShows("Home: the cover", (d) => d.mode === "cover");
     // the canvas's own arrows did not move a card: the tour context's selection is the current stop's
     assert.strictEqual(api.session().contexts[`tour:${tour}`].selected, "tourdemo/shop.py::checkout");
+  });
+
+  /** the stage's fold is the page's own state and outlives a test: a test that folds it puts it back */
+  const unfold = () => {
+    if (last()?.layout.folded) api.stageKey(".");
+  };
+
+  test("the rest of the keys (design 05 §6): Enter starts, ↓ ↑ are the next and the previous stop, Alt+← goes back after a jump, . folds the stage, Esc unfolds it before it closes the tour, Enter on the end card closes", async function () {
+    this.timeout(120_000);
+    await toCover();
+    try {
+      await restOfTheKeys();
+    } finally {
+      unfold();
+    }
+  });
+  const restOfTheKeys = async () => {
+    // the cover says the tour's title once, in its body: the header only folds
+    const cover = last()!;
+    assert.strictEqual(cover.title, "How the shop checks out");
+    assert.strictEqual(cover.header, "", "the header does not say the title again");
+    api.stageKey("Enter");
+    await stageShows("Enter on the cover starts the tour", atStep("s1"));
+    api.stageKey("ArrowDown");
+    await stageShows("↓ the next stop", (d) => d.mode === "step" && d.stop === "s2");
+    api.stageKey("ArrowDown");
+    await stageShows("↓ again", (d) => d.mode === "step" && d.stop === "s4");
+    api.stageKey("ArrowUp");
+    await stageShows("↑ the previous stop", (d) => d.mode === "step" && d.stop === "s2");
+    // a jump remembers where the reader was; Alt+← goes back to it
+    api.stageClick("jump:s3");
+    await stageShows("a jump to the file stop", (d) => d.stop === "s3");
+    api.stageKey("Alt+ArrowLeft");
+    await stageShows("Alt+← back to where the jump left", (d) => d.mode === "step" && d.stop === "s2");
+    // `.` folds the stage to the mini bar, and the arrows still move
+    api.stageKey(".");
+    const folded = await stageShows("the stage folds", (d) => d.layout.folded);
+    api.stageKey("ArrowRight");
+    await stageShows("→ moves on in the mini bar", (d) => d.layout.folded && d.step !== folded.step);
+    // Esc unfolds first, and the next Esc closes the tour
+    api.stageKey("Escape");
+    await stageShows("Esc unfolds the stage", (d) => !d.layout.folded);
+    assert.ok(api.session().contexts[`tour:${tour}`], "the tour is still open");
+    api.stageKey(".");
+    await stageShows("`.` folds it again", (d) => d.layout.folded);
+    api.stageKey(".");
+    await stageShows("and `.` unfolds it", (d) => !d.layout.folded);
+    api.stageKey("Escape");
+    await until("Esc closes the tour", () => api.session().contexts[`tour:${tour}`] === undefined);
+    // Enter on the end card: Close Tour (the place is kept: the tour opens where it was left)
+    const drawn = api.stageDrawn().length;
+    await openByCommand();
+    await until("the stage draws the reopened tour", () => api.stageDrawn().length > drawn);
+    api.stageKey("End");
+    await stageShows("the end card", (d) => d.mode === "end");
+    api.stageKey("Enter");
+    await until("Enter on the end card closes the tour", () => api.session().contexts[`tour:${tour}`] === undefined);
+  };
+
+  test("a canvas 520 px wide: the stage stacks, nothing is cut, Next is reachable, the mini bar and the cover fit; long lines of code wrap at any width", async function () {
+    this.timeout(120_000);
+    await toCover();
+    try {
+      api.canvasWidth(520);
+      const cover = await stageShows("the cover on a narrow canvas", (d) => d.mode === "cover" && d.layout.narrow);
+      assert.deepStrictEqual(cover.layout.outside, [], `nothing of the cover's header is cut: ${JSON.stringify(cover.layout)}`);
+      api.stageKey("Enter");
+      const step = await stageShows("a step on a narrow canvas", (d) => d.mode === "step" && d.layout.narrow && d.layout.stacked && d.code !== null && d.layout.codeRows >= 3);
+      assert.deepStrictEqual(step.layout.outside, [], `the header's buttons and Next › are inside the stage: ${JSON.stringify(step.layout)}`);
+      assert.ok(step.layout.width <= 520, `the stage is as wide as the canvas: ${step.layout.width}`);
+      assert.ok(step.layout.codeHeight >= 6 * 18 - 2, `the code keeps six lines: ${step.layout.codeHeight}`);
+      assert.strictEqual(step.layout.codeCut, false, "no line of code is cut at the pane's edge");
+      assert.ok(step.layout.wrapped >= 1, "the long line of checkout wraps");
+      // the mini bar
+      api.stageKey(".");
+      const bar = await stageShows("the mini bar on a narrow canvas", (d) => d.layout.folded && d.layout.narrow);
+      assert.deepStrictEqual(bar.layout.outside, [], `the bar's buttons are inside it: ${JSON.stringify(bar.layout)}`);
+      assert.strictEqual(bar.layout.height, 30);
+      api.stageKey(".");
+      await stageShows("unfolded again", (d) => !d.layout.folded);
+    } finally {
+      unfold();
+      api.canvasWidth(null);
+    }
+    // wide again: the panes are side by side, and the long line still wraps
+    const wide = await stageShows("the stage on a wide canvas", (d) => d.mode === "step" && !d.layout.narrow && !d.layout.stacked && d.code !== null);
+    assert.ok(wide.layout.wrapped >= 1, "the long line wraps");
+    assert.strictEqual(wide.layout.codeCut, false);
+    assert.deepStrictEqual(wide.layout.outside, []);
   });
 
   test("the selection follows the stop: the node of the stop the place is on", async () => {
@@ -2278,7 +2369,8 @@ suite("JSON, check all, ask for a tour, open tour, show docs", () => {
     await vscode.commands.executeCommand("vnoc.tourCheckAll");
     const changed = await listShows("the row says changed", (d) => row(d, id)?.words.includes("changed") === true, 60_000);
     assert.ok(row(changed, id)!.words.includes("changed"), row(changed, id)!.words);
-    assert.deepStrictEqual(said(from), [], "the rows are the answer: no message");
+    assert.strictEqual(said(from).length, 1, "the core's one sentence ends it");
+    assert.match(said(from)[0].text, /^Checked \d+ tours?: \d+ changed/, "how many changed");
   });
 
   test("Ask for a Tour… is a dialog of the canvas page, filled in from where it was opened; its prompt is the core's, and Copy Prompt copies it, says the core's words and closes it", async function () {
@@ -2392,6 +2484,10 @@ suite("JSON, check all, ask for a tour, open tour, show docs", () => {
     assert.ok(picks, "a list was shown");
     assert.strictEqual(picks[0], "— on checkout", `the node's tours come first: ${JSON.stringify(picks)}`);
     assert.ok(picks.indexOf("On checkout again") < picks.indexOf("— other tours") && picks.indexOf("— other tours") < picks.indexOf("Elsewhere"), JSON.stringify(picks));
+    // a tour on the node says why (the core's `on.words`) before what its row says; the others say the row's words alone
+    const words = api.openTourPickWords()[shown];
+    assert.match(words[picks.indexOf("On checkout again")], /^(starts here|stops? [\d, and]+ of \d+|\d+ stops? inside) · /, `the pick says why it is on the node: ${JSON.stringify(words)}`);
+    assert.doesNotMatch(words[picks.indexOf("Elsewhere")], /starts here|inside/, "a tour that is not on the node says only its row's words");
     await until("the picked tour is open", () => api.session().active === `tour:${onCheckout}`, 30_000);
     // from a tour's bar: the same request, through the bar's own entry
     const second = api.openTourPicks().length;
@@ -2411,6 +2507,10 @@ suite("JSON, check all, ask for a tour, open tour, show docs", () => {
     await vscode.commands.executeCommand("vnoc.tourShowDocs", { tour: id, stop: "s1", nodeKey: "tourdemo/shop.py::checkout" });
     await until("the docs panel is open", () => api.docPanel().slice(from).some((d) => d.open), 30_000);
     assert.strictEqual(api.docPanel().at(-1)!.node, "tourdemo/shop.py::checkout", "for the tour's current stop: the selection");
+    // from the menu of another card: the docs are that card's stop's, not the current one's
+    api.dispatch({ type: "select", id: "tourdemo/shop.py::checkout" }, `tour:${id}`);
+    await vscode.commands.executeCommand("vnoc.tourShowDocs", { tour: id, stop: "s9", nodeKey: "tourdemo/shop.py::has_stock" });
+    await until("the docs are the right-clicked card's", () => api.docPanel().at(-1)?.node === "tourdemo/shop.py::has_stock", 30_000);
     api.dispatch({ type: "closeContext", id: `tour:${id}` }, `tour:${id}`);
   });
 });

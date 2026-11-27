@@ -36,3 +36,15 @@ export function moreLit(lit: Lit | null, view: PaneView): number {
 export function nextPage(view: PaneView, total: number): number {
   return Math.max(0, Math.min(view.top + view.rows, total - 1));
 }
+
+/**
+ * What is in view of a pane whose lines are not all one height (a long line is wrapped onto more rows): `tops` and `heights` are those of each line in px from the pane's own top
+ * (scrolled with it), `scrollTop` and `clientHeight` the pane's. `top` is the first line more than half in view, `rows` how many lines are whole in view from it (at least 1).
+ */
+export function viewOf(tops: readonly number[], heights: readonly number[], scrollTop: number, clientHeight: number): PaneView {
+  let top = tops.findIndex((t, i) => t + heights[i] / 2 > scrollTop);
+  if (top < 0) top = Math.max(0, tops.length - 1);
+  let rows = 0;
+  for (let i = top; i < tops.length && tops[i] + heights[i] <= scrollTop + clientHeight + 1; i++) rows++;
+  return { top, rows: Math.max(1, rows) };
+}

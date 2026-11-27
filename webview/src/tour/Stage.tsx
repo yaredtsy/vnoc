@@ -9,7 +9,7 @@ import { on, post, request } from "../host.ts";
 import { useData } from "../state/data.ts";
 import { dispatch } from "../state/session.ts";
 import { setStageFolded, setStageHeight, setStageText, useView } from "../state/view.ts";
-import { type Current, type Shown, ADDING_LINE, becameWritten, callLines, currentOf, enterDoes, keyMove, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf } from "./layout.ts";
+import { type Current, type Shown, ADDING_LINE, NARROW_BELOW, becameWritten, callLines, currentOf, enterDoes, keyMove, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf, stageHeightFor } from "./layout.ts";
 import { goToStop } from "./goToCode.ts";
 import { stepLabel } from "./labels.ts";
 import { go, loadTour, useTour } from "./store.ts";
@@ -19,6 +19,7 @@ import { Cover, End } from "./stage/Cover.tsx";
 import { Foot } from "./stage/Foot.tsx";
 import { Header } from "./stage/Header.tsx";
 import type { TextDrawn } from "./stage/Rich.tsx";
+import { measureStage } from "./stage/measure.ts";
 import { TextPane } from "./stage/TextPane.tsx";
 import { type Shown as Code, useCode } from "./stage/useCode.ts";
 import { useAsWritten } from "./stage/useWritten.ts";
@@ -60,6 +61,22 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const height = useView((v) => v.stageHeight);
   const textWidth = useView((v) => v.stageText);
   const folded = useView((v) => v.stageFolded);
+  // the canvas the dock is in: under 640 px wide the panes stack (design 03 §6), and the dock's height is a share of the canvas's own
+  const [room, setRoom] = useState({ width: 1000, height: 800 });
+  const watching = useRef<ResizeObserver | null>(null);
+  const stageEl = useRef<HTMLDivElement | null>(null);
+  const stageRef = useCallback((el: HTMLDivElement | null) => {
+    stageEl.current = el;
+    watching.current?.disconnect();
+    watching.current = null;
+    const canvas = el?.parentElement;
+    if (!canvas) return;
+    const read = () => setRoom((old) => (old.width === canvas.clientWidth && old.height === canvas.clientHeight ? old : { width: canvas.clientWidth, height: canvas.clientHeight }));
+    read();
+    watching.current = new ResizeObserver(read);
+    watching.current.observe(canvas);
+  }, []);
+  const narrow = room.width < NARROW_BELOW;
   const [drawn, setDrawn] = useState<CodeDrawn>({ scrolledTo: 0, lit: [], thin: [], coloured: 0, step: null, text: null });
   const [textDrawn, setTextDrawn] = useState<TextDrawn>({ lists: 0, tables: 0, fences: 0, diagrams: 0, drawn: 0, failed: 0 });
 
@@ -186,6 +203,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   useEffect(
     () =>
       on("viewCommand", ({ name, key }) => {
+        // the suite cannot drag the window: it narrows the page itself (the same layout rules run on it), and gives it back with no `key`
+        if (name === "canvasWidth") document.body.style.width = key ? `${key}px` : "";
         if (name === "stageKey" && key) {
           // `Alt+ArrowLeft`: the modifiers, then the key
           const parts = key.length > 1 && key.includes("+") ? key.split("+") : [key];
@@ -209,7 +228,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
 
   // what the suite reads of what was drawn: only a drawing that is whole. While the code is being read, and between a new step and the code pane's report of it, the page has not
   // drawn the step yet (a drawing then would carry the lit lines of the step before)
-  const codeDrawn = !wantsPane || (code !== null && ("error" in code || (drawn.step === (step?.id ?? null) && drawn.text === code.text)));
+  const codeDrawn = folded || !wantsPane || (code !== null && ("error" in code || (drawn.step === (step?.id ?? null) && drawn.text === code.text)));
   useEffect(() => {
     if (!view || !current || !codeDrawn) return;
     post({
@@ -229,10 +248,10 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       calls: stop ? [...callLines(view, stop.id).keys()] : [],
       code: code && "lines" in code ? { first: code.first, text: code.text } : null,
       // what the code pane drew: nothing when there is no code pane (the cover, the end, contents)
-      lit: wantsPane ? drawn.lit : [],
-      thin: wantsPane ? drawn.thin : [],
-      scrolledTo: wantsPane ? drawn.scrolledTo : 0,
-      coloured: wantsPane ? drawn.coloured : 0,
+      lit: wantsPane && !folded ? drawn.lit : [],
+      thin: wantsPane && !folded ? drawn.thin : [],
+      scrolledTo: wantsPane && !folded ? drawn.scrolledTo : 0,
+      coloured: wantsPane && !folded ? drawn.coloured : 0,
       asWritten: asWritten ? { commit: asWritten.commit, lit: drawn.lit } : null,
       switch: written.look === "written" && written.switch ? "written" : written.look === "now" ? "now" : null,
       checkFrom: view.check?.from ?? null,
@@ -250,10 +269,12 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       pin: current.mode === "cover" ? (pinned?.pin?.text ?? null) : null,
       reason: current.mode === "cover" ? (pinned?.reason ?? null) : null,
       offers: current.mode === "cover" ? (pinned?.offers ?? []).map((o) => `${o.text} | ${o.button}`) : [],
+      layout: stageEl.current ? measureStage(stageEl.current, narrow, folded) : { narrow, folded, stacked: false, width: 0, height: 0, codeHeight: 0, codeRows: 0, wrapped: 0, codeCut: false, outside: [] },
     });
-  }, [view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [narrow, folded, room.width, view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const style = { height: folded ? 30 : height };
+  const style = { height: folded ? 30 : stageHeightFor(height, narrow, Math.floor(room.height * MAX_SHARE), MIN_H) };
+  const cls = `stage${narrow ? " stage-narrow" : ""}`;
   const grip = (
     <div
       className="stage-grip"
@@ -268,7 +289,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
 
   if (!view) {
     return (
-      <div className="stage" style={{ height: 30 }} data-stage="loading">
+      <div ref={stageRef} className={cls} style={{ height: 30 }} data-stage="loading">
         <div className="stage-header">
           <span className="stage-dimtext">{answer && "unreadable" in answer ? `This tour cannot be read${answer.unreadable ? `: ${answer.unreadable}` : "."}` : "Opening the tour…"}</span>
           <span className="stage-grow" />
@@ -286,7 +307,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   if (folded) {
     // the mini bar (design 03 §6): one line; the keys and ‹ › still move
     return (
-      <div className="stage" style={style} data-stage="folded">
+      <div ref={stageRef} className={cls} style={style} data-stage="folded">
         <div className="stage-header">
           <span className="stage-name">{stop ? `${stop.number}  ${stop.name}` : view.title}</span>
           {step?.title && <span className="stage-dimtext"> · {step.title}</span>}
@@ -309,7 +330,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   // what a screen reader is told of the stage: the step (design 05 §8), or the cover and the end card by their tour
   const label = current!.mode === "step" && stop && step ? stepLabel(view, stop, step, current!.parent) : `${current!.mode === "cover" ? "Cover" : "End"} of the tour of ${view.title}`;
   return (
-    <div className="stage" style={style} role="region" aria-label={label} data-stage={current!.mode === "step" ? (step?.kind ?? "step") : current!.mode}>
+    <div ref={stageRef} className={cls} style={style} role="region" aria-label={label} data-stage={current!.mode === "step" ? (step?.kind ?? "step") : current!.mode}>
       {grip}
       {current!.mode === "step" && stop && step && look ? (
         <>

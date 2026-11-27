@@ -381,7 +381,7 @@ export class Commands {
 
   /** Close (08 §5): an EXPLORE context goes with its children; MAIN stays. */
   /** The QuickPick of **Open Tour…** (design/07 §8; `ignoreFocusOut`: from the bar's ⋯ the menu gives focus back to the page a moment after the picker opens, and a picker that closes with focus would be gone at once), the suite's way in: `pickAnswers` is the label to pick (`null`: VS Code's own), `picksShown` every list shown, as its lines (a line starting `— ` is a separator). */
-  readonly tourPick: { pickAnswers: string[] | null; picksShown: string[][] } = { pickAnswers: null, picksShown: [] };
+  readonly tourPick: { pickAnswers: string[] | null; picksShown: string[][]; picksDescribed: string[][] } = { pickAnswers: null, picksShown: [], picksDescribed: [] };
 
   /** The node selected in the window's active context (a tour's: the current stop's), if the tree has it. */
   private selectedKey(): string | null {
@@ -424,6 +424,8 @@ export class Commands {
     const items: (vscode.QuickPickItem & { row?: ToursAnswer["tours"][number] })[] =
       on.length > 0 ? [separator(`on ${name}`), ...on.map(pickItem), ...(rest.length > 0 ? [separator("other tours")] : []), ...rest.map(pickItem)] : tours.map(pickItem);
     this.tourPick.picksShown.push(items.map((i) => (i.kind === vscode.QuickPickItemKind.Separator ? `— ${i.label}` : i.label)));
+    // what each line says beside its label (a tour on the node says why: the core's `on.words`), for the suite
+    this.tourPick.picksDescribed.push(items.map((i) => i.description ?? ""));
     const want = this.tourPick.pickAnswers?.shift();
     const picked = this.tourPick.pickAnswers !== null ? items.find((i) => i.row !== undefined && i.label === want) : await vscode.window.showQuickPick(items, { title: "Open Tour", placeHolder: "Pick a tour", matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
     if (!picked?.row) return;

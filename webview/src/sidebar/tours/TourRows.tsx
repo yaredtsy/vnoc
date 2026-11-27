@@ -50,7 +50,8 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
       title={item.question === null ? item.id : `${item.question}\n${item.id}`}
       onClick={() => item.clickable && onOpen()}
     >
-      <div className="flex min-w-0 items-center gap-1.5">
+      {/* line 1 gives the strip of hover buttons its room (two buttons, 40 px): what it says at the right (`▶ playing`, the state, the size) moves left, never under them */}
+      <div className="flex min-w-0 items-center gap-1.5 group-focus-within/row:pr-[44px] group-hover/row:pr-[44px]">
         {item.kind !== null && (
           <span style={{ color: kind.color }} className="flex-none">
             <Codicon name={kind.icon} />
@@ -106,6 +107,22 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
           </span>
         )}
       </div>
+      {/* the row's menu with the pointer: the same menu as the right click (`⋯` sends it the click's place) */}
+      <button
+        type="button"
+        data-part="row-menu"
+        title="More"
+        aria-label={`More: ${item.title}`}
+        aria-haspopup="menu"
+        className={cn(hover, stop ? "right-1" : "right-[24px]", "w-[18px] px-0")}
+        onClick={(e) => {
+          e.stopPropagation();
+          const at = e.currentTarget.getBoundingClientRect();
+          e.currentTarget.closest("[role=option]")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: at.left, clientY: at.bottom, button: 2 }));
+        }}
+      >
+        <Codicon name="ellipsis" className="text-[13px]" />
+      </button>
       {!stop && (
         <button
           type="button"

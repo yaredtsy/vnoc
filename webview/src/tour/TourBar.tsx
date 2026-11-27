@@ -11,7 +11,7 @@ import { on, post, request } from "../host.ts";
 import { dispatch } from "../state/session.ts";
 import { useData } from "../state/data.ts";
 import { setHover, setMinimap, useView } from "../state/view.ts";
-import { MOVED_MS, canGoBack, crumbsOf, movedByAgent } from "./bar.ts";
+import { MOVED_MS, canGoBack, crumbsOf, movedByAgent, narrowAgent } from "./bar.ts";
 import { CENTER_TOUR_EVENT } from "./camera.ts";
 import { goToStop } from "./goToCode.ts";
 import { currentOf } from "./layout.ts";
@@ -100,8 +100,8 @@ export function TourBar({ tourId, contextId, width }: { tourId: string; contextI
         </span>
       )}
       {agent && (
-        <span className="flex flex-none items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground" role="status" data-part="agent">
-          {agent}
+        <span className="flex flex-none items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground" role="status" data-part="agent" aria-label={agent}>
+          {width < 640 ? narrowAgent(agent) : agent}
           {canStop && (
             <button type="button" data-part="stop" aria-label="Stop writing" title="Stop the agent: it finishes the stop it is on" className="flex size-5 items-center justify-center rounded-sm text-foreground hover:bg-toolbar-hover" onClick={() => halt(tourId)}>
               ■

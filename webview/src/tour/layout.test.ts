@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Place, StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import { ADDING_LINE, becameWritten, callLines, currentOf, enterDoes, keyMove, lineLook, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf } from "./layout.ts";
+import { ADDING_LINE, NARROW_MIN_HEIGHT, becameWritten, callLines, currentOf, enterDoes, keyMove, lineLook, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf, stageHeightFor } from "./layout.ts";
 
 const step = (id: string, kind: StepKind, over: Partial<StepView> = {}): StepView => ({ id, kind, depth: kind === "block" ? 1 : kind === "detail" ? 2 : 0, parent: null, title: null, text: "t", lines: null, ...over });
 const stop = (id: string, reading: StepView[], over: Partial<TourStop> = {}): TourStop => ({
@@ -157,4 +157,13 @@ test("the text fades in only where the grey bars were: the same step, planned be
   assert.equal(becameWritten({ id: "s3", kind: "intro" }, { id: "s3", kind: "intro" }), false);
   assert.equal(becameWritten(null, { id: "s3", kind: "intro" }), false, "the first drawing");
   assert.equal(becameWritten({ id: null, kind: null }, { id: "s3", kind: "intro" }), false);
+});
+
+test("the dock's height: the reader's, and on a narrow canvas room for six lines of code over the text; never past 45% of the canvas", () => {
+  const least = 30 + 5 * 18;
+  assert.equal(stageHeightFor(215, false, 400, least), 215, "wide: as it is");
+  assert.equal(stageHeightFor(215, true, 400, least), NARROW_MIN_HEIGHT, "narrow: the code keeps six lines");
+  assert.equal(stageHeightFor(330, true, 400, least), 330, "a taller one the reader chose stays");
+  assert.equal(stageHeightFor(215, true, 200, least), 200, "a short canvas: 45% of it");
+  assert.equal(stageHeightFor(215, false, 50, least), least, "never less than the header and five lines");
 });

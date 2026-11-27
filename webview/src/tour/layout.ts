@@ -216,3 +216,18 @@ export function callLines(view: TourView, stopId: string): Map<number, TourStop>
   for (const s of view.stops) if (s.from === stopId && s.line != null && !calls.has(s.line)) calls.set(s.line, s);
   return calls;
 }
+
+/** A canvas narrower than this (px) is a narrow one (design 03 §6, 04 §5): the stage's panes stack, the bar keeps the last crumb only. */
+export const NARROW_BELOW = 640;
+
+/** What the narrow stage is at least: the header (30), six lines of code (6 × 18), the text and the foot under it (about 130: three lines of text and the foot): the code keeps its six lines. */
+export const NARROW_MIN_HEIGHT = 30 + 6 * 18 + 130;
+
+/**
+ * The dock's height now: the one the reader set (or the default), and on a narrow canvas no less than [`NARROW_MIN_HEIGHT`] (the panes are one above the other: the code keeps
+ * six lines and the text has room); never more than `max` (45% of the canvas), and never less than the header and five lines.
+ */
+export function stageHeightFor(height: number, narrow: boolean, max: number, least: number): number {
+  const wanted = narrow ? Math.max(height, NARROW_MIN_HEIGHT) : height;
+  return Math.max(least, Math.min(wanted, Math.max(least, max)));
+}

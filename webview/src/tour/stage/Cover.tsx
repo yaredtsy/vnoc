@@ -11,7 +11,7 @@ import type { CoverPin } from "../pin.ts";
 const size = (v: TourView) =>
   v.of !== null ? `${v.of} ${v.of === 1 ? "stop" : "stops"}${v.detail === "normal" ? "" : ` · ${v.detail}`} · about ${v.minutes} min` : `${soFar(v)} · the agent is adding more`;
 
-/** The cover (design 02 frame 2): one column. The title, the question if it has one, the size, what the agent is doing, **Start**; then the pin and its offers, then what changed: Start is never below the fold. */
+/** The cover (design 02 frame 2): one column. The title, the question if it has one, the size, what the agent is doing, **Start**; then its offers (Commit and Pin… among them: the first one is in view with Start), then the pin and why, then what changed: what does not fit scrolls inside the cover. */
 export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: () => void; onOffer: (kind: "ids" | "commit") => void }) {
   const { view } = p;
   const writing = view.writing === null || p.beat !== "writing" ? null : view.stops.find((s) => s.id === view.writing);
@@ -35,6 +35,14 @@ export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: (
           Start ›
         </button>
       </div>
+      {offers.map((o) => (
+        <p key={o.kind} className="stage-paragraph stage-offer" data-part="offer" data-offer={o.kind}>
+          <span>{o.text}</span>
+          <button type="button" className="stage-btn stage-secondary" onClick={() => p.onOffer(o.kind)}>
+            {o.button}
+          </button>
+        </p>
+      ))}
       {pin && (
         <p className="stage-paragraph stage-dimtext" data-part="pin" title={pin.title}>
           {pin.text}
@@ -45,14 +53,6 @@ export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: (
           {reason}
         </p>
       )}
-      {offers.map((o) => (
-        <p key={o.kind} className="stage-paragraph stage-offer" data-part="offer" data-offer={o.kind}>
-          <span>{o.text}</span>
-          <button type="button" className="stage-btn stage-secondary" onClick={() => p.onOffer(o.kind)}>
-            {o.button}
-          </button>
-        </p>
-      ))}
       {notes.gone && (
         <p className="stage-paragraph" data-part="first-gone">
           {notes.gone}

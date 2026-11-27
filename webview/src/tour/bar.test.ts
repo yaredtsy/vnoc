@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Place, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import { canGoBack, crumbsOf, movedByAgent } from "./bar.ts";
+import { canGoBack, crumbsOf, movedByAgent, narrowAgent } from "./bar.ts";
 
 const intro = (id: string): StepView => ({ id, kind: "intro", depth: 0, parent: null, title: null, text: "t", lines: null });
 const stop = (n: number, over: Partial<TourStop> = {}): TourStop => ({ number: n, id: `s${n}`, depth: 0, planned: false, kind: "function", name: `f${n}`, path: "a.py", qualname: `f${n}`, key: `a.py::f${n}`, steps: 1, blocks: [], reading: [intro(`s${n}`)], ...over });
@@ -38,4 +38,8 @@ test("`moved by the agent` is a place that moved since the last, and says a comm
 test("← is enabled when the core has a place to go back to", () => {
   assert.equal(canGoBack(view("s2", { back: ["s1"] })), true);
   assert.equal(canGoBack(view("s2")), false);
+});
+
+test("on a narrow bar the agent says its numbers alone: 6/10, 6 so far; the other words stay", () => {
+  assert.deepEqual(["writing 6/10", "writing · 6 so far", "stopping", "stopped", "no news"].map(narrowAgent), ["6/10", "6 so far", "stopping", "stopped", "no news"]);
 });

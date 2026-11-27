@@ -518,6 +518,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** a key pressed in the tour's stage, and a click on one of its buttons (`next`, `prev`, `goToCode`, `start`, `closeTour`), as the page handles them: the suite cannot press keys or click in a webview */
     stageKey: (key: string) => panels.emit("viewCommand", { name: "stageKey", key }),
     stageClick: (button: string) => panels.emit("viewCommand", { name: "stageClick", key: button }),
+    canvasWidth: (px: number | null) => panels.emit("viewCommand", { name: "canvasWidth", key: px === null ? undefined : String(px) }),
     /** every drawing of the tour's map, in order: its cards (badge, ring, call line) and its heavy edges */
     mapDrawn: () => mapPosts,
     /** what the bar said in a tour context each time it changed: the crumbs, `moved by the agent`, whether `←` is enabled */
@@ -547,6 +548,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** **Open Tour…**'s QuickPick: the label to pick (`null`: VS Code's own), and every list it showed (a line that starts with `— ` is a separator) */
     answerOpenTour: (labels: string[] | null) => void (commands.tourPick.pickAnswers = labels),
     openTourPicks: () => commands.tourPick.picksShown,
+    openTourPickWords: () => commands.tourPick.picksDescribed,
     /** every state of the canvas's doc panel (the bar's `ⓘ`), in order */
     docPanel: () => docPanelPosts,
     /** every drawing of the sidebar's TOURS section, in order */
