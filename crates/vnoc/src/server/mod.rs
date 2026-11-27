@@ -83,6 +83,9 @@ enum Work {
 /// What a corpus is made for: the index revision and the doc-text generation.
 type CorpusKey = (u64, u64);
 
+/// The sizes of a node's route, with the index revision they were made for (`None`: the route could not be made).
+type RouteSizes = (u64, Option<Arc<Vec<crate::tours::route::Size>>>);
+
 /// Shared between the handlers and the background tasks they start.
 struct State {
     project: OnceLock<Project>,
@@ -95,9 +98,7 @@ struct State {
     /// The tours whose calls (`vnoc/tourCalls`) are being counted now, each by a task of its own.
     calls_running: Mutex<std::collections::BTreeSet<TourId>>,
     /// The sizes `vnoc/tourAsk` gives for a node, by its tree key, kept with the index revision they were made for (`None`: the route could not be made).
-    route_sizes: Mutex<
-        std::collections::HashMap<String, (u64, Option<Arc<Vec<crate::tours::route::Size>>>)>,
-    >,
+    route_sizes: Mutex<std::collections::HashMap<String, RouteSizes>>,
     /// The nodes whose sizes are being made now, each by a task of its own.
     route_sizes_running: Mutex<std::collections::BTreeSet<String>>,
     /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
