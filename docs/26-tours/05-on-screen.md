@@ -788,6 +788,11 @@ the final skill):
   `vnoc code`, `vnoc show`, `vnoc grep` (`--lines` for a part), one command per call: no `|`, `;`, `sed` or `grep -n`*.
 - **S5, ranges a few lines off:** `add`'s answer lists each block with its first lit line (`## 11-24 Title → 11: def reserve(…`, cut at the
   line's width), so the agent sees what it lit. One line per block.
+- **How far stays the call tree** (the user, 2026-11-27): the dialog's number is levels of children in the call tree, with its sizes, as
+  built; no stop counts are forced, and with no number the agent decides how far. What the user does not want is a stop taken apart
+  into many small blocks (the film's run: 49 blocks in 14 stops). The skill: *a stop's blocks are its main parts, usually two or
+  three `##`; `###` only for a part too long to read at once; a detailed tour gives deeper reasons, not more blocks; leave out lines
+  that only log, check arguments or pass a value on.*
 - **S2** (progress lines in the chat) and **S3** (no `Tour started` line): left as they are; harmless, and the film keeps S2.
 - **Product, same step:** G6 `go` (or any move) to a block of another stop scrolls its lit lines into view (a bug the film needs);
   G8 Next by key brings the next lit block into view wherever the pointer is, and the pointer state ends when it leaves; G7 a sideways
