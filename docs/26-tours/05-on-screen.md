@@ -820,8 +820,30 @@ cannot happen now code wraps; G2 fits at 215 px. Rust lib 584, cli 283, agent 33
 (`s1.b1  ## 14-15 Title → 14: …`: the guide's `drop` and `--under` need them); the Ask chip uses the short name too (it still shows
 `<locals>`).
 
+**The film's proof run on the TR24s VSIX (TF0e, 2026-11-27,** `../vnoc-tour-film/tools/media/out/tf/probe-e*.txt`, run-1/, run-2/): the same
+prompt gave 12 stops, 37 blocks (49 before), **8 diagrams**, 6 of them on a stop with that flow; 4 of 57 reads still `grep -nE`. Found, and
+decided for **TR24u**:
+- **G11, checked in the probe:** run-2's move to s6 (`run_single_turn`, the first stop in `run_loop.py`, 3,123 lines): the route answered
+  in 168 ms, the code was drawn after **19,375 ms**; every other move drew its code in 156–427 ms, also in `run.py`, whose `_run_impl` is
+  1,879 lines. So it is not the file's size alone: something asked on the first arrival in a file waits, most likely on the Python driver
+  (a 30 s call-tree limit; run-1 took 24–30 s). TR24u measures first (the core's `timed` lines with `VNOC_LOG`), then fixes: the code
+  is drawn at once, and anything slow fills in after.
+- **G12:** a diagram opened large fits the screen whole (scaled down; zoom and pan to read it closer).
+- **S7, made exact by the user:** what is refused is a **duplicate sibling**: two stops with the same parent (the same `from`, or both
+  top-level) on the same node, and two blocks with the same parent whose lines overlap. The same function in a different part of the tour
+  is fine (a call from elsewhere: `--same-as` shares its text). The skill: *a function is one stop where it is reached; its parts are `##`
+  blocks with the `###` details they need, deeper for a long function, never more stops beside it; what the caller does after a call is a
+  block of the caller's stop.* `add` refuses both duplicates in words the agent can act on.
+- **S8:** a diagram goes on the block (or detail) whose own lines branch, loop, retry or fan out, never on a block that only calls them;
+  plus the whole route once in the first stop's intro.
+- **S6:** a new session never loads the skill for "why is this here?" / "take me to …". The always-loaded V-NOC block that `vnoc agent
+  install` writes says: *"this", "here" or "take me to …" may mean the tour open in V-NOC: run `vnoc tour where` first.*
+- With them: `add`'s block lines carry their ids again, and the Ask chip shows the short name (TR24s's review).
+
 **Next, in this order:**
-- The film's proof run on this VSIX (the same prompt: ≥ 3 diagrams on stops with a flow; fewer, larger blocks), and **TR24b**, the user's
+- **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
+  diagram that fits) and the user's by-hand pass on it; then push, PR, merge, `v0.4.0`.
+- (superseded) The film's proof run on this VSIX (the same prompt: ≥ 3 diagrams on stops with a flow; fewer, larger blocks), and **TR24b**, the user's
   by-hand pass, on the same build; then one fix step for what both find; then push, PR, merge, `v0.4.0`.
 - (done) **TR24s** (the film's findings above), a VSIX (the film's write runs wait for S1), then **TR24b** (the user), then
   push, PR, merge, `v0.4.0`.
