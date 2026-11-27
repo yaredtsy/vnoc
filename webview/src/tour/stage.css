@@ -37,8 +37,8 @@
 .stage-text { padding-right: 16px; }
 .stage-token { white-space: pre; }
 .stage-line::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
-/* the lit block (design 03 §2): the lit lines in full strength with the theme's own highlight, the gutter bar in the focus colour, every other line at 40% */
-.stage-lit { background: var(--vscode-editor-rangeHighlightBackground, var(--vscode-editor-findMatchHighlightBackground, color-mix(in srgb, var(--ring) 22%, transparent))); }
+/* the lit block (design 03 §2): the lit lines in the theme's own highlight with a tint of the bar's colour on top (a dark theme's highlight is nearly invisible), the gutter bar in the focus colour, every other line at 40% */
+.stage-lit { background: linear-gradient(color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent), color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent)), var(--vscode-editor-rangeHighlightBackground, var(--vscode-editor-findMatchHighlightBackground, transparent)); }
 .stage-lit::before { background: var(--vscode-focusBorder, #007fd4); }
 .stage-dim { opacity: 0.4; }
 .stage-thin::before { background: var(--card-selected); width: 1px; left: 1px; opacity: 0.8; }
