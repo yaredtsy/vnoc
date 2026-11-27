@@ -872,6 +872,15 @@ frames that card and keeps the focus; otherwise as now. A window test on a call 
 `_run_impl` card's `… calls not loaded` beside its drawn calls — the user checks whether it stays after close and reopen; if it does,
 it is a stale mark, fixed in the same commit.
 
+**And a second bug under it (the user, same day):** typing alone (no pick) dims the call view's cards that do not match and keeps the
+matches bright: `resolve_trace` leaves `resolve_trace_settings`'s call card bright (called once, line 801, callee ~19 of 125), but
+`run_single_turn` leaves **no** card bright, though `vnoc calls` lists it among `_run_impl`'s callees (`run_loop.py::run_single_turn ×2`,
+lines 1795 — inside `asyncio.create_task(…)` — and 1913, callee ~103). The fix step finds why the canvas's `searchCards` question or answer
+misses that card: its key (a callee with two sites, or a call inside another call's arguments), whether it is laid out at all, or the
+match. Reproduce on the user's copy (`/Users/yared/Documents/Programing/rust/language_clone/openai-agents-python`, read only): the
+`_run_impl` call view from `Runner.run`, type `run_single_turn`. A window test with a callee called twice, one call inside another's
+arguments.
+
 **Next, in this order:**
 - The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
 - (done) **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
