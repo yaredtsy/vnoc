@@ -892,7 +892,7 @@ fn the_topics_are_the_files_of_the_guide_folder_and_each_is_short() {
         let text = read(&guide_dir().join(format!("{topic}.md")));
         let lines = text.lines().count();
         // the tours' topic is the one with a session to show in every section (04 §4): the rest are about 40
-        let most = if topic == "tour" { 300 } else { 60 };
+        let most = if topic == "tour" { 305 } else { 60 };
         assert!(
             lines <= most,
             "{topic}.md is {lines} lines: a topic is about 40 (tour: at most {most})"

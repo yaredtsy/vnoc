@@ -254,18 +254,21 @@ The constructor only keeps what it is given.
 It adds up the amount of each line every time.
 EOF
 vnoc tour show how-an-order-is-parsed-7k2q --text
-How an order is parsed   "how does an order get parsed"
-private · writing · 2 stops · 4 steps · by claude-code · not pinned (being written)
+How an order is parsed     writing · 2 stops · 4 steps · by claude-code · not pinned (being written)
+how-an-order-is-parsed-7k2q · private · “how does an order get parsed”
+
  1  s1  ƒ OrderService.parse_order  orders/service.py:10-13  1 step
       parse_order is where raw input becomes an Order.
- 2  s2    ◆ Order                   orders/models.py:14-21   3 steps  ← s1 line 13
+ 2  s2  └ ◆ Order                   orders/models.py:14-21   3 steps  ← s1 line 13
       An Order is its number and its lines.
     s2.b1  15-17  Two fields and nothing else
       The constructor only keeps what it is given.
     s2.b2  19-21  The total is a sum, not a stored number
       It adds up the amount of each line every time.
-vnoc tour check | tail -n 1
-1 tour · all fresh
+vnoc tour check
+✓ 1 tour · all fresh
+
+   up to date How an order is parsed                                     how-an-order-is-parsed-7k2q
 vnoc tour drop how-an-order-is-parsed-7k2q s2.b2
 dropped s2.b2
 ```
