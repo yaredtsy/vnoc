@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { depthOf, formFor, formFromTour, paramsOf, shortName, sizeAt } from "./ask.ts";
+import { aboutName, depthOf, formFor, formFromTour, paramsOf, shortName, sizeAt } from "./ask.ts";
 
 test("the request is the node and every part as it stands, with no depth while the agent decides", () => {
   assert.deepEqual(paramsOf({ ...formFor("a.py::f"), question: "why?", detail: "quick" }), { key: "a.py::f", question: "why?", detail: "quick" });
@@ -52,4 +52,12 @@ test("the chip says the last part of an address", () => {
   assert.equal(shortName("orders/service.py"), "service.py");
   assert.equal(shortName("orders/"), "orders");
   assert.equal(shortName("app"), "app");
+  assert.equal(shortName("billing/charge.py::retry_charge.<locals>.one_try"), "one_try", "never <locals>");
+});
+
+test("the chip's words for a node are its qualified name, and a nested function's own name, never <locals>", () => {
+  assert.equal(aboutName({ name: "run", qualname: "Runner.run" }, "src/run.py::Runner.run"), "Runner.run");
+  assert.equal(aboutName({ name: "one_try", qualname: "retry_charge.<locals>.one_try" }, "billing/charge.py::retry_charge.<locals>.one_try"), "one_try");
+  assert.equal(aboutName({ name: "service.py", qualname: null }, "orders/service.py"), "service.py");
+  assert.equal(aboutName(null, "billing/charge.py::retry_charge.<locals>.one_try"), "one_try", "a node that is gone: the address's own last part");
 });

@@ -443,6 +443,9 @@ fn of_the_ask<T>(asked: Result<Result<T, CallsError>, tokio::time::error::Elapse
 /// The count of `vnoc/tourCalls` for one tour, kept when the tour is as it was when it started (a stop whose driver ask failed is left out).
 async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseError> {
     let state = core.state.clone();
+    if let Some(hold) = super::test_millis("VNOC_HOLD_TOUR_CALLS_MS") {
+        tokio::time::sleep(hold).await; // for the window tests: a count that does not end, and the stage draws its code all the same
+    }
     let project = ready_project(&state).await?;
     let found = row
         .tour

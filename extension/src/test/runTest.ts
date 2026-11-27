@@ -59,7 +59,7 @@ function makeWorkspace(tmp: string, name: string): string {
  */
 const NO_THROTTLING = ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-features=CalculateNativeWinOcclusion"];
 
-/** The suites that run in a window of their own, with a core whose first build is held past the time a request may wait (`suite/waits.test.ts`). */
+/** The suites that run in a window of their own, with a core whose first build is held past the time a request may wait, and whose count of a tour's calls never ends (`suite/waits.test.ts`). */
 const HELD = ["waits"];
 
 /** One window, one run of its suites. `env` is for the suites and, through the extension, for the core. */
@@ -85,7 +85,7 @@ async function main() {
   const failed: unknown[] = [];
   // the ordinary window first (all its suites); then the one whose core is held. A failure in the first does not stop the second
   if (main) await window(tmp, "main", {}).catch((e) => failed.push(e));
-  if (held) await window(tmp, "held", { VNOC_WINDOW: "held", VNOC_WAIT_LIMIT_MS: "2000", VNOC_HOLD_FIRST_BUILD_MS: "12000" }).catch((e) => failed.push(e));
+  if (held) await window(tmp, "held", { VNOC_WINDOW: "held", VNOC_WAIT_LIMIT_MS: "2000", VNOC_HOLD_FIRST_BUILD_MS: "12000", VNOC_HOLD_TOUR_CALLS_MS: "900000" }).catch((e) => failed.push(e));
   if (failed.length > 0) throw failed[0];
 }
 main().catch((e) => {

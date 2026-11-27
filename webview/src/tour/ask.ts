@@ -58,8 +58,12 @@ export function paramsOf(form: AskForm): TourAskParams {
   return { ...base, question: form.question, ...(form.about !== null && !form.agentDepth ? { depth: form.depth } : {}), detail: form.detail };
 }
 
-/** The chip's words: the last part of an address (`parse_order` of `orders/service.py::OrderService.parse_order`); a node's name is given by the caller. */
-export const shortName = (address: string): string => address.split("::").pop()?.split("/").filter(Boolean).pop() ?? address;
+/** The chip's words: the last part of an address (`parse_order` of `orders/service.py::OrderService.parse_order`); a function nested in another is its own name (`one_try` of `retry_charge.<locals>.one_try`). */
+export const shortName = (address: string): string => address.split("::").pop()?.split("/").filter(Boolean).pop()?.split("<locals>.").pop() ?? address;
+
+/** The chip's words for a node of the tree, as the cards say it: its qualified name, and a function nested in another its own name (never `<locals>`: the choice is between two words the core sent). */
+export const aboutName = (node: { name: string; qualname: string | null } | null | undefined, address: string): string =>
+  node ? (node.qualname === null || node.qualname.includes("<locals>") ? node.name : node.qualname) : shortName(address);
 
 /** The core's size of one depth (`9 stops · about 6 min`), from the sizes it gave; null when it gave none. */
 export const sizeAt = (sizes: readonly TourAskSize[] | null, depth: number): string | null => sizes?.find((s) => s.depth === depth)?.words ?? null;

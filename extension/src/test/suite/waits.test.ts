@@ -8,10 +8,12 @@ import type { Notes } from "@vnoc/shared/messages";
 import { canvasTabs, guarded, soft, until } from "./util";
 
 // A core whose first build is held (`VNOC_HOLD_FIRST_BUILD_MS`) for longer than a request may wait (`VNOC_WAIT_LIMIT_MS`): the core refuses what needs the index with `data.askAgain`, and the host asks
-// again every 2 s. This suite runs in a window of its own (`runTest.ts` starts it with those two variables); the rest of a run has a core that is never held.
+// again every 2 s. Its count of a tour's calls never ends (`VNOC_HOLD_TOUR_CALLS_MS`): the stage draws the code of a stop without the `+N`. This suite runs in a window of its own (`runTest.ts` starts it with
+// those variables); the rest of a run has a core that is never held.
 
 interface Api {
   stageDrawn(): Extract<Notes, { type: "stageDrawn" }>[];
+  stageClick(button: string): void;
   toursDrawn(): Extract<Notes, { type: "toursDrawn" }>[];
   webviewErrors(): string[];
   cli: { binaryPath(): string | undefined; driverPaths(): string[] };
@@ -69,5 +71,41 @@ suite("a core whose first build is held", () => {
     assert.deepStrictEqual(api.webviewErrors(), [], "no page showed an error");
     assert.deepStrictEqual(api.tourMessages().filter((m) => m.level === "error"), [], "no message said an error");
     assert.deepStrictEqual(await host.request("vnoc/tourCounts").then(() => "answered", () => "refused"), "answered", "the build is over");
+  });
+
+  test("the stage draws the code of a stop in a big file at once, though the count of the tour's calls never ends", async function () {
+    this.timeout(120_000);
+    const host: { request<T>(method: string, params?: object): Promise<T> } = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    // a file of 3,000 lines with the stop at its end, and a small one for the first stop: the arrival in the big file is the first
+    const dir = path.join(workspace(), "tourbig");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "small.py"), "def first(x):\n    return x\n");
+    const filler = Array.from({ length: 1000 }, (_, i) => `def filler_${i}(x):\n    return x + ${i}\n\n`).join("");
+    fs.writeFileSync(path.join(dir, "big.py"), `${filler}def last_stop(order):\n    total = 0\n    for line in order:\n        total += line\n    return total\n`);
+    const id: string = JSON.parse(vnoc(["tour", "start", "--title", "A big file", "--question", "does it draw", "--author", "the suite", "--json"])).tour;
+    vnoc(["tour", "add", id, "tourbig/small.py::first", "--body-file", "-"], "first is only here to be left.\n");
+    vnoc(["tour", "add", id, "tourbig/big.py::last_stop", "--body-file", "-"], "last_stop adds up the lines of an order, in a file of three thousand lines.\n");
+    vnoc(["tour", "finish", id, "--no-ids"]);
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the cover", () => api.stageDrawn().some((d) => d.tour === id && d.mode === "cover"), 30_000);
+    api.stageClick("start");
+    await until("the first stop", () => api.stageDrawn().some((d) => d.tour === id && d.stop === "s1" && d.code?.text.includes("def first") === true), 30_000);
+    // the count of the calls is still going on: it has not answered, and it will not for 15 minutes
+    const count = await host.request("vnoc/tourCalls", { id }).then(() => "answered", (e: { data?: { askAgain?: boolean } }) => (e.data?.askAgain ? "asks again" : "failed"));
+    assert.strictEqual(count, "asks again");
+    const drawn = api.stageDrawn().length;
+    const before = Date.now();
+    api.stageClick("jump:s2");
+    let took = -1;
+    while (Date.now() - before < 10_000) {
+      if (api.stageDrawn().slice(drawn).some((d) => d.tour === id && d.stop === "s2" && d.code?.text.includes("def last_stop") === true)) {
+        took = Date.now() - before;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    console.log(`the code of s2 (the first arrival in a 3,000-line file) was drawn after ${took} ms`);
+    assert.ok(took >= 0 && took < 1000, `the code of the stop was drawn after ${took} ms (-1: never in 10 s); the stage drew ${JSON.stringify(api.stageDrawn().slice(drawn).slice(-4).map((d) => [d.mode, d.stop, d.step, d.code?.first, d.code?.text.slice(0, 30), d.header]))}; the core says ${vnoc(["tour", "where", id])}`);
+    assert.deepStrictEqual(api.webviewErrors(), [], "no page showed an error");
   });
 });

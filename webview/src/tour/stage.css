@@ -102,8 +102,13 @@
 .tour-diagram-note { margin: 0; color: var(--muted-foreground); font-size: 11px; }
 .tour-diagram-failed .tour-fence { margin-bottom: 4px; }
 .tour-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 32px; background: color-mix(in srgb, var(--vscode-editor-background, #000) 82%, transparent); cursor: zoom-out; }
-.tour-overlay-body { max-width: 100%; max-height: 100%; overflow: auto; padding: 16px; border-radius: 6px; background: var(--vscode-editor-background, var(--background)); border: 1px solid var(--vscode-panel-border, var(--border)); cursor: default; }
-.tour-overlay-body svg { max-width: none; width: auto; height: auto; min-width: min(80vw, 900px); }
+.tour-overlay-body { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 6px; background: var(--vscode-editor-background, var(--background)); border: 1px solid var(--vscode-panel-border, var(--border)); cursor: grab; touch-action: none; user-select: none; }
+.tour-overlay-dragging { cursor: grabbing; }
+.tour-overlay-canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.tour-overlay-canvas svg { display: block; width: 100% !important; height: 100% !important; max-width: none !important; }
+.tour-overlay-tools { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; }
+.tour-overlay-tools button { min-width: 28px; height: 26px; padding: 0 8px; border: 1px solid var(--vscode-button-border, var(--border)); border-radius: 4px; background: var(--vscode-editorWidget-background, var(--card)); color: var(--foreground); font: inherit; cursor: pointer; }
+.tour-overlay-tools button:hover { background: var(--vscode-toolbar-hoverBackground, var(--accent)); }
 .tour-overlay-close { position: absolute; top: 10px; right: 14px; border: 0; background: none; color: var(--foreground); font-size: 16px; cursor: pointer; }
 
 .stage-mark-note, .stage-explained, .stage-sentence { color: var(--muted-foreground); }

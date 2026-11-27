@@ -225,7 +225,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
           else act.current[key]?.();
         }
       }),
-    [],
+    [tourId], // the suite opens another tour in the same page: `go` is for the tour on the stage now
   );
 
   // what the suite reads of what was drawn: only a drawing that is whole. While the code is being read, and between a new step and the code pane's report of it, the page has not

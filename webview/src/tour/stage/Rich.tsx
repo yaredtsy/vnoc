@@ -1,7 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { request } from "../../host.ts";
+import { type Size, STEP, type View, fitView, naturalSize, panBy, wheelFactor, zoomAt } from "../diagramView.ts";
 import { type MermaidLike, diagramWidth, drawDiagram, linkTarget, mermaidTheme, naturalWidth, renderText, uniqueIds } from "../text.ts";
 import { highlightEnv, useHighlighter, useThemeName } from "./useHighlight.ts";
 
@@ -123,25 +124,131 @@ export function Rich({ text, className, onDrawn }: { text: string; className?: s
   );
 }
 
-/** The diagram large: over the whole window, Esc or a click closes it. A portal, so no pane's overflow clips it. */
+/**
+ * The diagram large: over the whole window, Esc or a click outside it closes it. A portal, so no pane's overflow clips it. It opens fitted whole (scaled down, aspect kept; `diagramView.ts`),
+ * and is zoomed with the wheel or `+` and `−` (about the pointer), moved by dragging, and fitted again with `0` or **Fit**; a window that is resized fits it again while it is untouched.
+ */
 function Enlarged({ svg, onClose }: { svg: string; onClose: () => void }) {
+  const natural = useMemo(() => naturalSize(svg) ?? { width: 600, height: 400 }, [svg]);
+  const html = useMemo(() => uniqueIds(svg, "-large"), [svg]);
+  const port = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState<Size>({ width: 0, height: 0 });
+  const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  /** the reader has not zoomed or moved it: a new room fits it again */
+  const untouched = useRef(true);
+  const latest = useRef({ view, room });
+  latest.current = { view, room };
+
+  useLayoutEffect(() => {
+    const el = port.current;
+    if (!el) return;
+    const read = () => {
+      const now = { width: el.clientWidth, height: el.clientHeight };
+      setRoom(now);
+      if (untouched.current) setView(fitView(natural, now));
+    };
+    read();
+    const watch = new ResizeObserver(read);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [natural]);
+
+  const zoomBy = (factor: number, at?: { x: number; y: number }) => {
+    const { view, room } = latest.current;
+    untouched.current = false;
+    setView(zoomAt(view, factor, at ?? { x: room.width / 2, y: room.height / 2 }, natural, room));
+  };
+  const fit = () => {
+    untouched.current = true;
+    setView(fitView(natural, latest.current.room));
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const zoom = e.key === "+" || e.key === "=" ? STEP : e.key === "-" || e.key === "_" ? 1 / STEP : null;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopImmediatePropagation();
         onClose();
+      } else if (zoom !== null || e.key === "0") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (zoom !== null) zoomBy(zoom);
+        else fit();
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [onClose]); // eslint-disable-line react-hooks/exhaustive-deps -- `zoomBy` and `fit` read `latest`
+  // the wheel zooms about the pointer; a native listener, because React's is passive and cannot stop the page behind from scrolling
+  useEffect(() => {
+    const el = port.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const box = el.getBoundingClientRect();
+      zoomBy(wheelFactor(e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY), { x: e.clientX - box.left, y: e.clientY - box.top });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- `zoomBy` reads `latest`
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0 || (e.target as Element).closest("button")) return;
+    e.preventDefault();
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    setDragging(true);
+    let [x, y] = [e.clientX, e.clientY];
+    const move = (m: PointerEvent) => {
+      const { view, room } = latest.current;
+      untouched.current = false;
+      setView(panBy(view, m.clientX - x, m.clientY - y, natural, room));
+      [x, y] = [m.clientX, m.clientY];
+    };
+    const end = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", end);
+      el.removeEventListener("pointercancel", end);
+      setDragging(false);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+  };
+
   return createPortal(
     <div className="tour-overlay" role="dialog" aria-label="Diagram" data-part="diagram-large" onClick={onClose}>
       <button type="button" className="tour-overlay-close" aria-label="Close the diagram" onClick={onClose}>
         ✕
       </button>
-      <div className="tour-overlay-body" onClick={(e) => e.stopPropagation()} dangerouslySetInnerHTML={{ __html: uniqueIds(svg, "-large") }} />
+      <div
+        ref={port}
+        className={`tour-overlay-body${dragging ? " tour-overlay-dragging" : ""}`}
+        data-part="diagram-port"
+        data-scale={view.scale.toFixed(3)}
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={onPointerDown}
+      >
+        <div
+          className="tour-overlay-canvas"
+          data-part="diagram-canvas"
+          style={{ width: natural.width, height: natural.height, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+        <div className="tour-overlay-tools" data-part="diagram-tools">
+          <button type="button" aria-label="Zoom out" title="Zoom out (−)" onClick={() => zoomBy(1 / STEP)}>
+            −
+          </button>
+          <button type="button" aria-label="Fit the diagram" title="Fit the diagram (0)" onClick={fit}>
+            Fit
+          </button>
+          <button type="button" aria-label="Zoom in" title="Zoom in (+)" onClick={() => zoomBy(STEP)}>
+            +
+          </button>
+        </div>
+      </div>
     </div>,
     document.body,
   );

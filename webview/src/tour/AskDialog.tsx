@@ -4,7 +4,7 @@ import { Codicon } from "@/components/Codicon.tsx";
 import { findNode } from "@vnoc/shared/tree.ts";
 import { on, post, request } from "../host.ts";
 import { useData } from "../state/data.ts";
-import { ASK_AGAIN_MS, ASK_DEBOUNCE_MS, DETAIL_CHOICES, MAX_DEPTH, depthOf, paramsOf, saysAskAgain, shortName, sizeAt } from "./ask.ts";
+import { ASK_AGAIN_MS, ASK_DEBOUNCE_MS, DETAIL_CHOICES, MAX_DEPTH, aboutName, depthOf, paramsOf, saysAskAgain, shortName, sizeAt } from "./ask.ts";
 import { changeAskForm, closeAskDialog, copyAskPrompt, openAskDialog, useAskDialog } from "./askDialog.ts";
 
 const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -56,7 +56,7 @@ export function AskDialog() {
       clearTimeout(timer);
     };
   }, [asked]); // eslint-disable-line react-hooks/exhaustive-deps
-  const label = form === null || form.about === null ? null : form.tour !== null ? shortName(form.about) : ((tree ? (findNode(tree, form.about)?.qualname ?? findNode(tree, form.about)?.name) : null) ?? shortName(form.about));
+  const label = form === null || form.about === null ? null : form.tour !== null ? shortName(form.about) : aboutName(tree ? findNode(tree, form.about) : null, form.about);
   const size = dialog === null ? null : sizeAt(dialog.sizes, dialog.form.depth);
   // what the suite reads of the dialog
   useEffect(() => {
