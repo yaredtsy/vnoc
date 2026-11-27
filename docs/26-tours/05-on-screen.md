@@ -775,8 +775,31 @@ Rust lib 582; TS 913 / 319; the full window run: 192, only Bend's 3 failing.
   the PR, the merge, the tag.
 - Mermaid's 5.2 MB stays (the user was asked; the VSIX is 19.9 MB, no reason to cut diagram types now).
 
+**From the tour film's first real run (2026-11-27,** `../vnoc-tour-film`, docs/28; evidence in its `tools/media/out/tf/`): Claude Code,
+Sonnet 5.5, 0.4.0 (TR23b), openai-agents-python, the Ask dialog's prompt with Detail: Detailed. A good tour (14 stops, 6 files, 49 blocks,
+4.9 min, 2 refusals fixed) with **one** diagram. Decided, for **TR24s** (after TR24a, before the user's by-hand pass, so the pass tests
+the final skill):
+- **S1, diagrams where the code has a flow** (the user asked): skill, guide and §7 say: *a step whose code branches, loops, retries or
+  fans out gets a mermaid flowchart of that flow, one per step at most, small (about 8 boxes, the code's own names); a tour across files
+  also opens with the whole route in the first stop's intro. Asked for diagrams or a detailed tour: one in every stop with such a flow;
+  otherwise where it helps most.* Proof (the film's harness): the same prompt gives ≥ 3 diagrams, each on a stop with that flow.
+- **S4, reading with pipes** (`vnoc code A | head -120; vnoc code B`, `sed -n`, `grep -n`): each asks a permission outside auto mode.
+  `vnoc code` gains `--lines <a-b>` (the file's numbers, inside the node), so a long function needs no `head`; the skill: *read with
+  `vnoc code`, `vnoc show`, `vnoc grep` (`--lines` for a part), one command per call: no `|`, `;`, `sed` or `grep -n`*.
+- **S5, ranges a few lines off:** `add`'s answer lists each block with its first lit line (`## 11-24 Title → 11: def reserve(…`, cut at the
+  line's width), so the agent sees what it lit. One line per block.
+- **S2** (progress lines in the chat) and **S3** (no `Tour started` line): left as they are; harmless, and the film keeps S2.
+- **Product, same step:** G6 `go` (or any move) to a block of another stop scrolls its lit lines into view (a bug the film needs);
+  G8 Next by key brings the next lit block into view wherever the pointer is, and the pointer state ends when it leaves; G7 a sideways
+  scroll is reset on a new step (check it still happens now code wraps); G9 the stage's grip goes to 70 % of the canvas; G3 the Ask
+  dialog's chip shows the qualified name (`Runner.run`); G10 a nested function shows its own name (`_on_invoke_tool_impl`) with
+  `in function_tool` dim, on its card and its route row; G2 re-check the cover at the stage's default height after TR24a.
+- **G4, `vnoc agent install` replaces a symlinked CLAUDE.md with a file** (git: `T CLAUDE.md`): a bug in the user's files. It writes
+  through the link, into its target, and keeps the link; a test with a linked CLAUDE.md.
+
 **Next, in this order:**
-- **TR24a**, then **TR24b** (the user), then push, PR, merge, `v0.4.0`.
+- **TR24a** (running), **TR24s** (the film's findings above), a VSIX (the film's write runs wait for S1), then **TR24b** (the user), then
+  push, PR, merge, `v0.4.0`.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
