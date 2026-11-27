@@ -224,6 +224,13 @@ test("Open as JSON gives the core's text to a tab for this tour", async () => {
   assert.deepEqual(w.events, [["open", "t-1", "{}"]]);
 });
 
+test("Copy Tour ID puts the id on the clipboard and says so in a few words", async () => {
+  const w = window({});
+  await w.actions.copyId("how-it-works-ab12");
+  assert.deepEqual(w.events, [["copy", "how-it-works-ab12"]]);
+  assert.deepEqual(w.said.map((m) => m.text), ["Copied how-it-works-ab12"]);
+});
+
 test("Import into This Tour is import --replace with the text; success is the core's words and the list again, refusals are diagnostics and the core's words", async () => {
   const written = window({ replies: { "vnoc/tourImport": { id: "t-1", words: "Replaced “Retry”: 3 stops (3 kept, 0 new, 0 gone)." } } });
   assert.equal(await written.actions.importInto("t-1", "{...}", "untitled:1"), "imported");

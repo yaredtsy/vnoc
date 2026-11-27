@@ -7,6 +7,10 @@ import type { TourRow } from "@vnoc/shared/tours.ts";
 /** What **Stop Playing** says, as a tooltip and an accessible name: it is an icon button everywhere (the row, the strip, the route header). */
 export const STOP_PLAYING = "Stop Playing: the place is kept";
 
+/** Stop Playing's icon: a filled square (`debug-stop` is hollow and reads as a check box), in the icon colour, and the error colour on hover. */
+export const STOP_PLAYING_ICON = "primitive-square";
+export const STOP_PLAYING_HOVER = "hover:text-[var(--vscode-errorForeground,#f85149)]";
+
 /** A row whose tour is being written now (the core's `state`). */
 const isWriting = (row: TourRow): boolean => row.readable && row.state === "writing";
 

@@ -165,7 +165,8 @@
 .ask-segment { padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; color: var(--vscode-button-secondaryForeground, var(--foreground)); background: var(--vscode-button-secondaryBackground, transparent); border: 1px solid var(--vscode-input-border, var(--border)); margin-left: -1px; }
 .ask-segment:first-child { margin-left: 0; border-radius: 2px 0 0 2px; }
 .ask-segment:last-child { border-radius: 0 2px 2px 0; }
-.ask-segment-on { position: relative; color: var(--primary-foreground); background: var(--primary); border-color: var(--primary); }
+/* the chosen segment: the secondary button's own colours (only Copy Prompt is primary) and the focus border as an outline */
+.ask-segment-on { position: relative; z-index: 1; outline: 1px solid var(--vscode-focusBorder, var(--ring)); outline-offset: -1px; }
 .ask-segment:focus-visible { outline: 1px solid var(--ring); outline-offset: 1px; }
 .ask-prompt { margin: 0; padding: 6px 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; background: var(--vscode-input-background, var(--background)); border: 1px solid var(--border); border-radius: 2px; }
 .ask-hint { margin-left: auto; align-self: center; }

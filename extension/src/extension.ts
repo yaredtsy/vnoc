@@ -398,6 +398,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.tourSettings", () => tourActions.settings()),
     vscode.commands.registerCommand("vnoc.tourExportJson", (arg) => tourActions.exportJson(tourOfArg(arg))),
     vscode.commands.registerCommand("vnoc.tourOpenJson", (arg) => tourActions.openJson(tourOfArg(arg))),
+    vscode.commands.registerCommand("vnoc.tourCopyId", (arg) => tourActions.copyId(tourOfArg(arg))),
     vscode.commands.registerCommand("vnoc.tourImportInto", () => {
       const doc = vscode.window.activeTextEditor?.document;
       const tab = doc && jsonTabs.get(doc.uri.toString());

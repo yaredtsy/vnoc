@@ -10,7 +10,7 @@ import { isOpen, listItem } from "./list.ts";
 import type { Tomb } from "./deleted.ts";
 import { tourRowContext } from "./menu.ts";
 import type { RouteRow } from "./route.ts";
-import { STOP_PLAYING, rowMarks } from "./writing.ts";
+import { STOP_PLAYING, STOP_PLAYING_HOVER, STOP_PLAYING_ICON, rowMarks } from "./writing.ts";
 
 const kindOf = (kind: string | null): Kind => (kind && kind in KINDS ? (kind as Kind) : "function");
 const MARKS = { seen: "✓", here: "●", ahead: "○", planned: "◌" } as const;
@@ -46,7 +46,7 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
         item.clickable ? "cursor-pointer hover:bg-[color:var(--list-hover-bg)]" : "opacity-60",
         focused && "group-focus-within:outline group-focus-within:outline-1 group-focus-within:-outline-offset-1 group-focus-within:outline-[color:var(--ring)]",
       )}
-      title={item.question ?? undefined}
+      title={item.question === null ? item.id : `${item.question}\n${item.id}`}
       onClick={() => item.clickable && onOpen()}
     >
       <div className="flex min-w-0 items-center gap-1.5">
@@ -92,10 +92,10 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
             )}
             {marks.playing && (
               <BarButton
-                icon="debug-stop"
+                icon={STOP_PLAYING_ICON}
                 label={STOP_PLAYING}
                 data-part="row-stop-playing"
-                className="size-4"
+                className={cn("size-4", STOP_PLAYING_HOVER)}
                 onClick={(e) => {
                   e.stopPropagation();
                   onStopPlaying();

@@ -26,7 +26,7 @@ import { headerPlace, rowKey, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
 import { useTourList } from "./store.ts";
 import { DeletedRow, RouteRowView, TourListRow } from "./TourRows.tsx";
-import { STOP_PLAYING, rowMarks, stripOf } from "./writing.ts";
+import { STOP_PLAYING, STOP_PLAYING_HOVER, STOP_PLAYING_ICON, rowMarks, stripOf } from "./writing.ts";
 
 /**
  * The TOURS section (docs/26-tours/design/07-tour-list.md §2, 04 §1): under the context panels. Folded it says its name and how many tours there are; open it is
@@ -340,7 +340,7 @@ export function ToursSection() {
                   <button type="button" data-part="strip-playing" title="Back to the tour's route" className="min-w-0 truncate text-left font-bold hover:underline" onClick={() => setShowList(false)}>
                     {strip.playing}
                   </button>
-                  <BarButton icon="debug-stop" label={STOP_PLAYING} data-part="strip-stop-playing" className="ml-auto size-[18px]" onClick={closeTour} />
+                  <BarButton icon={STOP_PLAYING_ICON} label={STOP_PLAYING} data-part="strip-stop-playing" className={cn("ml-auto size-[18px]", STOP_PLAYING_HOVER)} onClick={closeTour} />
                 </span>
               )}
             </div>
@@ -364,7 +364,7 @@ export function ToursSection() {
                   )}
                 </span>
               )}
-              <BarButton icon="debug-stop" label={STOP_PLAYING} data-part="stop-playing" className="size-[18px]" onClick={closeTour} />
+              <BarButton icon={STOP_PLAYING_ICON} label={STOP_PLAYING} data-part="stop-playing" className={cn("size-[18px]", STOP_PLAYING_HOVER)} onClick={closeTour} />
             </div>
           )}
           <div

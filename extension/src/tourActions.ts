@@ -245,6 +245,12 @@ export class TourActions {
     }
   }
 
+  /** **Copy Tour ID**: the id goes to the clipboard (it is what `vnoc tour show <id>` takes); the host says so in a few words, which are not a sentence about the tour. */
+  async copyId(id: TourId): Promise<void> {
+    await this.d.copy(id);
+    await this.d.say("info", `Copied ${id}`, []);
+  }
+
   /** **Open as JSON**: the core's document in an untitled JSON editor tab. */
   async openJson(id: TourId): Promise<"opened" | "refused"> {
     try {

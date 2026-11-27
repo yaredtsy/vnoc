@@ -296,11 +296,11 @@ test("08 §5: a section shows only its own menu: a node never shows a pane's ent
   assert.ok(!shown(webviewMenu, { ...pane("canvas"), webviewId: "vnoc.docs" }).length, "another webview gets none of V-NOC's entries");
 });
 
-test("05 §3: a tour's row has its menu in this order; a row that cannot be read has only Delete", () => {
+test("05 §3: a tour's row has its menu in this order; a row that cannot be read has only Copy Tour ID and Delete", () => {
   const row = (over: Record<string, unknown> = {}) => ({ ...JSON.parse(tourRowContext({ id: "t-1", title: "T", readable: true, state: "finished", pinned: false, folder: "private", ...over } as Parameters<typeof tourRowContext>[0])), webviewId: "vnoc.structure" });
-  assert.deepEqual(shown(webviewMenu, row()), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourPin", "tourCommitAndPin", "tourWriteIds", "tourShare", "tourExportJson", "tourOpenJson", "tourAskAgain", "tourDelete"]);
-  assert.deepEqual(shown(webviewMenu, row({ pinned: true, folder: "project" })), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourWriteIds", "tourMakePrivate", "tourExportJson", "tourOpenJson", "tourAskAgain", "tourDelete"]);
-  assert.deepEqual(shown(webviewMenu, row({ readable: false, state: undefined })), ["tourDelete"]);
+  assert.deepEqual(shown(webviewMenu, row()), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourPin", "tourCommitAndPin", "tourWriteIds", "tourShare", "tourExportJson", "tourOpenJson", "tourCopyId", "tourAskAgain", "tourDelete"]);
+  assert.deepEqual(shown(webviewMenu, row({ pinned: true, folder: "project" })), ["tourOpen", "tourStartAgain", "tourRevealRoot", "tourRename", "tourWriteIds", "tourMakePrivate", "tourExportJson", "tourOpenJson", "tourCopyId", "tourAskAgain", "tourDelete"]);
+  assert.deepEqual(shown(webviewMenu, row({ readable: false, state: undefined })), ["tourCopyId", "tourDelete"]);
 });
 
 test("TR22c: Ask for a Tour… is in a node's menu on a card and a row, with or without tours; a stop's menu has Show Docs; Import into This Tour is on a JSON tab's title bar only", () => {
