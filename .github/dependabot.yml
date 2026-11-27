@@ -12,6 +12,9 @@ updates:
     groups:
       npm-minor-patch:
         update-types: [minor, patch] # majors: one PR each
+    ignore:
+      # @types/vscode must not pass engines.vscode (^1.90.0): vsce refuses to package then. Raise both by hand, together.
+      - dependency-name: "@types/vscode"
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: monthly }

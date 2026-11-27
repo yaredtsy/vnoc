@@ -3558,7 +3558,7 @@ fn tour_go_writes_the_state_file_and_does_not_echo_but_another_process_does() {
     // the list says each row's second line, and `tourOpen` answers a place with its stop too
     let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
     assert!(
-        row["words"].as_str().unwrap().starts_with("writing · "),
+        row["words"].as_str().unwrap().starts_with("1 stop"),
         "{row}"
     );
     // the one word `words` starts with is a field of its own
@@ -3680,7 +3680,7 @@ fn an_answer_of_vnoc_tour_has_the_steps_the_place_and_what_the_row_says() {
     let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
     assert_eq!(row["quiet"], true);
     assert!(
-        row["words"].as_str().unwrap().starts_with("no news"),
+        row["words"].as_str().unwrap().starts_with("1 stop"),
         "{row}"
     );
     assert_eq!(row["state_word"], "no news", "{row}");
@@ -5162,13 +5162,24 @@ fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_as
     let with = core
         .request("vnoc/tourAsk", json!({ "key": PARSE }))
         .unwrap();
-    assert_eq!(
-        with,
-        json!({
-            "text": format!("Walk me through {PARSE}"),
-            "words": "Copied. Paste it to your agent.",
-        })
-    );
+    assert_eq!(with["text"], format!("Walk me through {PARSE}"), "{with}");
+    assert_eq!(with["words"], "Copied. Paste it to your agent.", "{with}");
+    // a node has the size of each depth 0 to 6, in the words of `vnoc tour route`: one stop at 0, never fewer as the depth grows
+    let sizes = with["sizes"].as_array().expect("a node has sizes");
+    assert_eq!(sizes.len(), 7, "{with}");
+    for (depth, size) in sizes.iter().enumerate() {
+        assert_eq!(size["depth"], depth, "{with}");
+        let stops = size["stops"].as_u64().unwrap();
+        assert!(stops >= 1 && (depth == 0 || stops >= sizes[depth - 1]["stops"].as_u64().unwrap()));
+        let minutes = size["minutes"].as_u64().unwrap();
+        let unit = if stops == 1 { "stop" } else { "stops" };
+        assert_eq!(
+            size["words"],
+            format!("{stops} {unit} · about {minutes} min"),
+            "{with}"
+        );
+    }
+    assert_eq!(sizes[0]["words"], "1 stop · about 1 min", "{with}");
     for params in [Value::Null, json!({})] {
         let without = core.request("vnoc/tourAsk", params).unwrap();
         assert_eq!(
@@ -5191,6 +5202,10 @@ fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_as
         .request("vnoc/tourAsk", json!({ "key": file }))
         .unwrap();
     assert_eq!(folder["text"], "Walk me through orders", "{folder}");
+    // a folder's depths are what it holds: the folder alone at 0, more below
+    let held = folder["sizes"].as_array().expect("a folder has sizes");
+    assert_eq!(held[0]["stops"], 1, "{folder}");
+    assert!(held[1]["stops"].as_u64().unwrap() > 1, "{folder}");
     // the form's parts: the node, a question, how far, how much
     let parts = core
         .request(
@@ -5198,19 +5213,37 @@ fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_as
             json!({
                 "key": PARSE,
                 "question": "why does it retry twice?",
-                "reach": "calls",
+                "depth": 2,
                 "detail": "quick",
             }),
         )
         .unwrap();
     assert_eq!(
-        parts,
-        json!({
-            "text": format!("Walk me through {PARSE}: why does it retry twice? Cover it and what it calls. Make it a quick tour."),
-            "words": "Copied. Paste it to your agent.",
-        })
+        parts["text"],
+        format!(
+            "Walk me through {PARSE}: why does it retry twice? Cover it and what it calls, 2 levels deep. Make it a quick tour."
+        ),
+        "{parts}"
     );
-    // a question alone, and nothing at all (the reach and the detail have nothing to be about)
+    assert_eq!(parts["words"], "Copied. Paste it to your agent.", "{parts}");
+    assert_eq!(parts["sizes"].as_array().unwrap().len(), 7, "{parts}");
+    // depth 0 is only that; a folder is worded by what it holds
+    let only = core
+        .request("vnoc/tourAsk", json!({ "key": PARSE, "depth": 0 }))
+        .unwrap();
+    assert_eq!(
+        only["text"],
+        format!("Walk me through {PARSE}. Cover only that."),
+        "{only}"
+    );
+    let held = core
+        .request("vnoc/tourAsk", json!({ "key": file, "depth": 1 }))
+        .unwrap();
+    assert_eq!(
+        held["text"], "Walk me through orders. Cover it one level deep.",
+        "{held}"
+    );
+    // a question alone, and nothing at all (the depth and the detail have nothing to be about)
     let only_question = core
         .request(
             "vnoc/tourAsk",
@@ -5222,18 +5255,15 @@ fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_as
         json!({ "text": "Walk me through how does checkout end?", "words": "Copied. Paste it to your agent." })
     );
     let nothing = core
-        .request(
-            "vnoc/tourAsk",
-            json!({ "reach": "only", "detail": "quick" }),
-        )
+        .request("vnoc/tourAsk", json!({ "depth": 1, "detail": "quick" }))
         .unwrap();
     assert_eq!(
         nothing,
         json!({ "text": "Walk me through ", "words": "Add what you want explained." })
     );
-    // a word that is not a reach is a bad request
+    // a depth past 6 is a bad request
     assert_eq!(
-        core.request("vnoc/tourAsk", json!({ "key": PARSE, "reach": "far" }))
+        core.request("vnoc/tourAsk", json!({ "key": PARSE, "depth": 7 }))
             .unwrap_err()["code"],
         -32602
     );
@@ -5281,20 +5311,37 @@ fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_as
         json!({ "key": PARSE, "question": "why twice?", "detail": "quick" }),
         "{again}"
     );
-    // the other keys override the tour's: a question of its own, a reach, a detail
+    // the other keys override the tour's: a question of its own, a depth, a detail
     let changed = core
         .request(
             "vnoc/tourAsk",
-            json!({ "tour": id, "question": "why retry", "reach": "calls", "detail": "detailed" }),
+            json!({ "tour": id, "key": PARSE, "question": "why retry", "depth": 1, "detail": "detailed" }),
         )
         .unwrap();
     assert_eq!(
         changed["text"],
         format!(
-            "Walk me through {PARSE}: why retry. Cover it and what it calls. Make it a detailed tour."
+            "Walk me through {PARSE}: why retry. Cover it and what it calls, one level deep. Make it a detailed tour."
         ),
         "{changed}"
     );
+    // a depth with only the tour: its root is the node, so the depth is worded by its kind and has its sizes (without a depth the tour's root has none)
+    let by_tour = core
+        .request("vnoc/tourAsk", json!({ "tour": id, "depth": 1 }))
+        .unwrap();
+    assert_eq!(
+        by_tour["text"],
+        format!(
+            "Walk me through {PARSE}: why twice? Cover it and what it calls, one level deep. Make it a quick tour."
+        ),
+        "{by_tour}"
+    );
+    assert_eq!(
+        by_tour["sizes"].as_array().map(Vec::len),
+        Some(7),
+        "{by_tour}"
+    );
+    assert!(again.get("sizes").is_none(), "{again}");
     // `agent` says nothing, even where the tour said quick; an empty question takes the tour's away
     let plain = core
         .request(

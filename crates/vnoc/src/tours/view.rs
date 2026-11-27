@@ -1267,8 +1267,9 @@ pub fn row_state_word(row: &ListRowView) -> String {
 }
 
 /// The second line of a row, built from the pieces `list` prints: `shared · ` for a project tour (05 §3), the state word, the size (`stops_words`).
-/// `writing · 6 of 10 stops`, `stop 4 · 9 stops`, `finished · 9 stops`, `new · 1 stop`, `shared · changed · 3 stops`. A tour that cannot be read says so.
-/// It is made once the row has its `place` and `quiet` (`serve::list_rows`).
+/// `stop 4 · 9 stops`, `finished · 9 stops`, `new · 1 stop`, `shared · changed · 3 stops`. A tour that is being written, is stopping or has stopped has its
+/// state at the right of line 1 (the list draws `state_word` there), so line 2 does not say it again: `1 of 3 stops`, `shared · 1 of 3 stops`. A tour that cannot
+/// be read says so. It is made once the row has its `place` and `quiet` (`serve::list_rows`).
 pub fn row_words(row: &ListRowView, when: &str) -> String {
     if !row.readable {
         return "cannot be read".to_string();
@@ -1277,7 +1278,9 @@ pub fn row_words(row: &ListRowView, when: &str) -> String {
     if row.folder == "project" {
         parts.push("shared".to_string());
     }
-    parts.push(row_state_word(row));
+    if !matches!(row.state, Some("writing" | "stopping" | "stopped")) {
+        parts.push(row_state_word(row));
+    }
     parts.push(stops_words(
         row.written.unwrap_or(0),
         row.planned.unwrap_or(0),
@@ -2057,22 +2060,19 @@ mod tests {
             row_words(&r, "")
         };
         let nothing = |_: &mut ListRowView| {};
-        // in the order the design gives them: writing, stopped, no news, changed, stop N, finished, new
+        // writing, stopping, stopped and no news are said at the right of line 1, not here; then changed, stop N, finished, new
         assert_eq!(
             words(row_of(writing.clone(), Where::Private), &nothing),
-            "writing · 1 of 3 stops"
+            "1 of 3 stops"
         );
-        assert_eq!(
-            words(row_of(stopping, Where::Private), &nothing),
-            "stopping · 1 stop"
-        );
+        assert_eq!(words(row_of(stopping, Where::Private), &nothing), "1 stop");
         assert_eq!(
             words(row_of(stopped, Where::Private), &nothing),
-            "stopped · 1 of 2 stops"
+            "1 of 2 stops"
         );
         assert_eq!(
             words(row_of(writing.clone(), Where::Private), &|r| r.quiet = true),
-            "no news · 1 of 3 stops"
+            "1 of 3 stops"
         );
         assert_eq!(
             words(row_of(finished.clone(), Where::Private), &|r| r.check =
@@ -2098,7 +2098,7 @@ mod tests {
                 at(None, 1)),
             "seen 1 of 2 · 2 stops"
         );
-        // the first that applies wins: changed over where you are, no news over writing, stopped over where you are
+        // the first that applies wins: changed over where you are; a tour being written says only its size
         assert_eq!(
             words(row_of(finished.clone(), Where::Private), &|r| {
                 r.check = Some("changed");
@@ -2111,7 +2111,7 @@ mod tests {
                 r.quiet = true;
                 r.place = at(Some(1), 0)
             }),
-            "no news · 1 of 3 stops"
+            "1 of 3 stops"
         );
         // a project tour is shared; one stop is "1 stop"
         assert_eq!(

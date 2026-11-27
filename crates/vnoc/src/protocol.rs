@@ -953,10 +953,12 @@ impl Request for TourImport {
 }
 
 /// `vnoc/tourAsk`: the sentence to paste to an agent to ask for a tour, and the line that says so (**Ask for a Tour…**, design/07 §7), built from the form's
-/// parts. `key` is the node (as `vnoc/tours`' `on` names one); `question` is what the person wants to understand; `reach` is `agent` (says nothing), `only`,
-/// `calls` or `calls2`; `detail` is `agent` (says nothing), `quick`, `normal` or `detailed`. With no node and no question the sentence is `Walk me through ` and
-/// the words say to add what is wanted. `tour` is a row's **Ask for a New Tour**: that tour's root, question and detail fill what the other keys do not give
-/// (a `question` of `""` takes the tour's away), and `filled` answers with them, for the form to show. Answers `{ text, words, filled? }`.
+/// parts. `key` is the node (as `vnoc/tours`' `on` names one); `question` is what the person wants to understand; `depth` is how many levels from the node, 0
+/// (only that) to 6, absent when the agent decides; `detail` is `agent` (says nothing), `quick`, `normal` or `detailed`. With no node and no question the
+/// sentence is `Walk me through ` and the words say to add what is wanted. `tour` is a row's **Ask for a New Tour**: that tour's root, question and detail fill
+/// what the other keys do not give (a `question` of `""` takes the tour's away), and `filled` answers with them, for the form to show. Answers
+/// `{ text, words, filled?, sizes? }`; `sizes` (when `key` is a node the route can start at) is, for each depth 0 to 6, the stops and minutes `vnoc tour route`
+/// counts, with the words for them. A node whose size is not known in about a second is `askAgain`.
 pub enum TourAsk {}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -966,7 +968,7 @@ pub struct TourAskParams {
     #[serde(default)]
     pub question: Option<String>,
     #[serde(default)]
-    pub reach: Option<crate::tours::document::Reach>,
+    pub depth: Option<u32>,
     #[serde(default)]
     pub detail: Option<crate::tours::document::AskDetail>,
     #[serde(default)]
@@ -989,6 +991,17 @@ pub struct TourAskResult {
     pub words: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filled: Option<TourAskFilled>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sizes: Option<Vec<TourAskSize>>,
+}
+
+/// What one depth of the route is: its stops and minutes, and the words for them (`9 stops · about 6 min`).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourAskSize {
+    pub depth: u32,
+    pub stops: usize,
+    pub minutes: usize,
+    pub words: String,
 }
 
 impl Request for TourAsk {

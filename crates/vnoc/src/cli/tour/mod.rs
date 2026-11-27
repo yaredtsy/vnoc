@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::calls::{self, CallsError};
 use crate::cli::args::{DetailArg, TourCommand};
 use crate::cli::nodes::{Hints, Lookup, NodeError, Target};
 use crate::cli::out::{self};
@@ -401,52 +400,21 @@ async fn build_route(
         unreachable!("a refusal is a failure")
     };
     let levels = depth.max(2);
-    let mut no_calls = false;
-    let (item, how) = if node.kind == crate::index::Kind::Function {
-        let tree = match calls::ask(
+    let (item, how, no_calls) = {
+        route::build(
             &opened.project,
             &opened.index,
             &opened.host,
-            &node.id,
-            Some(levels),
+            &lookup.tree,
+            node,
+            root,
+            levels,
         )
         .await
-        {
-            Ok(answer) => Some(calls::merge(&answer.root)),
-            // a driver with no call trees: the node alone, and a line that says so
-            Err(CallsError::MissingCapability(_)) => {
-                no_calls = true;
-                None
-            }
-            Err(CallsError::Invalid(message)) => return Err(Failure::NoSuchNode(message)),
-            Err(CallsError::Internal(message)) => return Err(Failure::Environment(message)),
-        };
-        let known = |target: &vnoc_driver_protocol::CallTarget| {
-            let location = vnoc_domain::LocationKey::new(
-                opened.project.repo_path(target.file.as_deref()?).ok()?,
-                target.qualname.clone(),
-                target.occurrence,
-            )
-            .ok()?;
-            lookup
-                .tree
-                .find(&location.to_string())
-                .and_then(route::known_of)
-        };
-        let item = match &tree {
-            Some(merged) => route::from_calls(merged, root, levels, &known),
-            None => route::Item {
-                known: root,
-                line: None,
-                children: Vec::new(),
-            },
-        };
-        (item, route::How::Calls)
-    } else {
-        let item = route::from_tree(node, levels).ok_or_else(|| {
-            Failure::Environment("the node is not a stop: name a folder in the project".to_string())
-        })?;
-        (item, route::How::Contents)
+        .map_err(|e| match e {
+            route::BuildError::Invalid(message) => Failure::NoSuchNode(message),
+            route::BuildError::Internal(message) => Failure::Environment(message),
+        })?
     };
     Ok(Built {
         route: route::propose(&item, how, depth),

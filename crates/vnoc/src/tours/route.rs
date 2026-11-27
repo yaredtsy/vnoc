@@ -13,6 +13,7 @@
 //! Minutes are a guess that is the same guess every time: [`STEPS_PER_STOP`] steps of [`SECONDS_PER_STEP`] seconds, rounded up to whole minutes.
 
 use std::collections::HashMap;
+use std::sync::RwLock;
 
 use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
@@ -21,8 +22,10 @@ use vnoc_driver_protocol::CallTarget;
 
 use super::add::{MAX_STOPS, node_kind};
 use super::find::place_of;
-use crate::calls::Merged;
-use crate::index::{Kind, Node};
+use crate::calls::{self, CallsError, Merged};
+use crate::driver_host::DriverHost;
+use crate::index::{Index, Kind, Node};
+use crate::project::Project;
 
 /// The guess of 02 §11: two steps for a stop (its intro and one block), twenty seconds a step.
 pub const STEPS_PER_STOP: usize = 2;
@@ -175,6 +178,19 @@ pub struct Size {
     pub cut: bool,
 }
 
+impl Size {
+    /// For a person, on one line: `9 stops · about 6 min` (`1 stop`, and `(cut)` when the route is cut).
+    pub fn words(&self) -> String {
+        format!(
+            "{} {}{} · about {} min",
+            self.stops,
+            if self.stops == 1 { "stop" } else { "stops" },
+            if self.cut { " (cut)" } else { "" },
+            self.minutes
+        )
+    }
+}
+
 /// Whole minutes for this many stops: [`STEPS_PER_STOP`] steps of [`SECONDS_PER_STEP`] seconds each, rounded up (1 stop is `1`, 6 are `4`, 10 are `7`).
 pub fn minutes(stops: usize) -> usize {
     (stops * STEPS_PER_STOP * SECONDS_PER_STEP).div_ceil(60)
@@ -240,9 +256,9 @@ fn outline(root: &Item, depth: u32) -> (Vec<Entry>, bool) {
     (walk.stops, walk.cut)
 }
 
-/// The route of `root` at `depth`, with the sizes of every depth from 0 to `max(depth, 2)`. The tree must go at least that deep.
-pub fn propose(root: &Item, how: How, depth: u32) -> Route {
-    let sizes = (0..=depth.max(2))
+/// What each depth from 0 to `last` adds up to. The tree must go at least that deep.
+pub fn sizes(root: &Item, last: u32) -> Vec<Size> {
+    (0..=last)
         .map(|d| {
             let (stops, cut) = outline(root, d);
             Size {
@@ -252,7 +268,12 @@ pub fn propose(root: &Item, how: How, depth: u32) -> Route {
                 cut,
             }
         })
-        .collect();
+        .collect()
+}
+
+/// The route of `root` at `depth`, with the sizes of every depth from 0 to `max(depth, 2)`. The tree must go at least that deep.
+pub fn propose(root: &Item, how: How, depth: u32) -> Route {
+    let sizes = sizes(root, depth.max(2));
     let (stops, cut) = outline(root, depth);
     Route {
         how,
@@ -263,6 +284,63 @@ pub fn propose(root: &Item, how: How, depth: u32) -> Route {
         stops,
         cut,
     }
+}
+
+/// Why the tree of a node could not be made.
+#[derive(Debug)]
+pub enum BuildError {
+    /// the node is not one the driver can start a tree at (`vnoc/callTree`'s refusal)
+    Invalid(String),
+    Internal(String),
+}
+
+/// The tree of `node` for a route, `levels` deep: a function's from the driver's call tree (merged), a class's, a file's and a folder's from the index. The
+/// one place `vnoc tour route` and `vnoc/tourAsk` both get it from. `bool`: the driver has no call trees, so the tree is the node alone. `root` is the node as
+/// a stop ([`known_of`]); `tree` is the index's tree of the opened folder.
+pub async fn build(
+    project: &Project,
+    index: &RwLock<Index>,
+    host: &DriverHost,
+    tree: &Node,
+    node: &Node,
+    root: Known,
+    levels: u32,
+) -> Result<(Item, How, bool), BuildError> {
+    if node.kind != Kind::Function {
+        let item = from_tree(node, levels).ok_or_else(|| {
+            BuildError::Internal("the node is not a stop: name a folder in the project".to_string())
+        })?;
+        return Ok((item, How::Contents, false));
+    }
+    let mut no_calls = false;
+    let merged = match calls::ask(project, index, host, &node.id, Some(levels)).await {
+        Ok(answer) => Some(calls::merge(&answer.root)),
+        // a driver with no call trees: the node alone, and a line that says so
+        Err(CallsError::MissingCapability(_)) => {
+            no_calls = true;
+            None
+        }
+        Err(CallsError::Invalid(message)) => return Err(BuildError::Invalid(message)),
+        Err(CallsError::Internal(message)) => return Err(BuildError::Internal(message)),
+    };
+    let known = |target: &CallTarget| {
+        let location = vnoc_domain::LocationKey::new(
+            project.repo_path(target.file.as_deref()?).ok()?,
+            target.qualname.clone(),
+            target.occurrence,
+        )
+        .ok()?;
+        tree.find(&location.to_string()).and_then(known_of)
+    };
+    let item = match &merged {
+        Some(merged) => from_calls(merged, root, levels, &known),
+        None => Item {
+            known: root,
+            line: None,
+            children: Vec::new(),
+        },
+    };
+    Ok((item, How::Calls, no_calls))
 }
 
 fn icon(kind: &NodeKind) -> &'static str {
@@ -404,6 +482,37 @@ impl Route {
 mod tests {
     use super::*;
     use vnoc_driver_protocol::{DefKind, Position, Range};
+
+    #[test]
+    fn a_size_says_its_stops_and_minutes_on_one_line() {
+        let size = |stops, cut| Size {
+            depth: 1,
+            stops,
+            minutes: minutes(stops),
+            cut,
+        };
+        assert_eq!(size(1, false).words(), "1 stop · about 1 min");
+        assert_eq!(size(9, false).words(), "9 stops · about 6 min");
+        assert_eq!(size(40, true).words(), "40 stops (cut) · about 27 min");
+    }
+
+    #[test]
+    fn the_sizes_of_a_tree_are_the_ones_propose_gives() {
+        let leaf = |id: &str| Item {
+            known: known(id, NodeKind::Function),
+            line: None,
+            children: Vec::new(),
+        };
+        let mut root = leaf("a.py::f");
+        root.children = vec![leaf("a.py::g"), leaf("a.py::h")];
+        let all = sizes(&root, 6);
+        assert_eq!(all.len(), 7);
+        assert_eq!(
+            all.iter().map(|s| s.stops).collect::<Vec<_>>(),
+            [1, 3, 3, 3, 3, 3, 3]
+        );
+        assert_eq!(propose(&root, How::Calls, 1).sizes, all[..3].to_vec());
+    }
 
     fn known(id: &str, kind: NodeKind) -> Known {
         let (path, name) = id.split_once("::").unwrap_or((id, id));

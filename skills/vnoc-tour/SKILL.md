@@ -20,7 +20,7 @@ user's canvas the moment you add it. **The tour is the answer.**
 
 `--title` is a phrase a person would name the tour by ("How checkout survives a payment timeout"), never a path or a function's name.
 `--question` is optional: what the user wants to understand. A request that only names code ("walk me through app/x.py") has none: leave `--question` out, never copy the request into it.
-If the request names a reach ("only this", "and what it calls", "two levels") or a detail ("a quick tour", "a detailed tour"), use it: `--route <node> --depth 0|1|2` and `--detail quick|detailed`. Otherwise pick `--detail` from the question: a quick look → quick; learning or onboarding → detailed; else normal.
+If the request names a depth ("N levels deep", "only that") or a detail ("a quick tour", "a detailed tour"), use it on `vnoc tour start`: `--route <node> --depth <N>` (`only that` is `--depth 0`) and `--detail quick|detailed`. Otherwise pick `--detail` from the question: a quick look → quick; learning or onboarding → detailed; else normal.
 
 Add one stop per command, in the order the user should read them. Send one `add` at a time and read its answer before the next: never several in one message. The answer may be a refusal to fix, or Stop.
 For a tour across files (a question, not one function's call tree), find the route first, then start with `--plan <the nodes in reading order>` and fill it with `add`, in that order:

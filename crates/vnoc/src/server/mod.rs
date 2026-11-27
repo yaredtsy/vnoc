@@ -94,6 +94,12 @@ struct State {
     attaching: tokio::sync::Mutex<()>,
     /// The tours whose calls (`vnoc/tourCalls`) are being counted now, each by a task of its own.
     calls_running: Mutex<std::collections::BTreeSet<TourId>>,
+    /// The sizes `vnoc/tourAsk` gives for a node, by its tree key, kept with the index revision they were made for (`None`: the route could not be made).
+    route_sizes: Mutex<
+        std::collections::HashMap<String, (u64, Option<Arc<Vec<crate::tours::route::Size>>>)>,
+    >,
+    /// The nodes whose sizes are being made now, each by a task of its own.
+    route_sizes_running: Mutex<std::collections::BTreeSet<String>>,
     /// An "everything" update is waiting or about to start. A second request for one (a double click on Refresh) is dropped.
     everything_pending: AtomicBool,
     /// The last update after a good first build failed or ran out of time, so some of the files it was told about were not read: the next update reads everything again.
@@ -137,6 +143,8 @@ impl State {
             one_at_a_time: tokio::sync::Mutex::new(()),
             attaching: tokio::sync::Mutex::new(()),
             calls_running: Mutex::new(std::collections::BTreeSet::new()),
+            route_sizes: Mutex::default(),
+            route_sizes_running: Mutex::default(),
             everything_pending: AtomicBool::new(false),
             needs_everything: AtomicBool::new(false),
             update_limit: UPDATE_LIMIT,

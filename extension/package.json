@@ -1171,7 +1171,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.0",
     "@types/node": "^22.0.0",
-    "@types/vscode": "^1.146.0",
+    "@types/vscode": "^1.90.0",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.1.1",
     "esbuild": "^0.28.2",

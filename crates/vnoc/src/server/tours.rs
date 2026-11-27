@@ -1089,6 +1089,106 @@ async fn after_end(
     said
 }
 
+/// How long `vnoc/tourAsk` waits for the sizes of a node: they ask the driver for a call tree [`route::MAX_DEPTH`] levels deep. A slower one goes on in a task of
+/// its own and is kept (for the index it was made from), so the next ask has it.
+const SIZES_WAIT: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// The size of each depth 0 to [`route::MAX_DEPTH`] of the route of the node with this tree key, as `vnoc tour route` counts them (one route, cut as it cuts it).
+/// `None`: no route can start there. Waits for [`SIZES_WAIT`], then says to ask again.
+async fn route_sizes(
+    core: &Core,
+    id: &str,
+) -> Result<Option<Arc<Vec<route::Size>>>, ResponseError> {
+    let state = &core.state;
+    let revision = || {
+        state
+            .index
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .revision()
+    };
+    let kept = || {
+        let kept = state.route_sizes.lock().unwrap();
+        let (at, sizes) = kept.get(id)?;
+        (*at == revision()).then(|| sizes.clone())
+    };
+    if let Some(sizes) = kept() {
+        return Ok(sizes);
+    }
+    if state
+        .route_sizes_running
+        .lock()
+        .unwrap()
+        .insert(id.to_string())
+    {
+        let (core, id) = (core.clone(), id.to_string());
+        tokio::spawn(async move {
+            let made = make_sizes(&core, &id).await;
+            core.state
+                .route_sizes
+                .lock()
+                .unwrap()
+                .insert(id.clone(), made);
+            core.state.route_sizes_running.lock().unwrap().remove(&id);
+        });
+    }
+    let deadline = tokio::time::Instant::now() + SIZES_WAIT;
+    loop {
+        if let Some(sizes) = kept() {
+            return Ok(sizes);
+        }
+        let running = state.route_sizes_running.lock().unwrap().contains(id);
+        if tokio::time::Instant::now() >= deadline {
+            return Err(super::ask_again_with(
+                "the size of this route is being worked out: ask again",
+            ));
+        }
+        if !running {
+            // done, but for an index that has moved since: begin again
+            return Box::pin(route_sizes(core, id)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// The sizes of one node's route, with the revision of the index they were made from.
+async fn make_sizes(core: &Core, id: &str) -> (u64, Option<Arc<Vec<route::Size>>>) {
+    let state = &core.state;
+    let Some(project) = state.project.get() else {
+        return (0, None);
+    };
+    let (revision, tree) = {
+        let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+        (
+            index.revision(),
+            index.tree(&project.name(), project.prefix()),
+        )
+    };
+    let Some(node) = tree.find(id) else {
+        return (revision, None);
+    };
+    let Some(root) = route::known_of(node) else {
+        return (revision, None);
+    };
+    let built = route::build(
+        project,
+        &state.index,
+        &core.host,
+        &tree,
+        node,
+        root,
+        route::MAX_DEPTH,
+    )
+    .await;
+    match built {
+        Ok((item, _, _)) => (
+            revision,
+            Some(Arc::new(route::sizes(&item, route::MAX_DEPTH))),
+        ),
+        Err(_) => (revision, None),
+    }
+}
+
 /// `vnoc/tourAsk`: the sentence for an agent from the form's parts (`tours::document::ask`); **Ask for a New Tour** gives the row's tour for what the parts
 /// leave out, and `filled` says what it gave. TypeScript makes neither the sentence nor the line that says what to do with it.
 pub(super) fn tour_ask(
@@ -1096,6 +1196,7 @@ pub(super) fn tour_ask(
     params: Option<protocol::TourAskParams>,
 ) -> impl std::future::Future<Output = Result<protocol::TourAskResult, ResponseError>> + Send + use<>
 {
+    let core = core.clone();
     let state = core.state.clone();
     timed("tourAsk", async move {
         let params = params.unwrap_or_default();
@@ -1132,17 +1233,43 @@ pub(super) fn tour_ask(
         } else {
             None
         };
-        let address = if let Some(key) = params.key.as_ref().filter(|k| !k.trim().is_empty()) {
+        if params.depth.is_some_and(|d| d > route::MAX_DEPTH) {
+            return Err(bad_params(format!("`depth` is 0 to {}", route::MAX_DEPTH)));
+        }
+        // the node: the one `key` names (no such node is a bad request), else, when a depth is asked for, the root of the row's tour (its sentence still names it
+        // if the node is gone, only without the depth)
+        let given_address = given.as_ref().and_then(|(address, _, _)| address.clone());
+        let key = params.key.as_ref().filter(|k| !k.trim().is_empty());
+        let (looked_up, strict) = match (key, &given_address, params.depth) {
+            (Some(key), _, _) => (Some(key.clone()), true),
+            (None, Some(address), Some(_)) => (Some(address.clone()), false),
+            _ => (None, false),
+        };
+        let found = if let Some(key) = looked_up {
             let project = ready_project(&state).await?;
             let index = state.index.read().unwrap_or_else(|e| e.into_inner());
             let tree = index.tree(&project.name(), project.prefix());
-            let node = find::node_named(&index, project, &tree, key)
-                .ok_or_else(|| bad_params(format!("no node is named `{key}`")))?;
-            // the project's root is every tour's: a sentence about it names nothing
-            let address = node.location();
-            (address != ".").then_some(address)
+            match find::node_named(&index, project, &tree, &key) {
+                // the project's root is every tour's: a sentence about it names nothing
+                Some(node) if node.location() != "." => Some((
+                    node.location(),
+                    node.kind == crate::index::Kind::Function,
+                    node.id.clone(),
+                )),
+                Some(_) => None,
+                None if strict => return Err(bad_params(format!("no node is named `{key}`"))),
+                None => None,
+            }
         } else {
-            given.as_ref().and_then(|(address, _, _)| address.clone())
+            None
+        };
+        let (address, calls, sized) = match found {
+            Some((address, calls, id)) => (Some(address), calls, Some(id)),
+            None => (
+                if key.is_some() { None } else { given_address },
+                false,
+                None,
+            ),
         };
         let question = match &params.question {
             Some(q) => Some(q.clone()),
@@ -1155,9 +1282,14 @@ pub(super) fn tour_ask(
         let asked = document::ask(&document::Parts {
             address: address.as_deref(),
             question: question.as_deref(),
-            reach: params.reach.unwrap_or_default(),
+            depth: params.depth,
+            calls,
             detail,
         });
+        let sizes = match sized {
+            Some(id) => route_sizes(&core, &id).await?,
+            None => None,
+        };
         Ok(protocol::TourAskResult {
             text: asked.text,
             words: asked.words.to_string(),
@@ -1165,6 +1297,17 @@ pub(super) fn tour_ask(
                 key,
                 question,
                 detail,
+            }),
+            sizes: sizes.map(|sizes| {
+                sizes
+                    .iter()
+                    .map(|s| protocol::TourAskSize {
+                        depth: s.depth,
+                        stops: s.stops,
+                        minutes: s.minutes,
+                        words: s.words(),
+                    })
+                    .collect()
             }),
         })
     })

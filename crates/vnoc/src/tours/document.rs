@@ -457,17 +457,6 @@ pub struct Asked {
     pub words: &'static str,
 }
 
-/// How far a tour goes from its node, as the person chose it in the form (`vnoc/tourAsk`'s `reach`). `Agent` says nothing: the agent decides.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Reach {
-    #[default]
-    Agent,
-    Only,
-    Calls,
-    Calls2,
-}
-
 /// How much each step says, as the person chose it (`vnoc/tourAsk`'s `detail`). `Agent` says nothing: the agent chooses from the question.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -495,14 +484,19 @@ impl AskDetail {
 pub struct Parts<'a> {
     pub address: Option<&'a str>,
     pub question: Option<&'a str>,
-    pub reach: Reach,
+    /// How many levels from the node the tour goes (`vnoc/tourAsk`'s `depth`, 0 to [`MAX_DEPTH`](super::route::MAX_DEPTH)); `None`: the agent decides.
+    pub depth: Option<u32>,
+    /// The node is a function: its levels are what it calls. Else (a file, a class, a folder) they are what it holds.
+    pub calls: bool,
     pub detail: AskDetail,
 }
 
-/// The sentence from its parts (design/07 §7, TR23a): `Walk me through orders/service.py::OrderService.parse_order: why does it retry twice? Cover it and
-/// what it calls. Make it a quick tour.`, and *"Copied. Paste it to your agent."*. With no node, the question alone follows `Walk me through `; with neither,
-/// the text is `Walk me through ` and the words say *"Add what you want explained."* (a reach and a detail have nothing to be about, so they are not added).
-/// Whitespace in the question is one space, so the sentence is one line.
+/// The sentence from its parts (design/07 §7, TR23a, TR23b): `Walk me through orders/service.py::OrderService.parse_order: why does it retry twice? Cover it
+/// and what it calls, 2 levels deep. Make it a quick tour.`, and *"Copied. Paste it to your agent."*. The depth is said by the node's kind: 0 is `Cover only
+/// that.`; a function `Cover it and what it calls, N levels deep.`; a file, a class or a folder `Cover it N levels deep.` (1 is `one level deep`); no depth
+/// says nothing. With no node, the question alone follows `Walk me through `; with neither, the text is `Walk me through ` and the words say *"Add what you
+/// want explained."* (a depth and a detail have nothing to be about, so they are not added; nor is a depth with no node). Whitespace in the question is one
+/// space, so the sentence is one line.
 pub fn ask(parts: &Parts) -> Asked {
     let address = parts.address.map(str::trim).filter(|a| !a.is_empty());
     let question = parts
@@ -521,24 +515,30 @@ pub fn ask(parts: &Parts) -> Asked {
         }
     };
     let mut text = format!("Walk me through {subject}");
-    let reach = match parts.reach {
-        Reach::Agent => None,
-        Reach::Only => Some("Cover only that, not what it calls."),
-        Reach::Calls => Some("Cover it and what it calls."),
-        Reach::Calls2 => Some("Cover it, what it calls, and what those call."),
+    let levels = |n: u32| match n {
+        1 => "one level deep".to_string(),
+        n => format!("{n} levels deep"),
+    };
+    let reach = match (address.is_some(), parts.depth) {
+        (false, _) | (_, None) => None,
+        (true, Some(0)) => Some("Cover only that.".to_string()),
+        (true, Some(n)) if parts.calls => {
+            Some(format!("Cover it and what it calls, {}.", levels(n)))
+        }
+        (true, Some(n)) => Some(format!("Cover it {}.", levels(n))),
     };
     let detail = match parts.detail {
         AskDetail::Agent => None,
-        AskDetail::Quick => Some("Make it a quick tour."),
-        AskDetail::Normal => Some("Make it a normal tour."),
-        AskDetail::Detailed => Some("Make it a detailed tour."),
+        AskDetail::Quick => Some("Make it a quick tour.".to_string()),
+        AskDetail::Normal => Some("Make it a normal tour.".to_string()),
+        AskDetail::Detailed => Some("Make it a detailed tour.".to_string()),
     };
     for sentence in reach.into_iter().chain(detail) {
         if !text.ends_with(['.', '?', '!']) {
             text.push('.');
         }
         text.push(' ');
-        text.push_str(sentence);
+        text.push_str(&sentence);
     }
     Asked {
         text,
@@ -552,7 +552,8 @@ pub fn of_tour<'a>(tour: &'a Tour, address: Option<&'a str>) -> Parts<'a> {
     Parts {
         address,
         question: tour.question.as_deref(),
-        reach: Reach::Agent,
+        depth: None,
+        calls: false,
         detail: AskDetail::of_tour(tour.detail),
     }
 }
@@ -592,13 +593,14 @@ mod tests {
     fn said(
         address: Option<&str>,
         question: Option<&str>,
-        reach: Reach,
+        depth: Option<u32>,
         detail: AskDetail,
     ) -> String {
         ask(&Parts {
             address,
             question,
-            reach,
+            depth,
+            calls: true,
             detail,
         })
         .text
@@ -630,16 +632,11 @@ mod tests {
     fn the_question_follows_the_address_after_a_colon_on_one_line() {
         let at = Some("orders/service.py::OrderService.parse_order");
         assert_eq!(
-            said(
-                at,
-                Some("why does it retry twice?"),
-                Reach::Agent,
-                AskDetail::Agent
-            ),
+            said(at, Some("why does it retry twice?"), None, AskDetail::Agent),
             "Walk me through orders/service.py::OrderService.parse_order: why does it retry twice?"
         );
         assert_eq!(
-            said(at, Some("  why\n  twice  "), Reach::Agent, AskDetail::Agent),
+            said(at, Some("  why\n  twice  "), None, AskDetail::Agent),
             "Walk me through orders/service.py::OrderService.parse_order: why twice"
         );
     }
@@ -652,41 +649,75 @@ mod tests {
         });
         assert_eq!(asked.text, "Walk me through how does checkout end?");
         assert_eq!(asked.words, "Copied. Paste it to your agent.");
-        // a reach and a detail are about a subject: with neither node nor question they are not added
+        // a depth and a detail are about a subject: with neither node nor question they are not added
         assert_eq!(
-            said(None, None, Reach::Calls, AskDetail::Quick),
+            said(None, None, Some(1), AskDetail::Quick),
             "Walk me through "
         );
         // with only a question they are
         assert_eq!(
-            said(None, Some("why twice?"), Reach::Calls, AskDetail::Quick),
-            "Walk me through why twice? Cover it and what it calls. Make it a quick tour."
+            said(None, Some("why twice?"), Some(1), AskDetail::Quick),
+            "Walk me through why twice? Make it a quick tour."
         );
     }
 
     #[test]
-    fn each_reach_says_its_own_sentence_and_the_agents_says_nothing() {
+    fn each_depth_says_its_own_sentence_by_the_nodes_kind_and_no_depth_says_nothing() {
         let at = Some("a.py::f");
-        let reach = |r| said(at, None, r, AskDetail::Agent);
-        assert_eq!(reach(Reach::Agent), "Walk me through a.py::f");
+        let calls = |d| said(at, None, d, AskDetail::Agent);
+        assert_eq!(calls(None), "Walk me through a.py::f");
+        assert_eq!(calls(Some(0)), "Walk me through a.py::f. Cover only that.");
         assert_eq!(
-            reach(Reach::Only),
-            "Walk me through a.py::f. Cover only that, not what it calls."
+            calls(Some(1)),
+            "Walk me through a.py::f. Cover it and what it calls, one level deep."
         );
         assert_eq!(
-            reach(Reach::Calls),
-            "Walk me through a.py::f. Cover it and what it calls."
+            calls(Some(2)),
+            "Walk me through a.py::f. Cover it and what it calls, 2 levels deep."
         );
         assert_eq!(
-            reach(Reach::Calls2),
-            "Walk me through a.py::f. Cover it, what it calls, and what those call."
+            calls(Some(6)),
+            "Walk me through a.py::f. Cover it and what it calls, 6 levels deep."
         );
+        // a file, a class or a folder holds things, it calls nothing
+        let holds = |d| {
+            ask(&Parts {
+                address: Some("app/orders.py"),
+                depth: d,
+                ..Parts::default()
+            })
+            .text
+        };
+        assert_eq!(holds(None), "Walk me through app/orders.py");
+        assert_eq!(
+            holds(Some(0)),
+            "Walk me through app/orders.py. Cover only that."
+        );
+        assert_eq!(
+            holds(Some(1)),
+            "Walk me through app/orders.py. Cover it one level deep."
+        );
+        assert_eq!(
+            holds(Some(3)),
+            "Walk me through app/orders.py. Cover it 3 levels deep."
+        );
+    }
+
+    #[test]
+    fn a_depth_with_no_node_says_nothing() {
+        let with_question = ask(&Parts {
+            question: Some("how does checkout end?"),
+            depth: Some(2),
+            calls: true,
+            ..Parts::default()
+        });
+        assert_eq!(with_question.text, "Walk me through how does checkout end?");
     }
 
     #[test]
     fn each_detail_says_its_own_sentence_and_the_agents_says_nothing() {
         let at = Some("a.py::f");
-        let detail = |d| said(at, Some("why?"), Reach::Agent, d);
+        let detail = |d| said(at, Some("why?"), None, d);
         assert_eq!(detail(AskDetail::Agent), "Walk me through a.py::f: why?");
         assert_eq!(
             detail(AskDetail::Quick),
@@ -708,19 +739,19 @@ mod tests {
             said(
                 Some("a.py::f"),
                 Some("why retry"),
-                Reach::Calls,
+                Some(1),
                 AskDetail::Detailed
             ),
-            "Walk me through a.py::f: why retry. Cover it and what it calls. Make it a detailed tour."
+            "Walk me through a.py::f: why retry. Cover it and what it calls, one level deep. Make it a detailed tour."
         );
         assert_eq!(
             said(
                 Some("a.py::f"),
                 Some("why retry?"),
-                Reach::Calls2,
+                Some(2),
                 AskDetail::Quick
             ),
-            "Walk me through a.py::f: why retry? Cover it, what it calls, and what those call. Make it a quick tour."
+            "Walk me through a.py::f: why retry? Cover it and what it calls, 2 levels deep. Make it a quick tour."
         );
     }
 
