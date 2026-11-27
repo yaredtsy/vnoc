@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type MermaidLike, diagramWidth, drawDiagram, linkTarget, mermaidTheme, naturalWidth, renderText } from "./text.ts";
+import { type MermaidLike, diagramWidth, drawDiagram, linkTarget, mermaidTheme, naturalWidth, renderText, uniqueIds } from "./text.ts";
 
 test("a paragraph keeps its words, `code` and emphasis and strong are marks", () => {
   assert.equal(renderText("It checks the stock.").html, "<p>It checks the stock.</p>\n");
@@ -108,4 +108,12 @@ test("the natural width of Mermaid's SVG is its viewBox", () => {
   assert.equal(naturalWidth('<svg viewBox="-8, -8, 120 40">'), 120);
   assert.equal(naturalWidth("<svg></svg>"), null);
   assert.equal(naturalWidth('<svg viewBox="0 0 0 10">'), null);
+});
+
+test("an SVG drawn a second time (the enlarged diagram) has ids of its own: the id, what points at it, and the style rules that start with it", () => {
+  const svg = '<svg id="tour-a-0"><style>#tour-a-0 .node{fill:red}#tour-a-0 .edge-1{x:1}</style><defs><marker id="arrow"></marker></defs><path marker-end="url(#arrow)" id="arrow-path"/><use href="#arrow-path"/></svg>';
+  const second = uniqueIds(svg, "-large");
+  assert.equal(second, '<svg id="tour-a-0-large"><style>#tour-a-0-large .node{fill:red}#tour-a-0-large .edge-1{x:1}</style><defs><marker id="arrow-large"></marker></defs><path marker-end="url(#arrow-large)" id="arrow-path-large"/><use href="#arrow-path-large"/></svg>');
+  const ids = (s: string) => Array.from(s.matchAll(/\bid="([^"]+)"/g), (m) => m[1]);
+  assert.equal(new Set([...ids(svg), ...ids(second)]).size, ids(svg).length * 2, "no id of the first is in the second");
 });

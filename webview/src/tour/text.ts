@@ -80,6 +80,23 @@ export async function drawDiagram(load: () => Promise<MermaidLike>, source: stri
   }
 }
 
+/**
+ * The same SVG with every `id` made new by `suffix`: the id itself, what points at it (`url(#a)`, `href="#a"`) and the rules of Mermaid's own `<style>` that start with it
+ * (`#a .node`). A diagram drawn a second time in the page (the enlarged one is the pane's, again) must not repeat the ids of the first: an id is one element's (a screen reader, a
+ * `url(#…)` and a `<use>` take the first one they find).
+ */
+export function uniqueIds(svg: string, suffix: string): string {
+  const ids = Array.from(new Set(Array.from(svg.matchAll(/\bid="([^"]+)"/g), (m) => m[1]))).sort((a, b) => b.length - a.length);
+  let out = svg;
+  for (const id of ids) {
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out
+      .replace(new RegExp(`\\bid="${escaped}"`, "g"), `id="${id}${suffix}"`)
+      .replace(new RegExp(`(?<![\\w-])#${escaped}(?![\\w-])`, "g"), `#${id}${suffix}`);
+  }
+  return out;
+}
+
 /** Mermaid's theme for VS Code's: `dark` on a dark theme, `default` on a light one (the cards choose theirs the same way: `currentTheme` in `lib/highlighter.ts`). */
 export const mermaidTheme = (shikiTheme: string): string => (shikiTheme.endsWith("light") ? "default" : "dark");
 

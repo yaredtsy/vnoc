@@ -164,11 +164,15 @@ export interface Shown {
 /** The reader is on a stop that was `planned` a moment ago and is written now: the same step, its text appears where the grey bars were, and fades in. */
 export const becameWritten = (before: Shown | null, now: Shown): boolean => before !== null && before.id !== null && before.id === now.id && before.kind === "planned" && now.kind !== null && now.kind !== "planned";
 
+/** What a key does in the stage (design 05 §6): a move for the core, Go to Code, back to where you were, closing or folding, or the key that does the cover's or the end card's one thing. */
+export type KeyMove = "next" | "prev" | "nextStop" | "prevStop" | "cover" | "end" | "goToCode" | "history" | "closeTour" | "enter" | "fold";
+
 /**
- * What a key does in the stage: a move for the core, Go to Code, back to where you were (`Alt+←`: the core's history, not Prev), closing the tour (`Esc`), or nothing.
- * Space and → are Next; ← Prev; Home the cover; End the end card.
+ * What a key does in the stage (design 05 §6): `→` and Space are Next, `←` Prev, `↓` and `↑` the next and the previous **stop**, `Alt+←` back to where you were (the core's
+ * history, not Prev), `Home` the cover, `End` the end card, `Enter` the cover's Start or the end card's Close Tour (`enter`: the stage knows which), `Ctrl/Cmd+Enter` Go to
+ * Code, `Esc` closes the tour (unfolds the stage first when it is folded), `.` folds and unfolds the stage.
  */
-export function keyMove(key: string, mod: { ctrl: boolean; meta: boolean; alt: boolean }): "next" | "prev" | "cover" | "end" | "goToCode" | "history" | "closeTour" | null {
+export function keyMove(key: string, mod: { ctrl: boolean; meta: boolean; alt: boolean }): KeyMove | null {
   if ((mod.ctrl || mod.meta) && key === "Enter") return "goToCode";
   if (mod.alt && !mod.ctrl && !mod.meta && key === "ArrowLeft") return "history";
   if (mod.ctrl || mod.meta || mod.alt) return null;
@@ -178,16 +182,30 @@ export function keyMove(key: string, mod: { ctrl: boolean; meta: boolean; alt: b
       return "next";
     case "ArrowLeft":
       return "prev";
+    case "ArrowDown":
+      return "nextStop";
+    case "ArrowUp":
+      return "prevStop";
     case "Home":
       return "cover";
     case "End":
       return "end";
+    case "Enter":
+      return "enter";
     case "Escape":
       return "closeTour";
+    case ".":
+      return "fold";
     default:
       return null;
   }
 }
+
+/**
+ * What the `Enter` key does where the reader is: **Start** on the cover, **Close Tour** on the end card, and nothing on a step (a step has no one thing to do: `→` goes on). The
+ * stage does the same for `Esc` with the stage folded: it unfolds first, and the next `Esc` closes.
+ */
+export const enterDoes = (mode: Current["mode"]): "start" | "closeTour" | null => (mode === "cover" ? "start" : mode === "end" ? "closeTour" : null);
 
 /**
  * The calls of a stop's code that are stops of this tour, by file line: the stops reached from this one by a call (`from` is this stop, `line` the line of the call). The

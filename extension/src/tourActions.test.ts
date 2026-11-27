@@ -72,7 +72,7 @@ function window(over: Partial<ActionDeps> & { answers?: (string | undefined)[]; 
     },
     showRefusals: async (target, refusals) => void events.push(["problems", target, refusals.map((r) => [r.place, r.line])]),
     clearRefusals: (target) => void events.push(["clear", target]),
-    checkAll: async () => void events.push(["checkAll"]),
+    checkAll: async () => (events.push(["checkAll"]), "Checked 4 tours: 1 changed."),
     copy: async (text) => void events.push(["copy", text]),
     ...over,
   };
@@ -258,6 +258,8 @@ test("Check All Tours asks the host to check every tour; Ask for a Tour… copie
   const w = window({ replies: { "vnoc/tourAsk": { text: "Walk me through a.py::f", words: "Copied. Paste it to your agent." } } });
   assert.equal(await w.actions.checkAll(), "checked");
   assert.deepEqual(w.events, [["checkAll"]]);
+  assert.deepEqual(w.said, [{ level: "info", text: "Checked 4 tours: 1 changed.", buttons: [] }], "the core's one sentence ends it");
+  w.said.length = 0;
   assert.equal(await w.actions.ask({ key: "a.py::f" }), "asked");
   assert.deepEqual(w.asked, [["vnoc/tourAsk", { key: "a.py::f" }]]);
   assert.deepEqual(w.events.slice(1), [["copy", "Walk me through a.py::f"]]);

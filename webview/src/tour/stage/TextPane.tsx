@@ -13,7 +13,7 @@ export function TextPane(p: { view: TourView; stop: TourStop; step: StepView; pa
   const { view, stop, step, look } = p;
   const explained = stop.same_as == null ? null : view.stops.find((s) => s.id === stop.same_as);
   return (
-    <div className="stage-textpane" data-part="text">
+    <div className="stage-textpane" data-part="text" aria-live="polite">
       {look.parentLine && p.parent && (
         <button type="button" className="stage-parent" title="Go to the block this is a detail of" onClick={() => p.onJump(p.parent!.id)}>
           {p.parent.title} ›

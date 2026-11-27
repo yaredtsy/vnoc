@@ -41,8 +41,8 @@ export interface ActionDeps {
   showRefusals(target: string, refusals: TourRefusal[]): Promise<void>;
   /** the diagnostics of that editor go away: it imported */
   clearRefusals(target: string): void;
-  /** every tour is checked anew, with a progress line, and the pages are given the rows the core answered */
-  checkAll(): Promise<void>;
+  /** every tour is checked anew, with a progress line, and the pages are given the rows the core answered; the core's one sentence of what it found (undefined from an older core) */
+  checkAll(): Promise<string | undefined>;
   /** the text goes to the clipboard */
   copy(text: string): Promise<void>;
 }
@@ -301,10 +301,11 @@ export class TourActions {
     }
   }
 
-  /** **Check All Tours**: the host checks every tour anew with a progress line; each row says what was found. */
+  /** **Check All Tours**: the host checks every tour anew with a progress line; each row says what was found, and the core's one sentence (how many changed) ends it as a message. */
   async checkAll(): Promise<"checked" | "refused"> {
     try {
-      await this.d.checkAll();
+      const words = await this.d.checkAll();
+      if (words) void this.d.say("info", words, []);
       return "checked";
     } catch (e) {
       await this.refused(e);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Place, StepKind, StepView, TourStop, TourView } from "@vnoc/shared/tours.ts";
-import { ADDING_LINE, becameWritten, callLines, currentOf, keyMove, lineLook, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf } from "./layout.ts";
+import { ADDING_LINE, becameWritten, callLines, currentOf, enterDoes, keyMove, lineLook, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf } from "./layout.ts";
 
 const step = (id: string, kind: StepKind, over: Partial<StepView> = {}): StepView => ({ id, kind, depth: kind === "block" ? 1 : kind === "detail" ? 2 : 0, parent: null, title: null, text: "t", lines: null, ...over });
 const stop = (id: string, reading: StepView[], over: Partial<TourStop> = {}): TourStop => ({
@@ -78,7 +78,11 @@ test("the primary button says Start on the cover, Finish on the last step, Next 
 
 test("the keys: → and Space are Next, ← is Prev, Home the cover, End the end card, Ctrl or Cmd+Enter Go to Code; a modified arrow is not ours", () => {
   const none = { ctrl: false, meta: false, alt: false };
-  assert.deepEqual(["ArrowRight", " ", "ArrowLeft", "Home", "End", "x", "Enter"].map((k) => keyMove(k, none)), ["next", "next", "prev", "cover", "end", null, null]);
+  assert.deepEqual(["ArrowRight", " ", "ArrowLeft", "Home", "End", "x"].map((k) => keyMove(k, none)), ["next", "next", "prev", "cover", "end", null]);
+  // design 05 §6: ↓ ↑ are the next and the previous stop, Enter is the cover's Start and the end card's Close Tour, `.` folds the stage
+  assert.deepEqual(["ArrowDown", "ArrowUp", "Enter", ".", "Escape"].map((k) => keyMove(k, none)), ["nextStop", "prevStop", "enter", "fold", "closeTour"]);
+  assert.equal(keyMove("ArrowDown", { ...none, alt: true }), null, "a modified arrow is not ours");
+  assert.equal(keyMove(".", { ...none, ctrl: true }), null);
   assert.equal(keyMove("Enter", { ...none, ctrl: true }), "goToCode");
   assert.equal(keyMove("Enter", { ...none, meta: true }), "goToCode");
   assert.equal(keyMove("ArrowLeft", { ...none, alt: true }), "history", "Alt+← is back to where you were");
@@ -86,6 +90,10 @@ test("the keys: → and Space are Next, ← is Prev, Home the cover, End the end
   assert.equal(keyMove("ArrowRight", { ...none, alt: true }), null);
   assert.equal(keyMove("ArrowRight", { ...none, meta: true }), null);
   assert.equal(keyMove("Escape", { ...none, ctrl: true }), null);
+});
+
+test("Enter starts the tour on the cover, closes it on the end card, and does nothing on a step", () => {
+  assert.deepEqual((["cover", "end", "step"] as const).map(enterDoes), ["start", "closeTour", null]);
 });
 
 test("the calls of a stop's code that are stops of the tour are the stops reached from it by a call, by line; nothing is matched by name", () => {

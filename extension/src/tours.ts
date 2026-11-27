@@ -98,7 +98,8 @@ export function selectionKey(view: TourView): string | null {
  * read), the description the row's second line (`words`: the state word and the size), the detail the question the tour answers, or why it cannot be read.
  */
 export function pickItem(row: TourRow): { label: string; description: string; detail?: string; row: TourRow } {
-  return { label: row.title ?? row.id, description: row.words, detail: row.readable ? row.question : row.problem, row };
+  // a tour on the node the picker was opened for says why (`on.words`: `starts here`, `stops 2 and 4 of 4`, `3 stops inside`), then what the row says of the tour
+  return { label: row.title ?? row.id, description: row.on ? `${row.on.words} · ${row.words}` : row.words, detail: row.readable ? row.question : row.problem, row };
 }
 
 /** The context of the session that shows a tour: at most one. */
@@ -267,11 +268,11 @@ export class Tours {
     return tours;
   }
 
-  /** **Check All Tours**: every tour is checked anew (`vnoc/tours { check_all }`, asked again while the core says to), and the rows it answered are what the pages draw. */
-  async checkAll(): Promise<TourRow[]> {
-    const tours = (await this.ask("vnoc/tours", { check_all: true })).tours;
+  /** **Check All Tours**: every tour is checked anew (`vnoc/tours { check_all }`, asked again while the core says to), and the rows it answered are what the pages draw; the core's one sentence of what it found goes with them. */
+  async checkAll(): Promise<{ tours: TourRow[]; words: string | undefined }> {
+    const { tours, words } = await this.ask("vnoc/tours", { check_all: true });
     this.publish(tours);
-    return tours;
+    return { tours, words };
   }
 
   private publish(tours: TourRow[]): void {

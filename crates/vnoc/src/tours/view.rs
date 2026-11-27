@@ -1063,6 +1063,27 @@ pub struct ListRowView {
     pub say_fresh: bool,
 }
 
+/// The one sentence **Check All Tours** ends with, from the rows it just checked: `Checked 4 tours: all up to date.`, `Checked 4 tours: 1 changed.`,
+/// `Checked 3 tours: 2 changed, 1 cannot be read.` The count is of the tours that can be read; a tour that cannot be is said last.
+pub fn checked_words(rows: &[ListRowView]) -> String {
+    let readable = rows.iter().filter(|r| r.readable).count();
+    let changed = rows.iter().filter(|r| r.check == Some("changed")).count();
+    let unreadable = rows.len() - readable;
+    let mut said = vec![if changed == 0 {
+        "all up to date".to_string()
+    } else {
+        format!("{changed} changed")
+    }];
+    if unreadable > 0 {
+        said.push(format!("{unreadable} cannot be read"));
+    }
+    format!(
+        "Checked {}: {}.",
+        count(readable, "tour", "tours"),
+        said.join(", ")
+    )
+}
+
 /// What the cover of a finished tour offers (05 §3), by `[tours] ids` and `[tours] commit`: only for `"ask"`. `"always"` was done at `finish` and `"never"` is
 /// not offered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1722,6 +1743,18 @@ mod tests {
         assert!(views[1].private_copy);
         assert!(!views[0].private_copy);
         assert!(!views[2].readable);
+        // Check All Tours ends with one sentence: the readable tours counted, and what changed
+        assert_eq!(
+            checked_words(&views),
+            "Checked 2 tours: all up to date, 1 cannot be read."
+        );
+        let mut changed = views.clone();
+        changed[0].check = Some("changed");
+        assert_eq!(checked_words(&changed[..1]), "Checked 1 tour: 1 changed.");
+        assert_eq!(
+            checked_words(&changed),
+            "Checked 2 tours: 1 changed, 1 cannot be read."
+        );
     }
 
     #[test]

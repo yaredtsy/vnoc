@@ -469,6 +469,8 @@ export interface TourAskSize {
 export interface ToursAnswer {
   /** newest first, in the core's order */
   tours: TourRow[];
+  /** only after `check_all`: the core's one sentence of what was found (`Checked 4 tours: 1 changed.`) */
+  words?: string;
 }
 
 /** Every request to the core about tours, by its method (03 §8). The host sends them; a page never does. */

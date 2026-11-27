@@ -171,6 +171,11 @@ pub(super) fn tours(
             .await?
             .ok_or_else(|| internal("no folder is open"))?
         };
+        // Check All Tours ends with one sentence of the core's: how many changed
+        if params.check_all {
+            let words = view::checked_words(&shown);
+            return Ok(serde_json::json!({ "tours": shown, "words": words }));
+        }
         Ok(serde_json::json!({ "tours": shown }))
     })
 }

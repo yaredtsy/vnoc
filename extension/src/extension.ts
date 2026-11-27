@@ -250,7 +250,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       );
     },
     clearRefusals: (target) => refusalMarks.delete(vscode.Uri.parse(target)),
-    checkAll: async () => void (await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Checking tours…" }, () => tours.checkAll())),
+    checkAll: async () => (await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Checking tours…" }, () => tours.checkAll())).words,
     copy: (text) => Promise.resolve(vscode.env.clipboard.writeText(text)),
   });
   /** the untitled tabs **Open as JSON** made: each is the document of one tour, which **Import into This Tour** (on the tab's title bar) imports back into it */
@@ -411,7 +411,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.tourAsk", async (arg, selected) => openAsk({ key: await commands.askKeyOf(arg, selected) })),
     vscode.commands.registerCommand("vnoc.tourAskAgain", (arg) => openAsk({ tour: tourOfArg(arg) })),
     // **Show Docs** in a stop's menu: the docs panel, as the bar's `ⓘ` opens it
-    vscode.commands.registerCommand("vnoc.tourShowDocs", async () => {
+    // the card's menu names its stop's node (`nodeKey`): the docs are that stop's, not the current one's, so the node is selected in the tour's context first
+    vscode.commands.registerCommand("vnoc.tourShowDocs", async (arg) => {
+      const key = (arg as { nodeKey?: unknown } | null)?.nodeKey;
+      const context = tourContext(store.get());
+      if (typeof key === "string" && context) {
+        store.dispatch({ type: "select", id: key }, context.id);
+        store.dispatch({ type: "activate", id: context.id }, context.id);
+      }
       await panels.showCanvas();
       panels.emit("viewCommand", { name: "showDocPanel" });
     }),

@@ -9,8 +9,9 @@ import { on, post, request } from "../host.ts";
 import { useData } from "../state/data.ts";
 import { dispatch } from "../state/session.ts";
 import { setStageFolded, setStageHeight, setStageText, useView } from "../state/view.ts";
-import { type Current, type Shown, ADDING_LINE, becameWritten, callLines, currentOf, keyMove, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf } from "./layout.ts";
+import { type Current, type Shown, ADDING_LINE, becameWritten, callLines, currentOf, enterDoes, keyMove, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf } from "./layout.ts";
 import { goToStop } from "./goToCode.ts";
+import { stepLabel } from "./labels.ts";
 import { go, loadTour, useTour } from "./store.ts";
 import { CodePane, type CodeDrawn, LINE_H } from "./stage/CodePane.tsx";
 import { Contents } from "./stage/Contents.tsx";
@@ -121,12 +122,18 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   /** the step on the stage, for the suite's `choose:now` */
   const stepNow = useRef<string | null>(null);
   stepNow.current = step?.id ?? null;
+  /** where the reader is (the cover, a step, the end card): `Enter` is the stage's only on the cover and the end card */
+  const modeNow = useRef<Current["mode"] | null>(null);
+  modeNow.current = current?.mode ?? null;
   callTo.current = view && stop ? callLines(view, stop.id) : new Map();
   act.current = {
     // a tour with no plan, on its last written step: there is no next step to go to yet, and the core would take the reader to the end card of a tour that is not finished
     next: () => next !== "adding" && go(tourId, "next"),
     start: () => go(tourId, "next"),
     prev: () => go(tourId, "prev"),
+    // `↓` and `↑`: the next and the previous stop (design 05 §6)
+    nextStop: () => go(tourId, "next-stop"),
+    prevStop: () => go(tourId, "prev-stop"),
     back: () => go(tourId, "prev"),
     history: () => go(tourId, "back"),
     skipped: () => view?.place.first_unseen != null && go(tourId, view.place.first_unseen),
@@ -139,6 +146,16 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       if (to != null) go(tourId, to);
     },
     closeTour: () => dispatch({ type: "closeContext", id: contextId }, contextId),
+    // `Esc` with the stage folded unfolds it first; the next one closes the tour (design 05 §6)
+    escape: () => (useView.getState().stageFolded ? setStageFolded(false) : dispatch({ type: "closeContext", id: contextId }, contextId)),
+    // `.` folds and unfolds the stage
+    fold: () => setStageFolded(!useView.getState().stageFolded),
+    // `Enter`: Start on the cover, Close Tour on the end card; a step has none
+    enter: () => {
+      const does = current ? enterDoes(current.mode) : null;
+      if (does === "start") go(tourId, "next");
+      else if (does === "closeTour") dispatch({ type: "closeContext", id: contextId }, contextId);
+    },
     // the cover's offers: **Write IDs** is the host's (it saves the stops' files first), **Commit and Pin…** opens the dialog
     writeIds: () => void request("tourWriteIds", { id: tourId }).catch(() => {}),
     commitAndPin: () => void openPinDialog(tourId, view?.title ?? null),
@@ -154,11 +171,13 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       const target = e.target instanceof Element ? e.target : null;
       if (target?.closest(TEXT_FIELD)) return;
       const move = keyMove(e.key, { ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey });
-      if (!move || (e.key === " " && target?.closest("button, a"))) return; // Space on a button is the button's
+      if (!move || ((e.key === " " || e.key === "Enter") && !e.ctrlKey && !e.metaKey && target?.closest("button, a, [role=option], [role=menuitem]"))) return; // Space and Enter on a button are the button's
       if (move === "closeTour" && document.querySelector('[role="menu"], [role="dialog"]')) return; // Esc closes a menu first
+      // on a step `Enter` is nobody's here: the canvas keeps it
+      if (move === "enter" && (modeNow.current === null || enterDoes(modeNow.current) === null)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      act.current[move]?.();
+      act.current[move === "closeTour" ? "escape" : move]?.();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -200,7 +219,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       stop: stop?.id ?? null,
       step: step?.id ?? null,
       kind: step?.kind ?? null,
-      header: stop ? `${stop.planned ? "◌" : "●"} ${stop.number} ${stop.name} ${stop.path}` : view.title,
+      header: stop ? `${stop.planned ? "◌" : "●"} ${stop.number} ${stop.name} ${stop.path}` : "",
       title: current.mode === "step" ? (step?.title ?? null) : view.title,
       text: step?.text ?? null,
       position: positionWords(view),
@@ -287,8 +306,10 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     );
   }
 
+  // what a screen reader is told of the stage: the step (design 05 §8), or the cover and the end card by their tour
+  const label = current!.mode === "step" && stop && step ? stepLabel(view, stop, step, current!.parent) : `${current!.mode === "cover" ? "Cover" : "End"} of the tour of ${view.title}`;
   return (
-    <div className="stage" style={style} data-stage={current!.mode === "step" ? (step?.kind ?? "step") : current!.mode}>
+    <div className="stage" style={style} role="region" aria-label={label} data-stage={current!.mode === "step" ? (step?.kind ?? "step") : current!.mode}>
       {grip}
       {current!.mode === "step" && stop && step && look ? (
         <>
@@ -335,8 +356,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
         </>
       ) : (
         <>
+          {/* the cover's and the end card's body say the tour's title: the header does not say it again, it only folds */}
           <div className="stage-header">
-            <span className="stage-name">{view.title}</span>
             <span className="stage-grow" />
             <button type="button" className="stage-icon" title="Fold the stage" aria-label="Fold the stage" onClick={() => setStageFolded(true)}>
               <Codicon name="chevron-down" />

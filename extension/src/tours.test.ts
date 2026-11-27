@@ -71,6 +71,9 @@ test("a row of Open Tour… says what the row says", () => {
   assert.deepEqual({ ...pickItem(row), row: undefined }, { label: "Retry charge", description: "stop 4 · 9 stops", detail: "Why does it retry?", row: undefined });
   const broken: TourRow = { id: "t-9", folder: "private", readable: false, problem: "line 1: not a tour", quiet: false, root: null, place: null, offers: null, words: "cannot be read", state_word: "" };
   assert.deepEqual({ ...pickItem(broken), row: undefined }, { label: "t-9", description: "cannot be read", detail: "line 1: not a tour", row: undefined });
+  // a tour on the node the picker was opened for says why it is there (the core's `on.words`), then what the row says
+  const onNode: TourRow = { ...row, on: { how: "stops", stops: [2, 4], inside: 0, first: "s2", of: 4, words: "stops 2 and 4 of 4" } };
+  assert.equal(pickItem(onNode).description, "stops 2 and 4 of 4 · stop 4 · 9 stops");
 });
 
 // ── the holder, with a host that is only a record ─────────────────────────────────────────────────────────────────────────

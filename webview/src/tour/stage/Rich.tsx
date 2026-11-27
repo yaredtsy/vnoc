@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { request } from "../../host.ts";
-import { type MermaidLike, diagramWidth, drawDiagram, linkTarget, mermaidTheme, naturalWidth, renderText } from "../text.ts";
+import { type MermaidLike, diagramWidth, drawDiagram, linkTarget, mermaidTheme, naturalWidth, renderText, uniqueIds } from "../text.ts";
 import { highlightEnv, useHighlighter, useThemeName } from "./useHighlight.ts";
 
 /** What the suite reads of a drawn text: the Markdown it has, and how its diagrams ended (`failed`: the source is shown with a note). */
@@ -141,7 +141,7 @@ function Enlarged({ svg, onClose }: { svg: string; onClose: () => void }) {
       <button type="button" className="tour-overlay-close" aria-label="Close the diagram" onClick={onClose}>
         ✕
       </button>
-      <div className="tour-overlay-body" onClick={(e) => e.stopPropagation()} dangerouslySetInnerHTML={{ __html: svg }} />
+      <div className="tour-overlay-body" onClick={(e) => e.stopPropagation()} dangerouslySetInnerHTML={{ __html: uniqueIds(svg, "-large") }} />
     </div>,
     document.body,
   );

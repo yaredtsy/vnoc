@@ -34,6 +34,8 @@ export type RouteRow =
       depth: number;
       /** the intro's row reads `what it is for`; a block's is its title */
       text: string;
+      /** the title of the block this one is a detail of: a screen reader says "detail of …" */
+      parent: string | null;
       current: boolean;
     };
 
@@ -67,7 +69,10 @@ export function routeRows(view: TourView): RouteRow[] {
     rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, key: stop.key, mark: markOf(view, stop.id, stop.planned), current, description, struck: isStruck(stop) });
     // the steps are under the stop you are in, and only when it has more than one: leaving it folds them away (§1.2)
     if (current && stop.reading.length > 1) {
-      for (const step of stop.reading) rows.push({ type: "step", id: step.id, depth: stop.depth + step.depth, text: step.depth === 0 ? "what it is for" : (step.title ?? ""), current: step.id === view.place.at });
+      for (const step of stop.reading) {
+        const parent = step.parent ? (stop.reading.find((r) => r.id === step.parent)?.title ?? null) : null;
+        rows.push({ type: "step", id: step.id, depth: stop.depth + step.depth, text: step.depth === 0 ? "what it is for" : (step.title ?? ""), parent, current: step.id === view.place.at });
+      }
     }
   }
   return rows;

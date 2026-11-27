@@ -5,10 +5,11 @@ import { coverNotes } from "../written.ts";
 import type { CoverPin } from "../pin.ts";
 
 /**
- * The size line (05 §3): `10 stops · about 7 min` when the size is known (a plan, a finished or a stopped tour); `6 stops so far · the agent is adding more` for a tour with no plan
+ * The size line (05 §3): `10 stops · about 7 min` (`10 stops · detailed · about 7 min` when the tour was asked for as quick or detailed) when the size is known (a plan, a finished or a stopped tour); `6 stops so far · the agent is adding more` for a tour with no plan
  * that is being written. The core's numbers, written out.
  */
-const size = (v: TourView) => (v.of !== null ? `${v.of} ${v.of === 1 ? "stop" : "stops"} · about ${v.minutes} min` : `${soFar(v)} · the agent is adding more`);
+const size = (v: TourView) =>
+  v.of !== null ? `${v.of} ${v.of === 1 ? "stop" : "stops"}${v.detail === "normal" ? "" : ` · ${v.detail}`} · about ${v.minutes} min` : `${soFar(v)} · the agent is adding more`;
 
 /** The cover (design 02 frame 2): one column. The title, the question if it has one, the size, what the agent is doing, **Start**; then the pin and its offers, then what changed: Start is never below the fold. */
 export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: () => void; onOffer: (kind: "ids" | "commit") => void }) {
