@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.0
+
+Tours: your coding agent explains code to you, step by step, on the canvas.
+
+### Tours
+
+- **A tour is a walk through code that an agent writes for you.** Ask "walk me through `checkout_order`": the agent reads the code with `vnoc` and writes a tour, a route of
+  **stops** (a function, a class, a file, a folder) with a few sentences on what each is for, and lit lines in the code that say why they are there. You read it while the agent is still writing.
+- **The stage** under the canvas shows one step at a time: the code with its real line numbers and the step's lines lit, and the words beside it, in Markdown, with a Mermaid diagram when one helps.
+  **→ / Space** go on, **←** back, **↓ / ↑** by stop, **Esc** closes, **.** folds the stage to a one-line bar. The canvas shows the route as a map of cards.
+- **The TOURS section** in the side bar lists your tours: **All**, or only those **on the selected node**, and `▶ N` on a node says it has tours. It tells which tour is being written
+  (`● writing 6/10`, with **Stop**) and which one is playing (**Stop Playing**); the place is kept, so a tour opens where you left it.
+- **Ask for a Tour…** opens a small dialog (from the `＋`, a node's menu, or an empty list): what to explain, how far (only this, what it calls, two levels), and how much detail. It gives you
+  the request to paste to your agent.
+- **A tour knows when the code moved on.** A step whose code changed says so; a step whose code is gone says that. **Check All Tours** tells you how many changed.
+- **Pin a tour to a commit** and its changed steps show the code **as written**, with a switch to the code as it is now. **Commit and Pin…** commits the tour's files first when you ask it to.
+- **IDs for a tour's stops** (**Write IDs**), so a tour follows its functions through renames and moves.
+- **Share with the Project** moves a finished tour to `.vnoc/tours/`, where `git` shares it with the team; **Make Private Again** takes it back. **Rename…**, and **Delete** with **Undo**.
+- **Export as JSON…, Open as JSON, Import a Tour from JSON…**: a tour as one nested document you can read and edit, and **Import into This Tour** to take your edits back.
+- **For agents and scripts, `vnoc tour`**: `start`, `add`, `plan`, `route`, `finish` write a tour; `list`, `show`, `check`, `where` read one; `go` moves the reader. The output is laid out and
+  coloured in a terminal, and plain in a pipe; `--json` is there for scripts. `vnoc guide tour` prints the how-to, and **`vnoc agent`** installs the new **`vnoc-tour`** skill beside V-NOC's own.
+- A narrow canvas (under 640 px) stacks the stage; **Reduce motion** is kept; screen readers get each step, and each row of the route, in words.
+
+### Fixes
+
+- **The core could stop answering for good.** When more requests waited than it had slots for (one per CPU), it stopped reading its input, never answered again, and was left running
+  after the window closed. It now takes any number of waiting requests.
+- A request that waits for the first build of a large project longer than a few seconds is asked again until it is answered, instead of showing an error.
+
 ## 0.3.1
 
 Bend, as a second language, and fixes to the canvas.
