@@ -337,7 +337,6 @@ Used by:
 - [serde 1.0.229](https://github.com/serde-rs/serde)
 - [serde_core 1.0.229](https://github.com/serde-rs/serde)
 - [serde_derive 1.0.229](https://github.com/serde-rs/serde)
-- [serde_json 1.0.151](https://github.com/serde-rs/json)
 - [serde_json 1.0.154](https://github.com/serde-rs/json)
 - [serde_repr 0.1.21](https://github.com/dtolnay/serde-repr)
 - [siphasher 1.0.1](https://github.com/jedisct1/rust-siphash)
@@ -345,9 +344,7 @@ Used by:
 - [syn 3.0.10](https://github.com/dtolnay/syn)
 - [syn 3.0.3](https://github.com/dtolnay/syn)
 - [thin-vec 0.2.19](https://github.com/mozilla/thin-vec)
-- [thiserror 2.0.19](https://github.com/dtolnay/thiserror)
 - [thiserror 2.0.21](https://github.com/dtolnay/thiserror)
-- [thiserror-impl 2.0.19](https://github.com/dtolnay/thiserror)
 - [thiserror-impl 2.0.21](https://github.com/dtolnay/thiserror)
 - [typed-path 0.12.3](https://github.com/chipsenkbeil/typed-path)
 - [typeid 1.0.3](https://github.com/dtolnay/typeid)
@@ -7913,7 +7910,7 @@ Git Logo by [Jason Long](https://bsky.app/profile/jasonlong.me) is licensed unde
 
 Used by:
 
-- [elkjs 0.12.1](https://github.com/kieler/elkjs#readme)
+- [elkjs 0.12.2](https://github.com/kieler/elkjs#readme)
 
 ```text
 # Eclipse Public License - v 2.0
@@ -8874,8 +8871,8 @@ SOFTWARE.
 
 Used by:
 
-- [@tabler/icons 3.51.0](https://tabler.io/icons)
-- [@tabler/icons-react 3.51.0](https://tabler.io/icons)
+- [@tabler/icons 3.52.0](https://tabler.io/icons)
+- [@tabler/icons-react 3.52.0](https://tabler.io/icons)
 
 ```text
 MIT License
@@ -10013,7 +10010,7 @@ IN THE SOFTWARE.
 
 Used by:
 
-- [katex 0.18.11](https://katex.org)
+- [katex 0.18.10](https://katex.org)
 
 ```text
 The MIT License (MIT)
@@ -10576,7 +10573,7 @@ SOFTWARE.
 
 Used by:
 
-- [tailwind-merge 3.7.0](https://github.com/dcastil/tailwind-merge)
+- [tailwind-merge 3.7.1](https://github.com/dcastil/tailwind-merge)
 
 ```text
 MIT License
