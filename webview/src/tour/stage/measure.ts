@@ -24,6 +24,19 @@ export function measureStage(stage: HTMLElement, narrow: boolean, folded: boolea
       return r.top >= top.top - 1 && r.bottom <= top.bottom + 1;
     }).length;
   }
+  // the chip is under the code, never over a row of it: a row counts as covered where it is in view (inside the code pane's box) and the chip's box meets it
+  const chip = stage.querySelector<HTMLElement>(".stage-more");
+  const chipOverCode = (() => {
+    if (!chip || !code) return null;
+    const c = chip.getBoundingClientRect();
+    const view = code.getBoundingClientRect();
+    return lines.some((l) => {
+      const r = l.getBoundingClientRect();
+      const top = Math.max(r.top, view.top);
+      const bottom = Math.min(r.bottom, view.bottom);
+      return bottom > top && top < c.bottom - 0.5 && bottom > c.top + 0.5 && r.left < c.right && r.right > c.left;
+    });
+  })();
   return {
     narrow,
     folded,
@@ -35,5 +48,7 @@ export function measureStage(stage: HTMLElement, narrow: boolean, folded: boolea
     wrapped: lines.filter((l) => l.getBoundingClientRect().height > 20).length,
     codeCut: code ? code.scrollWidth > code.clientWidth + 1 : false,
     outside: needed.filter((el) => !inside(el)).map(named),
+    chipOverCode,
+    coverParts: Array.from(stage.querySelectorAll('[data-part="cover"] > [data-part]')).map((el) => el.getAttribute("data-part")!),
   };
 }

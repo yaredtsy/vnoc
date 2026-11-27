@@ -11,7 +11,7 @@ import type { CoverPin } from "../pin.ts";
 const size = (v: TourView) =>
   v.of !== null ? `${v.of} ${v.of === 1 ? "stop" : "stops"}${v.detail === "normal" ? "" : ` · ${v.detail}`} · about ${v.minutes} min` : `${soFar(v)} · the agent is adding more`;
 
-/** The cover (design 02 frame 2): one column. The title, the question if it has one, the size, what the agent is doing, **Start**; then its offers (Commit and Pin… among them: the first one is in view with Start), then the pin and why, then what changed: what does not fit scrolls inside the cover. */
+/** The cover (design 02 frame 2): one column under a header that says the tour's title. The question if it has one, the size, what the agent is doing, **Start**; then the pin and why (`not pinned` stands where the offers it explains follow it), its offers (Commit and Pin… among them: the first one is in view with Start), then what changed: what does not fit scrolls inside the cover. */
 export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: () => void; onOffer: (kind: "ids" | "commit") => void }) {
   const { view } = p;
   const writing = view.writing === null || p.beat !== "writing" ? null : view.stops.find((s) => s.id === view.writing);
@@ -19,9 +19,14 @@ export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: (
   const notes = coverNotes(view);
   return (
     <div className="stage-one" data-part="cover">
-      <h3 className="stage-title">{view.title}</h3>
-      {view.question && <p className="stage-lead">{view.question}</p>}
-      <p className="stage-paragraph stage-dimtext">{size(view)}</p>
+      {view.question && (
+        <p className="stage-lead" data-part="question">
+          {view.question}
+        </p>
+      )}
+      <p className="stage-paragraph stage-dimtext" data-part="meta">
+        {size(view)}
+      </p>
       {writing && (
         <p className="stage-paragraph stage-dimtext">
           <Codicon name="loading" className="text-[12px]" /> The agent is writing stop {writing.number} of {view.of}…
@@ -30,19 +35,11 @@ export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: (
       {p.beat === "stopping" && <p className="stage-paragraph stage-dimtext">Stopping: the agent finishes the stop it is on.</p>}
       {p.beat === "quiet" && <p className="stage-paragraph stage-dimtext">No news from the agent. Look at its terminal, or ask it to continue the tour.</p>}
       {view.state === "stopped" && <p className="stage-paragraph stage-dimtext">The tour was stopped: {view.written} of {view.of} stops are written.</p>}
-      <div>
+      <div data-part="start">
         <button type="button" className="stage-btn stage-primary" onClick={p.onStart}>
           Start ›
         </button>
       </div>
-      {offers.map((o) => (
-        <p key={o.kind} className="stage-paragraph stage-offer" data-part="offer" data-offer={o.kind}>
-          <span>{o.text}</span>
-          <button type="button" className="stage-btn stage-secondary" onClick={() => p.onOffer(o.kind)}>
-            {o.button}
-          </button>
-        </p>
-      ))}
       {pin && (
         <p className="stage-paragraph stage-dimtext" data-part="pin" title={pin.title}>
           {pin.text}
@@ -53,6 +50,14 @@ export function Cover(p: { view: TourView; beat: Beat; pin: CoverPin; onStart: (
           {reason}
         </p>
       )}
+      {offers.map((o) => (
+        <p key={o.kind} className="stage-paragraph stage-offer" data-part="offer" data-offer={o.kind}>
+          <span>{o.text}</span>
+          <button type="button" className="stage-btn stage-secondary" onClick={() => p.onOffer(o.kind)}>
+            {o.button}
+          </button>
+        </p>
+      ))}
       {notes.gone && (
         <p className="stage-paragraph" data-part="first-gone">
           {notes.gone}

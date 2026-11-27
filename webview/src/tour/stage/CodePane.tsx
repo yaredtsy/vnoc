@@ -19,6 +19,8 @@ export interface CodeDrawn {
   /** the step and the code text this was drawn for: the stage tells the suite what it drew only when these are the ones it holds, never a step behind */
   step: string | null;
   text: string | null;
+  /** the chip's number: the lit lines below the pane's bottom (0: no chip) */
+  more: number;
 }
 
 /**
@@ -96,16 +98,16 @@ export function CodePane(p: {
     measure();
   }, [p.stopId, p.stepId, shown?.text]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const more = p.look === "lit" || p.look === "detail" ? moreLit(litIndex, view) : 0;
   const looks: LineLook[] = shown ? shown.lines.map((_, i) => lineLook(p.look, first + i, first, p.lit, p.parentLit)) : [];
   const coloured = shown && tokens ? tokens.reduce((n, line, i) => (line.map((t) => t.content).join("") === shown.lines[i] ? n + line.filter((t) => t.color).length : n), 0) : 0;
   useEffect(() => {
-    p.onDrawn({ scrolledTo: view.top, lit: looks.flatMap((l, i) => (l === "lit" ? [first + i] : [])), thin: looks.flatMap((l, i) => (l === "thin" ? [first + i] : [])), coloured, step: p.stepId, text: shown?.text ?? null });
-  }, [p.stepId, shown?.text, p.look, p.lit?.[0], p.lit?.[1], p.parentLit?.[0], p.parentLit?.[1], view.top, coloured]); // eslint-disable-line react-hooks/exhaustive-deps
+    p.onDrawn({ scrolledTo: view.top, lit: looks.flatMap((l, i) => (l === "lit" ? [first + i] : [])), thin: looks.flatMap((l, i) => (l === "thin" ? [first + i] : [])), coloured, step: p.stepId, text: shown?.text ?? null, more });
+  }, [p.stepId, shown?.text, p.look, p.lit?.[0], p.lit?.[1], p.parentLit?.[0], p.parentLit?.[1], view.top, coloured, more]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (p.gone) return <div className="stage-code stage-empty">This is no longer in the code.</div>;
   if (p.code === null) return <div className="stage-code stage-empty">Reading the code…</div>;
   if ("error" in p.code) return <div className="stage-code stage-empty">{p.code.error}</div>;
-  const more = p.look === "lit" || p.look === "detail" ? moreLit(litIndex, view) : 0;
   return (
     <div className={`stage-code-wrap${p.written ? " stage-written" : ""}`} data-written={p.written?.commit}>
       {/* the label has a strip of its own on the pane's top edge: the code starts under it, and none of it is covered */}
@@ -131,16 +133,19 @@ export function CodePane(p: {
           </div>
         ))}
       </div>
+      {/* the chip has a row of its own under the code (the pane is a column): it covers none of the code */}
       {more > 0 && (
-        <button type="button" className="stage-more" onClick={() => {
-            const el = box.current;
-            if (!el) return;
-            const { tops } = lines(el);
-            const page = nextPage(view, shown!.lines.length);
-            el.scrollTop = tops[page] ?? page * LINE_H;
-          }}>
-          ▾ {more} more lit {more === 1 ? "line" : "lines"}
-        </button>
+        <div className="stage-more-row" data-part="more-row">
+          <button type="button" className="stage-more" onClick={() => {
+              const el = box.current;
+              if (!el) return;
+              const { tops } = lines(el);
+              const page = nextPage(view, shown!.lines.length);
+              el.scrollTop = tops[page] ?? page * LINE_H;
+            }}>
+            ▾ {more} more lit {more === 1 ? "line" : "lines"}
+          </button>
+        </div>
       )}
     </div>
   );

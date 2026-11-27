@@ -531,4 +531,8 @@ export interface StageLayout {
   codeCut: boolean;
   /** the foot's primary button and every icon of the header are inside the stage's box (nothing is clipped, `Next` is reachable); the names of those that are not */
   outside: string[];
+  /** the `▾ N more lit lines` chip's box overlaps a row of code that is in view (it must never: null when there is no chip) */
+  chipOverCode: boolean | null;
+  /** the cover's parts, top to bottom, by their `data-part` (empty off the cover) */
+  coverParts: string[];
 }

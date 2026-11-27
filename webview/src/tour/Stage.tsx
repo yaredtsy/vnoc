@@ -77,7 +77,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     watching.current.observe(canvas);
   }, []);
   const narrow = room.width < NARROW_BELOW;
-  const [drawn, setDrawn] = useState<CodeDrawn>({ scrolledTo: 0, lit: [], thin: [], coloured: 0, step: null, text: null });
+  const [drawn, setDrawn] = useState<CodeDrawn>({ scrolledTo: 0, lit: [], thin: [], coloured: 0, step: null, text: null, more: 0 });
   const [textDrawn, setTextDrawn] = useState<TextDrawn>({ lists: 0, tables: 0, fences: 0, diagrams: 0, drawn: 0, failed: 0 });
 
   useEffect(() => {
@@ -238,7 +238,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       stop: stop?.id ?? null,
       step: step?.id ?? null,
       kind: step?.kind ?? null,
-      header: stop ? `${stop.planned ? "◌" : "●"} ${stop.number} ${stop.name} ${stop.path}` : "",
+      header: stop ? `${stop.planned ? "◌" : "●"} ${stop.number} ${stop.name} ${stop.path}` : current.mode === "cover" ? view.title : "",
       title: current.mode === "step" ? (step?.title ?? null) : view.title,
       text: step?.text ?? null,
       position: positionWords(view),
@@ -269,9 +269,9 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       pin: current.mode === "cover" ? (pinned?.pin?.text ?? null) : null,
       reason: current.mode === "cover" ? (pinned?.reason ?? null) : null,
       offers: current.mode === "cover" ? (pinned?.offers ?? []).map((o) => `${o.text} | ${o.button}`) : [],
-      layout: stageEl.current ? measureStage(stageEl.current, narrow, folded) : { narrow, folded, stacked: false, width: 0, height: 0, codeHeight: 0, codeRows: 0, wrapped: 0, codeCut: false, outside: [] },
+      layout: stageEl.current ? measureStage(stageEl.current, narrow, folded) : { narrow, folded, stacked: false, width: 0, height: 0, codeHeight: 0, codeRows: 0, wrapped: 0, codeCut: false, outside: [], chipOverCode: null, coverParts: [] },
     });
-  }, [narrow, folded, room.width, view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [narrow, folded, room.width, view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.more, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const style = { height: folded ? 30 : stageHeightFor(height, narrow, Math.floor(room.height * MAX_SHARE), MIN_H) };
   const cls = `stage${narrow ? " stage-narrow" : ""}`;
@@ -377,8 +377,9 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
         </>
       ) : (
         <>
-          {/* the cover's and the end card's body say the tour's title: the header does not say it again, it only folds */}
+          {/* the cover's header says the tour's title (its body starts with the question); the end card's body says it, and its header only folds */}
           <div className="stage-header">
+            {current!.mode === "cover" ? <span className="stage-name" title={view.title}>{view.title}</span> : null}
             <span className="stage-grow" />
             <button type="button" className="stage-icon" title="Fold the stage" aria-label="Fold the stage" onClick={() => setStageFolded(true)}>
               <Codicon name="chevron-down" />

@@ -373,10 +373,10 @@ suite("a tour on the canvas", () => {
     }
   });
   const restOfTheKeys = async () => {
-    // the cover says the tour's title once, in its body: the header only folds
+    // the cover says the tour's title in its header, and its body starts with the question
     const cover = last()!;
     assert.strictEqual(cover.title, "How the shop checks out");
-    assert.strictEqual(cover.header, "", "the header does not say the title again");
+    assert.strictEqual(cover.header, "How the shop checks out", "the header says the title");
     api.stageKey("Enter");
     await stageShows("Enter on the cover starts the tour", atStep("s1"));
     api.stageKey("ArrowDown");
@@ -445,6 +445,50 @@ suite("a tour on the canvas", () => {
     assert.ok(wide.layout.wrapped >= 1, "the long line wraps");
     assert.strictEqual(wide.layout.codeCut, false);
     assert.deepStrictEqual(wide.layout.outside, []);
+  });
+
+  test("the `▾ N more lit lines` chip has a row of its own under the code, at 520 px and at full width; the cover's header says the title and `not pinned` stands between Start and its offers", async function () {
+    this.timeout(120_000);
+    await toCover();
+    // the cover: the header says the tour's title; the body starts with the question or the meta; the pin line is under Start and above the offers
+    const cover = last()!;
+    assert.strictEqual(cover.header, cover.title, "the cover's header is the tour's title");
+    const parts = cover.layout.coverParts;
+    assert.ok(parts[0] === "question" || parts[0] === "meta", `the body starts with the question, or the meta when there is none: ${JSON.stringify(parts)}`);
+    assert.ok(parts.indexOf("meta") >= 0 && parts.indexOf("start") > parts.indexOf("meta"), `Start follows the meta: ${JSON.stringify(parts)}`);
+    if (parts.includes("pin")) {
+      assert.strictEqual(parts.indexOf("pin"), parts.indexOf("start") + 1, `the pin line is right under Start: ${JSON.stringify(parts)}`);
+      const offer = parts.indexOf("offer");
+      if (offer >= 0) assert.ok(parts.indexOf("pin") < offer && parts.indexOf("pin-reason") < offer, `the pin and its reason come before the offers they explain: ${JSON.stringify(parts)}`);
+    }
+    // the chip: walked through every step of the first stop at both widths; it is never over a row of code, and a narrow pane does show it
+    const walk = async () => {
+      const seen: { step: string | null; over: boolean | null }[] = [];
+      api.stageKey("Enter");
+      await stageShows("the first step", atStep("s1"));
+      for (let i = 0; i < 5; i++) {
+        const d = await stageShows("a step settled", (x) => x.mode === "step" && x.code !== null);
+        await sleep(300);
+        const now = last()!;
+        seen.push({ step: now.step ?? d.step, over: now.layout.chipOverCode });
+        api.stageClick("next");
+        await sleep(300);
+      }
+      return seen;
+    };
+    try {
+      api.canvasWidth(520);
+      await stageShows("a narrow cover", (d) => d.mode === "cover" && d.layout.narrow);
+      const narrow = await walk();
+      assert.ok(narrow.every((s) => s.over !== true), `the chip never covers a row of code at 520 px: ${JSON.stringify(narrow)}`);
+      assert.ok(narrow.some((s) => s.over === false), `a chip was drawn at 520 px, so the check means something: ${JSON.stringify(narrow)}`);
+    } finally {
+      unfold();
+      api.canvasWidth(null);
+    }
+    await toCover();
+    const wide = await walk();
+    assert.ok(wide.every((s) => s.over !== true), `the chip never covers a row of code at full width: ${JSON.stringify(wide)}`);
   });
 
   test("the selection follows the stop: the node of the stop the place is on", async () => {

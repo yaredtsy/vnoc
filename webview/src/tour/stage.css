@@ -25,9 +25,8 @@
 .stage-right { width: clamp(320px, 40%, 460px); flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--vscode-panel-border, var(--border)); }
 
 /* the code pane: the editor's own font and colours, line numbers dim, long lines wrapped (soft wrap, the wrapped part two columns in from the line's own indent) */
-.stage-code-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.stage-code-wrap { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
 /* the code as it was written (a pinned tour, a step that changed): its own background, and a label in a strip of its own on the top edge, above the code (it covers none of it) */
-.stage-code-wrap.stage-written { flex-direction: column; }
 .stage-written .stage-code { background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 92%, var(--vscode-editorWarning-foreground, #cca700)); min-height: 0; }
 .stage-written-strip { flex: none; height: 16px; padding-left: 8px; background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 92%, var(--vscode-editorWarning-foreground, #cca700)); border-bottom: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 50%, transparent); }
 .stage-written-label { display: inline-block; padding: 0 6px; font-size: 10px; line-height: 16px; border-radius: 0 0 3px 3px; background: var(--vscode-editorWarning-foreground, #cca700); color: var(--vscode-editor-background, var(--background)); font-family: var(--editor-font); }
@@ -52,7 +51,9 @@
 /* a step that changed after it was written: a dashed bar and no background (the code is as it is now, the words are old) */
 .stage-changed { background: none; }
 .stage-changed::before { background: none; border-left: 3px dashed var(--card-selected); }
-.stage-more { position: absolute; right: 16px; bottom: 4px; padding: 1px 8px; font-size: 11px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--card); color: var(--foreground); cursor: pointer; }
+/* the `▾ N more lit lines` chip: a thin row under the code, never over a row of it */
+.stage-more-row { flex: none; display: flex; justify-content: flex-end; align-items: center; height: 22px; padding: 0 16px; background: var(--vscode-editor-background, var(--background)); border-top: 1px solid var(--vscode-panel-border, var(--border)); }
+.stage-more { padding: 0 8px; height: 18px; font-size: 11px; line-height: 16px; border: 1px solid var(--card-border); border-radius: 9px; background: var(--card); color: var(--foreground); cursor: pointer; }
 
 /* contents: a folder, a file with no blocks */
 .stage-contents { padding: 2px 0; font-family: var(--font); }
