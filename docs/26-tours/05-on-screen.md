@@ -651,8 +651,26 @@ above `engines.vscode` `^1.90.0`; the session set it back only while packaging.
 stays `^1.90.0`. Raising the engine would refuse installs in Cursor and other editors built on an older VS Code. `origin/main` has the
 same fault: it goes with the 0.3.1 deadlock fix if the user wants one on `main`. TR23b's first commit.
 
+**The user's second pass (2026-11-27), on the TR23p VSIX:**
+- **The prompt builder "sucks" as a form in the sidebar.** It becomes a **dialog**, drawn in the canvas page as **Commit and Pin…** is
+  (the page opens if it is closed), from the same places (`＋`, the node menu, a row's **Ask for a New Tour**, the empty states). The
+  sidebar's inline form goes. In the dialog: **About** (the node chip, removable), **Question** (three lines, focused), **How far**,
+  **Detail** (four segmented buttons: Let the agent decide · Quick · Normal · Detailed), the prompt as the core gives it, **Copy
+  Prompt** (primary; `⌘Enter`) and **Cancel** (`Esc`).
+- **How far is a number, or the agent's.** A check box *Let the agent decide* (on by default); off, a number 0–6 (0 = only this node),
+  and beside it the core's size of that depth for the node, as `vnoc tour route` counts it (*"9 stops · about 6 min"*). `tourAsk`
+  takes `depth?: 0..6` in place of `reach`, and answers `sizes` for a node. The text: depth 0 *"Cover only that."*; for a function
+  *"Cover it and what it calls, N levels deep."*; for a file, class or folder *"Cover it N levels deep."* (the core words it by the
+  node's kind). The skill: a request with *N levels deep* → `start --route <node> --depth N`.
+- **Stop Playing is an icon**, everywhere it is (the row, the strip, the route header): a stop icon (codicon `debug-stop`), its words in
+  the tooltip and the accessible name (*Stop Playing: the place is kept*). The writing **Stop** keeps its label: it stops the agent.
+
+**TR23b is cut again:** **TR23b** = the pin of `@types/vscode` (TR23p's review), the second pass above, and `writing` said once on a row
+(TR23a's review); then a VSIX for the user. **TR23c** = the rest of the old TR23 list (TR23a's review's narrow Stop Playing is done by the
+icon).
+
 **Next, in this order:**
-- **The user tries the 0.4.0 VSIX**, then **TR23b** (the pin above first), then TR24.
+- **TR23b**, a VSIX, the user tries it; then **TR23c**; then TR24.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
