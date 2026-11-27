@@ -854,6 +854,14 @@ sha256 `5ae675e3…`.
 **Decided at TR24u's review:** the film checks this VSIX. If the 19 s comes back there, the next step adds a host trace (a setting that
 logs each host request's time and the code request's `openTextDocument`) and the film runs once with it; the cause is fixed from that.
 
+**G13, from the tour film (TF1, `../vnoc-tour-film/tools/media/out/s1/03-s1-answer.jpg`), checked in the code:** `vnoc agent install`'s
+permission question is one long sentence (`cli/agent.rs` `permission_question`, ~190 characters) asked through dialoguer's `Confirm` with
+`.report(false)`. It wraps to two rows; when answered, the prompt is cleared one row short, so the first row stays cut at *"…relink,"*
+and neither the rest nor the answer is shown. **Decided** (the fix step after the film's check and TR24b): the question is short enough
+for one row (*Let Claude Code run V-NOC's read and tour commands without asking?*), the rest (*Other writes — doc new, doc tag, relink,
+repair, init, tour pin — still ask.*) is a dim line printed before it and kept, and the answer is reported on the question's row
+(`.report(true)`: `✔ Let Claude Code run … · yes`). A test at an 80-column terminal width.
+
 **Next, in this order:**
 - The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
 - (done) **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
