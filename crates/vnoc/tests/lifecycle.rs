@@ -3745,12 +3745,15 @@ fn finished_tour(root: &Path, title: &str, stops: &[&str]) -> String {
         .as_str()
         .unwrap()
         .to_string();
-    for stop in stops {
-        vnoc_ok(
-            root,
-            &["tour", "add", &id, stop, "--body-file", "-"],
-            ONE_STEP,
-        );
+    for (n, stop) in stops.iter().enumerate() {
+        // a node said again is a second visit to the first stop on it (`--same-as`), as a tour says it: a second stop beside it is refused
+        let first = stops.iter().position(|s| s == stop).unwrap();
+        let same = format!("s{}", first + 1);
+        let mut args = vec!["tour", "add", &id, stop, "--body-file", "-"];
+        if first < n {
+            args.extend(["--same-as", &same]);
+        }
+        vnoc_ok(root, &args, ONE_STEP);
     }
     vnoc_ok(root, &["tour", "finish", &id, "--no-ids"], "");
     id
