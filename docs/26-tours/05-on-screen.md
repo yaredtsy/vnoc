@@ -797,8 +797,15 @@ the final skill):
 - **G4, `vnoc agent install` replaces a symlinked CLAUDE.md with a file** (git: `T CLAUDE.md`): a bug in the user's files. It writes
   through the link, into its target, and keeps the link; a test with a linked CLAUDE.md.
 
+**As built (TR24a, `bd2e13a`, `b84ce46`; reviewed).** The chip has its own row under the code; the cover's header is the tour's title, the
+body: question, meta, **Start**, the pin and its reason, the offers. Bend built (debug, 25 s): every test passes now. Full runs: 1 and 3
+clean (cargo 1010, window 201 + `waits` 1); run 2's main extension host exited with code 0 mid-suite, no failure, no verdict — 1 in 3,
+cause unknown, a known gap. The 0.4.0 changelog; `PR.md` (git-ignored); a VSIX. **Decided:** the changelog's Ask line says *how far:
+a number of levels, or the agent decides* (it still names TR23a's three choices): TR24s fixes it. The chip's 22 px row at 520 px (four code
+rows left) is accepted.
+
 **Next, in this order:**
-- **TR24a** (running), **TR24s** (the film's findings above), a VSIX (the film's write runs wait for S1), then **TR24b** (the user), then
+- **TR24s** (the film's findings above), a VSIX (the film's write runs wait for S1), then **TR24b** (the user), then
   push, PR, merge, `v0.4.0`.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
