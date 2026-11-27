@@ -809,8 +809,21 @@ cause unknown, a known gap. The 0.4.0 changelog; `PR.md` (git-ignored); a VSIX. 
 a number of levels, or the agent decides* (it still names TR23a's three choices): TR24s fixes it. The chip's 22 px row at 520 px (four code
 rows left) is accepted.
 
+**As built (TR24s, `30531ea`, `3d6feb1`; reviewed).** The skill and guide: diagrams where the code branches, loops, retries or fans out;
+reading with `vnoc code --lines a-b`, `show`, `grep`, one command a call; blocks are a stop's main parts, a detailed tour gives deeper
+reasons. `add` answers one line per block (`## 14-15 Title → 14: def one_try():`). `write_atomic` writes through a symlink (as an editor
+saves one), so `agent install` keeps a linked CLAUDE.md. Far blocks come into view after any move; keys scroll wherever the pointer is;
+the grip goes to 70 %; a nested function shows its short name with `in <container>` (the screen only; the CLI keeps the qualname). G7
+cannot happen now code wraps; G2 fits at 215 px. Rust lib 584, cli 283, agent 33; window 205 + `waits` 1, all passing, no host exit. A VSIX.
+
+**Decided at TR24s's review** (small, after the by-hand pass, with what it finds): `add`'s block lines carry their ids again
+(`s1.b1  ## 14-15 Title → 14: …`: the guide's `drop` and `--under` need them); the Ask chip uses the short name too (it still shows
+`<locals>`).
+
 **Next, in this order:**
-- **TR24s** (the film's findings above), a VSIX (the film's write runs wait for S1), then **TR24b** (the user), then
+- The film's proof run on this VSIX (the same prompt: ≥ 3 diagrams on stops with a flow; fewer, larger blocks), and **TR24b**, the user's
+  by-hand pass, on the same build; then one fix step for what both find; then push, PR, merge, `v0.4.0`.
+- (done) **TR24s** (the film's findings above), a VSIX (the film's write runs wait for S1), then **TR24b** (the user), then
   push, PR, merge, `v0.4.0`.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
