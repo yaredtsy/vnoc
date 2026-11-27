@@ -669,8 +669,23 @@ same fault: it goes with the 0.3.1 deadlock fix if the user wants one on `main`.
 (TR23a's review); then a VSIX for the user. **TR23c** = the rest of the old TR23 list (TR23a's review's narrow Stop Playing is done by the
 icon).
 
+**As built (TR23b, `b3b29ed`, `ccd090f`; reviewed).** The ask dialog in the canvas page (About, Question focused, How far: *Let the
+agent decide* or 0–6 with the core's size beside it, Detail as four segments, the core's prompt, Copy Prompt `⌘Enter`, Esc); the
+sidebar form is gone. `tourAsk { depth }` with `sizes` from one shared route build (`tours::route::build`, the CLI's too), a slow size
+kept per node and index revision ("ask again" only while it runs). Line 2 drops the state line 1 says (`writing`, `stopping`,
+`stopped`, `no news`; a playing row keeps `stop 4`). Stop Playing is the `debug-stop` icon. `@types/vscode` `^1.90.0` (resolved still
+1.146.0), Dependabot ignores it; `vsce` packages with no workaround. A 0.4.0 VSIX (19.8 MB). **The user had the full runs skipped**:
+only filtered Rust (tours 295, cli `tour_` 84, lifecycle `tour` 29, guide 12) and TS (900 / 318); owed at TR24.
+
+**Decided at TR23b's review** (TR23c's first commit):
+- The `debug-stop` icon is a hollow square and reads as a check box: a filled square (`■`, codicon `primitive-square` or the glyph), the
+  icon colour, red on hover.
+- The dialog's selected Detail segment uses the primary blue of **Copy Prompt**: it uses the secondary button's colours with a focus
+  border, so only Copy Prompt is primary.
+- `@types/vscode` resolves to 1.90.x in the lockfile too (`~1.90.0`), so the type check catches an API newer than the engine.
+
 **Next, in this order:**
-- **TR23b**, a VSIX, the user tries it; then **TR23c**; then TR24.
+- **The user tries the TR23b VSIX**, then **TR23c** (the three items above first, then the old TR23 list), then TR24 (with the full runs).
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
