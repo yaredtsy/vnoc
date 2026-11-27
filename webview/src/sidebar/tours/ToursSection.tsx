@@ -26,9 +26,7 @@ import { headerPlace, rowKey, routeRows } from "./route.ts";
 import { tourKey } from "./keys.ts";
 import { useTourList } from "./store.ts";
 import { DeletedRow, RouteRowView, TourListRow } from "./TourRows.tsx";
-import { AskFormView } from "./AskForm.tsx";
-import { ASK_DEBOUNCE_MS, type AskForm, formFor, formFromTour, paramsOf, shortName } from "./ask.ts";
-import { rowMarks, stripOf } from "./writing.ts";
+import { STOP_PLAYING, rowMarks, stripOf } from "./writing.ts";
 
 /**
  * The TOURS section (docs/26-tours/design/07-tour-list.md §2, 04 §1): under the context panels. Folded it says its name and how many tours there are; open it is
@@ -139,54 +137,6 @@ export function ToursSection() {
   const more = mode === "route" && view !== null && view.state === "writing" && view.of === null;
   const count = mode === "route" ? route.length : (rows?.length ?? 0);
 
-  // the prompt builder (TR23a): opened from `＋`, a node's menu, a row's **Ask for a New Tour** and the empty states; its sentence is the core's, asked again 300 ms after the last change
-  const [form, setForm] = useState<AskForm | null>(null);
-  const [prompt, setPrompt] = useState("");
-  const [lastWords, setLastWords] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
-  const openForm = (from: { key?: string | null; tour?: string }) => {
-    setToursFolded(false);
-    setCopied(null);
-    const tourFrom = from.tour;
-    if (tourFrom === undefined) {
-      setForm(formFor(from.key ?? null));
-      return;
-    }
-    void request("tourAskText", { tour: tourFrom }).then(
-      (answer) => {
-        setForm(formFromTour(tourFrom, answer.filled));
-        setPrompt(answer.text);
-        setLastWords(answer.words);
-      },
-      () => {},
-    );
-  };
-  const formKey = form === null ? null : JSON.stringify(paramsOf(form));
-  useEffect(() => {
-    if (form === null) return;
-    let wanted = true;
-    const timer = setTimeout(() => {
-      void request("tourAskText", paramsOf(form)).then(
-        (answer) => {
-          if (!wanted) return;
-          setPrompt(answer.text);
-          setLastWords(answer.words);
-        },
-        () => {},
-      );
-    }, ASK_DEBOUNCE_MS);
-    return () => {
-      wanted = false;
-      clearTimeout(timer);
-    };
-  }, [formKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const change = (part: Partial<AskForm>) => {
-    setCopied(null);
-    setForm((f) => (f === null ? f : { ...f, ...part }));
-  };
-  const copyPrompt = () => form !== null && void request("tourAsk", paramsOf(form)).then(() => setCopied(lastWords), () => {});
-  const chip = form === null || form.about === null ? null : { label: form.tour !== null ? shortName(form.about) : ((tree ? findNode(tree, form.about)?.name : null) ?? shortName(form.about)), title: form.about };
-
   const openTour = (row: TourRow) => {
     setShowList(false);
     const open = () => dispatch({ type: "tourOpen", id: row.id, title: row.title });
@@ -206,8 +156,8 @@ export function ToursSection() {
   // the delete and its Undo are the host's (it asks the core, closes the tour if it is the open one, and says a refusal in the core's words)
   const deleteRow = (id: string) => void request("tourDelete", { id }).catch(() => {});
   const stopRow = (id: string) => void request("tourHalt", { id }).catch(() => {});
-  // **Ask for a Tour…** opens the prompt builder, with the selected node in it (or none)
-  const ask = () => openForm({ key: selection });
+  // **Ask for a Tour…** is a dialog of the canvas page (the host brings it up), with the selected node in it (or none)
+  const ask = () => void request("tourAskOpen", selection === null ? {} : { key: selection }).catch(() => {});
   const undo = (tomb: { key: string; tokens: string[] }) => void request("tourUndo", { tokens: tomb.tokens }).then(() => removeTomb(tomb.key), () => {});
   // the row's action, for a click and for Enter: one function
   const act = (index: number) => {
@@ -245,7 +195,7 @@ export function ToursSection() {
 
   // the extension's test suite cannot click in a webview: it sends the click
   const stopWriting = () => tourId !== null && canStop && halt(tourId);
-  const now = { ask, openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo, openForm, change, copyPrompt, closeForm: () => setForm(null), stripStop: strip?.stop ?? null };
+  const now = { ask, openTour, jump, closeTour, key, rows: shown, route, stopWriting, switchView, listView, canOn: selection !== null, deleteRow, stopRow, undo, stripStop: strip?.stop ?? null };
   const latest = useRef(now);
   latest.current = now;
   // the host deleted tours (this page's `🗑` or key, the row's menu, **Delete Finished Tours**): their place in the list is the row above them as it was drawn a moment ago
@@ -259,10 +209,6 @@ export function ToursSection() {
           setShowList(true);
           return;
         }
-        if (name === "askForTour") {
-          latest.current.openForm({ key: what ?? null, tour: text });
-          return;
-        }
         if (name !== "toursClick" || !what) return;
         const l = latest.current;
         const [kind, id] = [what.split(":")[0], what.slice(what.indexOf(":") + 1)];
@@ -274,17 +220,6 @@ export function ToursSection() {
         else if (what === "stopplaying") l.closeTour();
         else if (what === "stripstop") l.stripStop !== null && l.stopRow(l.stripStop);
         else if (what === "backtoroute") setShowList(false);
-        else if (what.startsWith("askform:")) {
-          // the suite cannot click in a webview: `askform:question:<text>`, `askform:reach:<value>`, `askform:detail:<value>`, `askform:about:remove`, `askform:copy`, `askform:cancel`
-          const [, part, ...rest] = what.split(":");
-          const value = rest.join(":");
-          if (part === "question") l.change({ question: value });
-          else if (part === "reach") l.change({ reach: value as AskForm["reach"] });
-          else if (part === "detail") l.change({ detail: value as AskForm["detail"] });
-          else if (part === "about") l.change({ about: null, tour: null });
-          else if (part === "copy") l.copyPrompt();
-          else if (part === "cancel") l.closeForm();
-        }
         else if (what === "view:all" || what === "view:on") l.switchView(what === "view:on" ? "on" : "all");
         else if (what === "showAll") l.switchView("all");
         else if (what === "deleteFinished") void request("tourDeleteFinished").catch(() => {});
@@ -336,10 +271,9 @@ export function ToursSection() {
       waiting: rows === null ? waiting : null,
       strip: strip === null ? null : { writing: strip.writing, stop: strip.stop !== null, playing: strip.playing, stopPlaying: strip.playing !== null },
       routeHeader: view && mode === "route" ? { writing: isWriting(view) || view.state === "stopped" ? headerWords : null, stop: canStop, stopPlaying: true } : null,
-      form: form === null ? null : { about: chip?.label ?? null, question: form.question, reach: form.reach, detail: form.detail, prompt, words: copied },
       route: route.map((r) => ({ id: r.id, kind: r.type, text: r.type === "stop" ? r.name : r.text, mark: r.type === "stop" ? r.mark : null, current: r.current, number: r.type === "stop" ? r.number : null, description: r.type === "stop" ? r.description : null, struck: r.type === "stop" && r.struck, depth: r.depth })),
     });
-  }, [entries, listView, buttons.map((b) => b.text).join("|"), emptyOnText, asks.join("|"), route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null, strip?.writing, strip?.stop, strip?.playing, headerWords, form, prompt, copied, chip?.label]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entries, listView, buttons.map((b) => b.text).join("|"), emptyOnText, asks.join("|"), route, folded, mode, count, tourId, view?.title, foot, canStop, more, rows === null ? waiting : null, strip?.writing, strip?.stop, strip?.playing, headerWords]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section
@@ -406,14 +340,11 @@ export function ToursSection() {
                   <button type="button" data-part="strip-playing" title="Back to the tour's route" className="min-w-0 truncate text-left font-bold hover:underline" onClick={() => setShowList(false)}>
                     {strip.playing}
                   </button>
-                  <button type="button" data-part="strip-stop-playing" title="Close the tour. The place is kept" className="ml-auto flex h-4 flex-none items-center rounded-sm border border-border px-1 text-foreground hover:bg-toolbar-hover" onClick={closeTour}>
-                    Stop Playing
-                  </button>
+                  <BarButton icon="debug-stop" label={STOP_PLAYING} data-part="strip-stop-playing" className="ml-auto size-[18px]" onClick={closeTour} />
                 </span>
               )}
             </div>
           )}
-          {form !== null && <AskFormView form={form} chip={chip} prompt={prompt} words={copied} onChange={change} onCopy={copyPrompt} onCancel={() => setForm(null)} />}
           {mode === "route" && view && (
             <div className={cn("flex h-[22px] flex-none items-center gap-1 border-l-2 pr-1 pl-1 text-[12px]", tourActive ? "border-l-[color:var(--ring)]" : "border-l-transparent")} data-part="route-header">
               <button type="button" className="flex flex-none items-center text-muted-foreground hover:text-foreground" title="Back to the list of tours (the tour stays open)" onClick={() => setShowList(true)}>
@@ -433,9 +364,7 @@ export function ToursSection() {
                   )}
                 </span>
               )}
-              <button type="button" data-part="stop-playing" title="Close the tour. The place is kept" className="flex h-4 flex-none items-center rounded-sm border border-border px-1 text-[11px] hover:bg-toolbar-hover" onClick={closeTour}>
-                Stop Playing
-              </button>
+              <BarButton icon="debug-stop" label={STOP_PLAYING} data-part="stop-playing" className="size-[18px]" onClick={closeTour} />
             </div>
           )}
           <div

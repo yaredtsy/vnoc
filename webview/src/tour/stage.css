@@ -152,6 +152,23 @@
 .pin-label { display: flex; flex-direction: column; gap: 3px; color: var(--muted-foreground); }
 .pin-message { resize: vertical; padding: 4px 6px; font: inherit; color: var(--foreground); background: var(--vscode-input-background, var(--background)); border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 2px; }
 .pin-check { display: flex; align-items: center; gap: 6px; }
+.ask-dialog { width: min(520px, calc(100% - 32px)); }
+.ask-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 24px; }
+.ask-label { flex: none; width: 56px; color: var(--muted-foreground); }
+.ask-chip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 1px 4px 1px 8px; border-radius: 999px; font-size: 12px; background: var(--card-badge-bg); color: var(--card-badge-fg); }
+.ask-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ask-chip-x { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 999px; background: none; color: inherit; cursor: pointer; }
+.ask-chip-x:hover { background: var(--toolbar-hover); }
+.ask-number { width: 56px; padding: 2px 4px; font: inherit; color: var(--foreground); background: var(--vscode-input-background, var(--background)); border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 2px; }
+.ask-size { min-width: 0; }
+.ask-segments { display: flex; flex-wrap: wrap; gap: 0; }
+.ask-segment { padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; color: var(--vscode-button-secondaryForeground, var(--foreground)); background: var(--vscode-button-secondaryBackground, transparent); border: 1px solid var(--vscode-input-border, var(--border)); margin-left: -1px; }
+.ask-segment:first-child { margin-left: 0; border-radius: 2px 0 0 2px; }
+.ask-segment:last-child { border-radius: 0 2px 2px 0; }
+.ask-segment-on { position: relative; color: var(--primary-foreground); background: var(--primary); border-color: var(--primary); }
+.ask-segment:focus-visible { outline: 1px solid var(--ring); outline-offset: 1px; }
+.ask-prompt { margin: 0; padding: 6px 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; background: var(--vscode-input-background, var(--background)); border: 1px solid var(--border); border-radius: 2px; }
+.ask-hint { margin-left: auto; align-self: center; }
 .pin-error { margin: 0; color: var(--vscode-errorForeground, #f85149); white-space: pre-wrap; }
 /* an offer on the cover: the sentence, and its button after it */
 .stage-offer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; max-width: none; }

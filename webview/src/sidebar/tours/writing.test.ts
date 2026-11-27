@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { TourRow } from "@vnoc/shared/tours.ts";
-import { rowMarks, stripOf } from "./writing.ts";
+import { STOP_PLAYING, rowMarks, stripOf } from "./writing.ts";
 
 const row = (id: string, over: Partial<TourRow> = {}): TourRow => ({ id, folder: "private", readable: true, state: "finished", quiet: false, state_word: "finished", ...over }) as TourRow;
 
@@ -35,4 +35,8 @@ test("in the route the open tour's own header says it is being written; another 
   assert.equal(stripOf([writing("a")], open, "route"), null);
   assert.deepEqual(stripOf([writing("a"), writing("b")], open, "route"), { writing: "● 2 writing", stop: null, playing: null });
   assert.deepEqual(stripOf([row("a"), writing("b")], open, "route"), { writing: "● writing", stop: "b", playing: null });
+});
+
+test("Stop Playing says the same words as a tooltip and an accessible name everywhere, and it keeps the place", () => {
+  assert.equal(STOP_PLAYING, "Stop Playing: the place is kept");
 });

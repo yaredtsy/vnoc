@@ -1,3 +1,4 @@
+import { BarButton } from "@/components/BarButton.tsx";
 import { Codicon } from "@/components/Codicon.tsx";
 import { cn } from "@/lib/utils.ts";
 import type { Kind } from "@vnoc/shared/messages.ts";
@@ -9,7 +10,7 @@ import { isOpen, listItem } from "./list.ts";
 import type { Tomb } from "./deleted.ts";
 import { tourRowContext } from "./menu.ts";
 import type { RouteRow } from "./route.ts";
-import { rowMarks } from "./writing.ts";
+import { STOP_PLAYING, rowMarks } from "./writing.ts";
 
 const kindOf = (kind: string | null): Kind => (kind && kind in KINDS ? (kind as Kind) : "function");
 const MARKS = { seen: "✓", here: "●", ahead: "○", planned: "◌" } as const;
@@ -21,7 +22,7 @@ function LiveDot({ mode }: { mode: "pulse" | "still" }) {
 
 /**
  * One tour's row in the list (design 07 §3): the kind's icon and the title, then the core's words and the question. 40 px. A tour being written has a live dot and the core's word at the right of line 1,
- * and **■ Stop** at the right of line 2, always shown; the open tour says `▶ playing` and has **Stop Playing**, always shown. On hover, at the right of line 1: `🗑` Delete (not on a tour being written:
+ * and **■ Stop** at the right of line 2, always shown; the open tour says `▶ playing` and has the **Stop Playing** icon, always shown. On hover, at the right of line 1: `🗑` Delete (not on a tour being written:
  * it is not deleted under the agent). A row that cannot be read is dim and has only the delete.
  */
 export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpen, onDelete, onStop, onStopPlaying }: { row: TourRow; domId: string; open: string | null; focused: boolean; /** the row's second line in this view: its own words, or in the second view how it is on the node */ line2: string; /** the state word at the right of line 1, in the second view */ stateWord: string | null; onOpen: () => void; onDelete: () => void; onStop: () => void; onStopPlaying: () => void }) {
@@ -90,19 +91,16 @@ export function TourListRow({ row, domId, open, focused, line2, stateWord, onOpe
               </button>
             )}
             {marks.playing && (
-              <button
-                type="button"
+              <BarButton
+                icon="debug-stop"
+                label={STOP_PLAYING}
                 data-part="row-stop-playing"
-                title="Close the tour. The place is kept"
-                aria-label={`Stop Playing: ${item.title}`}
-                className="flex h-4 items-center rounded-sm border border-border px-1 text-[11px] text-foreground hover:bg-toolbar-hover"
+                className="size-4"
                 onClick={(e) => {
                   e.stopPropagation();
                   onStopPlaying();
                 }}
-              >
-                Stop Playing
-              </button>
+              />
             )}
           </span>
         )}

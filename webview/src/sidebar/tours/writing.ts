@@ -4,6 +4,9 @@
 
 import type { TourRow } from "@vnoc/shared/tours.ts";
 
+/** What **Stop Playing** says, as a tooltip and an accessible name: it is an icon button everywhere (the row, the strip, the route header). */
+export const STOP_PLAYING = "Stop Playing: the place is kept";
+
 /** A row whose tour is being written now (the core's `state`). */
 const isWriting = (row: TourRow): boolean => row.readable && row.state === "writing";
 

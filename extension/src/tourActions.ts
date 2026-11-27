@@ -311,7 +311,8 @@ export class TourActions {
     try {
       const answer = await this.d.request("vnoc/tourAsk", params && Object.values(params).some((v) => v !== undefined) ? params : undefined);
       await this.d.copy(answer.text);
-      await this.d.say("info", answer.words, []);
+      // the message is not waited for: the page closes its dialog when the sentence is copied, not when the message is dismissed
+      void this.d.say("info", answer.words, []);
       return "asked";
     } catch (e) {
       await this.refused(e);

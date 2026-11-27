@@ -437,8 +437,6 @@ export interface TourRefusal {
 /** `vnoc/tourImport`: the tour that was written, or every refusal of the document (nothing was written); `words` is the core's sentence either way. */
 export type TourImportAnswer = { id: TourId; words: string; refused?: undefined } | { refused: TourRefusal[]; words: string; id?: undefined };
 
-/** How far the form's tour goes from its node: `agent` says nothing in the sentence. */
-export type AskReach = "agent" | "only" | "calls" | "calls2";
 /** How much each step says: `agent` says nothing in the sentence. */
 export type AskDetail = "agent" | "quick" | "normal" | "detailed";
 
@@ -446,7 +444,8 @@ export type AskDetail = "agent" | "quick" | "normal" | "detailed";
 export interface TourAskParams {
   key?: string;
   question?: string;
-  reach?: AskReach;
+  /** how many levels from the node, 0 (only that) to 6; absent: the agent decides */
+  depth?: number;
   detail?: AskDetail;
   tour?: TourId;
 }
@@ -456,6 +455,15 @@ export interface TourAskAnswer {
   text: string;
   words: string;
   filled?: { key?: string; question?: string; detail: AskDetail };
+  /** with a `key` that is a node: what each depth 0 to 6 of its route comes to, in the core's words (`9 stops · about 6 min`) */
+  sizes?: TourAskSize[];
+}
+
+export interface TourAskSize {
+  depth: number;
+  stops: number;
+  minutes: number;
+  words: string;
 }
 
 export interface ToursAnswer {

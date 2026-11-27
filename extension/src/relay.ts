@@ -66,7 +66,11 @@ export interface Deps {
     pin(params: TourPinParams): Promise<TourPinAnswer>;
     /** the tour **Commit and Pin…** was chosen for in the host, once (see `Requests.tourDialogTake`) */
     takeDialog(): { id: TourId; title: string | null } | null;
+    /** where **Ask for a Tour…** was chosen in the host, once (see `Requests.tourAskTake`) */
+    takeAsk(): { key?: string; tour?: TourId } | null;
   };
+  /** **Ask for a Tour…**: the canvas page comes up with the ask dialog, filled in from a node or a row's tour */
+  openAsk(from: { key?: string; tour?: TourId }): void;
   /** what the user does to a tour from a button (`tourActions.ts`): the host asks, saves, writes and says what happened */
   tourActions: {
     writeIds(id: TourId): Promise<unknown>;
@@ -127,6 +131,8 @@ export function createHandlers(d: Deps): Handlers {
     tourSettings: (params) => d.core("vnoc/tourSettings", params),
     tourWriteIds: async ({ id }) => void (await d.tourActions.writeIds(id)),
     tourDialogTake: async () => d.tours.takeDialog(),
+    tourAskOpen: async (from) => d.openAsk(from),
+    tourAskTake: async () => d.tours.takeAsk(),
     openChange: ({ path }) => d.openChange(path),
     tourSettingsPick: async () => void (await d.tourActions.settings()),
     tourDelete: async ({ id }) => void (await d.tourActions.delete(id)),

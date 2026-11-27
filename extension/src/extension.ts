@@ -60,6 +60,8 @@ const barPosts: Extract<Notes, { type: "tourBar" }>[] = [];
 const viewports: Record<string, { x: number; y: number; zoom: number }> = {};
 /** What the **Commit and Pin…** dialog was, each time it changed (for the test suite). */
 const pinDialogPosts: Extract<Notes, { type: "pinDialog" }>[] = [];
+/** What the **Ask for a Tour** dialog was, each time it changed (for the test suite). */
+const askDialogPosts: Extract<Notes, { type: "askDialog" }>[] = [];
 /** What the sidebar's TOURS section drew, each time it changed (for the test suite). */
 const toursPosts: Extract<Notes, { type: "toursDrawn" }>[] = [];
 /** The nodes that showed `▶ N`, by surface, as each page last said (for the test suite). */
@@ -275,8 +277,14 @@ export function activate(ctx: vscode.ExtensionContext) {
   const docs = new Docs(() => c.gitRoot, (name, data) => panels.emit(name, data));
   // the files with unsaved changes: the cards that show their code mark it (docs/17-edit-in-canvas.md step 9.1)
   const dirty = new DirtyFiles((paths) => panels.emit("dirtyFiles", { paths }));
+  // **Ask for a Tour…** is a dialog of the canvas page: the host tells it where it was chosen, and the canvas comes up if it was not open
+  const openAsk = (from: { key?: string; tour?: string }) => {
+    tours.askForm(from);
+    void panels.showCanvas();
+  };
   // what a webview may ask of the extension (`shared/messages.ts` lists it, `relay.ts` serves it)
   const handlers = createHandlers({
+    openAsk,
     // the first read has the progress line on the STRUCTURE view; a read after rows are drawn (the index changed) is quiet
     structure: () => {
       const read = async () => ({ ...(await c.loadStructure()), epoch: c.epoch });
@@ -399,8 +407,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("vnoc.tourImportFile", () => tourActions.importFile()),
     vscode.commands.registerCommand("vnoc.tourCheckAll", () => tourActions.checkAll()),
     // **Ask for a Tour…**: the node it was chosen on (a menu names it; the palette and the buttons mean the selected one), else none; a row's **Ask for a New Tour** names the tour
-    vscode.commands.registerCommand("vnoc.tourAsk", async (arg, selected) => commands.askForTour({ key: await commands.askKeyOf(arg, selected) })),
-    vscode.commands.registerCommand("vnoc.tourAskAgain", (arg) => commands.askForTour({ tour: tourOfArg(arg) })),
+    vscode.commands.registerCommand("vnoc.tourAsk", async (arg, selected) => openAsk({ key: await commands.askKeyOf(arg, selected) })),
+    vscode.commands.registerCommand("vnoc.tourAskAgain", (arg) => openAsk({ tour: tourOfArg(arg) })),
     // **Show Docs** in a stop's menu: the docs panel, as the bar's `ⓘ` opens it
     vscode.commands.registerCommand("vnoc.tourShowDocs", async () => {
       await panels.showCanvas();
@@ -512,6 +520,10 @@ export function activate(ctx: vscode.ExtensionContext) {
     mapClick: (stop: string) => panels.emit("viewCommand", { name: "mapClick", key: stop }),
     /** sets the pan and zoom of the canvas that is on screen, as a drag and the wheel would: `x,y,zoom` */
     setView: (text: string) => panels.emit("viewCommand", { name: "setView", text }),
+    /** every state of the **Ask for a Tour** dialog, in order (`dialog: null`: closed) */
+    askDialog: () => askDialogPosts,
+    /** a control of the ask dialog, as the page handles it: `question` (with `text`), `agent` (the box), `depth` (with `text`), `detail` (with `text`), `about:remove`, `copy` (⌘Enter), `cancel` (Esc) */
+    askDialogClick: (key: string, text?: string) => panels.emit("viewCommand", { name: "askDialog", key, text }),
     /** every state of the **Commit and Pin…** dialog, in order (`dialog: null`: closed) */
     pinDialog: () => pinDialogPosts,
     /** a button of the dialog, as the page handles it: `commit`, `cancel`, `always`, `message` (with `text`), `file:<path>` */
@@ -664,6 +676,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "pinDialog":
       pinDialogPosts.push(note);
+      break;
+    case "askDialog":
+      askDialogPosts.push(note);
       break;
     case "keysChecked":
       keysCheckedPosts.push({ found: note.found, target: note.target, taken: note.taken, hosts: note.hosts });

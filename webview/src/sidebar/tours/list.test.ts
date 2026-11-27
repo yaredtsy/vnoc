@@ -9,7 +9,7 @@ const row = (over: Partial<TourRow> = {}): TourRow => ({ id: "t-1", folder: "pri
 test("a row draws the core's words unchanged, the title, the question, and the icon of its first stop", () => {
   assert.deepEqual(listItem(row()), { key: "t-1:private", id: "t-1", title: "Retry charge", words: "stop 3 · 9 stops", question: "what happens when it drops", kind: "function", clickable: true });
   // whatever the core says is what is drawn: a state word, `shared ·`, a size, in its order
-  for (const words of ["writing · 6 of 10 stops", "shared · changed · 3 stops", "no news · 1 stop", "seen 2 of 9 · 9 stops", "new · 1 stop", "finished · 4 stops"]) assert.equal(listItem(row({ words })).words, words);
+  for (const words of ["6 of 10 stops", "shared · changed · 3 stops", "shared · 1 of 3 stops", "seen 2 of 9 · 9 stops", "new · 1 stop", "finished · 4 stops"]) assert.equal(listItem(row({ words })).words, words);
 });
 
 test("a tour with no question or no stop yet draws neither", () => {

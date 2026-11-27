@@ -43,6 +43,8 @@ interface Api {
   request<T>(method: string, params?: object): Promise<T>;
   pinDialog(): Extract<Notes, { type: "pinDialog" }>[];
   pinDialogClick(key: string, text?: string): void;
+  askDialog(): Extract<Notes, { type: "askDialog" }>[];
+  askDialogClick(key: string, text?: string): void;
   tourMessages(): { level: string; text: string; buttons: string[] }[];
   answerTourMessages(answers: (string | undefined)[] | null): void;
   answerTourPicks(labels: string[] | null): void;
@@ -1957,7 +1959,7 @@ suite("rename, share and delete a tour", () => {
     const id = JSON.parse(tourCmd(["start", "--title", "Still being written", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), "--json"])).tour;
     tourCmd(["add", id, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
     await closeWhenItOpens(id);
-    await listShows("the row of the tour being written", (d) => row(d, id)?.stateWord === null && row(d, id)?.words.startsWith("writing") === true);
+    await listShows("the row of the tour being written", (d) => row(d, id)?.mark === "writing" && row(d, id)?.words.startsWith("1 of 2 stops") === true);
     const from = api.tourMessages().length;
     api.toursClick(`delete:${id}`);
     await until("the refusal", () => said(from).length === 1, 30_000);
@@ -1976,7 +1978,9 @@ suite("rename, share and delete a tour", () => {
     // ■ Stop on the row: the core's halt, and the row then shows the core's `stopping`
     api.toursClick(`rowstop:${id}`);
     await until("the core's state", () => JSON.parse(tourCmd(["show", id, "--json"])).state === "stopping", 30_000);
-    const stopping = await listShows("the row says stopping", (d) => row(d, id)?.words.startsWith("stopping") === true);
+    // line 1 says it (the core's `state_word`), so line 2 is the size alone: the state is not said twice
+    const stopping = await listShows("the row says stopping", (d) => row(d, id)?.mark === "writing" && row(d, id)?.stop === false);
+    assert.ok(row(stopping, id)!.words.startsWith("1 of 2 stops"), row(stopping, id)!.words);
     assert.deepStrictEqual([row(stopping, id)!.mark, row(stopping, id)!.stop], ["writing", false], "no Stop to press twice");
     assert.strictEqual(writingNow(stopping), n - 1, "one fewer is being written");
   });
@@ -2275,45 +2279,69 @@ suite("JSON, check all, ask for a tour, open tour, show docs", () => {
     assert.deepStrictEqual(said(from), [], "the rows are the answer: no message");
   });
 
-  test("Ask for a Tour… opens the prompt builder at the top of the section, filled in from where it was opened; its prompt is the core's, and Copy Prompt copies it and says the core's words", async function () {
+  test("Ask for a Tour… is a dialog of the canvas page, filled in from where it was opened; its prompt is the core's, and Copy Prompt copies it, says the core's words and closes it", async function () {
     this.timeout(120_000);
     const id = JSON.parse(tourCmd(["start", "--title", "Asked again", "--question", "why this order?", "--detail", "quick", "--json"])).tour;
     tourCmd(["add", id, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
     tourCmd(["finish", id, "--no-ids"]);
-    const prompt = (text: string) => sectionShows(`the prompt ${text}`, (d) => d.form?.prompt === text, 30_000);
-    // a node's menu: the form opens with the node as its chip; nothing is copied yet
+    const dialog = () => api.askDialog().at(-1)?.dialog ?? null;
+    const dialogShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof dialog>>) => boolean, ms = 30_000) => {
+      await until(what, () => {
+        const d = dialog();
+        return d !== null && ready(d);
+      }, ms);
+      return dialog()!;
+    };
+    const prompt = (text: string) => dialogShows(`the prompt ${text}`, (d) => d.prompt === text);
+    const closed = () => until("the dialog is closed", () => api.askDialog().length > 0 && dialog() === null, 30_000);
+    // a node's menu: the dialog opens with the node as its chip; nothing is copied yet
     await vscode.env.clipboard.writeText("untouched");
     let from = api.tourMessages().length;
     await vscode.commands.executeCommand("vnoc.tourAsk", { nodeKey: "tourdemo/shop.py::checkout", contextId: "main" });
     const opened = await prompt("Walk me through tourdemo/shop.py::checkout");
-    assert.strictEqual(opened.form?.about, "checkout");
+    assert.deepStrictEqual([opened.about, opened.agentDepth, opened.detail], ["checkout", true, "agent"]);
     assert.strictEqual(await vscode.env.clipboard.readText(), "untouched");
-    // the parts: a question, how far, how much; the sentence is the core's and follows the last change
-    api.toursClick("askform:question:why does it hold the stock first?");
-    api.toursClick("askform:reach:calls");
-    api.toursClick("askform:detail:quick");
-    await prompt("Walk me through tourdemo/shop.py::checkout: why does it hold the stock first? Cover it and what it calls. Make it a quick tour.");
-    api.toursClick("askform:copy");
-    await waitFor("the sentence is copied", async () => (await vscode.env.clipboard.readText()) === "Walk me through tourdemo/shop.py::checkout: why does it hold the stock first? Cover it and what it calls. Make it a quick tour.", 30_000);
+    // Esc closes it, and copies nothing
+    api.askDialogClick("cancel");
+    await closed();
+    assert.strictEqual(await vscode.env.clipboard.readText(), "untouched");
+    // `＋` with a node selected: the same dialog. A question, the agent's box unticked, 2 levels (its size shows), Quick; the sentence is the core's and follows the last change
+    api.dispatch({ type: "select", id: "tourdemo/shop.py::checkout" }, "main");
+    api.toursClick("ask");
+    await prompt("Walk me through tourdemo/shop.py::checkout");
+    api.askDialogClick("question", "why does it hold the stock first?");
+    api.askDialogClick("agent");
+    api.askDialogClick("depth", "2");
+    api.askDialogClick("detail", "quick");
+    const sentence = "Walk me through tourdemo/shop.py::checkout: why does it hold the stock first? Cover it and what it calls, 2 levels deep. Make it a quick tour.";
+    const filled = await prompt(sentence);
+    assert.deepStrictEqual([filled.agentDepth, filled.depth, filled.detail], [false, 2, "quick"]);
+    const sized = await dialogShows("the size of 2 levels, in the core's words", (d) => d.size !== null);
+    assert.match(sized.size!, /^\d+ stops? · about \d+ min$/);
+    // ⌘Enter (the same function): the sentence is copied, the core's words are said, the dialog is gone
+    api.askDialogClick("copy");
+    await waitFor("the sentence is copied", async () => (await vscode.env.clipboard.readText()) === sentence, 30_000);
     assert.deepStrictEqual(said(from).map((m) => m.text), ["Copied. Paste it to your agent."]);
-    assert.strictEqual((await sectionShows("the core's words in the form", (d) => d.form?.words === "Copied. Paste it to your agent.")).form?.words, "Copied. Paste it to your agent.");
-    // the chip is removed: the question alone
-    api.toursClick("askform:about:remove");
-    await prompt("Walk me through why does it hold the stock first? Cover it and what it calls. Make it a quick tour.");
-    api.toursClick("askform:cancel");
-    await sectionShows("the form is closed", (d) => d.form === null);
-    // the palette means the selected node: none selected, the form has no chip and the start of a sentence
+    await closed();
+    // the chip is removed: the question alone, and no depth (it is a depth of a node)
+    await vscode.commands.executeCommand("vnoc.tourAsk", { nodeKey: "tourdemo/shop.py::checkout", contextId: "main" });
+    await prompt("Walk me through tourdemo/shop.py::checkout");
+    api.askDialogClick("question", "how does it end?");
+    api.askDialogClick("agent");
+    api.askDialogClick("depth", "0");
+    await prompt("Walk me through tourdemo/shop.py::checkout: how does it end? Cover only that.");
+    api.askDialogClick("about:remove");
+    await prompt("Walk me through how does it end?");
+    api.askDialogClick("cancel");
+    await closed();
+    // the palette means the selected node: none selected, the dialog has no chip and the start of a sentence
     api.dispatch({ type: "select", id: null }, "main");
     await vscode.commands.executeCommand("vnoc.tourAsk");
     const bare = await prompt("Walk me through ");
-    assert.strictEqual(bare.form?.about, null);
-    api.toursClick("askform:cancel");
-    // the section's `＋` means the selected node too
-    api.dispatch({ type: "select", id: "tourdemo/shop.py::reserve" }, "main");
-    api.toursClick("ask");
-    await prompt("Walk me through tourdemo/shop.py::reserve");
-    api.toursClick("askform:cancel");
-    // a function no tour passes through: the second view is empty, and its empty state asks for one: the same form
+    assert.strictEqual(bare.about, null);
+    api.askDialogClick("cancel");
+    await closed();
+    // a function no tour passes through: the second view is empty, and its empty state asks for one: the same dialog
     const quiet = path.join(folder(), "quiet.py");
     fs.writeFileSync(quiet, "def quiet():\n    return None\n");
     for (let waited = 0; ; waited += 500) {
@@ -2327,18 +2355,19 @@ suite("JSON, check all, ask for a tour, open tour, show docs", () => {
     assert.deepStrictEqual(empty.asks, ["Ask for One"]);
     api.toursClick("ask");
     await prompt("Walk me through tourdemo/quiet.py::quiet");
-    api.toursClick("askform:cancel");
+    api.askDialogClick("cancel");
+    await closed();
     api.toursClick("view:all");
     fs.rmSync(quiet);
-    // a row's Ask for a New Tour: the form is filled with that tour's root, question and detail, and the prompt is the core's
+    // a row's Ask for a New Tour: the dialog is filled with that tour's root, question and detail, and the prompt is the core's
     await vscode.commands.executeCommand("vnoc.tourAskAgain", { tour: id });
     const again = await prompt("Walk me through tourdemo/shop.py::checkout: why this order? Make it a quick tour.");
-    assert.deepStrictEqual([again.form?.about, again.form?.question, again.form?.detail], ["checkout", "why this order?", "quick"]);
+    assert.deepStrictEqual([again.about, again.question, again.detail], ["checkout", "why this order?", "quick"]);
     from = api.tourMessages().length;
-    api.toursClick("askform:copy");
+    api.askDialogClick("copy");
     await waitFor("the sentence is copied", async () => (await vscode.env.clipboard.readText()) === "Walk me through tourdemo/shop.py::checkout: why this order? Make it a quick tour.", 30_000);
     assert.deepStrictEqual(said(from).map((m) => m.text), ["Copied. Paste it to your agent."]);
-    api.toursClick("askform:cancel");
+    await closed();
     api.dispatch({ type: "select", id: null }, "main");
   });
 

@@ -13,6 +13,7 @@ import { DocPanel } from "./docs/DocPanel.tsx";
 import { on, post, request } from "./host.ts";
 import { useData } from "./state/data.ts";
 import { useSession } from "./state/session.ts";
+import { AskDialog } from "./tour/AskDialog.tsx";
 import { PinDialog } from "./tour/PinDialog.tsx";
 import { Stage } from "./tour/Stage.tsx";
 import { TourCanvas } from "./tour/TourCanvas.tsx";
@@ -63,6 +64,8 @@ export function App() {
         </div>
         {/* **Commit and Pin…**: over the page, for the tour the cover or the host chose it for */}
         <PinDialog />
+        {/* **Ask for a Tour**: the dialog that builds the sentence for an agent, over the page as well */}
+        <AskDialog />
       </ReactFlowProvider>
     </TooltipProvider>
   );

@@ -260,8 +260,8 @@ test("Check All Tours asks the host to check every tour; Ask for a Tour… copie
   await w.actions.ask({ tour: "t-1" });
   assert.deepEqual(w.asked.slice(1), [["vnoc/tourAsk", undefined], ["vnoc/tourAsk", { tour: "t-1" }]]);
   // the form's parts go to the core as they are: it makes the sentence
-  await w.actions.ask({ key: "a.py::f", question: "why?", reach: "calls", detail: "quick" });
-  assert.deepEqual(w.asked.at(-1), ["vnoc/tourAsk", { key: "a.py::f", question: "why?", reach: "calls", detail: "quick" }]);
+  await w.actions.ask({ key: "a.py::f", question: "why?", depth: 2, detail: "quick" });
+  assert.deepEqual(w.asked.at(-1), ["vnoc/tourAsk", { key: "a.py::f", question: "why?", depth: 2, detail: "quick" }]);
   // parts that are all undefined are nothing
   await w.actions.ask({ key: undefined });
   assert.deepEqual(w.asked.at(-1), ["vnoc/tourAsk", undefined]);
