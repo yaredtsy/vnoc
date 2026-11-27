@@ -768,7 +768,7 @@ Rust lib 582; TS 913 / 319; the full window run: 192, only Bend's 3 failing.
 
 **TR24 is cut in two:**
 - **TR24a** (the coding session): the two fixes above; the Bend driver built once in debug, so its 13 Rust and 3 window failures go;
-  the owed full runs, **twice**, each with no failure; a 0.4.0 entry in `CHANGELOG.md`; the pull request's description written to a file
+  the owed full runs, **twice**, each with no failure; a 0.4.0 entry in `extension/CHANGELOG.md`; the pull request's description written to a file
   (nothing pushed); a VSIX for the by-hand pass.
 - **TR24b** (the user, by hand, on that VSIX): design/05 §8's checks in Dark+, Light+ and High Contrast, VoiceOver, Reduce motion; "explain
   this more" on a step; "take me to stop 3"; a tour of uncommitted work to pinned; watch one person take a tour in silence. Then push,
