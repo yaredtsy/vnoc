@@ -519,6 +519,8 @@ export interface StageLayout {
   folded: boolean;
   /** the code and the text are one above the other */
   stacked: boolean;
+  /** the height of the canvas the stage is in (the grip's limit is a share of it) */
+  canvasHeight: number;
   /** the stage's width and height */
   width: number;
   height: number;

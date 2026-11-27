@@ -193,7 +193,10 @@ export interface TourStop {
   planned: boolean;
   /** null for a planned stop */
   kind: TourNodeKind | null;
+  /** the display name: a function nested in another def is only its own name; `qualname` is the full one */
   name: string;
+  /** the nearest enclosing function or class of a nested function: drawn dim after the name, `in <container>` */
+  container?: string;
   path: string;
   qualname: string;
   /** the node's key in the structure (`TreeNode.id`: a path, or `path::qualname#n`), from what the stop wrote (a planned stop's is where the plan says it will be). null for one a check found gone: the host sets the selection with it, the stage reads the node's code with it */

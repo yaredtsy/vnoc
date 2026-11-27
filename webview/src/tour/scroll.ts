@@ -11,13 +11,17 @@ export type Lit = readonly [number, number];
 
 /**
  * The line to put at the top of the pane after the step changed, or null when the pane stays where it is.
- * - a new stop: the top (the code is another code);
+ * - a new stop: the top (the code is another code), unless the lit lines are not in view from the top: then the first lit line goes two lines under the top (a block far
+ *   below the function's start, reached by `go`, the route or the map);
  * - a new step in the same stop: only if the lit lines are not fully in view, and then the first lit line goes two lines under the top;
  * - never for a step of the same stop while the pointer is over the pane: it is being read or selected.
  */
 export function scrollTarget(a: { newStop: boolean; lit: Lit | null; view: PaneView; pointerOver: boolean }): number | null {
   const { view } = a;
-  if (a.newStop) return view.top === 0 ? null : 0;
+  if (a.newStop) {
+    const target = a.lit === null || a.lit[1] < view.rows ? 0 : Math.max(0, a.lit[0] - 2);
+    return target === view.top ? null : target;
+  }
   if (a.pointerOver || a.lit === null) return null;
   const [first, last] = a.lit;
   if (first >= view.top && last < view.top + view.rows) return null; // fully in view: the code does not move

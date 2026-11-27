@@ -17,6 +17,9 @@ export type RouteRow =
       depth: number;
       kind: string | null;
       name: string;
+      /** a nested function's container, dim after the name; and its full name for the tooltip */
+      container: string | null;
+      qualname: string;
       /** the node's key in the structure, for the row's menu */
       key: string | null;
       mark: Mark;
@@ -66,7 +69,7 @@ export function routeRows(view: TourView): RouteRow[] {
   for (const stop of view.stops) {
     const description = stopDescription(view, stop);
     const current = view.place.stop === stop.id;
-    rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, key: stop.key, mark: markOf(view, stop.id, stop.planned), current, description, struck: isStruck(stop) });
+    rows.push({ type: "stop", id: stop.id, number: stop.number, depth: stop.depth, kind: stop.kind, name: stop.name, container: stop.container ?? null, qualname: stop.qualname || stop.name, key: stop.key, mark: markOf(view, stop.id, stop.planned), current, description, struck: isStruck(stop) });
     // the steps are under the stop you are in, and only when it has more than one: leaving it folds them away (§1.2)
     if (current && stop.reading.length > 1) {
       for (const step of stop.reading) {

@@ -56,7 +56,7 @@ export function AskDialog() {
       clearTimeout(timer);
     };
   }, [asked]); // eslint-disable-line react-hooks/exhaustive-deps
-  const label = form === null || form.about === null ? null : form.tour !== null ? shortName(form.about) : ((tree ? findNode(tree, form.about)?.name : null) ?? shortName(form.about));
+  const label = form === null || form.about === null ? null : form.tour !== null ? shortName(form.about) : ((tree ? (findNode(tree, form.about)?.qualname ?? findNode(tree, form.about)?.name) : null) ?? shortName(form.about));
   const size = dialog === null ? null : sizeAt(dialog.sizes, dialog.form.depth);
   // what the suite reads of the dialog
   useEffect(() => {

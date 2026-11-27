@@ -5,8 +5,12 @@ import { moreLit, nextPage, scrollTarget, viewOf } from "./scroll.ts";
 
 const view = (top: number, rows = 9) => ({ top, rows });
 
-test("a new stop starts at the top, whatever the pointer does", () => {
-  assert.equal(scrollTarget({ newStop: true, lit: [20, 22], view: view(15), pointerOver: false }), 0);
+test("a new stop starts at the top, whatever the pointer does; a block far below the start is brought into view", () => {
+  assert.equal(scrollTarget({ newStop: true, lit: [3, 5], view: view(15), pointerOver: false }), 0);
+  assert.equal(scrollTarget({ newStop: true, lit: [20, 22], view: view(15), pointerOver: false }), 18, "lit lines 20-22 are not in view from the top: two lines under the top");
+  assert.equal(scrollTarget({ newStop: true, lit: [1270, 1280], view: view(0), pointerOver: false }), 1268, "far below the function's start");
+  assert.equal(scrollTarget({ newStop: true, lit: [1270, 1280], view: view(1268), pointerOver: false }), null, "already there");
+  assert.equal(scrollTarget({ newStop: true, lit: [1, 2], view: view(0), pointerOver: true }), null);
   assert.equal(scrollTarget({ newStop: true, lit: null, view: view(15), pointerOver: true }), 0);
   assert.equal(scrollTarget({ newStop: true, lit: null, view: view(0), pointerOver: false }), null, "already there");
 });

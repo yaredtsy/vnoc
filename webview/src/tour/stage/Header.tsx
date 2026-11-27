@@ -26,7 +26,10 @@ export function Header(p: {
       <span className="stage-kind" style={{ color: KINDS[kind].color }}>
         <Codicon name={KINDS[kind].icon} />
       </span>
-      <span className="stage-name">{KINDS[kind].title(stop.name)}</span>
+      <span className="stage-name" title={KINDS[kind].title(stop.qualname || stop.name)}>
+        {KINDS[kind].title(stop.name)}
+        {stop.container && <span className="stage-dimtext"> in {stop.container}</span>}
+      </span>
       <button type="button" className="stage-where" title="Go to Code" onClick={p.onGoToCode}>
         {p.where}
       </button>

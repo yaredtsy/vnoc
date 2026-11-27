@@ -16,6 +16,9 @@ export type TourCardData = {
   y: number;
   kind: string | null;
   name: string;
+  /** a nested function's container (`in <container>`, dim) and its full name (the tooltip) */
+  container: string | null;
+  qualname: string;
   path: string;
   /** the stop's first line in its file, when it has lines (a folder has none) */
   line: number | null;
@@ -79,6 +82,8 @@ export function mapOf(view: TourView, off: Readonly<Record<string, number>> = {}
       y: i * ROW_H,
       kind: stop.kind,
       name: stop.name,
+      container: stop.container ?? null,
+      qualname: stop.qualname || stop.name,
       path: stop.path,
       line: stop.lines ? stop.lines[0] : null,
       mark: markOf(view, stop.id, stop.planned),

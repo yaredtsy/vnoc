@@ -41,6 +41,7 @@ export function measureStage(stage: HTMLElement, narrow: boolean, folded: boolea
     narrow,
     folded,
     stacked: body !== null && getComputedStyle(body).flexDirection === "column",
+    canvasHeight: stage.parentElement?.clientHeight ?? 0,
     width: Math.round(box.width),
     height: Math.round(box.height),
     codeHeight: code ? Math.round(code.clientHeight) : 0,

@@ -9,11 +9,11 @@ import { on, post, request } from "../host.ts";
 import { useData } from "../state/data.ts";
 import { dispatch } from "../state/session.ts";
 import { setStageFolded, setStageHeight, setStageText, useView } from "../state/view.ts";
-import { type Current, type Shown, ADDING_LINE, NARROW_BELOW, becameWritten, callLines, currentOf, enterDoes, keyMove, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf, stageHeightFor } from "./layout.ts";
+import { type Current, type Shown, ADDING_LINE, MAX_SHARE, NARROW_BELOW, becameWritten, callLines, currentOf, enterDoes, keyMove, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf, stageHeightFor } from "./layout.ts";
 import { goToStop } from "./goToCode.ts";
 import { stepLabel } from "./labels.ts";
 import { go, loadTour, useTour } from "./store.ts";
-import { CodePane, type CodeDrawn, LINE_H } from "./stage/CodePane.tsx";
+import { CodePane, type CodeDrawn, LINE_H, keyMoved } from "./stage/CodePane.tsx";
 import { Contents } from "./stage/Contents.tsx";
 import { Cover, End } from "./stage/Cover.tsx";
 import { Foot } from "./stage/Foot.tsx";
@@ -29,9 +29,8 @@ import { openPinDialog } from "./pinDialog.ts";
 import { type Choice, wantsWritten, writtenLook } from "./written.ts";
 import "./stage.css";
 
-/** The least the dock is (the header and five lines of code) and the most (45% of the canvas): design 03 §6. */
+/** The least the dock is (the header and five lines of code) and the most (`MAX_SHARE` of the canvas): design 03 §6. */
 const MIN_H = 30 + 5 * LINE_H;
-const MAX_SHARE = 0.45;
 const TEXT_MIN = 320;
 const TEXT_MAX = 460;
 
@@ -192,6 +191,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       if (move === "closeTour" && document.querySelector('[role="menu"], [role="dialog"]')) return; // Esc closes a menu first
       // on a step `Enter` is nobody's here: the canvas keeps it
       if (move === "enter" && (modeNow.current === null || enterDoes(modeNow.current) === null)) return;
+      if (move === "next" || move === "prev" || move === "nextStop" || move === "prevStop") keyMoved.at = Date.now(); // a move by key scrolls the code wherever the pointer is
       e.preventDefault();
       e.stopImmediatePropagation();
       act.current[move === "closeTour" ? "escape" : move]?.();
@@ -220,6 +220,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
             const target = callTo.current.get(Number(arg));
             if (target) go(tourId, target.id);
           }
+          else if (what === "grip") setStageHeight(clamp(useView.getState().stageHeight - Number(arg), MIN_H, Math.max(MIN_H, Math.floor((stageEl.current?.parentElement?.clientHeight ?? 800) * MAX_SHARE)))); // a drag of the grip, `dy` px
+          else if (what === "pointer") document.querySelector('[data-part="code"]')?.dispatchEvent(new PointerEvent(arg === "out" ? "pointerleave" : "pointerenter"));
           else act.current[key]?.();
         }
       }),
@@ -269,7 +271,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       pin: current.mode === "cover" ? (pinned?.pin?.text ?? null) : null,
       reason: current.mode === "cover" ? (pinned?.reason ?? null) : null,
       offers: current.mode === "cover" ? (pinned?.offers ?? []).map((o) => `${o.text} | ${o.button}`) : [],
-      layout: stageEl.current ? measureStage(stageEl.current, narrow, folded) : { narrow, folded, stacked: false, width: 0, height: 0, codeHeight: 0, codeRows: 0, wrapped: 0, codeCut: false, outside: [], chipOverCode: null, coverParts: [] },
+      layout: stageEl.current ? measureStage(stageEl.current, narrow, folded) : { narrow, folded, stacked: false, width: 0, canvasHeight: 0, height: 0, codeHeight: 0, codeRows: 0, wrapped: 0, codeCut: false, outside: [], chipOverCode: null, coverParts: [] },
     });
   }, [narrow, folded, room.width, view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.more, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 

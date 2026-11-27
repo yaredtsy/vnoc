@@ -10,6 +10,10 @@ import { languageOf } from "../../lib/highlighter.ts";
 /** One row of the code is this high (px): the scroll rule counts in lines. */
 export const LINE_H = 18;
 
+/** When the reader last moved with a key (`→ ← ↓ ↑`, Space): a move by key scrolls the code to the lit lines wherever the pointer is. The stage sets it, the pane reads it. */
+export const keyMoved = { at: 0 };
+const KEY_MOVE_MS = 2000;
+
 export interface CodeDrawn {
   scrolledTo: number;
   lit: number[];
@@ -86,15 +90,34 @@ export function CodePane(p: {
     return () => watch.disconnect();
   }, [shown?.text]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // the pointer is over the pane while it is, and the state ends when the pointer leaves the pane or the window (it may leave with no `pointerleave` of the pane's: a key, a blur)
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const enter = () => (pointerOver.current = true);
+    const leave = () => (pointerOver.current = false);
+    el.addEventListener("pointerenter", enter);
+    el.addEventListener("pointerleave", leave);
+    document.documentElement.addEventListener("pointerleave", leave);
+    window.addEventListener("blur", leave);
+    return () => {
+      el.removeEventListener("pointerenter", enter);
+      el.removeEventListener("pointerleave", leave);
+      document.documentElement.removeEventListener("pointerleave", leave);
+      window.removeEventListener("blur", leave);
+    };
+  }, [shown?.text]);
+
   // a new step: the rule of scroll.ts, once the code of this stop is there
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || !shown) return;
     const { rows: els, tops, heights } = lines(el);
     const now = viewOf(tops, heights, el.scrollTop, el.clientHeight);
-    const target = scrollTarget({ newStop: previous.current !== p.stopId, lit: p.look === "lit" || p.look === "detail" ? litIndex : null, view: now, pointerOver: pointerOver.current });
+    const target = scrollTarget({ newStop: previous.current !== p.stopId, lit: p.look === "lit" || p.look === "detail" ? litIndex : null, view: now, pointerOver: pointerOver.current && Date.now() - keyMoved.at > KEY_MOVE_MS });
     previous.current = p.stopId;
     if (target !== null) el.scrollTop = els[target] ? tops[target] : target * LINE_H;
+    el.scrollLeft = 0; // a sideways scroll of the last step is not kept
     measure();
   }, [p.stopId, p.stepId, shown?.text]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -118,7 +141,7 @@ export function CodePane(p: {
           </span>
         </div>
       )}
-      <div ref={box} className="stage-code" data-part="code" onScroll={measure} onPointerEnter={() => (pointerOver.current = true)} onPointerLeave={() => (pointerOver.current = false)}>
+      <div ref={box} className="stage-code" data-part="code" onScroll={measure}>
         {shown!.lines.map((text, i) => (
           <div key={i} className={`stage-line stage-${looks[i]}${p.changed && looks[i] === "lit" ? " stage-changed" : ""}`} data-line={first + i}>
             <span className="stage-gutter">{first + i}</span>

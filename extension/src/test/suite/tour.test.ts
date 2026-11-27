@@ -2558,3 +2558,116 @@ suite("JSON, check all, ask for a tour, open tour, show docs", () => {
     api.dispatch({ type: "closeContext", id: `tour:${id}` }, `tour:${id}`);
   });
 });
+
+// ── TR24s: a far block comes into view, keys scroll wherever the pointer is, a taller stage, short nested names ────────────────────────────────────────────
+
+/** a long function (lines 4-90) whose second block is far below its start, and a function nested in another */
+const LONG = [
+  '"""A long job, for the tour suite."""',
+  "",
+  "",
+  "def long_job(items):",
+  "    total = 0",
+  "    for item in items:",
+  "        total += item",
+  ...Array.from({ length: 80 }, (_, i) => `    total += ${i}  # filler ${i}`),
+  "    if total > 100:",
+  "        total = 100",
+  "    return total",
+  "",
+  "",
+  "def outer():",
+  "    def inner(x):",
+  "        return x + 1",
+  "    return inner(1)",
+  "",
+].join("\n");
+
+suite("TR24s: the screen", () => {
+  let far = "";
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    await sleep(1100); // told apart by the second they were started in
+    const dir = path.join(workspace(), "tourdemo");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "long.py"), LONG);
+    for (let waited = 0; ; waited += 500) {
+      const file = (await api.structure()).root.children.find((c) => c.id === "tourdemo")?.children.find((c) => c.id === "tourdemo/long.py");
+      if (file && file.children.length >= 2) break;
+      assert.ok(waited < 30_000, "the structure never held tourdemo/long.py");
+      await sleep(500);
+    }
+    far = JSON.parse(tourCmd(["start", "--title", "A far block", "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", far, "tourdemo/long.py::long_job", "--body-file", "-"], "long_job adds the items up and clamps the sum at the end.\n\n## 5-7 Start the sum\nIt starts at zero and adds each item.\n\n## 88-89 Clamp at the end\nThe sum never goes past one hundred.\n");
+    tourCmd(["add", far, "tourdemo/long.py::outer.<locals>.inner", "--body-file", "-"], "inner adds one; it lives inside outer and nothing else calls it.\n");
+    tourCmd(["finish", far, "--no-ids"]);
+  });
+
+  setup(async function () {
+    this.timeout(60_000);
+    await openAtCover(far);
+  });
+
+  /** the first lit line is in view: the pane's own top line and the rows whole in it, from what the stage drew */
+  const litInView = (d: Drawn) => {
+    const first = d.lit[0] - d.code!.first;
+    return d.lit.length > 0 && first >= d.scrolledTo && first < d.scrolledTo + Math.max(1, d.layout.codeRows);
+  };
+
+  test("G6: a move to a block of another stop, far below the function's start, scrolls its lit lines into view", async function () {
+    this.timeout(90_000);
+    tourCmd(["go", far, "s2"]);
+    await stageShows("stop 2", (d) => d.stop === "s2" && d.code !== null, 30_000, far);
+    tourCmd(["go", far, "s1.b2"]);
+    const d = await stageShows("the far block drawn", (x) => x.step === "s1.b2" && x.lit.includes(88) && x.code !== null, 30_000, far);
+    assert.ok(d.scrolledTo > 0, `the pane scrolled: ${d.scrolledTo}`);
+    assert.ok(litInView(d), `lit ${d.lit[0]}-${d.lit.at(-1)} is in view (top ${d.scrolledTo}, ${d.layout.codeRows} rows)`);
+    tourCmd(["go", far, "cover"]);
+    await stageShows("the cover", (x) => x.mode === "cover", 30_000, far);
+    tourCmd(["go", far, "s1.b2"]);
+    const again = await stageShows("the far block from the cover", (x) => x.step === "s1.b2" && x.lit.includes(88), 30_000, far);
+    assert.ok(litInView(again), `from the cover: lit ${again.lit[0]} is in view (top ${again.scrolledTo})`);
+    if (process.env.VNOC_SHOT_DIR) fs.writeFileSync(path.join(process.env.VNOC_SHOT_DIR, "far-block"), "ready");
+  });
+
+  test("G8: the key Next brings the next lit block into view with the pointer over the pane", async function () {
+    this.timeout(90_000);
+    tourCmd(["go", far, "s1.b1"]);
+    await stageShows("the first block", (x) => x.step === "s1.b1" && x.code !== null, 30_000, far);
+    api.stageClick("pointer:in");
+    await sleep(200);
+    api.stageKey("ArrowRight");
+    const d = await stageShows("the far block by key", (x) => x.step === "s1.b2" && x.lit.includes(88), 30_000, far);
+    assert.ok(litInView(d), `by key, with the pointer over the pane: lit ${d.lit[0]} is in view (top ${d.scrolledTo})`);
+    api.stageClick("pointer:out");
+    api.stageKey("ArrowLeft");
+    const back = await stageShows("the first block again", (x) => x.step === "s1.b1" && x.code !== null, 30_000, far);
+    assert.ok(litInView(back), `back by key: lit ${back.lit[0]} is in view (top ${back.scrolledTo})`);
+  });
+
+  test("G9: the grip goes to 70% of the canvas and no further", async function () {
+    this.timeout(90_000);
+    api.stageClick("start");
+    await stageShows("a step", (x) => x.mode === "step", 30_000, far);
+    const start = last()!.layout.height;
+    try {
+      api.stageClick("grip:-5000");
+      api.stageKey("ArrowRight");
+      const d = await stageShows("a step drawn at the limit", (x) => x.mode === "step" && x.layout.height > start, 30_000, far);
+      const { height, canvasHeight } = d.layout;
+      assert.ok(canvasHeight > 0, "the layout says the canvas's height");
+      const limit = Math.floor(canvasHeight * 0.7);
+      assert.ok(height <= limit + 1 && height >= limit - 1, `the stage is ${height} px of a canvas ${canvasHeight} px: the limit is ${limit}`);
+      assert.ok(height > Math.floor(canvasHeight * 0.45), `past the old 45% (${Math.floor(canvasHeight * 0.45)})`);
+    } finally {
+      api.stageClick(`grip:${last()!.layout.height - 215}`);
+    }
+  });
+
+  test("G10: a nested function's stop is named by its own name, not its qualified one", async function () {
+    this.timeout(90_000);
+    tourCmd(["go", far, "s2"]);
+    const d = await stageShows("the nested function's stop", (x) => x.stop === "s2" && x.header.includes("inner"), 30_000, far);
+    assert.ok(!d.header.includes("<locals>") && !d.header.includes("outer"), `the header: ${d.header}`);
+  });
+});
