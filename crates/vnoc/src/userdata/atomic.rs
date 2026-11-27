@@ -6,7 +6,18 @@ use std::path::Path;
 
 /// Writes `bytes` to a temporary file in the same folder, then renames it over `target`. A reader sees the old file or the
 /// new one, never a mix. (Same folder: a rename across disks is a copy, and a copy is not atomic.)
+///
+/// A `target` that is a symlink is written through: the bytes go to the file it points at and the link stays a link
+/// (a `CLAUDE.md` that points at `AGENTS.md` is still that link afterwards).
 pub fn write_atomic(target: &Path, bytes: &[u8]) -> io::Result<()> {
+    let linked;
+    let target = if fs::symlink_metadata(target).is_ok_and(|m| m.file_type().is_symlink()) {
+        // a link that points nowhere is replaced by a file, as before
+        linked = fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+        linked.as_path()
+    } else {
+        target
+    };
     let dir = target.parent().expect("a file has a parent folder");
     fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(
@@ -63,6 +74,24 @@ mod tests {
             1,
             "only the file itself is left"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_written_through_and_stays_a_link() {
+        let d = fresh("link");
+        let real = d.join("AGENTS.md");
+        let link = d.join("CLAUDE.md");
+        write_atomic(&real, b"one").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", &link).unwrap();
+        write_atomic(&link, b"two").unwrap();
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&real).unwrap(), "two");
     }
 
     #[cfg(unix)]

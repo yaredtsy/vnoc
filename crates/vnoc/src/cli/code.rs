@@ -10,6 +10,7 @@ use super::show::numbered;
 use super::{Failure, Global, style};
 use crate::index::Kind;
 use crate::source;
+use vnoc_driver_protocol::{Position, Range};
 
 pub async fn run(global: &Global, args: &CodeArgs) -> Result<(), Failure> {
     let opened = open_from(global).await?;
@@ -43,13 +44,44 @@ pub async fn run(global: &Global, args: &CodeArgs) -> Result<(), Failure> {
                 format!("{location} is {what}: use vnoc show for a file or a folder"),
             ));
         };
-        let excerpt =
-            source::excerpt(&file_of(lookup, node), &range, args.context).map_err(|e| {
-                NodeError::new(
-                    "unreadable",
-                    format!("{} could not be read: {e}", node.path),
+        let (range, context) = match &args.lines {
+            None => (range, args.context),
+            Some(text) => {
+                let Some((from, to)) = parse_lines(text) else {
+                    return Err(NodeError::new(
+                        "bad_lines",
+                        format!(
+                            "--lines {text} is not a range: write it as a-b, for example 12-30"
+                        ),
+                    ));
+                };
+                if from < a || to > b {
+                    return Err(NodeError::new(
+                        "lines_outside",
+                        format!(
+                            "--lines {from}-{to} is outside {location} ({a}-{b}): ask for lines inside it"
+                        ),
+                    ));
+                }
+                let at = |line: u32| Position {
+                    line: line - 1,
+                    character: 0,
+                };
+                (
+                    Range {
+                        start: at(from),
+                        end: at(to),
+                    },
+                    0,
                 )
-            })?;
+            }
+        };
+        let excerpt = source::excerpt(&file_of(lookup, node), &range, context).map_err(|e| {
+            NodeError::new(
+                "unreadable",
+                format!("{} could not be read: {e}", node.path),
+            )
+        })?;
         Ok(CodeAnswer {
             kind: if node.kind == Kind::Class {
                 "class"
@@ -69,6 +101,18 @@ pub async fn run(global: &Global, args: &CodeArgs) -> Result<(), Failure> {
             headed: lookup.count > 1,
         })
     })
+}
+
+/// `a-b` (or one number) as 1-based file lines, a not after b, none 0.
+fn parse_lines(text: &str) -> Option<(u32, u32)> {
+    let (from, to) = match text.split_once('-') {
+        Some((from, to)) => (from.trim().parse().ok()?, to.trim().parse().ok()?),
+        None => {
+            let one = text.trim().parse().ok()?;
+            (one, one)
+        }
+    };
+    (from >= 1 && from <= to).then_some((from, to))
 }
 
 #[derive(Serialize)]

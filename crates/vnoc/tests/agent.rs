@@ -208,6 +208,35 @@ created      CLAUDE.md
     assert_eq!(get(&root, "AGENTS.md"), RULES);
 }
 
+/// A CLAUDE.md that is a link to AGENTS.md stays a link: install, status and remove write through it (git sees no type change).
+#[cfg(unix)]
+#[test]
+fn a_claude_md_that_is_a_symlink_is_written_through_and_stays_a_link() {
+    let (root, home) = world("link");
+    put(&root, "AGENTS.md", "# Our rules\n");
+    std::os::unix::fs::symlink("AGENTS.md", root.join("CLAUDE.md")).unwrap();
+    let is_link = || {
+        std::fs::symlink_metadata(root.join("CLAUDE.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    };
+    let o = vnoc(&root, &home, &["agent", "install", "--agent", "claude"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""), "{}", out(&o));
+    assert!(is_link(), "install kept the link");
+    let agents = get(&root, "AGENTS.md");
+    assert!(agents.starts_with("# Our rules\n"), "{agents}");
+    assert!(agents.contains("vnoc"), "the rules block is in the target");
+    assert_eq!(get(&root, "CLAUDE.md"), agents, "one file, two names");
+    let o = vnoc(&root, &home, &["agent", "status"]);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(is_link(), "status kept the link");
+    let o = vnoc(&root, &home, &["agent", "remove", "--agent", "claude"]);
+    assert_eq!((code(&o), err(&o).as_str()), (0, ""), "{}", out(&o));
+    assert!(is_link(), "remove kept the link");
+    assert_eq!(get(&root, "AGENTS.md"), "# Our rules\n", "{}", out(&o));
+}
+
 #[test]
 fn an_agent_with_no_known_syntax_gets_no_permission_lines() {
     let (root, home) = world("cursor");

@@ -1256,6 +1256,29 @@ fn code_prints_only_the_lines_and_context_adds_some_on_each_side() {
     );
 }
 
+#[test]
+fn code_with_lines_prints_only_those_lines_of_the_node_and_refuses_outside_it() {
+    let root = sample_copy("code-lines");
+    let source = std::fs::read_to_string(root.join("orders/service.py")).unwrap();
+    let source: Vec<&str> = source.lines().collect();
+    // the node is lines 10-13; the numbers stay the file's
+    let part = stdout_of(&root, &["code", METHOD, "--lines", "11-12"]);
+    assert_eq!(part, format!("11  {}\n12  {}\n", source[10], source[11]));
+    let one = stdout_of(&root, &["code", METHOD, "--lines", "13"]);
+    assert_eq!(one, format!("13  {}\n", source[12]));
+    let whole = stdout_of(&root, &["code", METHOD, "--lines", "10-13"]);
+    assert_eq!(whole, stdout_of(&root, &["code", METHOD]));
+    for outside in ["9-12", "12-14", "20-30"] {
+        let error = error_of(&root, &["code", METHOD, "--lines", outside]);
+        assert!(
+            error.contains(&format!("--lines {outside} is outside {METHOD} (10-13)")),
+            "{error}"
+        );
+    }
+    let error = error_of(&root, &["code", METHOD, "--lines", "12-x"]);
+    assert!(error.contains("is not a range"), "{error}");
+}
+
 #[cfg(unix)]
 #[test]
 fn one_wrong_node_among_three_prints_its_error_in_place_and_exits_2() {

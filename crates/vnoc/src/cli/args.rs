@@ -1141,6 +1141,9 @@ pub struct CodeArgs {
     /// Lines of the file to add above and below the def (its decorators are already in it).
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub context: u32,
+    /// Only these lines of the node, as `a-b` in the file's numbers (the numbers `code` prints). Refused outside the node's own lines.
+    #[arg(long, value_name = "A-B", conflicts_with = "context")]
+    pub lines: Option<String>,
 }
 
 #[cfg(test)]

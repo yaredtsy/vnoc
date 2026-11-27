@@ -12,7 +12,7 @@ user's canvas the moment you add it. **The tour is the answer.**
 ## The loop
 1. `vnoc tour start --title "<what the tour explains>" --question "<what the user wants to understand>" --author <your name>` prints the tour's id.
    Then say one line: `Tour started: <title>. It is on the V-NOC canvas.`
-2. For each stop: read the code (a function with `vnoc code <node>`, a file or a folder with `vnoc show <node>`), then add the stop
+2. For each stop: read the code with `vnoc code <node>` (`--lines 40-120` for a part of a long one), `vnoc show <node>` (a file or a folder) and `vnoc grep`, one command per call: no `|`, `;`, `head`, `sed` or `grep -n`. Then add the stop
    with its text as a heredoc: `vnoc tour add <id> <node> --body-file - <<'EOF'`, the text, and `EOF` on a line of its own.
    Search and read between stops as you need. Say nothing in the chat from start to finish, not even a short line beside an add.
 3. Run `finish` on its own, after the last `add` printed "written": `vnoc tour finish <id>`. Then one line: `Tour finished: <title> · <n> stops.`
@@ -37,10 +37,10 @@ newline: the host allows only a command it can read, and asks the user about any
     ### 11-16 <a detail inside lines 11-24>
     <text>
 
-- General first, then detail. Most stops need two or three `##` blocks and no `###`. Use `###` only to take a long part apart.
+- General first, then detail. A stop's blocks are its main parts, usually two or three `##`; `###` only for a part too long to read at once. A detailed tour gives deeper reasons, not more blocks. Leave out lines that only log, check arguments or pass a value on.
 - The line numbers are the file's, as `vnoc code` printed them.
 - Say **why**, not what: the code is on screen beside your text. Never retell it line by line.
-- A step's text is a full paragraph of 2-4 sentences: why this part exists, what depends on it or would break without it, and anything surprising (a bug, a trap, a default). A quick tour: one sentence. A detailed tour: use its larger budget for the reasoning. Markdown: a set of things is a list or a table. A flow across stops or files is a ```` ```mermaid ```` flowchart, one per step, best in the first stop's intro of a tour across files. A code fence only for what is not on screen (an example call, a payload), never the stop's own code. No headings, HTML or images in a text.
+- A step's text is a full paragraph of 2-4 sentences: why this part exists, what depends on it or would break without it, and anything surprising (a bug, a trap, a default). A quick tour: one sentence. A detailed tour: use its larger budget for the reasoning. Markdown: a set of things is a list or a table. A step whose code branches, loops, retries or fans out (a choice between outcomes, a retry, a loop, tasks run in parallel) gets a ```` ```mermaid ```` flowchart of that flow: one per step at most, small (about 8 boxes, the code's own names). A tour across files also opens with the whole route in the first stop's intro. Asked for diagrams or a detailed tour: one in every stop with such a flow; otherwise where it helps most. A code fence only for what is not on screen (an example call, a payload), never the stop's own code. No headings, HTML or images in a text.
 - A block's title says what the part does ("Retry only a dropped connection"), not the function's name.
 - No block for a line that only starts or returns.
 - A function under 8 lines is one step: the first paragraph only.

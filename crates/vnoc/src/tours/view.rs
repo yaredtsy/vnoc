@@ -103,6 +103,17 @@ fn stop_label(stop: &TourStop) -> String {
     }
 }
 
+/// A function nested in another def (`f.<locals>.g`, `Outer.method.<locals>.inner`): its own name and the nearest enclosing function or class. `None` for
+/// anything else: a method keeps `Class.method`.
+fn nested_name(qualname: &str) -> Option<(&str, &str)> {
+    if !qualname.contains("<locals>") {
+        return None;
+    }
+    let mut names = qualname.rsplit('.').filter(|part| *part != "<locals>");
+    let own = names.next()?;
+    Some((own, names.next()?))
+}
+
 /// Where a stop's lines are: `app/checkout.py:11-30`, the path alone for a folder. The stop's own record, as it was written.
 fn stop_place(stop: &TourStop) -> String {
     match (stop.kind.as_ref(), stop.lines) {
@@ -168,7 +179,11 @@ pub struct StopView {
     /// `planned`: on the route and not written yet
     pub planned: bool,
     pub kind: Option<String>,
+    /// the display name: a def's qualname, but a function nested in another def is only its own name (`_on_invoke_tool_impl`); the full address is `qualname`
     pub name: String,
+    /// the nearest enclosing function or class of a nested function (`_create_function_tool`), for the dim `in …` after its name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
     pub path: String,
     pub qualname: String,
     /// the node's key in the index's tree, `Node::id` as `vnoc/structure` gives it (a path, or `path::qualname#n`), from what the stop wrote, as `on::Map`
@@ -406,7 +421,9 @@ fn stop_view(number: usize, stop: &TourStop) -> StopView {
         depth: stop.depth,
         planned: !stop.written,
         kind: stop.kind.as_ref().map(|k| k.as_str().to_string()),
-        name: stop_label(stop),
+        name: nested_name(&stop.qualname)
+            .map_or_else(|| stop_label(stop), |(own, _)| own.to_string()),
+        container: nested_name(&stop.qualname).map(|(_, container)| container.to_string()),
         path: stop.path.to_string(),
         qualname: stop.qualname.clone(),
         key: tree_key(stop),
@@ -888,7 +905,7 @@ pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
                 Some(now) if !now.qualname.is_empty() && now.qualname != label => {
                     format!("{} (was {label})", now.qualname)
                 }
-                _ => s.name.clone(),
+                _ => label.clone(),
             };
             // a stop reached from another is marked `└`, a step in for each level
             let nest = match s.depth {
@@ -1598,6 +1615,23 @@ pub fn where_text(view: &WhereView, stop: Option<&TourStop>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_nested_function_has_its_own_name_and_its_container() {
+        assert_eq!(
+            nested_name(
+                "function_tool.<locals>._create_function_tool.<locals>._on_invoke_tool_impl"
+            ),
+            Some(("_on_invoke_tool_impl", "_create_function_tool"))
+        );
+        assert_eq!(
+            nested_name("Outer.method.<locals>.inner"),
+            Some(("inner", "method"))
+        );
+        assert_eq!(nested_name("f.<locals>.Cls.meth"), Some(("meth", "Cls")));
+        assert_eq!(nested_name("Runner.run"), None);
+        assert_eq!(nested_name("checkout_order"), None);
+    }
+
     use super::*;
     use crate::tours::fold::fold;
 

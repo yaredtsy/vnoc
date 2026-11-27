@@ -12,7 +12,7 @@ Tours: your coding agent explains code to you, step by step, on the canvas.
   **→ / Space** go on, **←** back, **↓ / ↑** by stop, **Esc** closes, **.** folds the stage to a one-line bar. The canvas shows the route as a map of cards.
 - **The TOURS section** in the side bar lists your tours: **All**, or only those **on the selected node**, and `▶ N` on a node says it has tours. It tells which tour is being written
   (`● writing 6/10`, with **Stop**) and which one is playing (**Stop Playing**); the place is kept, so a tour opens where you left it.
-- **Ask for a Tour…** opens a small dialog (from the `＋`, a node's menu, or an empty list): what to explain, how far (only this, what it calls, two levels), and how much detail. It gives you
+- **Ask for a Tour…** opens a small dialog (from the `＋`, a node's menu, or an empty list): what to explain, how far (a number of levels, or the agent decides), and how much detail. It gives you
   the request to paste to your agent.
 - **A tour knows when the code moved on.** A step whose code changed says so; a step whose code is gone says that. **Check All Tours** tells you how many changed.
 - **Pin a tour to a commit** and its changed steps show the code **as written**, with a switch to the code as it is now. **Commit and Pin…** commits the tour's files first when you ask it to.

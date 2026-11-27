@@ -6,7 +6,8 @@
       "lines": [
         14,
         15
-      ]
+      ],
+      "title": "One attempt, as a function"
     },
     {
       "first_line": "return gateway.charge(order.total)",
@@ -15,7 +16,8 @@
         15,
         15
       ],
-      "parent": "s1.b1"
+      "parent": "s1.b1",
+      "title": "The call itself"
     },
     {
       "first_line": "for _ in range(attempts):",
@@ -23,7 +25,8 @@
       "lines": [
         17,
         22
-      ]
+      ],
+      "title": "Try, and try again"
     }
   ],
   "command": "tour add",

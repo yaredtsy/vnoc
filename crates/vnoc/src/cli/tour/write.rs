@@ -242,6 +242,7 @@ struct AddedBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     parent: Option<String>,
     lines: [u32; 2],
+    title: String,
     /// the code of the block's first line, trimmed
     first_line: String,
 }
@@ -323,33 +324,39 @@ impl Render for Added {
                 steps_words(self.steps.len())
             )
         };
-        let id_width = self.blocks.iter().map(|b| b.id.len()).max().unwrap_or(0);
-        let lines_of = |b: &AddedBlock| {
-            if b.lines[0] == b.lines[1] {
-                b.lines[0].to_string()
-            } else {
-                format!("{}-{}", b.lines[0], b.lines[1])
-            }
-        };
-        let lines_width = self
-            .blocks
-            .iter()
-            .map(|b| lines_of(b).len())
-            .max()
-            .unwrap_or(0);
+        // one line a block: `## 11-24 Title → 11: the first lit line's code`, `###` for a detail
         for block in &self.blocks {
-            let indent = if block.parent.is_some() { "    " } else { "  " };
+            let [first, last] = block.lines;
+            let lines = if first == last {
+                first.to_string()
+            } else {
+                format!("{first}-{last}")
+            };
+            let (indent, mark) = if block.parent.is_some() {
+                ("    ", "###")
+            } else {
+                ("  ", "##")
+            };
             text.push_str(&format!(
-                "{indent}{:<id_width$}  {:<lines_width$}   {}\n",
-                block.id,
-                lines_of(block),
-                block.first_line,
+                "{indent}{mark} {lines} {} → {first}: {}\n",
+                block.title,
+                cut_at(&block.first_line, 60)
             ));
         }
         if self.unpinned {
             text.push_str("not pinned any more: the tour changed after it was pinned\n");
         }
         text
+    }
+}
+
+/// `text` cut to `max` characters, with `…` where it was cut.
+fn cut_at(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        let cut: String = text.chars().take(max - 1).collect();
+        format!("{}…", cut.trim_end())
     }
 }
 
@@ -482,6 +489,7 @@ pub(super) async fn add(global: &Global, args: &TourAddArgs) -> Result<(), Failu
                 id: step.id.to_string(),
                 parent: step.parent.map(|p| p.to_string()),
                 lines: [step.lines.first, step.lines.last],
+                title: step.title.clone(),
                 first_line: first_line(&text, step.lines.first),
             }),
             _ => None,
