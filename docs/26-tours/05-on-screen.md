@@ -682,6 +682,8 @@ only filtered Rust (tours 295, cli `tour_` 84, lifecycle `tour` 29, guide 12) an
   icon colour, red on hover.
 - The dialog's selected Detail segment uses the primary blue of **Copy Prompt**: it uses the secondary button's colours with a focus
   border, so only Copy Prompt is primary.
+- **The tour's id is nowhere on screen** (the user asked how to get it): the row's menu gains **Copy Tour ID**, and the row's tooltip
+  ends with the id. The CLI's `vnoc tour list` stays the other way.
 - `@types/vscode` resolves to 1.90.x in the lockfile too (`~1.90.0`), so the type check catches an API newer than the engine.
 
 **Next, in this order:**
