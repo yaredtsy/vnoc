@@ -862,6 +862,16 @@ for one row (*Let Claude Code run V-NOC's read and tour commands without asking?
 repair, init, tour pin — still ask.*) is a dim line printed before it and kept, and the answer is reported on the question's row
 (`.report(true)`: `✔ Let Claude Code run … · yes`). A test at an 80-column terminal width.
 
+**The user, 2026-11-28: a search pick does not find a call that is drawn** (openai-agents-python: `run_single_turn` is one of
+`_run_impl`'s 125 callees, `vnoc calls` lists it ×2 in 2.75 s; the canvas's `_run_impl` call view does not show or select it after
+picking it in **Search nodes…**). Not the card budget (`MAX_CARDS` 200). A pick reveals by **structure** (`pickIntent` → `reveal` in
+`shared/session.ts`): the focus shortens until it holds the node's file (`run_loop.py`, outside the view's focus), so the call view
+loses its focus and the whole project is drawn, far out; the call card that is already drawn is never looked for. **Decided** (the fix
+step, its own commit, outside tours' code): a pick, when the active view draws a call card for that node (any depth), selects and
+frames that card and keeps the focus; otherwise as now. A window test on a call view with the callee drawn. Also checked: the
+`_run_impl` card's `… calls not loaded` beside its drawn calls — the user checks whether it stays after close and reopen; if it does,
+it is a stale mark, fixed in the same commit.
+
 **Next, in this order:**
 - The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
 - (done) **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
