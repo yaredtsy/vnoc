@@ -642,8 +642,17 @@ the tour's context and MAIN is as it was"*, MAIN's viewport). The disk fell to 8
 - The playing row was not photographed: TR23b's shots include it.
 - The unreproduced window failure: watched in TR23b's full run; if it recurs it is fixed there.
 
+**As built (TR23p, `42cc486`, `bbcdf49`; reviewed).** The lit block is tinted with `focusBorder` at 14% over the theme's highlight: plain
+in Dark Modern (screenshot `tools/media/out/tr23p/04`). Notices regenerated. A 0.4.0 VSIX (19.8 MB; `vnoc 0.4.0`; Bend inside) and CLI
+archive for the user. **`vsce` refused to package:** Dependabot raised `@types/vscode` to `^1.146.0` (`d8bb328`, on `origin/main` too)
+above `engines.vscode` `^1.90.0`; the session set it back only while packaging.
+
+**Decided at TR23p's review:** `@types/vscode` is pinned back to `^1.90.0` (lockfile too) and Dependabot ignores it; `engines.vscode`
+stays `^1.90.0`. Raising the engine would refuse installs in Cursor and other editors built on an older VS Code. `origin/main` has the
+same fault: it goes with the 0.3.1 deadlock fix if the user wants one on `main`. TR23b's first commit.
+
 **Next, in this order:**
-- **A new 0.4.0 VSIX** for the user (only the package; nothing else), then **TR23b**, then TR24.
+- **The user tries the 0.4.0 VSIX**, then **TR23b** (the pin above first), then TR24.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
