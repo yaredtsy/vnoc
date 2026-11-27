@@ -752,8 +752,31 @@ The guide's two examples stopped matching (`show --text`, `check | tail -n 1`). 
 print now (they are examples, not lines an agent acts on), and `vnoc tour check | tail -n 1` becomes `vnoc tour check`: a pipe is a
 second command to the host's allow rules, as `;` is (the skill's rule), and the summary is now the first line.
 
+**As built (TR23d, `4214955`, `7225cb1`; reviewed).** Every key of design/05 §6 on the stage (`→`/Space, `←`, `↓`/`↑` by stop, `Alt+←`,
+Home/End, Enter, `⌘Enter` Go to Code, Esc, `.` fold), Reduce motion through `motionMs` (a CSS source test); screen-reader labels
+(`labels.ts`, unit-tested only); Show Docs from a card selects that card's node first; the picker shows `on.words`; Check All Tours'
+`words`; the title said once; unique Mermaid overlay ids; the cover says `· detailed ·` / `· quick ·`. Below 640 px the stage stacks;
+the mini bar; code soft-wraps with an indent; offers right after Start; the list's first row never under the header; a hover `⋯`.
+Rust lib 582; TS 913 / 319; the full window run: 192, only Bend's 3 failing.
+
+**Decided at TR23d's review** (TR24a's first commit), from its screenshots:
+- the `▾ N more lit lines` chip covers the last code row (`dark-520-stage-on-a-step`): it sits in its own thin row under the code, never
+  over it;
+- the cover: `not pinned` comes last, after the offers it explains, and the stage's header strip is empty on the cover but for the fold
+  arrow. The header carries the tour's title on the cover (the body starts with the question), and `not pinned` stands between Start
+  and its offers.
+
+**TR24 is cut in two:**
+- **TR24a** (the coding session): the two fixes above; the Bend driver built once in debug, so its 13 Rust and 3 window failures go;
+  the owed full runs, **twice**, each with no failure; a 0.4.0 entry in `CHANGELOG.md`; the pull request's description written to a file
+  (nothing pushed); a VSIX for the by-hand pass.
+- **TR24b** (the user, by hand, on that VSIX): design/05 §8's checks in Dark+, Light+ and High Contrast, VoiceOver, Reduce motion; "explain
+  this more" on a step; "take me to stop 3"; a tour of uncommitted work to pinned; watch one person take a tour in silence. Then push,
+  the PR, the merge, the tag.
+- Mermaid's 5.2 MB stays (the user was asked; the VSIX is 19.9 MB, no reason to cut diagram types now).
+
 **Next, in this order:**
-- The guide fix, a VSIX and CLI archive for the user (the new CLI look is in the archive), then **TR23d**, then TR24 (with the full runs).
+- **TR24a**, then **TR24b** (the user), then push, PR, merge, `v0.4.0`.
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
