@@ -977,7 +977,7 @@ suite("a tour read while it is written", () => {
     }
     assert.ok(refused, "the add was refused: it exited with an error");
     assert.strictEqual(refused.status, 1);
-    assert.match(`${refused.stdout}${refused.stderr}`, /^stopped: the reader stopped this tour/m, "the core says the tour was stopped");
+    assert.match(`${refused.stdout}${refused.stderr}`, /^(! )?stopped: the reader stopped this tour/m, "the core says the tour was stopped");
     await barShows("stopped", (b) => b.agent === "stopped");
     const stopped = await stageShows("the stage says stopped", (x) => x.beat === "stopped", 10_000, writer);
     assert.strictEqual(stopped.sentence, "Not written: the tour was stopped here. Ask the agent to continue it.");
@@ -1368,7 +1368,9 @@ suite("the tours of the selected node", () => {
     assert.strictEqual(drawn.list.find((r) => r.id === pinnedId)?.line2, "stop 2 of 3");
     // the row keeps its state at the right of line 1: the core's `state_word`, the word its own `words` starts with (after `shared ·`)
     assert.deepStrictEqual(drawn.list.map((r) => [r.id, r.stateWord]), rows.map((r) => [r.id, r.state_word]), "the state word is the core's");
-    assert.ok(rows.every((r) => r.state_word !== "" && r.words.replace(/^shared · /, "").startsWith(r.state_word)), JSON.stringify(rows.map((r) => [r.state_word, r.words])));
+    // line 2 does not say again what line 1 says: a tour being written, stopping or stopped has `writing`, `stopping`, `stopped`, `no news` there (TR23b)
+    const onLine1 = ["writing", "stopping", "stopped", "no news"];
+    assert.ok(rows.every((r) => r.state_word !== "" && (onLine1.includes(r.state_word) || r.words.replace(/^shared · /, "").startsWith(r.state_word))), JSON.stringify(rows.map((r) => [r.state_word, r.words])));
     assert.strictEqual(drawn.empty, null);
     // a click opens at the stop the core named
     api.toursClick(`row:${pinnedId}`);
