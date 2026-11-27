@@ -840,8 +840,23 @@ decided for **TR24u**:
   install` writes says: *"this", "here" or "take me to …" may mean the tour open in V-NOC: run `vnoc tour where` first.*
 - With them: `add`'s block lines carry their ids again, and the Ask chip shows the short name (TR24s's review).
 
+**As built (TR24u, `3617f9a`, `ce5eb98`, `8c44c33`; reviewed).** `add` (and import) refuse a duplicate sibling stop (`s4:
+AgentRunner._run_impl is already s3, beside it: make this a block of s3, or a detail of one of its blocks`) and overlapping sibling
+blocks (reworded); `--same-as` and planned stops are not siblings. The skill and guide: one stop per function where it is reached, parts
+as `##` with `###` details; diagrams on the block whose own lines have the flow. The always-loaded rules block: *"this", "here" or "take me
+to …" may mean the tour open in V-NOC: run `vnoc tour where` first.* `add`'s block lines carry ids. A large diagram opens fitted (zoom,
+pan, `0`, Esc). The Ask chip shows the short name. **G11 was not reproduced**: on the debug core in the dev window, the film's project
+drew `run_loop.py`'s code in 174–267 ms every time (also under load); every move request ≤ 29 ms; the stage draws from the host's `code`
+request (VS Code's document) and waits on nothing slow. The film ran the release core from the VSIX under its harness. A window test
+holds the calls count and still draws in 82 ms. Rust lib 585, lifecycle 82; TS 922 / 319; window 205 + `waits` 2, no failure. VSIX
+sha256 `5ae675e3…`.
+
+**Decided at TR24u's review:** the film checks this VSIX. If the 19 s comes back there, the next step adds a host trace (a setting that
+logs each host request's time and the code request's `openTextDocument`) and the film runs once with it; the cause is fixed from that.
+
 **Next, in this order:**
-- **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
+- The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
+- (done) **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
   diagram that fits) and the user's by-hand pass on it; then push, PR, merge, `v0.4.0`.
 - (superseded) The film's proof run on this VSIX (the same prompt: ≥ 3 diagrams on stops with a flow; fewer, larger blocks), and **TR24b**, the user's
   by-hand pass, on the same build; then one fix step for what both find; then push, PR, merge, `v0.4.0`.
