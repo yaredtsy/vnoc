@@ -1,5 +1,6 @@
-retry_charge   "what happens when the gateway drops the call"
-private · finished · 4 stops · 7 steps · by claude-code · not pinned
+retry_charge                              finished · 4 stops · 7 steps · by claude-code · not pinned
+<tour> · private · “what happens when the gateway drops the call”
+
  1  s1  ƒ retry_charge                     billing/charge.py:11-22  4 steps
       retry_charge calls the gateway and tries again when the call drops, up to a fixed number of
       attempts, then gives up with an error that names the order.
@@ -12,9 +13,9 @@ private · finished · 4 stops · 7 steps · by claude-code · not pinned
     s1.b3  17-22  Try, and try again
       Only a dropped connection is retried: any other error leaves the loop at once. When every
       attempt drops, the function raises ChargeError.
- 2  s2    ƒ retry_charge.<locals>.one_try  billing/charge.py:14-15  1 step   ← s1 line 19
+ 2  s2  └ ƒ retry_charge.<locals>.one_try  billing/charge.py:14-15  1 step   ← s1 line 19
       one_try makes the one call to the gateway and returns what it answers.
- 3  s3    ◆ ChargeError                    billing/charge.py:7-8    1 step   ← s1 line 22
+ 3  s3  └ ◆ ChargeError                    billing/charge.py:7-8    1 step   ← s1 line 22
       ChargeError is what the caller sees when every attempt dropped; it carries nothing but its
       message.
  4  s4  ƒ retry_charge.<locals>.one_try    billing/charge.py:14-15  1 step   = s2

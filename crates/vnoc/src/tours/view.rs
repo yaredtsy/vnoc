@@ -783,10 +783,9 @@ pub fn stops_words(written: usize, planned: usize) -> String {
     }
 }
 
-/// `private · writing · 6 of 10 stops · 15 steps · by claude-code · not pinned (being written)`.
+/// `writing · 6 of 10 stops · 15 steps · by claude-code · not pinned (being written)`.
 fn facts(tour: &Tour, view: &TourView) -> String {
     let mut facts = vec![
-        view.folder.to_string(),
         view.state.to_string(),
         stops_words(view.written, view.planned),
         count(view.steps, "step", "steps"),
@@ -796,14 +795,6 @@ fn facts(tour: &Tour, view: &TourView) -> String {
     }
     facts.push(pin_words(tour, view.pin_in_repository != Some(false)));
     facts.join(" · ")
-}
-
-/// `title   "question"`.
-fn head(title: &str, question: Option<&str>) -> String {
-    match question {
-        Some(q) => format!("{title}   \"{q}\""),
-        None => title.to_string(),
-    }
 }
 
 /// `← s1 line 13`, `← s1`, and `= s2`, in one string; empty for a stop at the top that repeats nothing.
@@ -859,20 +850,24 @@ fn wrapped(text: &str, indent: usize) -> String {
     out
 }
 
-/// What `show` prints: the title, the facts, one row per stop (details of a block with `with_text`), then the lines of the file that were skipped.
+/// What `show` prints (docs/26-tours/05 §5): the title and the facts, the id with where it is kept and the question, then a row for each stop, nested
+/// stops marked with `└`, and under each its blocks (their text too with `with_text`), then the lines of the file that were skipped.
 ///
 /// ```text
-/// checkout_order   "what happens when the payment times out"
-/// private · writing · 3 of 4 stops · 8 steps · by claude-code · not pinned (being written)
-///  1  s1  ƒ checkout_order    app/checkout.py:11-30   5 steps
-///  2  s2    ƒ check_stock     app/inventory.py:12-15  1 step    ← s1 line 13
+/// checkout_order   writing · 3 of 4 stops · 8 steps · by claude-code · not pinned (being written)
+/// checkout-order-7k2q · private · “what happens when the payment times out”
+///
+///  1  s1  ƒ checkout_order   app/checkout.py:11-30   2 steps
+///       s1.b1  11-24  Retry
+///  2  s2  └ ƒ check_stock    app/inventory.py:12-15  1 step    ← s1 line 13
 /// ```
 pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
-    let mut text = format!(
-        "{}\n{}\n",
-        head(&view.title, view.question.as_deref()),
-        facts(tour, view)
-    );
+    let mut text = format!("{}   {}\n", view.title, facts(tour, view));
+    text.push_str(&format!("{} · {}", view.id, view.folder));
+    if let Some(question) = &view.question {
+        text.push_str(&format!(" · “{question}”"));
+    }
+    text.push('\n');
     if let Some(check) = &view.check {
         text.push_str(&format!(
             "{} {}\n",
@@ -880,6 +875,7 @@ pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
             when_words(check.from, check.fresh, &check.at, &super::time::now())
         ));
     }
+    text.push('\n');
     let id_width = view.stops.iter().map(|s| s.id.len()).max().unwrap_or(2);
     let rows: Vec<(String, String, String)> = view
         .stops
@@ -894,7 +890,12 @@ pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
                 }
                 _ => s.name.clone(),
             };
-            let name = format!("{}{} {shown_name}", "  ".repeat(s.depth), icon(kind));
+            // a stop reached from another is marked `└`, a step in for each level
+            let nest = match s.depth {
+                0 => String::new(),
+                d => format!("{}└ ", "  ".repeat(d - 1)),
+            };
+            let name = format!("{nest}{} {shown_name}", icon(kind));
             let place = if s.planned && s.lines.is_none() {
                 // not written: the name it will be found by
                 if s.qualname.is_empty() {
@@ -944,9 +945,7 @@ pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
         if let Some(written) = &stop.as_written {
             text.push_str(&written.text());
         }
-        if with_text {
-            text.push_str(&stop_text(stop));
-        }
+        text.push_str(&stop_text(stop, with_text));
     }
     if !view.problems.is_empty() {
         text.push_str(&format!(
@@ -960,10 +959,10 @@ pub fn outline_text(tour: &Tour, view: &TourView, with_text: bool) -> String {
     text
 }
 
-/// The intro of a stop and each of its blocks, under its row: the id and the lines of a block, then its title, then its text.
-fn stop_text(stop: &StopView) -> String {
+/// Under a stop's row: its blocks (the id, the lines and the title of each); with `with_text` the intro first and the text under each block.
+fn stop_text(stop: &StopView, with_text: bool) -> String {
     let mut text = String::new();
-    if let Some(intro) = &stop.text {
+    if let (true, Some(intro)) = (with_text, &stop.text) {
         text.push_str(&wrapped(intro, 6));
     }
     for block in &stop.blocks {
@@ -985,7 +984,9 @@ fn stop_text(stop: &StopView) -> String {
             block.id,
             block.title
         ));
-        text.push_str(&wrapped(&block.text, indent));
+        if with_text {
+            text.push_str(&wrapped(&block.text, indent));
+        }
     }
     text
 }
@@ -1051,8 +1052,15 @@ pub struct ListRowView {
     /// the one word of design 07 §3 that `words` starts with (after `shared ·`): `writing`, `changed`, `stop 4`, `finished`, `new`, `seen 2 of 9`. Empty for a tour that cannot be read.
     /// The On view draws it at the right of line 1 (`words` is then the node's)
     pub state_word: String,
+    /// when the tour was started (`2026-11-23T18:40:02Z`): the list says it in words; not part of `--json`
     #[serde(skip)]
-    pins: String,
+    pub started: String,
+    /// when the reader last moved in the tour; empty for a tour nobody has moved in. Not part of `--json`
+    #[serde(skip)]
+    pub moved: String,
+    /// `list --check`: a fresh tour says so too (a changed one always does). Not part of `--json`
+    #[serde(skip)]
+    pub say_fresh: bool,
 }
 
 /// What the cover of a finished tour offers (05 §3), by `[tours] ids` and `[tours] commit`: only for `"ask"`. `"always"` was done at `finish` and `"never"` is
@@ -1180,12 +1188,6 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                         Some(pin) if tour.pinned() => in_repository(&pin.commit),
                         _ => true,
                     };
-                    let mut pins = pin_words(tour, held);
-                    match recorded {
-                        Some(r) if !r.fresh() => pins.push_str(" · changed"),
-                        Some(_) if say_fresh => pins.push_str(" · fresh"),
-                        _ => {}
-                    }
                     ListRowView {
                         id: view.id.clone(),
                         folder: view.folder,
@@ -1212,7 +1214,9 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                         offers: None,
                         words: String::new(),
                         state_word: String::new(),
-                        pins,
+                        started: tour.at.clone(),
+                        moved: String::new(),
+                        say_fresh,
                     }
                 }
                 Err(Unreadable { why, .. }) => ListRowView {
@@ -1241,7 +1245,9 @@ pub fn list_rows<R: std::borrow::Borrow<Row>>(
                     offers: None,
                     words: "cannot be read".to_string(),
                     state_word: String::new(),
-                    pins: String::new(),
+                    started: String::new(),
+                    moved: String::new(),
+                    say_fresh,
                 },
             }
         })
@@ -1321,74 +1327,6 @@ pub fn when_word(at: &str, now: &str) -> String {
             }
         }
     }
-}
-
-/// What `list` prints: a row a tour, in columns.
-///
-/// ```text
-/// checkout-order-7k2q  writing   6 of 10 stops  private  not pinned (being written)  checkout_order  "what happens …"
-/// ```
-pub fn list_text(rows: &[ListRowView]) -> String {
-    let cells: Vec<[String; 6]> = rows
-        .iter()
-        .map(|r| {
-            if !r.readable {
-                return [
-                    r.id.clone(),
-                    "cannot be read".to_string(),
-                    String::new(),
-                    folder_cell(r),
-                    String::new(),
-                    r.problem.clone().unwrap_or_default(),
-                ];
-            }
-            let title = r.title.clone().unwrap_or_default();
-            let said = match &r.question {
-                Some(q) => format!("{title}   \"{q}\""),
-                None => title,
-            };
-            [
-                r.id.clone(),
-                r.state.unwrap_or_default().to_string(),
-                stops_words(r.written.unwrap_or(0), r.planned.unwrap_or(0)),
-                folder_cell(r),
-                r.pins.clone(),
-                said,
-            ]
-        })
-        .collect();
-    let width = |i: usize| cells_width(&cells, i);
-    let widths: Vec<usize> = (0..5).map(width).collect();
-    let mut text = String::new();
-    for (at, cell) in cells.iter().enumerate() {
-        let mut row = String::new();
-        for (i, w) in widths.iter().enumerate() {
-            row.push_str(&format!("{:<w$}  ", cell[i], w = *w));
-        }
-        row.push_str(&cell[5]);
-        text.push_str(row.trim_end());
-        text.push('\n');
-        if let Some(on) = &rows[at].on {
-            text.push_str(&format!("  {}\n", on.words));
-        }
-    }
-    text
-}
-
-fn folder_cell(r: &ListRowView) -> String {
-    if r.private_copy {
-        format!("{} (private copy)", r.folder)
-    } else {
-        r.folder.to_string()
-    }
-}
-
-fn cells_width(cells: &[[String; 6]], i: usize) -> usize {
-    cells
-        .iter()
-        .map(|c| c[i].chars().count())
-        .max()
-        .unwrap_or(0)
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------- where
@@ -1672,12 +1610,14 @@ mod tests {
         let shown = tour_view(&t, Where::Private);
         assert_eq!(
             outline_text(&t, &shown, false),
-            "checkout_order   \"what happens when the payment times out\"\n\
-             private · writing · 3 of 4 stops · 4 steps · by claude-code · not pinned (being written)\n \
-             1  s1  ƒ checkout_order     app/checkout.py:11-30             2 steps\n \
-             2  s2    ƒ check_stock      app/inventory.py:11-30            1 step   ← s1 line 13\n \
-             3  s3      ƒ check_stock    app/inventory.py:11-30            1 step   ← s2 line 3   = s2\n \
-             4  s4    ◌ cancel_checkout  app/checkout.py::cancel_checkout  planned  ← s1 line 21\n"
+            "checkout_order   writing · 3 of 4 stops · 4 steps · by claude-code · not pinned (being written)\n\
+             checkout-order-7k2q · private · “what happens when the payment times out”\n\
+             \n \
+             1  s1  ƒ checkout_order     app/checkout.py:11-30             2 steps\n    \
+             s1.b1  11-24  T\n \
+             2  s2  └ ƒ check_stock      app/inventory.py:11-30            1 step   ← s1 line 13\n \
+             3  s3    └ ƒ check_stock    app/inventory.py:11-30            1 step   ← s2 line 3   = s2\n \
+             4  s4  └ ◌ cancel_checkout  app/checkout.py::cancel_checkout  planned  ← s1 line 21\n"
         );
     }
 
@@ -1691,7 +1631,7 @@ mod tests {
         ]);
         let shown = tour_view(&t, Where::Private);
         let text = outline_text(&t, &shown, true);
-        let rows: Vec<&str> = text.lines().skip(2).collect();
+        let rows: Vec<&str> = text.lines().skip(3).collect();
         assert_eq!(rows[0], " 1  s1  ƒ f  a.py:11-30  3 steps");
         // 40 words of 5 characters wrapped under 6 spaces: no line past 100 columns, every one indented
         for line in &rows[1..4] {
@@ -1715,10 +1655,14 @@ mod tests {
             r#"{"type":"stop","id":"s1","path":"app","qualname":"","kind":"folder","text":"t"}"#;
         let t = tour(&[folder.to_string()]);
         let text = outline_text(&t, &tour_view(&t, Where::Project), false);
-        assert_eq!(text.lines().nth(2).unwrap(), " 1  s1  □ app/  1 step");
+        assert_eq!(text.lines().nth(3).unwrap(), " 1  s1  □ app/  1 step");
+        assert_eq!(
+            text.lines().next().unwrap(),
+            "checkout_order   writing · 1 stop · 1 step · by claude-code · not pinned (being written)"
+        );
         assert_eq!(
             text.lines().nth(1).unwrap(),
-            "project · writing · 1 stop · 1 step · by claude-code · not pinned (being written)"
+            "checkout-order-7k2q · project · “what happens when the payment times out”"
         );
     }
 
@@ -1733,7 +1677,7 @@ mod tests {
         let text = outline_text(&t, &tour_view(&t, Where::Private), false);
         assert!(
             text.contains(
-                " · finished · 1 stop · 1 step · by claude-code · not pinned
+                "   finished · 1 stop · 1 step · by claude-code · not pinned
 "
             ),
             "{text}"
@@ -1775,12 +1719,6 @@ mod tests {
             ),
         ];
         let views = list_rows(&rows, &BTreeMap::new(), false, &|_| true);
-        assert_eq!(
-            list_text(&views),
-            "checkout-order-7k2q  writing         1 stop  project                 not pinned (being written)  checkout_order   \"what happens when the payment times out\"\n\
-             checkout-order-7k2q  writing         1 stop  private (private copy)  not pinned (being written)  checkout_order   \"what happens when the payment times out\"\n\
-             broken-0000          cannot be read          private                                             the first line is not JSON\n"
-        );
         assert!(views[1].private_copy);
         assert!(!views[0].private_copy);
         assert!(!views[2].readable);

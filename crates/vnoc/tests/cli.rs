@@ -6514,7 +6514,7 @@ fn the_loop_of_the_guide_start_add_add_add_finish_then_show() {
     ));
     assert_eq!(code(&started), 0, "{}", text(&started.stderr));
     assert!(started.stderr.is_empty());
-    let started_text = text(&started.stdout);
+    let started_text = words_of(&text(&started.stdout));
     let tour = started_text.split_whitespace().nth(1).unwrap().to_string();
     assert!(tour.starts_with("retry-charge-"), "{started_text}");
     golden_text(
@@ -6549,7 +6549,7 @@ fn the_loop_of_the_guide_start_add_add_add_finish_then_show() {
         "ChargeError is what the caller sees when every attempt dropped; it carries nothing but its message.\n",
     );
     assert_eq!(code(&s3), 0, "{}", text(&s3.stderr));
-    assert!(text(&s3.stdout).starts_with("s3 written   stop 3   ◆ ChargeError"));
+    assert!(words_of(&text(&s3.stdout)).starts_with("s3 written   stop 3   ◆ ChargeError"));
     // s4: one_try again, which the tour explained already
     let s4 = tour_add(
         &root,
@@ -6564,7 +6564,7 @@ fn the_loop_of_the_guide_start_add_add_add_finish_then_show() {
     assert_eq!(code(&finished), 0);
     // the setting is absent, so `ask`: the line for the agent to pass on (TR7), and nothing written
     assert!(
-        text(&finished.stdout)
+        words_of(&text(&finished.stdout))
             .starts_with("finished: 4 stops, 7 steps\nask the user  4 stops have no ID: "),
         "{}",
         text(&finished.stdout)
@@ -7176,7 +7176,7 @@ fn a_tour_named_wrong_gets_did_you_mean_and_the_start_of_an_id_is_enough() {
     let out = run(vnoc(&root, &["tour", "show", &a.replace("retry", "retri")]));
     assert_eq!(code(&out), 2);
     let err = text(&out.stderr);
-    assert!(err.starts_with("error: no tour retri"), "{err}");
+    assert!(err.starts_with("✗ no tour retri"), "{err}");
     assert!(err.contains("did you mean") && err.contains(&a), "{err}");
     // two tours start with `re`
     let out = run(vnoc(&root, &["tour", "show", "re"]));
@@ -7304,7 +7304,7 @@ fn finish_twice_says_so_and_writes_once() {
     assert_eq!(code(&tour_add(&root, &tour, RETRY, &[], RETRY_BODY)), 0);
     let first = run(vnoc(&root, &["tour", "finish", &tour]));
     assert!(
-        text(&first.stdout)
+        words_of(&text(&first.stdout))
             .starts_with("finished: 1 stop, 4 steps\nask the user  1 stop has no ID: "),
         "{}",
         text(&first.stdout)
@@ -7312,7 +7312,10 @@ fn finish_twice_says_so_and_writes_once() {
     let after_first = std::fs::read(tour_file(&root, &tour)).unwrap();
     let second = run(vnoc(&root, &["tour", "finish", &tour]));
     assert_eq!(code(&second), 0);
-    assert_eq!(text(&second.stdout), "already finished: 1 stop, 4 steps\n");
+    assert_eq!(
+        words_of(&text(&second.stdout)),
+        "already finished: 1 stop, 4 steps\n"
+    );
     assert_eq!(
         std::fs::read(tour_file(&root, &tour)).unwrap(),
         after_first,
@@ -7334,7 +7337,7 @@ fn finish_twice_says_so_and_writes_once() {
     assert_eq!(code(&more), 0, "{}", text(&more.stderr));
     let shown = run(vnoc(&root, &["tour", "show", &tour]));
     assert!(
-        text(&shown.stdout).contains("· finished · 2 stops"),
+        text(&shown.stdout).contains("finished · 2 stops"),
         "{}",
         text(&shown.stdout)
     );
@@ -7364,28 +7367,35 @@ fn list_with_none_says_so_and_with_two_lists_the_newer_first() {
     assert_eq!(code(&run(vnoc(&root, &["tour", "finish", &a]))), 0);
     let listed = run(vnoc(&root, &["tour", "list"]));
     assert_eq!(code(&listed), 0);
-    let rows: Vec<String> = text(&listed.stdout).lines().map(String::from).collect();
-    assert_eq!(rows.len(), 2, "{rows:?}");
+    // a block a tour: the one being written first, then the finished one
+    let listed_text = text(&listed.stdout);
+    let blocks: Vec<&str> = listed_text.trim_end().split("\n\n").collect();
+    assert_eq!(blocks.len(), 2, "{listed_text}");
+    let rows: Vec<Vec<&str>> = blocks.iter().map(|b| b.lines().collect()).collect();
     assert!(
-        rows[0].starts_with(&b) && rows[0].contains("writing") && rows[0].contains("0 stops"),
+        rows[0][0].contains("writing") && rows[0][0].ends_with("0 stops"),
         "{}",
-        rows[0]
+        blocks[0]
+    );
+    assert!(rows[0][1].trim_start().starts_with(&b), "{}", blocks[0]);
+    assert!(
+        rows[1][0].contains("finished") && rows[1][0].ends_with("1 stop"),
+        "{}",
+        blocks[1]
     );
     assert!(
-        rows[1].starts_with(&a) && rows[1].contains("finished") && rows[1].contains("1 stop"),
+        rows[1][1].trim_start().starts_with(&a) && rows[1][1].contains("· private · not pinned"),
         "{}",
-        rows[1]
+        blocks[1]
     );
     assert!(
-        rows[1].contains("private") && rows[1].contains("not pinned"),
-        "{}",
         rows[1]
-    );
-    assert!(
-        rows[1].contains("retry_charge   \"what happens when the gateway drops the call\"")
-            || rows[1].ends_with("retry_charge"),
+            .last()
+            .unwrap()
+            .contains("“what happens when the gateway drops the call”")
+            || rows[1][0].contains("retry_charge"),
         "{}",
-        rows[1]
+        blocks[1]
     );
     // a file in the folder that is not a tour is said once, on standard error
     std::fs::write(root.join(".vnoc/local/tours/notes.txt"), "x").unwrap();
@@ -7428,7 +7438,7 @@ fn show_of_a_tour_that_cannot_be_read_says_so_and_exits_0() {
     let listed = run(vnoc(&root, &["tour", "list"]));
     assert_eq!(code(&listed), 0);
     assert!(
-        text(&listed.stdout).contains("cannot be read"),
+        text(&listed.stdout).contains("unreadable") && text(&listed.stdout).contains("schema 2"),
         "{}",
         text(&listed.stdout)
     );
@@ -7460,8 +7470,9 @@ fn a_tour_in_both_folders_is_listed_twice_and_refuses_a_write() {
     .unwrap();
     let listed = run(vnoc(&root, &["tour", "list"]));
     let rows = text(&listed.stdout);
-    assert_eq!(rows.lines().count(), 2, "{rows}");
-    assert!(rows.contains("(private copy)"), "{rows}");
+    // a block of two lines and the question under it, for each of the two
+    assert_eq!(rows.lines().filter(|l| !l.is_empty()).count(), 6, "{rows}");
+    assert!(rows.contains("private copy"), "{rows}");
     let before = listing(&root);
     let out = tour_add(&root, &tour, "billing/charge.py::refund", &[], "refund.\n");
     assert_eq!(code(&out), 2);
@@ -7573,14 +7584,46 @@ fn loop_tour(root: &Path) -> String {
     tour
 }
 
-/// `vnoc tour …` that must succeed, with its standard output.
+/// The words of a tour command's answer, as they were before its look (TR23c): the mark of the first line gone, the other lines out by two spaces, and a
+/// refusal's `✗` as the `error:` it says. The tests of what a command *says* read this; the goldens and the tests of the look read the answer itself.
+fn words_of(answer: &str) -> String {
+    let mut lines = answer.split_inclusive('\n');
+    let Some(first) = lines.next() else {
+        return String::new();
+    };
+    let Some(first) = ["✓ ", "! ", "✗ "]
+        .iter()
+        .find_map(|m| first.strip_prefix(m))
+    else {
+        // no mark: `show`, `list`, a refusal's list: not dressed
+        return answer.to_string();
+    };
+    let rest: String = lines
+        .map(|line| line.strip_prefix("  ").unwrap_or(line))
+        .collect();
+    format!("{first}{rest}")
+}
+
+/// A refusal on standard error as it said before: its `✗` is the `error:` word (the lists under it were never indented by the look).
+fn refusal_words(stderr: &str) -> String {
+    match stderr.strip_prefix("✗ ") {
+        Some(rest) => format!("error: {rest}"),
+        None => stderr.to_string(),
+    }
+}
+
+/// `vnoc tour …` that must succeed, with its standard output (its words: see [`words_of`]; `--json` as it is).
 fn tour_ok(root: &Path, args: &[&str]) -> String {
     let mut all = vec!["tour"];
     all.extend_from_slice(args);
     let out = run(vnoc(root, &all));
     assert_eq!(code(&out), 0, "{args:?}: {}", text(&out.stderr));
     assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
-    text(&out.stdout)
+    if args.contains(&"--json") {
+        text(&out.stdout)
+    } else {
+        words_of(&text(&out.stdout))
+    }
 }
 
 fn tour_json(root: &Path, args: &[&str]) -> Value {
@@ -8050,10 +8093,7 @@ fn list_says_changed_from_a_record_that_holds_and_nothing_else_and_never_checks(
     );
     assert!(!checked(&root, &[]).1);
     let row = plain(&root);
-    assert!(
-        row.contains("not pinned (being written) · changed"),
-        "{row}"
-    );
+    assert!(row.contains("· private · changed ·"), "{row}");
     assert_eq!(tour_json(&root, &["list"])["tours"][0]["check"], "changed");
     // `list --check` checks first, and says `fresh` for a tour that is
     edit_file(
@@ -8133,7 +8173,10 @@ fn list_on_a_function_a_class_a_file_and_a_folder_says_how_each_tour_is_on_it() 
     // the text: a row, then line 2 under it
     let text = on(ONE_TRY);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!((lines.len(), lines[1]), (2, "  stops 2 and 4 of 4"));
+    assert!(
+        lines[0].trim_end().ends_with("stops 2 and 4 of 4") && lines.len() == 3,
+        "{text}"
+    );
     golden_text(
         "tour-list-on.txt",
         &tour_unrooted(on(ONE_TRY).as_bytes(), &root, &tour),
@@ -8178,11 +8221,13 @@ fn check_with_no_tours_or_a_wrong_name_or_a_tour_that_cannot_be_read() {
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     let said = text(&out.stdout);
     assert!(
-        said.contains("broken-0000        cannot be read: the first line is not JSON"),
+        said.contains("cannot be read: the first line is not JSON")
+            && said.contains("unreadable")
+            && said.contains("broken-0000"),
         "{said}"
     );
     assert!(
-        said.contains("2 tours · all fresh · 1 cannot be read"),
+        said.starts_with("! 2 tours · all fresh · 1 cannot be read"),
         "{said}"
     );
     // `--quiet` leaves the count out
@@ -8203,7 +8248,7 @@ fn check_with_no_tours_or_a_wrong_name_or_a_tour_that_cannot_be_read() {
     let out = run(cmd);
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     assert!(
-        text(&out.stdout).contains("fresh  (checked now)"),
+        text(&out.stdout).contains("up to date"),
         "{}",
         text(&out.stdout)
     );
@@ -8289,7 +8334,11 @@ fn tour_fails(root: &Path, args: &[&str], stdin: &str) -> (i32, String, String) 
     let mut all = vec!["tour"];
     all.extend_from_slice(args);
     let out = run_stdin(vnoc(root, &all), stdin);
-    (code(&out), text(&out.stdout), text(&out.stderr))
+    (
+        code(&out),
+        words_of(&text(&out.stdout)),
+        refusal_words(&text(&out.stderr)),
+    )
 }
 
 #[test]
@@ -8302,7 +8351,7 @@ fn replace_keeps_the_number_and_the_id_and_the_block_ids_go_on_from_the_highest_
     let out = tour_add(&root, &tour, RETRY, &["--replace", "s1"], body);
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     assert!(
-        text(&out.stdout).starts_with("s1 replaced   stop 1   ƒ retry_charge"),
+        words_of(&text(&out.stdout)).starts_with("s1 replaced   stop 1   ƒ retry_charge"),
         "{}",
         text(&out.stdout)
     );
@@ -8378,7 +8427,7 @@ fn replace_keeps_the_number_and_the_id_and_the_block_ids_go_on_from_the_highest_
     );
     assert_eq!(code(&out), 0);
     assert!(
-        text(&out.stdout).starts_with("s5 written"),
+        words_of(&text(&out.stdout)).starts_with("s5 written"),
         "{}",
         text(&out.stdout)
     );
@@ -8466,7 +8515,7 @@ fn blocks_added_with_to_go_after_the_stop_s_blocks_and_are_checked_against_them(
     );
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     assert!(
-        text(&out.stdout).starts_with("s1 +2 blocks   stop 1   ƒ retry_charge"),
+        words_of(&text(&out.stdout)).starts_with("s1 +2 blocks   stop 1   ƒ retry_charge"),
         "{}",
         text(&out.stdout)
     );
@@ -8721,7 +8770,7 @@ fn drop_takes_a_stop_with_what_is_nested_in_it_or_a_block_with_its_details_and_n
     let out = tour_add(&root, &tour, "billing/charge.py::refund", &[], "refund.\n");
     assert_eq!(code(&out), 0);
     assert!(
-        text(&out.stdout).starts_with("s5 written   stop 2"),
+        words_of(&text(&out.stdout)).starts_with("s5 written   stop 2"),
         "{}",
         text(&out.stdout)
     );
@@ -8793,7 +8842,7 @@ fn edit_changes_the_title_and_not_the_id_or_the_file_name() {
     // the list says the new title, and the id is the one it was
     let listed = tour_ok(&root, &["list"]);
     assert!(
-        listed.starts_with(&tour) && listed.contains("Retrying a charge"),
+        listed.contains(&tour) && listed.contains("Retrying a charge"),
         "{listed}"
     );
     // none, or a bad one, is refused and writes nothing
@@ -8828,7 +8877,7 @@ fn stop_refuses_the_next_write_with_the_text_of_the_plan_and_tells_the_agent_onc
         tour_ok(&root, &["halt", &tour]),
         format!("stopping {tour}: the next add is refused\n")
     );
-    assert!(tour_ok(&root, &["show", &tour]).contains("· stopping ·"));
+    assert!(tour_ok(&root, &["show", &tour]).contains("stopping · "));
     let halted = |root: &Path| {
         tour_lines(root, &tour)
             .iter()
@@ -8862,7 +8911,7 @@ fn stop_refuses_the_next_write_with_the_text_of_the_plan_and_tells_the_agent_onc
         &tour_unrooted(out.as_bytes(), &root, &tour),
     );
     assert_eq!(halted(&root), 1);
-    assert!(tour_ok(&root, &["show", &tour]).contains("· stopped ·"));
+    assert!(tour_ok(&root, &["show", &tour]).contains("stopped · "));
     // three more writes of the agent: refused alike, and `halted` stays one
     for args in [
         vec![
@@ -8907,7 +8956,7 @@ fn stop_refuses_the_next_write_with_the_text_of_the_plan_and_tells_the_agent_onc
         tour_ok(&root, &["resume", &tour]),
         format!("resumed {tour}: add is accepted again\n")
     );
-    assert!(tour_ok(&root, &["show", &tour]).contains("· writing ·"));
+    assert!(tour_ok(&root, &["show", &tour]).contains("writing · "));
     let out = tour_add(
         &root,
         &tour,
@@ -8999,7 +9048,7 @@ fn share_moves_the_file_byte_for_byte_and_the_state_file_still_applies() {
     );
     let listed = tour_ok(&root, &["list"]);
     assert!(
-        listed.contains("project") && !listed.contains("private"),
+        listed.contains("shared") && !listed.contains("private"),
         "{listed}"
     );
     assert_eq!(tour_json(&root, &["list"])["tours"][0]["folder"], "project");
@@ -9031,19 +9080,13 @@ fn a_tour_that_is_in_both_folders_is_listed_twice_and_neither_share_nor_delete_p
     )
     .unwrap();
     let listed = tour_ok(&root, &["list"]);
-    assert_eq!(listed.lines().count(), 2, "{listed}");
+    let blocks: Vec<&str> = listed.split("\n\n").collect();
+    assert_eq!(blocks.len(), 2, "{listed}");
     assert!(
-        listed.lines().next().unwrap().contains("project"),
+        blocks[0].contains("· shared ·"),
         "the project's first: {listed}"
     );
-    assert!(
-        listed
-            .lines()
-            .nth(1)
-            .unwrap()
-            .contains("private (private copy)"),
-        "{listed}"
-    );
+    assert!(blocks[1].contains("· private copy ·"), "{listed}");
     let snapshot = listing(&root);
     for args in [
         vec!["share", &tour],
@@ -9161,7 +9204,7 @@ fn a_shared_tour_deleted_is_restored_to_the_project_and_a_wrong_name_is_did_you_
     let entry = trashed(&root.join(".vnoc"))[0].entry.clone();
     restore(&root.join(".vnoc"), &entry).unwrap();
     assert!(root.join(format!(".vnoc/tours/{tour}.jsonl")).is_file());
-    assert!(tour_ok(&root, &["list"]).contains("project"));
+    assert!(tour_ok(&root, &["list"]).contains("shared"));
 }
 
 #[test]
@@ -9994,7 +10037,7 @@ fn import_doc(root: &Path, doc: &Value, flags: &[&str]) -> Output {
 
 fn imported_id(out: &Output) -> String {
     assert_eq!(code(out), 0, "{}", text(&out.stderr));
-    text(&out.stdout)
+    words_of(&text(&out.stdout))
         .split_whitespace()
         .nth(1)
         .unwrap()
@@ -10086,7 +10129,7 @@ fn export_then_import_gives_a_tour_that_shows_the_same_but_for_its_id() {
         vnoc(&root, &["tour", "import", "-"]),
         &export_text(&root, &tour, false),
     );
-    let said = text(&out.stdout);
+    let said = words_of(&text(&out.stdout));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     assert!(said.starts_with("imported "), "{said}");
     let copy = imported_id(&out);
@@ -10162,7 +10205,7 @@ fn export_then_import_replace_with_nothing_edited_keeps_every_id_and_every_hash(
         std::fs::read(root.join(format!(".vnoc/local/tour-state/{tour}.json"))).unwrap();
     let out = import_doc(&root, &doc, &["--replace", &tour]);
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
-    let said = text(&out.stdout);
+    let said = words_of(&text(&out.stdout));
     assert!(
         said.starts_with(&format!(
             "replaced {tour}  4 stops (4 kept, 0 new, 0 gone)\n"
@@ -10230,7 +10273,7 @@ fn replace_with_a_text_changed_a_stop_removed_and_one_added_keeps_the_ids_and_ne
     doc["stops"].as_array_mut().unwrap().push(json!({"node": "billing/charge.py::refund", "text": "refund gives the money back in full, by one call to the gateway."}));
     let out = import_doc(&root, &doc, &["--replace", &tour]);
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
-    let said = text(&out.stdout);
+    let said = words_of(&text(&out.stdout));
     assert!(
         said.starts_with(&format!(
             "replaced {tour}  4 stops (3 kept, 1 new, 1 gone)\n"
@@ -10286,10 +10329,7 @@ fn a_document_with_three_bad_stops_lists_all_three_with_their_places_and_writes_
     let out = import_doc(&root, &doc, &[]);
     assert_eq!(code(&out), 2, "{}", text(&out.stderr));
     let said = text(&out.stderr);
-    assert!(
-        said.starts_with("error: not written: 3 problems\n"),
-        "{said}"
-    );
+    assert!(said.starts_with("✗ not written: 3 problems\n"), "{said}");
     for place in [
         "stops[0].node: ",
         "stops[1].text: 500 of 420 characters",
@@ -11228,7 +11268,10 @@ fn tour_pin_check_says_can_be_pinned_and_can_be_pinned_again_and_pin_with_no_tou
     git(&root, &["add", "-A"]);
     git(&root, &["commit", "-qm", "the code"]);
     let said = tour_ok(&root, &["check"]);
-    assert!(said.contains("fresh · can be pinned"), "{said}");
+    assert!(
+        said.contains("up to date") && said.contains("can be pinned"),
+        "{said}"
+    );
     assert_eq!(
         tour_json(&root, &["check"])["tours"][0]["can_pin"],
         "can be pinned"
@@ -11265,7 +11308,10 @@ fn tour_pin_check_says_can_be_pinned_and_can_be_pinned_again_and_pin_with_no_tou
     let moved = head_hash(&root);
     assert_ne!(moved, head);
     let said = tour_ok(&root, &["check"]);
-    assert!(said.contains("fresh · can be pinned again"), "{said}");
+    assert!(
+        said.contains("up to date") && said.contains("can be pinned again"),
+        "{said}"
+    );
     let said = tour_ok(&root, &["pin"]);
     assert!(said.contains(&format!("at {}", &moved[..7])), "{said}");
     let pins = pins_of(&root, &tour);
@@ -12007,7 +12053,7 @@ fn route_of(root: &Path, tour: &str) -> Vec<String> {
 fn add_ok(root: &Path, tour: &str, node: &str, flags: &[&str], body: &str) -> String {
     let out = tour_add(root, tour, node, flags, body);
     assert_eq!(code(&out), 0, "{node}: {}", text(&out.stderr));
-    text(&out.stdout)
+    words_of(&text(&out.stdout))
 }
 
 #[test]
@@ -12031,7 +12077,7 @@ fn tour_plan_start_plan_writes_the_tour_and_the_plan_and_says_each_stop_and_a_pl
         ],
     ));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
-    let said = text(&out.stdout);
+    let said = words_of(&text(&out.stdout));
     let tour = said
         .strip_prefix("started ")
         .and_then(|rest| rest.split_whitespace().next())
@@ -12131,7 +12177,7 @@ fn tour_plan_start_plan_with_one_unknown_node_writes_nothing_and_says_did_you_me
         "{err}"
     );
     assert!(err.contains("did you mean"), "{err}");
-    assert!(err.ends_with("error: nothing was written\n"), "{err}");
+    assert!(err.ends_with("✗ nothing was written\n"), "{err}");
     assert!(!root.join(".vnoc/local/tours").exists(), "no tour was made");
     // as data: both errors
     let out = run(vnoc(
@@ -12163,7 +12209,7 @@ fn tour_plan_plans_more_where_add_would_put_them_and_says_each_with_a_count() {
     ));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     golden_text("tour-plan.txt", &tour_unrooted(&out.stdout, &root, &tour));
-    let said = text(&out.stdout);
+    let said = words_of(&text(&out.stdout));
     assert!(
         said.starts_with("planned 2 stops   · 0 of 4 stops written\n"),
         "{said}"
@@ -12326,7 +12372,7 @@ fn tour_plan_a_node_planned_twice_is_filled_in_route_order_and_an_unplanned_add_
     let out = tour_add(&root, &tour, RETRY, &[], RETRY_BODY);
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
     assert!(
-        text(&out.stdout).starts_with("s5 written   stop 5"),
+        words_of(&text(&out.stdout)).starts_with("s5 written   stop 5"),
         "{}",
         text(&out.stdout)
     );
@@ -12482,7 +12528,7 @@ fn tour_plan_finish_removes_what_is_left_and_says_how_many_on_its_first_line() {
         "tour-finish-planned.txt",
         &tour_unrooted(&out.stdout, &root, &tour),
     );
-    let said = text(&out.stdout);
+    let said = words_of(&text(&out.stdout));
     assert!(
         said.starts_with("finished: 2 stops, 5 steps · 2 planned stops left the route\n"),
         "{said}"
@@ -12905,7 +12951,7 @@ fn tour_route_start_route_plans_exactly_the_outline_and_show_lists_the_same_stop
         ],
     ));
     assert_eq!(code(&out), 0, "{}", text(&out.stderr));
-    let said = text(&out.stdout);
+    let said = words_of(&text(&out.stdout));
     let tour = said
         .strip_prefix("started ")
         .and_then(|rest| rest.split_whitespace().next())
@@ -13514,4 +13560,73 @@ fn tour_frozen_schema_1_the_fixtures_read_as_the_goldens_say_and_reading_never_w
     for (name, bytes) in &files {
         assert_eq!(&std::fs::read(root.join(name)).unwrap(), bytes, "{name}");
     }
+}
+
+#[test]
+fn tour_list_is_a_block_a_tour_the_one_being_written_first_then_the_last_read_and_it_has_one_colour_for_each_state()
+ {
+    let root = sample_copy("tour-list-look");
+    let done = finished_loop_tour(&root);
+    let writing = tour_start(&root, "reserve stock");
+    let added = tour_add(
+        &root,
+        &writing,
+        "orders/service.py::OrderService.place",
+        &[],
+        "place saves it.\n",
+    );
+    assert_eq!(code(&added), 0, "{}", text(&added.stderr));
+    tour_ok(&root, &["go", &done, "s2"]);
+    std::fs::write(
+        root.join(".vnoc/local/tours/broken-0000.jsonl"),
+        "this is not a tour\n",
+    )
+    .unwrap();
+    let listed = tour_ok(&root, &["list"]);
+    let blocks: Vec<&str> = listed.trim_end().split("\n\n").collect();
+    assert_eq!(blocks.len(), 3, "{listed}");
+    // written, last read, and (what cannot be read goes last) the broken one
+    let heads: Vec<&str> = blocks.iter().map(|b| b.lines().next().unwrap()).collect();
+    assert!(
+        heads[0].starts_with(" ● writing    reserve stock"),
+        "{listed}"
+    );
+    assert!(heads[0].ends_with("1 stop"), "{listed}");
+    assert!(
+        heads[1].starts_with(" ▶ last read  retry_charge"),
+        "{listed}"
+    );
+    assert!(heads[1].ends_with("stop 2 of 4"), "{listed}");
+    assert!(heads[2].starts_with(" ✗ unreadable"), "{listed}");
+    // the size or the place is at the right edge, the same column in each block; a pipe has the 100 of the fallback
+    assert!(heads.iter().all(|h| h.chars().count() == 100), "{listed}");
+    // line 2: the id, where it is kept, the pin, when; line 3: the question
+    let second: Vec<&str> = blocks[1].lines().collect();
+    assert_eq!(second.len(), 3, "{listed}");
+    assert!(
+        second[1]
+            .trim_start()
+            .starts_with(&format!("{done} · private · not pinned")),
+        "{listed}"
+    );
+    assert!(
+        second[2]
+            .trim_start()
+            .starts_with("“what happens when the gateway drops the call”"),
+        "{listed}"
+    );
+    assert!(blocks[2].contains("the first line is not JSON"), "{listed}");
+    // with colour: writing yellow, last read green, the id cyan, the unreadable one red
+    let out = run(vnoc(&root, &["--color", "always", "tour", "list"]));
+    let painted = text(&out.stdout);
+    assert!(painted.contains("\x1b[33m●\x1b[0m"), "{painted}");
+    assert!(painted.contains("\x1b[32m▶\x1b[0m"), "{painted}");
+    assert!(
+        painted.contains(&format!("\x1b[36m{done}\x1b[0m")),
+        "{painted}"
+    );
+    assert!(painted.contains("\x1b[31m ✗ unreadable"), "{painted}");
+    // `--color never` is the pipe's plain text
+    let never = run(vnoc(&root, &["--color", "never", "tour", "list"]));
+    assert_eq!(text(&never.stdout), listed);
 }

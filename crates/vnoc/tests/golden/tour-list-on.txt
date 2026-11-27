@@ -1,2 +1,3 @@
-<tour>  writing  4 stops  private  not pinned (being written)  retry_charge   "what happens when the gateway drops the call"
-  stops 2 and 4 of 4
+ ● writing    retry_charge                                                        stops 2 and 4 of 4
+              <tour> · private · just now
+              “what happens when the gateway drops the call”

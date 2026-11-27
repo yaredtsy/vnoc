@@ -1,8 +1,8 @@
-OrderService.place    1 stop    about 1 min
-and what it calls     2 stops   about 2 min      --depth 1
-and what those call   4 stops   about 3 min      --depth 2
+✓ OrderService.place    1 stop    about 1 min
+  and what it calls     2 stops   about 2 min      --depth 1
+  and what those call   4 stops   about 3 min      --depth 2
 
- 1  ƒ OrderService.place          orders/service.py:15
- 2    ƒ OrderService.parse_order  orders/service.py:10  line 16
- 3      ◆ Line                    orders/models.py:4    line 12
- 4      ◆ Order                   orders/models.py:14   line 13
+   1  ƒ OrderService.place          orders/service.py:15
+   2    ƒ OrderService.parse_order  orders/service.py:10  line 16
+   3      ◆ Line                    orders/models.py:4    line 12
+   4      ◆ Order                   orders/models.py:14   line 13

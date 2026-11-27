@@ -103,6 +103,24 @@ fn is_terminal(stream: Stream) -> bool {
     }
 }
 
+/// How many columns standard output has, when it is a terminal that says so; `None` for a pipe, a file and a test (nothing is cut there).
+pub fn terminal_width() -> Option<usize> {
+    #[cfg(test)]
+    {
+        None
+    }
+    #[cfg(not(test))]
+    {
+        if !is_terminal(Stream::Out) {
+            return None;
+        }
+        dialoguer::console::Term::stdout()
+            .size_checked()
+            .map(|(_, columns)| usize::from(columns))
+            .filter(|columns| *columns > 0)
+    }
+}
+
 /// `--color` as written in the arguments, read **before** clap parses them: `--help` is clap's own output, and its colour must follow the flag too.
 /// An unknown value is left for clap to refuse.
 pub fn when_in(args: &[std::ffi::OsString]) -> When {

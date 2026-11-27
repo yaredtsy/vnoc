@@ -29,8 +29,8 @@ use crate::userdata::ToursLock;
 
 use super::{
     IdsAfterEnd, IdsStep, Lazy, act_failure, chosen, detail_of, find_all, no_such, plan_rows,
-    refused_with_hint, resolve, settings_failure, steps_words, stopped, stops_words, store_failure,
-    take_lock,
+    refused_with_hint, render, resolve, settings_failure, steps_words, stopped, stops_words,
+    store_failure, take_lock,
 };
 
 /// The tour as it is now, under the lock the caller holds. A tour that cannot be read cannot be written to.
@@ -134,7 +134,7 @@ pub(super) async fn plan(global: &Global, args: &TourPlanArgs) -> Result<(), Fai
     };
     let after = read_tour(&vnoc_root, &tour_id)?;
     let size = after.size();
-    out::render(
+    render(
         &Planned {
             schema: 1,
             command: "tour plan",
@@ -435,7 +435,7 @@ pub(super) async fn pin_command(global: &Global, args: &TourPinArgs) -> Result<(
         .iter()
         .filter(|t| t.out.state == "pinned" && !t.already)
         .count();
-    out::render(
+    render(
         &PinAnswer {
             schema: 1,
             command: "tour pin",
@@ -588,7 +588,7 @@ pub(super) async fn drop_id(global: &Global, args: &TourDropArgs) -> Result<(), 
         &[Record::Drop(DropRecord { id })],
     )
     .map_err(store_failure)?;
-    out::render(
+    render(
         &Dropped {
             schema: 1,
             command: "tour drop",
@@ -629,7 +629,7 @@ pub(super) async fn resume(global: &Global, args: &TourResumeArgs) -> Result<(),
         store::append_locked(&w.lock, &w.vnoc_root, &w.id, &[Record::Resume(Bare {})])
             .map_err(store_failure)?;
     }
-    out::render(
+    render(
         &Resumed {
             schema: 1,
             command: "tour resume",
@@ -671,7 +671,7 @@ pub(super) async fn halt(global: &Global, args: &TourResumeArgs) -> Result<(), F
             .map_err(|e| Failure::Environment(e.to_string()))?
             .map_err(store_failure)?
     };
-    out::render(
+    render(
         &Halted {
             schema: 1,
             command: "tour halt",
@@ -739,7 +739,7 @@ pub(super) async fn edit(global: &Global, args: &TourEditArgs) -> Result<(), Fai
         &named,
     )
     .map_err(|e| act_failure(e, &project))?;
-    out::render(
+    render(
         &Edited {
             schema: 1,
             command: "tour edit",
@@ -797,7 +797,7 @@ pub(super) async fn share(global: &Global, args: &TourShareArgs) -> Result<(), F
             .map_err(|e| Failure::Environment(e.to_string()))?
             .map_err(store_failure)?
     };
-    out::render(
+    render(
         &Shared {
             schema: 1,
             command: "tour share",
@@ -856,7 +856,7 @@ pub(super) async fn ids(global: &Global, args: &TourIdsArgs) -> Result<(), Failu
     let vnoc_root = store::vnoc_root(opened.project.git_root());
     let id = resolve(global, "tour ids", &vnoc_root, &args.tour)?;
     let written = write_ids(global, &opened, &vnoc_root, &id, &args.stops).await?;
-    out::render(&written, global)
+    render(&written, global)
 }
 
 // ------------------------------------------------------------------------------------------------------------------ settings
@@ -909,7 +909,7 @@ pub(super) async fn settings(global: &Global, args: &TourSettingsArgs) -> Result
         Some(take_write_lock(&project).await?)
     };
     let shown = act::settings(&project, &set).map_err(|e| act_failure(e, &project))?;
-    out::render(&shown, global)
+    render(&shown, global)
 }
 
 // -------------------------------------------------------------------------------------------------------------- export, import
@@ -1116,7 +1116,7 @@ pub(super) async fn import(global: &Global, args: &TourImportArgs) -> Result<(),
         pin_text.push('\n');
     }
     let stops = size.written;
-    out::render(
+    render(
         &Imported {
             schema: 1,
             command: "tour import",
@@ -1213,7 +1213,7 @@ pub(super) async fn delete(global: &Global, args: &TourDeleteArgs) -> Result<(),
             state: gone.with_state,
         });
     }
-    out::render(
+    render(
         &Deleted {
             schema: 1,
             command: "tour delete",

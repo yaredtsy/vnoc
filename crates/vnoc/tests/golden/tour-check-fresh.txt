@@ -1,2 +1,3 @@
-<tour>  fresh  (checked now)
-1 tour · all fresh
+✓ 1 tour · all fresh
+
+   up to date retry_charge                                                         <tour>

@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::cli::args::{TourAddArgs, TourFinishArgs, TourStartArgs};
 use crate::cli::nodes::{Lookup, Target, doc_path};
-use crate::cli::out::{self, Render};
+use crate::cli::out::Render;
 use crate::cli::project::{open_from, open_without_driver};
 use crate::cli::{Failure, Global};
 use crate::source;
@@ -21,8 +21,8 @@ use crate::tours::{TourId, steps_in_order, time, view};
 use super::act::{ids_after_end, pin_tour, read_tour};
 use super::{
     BODY_READ_CAP, IdsStep, Lazy, build_route, detail_of, find_all, first_line, missing_error,
-    plan_rows, refused_with, refused_with_hint, resolve, settings_failure, steps_words, stopped,
-    stops_words, store_failure, take_lock,
+    plan_rows, refused_with, refused_with_hint, render, resolve, settings_failure, steps_words,
+    stopped, stops_words, store_failure, take_lock,
 };
 
 // --------------------------------------------------------------------------------------------------------------------- start
@@ -192,7 +192,7 @@ pub(super) async fn start(global: &Global, args: &TourStartArgs) -> Result<(), F
         let vnoc_root = store::vnoc_root(project.git_root());
         plan_rows(&read_tour(&vnoc_root, &started.id)?, &planned)
     };
-    out::render(
+    render(
         &Started {
             schema: 1,
             command: "tour start",
@@ -488,7 +488,7 @@ pub(super) async fn add(global: &Global, args: &TourAddArgs) -> Result<(), Failu
         })
         .collect();
     let size = after.size();
-    out::render(
+    render(
         &Added {
             schema: 1,
             command: "tour add",
@@ -646,7 +646,7 @@ pub(super) async fn finish(global: &Global, args: &TourFinishArgs) -> Result<(),
         }
         None => (None, String::new(), None),
     };
-    out::render(
+    render(
         &Finished {
             schema: 1,
             command: "tour finish",

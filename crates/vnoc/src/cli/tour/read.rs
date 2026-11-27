@@ -9,6 +9,7 @@ use crate::cli::args::{
 use crate::cli::nodes::{Lookup, NodeError, Target};
 use crate::cli::out::{self, Render};
 use crate::cli::project::{open_from, open_without_driver};
+use crate::cli::style;
 use crate::cli::{Failure, Global};
 use crate::tours::check::{self, Answer, Code, Mode, Recorded, Source};
 use crate::tours::on::{self, Map, Query};
@@ -19,8 +20,10 @@ use crate::tours::store::{self, Where};
 use crate::tours::{State, Tour, TourId, time, view};
 
 use super::act::can_pin_words;
+use super::look;
 use super::{
-    Lazy, build_route, chosen, missing_error, no_such, refused_with, resolve, store_failure,
+    Lazy, build_route, chosen, missing_error, no_such, refused_with, render, render_as, resolve,
+    store_failure,
 };
 
 /// What `route` prints: the route as data, and its text.
@@ -63,7 +66,7 @@ pub(super) async fn route(global: &Global, args: &TourRouteArgs) -> Result<(), F
         text.push_str("the driver gives no calls for this node: the route is the node alone\n");
     }
     let route = built.route;
-    out::render(
+    render_as(
         &Routed {
             schema: 1,
             command: "tour route",
@@ -76,6 +79,7 @@ pub(super) async fn route(global: &Global, args: &TourRouteArgs) -> Result<(), F
             text,
         },
         global,
+        look::Kind::Route,
     )
 }
 
@@ -154,6 +158,8 @@ struct CheckedTour {
     lines: Vec<String>,
     #[serde(skip)]
     word: String,
+    #[serde(skip)]
+    title: String,
 }
 
 fn checked_stops(tour: &Tour, recorded: &Recorded) -> Vec<CheckedStop> {
@@ -226,30 +232,9 @@ impl Render for Checked {
         if self.tours.is_empty() {
             return "no tours\n".to_string();
         }
-        let id_width = self.tours.iter().map(|t| t.id.len()).max().unwrap_or(0);
-        let word_width = self
-            .tours
-            .iter()
-            .filter(|t| t.readable)
-            .map(|t| t.word.len())
-            .max()
-            .unwrap_or(0);
+        let width = style::terminal_width();
+        let ids: Vec<String> = self.tours.iter().map(|t| t.id.clone()).collect();
         let mut text = String::new();
-        for tour in &self.tours {
-            let row = if tour.readable {
-                format!(
-                    "{:<id_width$}  {:<word_width$}  {}",
-                    tour.id, tour.word, tour.lines[0]
-                )
-            } else {
-                format!("{:<id_width$}  {}", tour.id, tour.word)
-            };
-            text.push_str(row.trim_end());
-            text.push('\n');
-            for line in tour.lines.iter().skip(usize::from(tour.readable)) {
-                text.push_str(&format!("  {line}\n"));
-            }
-        }
         if !quiet {
             let n = self.tours.len();
             let mut said = format!("{n} {}", if n == 1 { "tour" } else { "tours" });
@@ -260,8 +245,34 @@ impl Render for Checked {
             if self.unreadable > 0 {
                 said.push_str(&format!(" · {} cannot be read", self.unreadable));
             }
-            text.push_str(&said);
-            text.push('\n');
+            let mark = if self.stale + self.unreadable > 0 {
+                look::Mark::Needs
+            } else {
+                look::Mark::Done
+            };
+            text.push_str(&look::check_header(&said, mark));
+        }
+        for tour in &self.tours {
+            let (state, details) = if !tour.readable {
+                (look::Checked::Unreadable, vec![tour.word.clone()])
+            } else if tour.fresh == Some(false) {
+                // the tour's word and when it was checked, then a line for each stop that is not as it was written
+                let mut details = vec![format!("{}  {}", tour.word, tour.lines[0])];
+                details.extend(tour.lines.iter().skip(1).cloned());
+                (look::Checked::Changed, details)
+            } else {
+                // up to date: a line, and what can be done with it
+                let more = tour.can_pin.map(|says| vec![says.to_string()]);
+                (look::Checked::UpToDate, more.unwrap_or_default())
+            };
+            let title = if tour.readable {
+                tour.title.as_str()
+            } else {
+                ""
+            };
+            text.push_str(&look::check_block(
+                state, title, &tour.id, &details, &ids, width,
+            ));
         }
         text
     }
@@ -292,6 +303,7 @@ pub(super) async fn check(global: &Global, args: &TourCheckArgs) -> Result<(), F
                 id,
                 readable: false,
                 word: format!("cannot be read: {}", problem.as_deref().unwrap_or("")),
+                title: String::new(),
                 lines: vec![],
                 fresh: None,
                 from: None,
@@ -334,6 +346,7 @@ pub(super) async fn check(global: &Global, args: &TourCheckArgs) -> Result<(), F
             can_pin,
             lines,
             word,
+            title: tour.title.clone(),
         });
     }
     let stale = tours.iter().filter(|t| t.fresh == Some(false)).count();
@@ -362,6 +375,9 @@ struct Listed {
     tours: Vec<view::ListRowView>,
     /// what was wrong with the folders: a file that is not a tour's
     problems: Vec<String>,
+    /// the tour whose place moved last, the one `vnoc tour where` answers for: the list says `last read` of it
+    #[serde(skip)]
+    last_read: Option<String>,
 }
 
 impl Render for Listed {
@@ -376,7 +392,12 @@ impl Render for Listed {
             }
             return text;
         }
-        view::list_text(&self.tours)
+        look::list(
+            &self.tours,
+            self.last_read.as_deref(),
+            &time::now(),
+            style::terminal_width(),
+        )
     }
 }
 
@@ -459,6 +480,7 @@ pub(super) async fn list(global: &Global, args: &TourListArgs) -> Result<(), Fai
             on: on_node.map(|(location, _)| location),
             tours: rows,
             problems: listed.problems,
+            last_read: last_moved(&vnoc_root).map(|id| id.to_string()),
         },
         global,
     )
@@ -549,7 +571,7 @@ pub(super) async fn show(global: &Global, args: &TourShowArgs) -> Result<(), Fai
                 written_code(&project, pin, &mut tour_view);
             }
             let text = view::outline_text(tour, &tour_view, args.text);
-            out::render(
+            render_as(
                 &Shown {
                     schema: 1,
                     command: "tour show",
@@ -558,9 +580,10 @@ pub(super) async fn show(global: &Global, args: &TourShowArgs) -> Result<(), Fai
                     text,
                 },
                 global,
+                look::Kind::Outline,
             )
         }
-        Err(unreadable) => out::render(
+        Err(unreadable) => render(
             &ShownUnreadable {
                 schema: 1,
                 command: "tour show",
@@ -696,7 +719,7 @@ pub(super) async fn where_command(global: &Global, args: &TourWhereArgs) -> Resu
         None => match last_moved(&vnoc_root) {
             Some(id) => id,
             None => {
-                return out::render(
+                return render(
                     &NoPlaceYet {
                         schema: 1,
                         command: "tour where",
@@ -711,7 +734,7 @@ pub(super) async fn where_command(global: &Global, args: &TourWhereArgs) -> Resu
     // a tour nobody has moved is on its cover
     let place = store::read_place(&vnoc_root, &id).unwrap_or_default();
     let (view, text) = place_answer(global, &project, &vnoc_root, &id, &place).await?;
-    out::render(
+    render_as(
         &WhereOut {
             schema: 1,
             command: "tour where",
@@ -721,6 +744,7 @@ pub(super) async fn where_command(global: &Global, args: &TourWhereArgs) -> Resu
             text,
         },
         global,
+        look::Kind::Where,
     )
 }
 
@@ -744,7 +768,7 @@ pub(super) async fn go_command(global: &Global, args: &TourGoArgs) -> Result<(),
         }
     };
     let (view, text) = place_answer(global, &project, &vnoc_root, &id, &gone.place).await?;
-    out::render(
+    render_as(
         &WhereOut {
             schema: 1,
             command: "tour go",
@@ -754,5 +778,6 @@ pub(super) async fn go_command(global: &Global, args: &TourGoArgs) -> Result<(),
             text,
         },
         global,
+        look::Kind::Where,
     )
 }

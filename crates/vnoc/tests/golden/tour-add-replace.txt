@@ -1,3 +1,3 @@
-s1 replaced   stop 1   ƒ retry_charge   billing/charge.py:11-22   3 steps   · 4 stops written
-  s1.b4  17-22   for _ in range(attempts):
-  s1.b5  14-15   def one_try():
+✓ s1 replaced   stop 1   ƒ retry_charge   billing/charge.py:11-22   3 steps   · 4 stops written
+    s1.b4  17-22   for _ in range(attempts):
+    s1.b5  14-15   def one_try():

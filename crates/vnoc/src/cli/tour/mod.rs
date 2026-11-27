@@ -5,6 +5,7 @@
 //! environment `3`.
 
 mod act;
+pub mod look;
 mod read;
 mod write;
 
@@ -37,6 +38,8 @@ use write::{add, finish, start};
 const BODY_READ_CAP: u64 = 16 * 1024 * 1024;
 
 pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> {
+    // a refusal of a tour command starts with `✗` (look.rs)
+    out::mark_errors();
     match command {
         TourCommand::Start(args) => start(global, args).await,
         TourCommand::Add(args) => add(global, args).await,
@@ -63,6 +66,21 @@ pub async fn run(global: &Global, command: &TourCommand) -> Result<(), Failure> 
 }
 
 // --------------------------------------------------------------------------------------------------------------------- shared
+
+/// What a tour command answers: one JSON value with `--json`, else its text as a person reads it (`look`: a mark, the details indented, colour).
+fn render<T: out::Render>(value: &T, global: &Global) -> Result<(), Failure> {
+    render_as(value, global, look::Kind::Plain)
+}
+
+/// [`render`] for an answer whose text is laid out as `kind` says (`show`, `route`, `where`).
+fn render_as<T: out::Render>(value: &T, global: &Global, kind: look::Kind) -> Result<(), Failure> {
+    if global.json {
+        out::json(value)
+    } else {
+        let ids = look::ids_in(value);
+        out::text(&look::dress(&value.text(global.quiet), &ids, kind))
+    }
+}
 
 /// What a failure of the store is to a command: a tour that is not there, in two places, or too big is the request's (`2`); the lock, the disk and
 /// the project's settings are the environment's (`3`).
@@ -353,7 +371,11 @@ fn stopped(
             message: &message,
         })?;
     } else {
-        out::text(&message)?;
+        out::text(&look::dress(
+            &message,
+            &[tour.id.to_string()],
+            look::Kind::Plain,
+        ))?;
     }
     Err(Failure::Stopped)
 }

@@ -451,6 +451,25 @@ fn normalized(printed: &str, root: &Path) -> Vec<String> {
     trim_blank_ends(text.lines().map(String::from).collect())
 }
 
+/// The words of a line, without the look of the tour commands (docs/26-tours/05 §5): a guide shows what a command says, and the mark that starts an answer
+/// (`✓`, `!`; `✗` is the `error:` of a refusal) and the indent under it are for people on a terminal. What a line says is compared whole.
+fn words_of_line(line: &str) -> String {
+    let line = line.trim_start();
+    for mark in ["✓ ", "! "] {
+        if let Some(rest) = line.strip_prefix(mark) {
+            return rest.trim_start().to_string();
+        }
+    }
+    match line.strip_prefix("✗ ") {
+        Some(rest) => format!("error: {}", rest.trim_start()),
+        None => line.to_string(),
+    }
+}
+
+fn words_of_lines(lines: &[String]) -> Vec<String> {
+    lines.iter().map(|l| words_of_line(l)).collect()
+}
+
 #[derive(Default)]
 struct Findings {
     /// a command line the binary does not understand or that failed
@@ -496,7 +515,7 @@ fn check_session(label: &str, session: &Session, found: &mut Findings) {
         }
         if let Some(pasted) = &cmd.pasted {
             let real = normalized(&printed, &root);
-            if &real != pasted {
+            if words_of_lines(&real) != words_of_lines(pasted) {
                 found.outputs.push(format!(
                     "{}: `{}`\n--- pasted\n{}\n--- printed\n{}",
                     cmd.at,
