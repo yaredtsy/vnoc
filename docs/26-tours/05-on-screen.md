@@ -686,8 +686,38 @@ only filtered Rust (tours 295, cli `tour_` 84, lifecycle `tour` 29, guide 12) an
   ends with the id. The CLI's `vnoc tour list` stays the other way.
 - `@types/vscode` resolves to 1.90.x in the lockfile too (`~1.90.0`), so the type check catches an API newer than the engine.
 
+**The user, 2026-11-27: the tour commands' text is hard to read** (`vnoc tour list` on a real project: one long line per tour that
+wraps mid-word, no colour, nothing says which tour is being written or read). The tour CLI gets one look, for people, on a terminal:
+- **`list`**: a block per tour, a blank line between them; the tours being written first, then the last read, then the newest:
+  ```
+   ● writing    How a stock hold is released                     2 of 5 stops
+                knowledgebase-init-cw6v · private · 3 min ago
+                “why does init call the loader twice?”
+
+   ▶ last read  Creating a knowledge base                         stop 2 of 3
+                creating-a-knowledge-base-j8f6 · private · not pinned · changed · 2 h ago
+
+     finished   knowledge_base/base_resource.py                       4 stops
+                knowledge-base-base-resource-py-4xre · private · pinned at 704027a · yesterday
+  ```
+  Line 1: the state (a mark and a word, one colour per state), the title bold, the size or place at the right edge. Line 2, dim: the
+  id (cyan: the thing to copy), where it is kept, the pin, `changed`, when. Line 3, dim: the question, when it has one. `▶ last read` is
+  the tour `vnoc tour where` answers for (the CLI cannot know what a window shows, so it does not say "playing").
+- **Every other tour command** in the same voice: a first line with a mark — `✓` done (green), `!` needs you (yellow), `✗` refused
+  (red) — and the outcome in words; then the details indented, labels dim, ids cyan, titles bold. `show` and `route` as an indented
+  outline (stops numbered, blocks under them with their lines dim). States everywhere: writing yellow `●`, last read green `▶`,
+  stopped red `■`, `changed` yellow, `pinned at <hash>` green, `not pinned` dim.
+- **Width:** a terminal's width is kept: long text is cut with `…`, never wrapped mid-column. A pipe gets the same layout with no colour
+  and nothing cut.
+- **What does not change:** `--json`; and the words of every line the skill quotes or an agent acts on (`written`, `finished: …`, the
+  `ask the user` lines, the refusals' text, `Tour started` …): only their colour and indentation may change. The cli goldens follow the
+  new layout.
+
+This comes before the old TR23 list: **TR23c** = the tour CLI's look (and TR23b's review items: the filled stop icon, the quieter
+segment, `@types/vscode` resolved to 1.90, Copy Tour ID). **TR23d** = the old TR23 list.
+
 **Next, in this order:**
-- **The user tries the TR23b VSIX**, then **TR23c** (the three items above first, then the old TR23 list), then TR24 (with the full runs).
+- **TR23c**, then **TR23d**, then TR24 (with the full runs).
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
