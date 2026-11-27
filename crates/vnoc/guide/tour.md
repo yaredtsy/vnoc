@@ -29,14 +29,14 @@ The constructor only keeps what it is given, so parse_order can build an Order f
 It adds up the amount of each line every time, so a line changed later can never leave the total wrong.
 EOF
 s2 written   stop 2   ◆ Order   orders/models.py:14-21   3 steps   · 2 stops written
-  ## 15-17 Two fields and nothing else → 15: def __init__(self, number, lines):
-  ## 19-21 The total is a sum, not a stored number → 19: @property
+  s2.b1  ## 15-17 Two fields and nothing else → 15: def __init__(self, number, lines):
+  s2.b2  ## 19-21 The total is a sum, not a stored number → 19: @property
 vnoc tour finish how-an-order-is-parsed-7k2q
 finished: 2 stops, 4 steps
 ask the user  1 stop has no ID: the tour will not follow a rename.        vnoc tour ids how-an-order-is-parsed-7k2q
 not pinned: this is not a git repository
 ```
-`add` answers with one line a block: its lines, its title and the first line of code it lit (`###` for a detail). If a first line is not the one you meant, the numbers were wrong: `--replace` the stop.
+`add` answers with one line a block: its id, its lines, its title and the first line of code it lit (`###` for a detail). If a first line is not the one you meant, the numbers were wrong: `--replace` the stop.
 
 ## The structure
 ```
@@ -86,7 +86,7 @@ EOF
 error: not written: 2 problems
   fix them, then send the whole stop again
     intro: there is none. Start with a paragraph on what this is for, before the first heading
-    blocks 1 and 3 both light line 16
+    block 3: lines 16-18 overlap block 1 (15-17) beside it: one block for those lines, or give it lines of its own
 vnoc tour add how-an-order-is-parsed-7k2q orders/service.py::OrderService.place --body-file - <<'EOF'  # exit 2
 place parses, saves and returns.
 
@@ -97,7 +97,7 @@ error: not written: 1 problem
   fix them, then send the whole stop again
     OrderService.place is 4 lines: a stop this short is one step. Put it all in the first paragraph
 ```
-Others you may meet: `intro: 533 of 420 characters` (a budget), `block 1 title ends with a full stop`, `block 2: lines 30-35 are outside Order (14-21)`,
+Others you may meet: `s4: OrderService.place is already s2, beside it: make this a block of s2, or a detail of one of its blocks` (a second stop on a node that a stop beside it has), `intro: 533 of 420 characters` (a budget), `block 1 title ends with a full stop`, `block 2: lines 30-35 are outside Order (14-21)`,
 `--line 99 is outside OrderService.parse_order (10-13)`, `--from s7: this tour has no stops yet`, `no stop s9 in this tour` with the nearest ids. A refusal is a to-do list: do not send the same text again.
 
 ## Writing well
@@ -118,7 +118,7 @@ good:  --same-as s2, one sentence: "Called again here, before the stock is taken
 bad:   a list or a code fence that retells the stop's own lines (they are on screen)
 good:  a list for things to tell apart; a fence for what is not on screen: an example call, a payload
 ```
-A step whose code branches, loops, retries or fans out (a choice between outcomes, a retry, a loop, tasks run in parallel) gets a ` ```mermaid ` flowchart of that flow: one per step at most, small (about 8 boxes, the code's own names). A tour across files also opens with the whole route in the first stop's intro. Asked for diagrams or a detailed tour: one in every stop with such a flow; otherwise where it helps most.
+A diagram goes on the block (or detail) whose own lines branch, loop, retry or fan out (a choice between outcomes, a retry, a loop, tasks run in parallel), never on a block that only calls them: a ` ```mermaid ` flowchart of that flow, one per step at most, small (about 8 boxes, the code's own names). A tour across files also opens with the whole route once, in the first stop's intro. Asked for diagrams or a detailed tour: one on every block with such a flow; otherwise where it helps most.
 One that retells a function's body is the same bad fence; draw the files and the calls between them:
 ```
 vnoc tour start --title "How an order is parsed" --question "how does an order get saved" --author claude-code
@@ -131,7 +131,7 @@ flowchart LR
 ```
 EOF
 ```
-A stop's blocks are its main parts, usually two or three `##`; `###` only for a part too long to read at once. A detailed tour gives deeper reasons, not more blocks. Leave out lines that only log, check arguments or pass a value on. No block for a line that only starts or returns. A stop planned as a second visit (`= s2` in `show` and `route`) takes `--same-as s2` too;
+A function is one stop where it is reached; its parts are `##` blocks with the `###` details they need, deeper for a long function, never more stops beside it; what the caller does after a call is a block of the caller's stop. Leave out lines that only log, check arguments or pass a value on. No block for a line that only starts or returns. A stop planned as a second visit (`= s2` in `show` and `route`) takes `--same-as s2` too;
 the plan does not do it for you.
 
 ## The route

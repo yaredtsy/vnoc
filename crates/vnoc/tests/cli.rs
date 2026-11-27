@@ -6655,18 +6655,18 @@ fn every_tour_command_has_its_json_golden() {
     );
     golden_of_output("tour-start.json", &started, &root, &tour);
 
+    // three problems at once, as JSON (before the stop is written: a second stop on the node would be a problem of its own)
+    let refused = tour_add(&root, &tour, RETRY, &["--json"], THREE_PROBLEMS);
+    assert_eq!(code(&refused), 2);
+    assert!(refused.stderr.is_empty(), "{}", text(&refused.stderr));
+    golden_of_output("tour-add-refused.json", &refused, &root, &tour);
+
     let added = tour_add(&root, &tour, RETRY, &["--json"], RETRY_BODY);
     assert_eq!(code(&added), 0, "{}", text(&added.stderr));
     let value: Value = serde_json::from_slice(&added.stdout).unwrap();
     assert_eq!(value["command"], "tour add");
     assert_eq!(value["steps"], json!(["s1", "s1.b1", "s1.b2", "s1.b3"]));
     golden_of_output("tour-add.json", &added, &root, &tour);
-
-    // three problems at once, as JSON
-    let refused = tour_add(&root, &tour, RETRY, &["--json"], THREE_PROBLEMS);
-    assert_eq!(code(&refused), 2);
-    assert!(refused.stderr.is_empty(), "{}", text(&refused.stderr));
-    golden_of_output("tour-add-refused.json", &refused, &root, &tour);
 
     let listed = run(vnoc(&root, &["tour", "list", "--json"]));
     assert_eq!(code(&listed), 0);
@@ -6751,7 +6751,7 @@ fn each_refusal_exits_2_and_writes_nothing() {
             RETRY,
             vec![],
             "Intro.\n\n## 14-15 A\nOne.\n\n## 15-16 B\nTwo.\n",
-            "blocks 1 and 2 both light",
+            "block 2: lines 15-16 overlap block 1 (14-15) beside it: one block for those lines, or give it lines of its own",
         ),
         (
             RETRY,
@@ -8562,15 +8562,15 @@ fn blocks_added_with_to_go_after_the_stop_s_blocks_and_are_checked_against_them(
     let cases: Vec<(&str, &str)> = vec![
         (
             "## 16-18 Over the loop\nx.\n",
-            "block 1 and s1.b3 both light line 17",
+            "block 1: lines 16-18 overlap s1.b3 (17-22) beside it: one block for those lines, or give it lines of its own",
         ),
         (
             "## 11-11 A\nx.\n\n## 11-13 B\ny.\n",
-            "blocks 1 and 2 both light line 11",
+            "block 2: lines 11-13 overlap block 1 (11) beside it: one block for those lines, or give it lines of its own",
         ),
         (
             "## 14-14 In the first block\nx.\n",
-            "block 1 and s1.b1 both light line 14",
+            "block 1: line 14 overlaps s1.b1 (14-15) beside it: one block for those lines, or nest it as a detail of s1.b1 (--under s1.b1)",
         ),
         (
             "Intro.\n\n## 16-16 A\nx.\n",
@@ -8713,7 +8713,7 @@ fn under_adds_details_to_a_block_and_a_deeper_heading_or_a_detail_is_refused() {
         (
             "s1.b1",
             "## 15-15 On the detail\nx.\n",
-            "block 1 and s1.b2 both light line 15",
+            "block 1: line 15 overlaps s1.b2 (15) beside it: one block for those lines, or give it lines of its own",
         ),
         (
             "s1.b1",
@@ -10414,6 +10414,90 @@ fn a_typo_key_a_later_same_as_and_a_nesting_that_disagrees_are_refused_with_thei
         text(&out.stderr)
     );
     assert_eq!(list_tree(&root.join(".vnoc")), before);
+}
+
+#[test]
+fn a_second_stop_on_a_node_beside_one_that_has_it_is_refused_by_add_and_by_import_and_a_far_one_is_not()
+ {
+    let root = sample_copy("tour-twin");
+    let tour = tour_start(&root, "retry_charge");
+    let first = tour_add(&root, &tour, RETRY, &[], RETRY_BODY);
+    assert_eq!(code(&first), 0, "{}", text(&first.stderr));
+    let snapshot = listing(&root);
+    // both at the top
+    let (status, out, err) = tour_fails(
+        &root,
+        &["add", &tour, RETRY, "--body-file", "-"],
+        "Again.\n",
+    );
+    assert_eq!(status, 2, "{err}");
+    assert!(out.is_empty(), "{out}");
+    assert!(
+        err.contains(
+            "s2: retry_charge is already s1, beside it: make this a block of s1, or a detail of one of its blocks"
+        ),
+        "{err}"
+    );
+    assert_eq!(listing(&root), snapshot, "nothing was written");
+    // the same node reached from another stop is elsewhere in the tour: allowed; `--same-as` says it again beside the first
+    let said = add_ok(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--from", "s1", "--line", "19"],
+        "one_try is called here.\n",
+    );
+    assert!(said.starts_with("s2 written"), "{said}");
+    let (status, _, err) = tour_fails(
+        &root,
+        &[
+            "add",
+            &tour,
+            ONE_TRY,
+            "--from",
+            "s1",
+            "--line",
+            "19",
+            "--body-file",
+            "-",
+        ],
+        "Again.\n",
+    );
+    assert_eq!(status, 2, "{err}");
+    assert!(
+        err.contains("s3: retry_charge.<locals>.one_try is already s2, beside it: make this a block of s2, or a detail of one of its blocks"),
+        "{err}"
+    );
+    let said = add_ok(
+        &root,
+        &tour,
+        ONE_TRY,
+        &["--same-as", "s2"],
+        "The same call, beside the others.\n",
+    );
+    assert!(said.starts_with("s3 written"), "{said}");
+
+    // an import: a document whose last stop repeats the first, both at the top
+    let doc = json!({"title": "t", "stops": [
+        {"node": RETRY, "text": "retry_charge."},
+        {"node": CHARGE_ERROR, "text": "ChargeError."},
+        {"node": RETRY, "text": "retry_charge again."}]});
+    let out = import_doc(&root, &doc, &[]);
+    assert_eq!(code(&out), 2, "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains(
+            "stops[2].node: retry_charge is already s1, beside it: make this a block of s1, or a detail of one of its blocks"
+        ),
+        "{}",
+        text(&out.stderr)
+    );
+    // the same function in another part of the document, or with `same_as`, is fine
+    let doc = json!({"title": "t", "stops": [
+        {"id": "a", "node": RETRY, "text": "retry_charge.", "stops": [
+            {"from": "a", "line": 19, "node": ONE_TRY, "text": "one_try."}]},
+        {"id": "b", "same_as": "a", "node": RETRY, "text": "Again."}]});
+    let out = import_doc(&root, &doc, &[]);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
 }
 
 #[test]

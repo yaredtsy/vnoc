@@ -324,7 +324,7 @@ impl Render for Added {
                 steps_words(self.steps.len())
             )
         };
-        // one line a block: `## 11-24 Title → 11: the first lit line's code`, `###` for a detail
+        // one line a block, its id first: `s1.b2  ## 11-24 Title → 11: the first lit line's code`, `###` for a detail (the guide's `drop` and `--under` need the id)
         for block in &self.blocks {
             let [first, last] = block.lines;
             let lines = if first == last {
@@ -338,7 +338,8 @@ impl Render for Added {
                 ("  ", "##")
             };
             text.push_str(&format!(
-                "{indent}{mark} {lines} {} → {first}: {}\n",
+                "{indent}{}  {mark} {lines} {} → {first}: {}\n",
+                block.id,
                 block.title,
                 cut_at(&block.first_line, 60)
             ));

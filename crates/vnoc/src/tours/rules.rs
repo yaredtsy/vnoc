@@ -174,10 +174,13 @@ pub fn check(body: &Body, node: &NodeLines, detail: Detail, options: Options) ->
             {
                 out.push(refusal(
                     &place,
-                    format!(
-                        "blocks {} and {n} both light line {}",
-                        other.number,
-                        first.max(other.lines.0)
+                    overlap_sentence(
+                        &format!("block {n}"),
+                        (first, last),
+                        &format!("block {}", other.number),
+                        other.lines,
+                        parent.is_none(),
+                        &format!("a ### under block {}", other.number),
                     ),
                 ));
             }
@@ -206,6 +209,35 @@ pub fn check(body: &Body, node: &NodeLines, detail: Detail, options: Options) ->
         markdown(&mut out, &text_place, &block.text);
     }
     out
+}
+
+/// A block whose lines overlap a block beside it (the same parent), in words that say what to do: `block 3: lines 40-60 overlap block 2 (35-50) beside it:
+/// one block for those lines, or nest it as a ### under block 2`. The nesting is offered only for a top-level block that lies wholly inside the other.
+pub fn overlap_sentence(
+    this: &str,
+    lines: (u32, u32),
+    other: &str,
+    other_lines: (u32, u32),
+    top_level: bool,
+    nest_as: &str,
+) -> String {
+    let mine = if lines.0 == lines.1 {
+        format!("line {} overlaps", lines.0)
+    } else {
+        format!("lines {}-{} overlap", lines.0, lines.1)
+    };
+    let theirs = if other_lines.0 == other_lines.1 {
+        other_lines.0.to_string()
+    } else {
+        format!("{}-{}", other_lines.0, other_lines.1)
+    };
+    let inside = other_lines.0 <= lines.0 && lines.1 <= other_lines.1;
+    let then = if top_level && inside {
+        format!("nest it as {nest_as}")
+    } else {
+        "give it lines of its own".to_string()
+    };
+    format!("{this}: {mine} {other} ({theirs}) beside it: one block for those lines, or {then}")
 }
 
 /// `block 2 text: 412 of 280 characters`
@@ -605,7 +637,9 @@ mod tests {
                 "I.\n## 11-24 A\na\n### 11-24 B\nb\n### 24 C\nc",
                 &node("f", 1, 40)
             ),
-            ["blocks 2 and 3 both light line 24"],
+            [
+                "block 3: line 24 overlaps block 2 (11-24) beside it: one block for those lines, or give it lines of its own"
+            ],
             "inside the block, and overlapping each other"
         );
         assert!(normal("I.\n## 11-24 A\na\n### 11-24 B\nb", &node("f", 1, 40)).is_empty());
@@ -623,37 +657,49 @@ mod tests {
     fn blocks_beside_each_other_do_not_overlap() {
         assert_eq!(
             normal("I.\n## 1-3 A\na\n## 15-17 B\nb\n## 17-20 C\nc", &big()),
-            ["blocks 2 and 3 both light line 17"]
+            [
+                "block 3: lines 17-20 overlap block 2 (15-17) beside it: one block for those lines, or give it lines of its own"
+            ]
         );
         // the first line they share
         assert_eq!(
             normal("I.\n## 10-30 A\na\n## 20-40 B\nb", &big()),
-            ["blocks 1 and 2 both light line 20"]
+            [
+                "block 2: lines 20-40 overlap block 1 (10-30) beside it: one block for those lines, or give it lines of its own"
+            ]
         );
         assert_eq!(
             normal("I.\n## 20-40 A\na\n## 10-30 B\nb", &big()),
-            ["blocks 1 and 2 both light line 20"]
+            [
+                "block 2: lines 10-30 overlap block 1 (20-40) beside it: one block for those lines, or give it lines of its own"
+            ]
         );
         // one inside the other, equal, one line
         assert_eq!(
             normal("I.\n## 10-30 A\na\n## 15 B\nb", &big()),
-            ["blocks 1 and 2 both light line 15"]
+            [
+                "block 2: line 15 overlaps block 1 (10-30) beside it: one block for those lines, or nest it as a ### under block 1"
+            ]
         );
         assert_eq!(
             normal("I.\n## 10 A\na\n## 10 B\nb", &big()),
-            ["blocks 1 and 2 both light line 10"]
+            [
+                "block 2: line 10 overlaps block 1 (10) beside it: one block for those lines, or nest it as a ### under block 1"
+            ]
         );
         // two details of one block
         assert_eq!(
             normal("I.\n## 10-30 A\na\n### 12-14 B\nb\n### 13-15 C\nc", &big()),
-            ["blocks 2 and 3 both light line 13"]
+            [
+                "block 3: lines 13-15 overlap block 2 (12-14) beside it: one block for those lines, or give it lines of its own"
+            ]
         );
         // each later block names the first earlier one it meets, once
         assert_eq!(
             normal("I.\n## 10-20 A\na\n## 15-25 B\nb\n## 18-30 C\nc", &big()),
             [
-                "blocks 1 and 2 both light line 15",
-                "blocks 1 and 3 both light line 18"
+                "block 2: lines 15-25 overlap block 1 (10-20) beside it: one block for those lines, or give it lines of its own",
+                "block 3: lines 18-30 overlap block 1 (10-20) beside it: one block for those lines, or give it lines of its own"
             ]
         );
         // beside each other is what is checked: end and start on neighbouring lines, a detail and its block, details of two blocks
@@ -1163,7 +1209,7 @@ mod tests {
                 "block 1 text: 500 of 420 characters",
                 "block 2 (12-14) is not inside block 1 (40-44)",
                 "block 3 (13-15) is not inside block 1 (40-44)",
-                "blocks 2 and 3 both light line 13",
+                "block 3: lines 13-15 overlap block 2 (12-14) beside it: one block for those lines, or give it lines of its own",
                 &format!("block 3 text: {IMAGE}"),
                 "block 4: lines 2-3 are outside reserve_stock (11-31)",
                 "block 4 title: HTML. A title is a short phrase",

@@ -172,6 +172,34 @@ pub fn nested_in(tour: &Tour, stop: StopId, outer: StopId) -> bool {
     false
 }
 
+/// Where a stop is reached from, as a call says it: `--from` and `--line`, else the stop it replaces, else the planned stop it fills.
+fn reached_by(
+    options: AddOptions,
+    replaced: Option<&TourStop>,
+    filling: Option<&TourStop>,
+) -> (Option<StopId>, Option<u32>) {
+    match (options.replace, options.from, replaced, filling) {
+        (Some(_), None, Some(old), _) => (old.from, old.line),
+        // a planned stop: the call's `--from` wins (the fold moves the stop when it is another than the plan's), and so does its `--line`; what the
+        // call does not say is the plan's. The plan's line was a line of the plan's `--from`: it does not carry over to another stop
+        (None, Some(call), _, Some(plan)) => (
+            Some(call),
+            options
+                .line
+                .or_else(|| (plan.from == Some(call)).then_some(plan.line).flatten()),
+        ),
+        (None, None, _, Some(plan)) => (plan.from, plan.line),
+        _ => (options.from, options.line),
+    }
+}
+
+/// The refusal of a stop on a node that a stop beside it (the same parent, or both at the top) already has.
+fn twin_sentence(name: &str, beside: StopId) -> String {
+    format!(
+        "{name} is already {beside}, beside it: make this a block of {beside}, or a detail of one of its blocks"
+    )
+}
+
 /// `--line` against the node of the `--from` stop as it is now.
 fn check_line(
     out: &mut Vec<Refusal>,
@@ -393,6 +421,25 @@ pub fn plan_stop(
             "this tour has no stop ids left: start a second tour",
         ));
     }
+    // the call's `--from` and `--line`, else the stop's own
+    let (from, line) = reached_by(options, replaced, filling);
+    // a second stop on a node that a stop beside it already has: its parts are blocks of that stop (`--same-as` is the one way to say the node again, and a stop that says it is not a stop to repeat)
+    if options.same_as.is_none()
+        && let Some(id) = stop_id
+        && let Some(beside) = tour.stops.iter().find(|s| {
+            s.written
+                && s.same_as.is_none()
+                && s.from == from
+                && Some(s.id) != options.replace
+                && Some(s.id) != filling.map(|f| f.id)
+                && same_node(s, node)
+        })
+    {
+        refusals.push(refusal(
+            "node",
+            format!("{id}: {}", twin_sentence(&name_of(node), beside.id)),
+        ));
+    }
     let (Some(stop_id), true) = (stop_id, refusals.is_empty()) else {
         return Err(refusals);
     };
@@ -403,21 +450,6 @@ pub fn plan_stop(
     let marker_refs: Vec<&str> = markers.iter().map(String::as_str).collect();
     let hash_of =
         |first: u32, last: u32| hash::of(&hash::lines_of(text, first, last), &marker_refs);
-
-    // the call's `--from` and `--line`, else the stop's own
-    let (from, line) = match (options.replace, options.from, replaced, filling) {
-        (Some(_), None, Some(old), _) => (old.from, old.line),
-        // a planned stop: the call's `--from` wins (the fold moves the stop when it is another than the plan's), and so does its `--line`; what the
-        // call does not say is the plan's. The plan's line was a line of the plan's `--from`: it does not carry over to another stop
-        (None, Some(call), _, Some(plan)) => (
-            Some(call),
-            options
-                .line
-                .or_else(|| (plan.from == Some(call)).then_some(plan.line).flatten()),
-        ),
-        (None, None, _, Some(plan)) => (plan.from, plan.line),
-        _ => (options.from, options.line),
-    };
     let has_hash = matches!(node.kind, Kind::Function | Kind::Class);
     let mut records = vec![Record::Stop(StopRecord {
         id: stop_id,
@@ -760,14 +792,20 @@ pub fn plan_more(
                 ),
             ));
         }
-        if let Some((id, (from, _))) = siblings
+        if let Some((id, other)) = siblings
             .iter()
             .find(|(_, (from, to))| a <= *to && *from <= b)
         {
-            let line = a.max(*from);
             refusals.push(refusal(
                 format!("block {}", block.number),
-                format!("block {} and {id} both light line {line}", block.number),
+                rules::overlap_sentence(
+                    &format!("block {}", block.number),
+                    (a, b),
+                    &id.to_string(),
+                    *other,
+                    under.is_none(),
+                    &format!("a detail of {id} (--under {id})"),
+                ),
             ));
         }
     }
@@ -1166,6 +1204,28 @@ pub fn plan_tour<'t>(
                     flat.stops[same].id.as_deref().unwrap_or("that stop"),
                     name_of(other),
                     name_of(node)
+                ),
+            ));
+        }
+        // a second stop on a node that a stop beside it (the same `from`, or both at the top) already has
+        if stop.same_as.is_none()
+            && let Some(beside) = (0..i).find(|&j| {
+                flat.stops[j].from == stop.from
+                    && flat.stops[j].same_as.is_none()
+                    && nodes
+                        .get(j)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|other| other.id == node.id)
+            })
+            && let Some(&beside_id) = stop_ids.get(beside)
+        {
+            refusals.push(refusal(
+                at_key(&stop.place, "node"),
+                format!(
+                    "{}.node: {}",
+                    stop.place,
+                    twin_sentence(&name_of(node), beside_id)
                 ),
             ));
         }
@@ -1870,13 +1930,13 @@ mod tests {
                 "--from s9: this tour has no stop s9 · did you mean: s3 · s2 · s1",
             ),
             (
-                "a.py::helper",
+                "a.py::Box.two",
                 options(Some(1), Some(99), None),
                 "--line",
                 "--line 99 is outside alpha (1-9)",
             ),
             (
-                "a.py::helper",
+                "a.py::Box.two",
                 options(Some(1), Some(0), None),
                 "--line",
                 "--line 0 is outside alpha (1-9)",
@@ -1986,6 +2046,95 @@ mod tests {
     }
 
     #[test]
+    fn a_second_stop_on_a_node_that_a_stop_beside_it_has_is_refused_in_words_that_say_what_to_do() {
+        let f = Fixture::new("twin");
+        let tour = tour_of(&[
+            stop_line(1, "alpha", ""),
+            stop_line(2, "helper", r#","from":"s1","line":5"#),
+        ]);
+        let id = |n: u32| StopId::new(n).unwrap();
+        // both at the top: the sentence names the id the stop would get, the stop that has the node, and the two ways out
+        let refused = f
+            .plan(&tour, "a.py::alpha", "Intro.\n", AddOptions::default())
+            .unwrap_err();
+        assert_eq!(
+            texts(&refused),
+            [
+                "s3: alpha is already s1, beside it: make this a block of s1, or a detail of one of its blocks"
+            ]
+        );
+        assert_eq!(refused[0].place, "node");
+        // both from s1
+        let from_s1 = AddOptions {
+            from: Some(id(1)),
+            line: Some(6),
+            ..AddOptions::default()
+        };
+        let refused = f
+            .plan(&tour, "a.py::helper", "Intro.\n", from_s1)
+            .unwrap_err();
+        assert_eq!(
+            texts(&refused),
+            [
+                "s3: helper is already s2, beside it: make this a block of s2, or a detail of one of its blocks"
+            ]
+        );
+        // the same node in another part of the tour is fine: helper at the top (beside alpha), alpha from s2 (beside nothing)
+        assert!(
+            f.plan(&tour, "a.py::helper", "Intro.\n", AddOptions::default())
+                .is_ok()
+        );
+        assert!(
+            f.plan(
+                &tour,
+                "a.py::alpha",
+                "Intro.\n",
+                AddOptions {
+                    from: Some(id(2)),
+                    line: Some(11),
+                    ..AddOptions::default()
+                }
+            )
+            .is_ok()
+        );
+        // `--same-as` is the way to say the node again beside it
+        assert!(
+            f.plan(
+                &tour,
+                "a.py::helper",
+                "Same.\n",
+                AddOptions {
+                    same_as: Some(id(2)),
+                    ..from_s1
+                }
+            )
+            .is_ok()
+        );
+        // a replacement is not beside the stop it replaces; a stop that fills a plan is not beside the plan
+        assert!(
+            f.plan(
+                &tour,
+                "a.py::helper",
+                "Intro.\n",
+                AddOptions {
+                    replace: Some(id(2)),
+                    ..from_s1
+                }
+            )
+            .is_ok()
+        );
+        let planned = tour_of(&[
+            stop_line(1, "alpha", ""),
+            r#"{"type":"plan","stops":[{"id":"s2","path":"a.py","qualname":"helper"}]}"#
+                .to_string(),
+        ]);
+        assert!(
+            f.plan(&planned, "a.py::helper", "Intro.\n", AddOptions::default())
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn the_forty_first_stop_is_refused_and_a_full_tour_counts_planned_stops() {
         let f = Fixture::new("forty");
         let lines: Vec<String> = (1..=40).map(|n| stop_line(n, "alpha", "")).collect();
@@ -2005,7 +2154,7 @@ mod tests {
         );
         let full = tour_of(&lines);
         let refused = f
-            .plan(&full, "a.py::alpha", "Intro.\n", AddOptions::default())
+            .plan(&full, "a.py::Box", "Intro.\n", AddOptions::default())
             .unwrap_err();
         assert_eq!(refused.len(), 1);
         // a call on the planned node fills the planned stop: it takes the id s40 and adds no stop
@@ -2216,12 +2365,13 @@ mod tests {
         let f = Fixture::new("replace-refused");
         let tour = tour_with_blocks();
         let id = |n| StopId::new(n).unwrap();
-        let refused = |options: AddOptions| {
-            texts(&f.plan(&tour, "a.py::helper", "x.\n", options).unwrap_err())
+        let refused_on = |node: &str, options: AddOptions| {
+            texts(&f.plan(&tour, node, "x.\n", options).unwrap_err())
                 .into_iter()
                 .map(String::from)
                 .collect::<Vec<_>>()
         };
+        let refused = |options: AddOptions| refused_on("a.py::helper", options);
         assert_eq!(
             refused(AddOptions {
                 replace: Some(id(9)),
@@ -2231,12 +2381,15 @@ mod tests {
         );
         // from itself, or from a stop inside it
         assert_eq!(
-            refused(AddOptions {
-                replace: Some(id(1)),
-                from: Some(id(1)),
-                line: Some(1),
-                ..AddOptions::default()
-            }),
+            refused_on(
+                "a.py::Box.two",
+                AddOptions {
+                    replace: Some(id(1)),
+                    from: Some(id(1)),
+                    line: Some(1),
+                    ..AddOptions::default()
+                }
+            ),
             ["--from s1: s1 is being replaced, and s1 is s1 or inside it"]
         );
         assert_eq!(
@@ -2314,14 +2467,17 @@ mod tests {
         let f = Fixture::new("more-refused");
         let tour = tour_with_blocks();
         let cases: Vec<(&str, &str)> = vec![
-            ("## 4-6 Over\nx.\n", "block 1 and s1.b1 both light line 4"),
+            (
+                "## 4-6 Over\nx.\n",
+                "block 1: lines 4-6 overlap s1.b1 (3-5) beside it: one block for those lines, or give it lines of its own",
+            ),
             (
                 "## 1-2 A\nx.\n\n## 2-3 B\ny.\n",
-                "blocks 1 and 2 both light line 2",
+                "block 2: lines 2-3 overlap block 1 (1-2) beside it: one block for those lines, or give it lines of its own",
             ),
             (
                 "## 8-8 In the last\nx.\n",
-                "block 1 and s1.b3 both light line 8",
+                "block 1: line 8 overlaps s1.b3 (7-9) beside it: one block for those lines, or nest it as a detail of s1.b3 (--under s1.b3)",
             ),
             (
                 "## 1-30 Too far\nx.\n",
@@ -2426,7 +2582,7 @@ mod tests {
             (
                 "s1.b1",
                 "## 4-4 On the detail\nx.\n",
-                "block 1 and s1.b2 both light line 4",
+                "block 1: line 4 overlaps s1.b2 (4) beside it: one block for those lines, or give it lines of its own",
             ),
             (
                 "s1.b1",

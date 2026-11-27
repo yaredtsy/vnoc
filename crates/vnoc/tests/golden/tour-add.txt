@@ -1,4 +1,4 @@
 ✓ s1 written   stop 1   ƒ retry_charge   billing/charge.py:11-22   4 steps   · 1 stop written
-    ## 14-15 One attempt, as a function → 14: def one_try():
-      ### 15 The call itself → 15: return gateway.charge(order.total)
-    ## 17-22 Try, and try again → 17: for _ in range(attempts):
+    s1.b1  ## 14-15 One attempt, as a function → 14: def one_try():
+      s1.b2  ### 15 The call itself → 15: return gateway.charge(order.total)
+    s1.b3  ## 17-22 Try, and try again → 17: for _ in range(attempts):
