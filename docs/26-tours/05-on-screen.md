@@ -746,8 +746,14 @@ wraps mid-word, no colour, nothing says which tour is being written or read). Th
 This comes before the old TR23 list: **TR23c** = the tour CLI's look (and TR23b's review items: the filled stop icon, the quieter
 segment, `@types/vscode` resolved to 1.90, Copy Tour ID). **TR23d** = the old TR23 list.
 
+**TR23c as built** (`d69bc62`, `8c81cf9`, `073958c`, `5c73b5d`): every tour command in the look (marks `✓`/`!`/`✗`, `list` blocks with
+`● writing` / `▶ last read` / `✗ unreadable`, outlines for `show` and `route`); goldens follow it; two window tests read the new words.
+The guide's two examples stopped matching (`show --text`, `check | tail -n 1`). **Decided:** the guide's examples show what the commands
+print now (they are examples, not lines an agent acts on), and `vnoc tour check | tail -n 1` becomes `vnoc tour check`: a pipe is a
+second command to the host's allow rules, as `;` is (the skill's rule), and the summary is now the first line.
+
 **Next, in this order:**
-- **TR23c**, then **TR23d**, then TR24 (with the full runs).
+- The guide fix, a VSIX and CLI archive for the user (the new CLI look is in the archive), then **TR23d**, then TR24 (with the full runs).
 - Later, when they hurt: `tests/cli.rs` (13,476) as one test binary with a `tour` module; `tours/view.rs` types and text apart;
   `cli/tour/act.rs` by its parts (pin, IDs, settings).
 
