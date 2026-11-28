@@ -119,3 +119,36 @@ Report: the hash, the output of the cap proof, anything that did not match.
 ## T0c, after T0a2
 
 Push `reliable-tests`, open a PR with T0a, T0b, T0a2 and the docs, merge it (the retry bridge then helps every release). Run the probe on Windows from the branch (command in item 1 above). Read the five logs; write the verdict (product or test) here.
+
+## Review of T0a2 (`e790a5c`, 2026-11-28)
+
+Good: the diagnosis is read at the failure; the cap works (proof: 2 retried, 4 failed at once, the line printed once); `ELECTRON_RUN_AS_NODE` is deleted.
+
+To fix (T0a3, small):
+1. **A silent run.** `run()` now awaits `activate()` before mocha starts. If that throws, the whole run exits 1 with no test output (one proof attempt did exactly that, cause unknown). Catch it, print `the extension did not activate: <error and stack>`, and go on with an empty api, so every test fails with its own message.
+2. **The header.** `FLAKY (passed on a later try): 0` above a `RETRIES STOPPED` line reads wrong. Make it `RETRIED: <n> tests, <m> passed on a later try`, the passed ones listed, then the cap line if it tripped. (The Markdown escaping is fine: GitHub shows `\|` as `|`.)
+
+## Prompt for the Sonnet session (T0a3, one commit)
+
+```
+You are working in /Users/yared/Documents/Programing/rust/vnoc on branch `reliable-tests`.
+Read first: the "Review of T0a2" section at the end of docs/28-reliable-tests/steps/T0-stop-the-reruns.md,
+and extension/src/test/suite/index.ts.
+
+One commit, file: extension/src/test/suite/index.ts.
+1. In run(): wrap the activate() call. On an error print, before mocha starts,
+   `the extension did not activate: ` + the error's message and stack, then use `{}` as the api
+   (diagnose already copes with a missing function). Mocha then runs, and each test fails with its own error.
+2. reportFlaky: the header is `RETRIED: <n> tests, <m> passed on a later try` (n = tests retried, m = those that
+   then passed). Then one line per test that passed on a later try, with its first error, as now; then the
+   RETRIES STOPPED line if the cap tripped. Printed (console and GITHUB_STEP_SUMMARY) when n > 0.
+Check: `pnpm --filter vnoc typecheck`. Prove 1: temporarily make activate() fail (e.g. throw at the top of
+`activate` in extension/src/extension.ts when VNOC_FAIL_ACTIVATE is set), run
+`VNOC_FAIL_ACTIVATE=1 VNOC_SUITE=skeleton pnpm --filter vnoc test`: the line is printed and the tests run and fail.
+Remove the temporary change (git diff must show only index.ts). Then `VNOC_SUITE=skeleton,bar pnpm --filter vnoc test` once, green.
+Message: `tests T0a3: a run whose extension does not activate says so; the retry block counts retried and passed`
+Stage explicit paths only (never `git add .`, never `git add docs`). Do not push.
+Report: the hash, the output of the proof.
+```
+
+After T0a3: push, PR to `main` (T0a, T0b, T0a2, T0a3, the docs), merge, then T0c.
