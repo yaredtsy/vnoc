@@ -534,28 +534,42 @@ pub fn parse_yes_no(line: &str) -> Option<bool> {
     }
 }
 
-/// The question of 07 §4, naming only the agents it covers.
+/// The line before the question, dim, which stays on screen: what is still asked (07 §4). It is not part of the question, which must fit one row
+/// (the prompt is cleared by its count of lines, so a wrapped row leaves its first half behind).
+const PERMISSION_NOTE: &str =
+    "Other writes (doc new, doc tag, relink, repair, init, tour pin) still ask.";
+
+/// The question of 07 §4, naming the agent it covers, short enough for one row at 80 columns, also while it is asked (`? … (y/n) › yes`, 12 more
+/// columns) and when answered (`✔ … · yes`). Two names do not fit beside `without asking`, so two agents are `both agents`.
 fn permission_question(covered: &[Agent]) -> String {
     let names: Vec<&str> = covered
         .iter()
         .filter_map(|a| agents::permission_name(*a))
         .collect();
-    format!(
-        "Let {} run V-NOC's read commands, and the commands that write a tour, without asking? Other writes (doc new, doc tag, relink, repair, init, tour pin) still ask.",
-        names.join(" and ")
-    )
+    let who = if names.len() > 1 {
+        "both agents".to_string()
+    } else {
+        names.join("")
+    };
+    format!("Let {who} run V-NOC's read and tour commands without asking?")
 }
 
-/// The question on standard error, Enter being yes. Esc is no. When the terminal cannot draw it, a typed `[Y/n]`.
+/// The question on standard error, Enter being yes. Esc is no. When the terminal cannot draw it, a typed `[Y/n]`. The answer stays on the
+/// question's row.
 fn ask_permissions(covered: &[Agent], prompt: Prompt) -> Result<bool, Failure> {
     let question = permission_question(covered);
+    let _ = writeln!(
+        std::io::stderr(),
+        "{}",
+        style::paint_direct(style::Stream::Err, style::dim(), PERMISSION_NOTE)
+    );
     if prompt == Prompt::Menu {
         let theme = theme();
         let asked = at_a_prompt(|| {
             Confirm::with_theme(&*theme)
                 .with_prompt(&question)
                 .default(true)
-                .report(false)
+                .report(true)
                 .interact_on_opt(&Term::stderr())
         });
         match asked {
@@ -1155,12 +1169,75 @@ mod tests {
     fn the_question_names_only_the_agents_it_covers() {
         assert_eq!(
             permission_question(&[Agent::Claude]),
-            "Let Claude Code run V-NOC's read commands, and the commands that write a tour, without asking? Other writes (doc new, doc tag, relink, repair, init, tour pin) still ask."
+            "Let Claude Code run V-NOC's read and tour commands without asking?"
         );
-        assert!(
-            permission_question(&[Agent::Claude, Agent::Codex])
-                .starts_with("Let Claude Code and Codex run")
+        assert_eq!(
+            permission_question(&[Agent::Claude, Agent::Codex]),
+            "Let both agents run V-NOC's read and tour commands without asking?"
         );
         assert!(permission_question(&[Agent::Codex]).starts_with("Let Codex run"));
+    }
+
+    /// Without its colour codes, what a theme writes.
+    fn plain(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_question_and_its_answer_are_whole_on_an_80_column_screen() {
+        let themes: [(&str, Box<dyn Theme>); 2] = [
+            ("colourful", Box::new(ColorfulTheme::default())),
+            ("simple", Box::new(SimpleTheme)),
+        ];
+        for covered in [
+            vec![Agent::Claude],
+            vec![Agent::Codex],
+            vec![Agent::Claude, Agent::Codex],
+        ] {
+            let question = permission_question(&covered);
+            for (name, theme) in &themes {
+                for answer in [true, false] {
+                    let mut asking = String::new();
+                    theme
+                        .format_confirm_prompt(&mut asking, &question, Some(true))
+                        .unwrap();
+                    let mut answered = String::new();
+                    theme
+                        .format_confirm_prompt_selection(&mut answered, &question, Some(answer))
+                        .unwrap();
+                    for (what, row) in [("asking", asking), ("answered", answered)] {
+                        let row = plain(&row);
+                        assert!(!row.contains('\n'), "{name} {what}: one row: {row:?}");
+                        assert!(
+                            row.chars().count() <= 80,
+                            "{name} {what}: {} columns: {row:?}",
+                            row.chars().count()
+                        );
+                        if what == "answered" {
+                            assert!(row.contains(&question), "{name}: the question is kept");
+                            assert!(
+                                row.trim_end().ends_with(if answer { "yes" } else { "no" }),
+                                "{name}: the answer is shown: {row:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(PERMISSION_NOTE.chars().count() <= 80);
+        assert!(!PERMISSION_NOTE.contains('\n'));
     }
 }
