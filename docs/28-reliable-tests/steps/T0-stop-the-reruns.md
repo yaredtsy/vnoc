@@ -176,12 +176,12 @@ T0a, T0b, T0a2, T0a3 done. Next: push, PR to `main`, merge, then T0c.
 
 Also red in the same runs: "a pinned tour whose function was edited…" and "a function deleted…" (2 of 3: the core's place is s1.b2 / s2 while the stage still draws the cover), "Write IDs on a clean tour…" (2 of 3), Next walks (1 of 3), G9 (1 of 3).
 
-**The likely root: `write_atomic` (`crates/vnoc/src/userdata/atomic.rs`) on Windows.** It writes a temp file, then `fs::rename`s it over the target. On Windows that rename fails with "Access is denied" whenever another process has the target open without `FILE_SHARE_DELETE`. Node's `fs` (VS Code's file watcher, the extension host reading a file) and antivirus scans open files that way. Rust's own readers do not block it. Two more weak points:
-- the temp name is `.<name>.tmp-<pid>`: two writes of the same file from one process at once share one temp file;
+**The likely root: `write_atomic` (`crates/vnoc/src/userdata/atomic.rs`) on Windows.** It writes a temp file, then `fs::rename`s it over the target. On Windows that rename fails with "Access is denied" whenever another process has the target open without `FILE_SHARE_DELETE`. Neither Node nor Rust opens files that way: libuv's `fs__open` (`src/win/fs.c`) passes `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE` unless `UV_FS_O_EXLOCK` is asked for, and Rust's `OpenOptions` has the same default. So the holder is not VS Code's or the core's ordinary reads. It is something else (Defender, the search indexer, another tool), or V-NOC colliding with itself (below). Two more weak points:
+- the temp name is `.<name>.tmp-<pid>`: two writes of the same file from one process at once share one temp file. One write can then create the temp file while the other is renaming it, and Windows refuses one of them with "Access is denied". With Node and Rust ruled out as holders, **this is now the first suspect**;
 - the restart test waits for `checkFrom: "record"`. If `vnoc tour check` could not write the record (the same rename) and said nothing, the new core has no record to answer from: exactly this failure. The test's message does not say what it got instead.
 
 **The same failure elsewhere:** rclone's forum, "Windows VFS cache: failed rename over an open handle returns success, silently losing atomic temp-rename saves" (July 2026, thread 54004). Its repro holds the target open with `FileShare.ReadWrite` and no `FileShare.Delete`, then `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` fails with "Access is denied". rclone's worse bug was logging the error and returning success. The maintainer's fix: first make the error visible, then rename with `FileRenameInfoEx` + `FILE_RENAME_FLAG_POSIX_SEMANTICS`. For us:
-- the POSIX-semantics rename is already what Rust's `std::fs::rename` uses on Windows, and our toolchain is 1.94.1. It still failed, because POSIX semantics replace an open target only when every open handle allows delete (`FILE_SHARE_DELETE`), and Node's (and many scanners') handles do not. So it does not fix this alone: the retry is still needed;
+- the POSIX-semantics rename is already what Rust's `std::fs::rename` uses on Windows, and our toolchain is 1.94.1. (the PR merged 2024-12-22, milestone 1.85.0). It still failed, so whatever blocked it held the file without `FILE_SHARE_DELETE`, or the failing call was not the rename at all (the temp file's create, in the collision above). The retry stays, but the unique temp name may be the real fix;
 - "make the error visible" is the part that matters most: a save that failed must never look like it worked. T0d's first commit does both.
 
 **This is a product bug, not only a test bug.** A Windows user whose editor or antivirus has `.vnoc/` files open loses tour state writes. It goes in a 0.4.1.
@@ -207,16 +207,29 @@ Commit 1 — write_atomic on Windows.
   A command (`vnoc tour check`, `go`, …) whose write failed exits non-zero with the error; the core's answer
   says the state could not be saved. List every place you changed.
 - Tests in atomic.rs:
-  - two threads write one target 200 times each: no error, the file is one of the two contents, no temp file left;
-  - #[cfg(windows)]: open the target with share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE) (no DELETE, as Node opens it,
-    via std::os::windows::fs::OpenOptionsExt), hold it 300 ms on another thread, write_atomic meanwhile: it succeeds
-    after the handle closes. (Runs on CI's Windows job; on this Mac it compiles out.)
+  - two threads write one target 200 times each: no error, the file is one of the two contents, no temp file left.
+    This is the test of the first suspect; it runs everywhere, and Windows CI is where it counts.
+  - #[cfg(windows)], a holder WITHOUT delete sharing (not Node: libuv and Rust both share delete; this stands for
+    an unknown holder such as a scanner):
+      OpenOptions::new().read(true).share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE /* 0x1 | 0x2, no DELETE */).open(&target)
+    via std::os::windows::fs::OpenOptionsExt. Two cases:
+      short hold: the handle is dropped after 500 ms on another thread; write_atomic meanwhile succeeds through the retry;
+      long hold: the handle is held past the retry budget; write_atomic RETURNS AN ERROR naming the target, the target
+      keeps its old bytes, and no temp file is left. (A save that failed never looks like it worked.)
+    (They run on CI's Windows job; on this Mac they compile out.)
+- Each retry is logged once to stderr with the step that failed (temp create, write, or rename) and the error,
+  so a CI log shows which call Windows refused.
 Message: `vnoc: an atomic write on Windows waits for a reader that holds the file, and a failed state write is said`
 
 Commit 2 — the restart test says what it saw.
 - In "a core that starts again", the wait for "the record's answer" fails with the checkFrom of every drawing
   after the reopen, and the output of `vnoc tour where <id> --json` and of `tour check` (its exit code too).
 - The restart: `api.restartCore()` resolves only when the new core has answered `vnoc/ping`. If it already does, say so.
+- On Windows only, when that wait fails, the test runs Sysinternals `handle64.exe -accepteula -nobanner <path>` on the
+  tour's state file and its record, and prints the output (every process that has them open). The binary is not on
+  GitHub's runners: probe.yml downloads it (https://download.sysinternals.com/files/Handle.zip) into a tools folder and
+  passes its path in VNOC_HANDLE_EXE; without that variable the test skips this part. It runs 20 s after the write
+  failed, so an empty answer means "gone by then", not "nobody".
 Message: `tests T0d: the restart test names what it got instead of the record`
 
 After the last commit, ONCE: cargo test -p vnoc --lib --tests --no-fail-fast; clippy -D warnings; fmt --check;
