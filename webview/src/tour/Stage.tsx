@@ -20,7 +20,7 @@ import { Cover, End } from "./stage/Cover.tsx";
 import { Foot } from "./stage/Foot.tsx";
 import { Header } from "./stage/Header.tsx";
 import type { TextDrawn } from "./stage/Rich.tsx";
-import { measureStage } from "./stage/measure.ts";
+import { measureStage, transitionsOf } from "./stage/measure.ts";
 import { TextPane } from "./stage/TextPane.tsx";
 import { type Shown as Code, useCode } from "./stage/useCode.ts";
 import { useAsWritten } from "./stage/useWritten.ts";
@@ -239,7 +239,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const codeDrawn = folded || !wantsPane || (code !== null && ("error" in code || (drawn.step === (step?.id ?? null) && drawn.text === code.text)));
   useEffect(() => {
     if (!view || !current || !codeDrawn) return;
-    post({
+    const send = () => post({
       type: "stageDrawn",
       seq: lastSeq.current,
       reducedMotion: prefersReducedMotion(),
@@ -281,6 +281,17 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
       offers: current.mode === "cover" ? (pinned?.offers ?? []).map((o) => `${o.text} | ${o.button}`) : [],
       layout: stageEl.current ? measureStage(stageEl.current, narrow, folded) : { narrow, folded, stacked: false, width: 0, canvasHeight: 0, height: 0, codeHeight: 0, codeRows: 0, wrapped: 0, codeCut: false, outside: [], chipOverCode: null, coverParts: [] },
     });
+    // a report describes what is on screen: a box whose size is still changing (a transition, even the one-frame transition that reduced motion leaves) is waited for
+    const settling = stageEl.current ? transitionsOf(stageEl.current) : [];
+    if (settling.length === 0) {
+      send();
+      return;
+    }
+    let live = true;
+    void Promise.allSettled(settling.map((t) => t.finished)).then(() => live && send());
+    return () => {
+      live = false;
+    };
   }, [narrow, folded, room.width, view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.more, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const style = { height: folded ? 30 : stageHeightFor(height, narrow, Math.floor(room.height * MAX_SHARE), MIN_H) };

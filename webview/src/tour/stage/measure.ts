@@ -53,3 +53,8 @@ export function measureStage(stage: HTMLElement, narrow: boolean, folded: boolea
     coverParts: Array.from(stage.querySelectorAll('[data-part="cover"] > [data-part]')).map((el) => el.getAttribute("data-part")!),
   };
 }
+
+/** The transitions still running in the stage (its height, a button's colour): finite ones only, a pulse or a shimmer that never ends is not waited for. */
+export function transitionsOf(stage: HTMLElement): Animation[] {
+  return stage.getAnimations({ subtree: true }).filter((a) => typeof CSSTransition !== "undefined" && a instanceof CSSTransition && a.playState === "running");
+}
