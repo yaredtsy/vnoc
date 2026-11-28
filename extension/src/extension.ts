@@ -482,7 +482,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   const stageAction = (name: "stageKey" | "stageClick", key: string): Promise<number> => {
     const n = ++actionSeq;
     const limit = 10_000 * (Number(process.env.VNOC_TEST_SLOWDOWN) || (process.env.CI ? 3 : 1));
-    return new Promise<number>((resolve, reject) => {
+    const ticket = new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => {
         handledWaiters.delete(n);
         reject(new Error(`the page never handled ${name} ${key} (seq ${n}): no page listens, or it threw`));
@@ -494,6 +494,8 @@ export function activate(ctx: vscode.ExtensionContext) {
       });
       panels.emit("viewCommand", { name, key, seq: n });
     });
+    ticket.catch(() => {}); // a caller that does not await (a click that closes the page it was sent to) must not leave an unhandled rejection; one that awaits still gets it
+    return ticket;
   };
 
   // What the test suite drives.

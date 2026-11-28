@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 
 import type { Notes, StructureResult } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
-import { canvasTabs, closeCanvas, guarded, sleep, soft, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, guarded, shows, sleep, soft, until, waitFor } from "./util";
 
 // A tour plays in a real window (docs/26-tours/06-build-order.md TR17). The tour is made by the built `vnoc tour` commands, so its hashes are real: a stop with blocks and
 // a detail, a short stop, a file with no blocks (contents), and a stop explained before. The suite cannot see the page, so it reads what the stage posts
@@ -18,8 +18,8 @@ interface Api {
   structure(): Promise<StructureResult>;
   session(): Session;
   stageDrawn(): Drawn[];
-  stageKey(key: string): void;
-  stageClick(button: string): void;
+  stageKey(key: string): Promise<number>;
+  stageClick(button: string): Promise<number>;
   canvasWidth(px: number | null): void;
   toursDrawn(): Extract<Notes, { type: "toursDrawn" }>[];
   toursClick(what: string): void;
@@ -297,26 +297,32 @@ suite("a tour on the canvas", () => {
       ["s4", "same_as", "stop 3 of 4", null, [], []],
       ["s3", "contents", "stop 4 of 4", null, [], []],
     ];
-    const check = (d: Drawn, [step, kind, position, title, lit, thin]: (typeof steps)[number]) => {
-      assert.deepStrictEqual([d.step, d.kind, d.position, d.title, d.lit, d.thin], [step, kind, position, title, lit, thin], `at ${step}`);
+    // what a failure says besides the difference: where the core is, and what the page reported as errors
+    const also = () => {
+      const coreAt = (() => {
+        try {
+          return JSON.parse(tourCmd(["where", tour, "--json"])).at;
+        } catch {
+          return "?";
+        }
+      })();
+      return `the core's place is ${coreAt}; the page's errors: ${JSON.stringify(api.webviewErrors())}`;
     };
-    for (const row of steps) {
-      api.stageClick("next");
-      check(await stageShows(`${row[0]}`, atStep(row[0])), row);
-    }
-    assert.strictEqual(last()!.next, "Finish", "the last step says Finish");
+    const stepShown = async (what: string, [step, kind, position, title, lit, thin]: (typeof steps)[number], click: "next" | "prev") => {
+      const t = await api.stageClick(click);
+      return shows(what, api.stageDrawn, { tour, mode: "step", step, kind, position, title, lit, thin }, { after: t, also });
+    };
+    assert.strictEqual(api.stageDrawn().at(-1)?.reducedMotion, true, "the page runs with reduced motion: --force-prefers-reduced-motion reaches the webview");
+    let drawn: Drawn | undefined;
+    for (const row of steps) drawn = await stepShown(row[0], row, "next");
+    assert.strictEqual(drawn!.next, "Finish", "the last step says Finish");
     // the code pane of each: the node's code for a block, the contents of a file, the same code dim for a stop explained before
     assert.strictEqual(steps.length, 7);
-    api.stageClick("next");
-    const end = await stageShows("the end card", (d) => d.mode === "end");
-    assert.strictEqual(end.step, null);
-    assert.strictEqual(end.code, null, "the end is one column");
-    for (const row of [...steps].reverse()) {
-      api.stageClick("prev");
-      check(await stageShows(`back to ${row[0]}`, atStep(row[0])), row);
-    }
-    api.stageClick("prev");
-    await stageShows("back to the cover", (d) => d.mode === "cover");
+    const toEnd = await api.stageClick("next");
+    await shows("the end card", api.stageDrawn, { tour, mode: "end", step: null, code: null }, { after: toEnd, also }); // the end is one column
+    for (const row of [...steps].reverse()) await stepShown(`back to ${row[0]}`, row, "prev");
+    const toCoverAgain = await api.stageClick("prev");
+    await shows("back to the cover", api.stageDrawn, { tour, mode: "cover" }, { after: toCoverAgain, also });
     assert.deepStrictEqual(api.webviewErrors(), []);
   });
 
