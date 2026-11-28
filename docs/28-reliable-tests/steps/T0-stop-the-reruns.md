@@ -161,3 +161,9 @@ Accepted as it is.
 - **A trap found:** `pnpm --filter vnoc test` loads the extension from `dist/` and does not rebuild it. A change to `extension/src/` (outside `test/`) is not tested until `pnpm --filter vnoc build`. T1a's prompt makes the test script build first (esbuild, about a second).
 
 T0a, T0b, T0a2, T0a3 done. Next: push, PR to `main`, merge, then T0c.
+
+## T0c, first probes (2026-11-28, after PR #33 merged)
+
+- **cli "a name the binary does not know …"**, alone on Windows: **5 of 5 passed** (run 46161278807). It fails only after the cli tests before it, so it is order: an earlier test leaves `.claude` half-removed (Windows "delete pending" while another process holds it), and this test's `files()` walk meets it. A test fix, in T2 (wait until a removed folder is gone; the walk does not read what it did not make).
+- **"a core that starts again"**, alone on Windows: **0 of 5**, but the probe never reached it (run 46161274922). Each run failed in the suite's `suiteSetup`: `ENOENT … ws-main\tourdemo\util.py`. `tourdemo/` is made by `makeTours()` in earlier suites of tour.test.ts, so a grep that runs this suite alone has no folder. This proves rule "every suite stands alone" (04-design §5.5, T2's `vnoc.test.reset`) and says nothing yet about Windows and the restart.
+- **Next probe:** the whole tour suite, no grep, 3 runs: `gh workflow run probe.yml --ref reliable-tests -f os=windows-latest -f suite=tour -f grep="" -f times=3`. The restart test's result in each of the 3 logs is the verdict input.
