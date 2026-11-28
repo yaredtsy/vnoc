@@ -3733,6 +3733,10 @@ fn git_in(root: &Path, args: &[&str]) {
 fn tour_git_project(label: &str) -> PathBuf {
     let root = tour_project(label);
     git_in(&root, &["init", "-q"]);
+    // a local identity: the core's own `git commit` (Commit and Pin) must work on a machine with no global one, as CI
+    git_in(&root, &["config", "user.name", "t"]);
+    git_in(&root, &["config", "user.email", "t@t"]);
+    git_in(&root, &["config", "commit.gpgsign", "false"]);
     git_in(&root, &["add", "-A"]);
     git_in(&root, &["commit", "-qm", "sample"]);
     root

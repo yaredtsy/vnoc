@@ -1288,10 +1288,17 @@ mod tests {
 
     #[test]
     fn two_equal_titles_give_two_ids() {
-        let ids: BTreeSet<TourId> = (0..200).map(|_| new_id("same title")).collect();
-        assert_eq!(ids.len(), 200, "the four characters differ every time");
+        // what `start` guarantees: it retries on an id that exists, so many tours of one title are all different
+        // (four random characters alone collide a few percent of runs, so raw `new_id`s are not asserted different)
+        let root = project("equal-titles");
+        let ids: BTreeSet<TourId> = (0..50)
+            .map(|_| start(&root, params("same title")).unwrap().id)
+            .collect();
+        assert_eq!(ids.len(), 50);
+        // the shape of a raw id
+        assert!(new_id("same title").as_str().starts_with("same-title-"));
         for id in &ids {
-            assert!(id.as_str().starts_with("same-title-"));
+            assert!(id.as_str().starts_with("same-title-"), "{id}");
         }
     }
 

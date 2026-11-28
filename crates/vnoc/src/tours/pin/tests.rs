@@ -552,11 +552,11 @@ fn commit_files_commits_exactly_those_files_and_other_staged_files_stay_staged()
 fn a_file_named_like_a_pattern_is_that_file_and_a_message_that_starts_with_a_dash_is_a_message() {
     let root = repo("literal");
     commit_all(&root, &[("keep.py", "k = 1\n")]);
-    write(&root, "we*rd.py", "w = 1\n");
+    write(&root, "we[i]rd.py", "w = 1\n");
     write(&root, "weird.py", "w = 2\n");
     commit_files(
         &project(&root),
-        &[changed("??", "we*rd.py")],
+        &[changed("??", "we[i]rd.py")],
         "--amend everything",
     )
     .unwrap();
@@ -565,7 +565,7 @@ fn a_file_named_like_a_pattern_is_that_file_and_a_message_that_starts_with_a_das
             .lines()
             .filter(|l| !l.is_empty())
             .collect::<Vec<_>>(),
-        ["--amend everything", "we*rd.py"]
+        ["--amend everything", "we[i]rd.py"]
     );
     assert_eq!(
         git(&root, &["status", "--porcelain"]).trim(),
