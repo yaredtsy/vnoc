@@ -39,7 +39,7 @@ const PING_MS = 3_000;
  * request a test makes (`util.core`), the rest of the suite's tests: each of them fails at once with "the core stopped answering earlier in this suite" (not skipped). A core that is not
  * running (a request fails at once: `bar` stops it on purpose) is not a core that stopped answering: the test goes on.
  */
-function guardTheCore(mocha: Mocha) {
+function guardTheCore(mocha: Mocha, retrying: Retrying) {
   const stopped = new Set<string>();
   const failAtOnce = (test: Mocha.Test, why: string) => {
     test.fn = () => {
@@ -49,6 +49,7 @@ function guardTheCore(mocha: Mocha) {
   mocha.suite.beforeEach(async function () {
     const test = this.currentTest!;
     const file = test.file ?? "";
+    if (retrying.stopped) test.retries(0); // the run is broken, not flaky: no more second tries
     // a test that fails because the core stopped is not retried: the retry would ask the same core again (a second 3 s ping, a second line)
     if (stopped.has(file)) {
       test.retries(0);
@@ -91,38 +92,46 @@ function retries(): number {
 type Api = Record<string, (() => unknown) | undefined>;
 const last = (what: unknown, n = 5) => (Array.isArray(what) ? what.slice(-n) : what);
 
-/** What the window knows at the moment a test failed its first try: the first error, the core's log, the pages' errors and their last reports. */
-async function diagnose(title: string, message: string): Promise<void> {
+/** The tests retried in this run, and whether the cap on them has been reached (then the guard in `guardTheCore` gives every later test no retry). */
+type Retrying = { tests: Set<string>; stopped: boolean; cap: number };
+
+/** How many tests may be retried in one run before the retries stop: `VNOC_RETRY_CAP=<n>`, else 5. */
+function retryCap(): number {
+  const asked = process.env.VNOC_RETRY_CAP;
+  if (asked === undefined || asked === "") return 5;
+  const n = Number(asked);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`VNOC_RETRY_CAP must be a whole number, not "${asked}"`);
+  return n;
+}
+
+/** What the window knows at the moment a test failed its first try: the first error, the core's log, the pages' errors and their last reports. Synchronous: it reads before the retry draws anything. */
+function diagnose(api: Api, title: string, message: string): void {
   const lines = [`::group::RETRY ${title}`, `first error: ${message}`];
-  try {
-    const api = (await vscode.extensions.getExtension("vnoc.vnoc")!.activate()) as Api;
-    const show = (name: string, tail: boolean) => {
-      try {
-        const v = api[name]?.();
-        if (v === undefined) return;
-        const text = typeof v === "string" ? v : JSON.stringify(tail ? last(v) : v, null, 1);
-        lines.push(`--- ${name}${tail ? " (last 5)" : ""}`, text);
-      } catch (e) {
-        lines.push(`--- ${name}: ${(e as Error).message}`);
-      }
-    };
-    show("logTail", false);
-    show("webviewErrors", false);
-    for (const name of ["stageDrawn", "toursDrawn", "sidebarPosts"]) show(name, true);
-  } catch (e) {
-    lines.push(`(no diagnosis: ${(e as Error).message})`);
-  }
+  const show = (name: string, tail: boolean) => {
+    try {
+      const v = api[name]?.();
+      if (v === undefined) return;
+      const text = typeof v === "string" ? v : JSON.stringify(tail ? last(v) : v, null, 1);
+      lines.push(`--- ${name}${tail ? " (last 5)" : ""}`, text);
+    } catch (e) {
+      lines.push(`--- ${name}: ${(e as Error).message}`);
+    }
+  };
+  show("logTail", false);
+  show("webviewErrors", false);
+  for (const name of ["stageDrawn", "toursDrawn", "sidebarPosts"]) show(name, true);
   lines.push("::endgroup::");
   console.log(lines.join("\n"));
 }
 
 /** `FLAKY (passed on a later try): n` and a line per test with its first error: to the console, and as Markdown to the step summary when there is one. */
-function reportFlaky(flaky: Map<string, string>): void {
+function reportFlaky(flaky: Map<string, string>, stoppedLine: string | null): void {
   const lines = [...flaky].map(([title, err]) => `${title} — ${err.split("\n")[0]}`);
+  if (stoppedLine) lines.push(stoppedLine);
   const head = `FLAKY (passed on a later try): ${flaky.size}`;
-  if (flaky.size > 0) console.log(["", head, ...lines.map((l) => `  ${l}`)].join("\n"));
+  if (lines.length > 0) console.log(["", head, ...lines.map((l) => `  ${l}`)].join("\n"));
   const summary = process.env.GITHUB_STEP_SUMMARY;
-  if (summary && flaky.size > 0) {
+  if (summary && lines.length > 0) {
     try {
       fs.appendFileSync(summary, `\n### ${head}\n\n${lines.map((l) => `- ${l.replace(/[|`<]/g, "\\$&")}`).join("\n")}\n`);
     } catch (e) {
@@ -131,23 +140,32 @@ function reportFlaky(flaky: Map<string, string>): void {
   }
 }
 
-export function run(): Promise<void> {
+export async function run(): Promise<void> {
+  // the api is got once, here: the `retry` handler reads it without waiting for anything
+  const api = (await vscode.extensions.getExtension("vnoc.vnoc")!.activate()) as Api;
   // `VNOC_GREP=text` runs only the tests whose full title has that text (a test that needs an earlier one of its suite fails by itself: say so)
   const mocha = new Mocha({ ui: "tdd", timeout: 60_000, color: false, retries: retries(), grep: process.env.VNOC_GREP || undefined });
-  guardTheCore(mocha);
+  const retrying: Retrying = { tests: new Set(), stopped: false, cap: retryCap() };
+  guardTheCore(mocha, retrying);
   for (const name of chosen()) mocha.addFile(path.resolve(__dirname, `${name}.test.js`));
   const firstError = new Map<string, string>(); // tests that failed a try, by full title
   const flaky = new Map<string, string>(); // ... and then passed
+  let stoppedLine: string | null = null;
   return new Promise((resolve, reject) => {
     const runner = mocha.run((failures) => {
-      reportFlaky(flaky);
+      reportFlaky(flaky, stoppedLine);
       failures ? reject(new Error(`${failures} tests failed`)) : resolve();
     });
-    // the diagnosis is asked at once (the window is as the failure left it); mocha does not wait for it, so the retry may start first: it is read-only
     runner.on("retry", (test: Mocha.Test, err: Error) => {
       const title = test.fullTitle();
       if (!firstError.has(title)) firstError.set(title, err.message);
-      void diagnose(title, err.message);
+      diagnose(api, title, err.message);
+      retrying.tests.add(title);
+      if (!retrying.stopped && retrying.tests.size >= retrying.cap) {
+        retrying.stopped = true;
+        stoppedLine = `RETRIES STOPPED after ${retrying.cap} tests: this run is broken, not flaky`;
+        console.log(stoppedLine);
+      }
     });
     runner.on("pass", (test: Mocha.Test) => {
       const title = test.fullTitle();

@@ -82,6 +82,7 @@ async function window(tmp: string, name: string, env: Record<string, string>): P
 }
 
 async function main() {
+  delete process.env.ELECTRON_RUN_AS_NODE; // a terminal inside an Electron app sets it; VS Code then runs the workspace folder as a script
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-ext-"));
   const asked = (process.env.VNOC_SUITE ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const main = asked.length === 0 || asked.some((s) => !HELD.includes(s));
