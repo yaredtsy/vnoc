@@ -180,6 +180,10 @@ Also red in the same runs: "a pinned tour whose function was edited…" and "a f
 - the temp name is `.<name>.tmp-<pid>`: two writes of the same file from one process at once share one temp file;
 - the restart test waits for `checkFrom: "record"`. If `vnoc tour check` could not write the record (the same rename) and said nothing, the new core has no record to answer from: exactly this failure. The test's message does not say what it got instead.
 
+**The same failure elsewhere:** rclone's forum, "Windows VFS cache: failed rename over an open handle returns success, silently losing atomic temp-rename saves" (July 2026, thread 54004). Its repro holds the target open with `FileShare.ReadWrite` and no `FileShare.Delete`, then `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` fails with "Access is denied". rclone's worse bug was logging the error and returning success. The maintainer's fix: first make the error visible, then rename with `FileRenameInfoEx` + `FILE_RENAME_FLAG_POSIX_SEMANTICS`. For us:
+- the POSIX-semantics rename is already what Rust's `std::fs::rename` uses on Windows, and our toolchain is 1.94.1. It still failed, because POSIX semantics replace an open target only when every open handle allows delete (`FILE_SHARE_DELETE`), and Node's (and many scanners') handles do not. So it does not fix this alone: the retry is still needed;
+- "make the error visible" is the part that matters most: a save that failed must never look like it worked. T0d's first commit does both.
+
 **This is a product bug, not only a test bug.** A Windows user whose editor or antivirus has `.vnoc/` files open loses tour state writes. It goes in a 0.4.1.
 
 ## T0d — atomic writes that work on Windows (prompt for the Sonnet session, two commits)
