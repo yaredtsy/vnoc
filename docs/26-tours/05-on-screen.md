@@ -893,8 +893,20 @@ host: with a call card for that node in view, the canvas selects and frames the 
 Rust 1019 (0 failed), TS 418 / 925, window 206 + `waits` 2, no failure. VSIX sha256 `8dd9c8cf…`. `tours` is 168 commits on
 `origin/main` (nothing new there), 11 ahead of `origin/tours`.
 
+**CI on PR #26 (run 46137670259, 2026-11-28) fails on every platform**, three faults, none seen locally:
+- **Ubuntu and Windows:** `lifecycle` `tour_pin_on_uncommitted_work_…` and `offers_are_the_ids_and_the_files_…`: the core's `git commit`
+  (Commit and Pin) fails with *Author identity unknown*. The runners have no git identity; this machine has a global one. The other
+  committing tests pass `-c user.name=t -c user.email=t@t`; these two make the core commit in a repo with none. Fix: the fixture repo of
+  those tests sets a local `user.name` / `user.email`. (The product is right: a user without an identity gets git's own words.)
+- **macOS:** lib `tours::store::tests::two_equal_titles_give_two_ids`: 200 raw `new_id`s with four random characters collided once
+  (199 of 200; a birthday chance of a few percent a run). The product never meets it: `start` retries on an id that exists (`id_for(…,
+  attempt)`). Fix: the test asserts what `start` guarantees (many tours of one title through `store::start` in a temp project are all
+  different), not raw `new_id`s.
+- **Windows:** lib `tours::pin::tests::a_file_named_like_a_pattern_…`: `we*rd.py` is not a legal file name on Windows (os error 123).
+  Fix: a pattern character Windows allows (`we[i]rd.py`, a pathspec glob too), so the test still proves literal paths.
+
 **Next, in this order:**
-- Push, PR (`tools/media/out/tr24a/PR.md`), merge, `v0.4.0`: when the user says.
+- **TR24w** (the three CI fixes, one commit), the user pushes, CI green; then merge, `v0.4.0`.
 - (done) **TR24v**, a VSIX; then push, PR, merge, `v0.4.0` (the user says when).
 - (done) The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
 - (done) **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
