@@ -884,8 +884,18 @@ arguments.
 **TR24v, the fix step** (2026-11-28; the user said the pass is done): G13; the search pick that keeps a call view; the call card that
 typing does not light. Pressing Enter to step through the lit cards waits for after the release (not answered). Then the release.
 
+**As built (TR24v, `442c1e0`, `2c5c9ec`; reviewed).** The install question fits a row (`both agents` when two), the dim line before it
+stays, the answer is reported on its row. The search bug was the **call tree's budget** (~10,000 nodes): every node from the root to where
+it stopped came back `cut` with the calls reached so far, so `_run_impl` had 58 of its 125 callees, `run_single_turn` (#100) not among
+them, and the card said `… calls not loaded` beside drawn calls. Now a `cut` node holds no calls (drawn closed; opening it asks its own
+tree) and the root is completed from a one-level tree (one driver request, ~0.6 s): `_run_impl` gives 125. A pick goes through the
+host: with a call card for that node in view, the canvas selects and frames the first and the focus stays; else the reveal by structure.
+Rust 1019 (0 failed), TS 418 / 925, window 206 + `waits` 2, no failure. VSIX sha256 `8dd9c8cf…`. `tours` is 168 commits on
+`origin/main` (nothing new there), 11 ahead of `origin/tours`.
+
 **Next, in this order:**
-- **TR24v**, a VSIX; then push, PR, merge, `v0.4.0` (the user says when).
+- Push, PR (`tools/media/out/tr24a/PR.md`), merge, `v0.4.0`: when the user says.
+- (done) **TR24v**, a VSIX; then push, PR, merge, `v0.4.0` (the user says when).
 - (done) The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
 - (done) **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
   diagram that fits) and the user's by-hand pass on it; then push, PR, merge, `v0.4.0`.
