@@ -1,5 +1,5 @@
 import * as assert from "assert";
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -119,6 +119,26 @@ let pinnedId = "";
 const vnoc = (args: string[], input = "") =>
   execFileSync(api.cli.binaryPath()!, ["--driver", api.cli.driverPaths().find((p) => p.includes("python"))!, ...args], { cwd: workspace(), encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, VNOC_DRIVER: "", VNOC_DRIVERS: "" } });
 const tourCmd = (args: string[], input = "") => vnoc(["tour", ...args], input);
+/** A `vnoc tour …` command that may fail: what it said and its exit code, never a throw (for a report of what a failed test found). */
+const tourCmdSaid = (args: string[]): string => {
+  const r = spawnSync(api.cli.binaryPath()!, ["--driver", api.cli.driverPaths().find((p) => p.includes("python"))!, "tour", ...args], { cwd: workspace(), encoding: "utf8", timeout: 60_000, env: { ...process.env, VNOC_DRIVER: "", VNOC_DRIVERS: "" } });
+  return `exit ${r.status ?? `none (${r.signal ?? r.error?.message})`}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+};
+/**
+ * Windows only: every process that has one of these paths open (Sysinternals `handle64.exe`, whose path is in VNOC_HANDLE_EXE; the probe workflow downloads it). Skipped, and says so, anywhere else
+ * or without the variable. "Nobody" is not proved by an empty answer: it is asked when the failure is already old.
+ */
+const whoHolds = (...paths: string[]): string => {
+  const exe = process.env.VNOC_HANDLE_EXE;
+  if (process.platform !== "win32") return "(handle64 is asked on Windows only)";
+  if (!exe) return "(VNOC_HANDLE_EXE is not set: handle64 was not asked)";
+  return paths
+    .map((p) => {
+      const r = spawnSync(exe, ["-accepteula", "-nobanner", p], { encoding: "utf8", timeout: 30_000 });
+      return `handle64 ${p}: exit ${r.status ?? `none (${r.signal ?? r.error?.message})`}\n${r.stdout}${r.stderr}`;
+    })
+    .join("\n");
+};
 
 const last = (): Drawn | undefined => api.stageDrawn().at(-1);
 /** Waits for the stage to draw something that satisfies `ready`; the newest drawing is the one asked. */
@@ -1445,7 +1465,7 @@ suite("a tour that no longer matches the code", () => {
   });
 
   test("a core that starts again: the list says changed from the record, and a tour opened first is answered from the record", async function () {
-    this.timeout(60_000);
+    this.timeout(120_000);
     api.stageClick("closeTour");
     await dropTourContext();
     edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
@@ -1456,7 +1476,7 @@ suite("a tour that no longer matches the code", () => {
     api.stageClick("closeTour");
     await dropTourContext();
     tourCmd(["check", pinned]); // the record on disk is of the file as it is now, whatever the window's core had made of it by now
-    await api.restartCore(); // the new core remembers nothing: the record on disk is all it has
+    await api.restartCore(); // the new core remembers nothing: the record on disk is all it has (it returns only once the new core has answered `vnoc/ping`)
     // opened with no list asked in between (a list that is asked for checks the rows it holds, and the core then remembers the answer: `memory`)
     const drawn = api.stageDrawn().length;
     api.dispatch({ type: "tourOpen", id: pinned }, "main");
@@ -1464,7 +1484,21 @@ suite("a tour that no longer matches the code", () => {
     const after = () => api.stageDrawn().slice(drawn).filter((d) => d.tour === pinned && d.checkFrom !== null);
     await until("the reopened tour drawn", () => after().length > 0, 20_000);
     // the page and the host both ask for the tour: the first answer is from the record, a second asked while it was being answered may be the core's memory of it. Never a check
-    await until("the record's answer", () => after().some((d) => d.checkFrom === "record"), 20_000);
+    try {
+      await until("the record's answer", () => after().some((d) => d.checkFrom === "record"), 20_000);
+    } catch (e) {
+      // 20 s have passed: say what the window drew instead, what the command line says of the tour now, and (Windows) who has the state open
+      const drawings = api.stageDrawn().slice(drawn).filter((d) => d.tour === pinned).map((d) => d.checkFrom);
+      const stateFile = path.join(stateDir(), `${pinned}.json`);
+      throw new Error(
+        `${(e as Error).message}\n` +
+          `checkFrom of every drawing of the tour after the reopen: ${JSON.stringify(drawings)} (restartCore returned after the new core answered vnoc/ping)\n` +
+          `the state file ${stateFile}: ${fs.existsSync(stateFile) ? fs.readFileSync(stateFile, "utf8") : "(not there)"}\n` +
+          `vnoc tour where ${pinned} --json: ${tourCmdSaid(["where", pinned, "--json"])}\n` +
+          `vnoc tour check ${pinned}: ${tourCmdSaid(["check", pinned])}\n` +
+          `who has the state open (asked after the wait, so empty may mean gone by then): ${whoHolds(stateFile, stateDir())}`,
+      );
+    }
     assert.ok(after().every((d) => d.checkFrom !== "check"), `no source file was read: ${JSON.stringify(after().map((d) => d.checkFrom))}`);
     api.stageClick("closeTour");
     await dropTourContext();

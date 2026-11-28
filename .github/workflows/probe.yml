@@ -51,6 +51,17 @@ jobs:
         run: cargo build -p vnoc
       - name: build the webview and the extension
         run: pnpm -r build
+      # Sysinternals Handle: the restart test names the processes that hold a tour's state file when its answer does not come (T0d). Not on the runners.
+      - name: handle64 (Windows)
+        if: ${{ inputs.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP "tools"
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP "Handle.zip"
+          Invoke-WebRequest -Uri https://download.sysinternals.com/files/Handle.zip -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $tools
+          "VNOC_HANDLE_EXE=$(Join-Path $tools 'handle64.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: run the suite ${{ inputs.times }} times
         env:
           VNOC_RETRIES: "0"

@@ -652,8 +652,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     codeShown: () => codeShownPosts,
     /** stops the core process, as a crash would: the next request to it fails. `restartCore` brings it back. */
     breakCore: () => c.stop(),
-    /** starts it again, so the suites after the one that broke it still have a core */
-    restartCore: () => c.restart(),
+    /** starts it again, so the suites after the one that broke it still have a core; resolves only when the new core has answered `vnoc/ping` (the client's restart alone waits for the handshake) */
+    restartCore: async () => {
+      await c.restart();
+      await c.request("vnoc/ping");
+    },
     /** tells the open pages the index changed, so each reads the structure again (what a save does) */
     emitIndexChanged: () => panels.emit("indexChanged", { revision: 0 }),
     /** resolves when the bar's ⚠ says something that satisfies `ready` (immediately if it already does) */
