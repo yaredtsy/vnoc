@@ -105,3 +105,67 @@ Stage explicit paths only (never `git add .`, never `git add docs`). Do not push
 Report: the two hashes; reducedMotion true or false; the 10 runs (how many green, the time of one); the
 failure message of the planted fault; anything in the step file that did not match the code.
 ```
+
+## Review of T1a (`b2d76cf`, `035e2f4`, 2026-11-28)
+
+Accepted. The Next test went 10 of 10 green under load with retries off. A planted fault failed with a message that names the step, the fields wanted, the newest report and the core's place. `reducedMotion` is `true`: the flag reaches the webview.
+
+Decided:
+1. **The 520 px test: fix it, never take it out from under the flag.** Reduced motion turned a flake into a failure that repeats, which is what the design is for. It is the same failure CI showed (`outside: Prev, Next, Unfold the stage`), so it was never "only a slow runner". One fact points at the measure, not the layout: the folded stage renders with `style={{ height: 30 }}` (`Stage.tsx`, the `if (folded)` branch), yet the report says `height: 268`. Either the report measures an element that is not the mini bar, or the fold is not what is on screen. T1a2 finds out with a picture, then fixes the layout or the measure, whichever is wrong.
+2. **A remount must not reset `seq`.** The host owns the numbers: it keeps the last ticket it gave each page and sends it in the page's first state, and the page starts from it. A wait that spans a remount then still matches.
+3. **One `SLOWDOWN`.** The formula moves to `shared/` and both `extension.ts` and `util.ts` import it.
+4. **G9 ("the grip goes to 70%") and "Esc closes the tour's context…"** are on the ledger. T1a2 only classifies them (alone ×5, in suite order ×3); their fix waits for T3/T4.
+5. **`handled` comes only from the Stage.** Fine for T1a; the TourBar's actions get tickets in T4.
+6. **The no-op `.catch` in `stageAction`** stays: an action nobody awaits must not crash the run, and one that is awaited still fails.
+
+## Also seen on PR #33's CI (run 46158338567, 2026-11-28)
+
+Ubuntu and macOS were green. Windows had two tests that failed even after the retry, and both failed the same way on `main`'s v0.4.0 publish run, so neither comes from this PR:
+- **"a core that starts again"**: T0c's target, unchanged.
+- **cli "a name the binary does not know …"**: `EPERM: operation not permitted, scandir …\ws-main\.claude` in the test's `files()` walk. Most likely an earlier cli test removed `.claude`, and Windows keeps a folder "delete pending" while another process (VS Code's file watcher) still has it open. It goes on the ledger. The probe runs it after T0c's: `-f suite=cli -f grep="a name the binary does not know" -f times=5`. The fix belongs to T2 (the world outside: the walk waits until a removed folder is really gone).
+
+The "Node.js 20 is deprecated" warning comes from the pinned `actions/checkout`, `actions/setup-node` and `actions/cache`. GitHub runs them on Node 24 already, so nothing breaks. Dependabot's PR #4 ("the actions group, 6 updates") moves them to versions built for Node 24: merge it on its own, after #33.
+
+## Prompt for the Sonnet session (T1a2, two commits)
+
+```
+You are working in /Users/yared/Documents/Programing/rust/vnoc on branch `reliable-tests`.
+Commit locally; do NOT push. Stage explicit paths only (never `git add .`, never `git add docs`). Never edit docs/.
+The window suite needs ELECTRON_RUN_AS_NODE unset (runTest.ts does it) and does not rebuild dist/ by itself:
+build before each run.
+Read first: docs/28-reliable-tests/steps/T1-one-action.md from "Review of T1a" to the end;
+webview/src/tour/Stage.tsx (stageEl/stageRef, the stageDrawn effect, the `if (folded)` branch);
+webview/src/tour/stage/measure.ts; webview/src/tour/stage.css (.stage, .stage-header);
+extension/src/test/suite/tour.test.ts, the test "a canvas 520 px wide: …".
+
+Commit 1 — the 520 px mini bar.
+1. See it before changing anything: with reduced motion on, open a tour, set the canvas to 520 px, fold the
+   stage, and take a screenshot of the canvas page (tools/media `launch({ dev: true })` + `page.screenshot`,
+   saved under tools/media/out/t1a2/). Also log the stageDrawn report of that moment, and the folded
+   element's `getBoundingClientRect()` and `data-stage` attribute at the same moment.
+2. Decide which is wrong, and say why in the commit body:
+   - the measure (the report measures an element that is not the mini bar, or measures before the fold
+     is on screen): fix measure.ts or the effect, so the report describes what is drawn;
+   - the layout (the mini bar's Prev, Next and Unfold really are cut at 520 px): fix the CSS of design 03 §6,
+     one line, nothing cut; the name and step title shrink first.
+3. The test stays as it is, under the flag. It passes 5 times alone.
+Message: `tests T1a2: the folded stage at 520 px is measured as drawn` or
+`tour: the mini bar fits a 520 px canvas` (whichever it was).
+
+Commit 2 — the ticket survives a remount; one SLOWDOWN.
+- The host keeps the last ticket it gave each page and sends it in the page's first state. The Stage starts its
+  `seq` from it, never from 0 after a remount. A window test: open a tour, act (seq n), close and reopen the
+  canvas page, act again: the new report's seq is > n.
+- The SLOWDOWN formula moves to shared/ (one function), imported by extension.ts and util.ts.
+Message: `tests T1a2: a page that opens again keeps counting the host's tickets; one slowdown`
+
+Then, once: classify G9 ("the grip goes to 70% of the canvas and no further") and "Esc closes the tour's
+context…": each alone 5 times, then the tour suite in its order 3 times, retries off. Note only: pass/fail
+counts, and the failure message of each failure. Do not fix them.
+
+After the last commit, ONCE: extension and webview tsc and units; the whole window suite once, retries off.
+
+Report: the hashes and `git show --stat`; the screenshot's path and what it showed; which was wrong
+(measure or layout) and the line that proves it; the remount test; the G9/Esc counts and messages;
+the full run's result; `git status --short`.
+```
