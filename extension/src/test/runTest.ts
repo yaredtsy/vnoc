@@ -75,7 +75,7 @@ async function window(tmp: string, name: string, env: Record<string, string>): P
     vscodeExecutablePath: await vscodeExecutable(),
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(root, "out/test/suite/index"),
-    launchArgs: [workspace, ...NO_THROTTLING, "--disable-extensions", `--user-data-dir=${userData}`, `--extensions-dir=${path.join(tmp, `ext-${name}`)}`, "--disable-workspace-trust"],
+    launchArgs: [workspace, ...NO_THROTTLING, "--disable-extensions", `--user-data-dir=${userData}`, `--extensions-dir=${path.join(tmp, `ext-${name}`)}`, "--disable-workspace-trust", "--force-prefers-reduced-motion"],
     // the `cli` suite installs the `vnoc` command: into this folder, never the real ~/.local/bin (and nothing of the user's PATH)
     extensionTestsEnv: { VNOC_TEST_WORKSPACE: workspace, VNOC_CLI_DIR: path.join(tmp, `cli-bin-${name}`), ...env },
   });

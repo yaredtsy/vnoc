@@ -52,6 +52,9 @@ const docsShownPosts: { pinned: string | null; node: string | null; doc: string 
 const searchFocusedPosts: { focused: boolean; text: string }[] = [];
 /** What the tour's stage drew, each time it changed (for the test suite). */
 const stagePosts: Extract<Notes, { type: "stageDrawn" }>[] = [];
+/** The tickets of the test api's stage actions: one counter for all of them, and who waits for the page's `handled` of each. */
+let actionSeq = 0;
+const handledWaiters = new Map<number, () => void>();
 /** What the tour's map drew, each time it changed (for the test suite). */
 const mapPosts: Extract<Notes, { type: "mapDrawn" }>[] = [];
 /** What the bar said in a tour context (for the test suite). */
@@ -475,6 +478,24 @@ export function activate(ctx: vscode.ExtensionContext) {
   setExtensions([]);
   ctx.subscriptions.push(c.onLanguages(setExtensions));
 
+  // A stage action of the test api: numbered, sent, and its promise kept (with the number) when the page says `handled`. The limit is the suite's (`util.ts`: 10 s times its slowdown).
+  const stageAction = (name: "stageKey" | "stageClick", key: string): Promise<number> => {
+    const n = ++actionSeq;
+    const limit = 10_000 * (Number(process.env.VNOC_TEST_SLOWDOWN) || (process.env.CI ? 3 : 1));
+    return new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        handledWaiters.delete(n);
+        reject(new Error(`the page never handled ${name} ${key} (seq ${n}): no page listens, or it threw`));
+      }, limit);
+      handledWaiters.set(n, () => {
+        clearTimeout(timer);
+        handledWaiters.delete(n);
+        resolve(n);
+      });
+      panels.emit("viewCommand", { name, key, seq: n });
+    });
+  };
+
   // What the test suite drives.
   return {
     session: () => store.get(),
@@ -516,8 +537,9 @@ export function activate(ctx: vscode.ExtensionContext) {
     /** every drawing of the tour's stage, in order: the step it shows, its words and its code, which lines are lit */
     stageDrawn: () => stagePosts,
     /** a key pressed in the tour's stage, and a click on one of its buttons (`next`, `prev`, `goToCode`, `start`, `closeTour`), as the page handles them: the suite cannot press keys or click in a webview */
-    stageKey: (key: string) => panels.emit("viewCommand", { name: "stageKey", key }),
-    stageClick: (button: string) => panels.emit("viewCommand", { name: "stageClick", key: button }),
+    /** both return a ticket: a promise of the action's number, kept when the page says it handled it (a `stageDrawn` with `seq >= ticket` is a drawing made after) */
+    stageKey: (key: string) => stageAction("stageKey", key),
+    stageClick: (button: string) => stageAction("stageClick", button),
     canvasWidth: (px: number | null) => panels.emit("viewCommand", { name: "canvasWidth", key: px === null ? undefined : String(px) }),
     /** every drawing of the tour's map, in order: its cards (badge, ring, call line) and its heavy edges */
     mapDrawn: () => mapPosts,
@@ -683,6 +705,9 @@ function onNote(note: Notes, store: SessionStore, output: vscode.OutputChannel, 
       break;
     case "stageDrawn":
       stagePosts.push(note);
+      break;
+    case "handled":
+      handledWaiters.get(note.seq)?.();
       break;
     case "pinDialog":
       pinDialogPosts.push(note);

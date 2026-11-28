@@ -6,20 +6,58 @@ import * as vscode from "vscode";
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export const canvasTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith("vnoc.canvas"));
 
+/** Every deadline of a test is multiplied by this: 3 on CI, 1 here, or what `VNOC_TEST_SLOWDOWN` says. */
+export const SLOWDOWN = Number(process.env.VNOC_TEST_SLOWDOWN) || (process.env.CI ? 3 : 1);
+export const deadline = (ms: number) => ms * SLOWDOWN;
+
+/** Waits for a check, every 100 ms, until the deadline (measured on the clock, not by counting naps). */
 export async function until(what: string, check: () => boolean, ms = 20_000) {
-  for (let waited = 0; !check(); waited += 100) {
+  const end = Date.now() + deadline(ms);
+  while (!check()) {
     if (coreStopped()) assert.fail(CORE_STOPPED);
-    if (waited >= ms) assert.fail(`timed out waiting for ${what}`);
+    if (Date.now() >= end) assert.fail(`timed out waiting for ${what}`);
     await sleep(100);
   }
 }
 
-/** Waits for an async check, polling every 200 ms. */
+/** Waits for an async check, polling every 200 ms, until the deadline (on the clock). */
 export async function waitFor(what: string, check: () => Promise<boolean> | boolean, ms = 20_000) {
-  for (let waited = 0; !(await check()); waited += 200) {
+  const end = Date.now() + deadline(ms);
+  while (!(await check())) {
     if (coreStopped()) assert.fail(CORE_STOPPED);
-    assert.ok(waited < ms, `timed out waiting for ${what}`);
+    assert.ok(Date.now() < end, `timed out waiting for ${what}`);
     await sleep(200);
+  }
+}
+
+/** The fields of `report` that `expected` names. */
+const trimmed = (report: object, expected: object) => Object.fromEntries(Object.keys(expected).map((k) => [k, (report as any)[k]]));
+/** Does the report hold every field `expected` names, deep equal (an array or an object as a whole)? */
+const holds = (report: object, expected: object) => {
+  try {
+    assert.deepStrictEqual(trimmed(report, expected), expected);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Waits until the newest report made after the ticket (`seq >= after`) holds every field of `expected`, and gives it back. A report from before the action never counts, and a later unrelated one
+ * is read as it is: the wait is for the whole state the action asked for. It reads what is there every 50 ms. On the deadline it fails with the expected fields and the newest report after the ticket.
+ */
+export async function shows<R extends { seq: number }>(what: string, reports: () => R[], expected: Partial<R>, opts: { after: number; ms?: number; also?: () => string }): Promise<R> {
+  const end = Date.now() + deadline(opts.ms ?? 20_000);
+  const newest = () => reports().filter((r) => r.seq >= opts.after).at(-1);
+  for (;;) {
+    const r = newest();
+    if (r && holds(r, expected)) return r;
+    if (coreStopped()) assert.fail(CORE_STOPPED);
+    if (Date.now() >= end) {
+      const drawn = r ? JSON.stringify(trimmed(r, expected), null, 1) : `no report after seq ${opts.after}`;
+      assert.fail([`timed out waiting for ${what}`, `expected: ${JSON.stringify(expected, null, 1)}`, `newest report after seq ${opts.after}: ${drawn}`, opts.also?.()].filter((x) => x).join("\n"));
+    }
+    await sleep(50);
   }
 }
 

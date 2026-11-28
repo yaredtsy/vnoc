@@ -12,6 +12,7 @@ import { setStageFolded, setStageHeight, setStageText, useView } from "../state/
 import { type Current, type Shown, ADDING_LINE, MAX_SHARE, NARROW_BELOW, becameWritten, callLines, currentOf, enterDoes, keyMove, lookOf, nextLabel, notWrittenSentence, positionWords, segmentsOf, stageHeightFor } from "./layout.ts";
 import { goToStop } from "./goToCode.ts";
 import { stepLabel } from "./labels.ts";
+import { prefersReducedMotion } from "../lib/motion.ts";
 import { go, loadTour, useTour } from "./store.ts";
 import { CodePane, type CodeDrawn, LINE_H, keyMoved } from "./stage/CodePane.tsx";
 import { Contents } from "./stage/Contents.tsx";
@@ -133,6 +134,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
 
   // what a click or a key does: a move for the core, Go to Code, closing the tour
   const act = useRef<Record<string, () => void>>({});
+  /** The `seq` of the last stageKey/stageClick this page handled (0 before any): every `stageDrawn` says it, so the suite reads only drawings made after its action. */
+  const lastSeq = useRef(0);
   /** the calls of the code on screen that lead to a later stop, by file line: what a click on one jumps to */
   const callTo = useRef(new Map<number, { id: string }>());
   /** the step on the stage, for the suite's `choose:now` */
@@ -202,7 +205,9 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   // the extension's test suite cannot press keys or click in a webview: it sends the same key, and the same button
   useEffect(
     () =>
-      on("viewCommand", ({ name, key }) => {
+      on("viewCommand", ({ name, key, seq }) => {
+        const ticket = (name === "stageKey" || name === "stageClick") && seq !== undefined ? seq : null;
+        if (ticket !== null) lastSeq.current = ticket; // a drawing from here on says it saw this action
         // the suite cannot drag the window: it narrows the page itself (the same layout rules run on it), and gives it back with no `key`
         if (name === "canvasWidth") document.body.style.width = key ? `${key}px` : "";
         if (name === "stageKey" && key) {
@@ -224,6 +229,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
           else if (what === "pointer") document.querySelector('[data-part="code"]')?.dispatchEvent(new PointerEvent(arg === "out" ? "pointerleave" : "pointerenter"));
           else act.current[key]?.();
         }
+        if (ticket !== null) post({ type: "handled", seq: ticket }); // the handler has run: the page got the action
       }),
     [tourId], // the suite opens another tour in the same page: `go` is for the tour on the stage now
   );
@@ -235,6 +241,8 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     if (!view || !current || !codeDrawn) return;
     post({
       type: "stageDrawn",
+      seq: lastSeq.current,
+      reducedMotion: prefersReducedMotion(),
       tour: view.id,
       mode: current.mode,
       stop: stop?.id ?? null,
