@@ -1179,7 +1179,7 @@
     "unit": "node --test --experimental-strip-types ../shared/tree.test.ts ../shared/session.test.ts src/menus.test.ts src/report.test.ts src/dirtyFiles.test.ts src/saveDraft.test.ts src/sidebarSlot.test.ts src/cliInstall.test.ts src/agentsJson.test.ts src/askAgain.test.ts src/tours.test.ts src/tourActions.test.ts"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1",
+    "vscode-languageclient": "^11.0.1",
     "@vnoc/shared": "workspace:*"
   },
   "devDependencies": {
