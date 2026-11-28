@@ -240,3 +240,13 @@ the test results; `git status --short`.
 ```
 
 After T0d: push the branch, then the probe on Windows again (the whole tour suite, 3 runs). Green: open the PR and ship 0.4.1. Still red: the new message says what the record was instead, and that decides the next step.
+
+## Review of T0d (`6acd04b`, `49e0586`, 2026-11-28)
+
+Accepted.
+- `write_atomic`: unique temp name (`.<name>.tmp-<pid>-<n>`); the whole attempt (create, write, permissions, rename) retried about 2 s, Windows only, on `PermissionDenied` or raw 5/32/33 (Rust leaves a sharing violation unnamed); each retry one stderr line with its step; a final failure removes the temp file and names target and step. Windows only is right: on Unix a refused write is final.
+- No write error was swallowed in Rust. The real silent loss was elsewhere: `rewrite_state` read an unreadable state file as empty, so the next write erased the place or the check. It now fails, said (`the state of tour <id> could not be saved: …`). This is the "never looks like it worked" rule, found where we did not look.
+- `api.restartCore()` did not wait for the new core; it now pings it. That alone could explain a Windows-only "the record's answer" timeout (a slower restart), so the probe has two candidate fixes to judge, not one.
+- Known cost: a busy write sleeps on its thread up to 2 s, with the tour locks held. Only on Windows, only while something holds the file. Accepted.
+
+Next: push `reliable-tests`, probe the whole tour suite on Windows ×3. Green: PR (T1a, T1a2, T0d, docs), merge, 0.4.1. Red: the new failure text says which call Windows refused, or what the core answered instead of the record.
