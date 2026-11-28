@@ -309,7 +309,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     showLog: async () => output.show(),
     reportIssue: async () => void (await vscode.commands.executeCommand("vnoc.reportIssue")),
     retryCalls: async (key) => callTrees.retry(key),
-    rowClick: (context, id) => commands.rowClick(context, id),
+    rowClick: (context, id, pick) => commands.rowClick(context, id, pick),
     showTours: (key, context) => commands.showToursOf(key, context),
     tourActions,
     openTour: async () => void (await vscode.commands.executeCommand("vnoc.openTour")),
@@ -570,7 +570,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     ping: () => c.request<{ pong: boolean; pid: number; version: string }>("vnoc/ping"),
     structure: () => c.request<any>("vnoc/structure"),
     /** a click on a sidebar row, as the page sends it (the click rule of 07 §4) */
-    rowClick: (context: string, id: string) => commands.rowClick(context, id),
+    rowClick: (context: string, id: string, pick?: boolean) => commands.rowClick(context, id, pick),
     /** every drawing the STRUCTURE view reported, in order; empty until the view was shown */
     sidebarPosts: () => sidebarPosts,
     /** how many times the view's progress line was started: once, for the first read of the code */

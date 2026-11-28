@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FOLLOW_MS, MIN_READABLE_ZOOM, DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, selectedDrawn } from "./revealFollow.ts";
+import { FOLLOW_MS, MIN_READABLE_ZOOM, DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, pickedCard, selectedDrawn } from "./revealFollow.ts";
 
 const pane = { width: 900, height: 400 };
 const card = { x: 100, y: 96, width: 300, height: 80 };
@@ -77,4 +77,18 @@ test("the panel's opening is a change from closed to open; the card it opened fo
 test("the card is judged after the selection has arrived, and inside the window a reveal's pane change is followed in", () => {
   assert.ok(DOCS_SETTLE_MS > 0 && DOCS_SETTLE_MS < FOLLOW_MS);
   assert.equal(followsReveal(1000, 1000 + DOCS_SETTLE_MS + 400), true, "a late change of the pane, after the card was judged");
+});
+
+test("a pick finds the first call card, in reading order, whose callee is the node, and none when the view draws no call card for it", () => {
+  const cards = [
+    { id: "a.py::run", role: "node", key: "a.py::run" },
+    { id: "c1", role: "call", key: "lib.py::helper" },
+    { id: "c2", role: "call", key: "lib.py::go" },
+    { id: "c3", role: "call", key: "lib.py::go" }, // the same callee under another call: the first is the one
+  ];
+  assert.equal(pickedCard(cards, "lib.py::go"), "c2");
+  assert.equal(pickedCard(cards, "lib.py::helper"), "c1");
+  assert.equal(pickedCard(cards, "a.py::run"), null, "a structure card is not a call card: the pick reveals it by structure");
+  assert.equal(pickedCard(cards, "lib.py::absent"), null);
+  assert.equal(pickedCard([], "lib.py::go"), null);
 });

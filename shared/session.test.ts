@@ -386,6 +386,20 @@ test("reveal opens the ancestors and selects; it asks the canvas only when told 
   assert.equal(run(s, { type: "reveal", id: "gone", canvas: true }), s, "a node that is not in the tree");
 });
 
+test("a reveal that is a pick changes nothing but the request: the focus, what is open and the selection stay, and the canvas is asked", () => {
+  const s = run(emptySession(), { type: "focus", id: "a.py" });
+  const picked = run(s, { type: "reveal", id: "f", canvas: true, pick: true });
+  assert.deepEqual(picked.contexts.main, s.contexts.main, "nothing of the context moved: f is outside the focus, which a plain reveal would leave");
+  assert.deepEqual(picked.reveal, { context: "main", id: "f", n: picked.seq, pick: true });
+  // the canvas answers a pick it has no card for with a plain reveal, which does shorten the focus and replaces the request
+  const plain = run(picked, { type: "reveal", id: "f", canvas: true });
+  assert.deepEqual(plain.reveal, { context: "main", id: "f", n: plain.seq });
+  assert.deepEqual([...plain.contexts.main.focus], [], "the whole project holds f");
+  assert.equal(plain.contexts.main.selected, "f");
+  // a pick when the canvas is not to decide (`canvas: false`) is a plain reveal
+  assert.equal(run(s, { type: "reveal", id: "f", canvas: false, pick: true }).reveal, null);
+});
+
 test("reveal on a call card opens its owner and the call cards above it, selects nothing, and asks the canvas for the card (9.5a)", () => {
   const before = run(emptySession(), { type: "select", id: "g" });
   const shown = run(before, { type: "reveal", id: Cmg, canvas: true });

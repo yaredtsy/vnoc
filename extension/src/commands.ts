@@ -284,14 +284,22 @@ export class Commands {
    * A click on a sidebar row (docs/16-ui-redesign/07-sidebar-rows.md §4): the canvas is where you are working while it is open, so a click shows the node
    * there, in the row's context; the code comes along beside it, never on top of it. With the canvas closed it opens the code as a preview tab, like a click
    * in the Explorer. The page has sent the `select` intent already; it is sent again here for a caller that has not (the palette, a test): it changes nothing twice.
+   *
+   * `pick`: the click is a pick from the search, and the page has sent nothing. With the canvas to show it, only the request is made: the canvas knows what it draws, and
+   * selects and frames the call card it has for the node, keeping the view's focus, or else reveals the node by structure. Without it the node is revealed for the sidebar, as a pick always was.
    */
-  async rowClick(context: ContextId, id: string): Promise<void> {
+  async rowClick(context: ContextId, id: string, pick = false): Promise<void> {
     const node = findNode(this.core.tree ?? (await this.core.loadStructure()).root, id);
     if (!node) throw new Error("That node is not in the structure any more.");
-    this.store.dispatch({ type: "select", id: node.id }, context);
     const mode = vscode.workspace.getConfiguration("vnoc").get<"auto" | "code" | "canvas">("sidebar.click", "auto");
-    if (mode === "canvas" || (mode === "auto" && this.panels.canvas)) {
-      this.store.dispatch({ type: "reveal", id: node.id, canvas: true }, context);
+    const onCanvas = mode === "canvas" || (mode === "auto" && Boolean(this.panels.canvas));
+    if (pick && onCanvas) this.store.dispatch({ type: "reveal", id: node.id, canvas: true, pick: true }, context);
+    else {
+      if (pick) this.store.dispatch({ type: "reveal", id: node.id, canvas: false }, context);
+      this.store.dispatch({ type: "select", id: node.id }, context);
+      if (onCanvas) this.store.dispatch({ type: "reveal", id: node.id, canvas: true }, context);
+    }
+    if (onCanvas) {
       const canvas = this.panels.showCanvas({ preserveFocus: true });
       // a code editor already visible in another column follows the click too (canvas and code side by side); none is opened in the canvas's column
       const code = vscode.window.visibleTextEditors.find((e) => e.viewColumn !== undefined && e.viewColumn !== canvas.viewColumn);

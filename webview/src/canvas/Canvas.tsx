@@ -15,7 +15,7 @@ import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts"
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
-import { DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, selectedDrawn } from "./revealFollow.ts";
+import { DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, pickedCard, selectedDrawn } from "./revealFollow.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { useSearchDim } from "./useSearchDim.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
@@ -37,7 +37,13 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
   // the session's request to bring a node into view; done, it says so and the session clears it (a canvas opened later does not repeat it)
   const reveal = useSession((s) => s.reveal);
   // a canvas that shows another context leaves the request for that context's own canvas
-  const target = useMemo(() => (reveal && reveal.context === context ? { id: reveal.id, n: reveal.n } : null), [reveal, context]);
+  const asked = useMemo(() => (reveal && reveal.context === context ? { id: reveal.id, n: reveal.n, pick: reveal.pick === true } : null), [reveal, context]);
+  // a pick from the search (`pick`): the first call card this view draws for the node, in reading order, is the one to bring into view and select; the focus is not touched. With none, the node is revealed by structure.
+  const callCard = useMemo(() => (asked?.pick ? pickedCard(laid.nodes, asked.id) : null), [asked, laid]);
+  const target = useMemo(() => (asked === null || (asked.pick && callCard === null) ? null : { id: callCard ?? asked.id, n: asked.n, pick: asked.pick }), [asked, callCard]);
+  useEffect(() => {
+    if (asked?.pick && callCard === null) dispatch({ type: "reveal", id: asked.id, canvas: true }, context);
+  }, [asked, callCard, context]);
   /** the last reveal that was judged: which card, when, and whether the camera is still on its way to it */
   const judged = useRef<{ id: string; at: number; moving: boolean } | null>(null);
   const width = useStore((s) => s.width);
@@ -63,6 +69,7 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
       const now = { id: target.id, at: performance.now(), moving: false };
       judged.current = now;
       if (hasToMove(target.id)) frame(target.id, now);
+      if (target.pick) dispatch({ type: "select", id: target.id }, context);
       dispatch({ type: "revealed", n: target.n });
       pulse(target.id); // the card pulses for a second so the eye finds it
     };

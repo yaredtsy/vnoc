@@ -59,8 +59,8 @@ export interface Session {
   highlight: string | null;
   /** the text in the sidebar's search box, null when it is empty; never saved. The canvas dims the cards it does not find (docs/20-search/05-on-screen.md §3). It follows the box alone: a select or a focus clears the highlight, not this */
   search: string | null;
-  /** a request for the canvas: "bring this into view"; never saved. `n` is unique, so a canvas can tell which one it did. */
-  reveal: { context: ContextId; id: string; n: number } | null;
+  /** a request for the canvas: "bring this into view"; never saved. `n` is unique, so a canvas can tell which one it did. `pick`: from a search pick; nothing was changed for it, the canvas decides (a call card it draws for the node is selected and framed, else the node is revealed by structure) */
+  reveal: { context: ContextId; id: string; n: number; pick?: true } | null;
   /** grows on every change; a webview drops a session older than the one it shows */
   seq: number;
 }
@@ -73,7 +73,8 @@ export type Intent =
   | { type: "toggle"; id: string }
   | { type: "expand"; ids: string[] }
   | { type: "collapseAll" }
-  | { type: "reveal"; id: string; canvas: boolean }
+  /** `pick`: a pick from the search with the canvas open: only the request is made (`canvas` is true); the canvas answers it with a card it draws or a plain reveal */
+  | { type: "reveal"; id: string; canvas: boolean; pick?: boolean }
   | { type: "revealed"; n: number }
   | { type: "cursor"; id: string | null }
   | { type: "highlight"; id: string | null }
@@ -205,6 +206,8 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
       return change(s, context, setOpen(c, NONE));
 
     case "reveal": {
+      // a pick that the canvas decides: the session is as it was, and the request is made; the canvas has the cards, the focus is kept unless it has to go
+      if (intent.pick && intent.canvas) return { ...s, reveal: { context, id: intent.id, n: s.seq + 1, pick: true }, seq: s.seq + 1 };
       // A call card: its owner function opens, and so do the call cards above it in the owner's tree, so the card is drawn. Nothing is selected: selecting a call
       // card follows it (a preview EXPLORE), and a reveal only brings a card into view.
       const call = parseCallId(intent.id);

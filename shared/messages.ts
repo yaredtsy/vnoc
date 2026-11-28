@@ -379,7 +379,8 @@ export interface Requests {
   /** ask the host to fetch an entry's call tree again, after it failed (the footer's Retry) */
   retryCalls: { params: { key: string }; result: void };
   /** a click on a sidebar row (07 §4): the host applies the click rule: the canvas is open → reveal the card there (never a code tab over it); closed → the code as a preview tab */
-  rowClick: { params: { context: ContextId; id: string }; result: void };
+  rowClick: { params: { context: ContextId; id: string; pick?: boolean }; result: void };
+  // `pick`: the click is a pick from the search: with the canvas open the host only asks it (`reveal` with `pick`), and the canvas selects the call card it draws for the node, or reveals the node by structure
   /** the buttons of the sidebar's states (06 §8): Open Folder, and Try Again (the core reads the project again) */
   command: { params: { name: "openFolder" | "refreshStructure" }; result: void };
   /**

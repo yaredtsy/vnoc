@@ -48,7 +48,7 @@ export interface Deps {
   /** fetches a call tree again after it failed */
   retryCalls(key: string): Promise<void>;
   /** a click on a sidebar row: the click rule (07 §4) */
-  rowClick(context: ContextId, id: string): Promise<void>;
+  rowClick(context: ContextId, id: string, pick?: boolean): Promise<void>;
   /** a doc row of the search was picked: see `Requests.showDoc` */
   showDoc(params: Requests["showDoc"]["params"]): Promise<void>;
   /** a button of the sidebar's states */
@@ -118,7 +118,7 @@ export function createHandlers(d: Deps): Handlers {
     showLog: () => d.showLog(),
     reportIssue: () => d.reportIssue(),
     retryCalls: ({ key }) => d.retryCalls(key),
-    rowClick: ({ context, id }) => d.rowClick(context, id),
+    rowClick: ({ context, id, pick }) => d.rowClick(context, id, pick),
     command: ({ name }) => d.command(name),
     tours: (params) => d.tours.list(params ?? undefined),
     tour: ({ id }) => d.tours.get(id),
