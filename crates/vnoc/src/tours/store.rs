@@ -1126,13 +1126,29 @@ fn rewrite_state(
     id: &TourId,
     change: impl FnOnce(&mut TourState),
 ) -> Result<(), StoreError> {
-    let mut state = read_state(vnoc_root, id);
+    let path = state_file(vnoc_root, id);
+    // a file that is not there, or does not parse, is the empty state (`read_state`); one that is there and cannot be read is not: writing over
+    // it would drop the half (the place, or the check) that `change` does not touch, and say nothing
+    let mut state = match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice::<TourState>(&bytes)
+            .ok()
+            .filter(|state| state.schema == 1)
+            .unwrap_or_default(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => TourState::default(),
+        Err(e) => {
+            return Err(io_error(format!(
+                "the state of tour {id} could not be saved: could not read {}",
+                path.display()
+            ))(e));
+        }
+    };
     change(&mut state);
     let mut bytes = serde_json::to_vec(&state).expect("JSON is JSON");
     bytes.push(b'\n');
-    let path = state_file(vnoc_root, id);
-    crate::userdata::atomic::write_atomic(&path, &bytes)
-        .map_err(io_error(format!("could not write {}", path.display())))
+    crate::userdata::atomic::write_atomic(&path, &bytes).map_err(io_error(format!(
+        "the state of tour {id} could not be saved: could not write {}",
+        path.display()
+    )))
 }
 
 /// Replaces the `place` and keeps the `check`, under the tours lock the caller already holds (`go` reads the place and the tour under it, so two
@@ -2020,6 +2036,23 @@ mod tests {
             at: crate::tours::place::At::parse(at).unwrap(),
             ..Place::cover()
         }
+    }
+
+    #[test]
+    fn a_state_that_cannot_be_read_is_not_written_over_and_the_error_says_so() {
+        let root = project("state-unreadable");
+        let vnoc_root = vnoc_of(&root);
+        let tour = id("t-0000");
+        // a folder where the file should be: there, and not readable as a file
+        fs::create_dir_all(state_file(&vnoc_root, &tour)).unwrap();
+        let error = write_check(&vnoc_root, &tour, json!({"tour_len": 1})).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("the state of tour {tour} could not be saved")),
+            "{error}"
+        );
+        assert!(state_file(&vnoc_root, &tour).is_dir(), "left as it was");
     }
 
     #[test]
