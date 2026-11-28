@@ -32,7 +32,7 @@ T6  prove it: stress, the ledger, retries off, 10 green runs
 
 ## Rules for every step's prompt
 
-- Between commits: typecheck, the touched packages' unit tests, and the one suite being worked on, once.
+- Between commits: typecheck, the touched packages' unit tests, and the one suite being worked on, once. A change outside `extension/src/test/` needs `pnpm --filter vnoc build` before the window suite (until T1a makes the test script build).
 - The big run (all window suites, `cargo test`, clippy) once, after the last commit.
 - A repeated run (×5) only where the step's goal is flakiness, and once.
 - Stage explicit paths. Never `git add .` or `git add docs`.

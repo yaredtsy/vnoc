@@ -152,3 +152,12 @@ Report: the hash, the output of the proof.
 ```
 
 After T0a3: push, PR to `main` (T0a, T0b, T0a2, T0a3, the docs), merge, then T0c.
+
+## Review of T0a3 (`2c364f4`, 2026-11-28)
+
+Accepted as it is.
+- When activation fails, the run fails once, in the root `before all` hook, after printing why. That is better than the step asked for: one failure with the cause, not one per test.
+- The `RETRIED` header was not printed in a proof run. By reading: it counts the same set as the cap, which was proven in T0a2. The first CI run with a retry will show it.
+- **A trap found:** `pnpm --filter vnoc test` loads the extension from `dist/` and does not rebuild it. A change to `extension/src/` (outside `test/`) is not tested until `pnpm --filter vnoc build`. T1a's prompt makes the test script build first (esbuild, about a second).
+
+T0a, T0b, T0a2, T0a3 done. Next: push, PR to `main`, merge, then T0c.
