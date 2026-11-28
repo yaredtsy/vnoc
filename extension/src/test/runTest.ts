@@ -48,6 +48,10 @@ function makeWorkspace(tmp: string, name: string): string {
   // a git repository, so the refactor suite can `git mv` (the runners have no git identity: it is given here)
   const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace, stdio: "ignore" });
   git("init", "-q");
+  // the identity is saved in the repository too: the core's own `git commit` (Commit and Pin) has none of the `-c` flags above
+  git("config", "user.name", "V-NOC test");
+  git("config", "user.email", "test@vnoc.invalid");
+  git("config", "commit.gpgsign", "false");
   git("add", "-A");
   git("commit", "-q", "-m", "fixture");
   return workspace;
