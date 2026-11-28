@@ -881,8 +881,12 @@ match. Reproduce on the user's copy (`/Users/yared/Documents/Programing/rust/lan
 `_run_impl` call view from `Runner.run`, type `run_single_turn`. A window test with a callee called twice, one call inside another's
 arguments.
 
+**TR24v, the fix step** (2026-11-28; the user said the pass is done): G13; the search pick that keeps a call view; the call card that
+typing does not light. Pressing Enter to step through the lit cards waits for after the release (not answered). Then the release.
+
 **Next, in this order:**
-- The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
+- **TR24v**, a VSIX; then push, PR, merge, `v0.4.0` (the user says when).
+- (done) The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
 - (done) **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
   diagram that fits) and the user's by-hand pass on it; then push, PR, merge, `v0.4.0`.
 - (superseded) The film's proof run on this VSIX (the same prompt: ≥ 3 diagrams on stops with a flow; fewer, larger blocks), and **TR24b**, the user's
