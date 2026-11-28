@@ -124,14 +124,15 @@ function diagnose(api: Api, title: string, message: string): void {
   console.log(lines.join("\n"));
 }
 
-/** `FLAKY (passed on a later try): n` and a line per test with its first error: to the console, and as Markdown to the step summary when there is one. */
-function reportFlaky(flaky: Map<string, string>, stoppedLine: string | null): void {
+/** `RETRIED: n tests, m passed on a later try`, a line per test that passed with its first error, then the cap line if it tripped: to the console, and as Markdown to the step summary when there is one. Nothing when no test was retried. */
+function reportFlaky(retried: number, flaky: Map<string, string>, stoppedLine: string | null): void {
+  if (retried === 0) return;
   const lines = [...flaky].map(([title, err]) => `${title} — ${err.split("\n")[0]}`);
   if (stoppedLine) lines.push(stoppedLine);
-  const head = `FLAKY (passed on a later try): ${flaky.size}`;
-  if (lines.length > 0) console.log(["", head, ...lines.map((l) => `  ${l}`)].join("\n"));
+  const head = `RETRIED: ${retried} tests, ${flaky.size} passed on a later try`;
+  console.log(["", head, ...lines.map((l) => `  ${l}`)].join("\n"));
   const summary = process.env.GITHUB_STEP_SUMMARY;
-  if (summary && lines.length > 0) {
+  if (summary) {
     try {
       fs.appendFileSync(summary, `\n### ${head}\n\n${lines.map((l) => `- ${l.replace(/[|`<]/g, "\\$&")}`).join("\n")}\n`);
     } catch (e) {
@@ -142,7 +143,13 @@ function reportFlaky(flaky: Map<string, string>, stoppedLine: string | null): vo
 
 export async function run(): Promise<void> {
   // the api is got once, here: the `retry` handler reads it without waiting for anything
-  const api = (await vscode.extensions.getExtension("vnoc.vnoc")!.activate()) as Api;
+  let api: Api = {};
+  try {
+    api = (await vscode.extensions.getExtension("vnoc.vnoc")!.activate()) as Api;
+  } catch (e) {
+    // mocha still runs: each test fails with its own error, and the run is not a silent exit 1
+    console.log(`the extension did not activate: ${(e as Error).message}\n${(e as Error).stack ?? ""}`);
+  }
   // `VNOC_GREP=text` runs only the tests whose full title has that text (a test that needs an earlier one of its suite fails by itself: say so)
   const mocha = new Mocha({ ui: "tdd", timeout: 60_000, color: false, retries: retries(), grep: process.env.VNOC_GREP || undefined });
   const retrying: Retrying = { tests: new Set(), stopped: false, cap: retryCap() };
@@ -153,7 +160,7 @@ export async function run(): Promise<void> {
   let stoppedLine: string | null = null;
   return new Promise((resolve, reject) => {
     const runner = mocha.run((failures) => {
-      reportFlaky(flaky, stoppedLine);
+      reportFlaky(retrying.tests.size, flaky, stoppedLine);
       failures ? reject(new Error(`${failures} tests failed`)) : resolve();
     });
     runner.on("retry", (test: Mocha.Test, err: Error) => {
