@@ -167,3 +167,59 @@ T0a, T0b, T0a2, T0a3 done. Next: push, PR to `main`, merge, then T0c.
 - **cli "a name the binary does not know …"**, alone on Windows: **5 of 5 passed** (run 46161278807). It fails only after the cli tests before it, so it is order: an earlier test leaves `.claude` half-removed (Windows "delete pending" while another process holds it), and this test's `files()` walk meets it. A test fix, in T2 (wait until a removed folder is gone; the walk does not read what it did not make).
 - **"a core that starts again"**, alone on Windows: **0 of 5**, but the probe never reached it (run 46161274922). Each run failed in the suite's `suiteSetup`: `ENOENT … ws-main\tourdemo\util.py`. `tourdemo/` is made by `makeTours()` in earlier suites of tour.test.ts, so a grep that runs this suite alone has no folder. This proves rule "every suite stands alone" (04-design §5.5, T2's `vnoc.test.reset`) and says nothing yet about Windows and the restart.
 - **Next probe:** the whole tour suite, no grep, 3 runs: `gh workflow run probe.yml --ref reliable-tests -f os=windows-latest -f suite=tour -f grep="" -f times=3`. The restart test's result in each of the 3 logs is the verdict input.
+
+## T0c verdict (run 46163456424: the whole tour suite on Windows, 3 runs, 2026-11-28)
+
+**"a core that starts again" failed 3 of 3. It is not a flake.** It fails every time on Windows. Around it, every run logs:
+- `Client is not running`, then `Pending response rejected since connection got disposed`, at the restart (requests in flight when the core stops are dropped);
+- in run 3: `could not write …\.vnoc\local\tour-state\written-as-it-goes-7g6s.json: Access is denied. (os error 5)`.
+
+Also red in the same runs: "a pinned tour whose function was edited…" and "a function deleted…" (2 of 3: the core's place is s1.b2 / s2 while the stage still draws the cover), "Write IDs on a clean tour…" (2 of 3), Next walks (1 of 3), G9 (1 of 3).
+
+**The likely root: `write_atomic` (`crates/vnoc/src/userdata/atomic.rs`) on Windows.** It writes a temp file, then `fs::rename`s it over the target. On Windows that rename fails with "Access is denied" whenever another process has the target open without `FILE_SHARE_DELETE`. Node's `fs` (VS Code's file watcher, the extension host reading a file) and antivirus scans open files that way. Rust's own readers do not block it. Two more weak points:
+- the temp name is `.<name>.tmp-<pid>`: two writes of the same file from one process at once share one temp file;
+- the restart test waits for `checkFrom: "record"`. If `vnoc tour check` could not write the record (the same rename) and said nothing, the new core has no record to answer from: exactly this failure. The test's message does not say what it got instead.
+
+**This is a product bug, not only a test bug.** A Windows user whose editor or antivirus has `.vnoc/` files open loses tour state writes. It goes in a 0.4.1.
+
+## T0d — atomic writes that work on Windows (prompt for the Sonnet session, two commits)
+
+```
+You are working in /Users/yared/Documents/Programing/rust/vnoc on branch `reliable-tests`.
+Commit locally; do NOT push. Stage explicit paths only (never `git add .`, never `git add docs`). Never edit docs/.
+Cargo env for every cargo call: CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only.
+Read first: docs/28-reliable-tests/steps/T0-stop-the-reruns.md from "T0c verdict" to the end;
+crates/vnoc/src/userdata/atomic.rs; every caller of write_atomic under crates/vnoc/src/tours/ (the tour-state
+file, the record of a check); the `vnoc tour check` command; extension/src/test/suite/tour.test.ts, the test
+"a core that starts again: …".
+
+Commit 1 — write_atomic on Windows.
+- The temp name is unique per write: pid plus a process-wide counter (AtomicU64), so two writes of one file
+  at once never share a temp file.
+- The rename is retried when it fails with PermissionDenied (Windows: ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION),
+  with a short backoff (e.g. 10, 20, 40 … ms, about 2 s in all). Other errors fail at once. On a final failure
+  the temp file is removed, and the error names the target.
+- Find where a failed write of a tour's state or of a check's record is swallowed (logged, ignored, or `let _ =`).
+  A command (`vnoc tour check`, `go`, …) whose write failed exits non-zero with the error; the core's answer
+  says the state could not be saved. List every place you changed.
+- Tests in atomic.rs:
+  - two threads write one target 200 times each: no error, the file is one of the two contents, no temp file left;
+  - #[cfg(windows)]: open the target with share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE) (no DELETE, as Node opens it,
+    via std::os::windows::fs::OpenOptionsExt), hold it 300 ms on another thread, write_atomic meanwhile: it succeeds
+    after the handle closes. (Runs on CI's Windows job; on this Mac it compiles out.)
+Message: `vnoc: an atomic write on Windows waits for a reader that holds the file, and a failed state write is said`
+
+Commit 2 — the restart test says what it saw.
+- In "a core that starts again", the wait for "the record's answer" fails with the checkFrom of every drawing
+  after the reopen, and the output of `vnoc tour where <id> --json` and of `tour check` (its exit code too).
+- The restart: `api.restartCore()` resolves only when the new core has answered `vnoc/ping`. If it already does, say so.
+Message: `tests T0d: the restart test names what it got instead of the record`
+
+After the last commit, ONCE: cargo test -p vnoc --lib --tests --no-fail-fast; clippy -D warnings; fmt --check;
+extension tsc; VNOC_SUITE=tour once. No VSIX.
+
+Report: the hashes and `git show --stat`; every place a write failure was swallowed and what it does now;
+the test results; `git status --short`.
+```
+
+After T0d: push the branch, then the probe on Windows again (the whole tour suite, 3 runs). Green: open the PR and ship 0.4.1. Still red: the new message says what the record was instead, and that decides the next step.
