@@ -454,6 +454,24 @@ suite("a tour on the canvas", () => {
     assert.deepStrictEqual(wide.layout.outside, []);
   });
 
+  test("a page that opens again keeps counting the host's tickets: a report made after the canvas reopens is newer than an action before it", async function () {
+    this.timeout(60_000);
+    await toCover();
+    const before = await api.stageKey("Enter");
+    await stageShows("the first step", (d) => d.mode === "step" && d.seq >= before);
+    await closeCanvas();
+    const drawn = api.stageDrawn().length;
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await until("the canvas tab", () => canvasTabs().length > 0);
+    await until("the stage drawn anew by the page that opened again", () => api.stageDrawn().slice(drawn).some((d) => d.tour === tour), 30_000);
+    const first = api.stageDrawn().slice(drawn).find((d) => d.tour === tour)!;
+    assert.ok(first.seq >= before, `a page that opens again starts from the host's last ticket (${before}), not from 0: its first report says ${first.seq}`);
+    const after = await api.stageClick("next");
+    assert.ok(after > before, `the host's tickets go on counting: ${after} after ${before}`);
+    const report = await stageShows("a drawing after the action", (d) => d.seq >= after);
+    assert.ok(report.seq > before, `the new report's seq (${report.seq}) is newer than the action before the remount (${before})`);
+  });
+
   test("the `▾ N more lit lines` chip has a row of its own under the code, at 520 px and at full width; the cover's header says the title and `not pinned` stands between Start and its offers", async function () {
     this.timeout(120_000);
     await toCover();

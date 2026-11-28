@@ -368,6 +368,8 @@ export interface Requests {
   openAt: { params: { path: string; range: Range }; result: void };
   /** the session as it is now; a webview asks once when it starts, and after that it listens for the `session` event */
   session: { params: void; result: Session };
+  /** the last ticket the host gave a stage action (0 before any): a stage that mounts again counts on from it, never from 0, so a report after a remount is still newer than an action before it */
+  stageTicket: { params: void; result: number };
   /** Go to Call Site with several sites: a list the host shows, with a preview of each site as it is moved through; the answer is when it closes */
   pickCallSite: { params: { sites: { path: string; range: Range }[] }; result: void };
   /** the bar's ⚠: show the NEEDS ATTENTION view (`vnoc.attention.focus`) */

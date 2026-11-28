@@ -16,6 +16,7 @@ import { coreStopped, facts, helpAndFeedback, reportIssue } from "./help";
 import { LogTee } from "./report";
 import { CANVAS, DOCS, Surfaces } from "./surfaces";
 import { callLookup } from "@vnoc/shared/calls.ts";
+import { slowdown } from "@vnoc/shared/slowdown.ts";
 import { createHandlers } from "./relay";
 import { SessionStore } from "./session";
 import { Tours, tourContext, vnocIsAbove } from "./tours";
@@ -307,6 +308,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     callTrees: () => callTrees.all(),
     openAt: (path, range) => commands.openAt(path, range),
     session: () => store.get(),
+    stageTicket: () => actionSeq,
     pickCallSite: (sites) => commands.pickCallSite(sites),
     focusAttention: async () => void (await vscode.commands.executeCommand("vnoc.attention.focus")),
     showLog: async () => output.show(),
@@ -481,7 +483,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   // A stage action of the test api: numbered, sent, and its promise kept (with the number) when the page says `handled`. The limit is the suite's (`util.ts`: 10 s times its slowdown).
   const stageAction = (name: "stageKey" | "stageClick", key: string): Promise<number> => {
     const n = ++actionSeq;
-    const limit = 10_000 * (Number(process.env.VNOC_TEST_SLOWDOWN) || (process.env.CI ? 3 : 1));
+    const limit = 10_000 * slowdown(process.env);
     const ticket = new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => {
         handledWaiters.delete(n);

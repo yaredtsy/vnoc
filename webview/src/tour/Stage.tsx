@@ -136,6 +136,19 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   const act = useRef<Record<string, () => void>>({});
   /** The `seq` of the last stageKey/stageClick this page handled (0 before any): every `stageDrawn` says it, so the suite reads only drawings made after its action. */
   const lastSeq = useRef(0);
+  /** the host's last ticket is known (a page that opens again starts from it, never from 0): no report is made before */
+  const [ticketKnown, setTicketKnown] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const known = (n: number) => {
+      lastSeq.current = Math.max(lastSeq.current, n);
+      if (live) setTicketKnown(true);
+    };
+    request("stageTicket").then(known, () => known(0));
+    return () => {
+      live = false;
+    };
+  }, []);
   /** the calls of the code on screen that lead to a later stop, by file line: what a click on one jumps to */
   const callTo = useRef(new Map<number, { id: string }>());
   /** the step on the stage, for the suite's `choose:now` */
@@ -238,7 +251,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
   // drawn the step yet (a drawing then would carry the lit lines of the step before)
   const codeDrawn = folded || !wantsPane || (code !== null && ("error" in code || (drawn.step === (step?.id ?? null) && drawn.text === code.text)));
   useEffect(() => {
-    if (!view || !current || !codeDrawn) return;
+    if (!view || !current || !codeDrawn || !ticketKnown) return;
     const send = () => post({
       type: "stageDrawn",
       seq: lastSeq.current,
@@ -292,7 +305,7 @@ export function Stage({ tourId, contextId }: { tourId: string; contextId: string
     return () => {
       live = false;
     };
-  }, [narrow, folded, room.width, view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.more, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ticketKnown, narrow, folded, room.width, view, dry, beat, next, fading, code, codeDrawn, drawn.scrolledTo, drawn.coloured, drawn.more, drawn.lit.join(","), drawn.thin.join(","), textDrawn.lists, textDrawn.tables, textDrawn.fences, textDrawn.diagrams, textDrawn.drawn, textDrawn.failed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const style = { height: folded ? 30 : stageHeightFor(height, narrow, Math.floor(room.height * MAX_SHARE), MIN_H) };
   const cls = `stage${narrow ? " stage-narrow" : ""}`;

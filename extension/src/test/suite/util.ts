@@ -1,13 +1,15 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 
+import { slowdown } from "@vnoc/shared/slowdown.ts";
+
 // helpers for the suites that drive the real window
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export const canvasTabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith("vnoc.canvas"));
 
 /** Every deadline of a test is multiplied by this: 3 on CI, 1 here, or what `VNOC_TEST_SLOWDOWN` says. */
-export const SLOWDOWN = Number(process.env.VNOC_TEST_SLOWDOWN) || (process.env.CI ? 3 : 1);
+export const SLOWDOWN = slowdown(process.env);
 export const deadline = (ms: number) => ms * SLOWDOWN;
 
 /** Waits for a check, every 100 ms, until the deadline (measured on the clock, not by counting naps). */
