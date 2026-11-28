@@ -905,8 +905,22 @@ Rust 1019 (0 failed), TS 418 / 925, window 206 + `waits` 2, no failure. VSIX sha
 - **Windows:** lib `tours::pin::tests::a_file_named_like_a_pattern_…`: `we*rd.py` is not a legal file name on Windows (os error 123).
   Fix: a pattern character Windows allows (`we[i]rd.py`, a pathspec glob too), so the test still proves literal paths.
 
+**CI after TR24w (run 46139596300):** every Rust test passes on all three. The window suite fails, three tests, never run in CI before
+(earlier runs stopped at Rust):
+- **"Commit and Pin commits those files …"** (all three: *timed out waiting for the dialog closed*): the same missing git identity, now in
+  the window suite's workspace repo; git refuses, the dialog shows git's words and stays. Fix: the suite's fixture repo sets a local
+  identity.
+- **"a canvas 520 px wide …"** (macOS, Windows: the folded bar's Prev, Next and Unfold measured outside it, with the stage still 268 px
+  tall; Ubuntu: *timed out waiting for the stage on a wide canvas*, the canvas only 626 px wide) and **"Main ⇄ tour keeps the step and both
+  viewports"** (macOS, Windows): the CI windows are small (canvas 541–764 px tall; `xvfb-run -a` gives Ubuntu a small screen) and slower.
+  The 520 px test measured the fold before it ended; its wide case cannot be wide in a small window. Fix: the test window is made large on
+  every runner (Ubuntu's xvfb screen 1920×1080; the suite's user settings `window.newWindowDimensions: "maximized"`), and the tests wait for
+  what they measure (the fold settled) instead of a moment. Reproduced first on this machine with a small window; a real layout fault found
+  that way is fixed, not hidden.
+
 **Next, in this order:**
-- **TR24w** (the three CI fixes, one commit), the user pushes, CI green; then merge, `v0.4.0`.
+- **TR24x** (the window suite on CI), the user pushes, CI green; then merge, `v0.4.0`.
+- (done) **TR24w** (the three CI fixes, one commit).
 - (done) **TR24v**, a VSIX; then push, PR, merge, `v0.4.0` (the user says when).
 - (done) The film's check and the user's by-hand pass (TR24b) on the TR24u VSIX; then one fix step for what they find; then push, PR, merge, `v0.4.0`.
 - (done) **TR24u**, a VSIX, the film's check (one `_run_impl` stop with `##`/`###` inside, diagrams on the blocks with a flow, no 19 s wait, a large
