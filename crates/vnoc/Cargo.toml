@@ -21,7 +21,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ignore = "0.4"
-toml_edit = "0.22"
+toml_edit = "0.25"
 clap = { version = "4", features = ["derive"] }
 # The colour of the command line: the versions clap already builds (no new crate), used directly for the palette and the writer
 anstream = "1"
