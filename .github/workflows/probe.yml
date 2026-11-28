@@ -1,0 +1,78 @@
+# Runs one window suite (or one test) several times on one runner, with retries off, to see how often it fails (docs/28-reliable-tests, T0b). By hand only.
+name: probe
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: runner
+        type: choice
+        options: [windows-latest, macos-latest, ubuntu-22.04]
+        default: windows-latest
+      suite:
+        description: "VNOC_SUITE: a suite name, or several with commas (e.g. tour)"
+        type: string
+        required: true
+      grep:
+        description: "VNOC_GREP: text in the full title of the tests to run (may be empty)"
+        type: string
+        default: ""
+      times:
+        description: how many runs
+        type: number
+        default: 5
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  probe:
+    name: probe ${{ inputs.os }}
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: test
+          save-cache: "false"
+          vscode-test: "true"
+      # what the window suite loads: the drivers and the core (target/debug/vnoc), then the webview and the extension
+      - name: drivers
+        run: |
+          for d in drivers/*/; do
+            echo "::group::$d"
+            (cd "$d" && cargo build)
+            echo "::endgroup::"
+          done
+      - name: core
+        run: cargo build -p vnoc
+      - name: build the webview and the extension
+        run: pnpm -r build
+      - name: run the suite ${{ inputs.times }} times
+        env:
+          VNOC_RETRIES: "0"
+          VNOC_SUITE: ${{ inputs.suite }}
+          VNOC_GREP: ${{ inputs.grep }}
+          TIMES: ${{ inputs.times }}
+          WINDOW: ${{ inputs.os == 'ubuntu-22.04' && 'xvfb-run -a' || '' }}
+        run: |
+          set +e # a failed run must not stop the loop
+          passed=0
+          for i in $(seq 1 "$TIMES"); do
+            echo "::group::run $i of $TIMES"
+            $WINDOW pnpm --filter vnoc test 2>&1 | tee "probe-$i.log"
+            code=${PIPESTATUS[0]}
+            echo "::endgroup::"
+            if [ "$code" -eq 0 ]; then passed=$((passed + 1)); echo "run $i: passed"; else echo "run $i: FAILED (exit $code)"; fi
+          done
+          echo "passed $passed of $TIMES"
+          [ "$passed" -ge "$TIMES" ]
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: probe-logs-${{ inputs.os }}
+          path: probe-*.log
+          if-no-files-found: warn
