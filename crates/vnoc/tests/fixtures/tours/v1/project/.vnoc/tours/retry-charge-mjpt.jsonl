@@ -1,0 +1,19 @@
+{"type":"tour","schema":1,"id":"retry-charge-mjpt","title":"retry_charge","question":"what happens when the gateway drops the call","author":"claude-code","at":"2026-11-24T21:09:21Z","detail":"normal"}
+{"type":"plan","stops":[{"id":"s1","path":"billing/charge.py","qualname":"retry_charge"},{"id":"s2","path":"billing/invoice.py","qualname":"Invoice.total"},{"id":"s3","path":"billing/tax.py","qualname":"apply_tax"}]}
+{"type":"stop","id":"s1","path":"billing/charge.py","qualname":"retry_charge","kind":"function","lines":[11,22],"hash":"953d829e42850c80","text":"retry_charge asks the gateway to charge an order and tries again when the call is dropped, up to `attempts` times, before it gives up with a ChargeError."}
+{"type":"step","id":"s1.b1","stop":"s1","lines":[14,15],"hash":"3c7457d95d95d5a6","title":"One attempt","text":"one_try is a single call to the gateway for the order's total. It is a function of its own so the loop below stays short."}
+{"type":"step","id":"s1.b2","stop":"s1","lines":[17,22],"hash":"91c4d975221f79e9","title":"Try, then give up","text":"The loop makes up to `attempts` tries. The first one that does not drop returns its answer; when all of them drop, the error names the order."}
+{"type":"step","id":"s1.b3","stop":"s1","parent":"s1.b2","lines":[20,21],"hash":"a20c749d7061e731","title":"A dropped call tries again","text":"Only a *ConnectionError* counts as a dropped call: it moves on to the next try. Any other error leaves the loop at once."}
+{"type":"halt"}
+{"type":"halted"}
+{"type":"resume"}
+{"type":"stop","id":"s2","path":"billing/invoice.py","qualname":"Invoice.total","kind":"function","lines":[19,21],"hash":"278918e800e02f71","text":"Invoice.total adds the amounts of the invoice lines and has the tax applied for the invoice's country. It is what the customer is charged."}
+{"type":"stop","id":"s3","path":"billing/tax.py","qualname":"apply_tax","kind":"function","lines":[10,11],"hash":"468c1896ebf59124","from":"s2","line":21,"text":"apply_tax raises an amount by the country's rate and rounds it to cents, so the total on the invoice is the amount that is charged."}
+{"type":"drop","id":"s1.b1"}
+{"type":"meta","title":"retry_charge, then the invoice"}
+{"type":"end","at":"2026-11-24T21:09:32Z"}
+{"type":"pin","commit":"6d0e3dd6479c54f027dcd25032e2da38bd084663","at":"2026-11-24T21:09:32Z","where":{"s1":["billing/charge.py",11,22],"s1.b2":["billing/charge.py",17,22],"s1.b3":["billing/charge.py",20,21],"s2":["billing/invoice.py",19,21],"s3":["billing/tax.py",10,11]}}
+{"type":"rebase","steps":{"s1":{"lines":[11,25],"hash":"c2ef6298cccbf550"},"s1.b2":{"lines":[20,25],"hash":"91c4d975221f79e9"},"s1.b3":{"lines":[23,24],"hash":"a20c749d7061e731"}}}
+{"type":"rebase","steps":{"s2":{"lines":[19,22],"hash":"278918e800e02f71"}}}
+{"type":"rebase","steps":{"s3":{"lines":[10,12],"hash":"468c1896ebf59124"}}}
+{"type":"ids","nodes":{"s1":"7RGEHDGW99TJVQE9NG5D8WXZJN","s2":"2EY9F95EHWY0RPKCJ35B93DM45","s3":"6W9JVH8GKHQ64D5G6MG5ZVB4JB"}}

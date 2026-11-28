@@ -1,0 +1,175 @@
+{
+  "author": "claude-code",
+  "command": "tour show",
+  "detail": "normal",
+  "folder": "private",
+  "id": "<tour>",
+  "minutes": 2,
+  "of": 3,
+  "offers": null,
+  "pinned": false,
+  "place": {
+    "at": "cover",
+    "back": [],
+    "by": "reader",
+    "first_unseen": "s1",
+    "moved": "",
+    "open": false,
+    "position": null,
+    "seen": [],
+    "stop": null,
+    "unseen": 3
+  },
+  "planned": 0,
+  "problems": [],
+  "question": "what happens when the gateway drops the call",
+  "quiet": false,
+  "readable": true,
+  "schema": 1,
+  "state": "finished",
+  "steps": 5,
+  "stops": [
+    {
+      "blocks": [
+        {
+          "depth": 0,
+          "id": "s1.b1",
+          "lines": [
+            20,
+            25
+          ],
+          "text": "The loop makes up to `attempts` tries. The first one that does not drop returns its answer; when all of them drop, the error names the order.",
+          "title": "Try, then give up"
+        },
+        {
+          "depth": 1,
+          "id": "s1.b2",
+          "lines": [
+            23,
+            24
+          ],
+          "parent": "s1.b1",
+          "text": "Only a *ConnectionError* counts as a dropped call: it moves on to the next try. Any other error leaves the loop at once.",
+          "title": "A dropped call tries again"
+        }
+      ],
+      "depth": 0,
+      "id": "s1",
+      "key": "billing/charge.py::retry_charge",
+      "kind": "function",
+      "lines": [
+        11,
+        25
+      ],
+      "name": "retry_charge",
+      "node": "7RGEHDGW99TJVQE9NG5D8WXZJN",
+      "number": 1,
+      "path": "billing/charge.py",
+      "planned": false,
+      "qualname": "retry_charge",
+      "reading": [
+        {
+          "depth": 0,
+          "id": "s1",
+          "kind": "intro",
+          "lines": null,
+          "parent": null,
+          "text": "retry_charge asks the gateway to charge an order and tries again when the call is dropped, up to `attempts` times, before it gives up with a ChargeError.",
+          "title": null
+        },
+        {
+          "depth": 1,
+          "id": "s1.b1",
+          "kind": "block",
+          "lines": [
+            20,
+            25
+          ],
+          "parent": null,
+          "text": "The loop makes up to `attempts` tries. The first one that does not drop returns its answer; when all of them drop, the error names the order.",
+          "title": "Try, then give up"
+        },
+        {
+          "depth": 2,
+          "id": "s1.b2",
+          "kind": "detail",
+          "lines": [
+            23,
+            24
+          ],
+          "parent": "s1.b1",
+          "text": "Only a *ConnectionError* counts as a dropped call: it moves on to the next try. Any other error leaves the loop at once.",
+          "title": "A dropped call tries again"
+        }
+      ],
+      "steps": 3,
+      "text": "retry_charge asks the gateway to charge an order and tries again when the call is dropped, up to `attempts` times, before it gives up with a ChargeError."
+    },
+    {
+      "blocks": [],
+      "depth": 0,
+      "id": "s2",
+      "key": "billing/invoice.py::Invoice.total",
+      "kind": "function",
+      "lines": [
+        19,
+        22
+      ],
+      "name": "Invoice.total",
+      "node": "2EY9F95EHWY0RPKCJ35B93DM45",
+      "number": 2,
+      "path": "billing/invoice.py",
+      "planned": false,
+      "qualname": "Invoice.total",
+      "reading": [
+        {
+          "depth": 0,
+          "id": "s2",
+          "kind": "short",
+          "lines": null,
+          "parent": null,
+          "text": "Invoice.total adds the amounts of the invoice lines and has the tax applied for the invoice's country. It is what the customer is charged.",
+          "title": null
+        }
+      ],
+      "steps": 1,
+      "text": "Invoice.total adds the amounts of the invoice lines and has the tax applied for the invoice's country. It is what the customer is charged."
+    },
+    {
+      "blocks": [],
+      "depth": 1,
+      "from": "s2",
+      "id": "s3",
+      "key": "billing/tax.py::apply_tax",
+      "kind": "function",
+      "line": 21,
+      "line_step": "s2",
+      "lines": [
+        10,
+        12
+      ],
+      "name": "apply_tax",
+      "node": "6W9JVH8GKHQ64D5G6MG5ZVB4JB",
+      "number": 3,
+      "path": "billing/tax.py",
+      "planned": false,
+      "qualname": "apply_tax",
+      "reading": [
+        {
+          "depth": 0,
+          "id": "s3",
+          "kind": "short",
+          "lines": null,
+          "parent": null,
+          "text": "apply_tax raises an amount by the country's rate and rounds it to cents, so the total on the invoice is the amount that is charged.",
+          "title": null
+        }
+      ],
+      "steps": 1,
+      "text": "apply_tax raises an amount by the country's rate and rounds it to cents, so the total on the invoice is the amount that is charged."
+    }
+  ],
+  "title": "retry_charge, then the invoice",
+  "writing": null,
+  "written": 3
+}

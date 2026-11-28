@@ -137,6 +137,18 @@ V-NOC
 │   ├── on screen · agents             the panel's second tab, Run, the output · vnoc play list / show / path / new / run
 │   └── build order · later            steps PG0 – PG12 · what is not built and why the format has room
 │
+├── TOURS, STATIC (not tied to a release) ─────────── 26-tours/
+│   ├── on disk                        one file per tour, a log · private in .vnoc/local/tours/, shared in .vnoc/tours/ · stops in stops, blocks in blocks
+│   │                                  ids · names and IDs · hashes · the pin to a commit · this machine's state file (the place, the last check)
+│   ├── commands                       vnoc tour start · add (one stop per call) · finish · where · go · check · pin · ids · share · delete · export · import (a nested document; flat inside)
+│   ├── the core                       replay · find by ID or name · out of date: lazy, and recorded · the place · as written · tours on a node · the requests
+│   ├── skill · on screen              a second skill, vnoc-tour, and vnoc guide tour · how to read design/ now
+│   ├── build order                    steps TR0 – TR24 in five phases
+│   └── design/                        the mock design: route, map, stage, states, the list, mockup.html
+│
+├── TOURS, INTERACTIVE (after 26; a first plan) ───── 27-tours-interactive.md
+│   └── a side trip · reaching the agent (the chat, then it listens, then the extension starts it) · the reader's own file · answer, wait · TI0 – TI10
+│
 ├── WHAT I FOUND ────────────────────────────────── 01-review.md
 │
 └── LATER (ideas, not scheduled) ────────────────── futureplan/

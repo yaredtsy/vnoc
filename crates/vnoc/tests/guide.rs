@@ -11,7 +11,14 @@
 //!
 //! One code block is one session: its commands run in order on one fresh copy, so a write is seen by the lines after it. Needs the driver built
 //! first, as `cli.rs` does, and `sh` (Unix).
+//!
+//! A command that takes its text on standard input is written as a heredoc: `vnoc tour add … <<'EOF'`, the text, and `EOF` on a line of its own. Those
+//! lines are the command's, not an output. The tours' ids end in a random suffix: a run sets `VNOC_TOUR_ID_SUFFIX` (a variable for tests only, in no
+//! help text and no guide), so the ids a guide shows are the ones its run prints.
 #![cfg(unix)]
+
+#[path = "common/testdir.rs"]
+mod testdir;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -37,6 +44,14 @@ fn skill_dir() -> PathBuf {
     repo_root().join("skills/vnoc")
 }
 
+/// The second skill's folder, `vnoc-tour`.
+fn tour_skill_dir() -> PathBuf {
+    repo_root().join("skills/vnoc-tour")
+}
+
+/// The suffix of every tour id in a run, and so in a guide.
+const ID_SUFFIX: &str = "7k2q";
+
 fn guide_dir() -> PathBuf {
     crate_dir().join("guide")
 }
@@ -49,6 +64,10 @@ fn read(path: &Path) -> String {
 fn texts() -> Vec<(String, String)> {
     let mut texts = vec![
         ("SKILL.md".to_string(), read(&skill_dir().join("SKILL.md"))),
+        (
+            "vnoc-tour/SKILL.md".to_string(),
+            read(&tour_skill_dir().join("SKILL.md")),
+        ),
         ("rules.md".to_string(), read(&skill_dir().join("rules.md"))),
         // the two READMEs are read by people who type what they find there (A13r)
         (
@@ -69,7 +88,7 @@ fn texts() -> Vec<(String, String)> {
     texts
 }
 
-const TOPICS: [&str; 5] = ["read", "tree", "find", "write", "check"];
+const TOPICS: [&str; 6] = ["read", "tree", "find", "write", "check", "tour"];
 
 // ------------------------------------------------------------------------------------------------------------ the lines
 
@@ -99,8 +118,20 @@ fn trim_blank_ends(mut lines: Vec<String>) -> Vec<String> {
 fn sessions(name: &str, text: &str) -> Vec<Session> {
     let mut sessions = Vec::new();
     let mut block: Option<Session> = None;
+    // inside a heredoc: the lines up to `EOF` are the command's
+    let mut in_heredoc = false;
     for (n, raw) in text.lines().enumerate() {
         let at = format!("{name}:{}", n + 1);
+        if in_heredoc {
+            let cmd = block
+                .as_mut()
+                .and_then(|b| b.cmds.last_mut())
+                .expect("a heredoc belongs to a command");
+            cmd.line.push('\n');
+            cmd.line.push_str(raw);
+            in_heredoc = raw != "EOF";
+            continue;
+        }
         if raw.trim_start().starts_with("```") {
             match block.take() {
                 Some(mut done) => {
@@ -122,6 +153,7 @@ fn sessions(name: &str, text: &str) -> Vec<Session> {
         match &mut block {
             Some(session) => {
                 if raw.starts_with("vnoc ") {
+                    in_heredoc = raw.contains("<<'EOF'");
                     session.cmds.push(Cmd {
                         at,
                         line: raw.to_string(),
@@ -150,6 +182,7 @@ fn sessions(name: &str, text: &str) -> Vec<Session> {
         }
     }
     assert!(block.is_none(), "{name}: a code block is not closed");
+    assert!(!in_heredoc, "{name}: a heredoc is not closed");
     sessions
 }
 
@@ -224,12 +257,34 @@ fn placeholder() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"<[^<>\n]+>").unwrap())
 }
 
+/// What stands for a `<placeholder>` when clap reads the line: a value its argument accepts. A stop, a block and a number are typed.
+fn placeholder_value(placeholder: &str) -> &'static str {
+    let inner = placeholder.trim_matches(['<', '>']).to_lowercase();
+    if inner.contains("block") {
+        "s1.b1"
+    } else if inner.contains("stop") {
+        "s1"
+    } else if matches!(inner.as_str(), "n" | "line" | "depth") {
+        "1"
+    } else {
+        "x"
+    }
+}
+
 /// Has clap accept every `vnoc` of the line, and says whether the line is to be run.
-fn plan(line: &str) -> Result<Plan, String> {
+fn plan(whole: &str) -> Result<Plan, String> {
+    // a heredoc's text is the command's input: clap is given the first line, without the `<<'EOF'`
+    let line = &whole
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .replace("<<'EOF'", "");
     let has_placeholder = placeholder().is_match(line);
     // `vnoc <command> --help`: any command, so a command-name placeholder stands for `status`, and only `--help` may follow it
     let subcommand_placeholder = Regex::new(r"^vnoc <[^<>]+>( |$)").unwrap().is_match(line);
-    let line_for_clap = placeholder().replace_all(line, "x");
+    let line_for_clap = placeholder().replace_all(line, |caps: &regex::Captures| {
+        placeholder_value(&caps[0]).to_string()
+    });
     let segments = pipeline(&line_for_clap)?;
     let mut run = !has_placeholder;
     for words in &segments {
@@ -250,8 +305,11 @@ fn plan(line: &str) -> Result<Plan, String> {
                 run = false;
             }
             Err(e)
-                if e.kind() == ErrorKind::MissingRequiredArgument
-                    && args[1..].iter().all(|a| !a.starts_with('-')) =>
+                if matches!(
+                    e.kind(),
+                    ErrorKind::MissingRequiredArgument
+                        | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                ) && args[1..].iter().all(|a| !a.starts_with('-')) =>
             {
                 // a command's name, in prose: its flags are the prose's business only when it names them
                 run = false;
@@ -324,6 +382,7 @@ fn bin_dir() -> &'static Path {
     DIR.get_or_init(|| {
         let dir = std::env::temp_dir().join(format!("vnoc-guide-bin-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        testdir::remove_at_exit(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_vnoc"), dir.join("vnoc")).unwrap();
         dir
@@ -347,6 +406,7 @@ fn copy_dir(from: &Path, to: &Path) {
 fn fresh_sample(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vnoc-guide-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    testdir::remove_at_end(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let dir = dunce::canonicalize(dir).unwrap();
     copy_dir(&crate_dir().join("tests/sample"), &dir);
@@ -366,6 +426,7 @@ fn run_line(root: &Path, line: &str) -> (i32, String) {
         .current_dir(root)
         .env("PATH", path)
         .env("VNOC_DRIVER", driver_path())
+        .env("VNOC_TOUR_ID_SUFFIX", ID_SUFFIX)
         // whatever a line does with the home folder, it is not the real one
         .env("HOME", root)
         .env("USERPROFILE", root)
@@ -388,6 +449,25 @@ fn normalized(printed: &str, root: &Path) -> Vec<String> {
         .replace(root.to_str().unwrap(), "<root>")
         .replace(env!("CARGO_PKG_VERSION"), "<version>");
     trim_blank_ends(text.lines().map(String::from).collect())
+}
+
+/// The words of a line, without the look of the tour commands (docs/26-tours/05 §5): a guide shows what a command says, and the mark that starts an answer
+/// (`✓`, `!`; `✗` is the `error:` of a refusal) and the indent under it are for people on a terminal. What a line says is compared whole.
+fn words_of_line(line: &str) -> String {
+    let line = line.trim_start();
+    for mark in ["✓ ", "! "] {
+        if let Some(rest) = line.strip_prefix(mark) {
+            return rest.trim_start().to_string();
+        }
+    }
+    match line.strip_prefix("✗ ") {
+        Some(rest) => format!("error: {}", rest.trim_start()),
+        None => line.to_string(),
+    }
+}
+
+fn words_of_lines(lines: &[String]) -> Vec<String> {
+    lines.iter().map(|l| words_of_line(l)).collect()
 }
 
 #[derive(Default)]
@@ -435,7 +515,7 @@ fn check_session(label: &str, session: &Session, found: &mut Findings) {
         }
         if let Some(pasted) = &cmd.pasted {
             let real = normalized(&printed, &root);
-            if &real != pasted {
+            if words_of_lines(&real) != words_of_lines(pasted) {
                 found.outputs.push(format!(
                     "{}: `{}`\n--- pasted\n{}\n--- printed\n{}",
                     cmd.at,
@@ -497,11 +577,13 @@ fn findings() -> &'static Findings {
 #[test]
 fn the_guides_have_command_lines_to_check() {
     let seen = &findings().seen;
-    assert_eq!(seen.len(), 2 + 2 + TOPICS.len());
+    assert_eq!(seen.len(), 3 + 2 + TOPICS.len());
     for (name, count) in seen {
         let least = match name.as_str() {
             "rules.md" => 1,
             "SKILL.md" => 15,
+            // the tours' skill: its commands are the loop, the lines it asks for, and the ones it leaves to the user
+            "vnoc-tour/SKILL.md" => 12,
             // the repository README has some 57 (24 run, the rest parsed against placeholders); the Marketplace page has one
             "README.md" => 40,
             "extension/README.md" => 1,
@@ -573,6 +655,40 @@ fn a_line_that_names_no_flag_the_binary_has_is_refused() {
     ));
 }
 
+#[test]
+fn a_heredoc_is_the_commands_input_and_what_follows_it_is_the_output() {
+    let text = "```\nvnoc tour add t-7k2q a.py::f --body-file - <<'EOF'\nOne paragraph.\n\n## 1-2 A block\nWhy.\nEOF\ns1 written\nvnoc tour finish t-7k2q\n```\n";
+    let list = sessions("x.md", text);
+    assert_eq!(list.len(), 1);
+    let cmds = &list[0].cmds;
+    assert_eq!(cmds.len(), 2);
+    assert_eq!(
+        cmds[0].line,
+        "vnoc tour add t-7k2q a.py::f --body-file - <<'EOF'\nOne paragraph.\n\n## 1-2 A block\nWhy.\nEOF"
+    );
+    assert_eq!(
+        cmds[0].pasted.as_deref(),
+        Some(&["s1 written".to_string()][..])
+    );
+    // clap is given the first line, and refuses what the binary does not have
+    assert!(matches!(plan(&cmds[0].line), Ok(Plan::Run { .. })));
+    assert!(plan("vnoc tour add t a.py::f --nope --body-file - <<'EOF'\ntext\nEOF").is_err());
+    // a placeholder for a stop, a block or a number is a value its argument takes
+    for line in [
+        "vnoc tour add <id> <node> --replace <stop> --body-file -",
+        "vnoc tour add <id> <node> --from <that stop> --line <n> --body-file -",
+        "vnoc tour drop <id> <block>",
+        "vnoc tour route <node> --depth <depth>",
+        "vnoc tour",
+    ] {
+        assert!(
+            matches!(plan(line), Ok(Plan::ParsedOnly)),
+            "{line}: {:?}",
+            plan(line).err()
+        );
+    }
+}
+
 // ------------------------------------------------------------------------------------------------------------ the skill's header
 
 /// The header's top-level keys and, for each, the text after its colon and its indented lines.
@@ -603,7 +719,13 @@ fn header(text: &str) -> Vec<(String, String, Vec<String>)> {
 
 #[test]
 fn the_skills_header_is_what_the_format_wants() {
-    let text = read(&skill_dir().join("SKILL.md"));
+    for dir in [skill_dir(), tour_skill_dir()] {
+        a_skills_header_is_what_the_format_wants(&dir);
+    }
+}
+
+fn a_skills_header_is_what_the_format_wants(skill_dir: &Path) {
+    let text = read(&skill_dir.join("SKILL.md"));
     let keys = header(&text);
     let names: Vec<&str> = keys.iter().map(|(k, _, _)| k.as_str()).collect();
     assert_eq!(
@@ -615,12 +737,7 @@ fn the_skills_header_is_what_the_format_wants() {
 
     // name: the folder's name, lower case, digits and hyphens, at most 64
     let name = &value("name").1;
-    let folder = skill_dir()
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
+    let folder = skill_dir.file_name().unwrap().to_str().unwrap().to_string();
     assert_eq!(name, &folder, "the name is the folder's name");
     assert!(name.len() <= 64);
     assert!(
@@ -642,10 +759,18 @@ fn the_skills_header_is_what_the_format_wants() {
         !description.starts_with(|c: char| "\"'[]{}&*!|>%@`#-?,".contains(c)),
         "a YAML indicator at the start of the description"
     );
-    assert!(
-        description.contains(".vnoc/") && description.contains("ID:"),
-        "the description names what a task would contain"
-    );
+    // the description names what a task would contain
+    let words: &[&str] = if name == "vnoc" {
+        &[".vnoc/", "ID:"]
+    } else {
+        &["tour", "walked through", "step by step"]
+    };
+    for word in words {
+        assert!(
+            description.contains(word),
+            "{name}: `{word}` in the description"
+        );
+    }
 
     // metadata: strings only, and the version of the skill
     let (_, inline, children) = value("metadata");
@@ -662,19 +787,22 @@ fn the_skills_header_is_what_the_format_wants() {
 /// The skill carries the version of the binary it is compiled into: a release changes both, and this fails until it has.
 #[test]
 fn the_skills_version_is_the_crates() {
-    let text = read(&skill_dir().join("SKILL.md"));
-    let (_, _, children) = header(&text)
-        .into_iter()
-        .find(|(k, _, _)| k == "metadata")
-        .unwrap();
-    assert!(
-        children.contains(&format!(
-            "  vnoc-version: \"{}\"",
+    for dir in [skill_dir(), tour_skill_dir()] {
+        let text = read(&dir.join("SKILL.md"));
+        let (_, _, children) = header(&text)
+            .into_iter()
+            .find(|(k, _, _)| k == "metadata")
+            .unwrap();
+        assert!(
+            children.contains(&format!(
+                "  vnoc-version: \"{}\"",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "metadata.vnoc-version in {}/SKILL.md is not {} (the version of the crate): bump it with the crate",
+            dir.display(),
             env!("CARGO_PKG_VERSION")
-        )),
-        "metadata.vnoc-version in skills/vnoc/SKILL.md is not {} (the version of the crate): bump it with the crate",
-        env!("CARGO_PKG_VERSION")
-    );
+        );
+    }
 }
 
 // ------------------------------------------------------------------------------------------------------------ the binary prints them
@@ -701,6 +829,15 @@ fn skill_and_guide_print_the_files_they_were_built_from() {
     let (exit, skill, err) = vnoc(&["skill"]);
     assert_eq!((exit, err.as_str()), (0, ""));
     assert_eq!(skill, read(&skill_dir().join("SKILL.md")));
+    // the second skill, exactly; and the first one stays what `vnoc skill` prints
+    let (exit, tour, err) = vnoc(&["skill", "tour"]);
+    assert_eq!((exit, err.as_str()), (0, ""));
+    assert_eq!(tour, read(&tour_skill_dir().join("SKILL.md")));
+    assert_ne!(tour, skill);
+    let (exit, out, err) = vnoc(&["skill", "nope"]);
+    assert_eq!((exit, out.as_str()), (2, ""));
+    assert!(err.starts_with("error: no skill `nope`"), "{err}");
+    assert_eq!(vnoc(&["skill", "tour", "--json"]).0, 2);
     for topic in TOPICS {
         let (exit, page, err) = vnoc(&["guide", topic]);
         assert_eq!((exit, err.as_str()), (0, ""), "{topic}");
@@ -712,6 +849,10 @@ fn skill_and_guide_print_the_files_they_were_built_from() {
     }
     assert_eq!(vnoc::cli::guide::RULES, read(&skill_dir().join("rules.md")));
     assert_eq!(vnoc::cli::guide::SKILL, read(&skill_dir().join("SKILL.md")));
+    assert_eq!(
+        vnoc::cli::guide::SKILL_TOUR,
+        read(&tour_skill_dir().join("SKILL.md"))
+    );
 }
 
 #[test]
@@ -750,9 +891,11 @@ fn the_topics_are_the_files_of_the_guide_folder_and_each_is_short() {
     for topic in TOPICS {
         let text = read(&guide_dir().join(format!("{topic}.md")));
         let lines = text.lines().count();
+        // the tours' topic is the one with a session to show in every section (04 §4): the rest are about 40
+        let most = if topic == "tour" { 305 } else { 60 };
         assert!(
-            lines <= 60,
-            "{topic}.md is {lines} lines: a topic is about 40"
+            lines <= most,
+            "{topic}.md is {lines} lines: a topic is about 40 (tour: at most {most})"
         );
         assert!(text.ends_with('\n') && !text.contains("\n\n\n"));
     }
@@ -764,9 +907,52 @@ fn the_rules_block_has_its_markers_and_the_skill_is_the_size_the_plan_wants() {
     assert!(rules.starts_with("<!-- vnoc:start "));
     assert!(rules.trim_end().ends_with("<!-- vnoc:end -->"));
     assert_eq!(rules.matches("vnoc:start").count(), 1);
-    let skill = read(&skill_dir().join("SKILL.md"));
-    assert!(
-        skill.lines().count() < 120,
-        "the format advises under 500 lines; this skill is meant to be a tenth of that"
-    );
+    for dir in [skill_dir(), tour_skill_dir()] {
+        let skill = read(&dir.join("SKILL.md"));
+        assert!(
+            skill.lines().count() < 120,
+            "the format advises under 500 lines; this skill is meant to be a tenth of that"
+        );
+    }
+}
+
+/// A tour's id ends in the suffix a run is given, and a value that is not four characters of the alphabet is ignored (the variable is for tests).
+#[test]
+fn the_tour_id_suffix_is_for_tests_and_an_invalid_one_is_ignored() {
+    let start = |suffix: Option<&str>| {
+        let root = fresh_sample("suffix");
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
+        cmd.current_dir(&root)
+            .env_remove("VNOC_TOUR_ID_SUFFIX")
+            .args([
+                "tour",
+                "start",
+                "--title",
+                "How an order is parsed",
+                "--json",
+            ])
+            .stdin(Stdio::null());
+        if let Some(suffix) = suffix {
+            cmd.env("VNOC_TOUR_ID_SUFFIX", suffix);
+        }
+        let out = cmd.output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        json["tour"].as_str().unwrap().to_string()
+    };
+    assert_eq!(start(Some("7k2q")), "how-an-order-is-parsed-7k2q");
+    for bad in ["", "7k2", "7k2q9", "ilou", "7K2Q", "7k-q"] {
+        let id = start(Some(bad));
+        assert!(
+            id.starts_with("how-an-order-is-parsed-")
+                && id.len() == "how-an-order-is-parsed-7k2q".len()
+                && id != format!("how-an-order-is-parsed-{bad}"),
+            "{bad:?} -> {id}"
+        );
+    }
+    // the variable is in no text the binary prints
+    for text in texts() {
+        assert!(!text.1.contains("VNOC_TOUR_ID_SUFFIX"), "{}", text.0);
+    }
 }

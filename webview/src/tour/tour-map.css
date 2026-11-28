@@ -1,0 +1,14 @@
+/* The tour's cards (docs/26-tours/design/04-route-and-map.md §3): the redesign's card (node-card.css), with the badge where the chevron was. A stop that is not written has a
+   dotted outline, not a dim one (60% already means "unknown callee"); a seen stop's header is dim; the current one has the ring (`.selected`). */
+.tour-card { cursor: pointer; }
+.tour-card.tour-planned { border-style: dotted; border-left-style: solid; }
+.tour-card.tour-seen .node-header { opacity: 0.7; }
+.tour-badge { display: inline-flex; flex: none; align-items: center; justify-content: center; min-width: 26px; height: 18px; padding: 0 4px; border-radius: 9px; font-size: 11px; font-weight: 600; line-height: 1; border: 1px solid var(--card-border); }
+.tour-badge-here { background: var(--card-selected); border-color: var(--card-selected); color: var(--card-selected-fg, #fff); }
+.tour-badge-seen { color: var(--muted-foreground); }
+.tour-badge-ahead { color: var(--foreground); }
+.tour-badge-planned { color: var(--muted-foreground); border-style: dotted; }
+/* the stop the agent is writing now: its badge turns (it pulses), and only while the agent is heard from (no news stops it) */
+.tour-card.tour-writing .tour-badge { animation: tour-writing-pulse 1.4s ease-in-out infinite; }
+@keyframes tour-writing-pulse { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) { .tour-card.tour-writing .tour-badge { animation: none; } }

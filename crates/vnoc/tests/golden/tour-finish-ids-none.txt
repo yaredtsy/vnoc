@@ -1,0 +1,3 @@
+finished: 4 stops, 5 steps
+not pinned: this is not a git repository
+note: ids = "always" does nothing here: this project writes no ID lines ([ids] default = "none")

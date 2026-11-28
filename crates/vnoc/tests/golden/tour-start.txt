@@ -1,0 +1,2 @@
+✓ started <tour>   private   .vnoc/local/tours/<tour>.jsonl
+  next: vnoc tour add <tour> <node> --body-file -   (vnoc guide tour)

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "title": "retry_charge",
+  "question": "what happens when the gateway drops the call",
+  "author": "claude-code",
+  "detail": "normal",
+  "stops": [
+    { "id": "s1", "node": "billing/charge.py::retry_charge",
+      "text": "retry_charge calls the gateway and tries again when the call drops, up to a fixed number of attempts, then gives up with an error that names the order.",
+      "blocks": [
+        { "id": "s1.b1", "lines": [14, 15], "title": "One attempt, as a function", "text": "one_try is the single charge call; keeping it in a function lets the loop below treat \"charge\" as one thing that either returns or raises." },
+        { "id": "s1.b2", "parent": "s1.b1", "lines": [15, 15], "title": "The call itself", "text": "This is the only line that talks to the gateway, so it is the only place a dropped connection can come from." },
+        { "id": "s1.b3", "lines": [17, 22], "title": "Try, and try again", "text": "Only a dropped connection is retried: any other error leaves the loop at once. When every attempt drops, the function raises ChargeError." }
+      ] },
+    { "id": "s2", "from": "s1", "line": 19, "node": "billing/charge.py::retry_charge.<locals>.one_try",
+      "text": "one_try makes the one call to the gateway and returns what it answers." },
+    { "id": "s3", "from": "s1", "line": 22, "node": "billing/charge.py::ChargeError",
+      "text": "ChargeError is what the caller sees when every attempt dropped." },
+    { "id": "s4", "same_as": "s2", "node": "billing/charge.py::retry_charge.<locals>.one_try",
+      "text": "The same single call as before: nothing in it is new here." }
+  ]
+}

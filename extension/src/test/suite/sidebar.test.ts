@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import { callNodesIn } from "@vnoc/shared/calls.ts";
 import type { CallTreeResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import { type Intent, type Session, exploreId, openOf } from "@vnoc/shared/session.ts";
-import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, guarded, sleep, soft, until, waitFor } from "./util";
 
 // The STRUCTURE view in a real window (docs/16-ui-redesign/06-sidebar.md, 07 §4): it is a webview, so the suite drives it through what it says (the
 // `sidebarRendered` note) and through the host's side of a click (`rowClick`). What a key or a click means is unit-tested beside the page.
@@ -25,6 +25,9 @@ interface Api {
   renderedPosts(): { context: string; visible: number }[];
   webviewErrors(): string[];
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 
 /** Waits until the index has stopped changing: the same revision for a second. */
@@ -64,7 +67,7 @@ const lastPost = (context = "main") => api.sidebarPosts().filter((p) => p.contex
 const shown = (id: string, context = "main"): boolean => lastPost(context)?.selected === id && lastPost(context)?.inView === true && lastPost(context)?.drawn === true;
 
 suiteSetup(async () => {
-  api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+  api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
 });
 
 suite("the commands", () => {

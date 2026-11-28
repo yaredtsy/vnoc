@@ -20,6 +20,7 @@ mod show;
 mod status;
 pub mod style;
 mod tags;
+mod tour;
 mod tree;
 mod write;
 
@@ -46,16 +47,19 @@ pub enum Failure {
     /// there): nothing more to say, exit `2`
     #[error("some nodes were not found")]
     Reported,
+    /// the reader stopped the tour (02 §5): the refusal was **already** printed in its place, as the answer, and the exit is `1`
+    #[error("the reader stopped this tour")]
+    Stopped,
     /// the reader of standard output went away (`vnoc tree | head`): the command ends quietly, successfully
     #[error("standard output was closed")]
     Closed,
 }
 
-/// C6 (05 §5): `0` done · `1` `check` found problems · `2` the request cannot be met · `3` the environment.
+/// C6 (05 §5): `0` done · `1` `check` found problems, or the reader stopped the tour · `2` the request cannot be met · `3` the environment.
 pub fn exit_code(failure: &Failure) -> i32 {
     match failure {
         Failure::Closed => 0,
-        Failure::CheckFailed => 1,
+        Failure::CheckFailed | Failure::Stopped => 1,
         Failure::Usage(_) | Failure::NoSuchNode(_) | Failure::Reported => 2,
         Failure::Environment(_) => 3,
     }
@@ -83,7 +87,7 @@ pub async fn run(args: Vec<OsString>) -> i32 {
             // `check` printed its findings and its summary: they are its answer, and the exit code says the rest
             if !matches!(
                 failure,
-                Failure::Closed | Failure::Reported | Failure::CheckFailed
+                Failure::Closed | Failure::Reported | Failure::CheckFailed | Failure::Stopped
             ) {
                 out::error(&failure.to_string());
             }
@@ -192,8 +196,9 @@ async fn execute(cli: &Cli) -> Result<(), Failure> {
         Command::Tags(args) => tags::tags(&cli.global, args).await,
         Command::Tag(command) => tags::tag_command(&cli.global, command).await,
         Command::Guide(args) => guide::guide(&cli.global, args),
-        Command::Skill => guide::skill(&cli.global),
+        Command::Skill(args) => guide::skill(&cli.global, args),
         Command::Agent(command) => agent::run(&cli.global, command),
+        Command::Tour(command) => tour::run(&cli.global, command).await,
     }
 }
 
@@ -206,6 +211,7 @@ mod tests {
         let table = [
             (Failure::Closed, 0),
             (Failure::CheckFailed, 1),
+            (Failure::Stopped, 1),
             (Failure::Usage("x".into()), 2),
             (Failure::NoSuchNode("x".into()), 2),
             (Failure::Reported, 2),

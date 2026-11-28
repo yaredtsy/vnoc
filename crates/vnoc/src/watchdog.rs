@@ -2,9 +2,11 @@
 //! a blocking read) starves everything else on that worker. `timed` measures every poll of a handler's future and warns
 //! when one poll runs too long, so a blocking call shows up in the log the first time it happens.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex, Once};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -16,8 +18,72 @@ pub const LIMIT: Duration = Duration::from_millis(50);
 /// How many slow polls there have been in this process (for tests and for a status line).
 pub static SLOW_POLLS: AtomicU32 = AtomicU32::new(0);
 
+/// The handlers that have started and not ended: id → (name, when). A handler whose future is waiting holds one of the core's request slots (`ConcurrencyLayer`), and with all of them
+/// held the core reads no more requests (not even a `vnoc/ping`), so what is still running is the first thing to know about a core that stopped answering.
+static IN_FLIGHT: Mutex<BTreeMap<u64, (&'static str, Instant)>> = Mutex::new(BTreeMap::new());
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+/// A handler counts as in flight while this lives (as long as its `Timed` does).
+struct InFlight(u64);
+
+impl InFlight {
+    fn start(name: &'static str) -> InFlight {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, (name, Instant::now()));
+        InFlight(id)
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+    }
+}
+
+/// The handlers that have been running for at least `age`, oldest first, as `name (seconds)`.
+pub fn running_for(age: Duration) -> Vec<String> {
+    let now = Instant::now();
+    let mut held: Vec<(Duration, &'static str)> = IN_FLIGHT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .map(|(name, since)| (now - *since, *name))
+        .filter(|(took, _)| *took >= age)
+        .collect();
+    held.sort_by(|a, b| b.0.cmp(&a.0));
+    held.iter()
+        .map(|(took, name)| format!("{name} ({}s)", took.as_secs()))
+        .collect()
+}
+
+/// Starts the thread that says, every 5 s, which handlers have been running for 10 s or more. It is a thread of its own, not a task: it still runs when every worker of the runtime is
+/// busy or every request slot is held, which is the case it is for. Once per process.
+pub fn report_slow_requests() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = std::thread::Builder::new()
+            .name("vnoc-watchdog".into())
+            .spawn(|| {
+                loop {
+                    std::thread::sleep(Duration::from_secs(5));
+                    let held = running_for(Duration::from_secs(10));
+                    if !held.is_empty() {
+                        tracing::warn!("requests running for 10 s or more: {}", held.join(", "));
+                    }
+                }
+            });
+    });
+}
+
 pin_project! {
     pub struct Timed<'c, F> {
+        _in_flight: InFlight,
         name: &'static str,
         limit: Duration,
         counter: &'c AtomicU32,
@@ -49,6 +115,7 @@ impl<F: Future> Future for Timed<'_, F> {
 /// Wrap a handler's future: `timed("structure", async move { … })`.
 pub fn timed<F: Future>(name: &'static str, inner: F) -> Timed<'static, F> {
     Timed {
+        _in_flight: InFlight::start(name),
         name,
         limit: LIMIT,
         counter: &SLOW_POLLS,
@@ -64,6 +131,7 @@ pub fn timed_with<'c, F: Future>(
     inner: F,
 ) -> Timed<'c, F> {
     Timed {
+        _in_flight: InFlight::start(name),
         name,
         limit,
         counter,
@@ -83,6 +151,29 @@ mod tests {
         })
         .await;
         assert_eq!(counter.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn a_handler_that_has_not_ended_is_named_with_its_age_and_leaves_when_it_does() {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let running = tokio::spawn(timed_with(
+            "stuck-for-the-test",
+            LIMIT,
+            &COUNTER,
+            tokio::time::sleep(Duration::from_millis(400)),
+        ));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let held = running_for(Duration::from_millis(100));
+        assert!(
+            held.iter().any(|h| h.starts_with("stuck-for-the-test")),
+            "{held:?}"
+        );
+        running.await.unwrap();
+        assert!(
+            !running_for(Duration::ZERO)
+                .iter()
+                .any(|h| h.starts_with("stuck-for-the-test"))
+        );
     }
 
     #[tokio::test]

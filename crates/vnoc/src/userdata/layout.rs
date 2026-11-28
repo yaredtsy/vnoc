@@ -56,3 +56,23 @@ pub fn trashed(root: &Path, id: &NodeId) -> Vec<PathBuf> {
         .map(|e| e.path())
         .collect()
 }
+
+/// The project's tours: one `.jsonl` file each. Committed (`docs/26-tours/01-on-disk.md` §1).
+pub fn tours_dir(root: &Path) -> PathBuf {
+    root.join("tours")
+}
+
+/// This machine's tours: every tour starts here. Not committed (`local/` is ignored).
+pub fn local_tours_dir(root: &Path) -> PathBuf {
+    root.join("local").join("tours")
+}
+
+/// This machine's state of each tour, private or project. Not committed.
+pub fn tour_state_dir(root: &Path) -> PathBuf {
+    root.join("local").join("tour-state")
+}
+
+/// The lock held for the length of one write to a tour or its state file (`lock.rs`). Not committed.
+pub fn tours_lock_file(root: &Path) -> PathBuf {
+    root.join("local").join("tours.lock")
+}

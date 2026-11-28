@@ -1,0 +1,70 @@
+{
+  "command": "tour route",
+  "cut": false,
+  "depth": 2,
+  "node": "orders/service.py::OrderService.place",
+  "schema": 1,
+  "sizes": [
+    {
+      "depth": 0,
+      "minutes": 1,
+      "stops": 1
+    },
+    {
+      "depth": 1,
+      "minutes": 2,
+      "stops": 2
+    },
+    {
+      "depth": 2,
+      "minutes": 3,
+      "stops": 4
+    }
+  ],
+  "stops": [
+    {
+      "first": 15,
+      "from": null,
+      "kind": "function",
+      "line": null,
+      "n": 1,
+      "name": "OrderService.place",
+      "node": "orders/service.py::OrderService.place",
+      "path": "orders/service.py",
+      "same_as": null
+    },
+    {
+      "first": 10,
+      "from": 1,
+      "kind": "function",
+      "line": 16,
+      "n": 2,
+      "name": "OrderService.parse_order",
+      "node": "orders/service.py::OrderService.parse_order",
+      "path": "orders/service.py",
+      "same_as": null
+    },
+    {
+      "first": 4,
+      "from": 2,
+      "kind": "class",
+      "line": 12,
+      "n": 3,
+      "name": "Line",
+      "node": "orders/models.py::Line",
+      "path": "orders/models.py",
+      "same_as": null
+    },
+    {
+      "first": 14,
+      "from": 2,
+      "kind": "class",
+      "line": 13,
+      "n": 4,
+      "name": "Order",
+      "node": "orders/models.py::Order",
+      "path": "orders/models.py",
+      "same_as": null
+    }
+  ]
+}

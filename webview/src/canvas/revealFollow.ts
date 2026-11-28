@@ -48,5 +48,8 @@ export const DOCS_SETTLE_MS = 150;
 /** Whether the docs panel has just opened (it was closed, it is open). Its narrowing of the pane is followed like a reveal's: the card it opened for is judged again, by `needsFraming` and the `FOLLOW_MS` window. */
 export const docsJustOpened = (wasOpen: boolean, isOpen: boolean): boolean => !wasOpen && isOpen;
 
+/** The card a pick from the search brings into view: the first call card, in reading order (the order laid out), whose callee is the node; null when the view draws none (then the node is revealed by structure and the focus may change). */
+export const pickedCard = (cards: readonly { id: string; role: string; key: string | null }[], node: string): string | null => cards.find((c) => c.role === "call" && c.key === node)?.id ?? null;
+
 /** The card the panel opened for: the selected one, when it is a card that is drawn. Null when nothing drawn is selected. */
 export const selectedDrawn = (selected: string | null, isDrawn: (id: string) => boolean): string | null => (selected !== null && isDrawn(selected) ? selected : null);

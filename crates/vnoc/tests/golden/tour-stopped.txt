@@ -1,0 +1,3 @@
+stopped: the reader stopped this tour (4 stops written). Add nothing more.
+Say one line: "Tour stopped at stop 4."
+To go on later, only if the user asks: vnoc tour resume <tour>

@@ -1,0 +1,2 @@
+✓ finished: 2 stops, 5 steps · 2 planned stops left the route
+  not pinned: this is not a git repository

@@ -3,7 +3,7 @@
 
 import type { TreeNode } from "./messages";
 import { callExists, isCallId } from "./calls.ts";
-import { MAIN, MAX_ROOTS, type Session } from "./session.ts";
+import { MAIN, MAX_ROOTS, type Session, tourContextId } from "./session.ts";
 import { chainedPrefix, findNode } from "./tree.ts";
 
 export function sessionProblems(s: Session, tree: TreeNode): string[] {
@@ -17,15 +17,25 @@ export function sessionProblems(s: Session, tree: TreeNode): string[] {
   if (s.order[0] !== MAIN) bad("MAIN is not first in order");
   if (s.contexts[s.active]?.preview) bad(`the active context ${s.active} is a preview: being active ends a preview`);
 
+  if (s.tourList.view !== "all" && s.tourList.view !== "onSelection") bad(`tourList.view "${String(s.tourList.view)}" is neither "all" nor "onSelection"`);
+
   const calls = new Set<string>();
+  const tours: string[] = [];
   s.order.forEach((id, at) => {
     const c = s.contexts[id];
     if (!c) return;
     if (c.id !== id) bad(`${id}: its id says ${c.id}`);
     if (c.kind === "main") {
-      if (id !== MAIN || c.parent !== null || c.call !== null) bad(`${id}: MAIN has no parent and no call, and it is the only one`);
+      if (id !== MAIN || c.parent !== null || c.call !== null || c.tour !== null) bad(`${id}: MAIN has no parent, no call and no tour, and it is the only one`);
       if (c.preview) bad(`${id}: MAIN is never a preview`);
+    } else if (c.kind === "tour") {
+      // a tour context: MAIN's child, no call, one tour; one per window; the place of the tour is not in it
+      if (c.tour === null || c.id !== tourContextId(c.tour)) bad(`${id}: a TOUR context names its tour, and its id says it`);
+      if (c.parent !== MAIN || c.call !== null) bad(`${id}: a TOUR context belongs to MAIN and has no call`);
+      if (c.preview) bad(`${id}: a TOUR context is never a preview`);
+      tours.push(id);
     } else {
+      if (c.tour !== null) bad(`${id}: an EXPLORE context has no tour`);
       if (c.parent === null || c.call === null) bad(`${id}: an EXPLORE context has a parent and a call`);
       else {
         const parentAt = s.order.indexOf(c.parent);
@@ -48,5 +58,6 @@ export function sessionProblems(s: Session, tree: TreeNode): string[] {
       for (const open of c.open[root]) if (!(isCallId(open) ? callExists(tree, open) : findNode(tree, open) !== undefined)) bad(`${id}: "${open}" is open (root "${root}") and does not exist`);
     }
   });
+  if (tours.length > 1) bad(`${tours.length} TOUR contexts are open (${tours.join(", ")}): there is one per window`);
   return problems;
 }

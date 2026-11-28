@@ -10,12 +10,12 @@ import { dispatch, useSession } from "../state/session.ts";
 import { useData } from "../state/data.ts";
 import { checkKeys } from "../node-card/keyCheck.ts";
 import { cardRef, saveDraft, saveFile, typeIn } from "../state/edit.ts";
-import { rememberViewport, savedViewport } from "../state/viewports.ts";
+import { rememberViewport, reportViewport, savedViewport } from "../state/viewports.ts";
 import { pulse, requestCodeFocus, setCodeOpen, useView } from "../state/view.ts";
 import { doubleClickIntent } from "./cardClicks.ts";
 import { FIT_VIEW_EVENT } from "./keys.ts";
 import { SETTLE_MS, cardsReport, onScreenIds } from "./onScreen.ts";
-import { DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, selectedDrawn } from "./revealFollow.ts";
+import { DOCS_SETTLE_MS, docsJustOpened, followsReveal, needsFraming, pickedCard, selectedDrawn } from "./revealFollow.ts";
 import { holderOf, pathEdges } from "./marks.ts";
 import { useSearchDim } from "./useSearchDim.ts";
 import { CARD_W, type Layout, type Placed, cardHeight } from "./layout.ts";
@@ -37,7 +37,13 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
   // the session's request to bring a node into view; done, it says so and the session clears it (a canvas opened later does not repeat it)
   const reveal = useSession((s) => s.reveal);
   // a canvas that shows another context leaves the request for that context's own canvas
-  const target = useMemo(() => (reveal && reveal.context === context ? { id: reveal.id, n: reveal.n } : null), [reveal, context]);
+  const asked = useMemo(() => (reveal && reveal.context === context ? { id: reveal.id, n: reveal.n, pick: reveal.pick === true } : null), [reveal, context]);
+  // a pick from the search (`pick`): the first call card this view draws for the node, in reading order, is the one to bring into view and select; the focus is not touched. With none, the node is revealed by structure.
+  const callCard = useMemo(() => (asked?.pick ? pickedCard(laid.nodes, asked.id) : null), [asked, laid]);
+  const target = useMemo(() => (asked === null || (asked.pick && callCard === null) ? null : { id: callCard ?? asked.id, n: asked.n, pick: asked.pick }), [asked, callCard]);
+  useEffect(() => {
+    if (asked?.pick && callCard === null) dispatch({ type: "reveal", id: asked.id, canvas: true }, context);
+  }, [asked, callCard, context]);
   /** the last reveal that was judged: which card, when, and whether the camera is still on its way to it */
   const judged = useRef<{ id: string; at: number; moving: boolean } | null>(null);
   const width = useStore((s) => s.width);
@@ -63,6 +69,7 @@ function CenterOn({ laid, context }: { laid: Layout; context: string }) {
       const now = { id: target.id, at: performance.now(), moving: false };
       judged.current = now;
       if (hasToMove(target.id)) frame(target.id, now);
+      if (target.pick) dispatch({ type: "select", id: target.id }, context);
       dispatch({ type: "revealed", n: target.n });
       pulse(target.id); // the card pulses for a second so the eye finds it
     };
@@ -135,13 +142,18 @@ function OnScreenReport({ laid, selected }: { laid: Layout; selected: string | n
 
 /** Menu commands (and the F key) that change only what this canvas draws: show or hide a card's code, fit the view, "Edit in Card" (the card shows its code and its editor takes the keyboard). */
 function ViewCommands({ laid }: { laid: Layout }) {
-  const { fitView } = useReactFlow();
+  const { fitView, setViewport } = useReactFlow();
   const cards = useRef(laid.nodes); // the latest layout, without listening again each time it changes
   cards.current = laid.nodes;
   useEffect(() => {
     const fit = () => void fitView({ duration: motionMs(300, prefersReducedMotion()) });
     const stop = on("viewCommand", ({ name, key, text }) => {
       if (name === "fitView") fit();
+      else if (name === "setView" && text) {
+        // the extension's test suite cannot drag the canvas: it sets the viewport as a person's pan and zoom would
+        const [x, y, zoom] = text.split(",").map(Number);
+        void setViewport({ x, y, zoom }, { duration: 0 });
+      }
       else if (name === "checkKeys") post({ type: "keysChecked", ...checkKeys() });
       else if (key && (name === "edit" || name === "setDraft" || name === "save" || name === "saveFile")) {
         const card = cards.current.find((p) => p.id === key);
@@ -162,7 +174,7 @@ function ViewCommands({ laid }: { laid: Layout }) {
       stop();
       window.removeEventListener(FIT_VIEW_EVENT, fit);
     };
-  }, [fitView]);
+  }, [fitView, setViewport]);
   return null;
 }
 
@@ -229,6 +241,7 @@ export function Canvas({ laid, context, at }: { laid: Layout; context: string; a
       fitView={saved === null}
       fitViewOptions={FIT_OPTIONS}
       defaultViewport={saved ?? undefined}
+      onInit={(rf) => reportViewport(context, rf.getViewport())}
       onMoveEnd={(_, viewport) => rememberViewport(context, at, viewport)}
       className="min-w-0 flex-1"
       minZoom={0.02}

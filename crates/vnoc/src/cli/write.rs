@@ -19,7 +19,6 @@ use crate::identity::folder_marker;
 use crate::identity::{
     AttachError, AttachOptions, EditSink, Env, MAX_BODY_BYTES, MarkerWritten, attach, check_note,
 };
-use crate::index::Kind;
 use crate::project::Project;
 use crate::protocol::AttachParams;
 use crate::userdata::{UserData, UserDataError, WriteLock};
@@ -27,13 +26,7 @@ use crate::userdata::{UserData, UserDataError, WriteLock};
 /// 04 §3: what a command that needs `.vnoc/` says when the project has none. The user decides to start V-NOC, not the agent.
 pub(super) const NO_VNOC: &str = "this project has no .vnoc/ yet. Starting it adds ID: lines to code when a note is attached. Ask the user, then: vnoc init";
 
-/// What the `changed` line says was added to the code (04 §8): an `ID:` line, or for a file its `# FileID:` comment, and where.
-pub(super) fn marker_words(kind: Kind, line: u32) -> String {
-    match kind {
-        Kind::File => format!("a # FileID: comment was added at line {line}"),
-        _ => format!("an ID: line was added at line {line}"),
-    }
-}
+pub(super) use crate::identity::marker_words;
 
 /// `.vnoc/vnoc.toml` that cannot be read, or is from a newer V-NOC: the environment's problem, not the request's.
 pub(super) fn settings_failure(e: UserDataError) -> Failure {

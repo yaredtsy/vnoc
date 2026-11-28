@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { guarded, soft } from "./util";
 
 // The command line's two commands in a real window (docs/21-agent-cli/07-install.md §3): *Install `vnoc` Command in PATH* with `VNOC_CLI_DIR` set to a temporary folder (`runTest.ts`
 // sets it: **never the real ~/.local/bin**, and on Windows, where an install writes the user PATH in the registry, only the refusal of a foreign file is run), and *Set Up Coding
@@ -22,6 +23,9 @@ interface SetUpResult {
   wrote: string[];
   left: string[];
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 
 const workspace = () => vscode.workspace.workspaceFolders![0].uri.fsPath;
@@ -57,7 +61,7 @@ const vnoc = (args: string[]) => execFileSync(api.cli.binaryPath()!, args, { cwd
 
 suite("cli", () => {
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     await api.cli.binaryPath(); // the core has started: the binary is known
     assert.ok(api.cli.binaryPath(), "the extension knows the binary it runs");
   });
@@ -216,18 +220,20 @@ suite("cli", () => {
       // true, and the default: V-NOC's read commands, and never a write
       const given = (await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true, permissions: true })) as SetUpResult;
       assert.ok(given.wrote.includes(".claude/settings.local.json"), String(given.wrote));
-      assert.ok(entries().includes("Bash(vnoc show *)") && entries().length === 15, String(entries()));
+      // V-NOC's read commands, and the tour commands an agent writes a tour with: how many there are is the core's list (it grew with the tours), not this test's
+      const count = entries().length;
+      assert.ok(entries().includes("Bash(vnoc show *)") && entries().includes("Bash(vnoc skill *)") && count >= 15 && entries().every((e) => e.startsWith("Bash(vnoc ")), String(entries()));
       assert.ok(!entries().some((e) => /agent|doc new|doc tag|relink|repair|init/.test(e)), "no write command is allowed");
       cleanUp();
       const byDefault = (await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true })) as SetUpResult;
       assert.ok(byDefault.wrote.includes(".claude/settings.local.json"), String(byDefault.wrote));
-      assert.strictEqual(entries().length, 15);
+      assert.strictEqual(entries().length, count);
 
       // the user's own entry stays when the setup runs again over it
       fs.writeFileSync(settings, JSON.stringify({ permissions: { allow: ["Bash(ls *)"] } }, null, 2));
       await vscode.commands.executeCommand("vnoc.setUpAgents", { agents: ["claude"], confirm: true });
       assert.strictEqual(entries()[0], "Bash(ls *)");
-      assert.strictEqual(entries().length, 16);
+      assert.strictEqual(entries().length, count + 1);
     } finally {
       cleanUp();
     }

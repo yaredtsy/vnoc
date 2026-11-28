@@ -6,41 +6,16 @@
 
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import { shikiToMonaco } from "@shikijs/monaco";
-import { createHighlighterCore } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import { currentTheme, languageOf, loadHighlighter } from "../lib/highlighter.ts";
 
-import { bendGrammar } from "./bendGrammar.ts";
-
-const LIGHT = "github-light";
-const DARK = "github-dark";
-
-export { languageOf } from "./languages.ts";
-
-/** VS Code puts `vscode-light` / `vscode-dark` / `vscode-high-contrast(-light)` on `<body>`. */
-export function currentTheme(): string {
-  const c = document.body.classList;
-  return c.contains("vscode-light") || c.contains("vscode-high-contrast-light") ? LIGHT : DARK;
-}
+// the language table, the theme names and the highlighter itself are `lib/highlighter.ts`: the tour's stage uses them without Monaco
+export { currentTheme, languageOf };
 
 let ready: Promise<typeof monaco> | null = null;
 
 export function loadMonaco(): Promise<typeof monaco> {
   return (ready ??= (async () => {
-    const highlighter = await createHighlighterCore({
-      themes: [import("@shikijs/themes/github-light"), import("@shikijs/themes/github-dark")],
-      langs: [
-        import("@shikijs/langs/python"),
-        import("@shikijs/langs/python").then((m) => bendGrammar(m.default[0])), // Bend's: Python's without its error marks
-        import("@shikijs/langs/rust"),
-        import("@shikijs/langs/typescript"),
-        import("@shikijs/langs/tsx"),
-        import("@shikijs/langs/javascript"),
-        import("@shikijs/langs/jsx"),
-        import("@shikijs/langs/json"),
-        import("@shikijs/langs/markdown"),
-      ],
-      engine: createJavaScriptRegexEngine(),
-    });
+    const highlighter = await loadHighlighter();
     // `shikiToMonaco` only tokenizes languages Monaco already knows, and the bare editor API registers none
     for (const id of highlighter.getLoadedLanguages()) monaco.languages.register({ id });
     shikiToMonaco(highlighter, monaco);

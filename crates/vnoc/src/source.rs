@@ -35,12 +35,18 @@ pub fn read_text(path: &Path) -> io::Result<String> {
     Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_string())
 }
 
+/// A file's text as lines, the way every reader of source here splits it: `\r\n` ends a line like `\n`, and the last line needs no end. (The text is
+/// what [`read_text`] returned: a byte order mark and bytes that are not UTF-8 are dealt with there.)
+pub fn split_lines(text: &str) -> Vec<&str> {
+    text.lines().collect()
+}
+
 /// The lines of `range` (0-based and inclusive, as the driver gives it) with `context` lines more on each side, read from `path`. The context stops
 /// at the file's first and last line, and a range past the end of the file (it was shortened since the index was built) gives the lines that are there.
 /// A UTF-8 byte order mark is dropped, `\r\n` ends a line like `\n`, and bytes that are not UTF-8 become U+FFFD.
 pub fn excerpt(path: &Path, range: &Range, context: u32) -> io::Result<Excerpt> {
     let text = read_text(path)?;
-    let all: Vec<&str> = text.lines().collect();
+    let all = split_lines(&text);
     let total = all.len() as u32;
     let start = range.start.line.saturating_sub(context);
     let end = range
@@ -79,6 +85,7 @@ mod tests {
     fn file(label: &str, bytes: &[u8]) -> std::path::PathBuf {
         let path =
             std::env::temp_dir().join(format!("vnoc-source-{label}-{}.py", std::process::id()));
+        crate::testdir::remove_at_end(&path);
         std::fs::write(&path, bytes).unwrap();
         path
     }

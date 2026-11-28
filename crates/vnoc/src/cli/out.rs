@@ -6,6 +6,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 
@@ -55,14 +56,23 @@ pub fn json<T: Serialize>(value: &T) -> Result<(), Failure> {
     raw(&line)
 }
 
+/// The tour commands mark a refusal with a red `✗` in place of the `error:` word (docs/26-tours/05 §5): set once by `vnoc tour`.
+static MARKED: AtomicBool = AtomicBool::new(false);
+
+/// From now on [`error`] starts its line with `✗`, and not with `error:`.
+pub fn mark_errors() {
+    MARKED.store(true, Ordering::Relaxed);
+}
+
 /// A failure's line on standard error. Nothing else is written there by a command (logs only with `VNOC_LOG`).
 pub fn error(message: &str) {
-    // a closed standard error has nowhere to complain to
-    let _ = writeln!(
-        style::writer(Stream::Err),
-        "{} {message}",
+    let label = if MARKED.load(Ordering::Relaxed) {
+        style::paint_err(style::alert(), "✗")
+    } else {
         style::paint_err(style::alert(), "error:")
-    );
+    };
+    // a closed standard error has nowhere to complain to
+    let _ = writeln!(style::writer(Stream::Err), "{label} {message}");
 }
 
 /// The list under an error, one item per line, indented: `  did you mean` (dim) and the items under it (locations, cyan), then `and N more`. On

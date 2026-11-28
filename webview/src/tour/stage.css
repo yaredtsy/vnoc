@@ -1,0 +1,203 @@
+/* The stage (docs/26-tours/design/03-stage.md §7): the dock is part of the canvas, like VS Code's own panel: its background, a 1 px top border, no shadow, no rounded
+   corners. The colour that means "here" on the map (--card-selected) is the bar of the lit lines and the edge of the title. */
+.stage { position: relative; display: flex; flex-direction: column; flex: none; background: var(--vscode-panel-background, var(--background)); border-top: 1px solid var(--vscode-panel-border, var(--border)); color: var(--foreground); font-family: var(--font); font-size: var(--font-size); min-height: 30px; overflow: hidden; }
+.stage-grip { position: absolute; left: 0; right: 0; top: -3px; height: 6px; cursor: ns-resize; z-index: 2; }
+.stage-header { display: flex; align-items: center; gap: 8px; height: 30px; flex: none; padding: 0 8px; white-space: nowrap; overflow: hidden; }
+.stage-number { font-weight: 600; }
+/* the header never clips its icons: the name and the file give way (an ellipsis), the number, the position and the buttons keep their room */
+.stage-header > * { flex: none; }
+.stage-header > .stage-name { flex: 0 1 auto; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.stage-header > .stage-where { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stage-header > .stage-dimtext { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stage-header > .stage-grow { flex: 1 1 0; min-width: 0; }
+.stage-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.stage-where, .stage-called { color: var(--muted-foreground); background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.stage-where:hover, .stage-called:hover { color: var(--foreground); text-decoration: underline; }
+.stage-grow { flex: 1; }
+.stage-position, .stage-dimtext { color: var(--muted-foreground); }
+.stage-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 3px; background: none; color: var(--foreground); cursor: pointer; }
+.stage-icon:hover { background: var(--toolbar-hover); }
+
+.stage-body { display: flex; flex: 1; min-height: 0; border-top: 1px solid var(--vscode-panel-border, var(--border)); }
+.stage-left { flex: 1; min-width: 0; display: flex; }
+.stage-divider { width: 5px; margin: 0 -2px; cursor: ew-resize; flex: none; z-index: 1; }
+.stage-divider:hover { background: var(--ring); opacity: 0.5; }
+.stage-right { width: clamp(320px, 40%, 460px); flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--vscode-panel-border, var(--border)); }
+
+/* the code pane: the editor's own font and colours, line numbers dim, long lines wrapped (soft wrap, the wrapped part two columns in from the line's own indent) */
+.stage-code-wrap { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* the code as it was written (a pinned tour, a step that changed): its own background, and a label in a strip of its own on the top edge, above the code (it covers none of it) */
+.stage-written .stage-code { background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 92%, var(--vscode-editorWarning-foreground, #cca700)); min-height: 0; }
+.stage-written-strip { flex: none; height: 16px; padding-left: 8px; background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 92%, var(--vscode-editorWarning-foreground, #cca700)); border-bottom: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 50%, transparent); }
+.stage-written-label { display: inline-block; padding: 0 6px; font-size: 10px; line-height: 16px; border-radius: 0 0 3px 3px; background: var(--vscode-editorWarning-foreground, #cca700); color: var(--vscode-editor-background, var(--background)); font-family: var(--editor-font); }
+/* Now / As Written: the chosen side is drawn pressed, as VS Code's own toggles are (aria-pressed) */
+.stage-switch { display: inline-flex; margin: 2px 0 6px; border: 1px solid var(--vscode-widget-border, var(--border)); border-radius: 3px; overflow: hidden; }
+.stage-switch button { height: 22px; padding: 0 10px; border: 0; font: inherit; font-size: 12px; cursor: pointer; background: transparent; color: var(--muted-foreground); }
+.stage-switch button + button { border-left: 1px solid var(--vscode-widget-border, var(--border)); }
+.stage-switch button[aria-pressed="true"] { background: var(--vscode-inputOption-activeBackground, var(--vscode-button-background, var(--accent))); color: var(--vscode-inputOption-activeForeground, var(--vscode-button-foreground, var(--foreground))); font-weight: 600; box-shadow: inset 0 -2px 0 var(--vscode-inputOption-activeBorder, var(--ring)); }
+.stage-code { flex: 1; min-width: 0; overflow: auto; background: var(--vscode-editor-background, var(--background)); font-family: var(--editor-font); font-size: var(--vscode-editor-font-size, 12px); line-height: 18px; }
+.stage-empty { display: flex; align-items: center; justify-content: center; color: var(--muted-foreground); font-family: var(--font); }
+.stage-line { display: flex; align-items: flex-start; min-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; position: relative; }
+.stage-gutter { flex: none; height: 18px; width: 4ch; padding-right: 1.5ch; text-align: right; color: var(--vscode-editorLineNumber-foreground, var(--muted-foreground)); user-select: none; box-sizing: content-box; }
+/* `--lead` is the line's own indent in characters: the first line starts it back at the edge (text-indent), the wrapped lines start two columns past it */
+.stage-text { flex: 1; min-width: 0; padding-right: 16px; padding-left: calc((var(--lead, 0) + 2) * 1ch); text-indent: calc((var(--lead, 0) + 2) * -1ch); }
+.stage-token { white-space: inherit; }
+.stage-line::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+/* the lit block (design 03 §2): the lit lines in the theme's own highlight with a tint of the bar's colour on top (a dark theme's highlight is nearly invisible), the gutter bar in the focus colour, every other line at 40% */
+.stage-lit { background: linear-gradient(color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent), color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent)), var(--vscode-editor-rangeHighlightBackground, var(--vscode-editor-findMatchHighlightBackground, transparent)); }
+.stage-lit::before { background: var(--vscode-focusBorder, #007fd4); }
+.stage-dim { opacity: 0.4; }
+.stage-thin::before { background: var(--card-selected); width: 1px; left: 1px; opacity: 0.8; }
+/* a step that changed after it was written: a dashed bar and no background (the code is as it is now, the words are old) */
+.stage-changed { background: none; }
+.stage-changed::before { background: none; border-left: 3px dashed var(--card-selected); }
+/* the `▾ N more lit lines` chip: a thin row under the code, never over a row of it */
+.stage-more-row { flex: none; display: flex; justify-content: flex-end; align-items: center; height: 22px; padding: 0 16px; background: var(--vscode-editor-background, var(--background)); border-top: 1px solid var(--vscode-panel-border, var(--border)); }
+.stage-more { padding: 0 8px; height: 18px; font-size: 11px; line-height: 16px; border: 1px solid var(--card-border); border-radius: 9px; background: var(--card); color: var(--foreground); cursor: pointer; }
+
+/* contents: a folder, a file with no blocks */
+.stage-contents { padding: 2px 0; font-family: var(--font); }
+.stage-row { display: flex; align-items: center; gap: 8px; width: 100%; height: 22px; padding: 0 8px 0 0; border: 0; background: none; color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
+.stage-row:hover:not(:disabled) { background: var(--accent); }
+.stage-row:disabled { cursor: default; }
+.stage-row.stage-dim { opacity: 0.4; }
+.stage-rowmeta { margin-left: auto; color: var(--muted-foreground); }
+
+/* the text pane */
+.stage-textpane { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px 4px; }
+.stage-title { margin: 0 0 6px; font-size: 13px; font-weight: 600; line-height: 1.35; border-left: 2px solid var(--card-selected); padding-left: 8px; margin-left: -10px; }
+.stage-parent { display: block; margin: 0 0 2px; padding: 0; border: 0; background: none; color: var(--muted-foreground); font: inherit; font-size: 11px; cursor: pointer; text-align: left; }
+.stage-parent:hover { text-decoration: underline; }
+.stage-paragraph, .stage-lead, .stage-sentence, .stage-explained, .stage-mark-note { margin: 0 0 6px; max-width: 46ch; line-height: 1.55; font-size: 13px; }
+.stage-lead { font-size: 14px; }
+.stage-paragraph code, .stage-lead code, .stage-sentence code { font-family: var(--editor-font); background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+
+/* a step's text is Markdown (`text.ts`, `stage/Rich.tsx`): paragraphs, lists, tables, quotes, fences, one diagram. No headings and no images: the core refuses them */
+.tour-md.stage-paragraph, .tour-md.stage-lead { max-width: none; }
+.tour-md > :first-child { margin-top: 0; }
+.tour-md > :last-child { margin-bottom: 0; }
+.tour-md p { margin: 0 0 6px; }
+.tour-md ul, .tour-md ol { margin: 0 0 6px; padding-left: 20px; }
+.tour-md ul { list-style: disc; }
+.tour-md ol { list-style: decimal; }
+.tour-md ul ul { list-style: circle; }
+.tour-md li { margin: 0 0 2px; }
+.tour-md li > p { margin: 0; }
+.tour-md a { color: var(--link); text-decoration: none; }
+.tour-md a:hover { text-decoration: underline; }
+.tour-md blockquote { margin: 0 0 6px; padding: 0 0 0 10px; border-left: 2px solid var(--vscode-textBlockQuote-border, var(--border)); color: var(--muted-foreground); }
+.tour-md code { font-family: var(--editor-font); background: var(--code-bg); padding: 0 3px; border-radius: 3px; font-size: 0.92em; }
+.tour-md .tour-image { color: var(--muted-foreground); font-style: italic; }
+.tour-table { overflow-x: auto; margin: 0 0 8px; max-width: 100%; }
+.tour-table table { border-collapse: collapse; font-size: 12px; line-height: 1.4; }
+.tour-table th, .tour-table td { border: 1px solid var(--vscode-panel-border, var(--border)); padding: 2px 8px; text-align: left; vertical-align: top; }
+.tour-table th { background: var(--code-bg); font-weight: 600; }
+.tour-fence, .tour-fence-box pre { margin: 0 0 8px; padding: 6px 8px; overflow-x: auto; border-radius: 4px; background: var(--vscode-textCodeBlock-background, var(--code-bg)) !important; font-family: var(--editor-font); font-size: 12px; line-height: 1.45; white-space: pre; }
+.tour-fence code, .tour-fence-box code { background: none; padding: 0; font-size: inherit; }
+.tour-diagram { margin: 0 0 8px; }
+.tour-diagram-drawn { display: block; overflow-x: auto; padding: 6px; border: 1px solid var(--vscode-panel-border, var(--border)); border-radius: 4px; cursor: zoom-in; }
+.tour-diagram-drawn:hover, .tour-diagram-drawn:focus-visible { border-color: var(--card-selected); outline: none; }
+/* the SVG's width is set by `diagramWidth` (80% of natural at least): a wide one scrolls in the box, a narrow one is centred */
+.tour-diagram-drawn svg { display: block; margin: 0 auto; height: auto; }
+.tour-diagram-note { margin: 0; color: var(--muted-foreground); font-size: 11px; }
+.tour-diagram-failed .tour-fence { margin-bottom: 4px; }
+.tour-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 32px; background: color-mix(in srgb, var(--vscode-editor-background, #000) 82%, transparent); cursor: zoom-out; }
+.tour-overlay-body { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 6px; background: var(--vscode-editor-background, var(--background)); border: 1px solid var(--vscode-panel-border, var(--border)); cursor: grab; touch-action: none; user-select: none; }
+.tour-overlay-dragging { cursor: grabbing; }
+.tour-overlay-canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.tour-overlay-canvas svg { display: block; width: 100% !important; height: 100% !important; max-width: none !important; }
+.tour-overlay-tools { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; }
+.tour-overlay-tools button { min-width: 28px; height: 26px; padding: 0 8px; border: 1px solid var(--vscode-button-border, var(--border)); border-radius: 4px; background: var(--vscode-editorWidget-background, var(--card)); color: var(--foreground); font: inherit; cursor: pointer; }
+.tour-overlay-tools button:hover { background: var(--vscode-toolbar-hoverBackground, var(--accent)); }
+.tour-overlay-close { position: absolute; top: 10px; right: 14px; border: 0; background: none; color: var(--foreground); font-size: 16px; cursor: pointer; }
+
+.stage-mark-note, .stage-explained, .stage-sentence { color: var(--muted-foreground); }
+.stage-link { background: none; border: 0; padding: 0; color: var(--link); cursor: pointer; font: inherit; }
+.stage-link:hover { text-decoration: underline; }
+.stage-bars { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.stage-bars i { display: block; height: 8px; border-radius: 2px; background: var(--vscode-editorWidget-border, var(--card-border)); animation: stage-shimmer 1.6s ease-in-out infinite; }
+.stage-bars i:nth-child(1) { width: 92%; } .stage-bars i:nth-child(2) { width: 100%; } .stage-bars i:nth-child(3) { width: 60%; }
+@keyframes stage-shimmer { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .stage-bars i { animation: none; } }
+/* the text of a stop written while the reader is on it: it fades in where the grey bars were (nothing moves; Reduce motion: it just appears) */
+.stage-fadein { animation: stage-fadein 450ms ease-out both; }
+@keyframes stage-fadein { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .stage-fadein { animation: none; } }
+
+/* the foot: segments, then Prev and Next */
+.stage-foot { display: flex; align-items: center; gap: 8px; flex: none; padding: 4px 12px 6px; }
+.stage-segments { display: flex; gap: 2px; flex: 1; min-width: 0; }
+.stage-seg { flex: 1; min-width: 2px; height: 3px; padding: 0; border: 0; background: var(--vscode-editorWidget-border, var(--card-border)); cursor: pointer; }
+.stage-seg.stage-filled { background: var(--ring); }
+.stage-seg.stage-planned { background: none; border-top: 3px dotted var(--vscode-editorWidget-border, var(--card-border)); height: 0; }
+.stage-btn { height: 26px; padding: 0 12px; border: 0; border-radius: 2px; font: inherit; cursor: pointer; }
+.stage-primary { background: var(--primary); color: var(--primary-foreground); }
+.stage-secondary { background: var(--vscode-button-secondaryBackground, var(--chip-active)); color: var(--vscode-button-secondaryForeground, var(--chip-active-foreground)); border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder, color-mix(in srgb, var(--foreground) 30%, transparent))); }
+.stage-btn:disabled { opacity: 0.5; cursor: default; }
+/* `Next ◌`: the next step is not written (still reachable) or not added yet (nowhere to go) */
+.stage-dimmed { opacity: 0.55; }
+.stage-dimmed[aria-disabled="true"] { cursor: default; }
+.stage-seg.stage-adding { display: block; }
+
+/* the cover and the end card: one column */
+.stage-one { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--vscode-panel-border, var(--border)); }
+.stage-one .stage-title { border: 0; padding: 0; margin: 0 0 2px; font-size: 14px; }
+/* the cover is compact: its paragraphs are one line apart, so Start and the first offer fit the dock's height */
+.stage-one .stage-paragraph, .stage-one .stage-lead { margin: 0; }
+.stage-one > div:has(> .stage-primary) { margin: 4px 0; }
+.stage-one .stage-offer { margin: 2px 0; }
+.stage-buttons { display: flex; gap: 8px; margin-top: 6px; }
+
+/* a line of the code that calls a later stop of this tour: a jump to that stop (design 03 §2.2) */
+.stage-callto { margin-left: 12px; padding: 0 6px; border: 0; border-radius: 3px; background: none; color: var(--link); font: inherit; font-family: var(--font); font-size: 11px; cursor: pointer; opacity: 0.8; }
+.stage-line:hover .stage-callto, .stage-callto:focus-visible { opacity: 1; text-decoration: underline; }
+
+/* the writing dot on a tour's chip: it pulses while the agent writes and is heard from; still when it is not (Reduce motion: it never pulses) */
+.tour-dot { display: inline-block; flex: none; width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: currentColor; opacity: 0.8; }
+.tour-dot-pulsing { animation: tour-dot-pulse 1.2s ease-in-out infinite; }
+@keyframes tour-dot-pulse { 50% { opacity: 0.2; } }
+@media (prefers-reduced-motion: reduce) { .tour-dot-pulsing { animation: none; } }
+
+/* the Commit and Pin… dialog: over the canvas page, the only dialog a tour has */
+.pin-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--vscode-editor-background, var(--background)) 55%, transparent); }
+.pin-dialog { width: min(480px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; background: var(--vscode-editorWidget-background, var(--card)); color: var(--foreground); border: 1px solid var(--vscode-editorWidget-border, var(--border)); border-radius: 4px; box-shadow: 0 6px 24px rgb(0 0 0 / 0.35); font-size: 13px; }
+.pin-title { margin: 0; font-size: 14px; }
+.pin-dim { margin: 0; color: var(--muted-foreground); }
+.pin-files { margin: 0; padding: 0; list-style: none; max-height: 140px; overflow: auto; font-family: var(--editor-font); font-size: 12px; }
+.pin-file { padding: 1px 0; border: 0; background: none; font: inherit; color: var(--vscode-textLink-foreground, var(--ring)); cursor: pointer; text-align: left; }
+.pin-file:hover { text-decoration: underline; }
+.pin-label { display: flex; flex-direction: column; gap: 3px; color: var(--muted-foreground); }
+.pin-message { resize: vertical; padding: 4px 6px; font: inherit; color: var(--foreground); background: var(--vscode-input-background, var(--background)); border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 2px; }
+.pin-check { display: flex; align-items: center; gap: 6px; }
+.ask-dialog { width: min(520px, calc(100% - 32px)); }
+.ask-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 24px; }
+.ask-label { flex: none; width: 56px; color: var(--muted-foreground); }
+.ask-chip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 1px 4px 1px 8px; border-radius: 999px; font-size: 12px; background: var(--card-badge-bg); color: var(--card-badge-fg); }
+.ask-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ask-chip-x { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 999px; background: none; color: inherit; cursor: pointer; }
+.ask-chip-x:hover { background: var(--toolbar-hover); }
+.ask-number { width: 56px; padding: 2px 4px; font: inherit; color: var(--foreground); background: var(--vscode-input-background, var(--background)); border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 2px; }
+.ask-size { min-width: 0; }
+.ask-segments { display: flex; flex-wrap: wrap; gap: 0; }
+.ask-segment { padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; color: var(--vscode-button-secondaryForeground, var(--foreground)); background: var(--vscode-button-secondaryBackground, transparent); border: 1px solid var(--vscode-input-border, var(--border)); margin-left: -1px; }
+.ask-segment:first-child { margin-left: 0; border-radius: 2px 0 0 2px; }
+.ask-segment:last-child { border-radius: 0 2px 2px 0; }
+/* the chosen segment: the secondary button's own colours (only Copy Prompt is primary) and the focus border as an outline */
+.ask-segment-on { position: relative; z-index: 1; outline: 1px solid var(--vscode-focusBorder, var(--ring)); outline-offset: -1px; }
+.ask-segment:focus-visible { outline: 1px solid var(--ring); outline-offset: 1px; }
+.ask-prompt { margin: 0; padding: 6px 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; background: var(--vscode-input-background, var(--background)); border: 1px solid var(--border); border-radius: 2px; }
+.ask-hint { margin-left: auto; align-self: center; }
+.pin-error { margin: 0; color: var(--vscode-errorForeground, #f85149); white-space: pre-wrap; }
+/* an offer on the cover: the sentence, and its button after it */
+.stage-offer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; max-width: none; }
+
+/* a narrow canvas (under 640 px, design 03 §6): the panes stack, the code keeps six lines, the text has the rest, and the foot stays at the bottom. Nothing is cut: the text pane
+   scrolls, the header drops what it cannot hold (where the code is, how the tour got here) */
+.stage-narrow .stage-body { flex-direction: column; }
+.stage-narrow .stage-left { flex: none; height: calc(6 * 18px); min-height: 0; border-bottom: 1px solid var(--vscode-panel-border, var(--border)); }
+.stage-narrow .stage-left .stage-code-wrap { min-height: 0; }
+.stage-narrow .stage-divider { display: none; }
+.stage-narrow .stage-right { width: auto !important; flex: 1; border-left: 0; }
+.stage-narrow .stage-header .stage-where, .stage-narrow .stage-header .stage-called { display: none; }
+.stage-narrow .stage-foot { padding: 4px 8px 6px; }
+.stage-narrow .stage-one { padding: 8px 12px; }

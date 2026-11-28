@@ -1,13 +1,17 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
+import { guarded, soft } from "./util";
 
 const WS = process.env.VNOC_TEST_WORKSPACE!;
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: { ping(): Promise<any>; reportFacts(): { extension: string; core: string | undefined }; logTail(): string; structure(): Promise<any>; waitRendered(ms: number): Promise<{ visible: number; hidden: number; callCards: number; chevrons: number }> };
 
 suiteSetup(async () => {
   const ext = vscode.extensions.getExtension("vnoc.vnoc")!;
   assert.ok(ext, "the extension is installed in the test host");
-  api = await ext.activate();
+  api = guarded(await ext.activate());
 });
 
 suite("walking skeleton: extension host -> core -> Python driver -> structure -> webview", () => {

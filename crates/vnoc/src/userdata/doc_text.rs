@@ -177,6 +177,7 @@ mod tests {
             let root =
                 std::env::temp_dir().join(format!("vnoc-doctext-{label}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&root);
+            crate::testdir::remove_at_end(&root);
             fs::create_dir_all(&root).unwrap();
             Scratch { root }
         }

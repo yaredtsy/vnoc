@@ -23,6 +23,8 @@ import type { CliSetup } from "./cliSetup";
 import { writeId } from "./writeId";
 import { emptyTrash, removeAllMissing, removeMissing, restoreRemoved } from "./trash";
 import { absolute, selectionOf } from "./files";
+import { pickItem } from "./tours";
+import type { ToursAnswer } from "@vnoc/shared/tours.ts";
 
 // Every `vnoc.*` command: what a sidebar row, a card's right-click menu, the Explorer and the editor's menu run. Each one turns its argument into a
 // node (`nodeFor`), then changes the session or shows something. The commands never keep state of their own.
@@ -108,6 +110,15 @@ export class Commands {
         this.store.dispatch({ type: "explore", call: call.id, activate: true }, call.context);
       }),
       on("vnoc.goToCallSite", (arg) => this.goToCallSite(this.callFor(arg).node)),
+      on("vnoc.openTour", (arg) => this.openTour(arg)),
+      // **Show Tours** in a node's menu (card and row), when the node is on tours: the same as a click on its `▶ N`
+      on("vnoc.showTours", async (arg, selected) => this.showToursOf((await this.nodeFor(arg, selected)).id, this.contextOf(arg))),
+      // the menu of a tour's card and of a stop's row (design 04 §7): the real file, and MAIN on that node (the tour stays where it was)
+      on("vnoc.tourGoToCode", (arg) => this.goToCodeOf(this.tourNodeKey(arg))),
+      on("vnoc.tourRevealInMain", (arg) => {
+        this.store.dispatch({ type: "reveal", id: this.tourNodeKey(arg), canvas: true }, MAIN);
+        this.store.dispatch({ type: "activate", id: MAIN }, MAIN);
+      }),
       on("vnoc.closeContext", (arg) => this.closeContext(this.contextOf(arg))),
       on("vnoc.closeOtherContexts", (arg) => this.closeOtherContexts(this.contextOf(arg))),
       on("vnoc.expandAll", async (arg, selected) => this.expandAll(await this.nodeFor(arg, selected))),
@@ -273,14 +284,22 @@ export class Commands {
    * A click on a sidebar row (docs/16-ui-redesign/07-sidebar-rows.md §4): the canvas is where you are working while it is open, so a click shows the node
    * there, in the row's context; the code comes along beside it, never on top of it. With the canvas closed it opens the code as a preview tab, like a click
    * in the Explorer. The page has sent the `select` intent already; it is sent again here for a caller that has not (the palette, a test): it changes nothing twice.
+   *
+   * `pick`: the click is a pick from the search, and the page has sent nothing. With the canvas to show it, only the request is made: the canvas knows what it draws, and
+   * selects and frames the call card it has for the node, keeping the view's focus, or else reveals the node by structure. Without it the node is revealed for the sidebar, as a pick always was.
    */
-  async rowClick(context: ContextId, id: string): Promise<void> {
+  async rowClick(context: ContextId, id: string, pick = false): Promise<void> {
     const node = findNode(this.core.tree ?? (await this.core.loadStructure()).root, id);
     if (!node) throw new Error("That node is not in the structure any more.");
-    this.store.dispatch({ type: "select", id: node.id }, context);
     const mode = vscode.workspace.getConfiguration("vnoc").get<"auto" | "code" | "canvas">("sidebar.click", "auto");
-    if (mode === "canvas" || (mode === "auto" && this.panels.canvas)) {
-      this.store.dispatch({ type: "reveal", id: node.id, canvas: true }, context);
+    const onCanvas = mode === "canvas" || (mode === "auto" && Boolean(this.panels.canvas));
+    if (pick && onCanvas) this.store.dispatch({ type: "reveal", id: node.id, canvas: true, pick: true }, context);
+    else {
+      if (pick) this.store.dispatch({ type: "reveal", id: node.id, canvas: false }, context);
+      this.store.dispatch({ type: "select", id: node.id }, context);
+      if (onCanvas) this.store.dispatch({ type: "reveal", id: node.id, canvas: true }, context);
+    }
+    if (onCanvas) {
       const canvas = this.panels.showCanvas({ preserveFocus: true });
       // a code editor already visible in another column follows the click too (canvas and code side by side); none is opened in the canvas's column
       const code = vscode.window.visibleTextEditors.find((e) => e.viewColumn !== undefined && e.viewColumn !== canvas.viewColumn);
@@ -347,6 +366,7 @@ export class Commands {
     const items = await Promise.all(sites.map(async (site) => ({ site, ...siteChoice({ ...site.range, path: site.path }, null, await lineText(site.path, site.range.start.line)) })));
     const pick = vscode.window.createQuickPick<(typeof items)[number]>();
     pick.title = "Go to Call Site";
+    pick.ignoreFocusOut = true;
     pick.matchOnDetail = true;
     pick.items = items;
     pick.onDidChangeActive(([item]) => item && void this.openAt(item.site.path, item.site.range, { preserveFocus: true }).catch(() => {}));
@@ -368,6 +388,97 @@ export class Commands {
   }
 
   /** Close (08 §5): an EXPLORE context goes with its children; MAIN stays. */
+  /** The QuickPick of **Open Tour…** (design/07 §8; `ignoreFocusOut`: from the bar's ⋯ the menu gives focus back to the page a moment after the picker opens, and a picker that closes with focus would be gone at once), the suite's way in: `pickAnswers` is the label to pick (`null`: VS Code's own), `picksShown` every list shown, as its lines (a line starting `— ` is a separator). */
+  readonly tourPick: { pickAnswers: string[] | null; picksShown: string[][]; picksDescribed: string[][] } = { pickAnswers: null, picksShown: [], picksDescribed: [] };
+
+  /** The node selected in the window's active context (a tour's: the current stop's), if the tree has it. */
+  private selectedKey(): string | null {
+    const s = this.store.get();
+    const key = s.contexts[s.active]?.selected ?? null;
+    return key !== null && this.core.tree && findNode(this.core.tree, key) ? key : null;
+  }
+
+  /** **Ask for a Tour…** from a node's menu, the palette, a button: the node's key for `vnoc/tourAsk` (a menu names its node; the palette and the bar's buttons mean the selected one), or none. */
+  async askKeyOf(arg: unknown, selected?: unknown): Promise<string | undefined> {
+    const named = isTreeNode(arg) || (typeof arg === "object" && arg !== null && "nodeKey" in arg);
+    if (named) return (await this.nodeFor(arg, selected)).id;
+    return this.selectedKey() ?? undefined;
+  }
+
+  /**
+   * **Open Tour…**. With a tour's id as its argument (`executeCommand("vnoc.openTour", id)`: the host's ⋯ and the suites) it opens that tour and asks nothing. Otherwise the core's list is a QuickPick in the
+   * core's order: with a node selected, the tours on it first under a line *"on reserve_stock"* (`vnoc/tours { first_on }`; the page sorts nothing), then the others.
+   */
+  private async openTour(id?: unknown): Promise<void> {
+    if (typeof id === "string" && id !== "") {
+      const { tours } = await this.request<ToursAnswer>("vnoc/tours");
+      const row = tours.find((r) => r.id === id);
+      if (!row) throw new Error(`There is no tour with the id ${id}.`);
+      await this.openTourById(row.id, row.title);
+      return;
+    }
+    if (!this.core.tree) await this.core.loadStructure();
+    const key = this.selectedKey();
+    // a node the core refuses (the project's root is every tour's) is no node here: the plain list
+    const { tours } = await (key !== null ? this.request<ToursAnswer>("vnoc/tours", { first_on: key }).catch(() => this.request<ToursAnswer>("vnoc/tours")) : this.request<ToursAnswer>("vnoc/tours"));
+    if (tours.length === 0) {
+      void vscode.window.showInformationMessage("There are no tours yet. Ask your coding agent for one: “give me a tour of …”.");
+      return;
+    }
+    const on = tours.filter((r) => r.on !== undefined && r.on !== null);
+    const rest = tours.filter((r) => !on.includes(r));
+    const name = key !== null && this.core.tree ? (findNode(this.core.tree, key)?.name ?? key) : "";
+    const separator = (label: string): vscode.QuickPickItem => ({ label, kind: vscode.QuickPickItemKind.Separator });
+    const items: (vscode.QuickPickItem & { row?: ToursAnswer["tours"][number] })[] =
+      on.length > 0 ? [separator(`on ${name}`), ...on.map(pickItem), ...(rest.length > 0 ? [separator("other tours")] : []), ...rest.map(pickItem)] : tours.map(pickItem);
+    this.tourPick.picksShown.push(items.map((i) => (i.kind === vscode.QuickPickItemKind.Separator ? `— ${i.label}` : i.label)));
+    // what each line says beside its label (a tour on the node says why: the core's `on.words`), for the suite
+    this.tourPick.picksDescribed.push(items.map((i) => i.description ?? ""));
+    const want = this.tourPick.pickAnswers?.shift();
+    const picked = this.tourPick.pickAnswers !== null ? items.find((i) => i.row !== undefined && i.label === want) : await vscode.window.showQuickPick(items, { title: "Open Tour", placeHolder: "Pick a tour", matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
+    if (!picked?.row) return;
+    await this.openTourById(picked.row.id, picked.row.title);
+  }
+
+  /** Opens a tour as the window's tour context (one that was open is replaced) and brings the canvas up: Open Tour… and the notification's **Open Tour** do the same. */
+  async openTourById(id: string, title: string | undefined): Promise<void> {
+    // the session checks its intents against the structure, and the host reads it only while a page asks: with the canvas closed there is none yet
+    if (!this.core.tree) await this.core.loadStructure();
+    this.store.dispatch({ type: "tourOpen", id, title });
+    await this.panels.showCanvas();
+  }
+
+  /**
+   * `▶ N` and **Show Tours** (design 07 §6): the node is selected in its own context (which becomes the active one: the list follows the active context's selection), the TOURS
+   * section is switched to **On the selected node** and shown. A tour context has no selection of this kind: the node is selected in MAIN instead.
+   */
+  async showToursOf(key: string, context: ContextId): Promise<void> {
+    if (!this.core.tree) await this.core.loadStructure();
+    const where = this.store.get().contexts[context]?.kind === "tour" || !this.store.get().contexts[context] ? MAIN : context;
+    this.store.dispatch({ type: "activate", id: where }, where);
+    this.store.dispatch({ type: "select", id: key }, where);
+    this.store.dispatch({ type: "tourView", view: "onSelection" }, where);
+    await this.showSidebar();
+    await this.panels.whenSidebarDrew(5000); // an event sent to a page that has not started is lost
+    this.panels.emit("viewCommand", { name: "showTours" });
+  }
+
+  /** **Reveal Root in Main** on a tour's row: MAIN selects the tour's first stop and is the context the canvas draws. The tour stays where it was. A root with no node in the tree has nothing to reveal. */
+  async revealTourRoot(key: string | null): Promise<void> {
+    if (key === null) throw new Error("That tour's first stop is not in the structure any more.");
+    if (!this.core.tree) await this.core.loadStructure();
+    this.store.dispatch({ type: "reveal", id: key, canvas: true }, MAIN);
+    this.store.dispatch({ type: "activate", id: MAIN }, MAIN);
+    await this.panels.showCanvas();
+  }
+
+  /** The structure node a tour's menu acts on: `nodeKey` of what the card or the row said. A stop whose node is gone has none. */
+  private tourNodeKey(arg: unknown): string {
+    const key = (arg as { nodeKey?: unknown } | null)?.nodeKey;
+    if (typeof key !== "string") throw new Error("That stop's code is not in the structure any more.");
+    return key;
+  }
+
   private closeContext(id: ContextId): void {
     if (this.store.get().contexts[id]?.kind === "explore") this.store.dispatch({ type: "closeContext", id }, id);
   }

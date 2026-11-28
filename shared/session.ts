@@ -6,19 +6,25 @@ import type { TreeNode } from "./messages";
 import { type CallId, type CallLookup, callExists, callId, isCallId, parseCallId } from "./calls.ts";
 import { jump, pop } from "./focusStack.ts";
 import { MAX_ROOTS, NONE, NO_ROOT, openOf, rootOf } from "./open.ts";
+import type { TourId } from "./tours";
 import { chainedPrefix, findNode, lineage, pathTo } from "./tree.ts";
 
 export type ContextId = string;
 
-/** One context: what the sidebar and the canvas show for it. MAIN, or an EXPLORE context opened from a call in another one (03 §4). */
+/**
+ * One context: what the sidebar and the canvas show for it. MAIN, an EXPLORE context opened from a call in another one (03 §4), or a TOUR context: one tour,
+ * at most one per window (docs/26-tours/05-on-screen.md §5). A tour context's parent is MAIN, and it has no call.
+ */
 export interface ContextState {
   id: ContextId;
   title: string;
-  kind: "main" | "explore";
+  kind: "main" | "explore" | "tour";
   /** the context it was opened from; null for MAIN */
   parent: ContextId | null;
-  /** the call in `parent` this context explores; null for MAIN */
+  /** the call in `parent` this context explores; null for MAIN and for a tour */
   call: CallId | null;
+  /** which tour a TOUR context shows; null for every other kind. Nothing else of the tour is here: where the reader is is the core's (D17) */
+  tour: TourId | null;
   /**
    * An EXPLORE context opened by selecting its call (not activated): its sidebar header is in italics, like a preview tab, until it is activated once
    * (09 §4). Cleared whenever the context becomes the active one, by any way; MAIN is never one. In the session, so a reloaded page keeps it.
@@ -45,14 +51,16 @@ export interface Session {
   order: readonly ContextId[];
   /** the one the canvas shows */
   active: ContextId;
+  /** which list the sidebar's TOURS section shows (docs/26-tours/design/07-tour-list.md): every tour, or the ones through the selected node */
+  tourList: { view: "all" | "onSelection" };
   /** the node the text cursor is in; never saved */
   cursor: string | null;
   /** "look here" without selecting; never saved */
   highlight: string | null;
   /** the text in the sidebar's search box, null when it is empty; never saved. The canvas dims the cards it does not find (docs/20-search/05-on-screen.md §3). It follows the box alone: a select or a focus clears the highlight, not this */
   search: string | null;
-  /** a request for the canvas: "bring this into view"; never saved. `n` is unique, so a canvas can tell which one it did. */
-  reveal: { context: ContextId; id: string; n: number } | null;
+  /** a request for the canvas: "bring this into view"; never saved. `n` is unique, so a canvas can tell which one it did. `pick`: from a search pick; nothing was changed for it, the canvas decides (a call card it draws for the node is selected and framed, else the node is revealed by structure) */
+  reveal: { context: ContextId; id: string; n: number; pick?: true } | null;
   /** grows on every change; a webview drops a session older than the one it shows */
   seq: number;
 }
@@ -65,7 +73,8 @@ export type Intent =
   | { type: "toggle"; id: string }
   | { type: "expand"; ids: string[] }
   | { type: "collapseAll" }
-  | { type: "reveal"; id: string; canvas: boolean }
+  /** `pick`: a pick from the search with the canvas open: only the request is made (`canvas` is true); the canvas answers it with a card it draws or a plain reveal */
+  | { type: "reveal"; id: string; canvas: boolean; pick?: boolean }
   | { type: "revealed"; n: number }
   | { type: "cursor"; id: string | null }
   | { type: "highlight"; id: string | null }
@@ -76,16 +85,29 @@ export type Intent =
   | { type: "callsChanged"; owner: string }
   | { type: "explore"; call: CallId; activate: boolean }
   | { type: "activate"; id: ContextId }
-  | { type: "closeContext"; id: ContextId };
+  | { type: "closeContext"; id: ContextId }
+  /**
+   * Opens a tour as a context and makes it the active one; a tour context that was open (another tour) is replaced. `title` is what the chip says (the id when
+   * the host has none yet), `at` the structure key to select (the current stop's, from a place the host holds). Sent again for the tour that is open, it
+   * updates the title and the selection and activates it. The place itself is not here: it is the core's.
+   */
+  | { type: "tourOpen"; id: TourId; title?: string; at?: string | null }
+  /** Sent by the host, to the tour context, when the place it holds changed: the selection is the current stop's key (null: none). Nothing else of the place is in the session. */
+  | { type: "tourSelect"; key: string | null }
+  /** The TOURS section's view: every tour, or the ones through the active context's selection (design 07 §4). Kept with the session. */
+  | { type: "tourView"; view: Session["tourList"]["view"] };
 
 export const MAIN: ContextId = "main";
 
 /** The id of the EXPLORE context for a call: one per call, wherever it was opened from. */
 export const exploreId = (call: CallId): ContextId => `explore:${call}`;
 
+/** The id of the TOUR context for a tour. */
+export const tourContextId = (tour: TourId): ContextId => `tour:${tour}`;
+
 export function emptySession(): Session {
-  const main: ContextState = { id: MAIN, title: "Main", kind: "main", parent: null, call: null, preview: false, focus: [], selected: null, open: {}, recent: [] };
-  return { contexts: { [MAIN]: main }, order: [MAIN], active: MAIN, cursor: null, highlight: null, search: null, reveal: null, seq: 0 };
+  const main: ContextState = { id: MAIN, title: "Main", kind: "main", parent: null, call: null, tour: null, preview: false, focus: [], selected: null, open: {}, recent: [] };
+  return { contexts: { [MAIN]: main }, order: [MAIN], active: MAIN, tourList: { view: "all" }, cursor: null, highlight: null, search: null, reveal: null, seq: 0 };
 }
 
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -184,6 +206,8 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
       return change(s, context, setOpen(c, NONE));
 
     case "reveal": {
+      // a pick that the canvas decides: the session is as it was, and the request is made; the canvas has the cards, the focus is kept unless it has to go
+      if (intent.pick && intent.canvas) return { ...s, reveal: { context, id: intent.id, n: s.seq + 1, pick: true }, seq: s.seq + 1 };
       // A call card: its owner function opens, and so do the call cards above it in the owner's tree, so the card is drawn. Nothing is selected: selecting a call
       // card follows it (a preview EXPLORE), and a reveal only brings a card into view.
       const call = parseCallId(intent.id);
@@ -224,8 +248,18 @@ export function reduce(s: Session, context: ContextId, intent: Intent, tree: Tre
 
     case "closeContext": {
       const target = s.contexts[intent.id];
-      return target && target.kind === "explore" ? removeContexts(s, [intent.id]) : s; // MAIN stays
+      return target && target.kind !== "main" ? removeContexts(s, [intent.id]) : s; // MAIN stays
     }
+
+    case "tourOpen":
+      return openTour(s, intent.id, intent.title, intent.at ?? null, tree);
+
+    case "tourSelect":
+      // only a tour context has a place to follow; a key the tree does not have selects nothing
+      return c.kind === "tour" ? change(s, context, { selected: intent.key !== null && findNode(tree, intent.key) !== undefined ? intent.key : null }, { highlight: null }) : s;
+
+    case "tourView":
+      return s.tourList.view === intent.view ? s : { ...s, tourList: { view: intent.view }, seq: s.seq + 1 };
 
     case "treeChanged":
       return treeChanged(s, tree);
@@ -257,8 +291,27 @@ function follow(s: Session, context: ContextId, id: string | null, tree: TreeNod
   const way = callee?.key != null ? lineage(tree, callee.key) : null;
   if (!callee || callee.key === null || !way) return next; // a callee the project does not know: selected, nothing opens
   const child = exploreId(id);
-  if (!next.contexts[child]) next = openExplore(next, context, { id: child, title: callee.name, kind: "explore", parent: context, call: id, preview: !activate, focus: way, selected: callee.key, open: {}, recent: [] });
+  if (!next.contexts[child]) next = openExplore(next, context, { id: child, title: callee.name, kind: "explore", parent: context, call: id, tour: null, preview: !activate, focus: way, selected: callee.key, open: {}, recent: [] });
   return activate ? activateContext(next, child) : next;
+}
+
+/**
+ * A tour opens as a context under MAIN and becomes the active one. One tour context per window: another tour's is closed first, with what was opened from it.
+ * The tour already open stays as it is (its focus, its open set, its viewport) and is activated; the title and the selection are updated.
+ */
+function openTour(s: Session, tour: TourId, title: string | undefined, at: string | null, tree: TreeNode): Session {
+  const id = tourContextId(tour);
+  const selected = at !== null && findNode(tree, at) !== undefined ? at : null;
+  const others = s.order.filter((o) => s.contexts[o].kind === "tour" && o !== id);
+  let next = others.length === 0 ? s : removeContexts(s, others);
+  const open = next.contexts[id];
+  if (open) {
+    next = change(next, id, { title: title ?? open.title, selected: at === null ? open.selected : selected });
+  } else {
+    const made: ContextState = { id, title: title ?? tour, kind: "tour", parent: MAIN, call: null, tour, preview: false, focus: [], selected, open: {}, recent: [] };
+    next = openExplore(next, MAIN, made); // after the last context of MAIN's descendants: at the end
+  }
+  return activateContext(next, id);
 }
 
 /** Makes a context the active one. Being active ends a preview (09 §4). The same session when it already is, and not a preview. */
@@ -409,10 +462,12 @@ export interface SavedSession {
   contexts: Record<ContextId, ContextState>;
   order: ContextId[];
   active: ContextId;
+  /** absent in a session saved before the tours */
+  tourList?: Session["tourList"];
 }
 
 export function toSaved(s: Session): SavedSession {
-  return { contexts: { ...s.contexts }, order: [...s.order], active: s.active };
+  return { contexts: { ...s.contexts }, order: [...s.order], active: s.active, tourList: s.tourList };
 }
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
@@ -447,10 +502,12 @@ function readContext(v: unknown): ContextState | null {
   if (c.selected !== null && typeof c.selected !== "string") return null;
   if (c.parent !== null && typeof c.parent !== "string") return null;
   const kind = c.kind ?? (c.parent === null ? "main" : undefined);
-  if (kind === "main") return c.parent === null ? { id: c.id, title: c.title, kind, parent: null, call: null, preview: false, focus: c.focus, selected: c.selected, ...opens } : null;
+  if (kind === "main") return c.parent === null ? { id: c.id, title: c.title, kind, parent: null, call: null, tour: null, preview: false, focus: c.focus, selected: c.selected, ...opens } : null;
   if (kind === "explore") {
-    return typeof c.call === "string" && parseCallId(c.call) !== null && c.parent !== null ? { id: c.id, title: c.title, kind, parent: c.parent, call: c.call, preview: c.preview === true, focus: c.focus, selected: c.selected, ...opens } : null;
+    return typeof c.call === "string" && parseCallId(c.call) !== null && c.parent !== null ? { id: c.id, title: c.title, kind, parent: c.parent, call: c.call, tour: null, preview: c.preview === true, focus: c.focus, selected: c.selected, ...opens } : null;
   }
+  // a tour context belongs to MAIN, has no call, and names its tour
+  if (kind === "tour") return typeof c.tour === "string" && c.tour !== "" && c.id === tourContextId(c.tour) && c.parent === MAIN ? { id: c.id, title: c.title, kind, parent: MAIN, call: null, tour: c.tour, preview: false, focus: c.focus, selected: c.selected, ...opens } : null;
   return null;
 }
 
@@ -471,10 +528,15 @@ export function restoreSession(saved: unknown, oldFocus?: unknown): Session {
   const contexts: Record<ContextId, ContextState> = {};
   const order: ContextId[] = [];
   const calls = new Set<string>();
+  let tourSeen = false;
   for (const id of s.order) {
     const c = read(id);
     if (!c || c.id !== id || id in contexts) continue;
     if (c.kind === "main" ? id !== MAIN || order.length > 0 : !(c.parent! in contexts) || calls.has(c.call!)) continue; // MAIN first; a parent comes before its child
+    if (c.kind === "tour") {
+      if (tourSeen) continue; // one tour context per window
+      tourSeen = true;
+    }
     contexts[id] = c;
     order.push(id);
     if (c.call) calls.add(c.call);
@@ -483,5 +545,6 @@ export function restoreSession(saved: unknown, oldFocus?: unknown): Session {
   const active = s.active in contexts ? s.active : MAIN;
   // the active context is not a preview (it was activated, whatever the file says)
   if (contexts[active].preview) contexts[active] = { ...contexts[active], preview: false };
-  return { ...fresh, contexts, order, active };
+  const view = (s.tourList as Partial<Session["tourList"]> | undefined)?.view;
+  return { ...fresh, contexts, order, active, tourList: { view: view === "onSelection" ? "onSelection" : "all" } };
 }

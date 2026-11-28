@@ -11,6 +11,7 @@ import { SearchBox } from "./SearchBox.tsx";
 import { SearchResults, resultId } from "./SearchResults.tsx";
 import { sidebarBody } from "./sidebarBody.ts";
 import { States } from "./States.tsx";
+import { ToursSection } from "./tours/ToursSection.tsx";
 import { useSearch } from "./useSearch.ts";
 
 const pageRoot = document.getElementById("root");
@@ -68,6 +69,8 @@ export function Sidebar() {
         ) : (
           <States body={body === "ready" ? "loading" : body} message={message} />
         )}
+        {/* the TOURS section: under the panels (and not under a search's results, which fill the view) */}
+        {body === "ready" && structure && !search.searching && <ToursSection />}
       </div>
     </TooltipProvider>
   );

@@ -1,0 +1,136 @@
+{
+  "author": "claude-code",
+  "command": "tour show",
+  "detail": "normal",
+  "folder": "private",
+  "id": "<tour>",
+  "minutes": 2,
+  "of": 1,
+  "offers": {
+    "commit": [],
+    "ids": 1
+  },
+  "pinned": false,
+  "place": {
+    "at": "cover",
+    "back": [],
+    "by": "reader",
+    "first_unseen": "s1",
+    "moved": "",
+    "open": false,
+    "position": null,
+    "seen": [],
+    "stop": null,
+    "unseen": 1
+  },
+  "planned": 0,
+  "problems": [],
+  "question": "what happens when the gateway drops the call",
+  "quiet": false,
+  "readable": true,
+  "schema": 1,
+  "state": "finished",
+  "steps": 4,
+  "stops": [
+    {
+      "blocks": [
+        {
+          "depth": 0,
+          "id": "s1.b1",
+          "lines": [
+            14,
+            15
+          ],
+          "text": "one_try is the single charge call; keeping it in a function lets the loop below treat \"charge\" as one thing that either returns or raises.",
+          "title": "One attempt, as a function"
+        },
+        {
+          "depth": 1,
+          "id": "s1.b2",
+          "lines": [
+            15,
+            15
+          ],
+          "parent": "s1.b1",
+          "text": "This is the only line that talks to the gateway, so it is the only place a dropped connection can come from.",
+          "title": "The call itself"
+        },
+        {
+          "depth": 0,
+          "id": "s1.b3",
+          "lines": [
+            17,
+            22
+          ],
+          "text": "Only a dropped connection is retried: any other error leaves the loop at once. When every attempt drops, the function raises ChargeError.",
+          "title": "Try, and try again"
+        }
+      ],
+      "depth": 0,
+      "id": "s1",
+      "key": "billing/charge.py::retry_charge",
+      "kind": "function",
+      "lines": [
+        11,
+        22
+      ],
+      "name": "retry_charge",
+      "number": 1,
+      "path": "billing/charge.py",
+      "planned": false,
+      "qualname": "retry_charge",
+      "reading": [
+        {
+          "depth": 0,
+          "id": "s1",
+          "kind": "intro",
+          "lines": null,
+          "parent": null,
+          "text": "retry_charge calls the gateway and tries again when the call drops, up to a fixed number of attempts, then gives up with an error that names the order.",
+          "title": null
+        },
+        {
+          "depth": 1,
+          "id": "s1.b1",
+          "kind": "block",
+          "lines": [
+            14,
+            15
+          ],
+          "parent": null,
+          "text": "one_try is the single charge call; keeping it in a function lets the loop below treat \"charge\" as one thing that either returns or raises.",
+          "title": "One attempt, as a function"
+        },
+        {
+          "depth": 2,
+          "id": "s1.b2",
+          "kind": "detail",
+          "lines": [
+            15,
+            15
+          ],
+          "parent": "s1.b1",
+          "text": "This is the only line that talks to the gateway, so it is the only place a dropped connection can come from.",
+          "title": "The call itself"
+        },
+        {
+          "depth": 1,
+          "id": "s1.b3",
+          "kind": "block",
+          "lines": [
+            17,
+            22
+          ],
+          "parent": null,
+          "text": "Only a dropped connection is retried: any other error leaves the loop at once. When every attempt drops, the function raises ChargeError.",
+          "title": "Try, and try again"
+        }
+      ],
+      "steps": 4,
+      "text": "retry_charge calls the gateway and tries again when the call drops, up to a fixed number of attempts, then gives up with an error that names the order."
+    }
+  ],
+  "title": "retry_charge",
+  "writing": null,
+  "written": 1
+}

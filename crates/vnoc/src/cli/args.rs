@@ -113,12 +113,17 @@ impl Cli {
     }
 }
 
-/// Whether the command at `path` (its names from the first, none for `vnoc` itself) starts the driver.
+/// Whether the command at `path` (its names from the first, none for `vnoc` itself) starts the driver. Of `tour`, only `add` reads the code.
 fn starts_driver(path: &[String]) -> bool {
-    !matches!(
-        path.first().map(String::as_str),
-        Some("tags" | "tag" | "guide" | "skill" | "agent" | "init")
-    )
+    match path.first().map(String::as_str) {
+        // `add` reads the code; `check`, `list --on`, `show --check` and `where` may (a tour whose record holds needs none)
+        Some("tour") => matches!(
+            path.get(1).map(String::as_str),
+            Some("add" | "check" | "list" | "plan" | "route" | "show" | "start" | "where")
+        ),
+        Some("tags" | "tag" | "guide" | "skill" | "agent" | "init") => false,
+        _ => true,
+    }
 }
 
 /// Whether the command at `path` has a list for `--format` to shape.
@@ -271,14 +276,15 @@ pub enum Command {
     /// Prints a short how-to with examples: `vnoc guide` lists the subjects, `vnoc guide <topic>` prints one.
     ///
     /// Prints a short how-to for one subject, with examples that were run on a sample project: `vnoc guide` lists the subjects (read, tree, find,
-    /// write, check), `vnoc guide <topic>` prints one. Read `write` before you write your first note and `find` before you search. A flag you
+    /// write, check, tour), `vnoc guide <topic>` prints one. Read `write` before you write your first note and `find` before you search. A flag you
     /// do not find there is in `vnoc <command> --help`. It needs no project and no driver.
     Guide(GuideArgs),
-    /// Prints the skill file that tells an agent when and how to use V-NOC, as this binary carries it.
+    /// Prints the skill file that tells an agent when and how to use V-NOC, as this binary carries it: `vnoc skill`, or `vnoc skill tour` for the tours'.
     ///
     /// Prints the skill file (`SKILL.md`) that tells an agent when to use V-NOC, what never to do to the code it marks, and the commands that
-    /// matter, exactly as this binary carries it. It changes nothing. It needs no project and no driver.
-    Skill,
+    /// matter, exactly as this binary carries it. `vnoc skill tour` prints the second skill, `vnoc-tour`, for walking someone through code. It changes
+    /// nothing. It needs no project and no driver.
+    Skill(SkillArgs),
     /// Sets up the coding agents the user names: writes the skill and the rules block where their tools look. The user's step: an agent runs it only when asked.
     ///
     /// `vnoc agent install` writes the V-NOC skill (`SKILL.md`) into `.claude/skills/vnoc/` or `.agents/skills/vnoc/` and a marked block of rules into
@@ -287,6 +293,391 @@ pub enum Command {
     /// never writes outside the project (or the home folder with --global), and never writes an agent's settings.
     #[command(subcommand)]
     Agent(AgentCommand),
+    /// Tours: explain a piece of the code to the person, step by step, on their V-NOC canvas. Write one when they ask you to walk them through code.
+    ///
+    /// A tour is a route through the code with a few sentences at each stop: `start` it, `add` one stop at a time (read the code first: `vnoc code`),
+    /// then `finish` it. The person reads it while you write it. `list` and `show` read tours back: `show <tour>` prints the route with the ids you
+    /// need to carry on in a new session. Every stop is checked against the code as it is now, and a text that does not pass is refused whole with
+    /// every reason, and nothing is written. A tour is kept in `.vnoc/local/tours/` (private), and writes nothing else of the project.
+    #[command(subcommand)]
+    Tour(TourCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TourCommand {
+    /// Starts a tour and prints its id: `vnoc tour start --title "checkout_order" --question "walk me through checkout_order" --author claude-code`.
+    ///
+    /// Starts a new, empty tour in `.vnoc/local/tours/` and prints its id (`checkout-order-7k2q`), which every later command takes (the start of it
+    /// is enough when only one tour starts so). `--title` says what the tour is of, in a few words: usually the node it starts at. `--question` is what
+    /// the person asked, in their words. Pass your own name as `--author`. In a project with no `.vnoc/` it makes one (`vnoc.toml` and a
+    /// `.gitignore`), and says so. It needs no driver.
+    Start(TourStartArgs),
+    /// Adds one stop: a node, a paragraph on what it is for, and blocks that light some of its lines. The text comes on standard input.
+    ///
+    /// Adds ONE stop to the tour, about one function, class, file or folder (`vnoc show` names: `path::Name`, `path:line`, an ID, a path). Read its
+    /// code first (`vnoc code`): the text is checked against the code as it is now. The text, from `--body-file <file>` or `-` for standard input,
+    /// is an intro (one paragraph: what this node is for), then blocks, each a heading with the file's own line numbers as `vnoc code` printed
+    /// them and one paragraph: `## 11-24 Hold the stock, then charge`. A `###` heading is a detail inside the `##` before it, and its lines are
+    /// inside that block's. A function under 8 lines, a folder, and a `--same-as` stop have the intro only. Budgets (characters): a title 60, an
+    /// intro 160 / 280 / 480 and a block 160 / 280 / 600 by the tour's detail (quick, normal, detailed). One paragraph each; only `code` and
+    /// *emphasis* in the text: no list, table, code fence, image, link or HTML. At most 12 blocks (details count) in a stop and 40 stops in a tour.
+    /// `--from <stop>` says which stop this one was reached from, and `--line <n>` the line of that stop's node where the call is; `--from` alone
+    /// is containment (a method of the class, a file of the folder). `--same-as <stop>` is for a node the tour already explained: one sentence.
+    /// Every problem of the call is listed, nothing is written, and exit is 2: fix the text and send the whole stop again. A node that
+    /// is not in the index is the usual "no such node", with "did you mean".
+    Add(TourAddArgs),
+    /// Puts stops on the route before they are written: `vnoc tour plan <tour> <node>… [--from <stop>] [--line <n>]`.
+    ///
+    /// Writes one `plan` record: the nodes in the order given, with the next stop ids, placed as `add` places new stops (`--from` nests them under a stop,
+    /// which may itself be planned: a plan can be a tree). Every node is found first; one that is not there refuses the call and nothing is written
+    /// (exit 2, with "did you mean" for each). A node may be planned again (a second visit). Planned stops count towards the 40 a tour holds. The reader
+    /// sees the whole outline at once and can open a planned stop's code before its text exists. `vnoc tour add` on a planned node fills it; `finish` removes
+    /// what is left, and says how many. `--line` goes with `--from` and one node. A tour the reader stopped answers as `add` does (exit 1); a finished one
+    /// is refused (exit 2).
+    Plan(TourPlanArgs),
+    /// Proposes a route for a tour from the call tree, with how big each depth of it is: `vnoc tour route app/checkout.py::checkout_order --depth 2`.
+    ///
+    /// Reads only: it needs no tour. For a function it is `vnoc calls` underneath, in reading order (depth first, a function's calls in the order of its
+    /// first call), cut at 40 stops; for a class, a file or a folder, depth is containment: its methods, its functions, its files. The first lines say
+    /// what each depth adds, in stops and minutes (two steps a stop, twenty seconds a step, rounded up): offer them to the person, then plan the one they pick
+    /// with `vnoc tour start --route <node> --depth N`. A node already on the route is a stop with `= k` (the first stop on it) and is not walked again, so
+    /// a recursive call ends the walk there. A call the index does not know (a library) is not a stop. `--depth 0` to `6`, default `1`.
+    Route(TourRouteArgs),
+    /// Ends the tour: it is finished, and the person's canvas shows it as complete. Run it when the last stop is written.
+    ///
+    /// Writes the end of the tour. Planned stops that were never written leave the route, and the answer says how many. Finishing a tour that is
+    /// finished already changes nothing and says so (exit 0). Then, for the stops whose node has no ID, by the project's `[tours] ids` (see `vnoc
+    /// tour settings`) and `--ids` / `--no-ids`: `always` writes them as `vnoc tour ids` does and names the changed files, `ask` (the start) prints
+    /// a line that starts with `ask the user`: pass it on to the user as a question, do not run the command yourself; `never` says nothing. Then it
+    /// pins the tour when every stop is as written and every file of it is committed; files that are not committed are committed by `[tours] commit` and
+    /// `--commit [-m]` / `--no-commit` (`ask`, the start: an `ask the user` line with the files; `never`: `not pinned` and the files). Any other reason is
+    /// said as `not pinned: <reason>`.
+    Finish(TourFinishArgs),
+    /// Takes a stop (with its blocks, and the stops nested in it) or a block (with its details) off the tour: `vnoc tour drop <tour> s3`, `s3.b2`.
+    ///
+    /// Writes one `drop` record. A stop goes with the blocks of it and the stops nested in it; a block with its details. The ids are not used again by
+    /// a later `add`. An id the tour does not have is refused with the nearest ones. Refused with exit 1 when the reader has stopped the tour.
+    Drop(TourDropArgs),
+    /// After the reader stopped the tour: lets `add` work again. Only when the user asks you to carry on.
+    ///
+    /// Writes `resume` when the tour is stopped (or stopping): `add`, `drop` and `finish` are accepted again. On a tour that is not stopped it says so
+    /// and does nothing (exit 0).
+    Resume(TourResumeArgs),
+    /// Changes a tour's title, question or detail: one `meta` record. The id and the file's name stay.
+    ///
+    /// `vnoc tour edit <tour> --title "…" --question "…" --detail quick|normal|detailed`: at least one. The same rules as `start` (a title of at most 60
+    /// characters on one line, a question of at most 200). The text of a stop is changed by `vnoc tour add --replace`, not here.
+    Edit(TourEditArgs),
+    /// Gives the nodes of a tour's stops an ID (an `ID:` line in the code), so the tour follows them through renames and moves. The user's command.
+    ///
+    /// `vnoc tour ids <tour> [<stop>…]`: for every written stop whose node has no ID (or the stops named): the ID, its marker in the code and
+    /// `node.toml`, as attaching a doc does, with no doc. A function or class gets an `ID:` line in its docstring, a file a `# FileID:` comment, a
+    /// folder a `.vnoc-id` file. The tour stays up to date through it. Prints each file it changed, and the files must be read again before they are
+    /// edited: lines moved down. Refused in a project whose `vnoc.toml` says `[ids] default = "none"`. Doing it twice writes nothing the second
+    /// time. An agent runs it only when asked.
+    Ids(TourIdsArgs),
+    /// Shows or changes what `finish` does by itself: `[tours] ids` and `commit` in `.vnoc/vnoc.toml`. The user's command.
+    ///
+    /// With no flag, prints both settings and where each value comes from (the file, or the default `ask`). `--ids <when>` and `--commit <when>`
+    /// (`always`, `ask`, `never`) change that key and keep everything else in the file: its comments, its other tables, its order. A value in the
+    /// file that is not one of the three is read as `ask` and said.
+    Settings(TourSettingsArgs),
+    /// Prints a tour as one JSON document, nested the way you read it: a stop's `stops` are the stops nested in it, a block's `blocks` its details. `--flat` prints V-NOC's own shape.
+    ///
+    /// The document of a tour as it is now: its title, question, author and detail, and every written stop with its `id`, `node` (the name it is found under now, else the one it was
+    /// written with), `line`, `same_as`, `text` and `blocks` (`id`, `lines`, `title`, `text`, `blocks`). A stop planned and never written is not in it. Edit it and give it back with
+    /// `vnoc tour import --replace`: a stop or block whose `id` is kept is the same one. `--flat` lists every stop and block at one level with `from` and `parent`, for a script.
+    Export(TourExportArgs),
+    /// Makes a tour from a JSON document (as `export` prints it), or replaces one with it: `vnoc tour import doc.json`, `vnoc tour import - --replace <tour>`. The user's command.
+    ///
+    /// Every stop is checked as `add` checks it (the node, the lines, the text, the limits), all the refusals of the whole document at once, each with its place in the
+    /// document (`stops[0].blocks[1].text: 412 of 280 characters`), exit 2, and nothing is written. A new tour is written finished, and what `finish` does after the end is done
+    /// (the IDs, by the setting). `--replace <tour>` writes the document over that tour: a stop or block whose `id` the tour has keeps it; the others get new ids; one that
+    /// is missing is gone. The old file goes to `.vnoc/local/trash/`. The tour is not pinned after it, and is refused while it is being written. The text comes from a file or `-`.
+    Import(TourImportArgs),
+    /// Pins tours to the commit that holds their code; `--commit` commits the files that are not committed first. The user's command.
+    ///
+    /// `vnoc tour pin [<tour>…] [--commit [-m "…"]]`. A tour is pinned when every stop is as it was written, and every file of it is committed and in
+    /// HEAD: the `pin` record then holds HEAD, and a stop that changes later is shown as written, from that commit (nothing is checked out). With no
+    /// tour: every finished tour that is not pinned, or whose pinned commit is not reachable from HEAD; the ones that can be are pinned, the others listed with
+    /// their reason. `--commit`, when the only thing in the way is files that are not committed: `git add` the untracked ones, `git commit --only` exactly
+    /// those files, then pin; other staged files stay staged. It is refused when a stop is stale, in the middle of a merge or a rebase, and for a file git
+    /// ignores; a hook that fails the commit fails the command (exit 3), with its output. `-m` is the message (default `Code for the tour "<title>"`).
+    /// An agent runs `--commit` only when the user said yes.
+    Pin(TourPinArgs),
+    /// Moves a finished tour's file to `.vnoc/tours/`, where `git` shares it with the project; `--private` moves it back. The user's command.
+    ///
+    /// The file moves as it is, byte for byte, and its state (where the reader is) stays. Refused while the tour is being written, when it is there
+    /// already, and when the same id is in the other folder. Prints the new path and, for a share, that it is for the user to commit. An agent runs it
+    /// only when asked.
+    Share(TourShareArgs),
+    /// Moves tours to `.vnoc/local/trash/` (the file and its state). Nothing is erased. The user's command.
+    ///
+    /// Refused for a tour that is being written (stop it first). A tour that was committed is also in git. An agent runs it only when asked.
+    Delete(TourDeleteArgs),
+    /// The reader's Stop button, from a terminal: for tests and trials. The next `add` is refused.
+    #[command(hide = true)]
+    Halt(TourResumeArgs),
+    /// Lists the tours of this project, newest first: id, state, stops, where it is kept, the title and the question.
+    ///
+    /// Lists every tour in `.vnoc/tours/` (the project's) and `.vnoc/local/tours/` (private), newest first, one row each: the id, whether it is
+    /// writing, stopping, stopped or finished, how many stops, which folder, whether it is pinned, the title and the question. A tour that cannot
+    /// be read says why. Prints `no tours` when there are none (exit 0). The last word of a row is `changed` when a check that still holds says
+    /// some stop no longer matches the code; `list` itself checks nothing and starts no driver. `--check` checks every tour first, as `vnoc tour
+    /// check` does. `--on <node>` keeps the tours that pass through that node and says how: `starts here`, `stop 3 of 10`, `stops 2 and 4 of 10`,
+    /// `4 stops inside` (for a class, a file or a folder); it needs the driver only to find the node.
+    List(TourListArgs),
+    /// Says which tours no longer match the code, and which stops: run it before you rely on a tour, or to bring one up to date.
+    ///
+    /// Checks the tours named (every tour with none): for each, whether it is fresh, or how many stops changed or are gone, with a line for each
+    /// stop that is not and the blocks of it that no longer match. A stop is changed when the lines it was written about are not the same any more
+    /// (a block that only moved down is still fresh); gone when its function is not found by its ID or its exact name. The answer is recorded,
+    /// and the next run costs a `stat` of each file the tour names and starts no driver, until one of them changes; `--again` checks anew. Always
+    /// exit 0: a stale tour is not a failed command. To mend one: read the code again, then `vnoc tour add` the stop again.
+    Check(TourCheckArgs),
+    /// Prints a tour's route: a row a stop, with its id, its node and lines, its steps, and where it came from. `--text` adds every sentence.
+    ///
+    /// Prints the tour: its title, question and state, then one row per stop (number, id, kind, name, `path:first-last`, how many steps, and
+    /// `← s1 line 13` for the stop it was reached from, `= s2` for one that repeats `s2`), with the stops nested in a stop indented under it. With
+    /// `--text` every intro, block title and text is printed under its row, with each block's id and lines. This is how a tour is carried on in
+    /// a new session: the ids in it are what `add --from` takes. It reads the tour as written and does not look at the code. It needs no driver.
+    Show(TourShowArgs),
+    /// Where the reader is in a tour: the stop, the step, the code it lights, and how long ago they moved. With no tour: the tour whose place moved last.
+    ///
+    /// Prints the place of the tour (the tour whose place moved last when none is named): its first line says whether the tour is open on a canvas and how
+    /// long ago the reader moved; then the stop's number and the step's, the node and the lines the step lights with their code (`>` marks a lit
+    /// line), the step's title and text, and the steps before and after. Use it to know what "this" is when the reader says "explain this more". The code is
+    /// as it is now when the step is fresh or moved; for a step of a pinned tour that changed it is the code as written, with a line that says so; else the
+    /// lines now and `the lines may not match`. A tour nobody has moved is on its cover. It checks the tour against the code when no recorded check
+    /// holds, and moves nothing. `--json` gives the place and the step as one object. With no place anywhere it says `no tour has been opened or moved
+    /// yet` (exit 0).
+    Where(TourWhereArgs),
+    /// Moves the reader's place in a tour: `next`, `prev`, `next-stop`, `prev-stop`, `back`, `cover`, `end`, `s4`, `s3.b2`. The user's command.
+    ///
+    /// `vnoc tour go <tour> <move>` moves the place the way the canvas's buttons do and prints the new place as `where` does. `next`, `prev`, `next-stop` and
+    /// `prev-stop` walk the steps in reading order; `s4`, `s3.b2`, `cover` and `end` are jumps: they remember where the reader was (20 jumps), and
+    /// `back` takes the reader to the last of them (`nothing to go back to` when there is none). A canvas that shows the tour follows; one that does not is
+    /// not opened. It works on a tour being written, a stopped one and a finished one. An id the tour does not have is refused with the nearest.
+    Go(TourGoArgs),
+}
+
+/// `quick`, `normal` or `detailed`: how much each step may say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum DetailArg {
+    Quick,
+    Normal,
+    Detailed,
+}
+
+#[derive(Debug, Args)]
+pub struct TourStartArgs {
+    /// What the tour is of, in a few words (at most 60 characters, one line): usually the name of the node it starts at. It becomes the id's slug.
+    #[arg(long, value_name = "TEXT")]
+    pub title: String,
+    /// What the person asked, in their words (at most 200 characters, one line). It tells two tours of one node apart.
+    #[arg(long, value_name = "TEXT")]
+    pub question: Option<String>,
+    /// Who is writing the tour: pass your own name.
+    #[arg(long, value_name = "NAME")]
+    pub author: Option<String>,
+    /// How much each step may say: `quick`, `normal` (the default) or `detailed`. It sets the text budgets of `add`.
+    #[arg(long, value_enum, value_name = "DETAIL", default_value_t = DetailArg::Normal)]
+    pub detail: DetailArg,
+    /// Start with these stops planned, in this order: `--plan a.py::f b.py::g`. Every node is found before anything is written; one that is not there
+    /// refuses the whole call (nothing is made). `vnoc tour add` on one of them fills it.
+    #[arg(long, value_name = "NODE", num_args = 1..)]
+    pub plan: Vec<String>,
+    /// Start with the route `vnoc tour route` proposes for this node, planned: each stop with its `from` and `line`, and `same_as` on a node already passed.
+    /// Not with `--plan`.
+    #[arg(long, value_name = "NODE", conflicts_with = "plan")]
+    pub route: Option<String>,
+    /// With `--route`: how far the route goes (0 is the node alone; 1 to 6; the default is 1).
+    #[arg(long, value_name = "N", requires = "route", value_parser = clap::value_parser!(u32).range(0..=6))]
+    pub depth: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourRouteArgs {
+    #[arg(
+        value_name = "NODE",
+        help = "the node the route starts at: path::Name, path:line, an ID, or a path"
+    )]
+    pub node: String,
+    /// How far the route goes: 0 is the node alone. 1 is what it calls (or holds), 2 what those call.
+    #[arg(long, value_name = "N", default_value_t = 1, value_parser = clap::value_parser!(u32).range(0..=6))]
+    pub depth: u32,
+}
+
+#[derive(Debug, Args)]
+pub struct TourPlanArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(
+        value_name = "NODE",
+        required = true,
+        help = "the nodes to plan, in the order they will be read: path::Name, path:line, an ID, or a path"
+    )]
+    pub nodes: Vec<String>,
+    /// Nest them under this stop (written or planned), as `add --from` does.
+    #[arg(long, value_name = "STOP")]
+    pub from: Option<crate::tours::StopId>,
+    /// The line of the `--from` stop's node where the call is. Needs `--from`, one node, and a `--from` stop that is written.
+    #[arg(long, value_name = "N")]
+    pub line: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourAddArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(
+        value_name = "NODE",
+        required_unless_present = "to",
+        conflicts_with = "to",
+        help = "the node this stop is about: path::Name, path:line, an ID, or a path",
+        long_help = "The node this stop is about (see `vnoc show --help` for how to name one): a function, a class, a file or a folder. Not given with --to."
+    )]
+    pub node: Option<String>,
+    #[arg(
+        long,
+        value_name = "FILE",
+        required = true,
+        help = "the stop's text: a file, or - for standard input"
+    )]
+    pub body_file: String,
+    /// The stop this one was reached from, as printed by `add` and `show` (`s1`). Without `--line` it is containment: a method of the class, a file of the folder.
+    #[arg(long, value_name = "STOP", conflicts_with = "to")]
+    pub from: Option<crate::tours::StopId>,
+    /// The line of the `--from` stop's node where the call is (the file's own line number).
+    #[arg(long, value_name = "N", requires = "from")]
+    pub line: Option<u32>,
+    /// The stop that already explained this node: this one is one sentence about why the tour is here again, with no blocks.
+    #[arg(long, value_name = "STOP", conflicts_with = "to")]
+    pub same_as: Option<crate::tours::StopId>,
+    /// Write this stop again where `s3` stands, keeping its id and its place on the route: new text, new blocks (their ids go on from the highest used).
+    /// The node may be another. `--from` and `--line` are the stop's own unless you give them. This is how a stop that no longer matches is fixed.
+    #[arg(long, value_name = "STOP", conflicts_with = "to")]
+    pub replace: Option<crate::tours::StopId>,
+    /// Add blocks to a stop that is written, instead of a stop: the text is blocks only (`##`, and `###` for their details), with no intro, written after
+    /// the stop's blocks. They are checked against the stop's node now and against the blocks it has.
+    #[arg(long, value_name = "STOP")]
+    pub to: Option<crate::tours::StopId>,
+    /// With `--to`: the blocks of the text are details of this block (`s1.b2`), written as `##`; a `###` is refused, details nest one level.
+    #[arg(long, value_name = "BLOCK")]
+    pub under: Option<crate::tours::StepId>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourFinishArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// Write IDs for the stops that have none, for this call, whatever `[tours] ids` says (as `vnoc tour ids` does).
+    #[arg(long, conflicts_with = "no_ids")]
+    pub ids: bool,
+    /// Do not write IDs and do not offer to, for this call, whatever `[tours] ids` says.
+    #[arg(long)]
+    pub no_ids: bool,
+    /// Commit the tour's files that are not committed (exactly those, the whole of each) so the tour can be pinned, for this call, whatever `[tours] commit` says.
+    #[arg(long, conflicts_with = "no_commit")]
+    pub commit: bool,
+    /// The message of that commit. Default: `Code for the tour "<title>"`.
+    #[arg(short = 'm', long, value_name = "MESSAGE", requires = "commit")]
+    pub message: Option<String>,
+    /// Do not commit, whatever `[tours] commit` says: say `not pinned` and the files, with no command.
+    #[arg(long)]
+    pub no_commit: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourPinArgs {
+    #[arg(
+        value_name = "TOUR",
+        help = "the tours to pin: each an id, or the start of one (default: every finished tour not pinned)",
+        long_help = "The tours to pin: each an id, or the start of one. With none: every finished tour that is not pinned, or whose pinned commit is not reachable from HEAD."
+    )]
+    pub tours: Vec<String>,
+    /// Commit the tour's files that are not committed (exactly those, the whole of each), then pin. Only when that is the one thing in the way.
+    #[arg(long)]
+    pub commit: bool,
+    /// The message of that commit. Default: `Code for the tour "<title>"`.
+    #[arg(short = 'm', long, value_name = "MESSAGE", requires = "commit")]
+    pub message: Option<String>,
+}
+
+/// `always`, `ask` or `never`: what happens by itself (`[tours]` in `vnoc.toml`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ChoiceArg {
+    Always,
+    Ask,
+    Never,
+}
+
+#[derive(Debug, Args)]
+pub struct TourSettingsArgs {
+    /// Write IDs for a tour's stops when it is finished: `always`, `ask` (the start: say it could be done) or `never`.
+    #[arg(long, value_enum, value_name = "WHEN")]
+    pub ids: Option<ChoiceArg>,
+    /// Commit a tour's files so it can be pinned: `always`, `ask` (the start: say it could be done) or `never`.
+    #[arg(long, value_enum, value_name = "WHEN")]
+    pub commit: Option<ChoiceArg>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourShowArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// Print every intro, block title and text under its stop.
+    #[arg(long)]
+    pub text: bool,
+    /// Mark each stop and block that no longer matches the code: `changed`, `moved` or `gone`. It checks if the recorded answer no longer holds.
+    #[arg(long)]
+    pub check: bool,
+    /// Under each stop of a pinned tour that is changed or gone, print the code of the pinned commit (read with `git show`, nothing is checked out), the lit lines
+    /// marked with `>`. Checks as `--check` does. A tour that is not pinned is refused.
+    #[arg(long)]
+    pub as_written: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourWhereArgs {
+    #[arg(
+        value_name = "TOUR",
+        help = "the tour's id, or the start of it (default: the tour whose place moved last)"
+    )]
+    pub tour: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourGoArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(
+        value_name = "MOVE",
+        help = "next, prev, next-stop, prev-stop, back, cover, end, a stop (s4) or a block (s3.b2)"
+    )]
+    pub r#move: String,
+}
+
+#[derive(Debug, Args)]
+pub struct TourListArgs {
+    /// Keep the tours that pass through this node, and say how: path::Name, path:line, an ID, or a path.
+    #[arg(long, value_name = "NODE")]
+    pub on: Option<String>,
+    /// Check every tour first (the recorded answer where it still holds), so each row says whether it is changed.
+    #[arg(long)]
+    pub check: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourCheckArgs {
+    #[arg(
+        value_name = "TOUR",
+        help = "the tours to check: each an id, or the start of one (default: every tour)"
+    )]
+    pub tours: Vec<String>,
+    /// Check anew, whatever is recorded.
+    #[arg(long)]
+    pub again: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -300,7 +691,7 @@ pub enum AgentCommand {
     /// left (exit 2) unless --force; in a rules file only the block between its markers is replaced, the rest is as it was; installing twice
     /// changes nothing. Prints each file it wrote or left, then what to commit.
     ///
-    /// For Claude Code and Codex it also offers to let them run V-NOC's read commands without asking (never a write): in a terminal it asks,
+    /// For Claude Code and Codex it also offers to let them run V-NOC's read commands, and the commands that write a tour (`tour start`, `add`, `finish`, `plan`, `drop`, `resume`, and the tour reads), without asking (never `tour go`, `pin`, `ids`, `edit`, `share`, `delete`, `import`, `settings`, or any other write): in a terminal it asks,
     /// Enter means yes; --permissions says yes and --no-permissions says no without asking; with no terminal and neither flag nothing is
     /// written and the lines are printed. Claude Code: the entries are added to `.claude/settings.local.json` (yours, not committed;
     /// --permissions=project: the shared `.claude/settings.json`), and what is there already stays. Codex: `~/.codex/rules/vnoc.rules`.
@@ -342,7 +733,7 @@ pub struct InstallArgs {
     /// Replace a `SKILL.md` that V-NOC did not write.
     #[arg(long)]
     pub force: bool,
-    /// Let Claude Code and Codex run V-NOC's read commands without asking, with no question. `local` (the default) is `.claude/settings.local.json`,
+    /// Let Claude Code and Codex run V-NOC's read commands and the tour-writing commands without asking, with no question. `local` (the default) is `.claude/settings.local.json`,
     /// `project` is the shared `.claude/settings.json`.
     #[arg(
         long,
@@ -377,8 +768,15 @@ pub struct RemoveArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct SkillArgs {
+    /// Which skill: `tour` for the tours' skill. Without it, the first.
+    #[arg(value_name = "SKILL")]
+    pub which: Option<String>,
+}
+
+#[derive(Debug, Args)]
 pub struct GuideArgs {
-    /// The subject: `read`, `tree`, `find`, `write` or `check`. Without it, the list of subjects.
+    /// The subject: `read`, `tree`, `find`, `write`, `check` or `tour`. Without it, the list of subjects.
     #[arg(value_name = "TOPIC")]
     pub topic: Option<String>,
 }
@@ -743,6 +1141,9 @@ pub struct CodeArgs {
     /// Lines of the file to add above and below the def (its decorators are already in it).
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub context: u32,
+    /// Only these lines of the node, as `a-b` in the file's numbers (the numbers `code` prints). Refused outside the node's own lines.
+    #[arg(long, value_name = "A-B", conflicts_with = "context")]
+    pub lines: Option<String>,
 }
 
 #[cfg(test)]
@@ -900,4 +1301,85 @@ mod tests {
             }
         }
     }
+}
+
+#[derive(Debug, Args)]
+pub struct TourDropArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(value_name = "ID", help = "a stop (`s3`) or a block (`s3.b2`)")]
+    pub id: crate::tours::StepId,
+}
+
+#[derive(Debug, Args)]
+pub struct TourResumeArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+}
+
+#[derive(Debug, Args)]
+#[command(group = clap::ArgGroup::new("what").required(true).multiple(true).args(["title", "question", "detail"]))]
+pub struct TourEditArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// The new title (at most 60 characters, one line).
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// The new question (at most 200 characters, one line).
+    #[arg(long, value_name = "TEXT")]
+    pub question: Option<String>,
+    /// How much each step may say: `quick`, `normal` or `detailed`.
+    #[arg(long, value_enum, value_name = "DETAIL")]
+    pub detail: Option<DetailArg>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourShareArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// Move it back to `.vnoc/local/tours/`.
+    #[arg(long)]
+    pub private: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourExportArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    /// Print V-NOC's own shape: every stop and block at one level, with `from` and `parent`, instead of the nested document.
+    #[arg(long)]
+    pub flat: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TourImportArgs {
+    #[arg(
+        value_name = "FILE",
+        help = "the document: a file, or - for standard input"
+    )]
+    pub file: String,
+    /// Replace this tour with the document, keeping the ids it gives that the tour has.
+    #[arg(long, value_name = "TOUR")]
+    pub replace: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourIdsArgs {
+    #[arg(value_name = "TOUR", help = "the tour's id, or the start of it")]
+    pub tour: String,
+    #[arg(
+        value_name = "STOP",
+        help = "only these stops (`s2 s4`); with none, every written stop"
+    )]
+    pub stops: Vec<crate::tours::StopId>,
+}
+
+#[derive(Debug, Args)]
+pub struct TourDeleteArgs {
+    #[arg(
+        value_name = "TOUR",
+        required = true,
+        help = "the tours to delete: each an id, or the start of one"
+    )]
+    pub tours: Vec<String>,
 }

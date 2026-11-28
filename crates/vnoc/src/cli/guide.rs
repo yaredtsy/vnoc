@@ -4,11 +4,14 @@
 //!
 //! Nothing here needs a project or a driver. A terminal gets the headings and the command lines painted; the words are never touched.
 
-use super::args::GuideArgs;
+use super::args::{GuideArgs, SkillArgs};
 use super::{Failure, Global, out, style};
 
 /// The skill, as `vnoc skill` prints it and `vnoc agent install` will write it.
 pub const SKILL: &str = include_str!("../../../../skills/vnoc/SKILL.md");
+
+/// The second skill, `vnoc-tour`: as `vnoc skill tour` prints it, and `vnoc agent install` writes it beside the first (`docs/26-tours/04-skill.md` §2).
+pub const SKILL_TOUR: &str = include_str!("../../../../skills/vnoc-tour/SKILL.md");
 
 /// The rules block for `AGENTS.md` and its kin, markers included (06 §4).
 pub const RULES: &str = include_str!("../../../../skills/vnoc/rules.md");
@@ -20,7 +23,7 @@ pub struct Topic {
     pub text: &'static str,
 }
 
-pub const TOPICS: [Topic; 5] = [
+pub const TOPICS: [Topic; 6] = [
     Topic {
         name: "read",
         about: "what a node is and what notes it has: show, code, doc read; naming a node; --json",
@@ -45,6 +48,11 @@ pub const TOPICS: [Topic; 5] = [
         name: "check",
         about: "check, repair, relink; what each problem means; the exit codes",
         text: include_str!("../../guide/check.md"),
+    },
+    Topic {
+        name: "tour",
+        about: "explain code as a tour the user plays: the loop, the text of a stop, the route, where the reader is",
+        text: include_str!("../../guide/tour.md"),
     },
 ];
 
@@ -115,10 +123,16 @@ pub fn guide(global: &Global, args: &GuideArgs) -> Result<(), Failure> {
     }
 }
 
-/// `vnoc skill`: the file as it is, for a pipe or a person.
-pub fn skill(global: &Global) -> Result<(), Failure> {
+/// `vnoc skill` and `vnoc skill tour`: the file as it is, for a pipe or a person.
+pub fn skill(global: &Global, args: &SkillArgs) -> Result<(), Failure> {
     text_only(global, "skill")?;
-    out::text(SKILL)
+    match args.which.as_deref() {
+        None => out::text(SKILL),
+        Some("tour") => out::text(SKILL_TOUR),
+        Some(other) => Err(Failure::Usage(format!(
+            "no skill `{other}`; `vnoc skill` prints the first, `vnoc skill tour` the tours'"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -161,7 +175,7 @@ mod tests {
 
     #[test]
     fn the_embedded_texts_have_no_carriage_return() {
-        let texts = [SKILL, RULES]
+        let texts = [SKILL, SKILL_TOUR, RULES]
             .into_iter()
             .chain(TOPICS.iter().map(|t| t.text));
         for text in texts {

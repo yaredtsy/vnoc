@@ -1,10 +1,13 @@
 ---
 name: vnoc
-description: Reads and writes V-NOC notes (the "why" attached to functions, classes, files and folders, such as constraints, decisions, history and plans) and shows Python code by structure, with one function's exact code and its notes, a tree of a folder with signatures, search by name or by a word in a note, and call trees. Use when the project has a .vnoc/ folder; when code has "ID:" docstring lines, "# FileID:" comments or .vnoc-id files; before changing a function that may have notes; when asked to document, explain the reason for, or plan a change to specific code; and when asked how the code is organised.
+description: Reads and writes V-NOC notes (the "why" attached to functions, classes, files and folders, such as constraints, decisions, history and plans) and shows Python code by structure, with one function's exact code and its notes, a tree of a folder with signatures, search by name or by a word in a note, and call trees. Use when the project has a .vnoc/ folder; when code has "ID:" docstring lines, "# FileID:" comments or .vnoc-id files; before changing a function that may have notes; when asked to document, explain the reason for, or plan a change to specific code; and when asked how the code is organised. For a step-by-step walk-through or a tour of code, use the vnoc-tour skill.
 metadata:
-  vnoc-version: "0.3.1"
+  vnoc-version: "0.4.0"
 ---
 # V-NOC
+
+Asked to walk someone through code, or for a tour: use the vnoc-tour skill (vnoc guide tour).
+"Explain this", "here", "that" with nothing named: run vnoc tour where first.
 
 This project attaches notes to code (the commands and their output call them docs). A note says WHY: a constraint, a decision, some
 history, a trap, a plan. Not what the code does.
@@ -33,6 +36,7 @@ If one is wrong, the error says what was meant: use its suggestion.
 - `vnoc grep 'parse_order\('` searches the code and answers with the functions that hold the hits. It is the way to find callers,
   and it matches text: the definition line itself is one of the hits.
 - `vnoc calls <node> --depth 2` what a function calls. Ask once with the depth you need; it is the slow command.
+One command per call: no shell variables or `for` loops (the host cannot check them and asks the user each time).
 
 ## After you changed code
 `vnoc check --changed` must pass. A lost ID line: `vnoc repair` writes it back. Then re-read the notes of what you changed
@@ -50,7 +54,7 @@ Tags: run `vnoc tags` first and reuse one that fits (`.vnoc/tags.toml` says what
 `--tag plan`; when it ships, `vnoc doc tag <node> --add done --remove plan`.
 
 ## More
-`vnoc guide` lists the topics (read · tree · find · write · check). `vnoc <command> --help` has every flag.
+`vnoc guide` lists the topics (read · tree · find · write · check · tour). `vnoc <command> --help` has every flag.
 
 ## Without the command
 First tell the user the `vnoc` command is not installed (VS Code: "V-NOC: Install `vnoc` Command in PATH", or `install.sh` from the

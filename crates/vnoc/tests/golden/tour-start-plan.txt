@@ -1,0 +1,7 @@
+✓ started <tour>   private   .vnoc/local/tours/<tour>.jsonl
+  planned 4 stops
+    s1  ◌ retry_charge   billing/charge.py
+    s2  ◌ retry_charge.<locals>.one_try   billing/charge.py
+    s3  ◌ ChargeError   billing/charge.py
+    s4  ◌ refund   billing/charge.py
+  next: vnoc tour add <tour> <node> --body-file -   (vnoc guide tour)

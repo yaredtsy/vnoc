@@ -566,6 +566,7 @@ mod tests {
     fn fresh(label: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("vnoc-tags-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
+        crate::testdir::remove_at_end(&d);
         fs::create_dir_all(&d).unwrap();
         d
     }

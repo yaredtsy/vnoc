@@ -7,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils.ts";
 import { FOOTER_H, LINE_H, type Placed } from "../canvas/layout.ts";
 import { request } from "../host.ts";
+import { useTourCounts, toursOf } from "../state/tourCounts.ts";
 import { useView } from "../state/view.ts";
 import { chevronAction } from "./chevronAction.ts";
 import { type Chip, footerChips } from "./footerChips.ts";
@@ -80,6 +81,12 @@ export function NodeFooter({ node, contextId }: { node: Placed; contextId: strin
             <Codicon name="link" className="text-[12px]" />
           </ChipView>
         );
+      case "tours": // `▶ N`: the node is on tours; a click shows them (select the node, TOURS, On the selected node)
+        return (
+          <ChipView key={c.kind} tip={c.tip} onClick={() => node.key !== null && void request("showTours", { key: node.key, context: contextId }).catch(() => {})}>
+            {c.text}
+          </ChipView>
+        );
       case "selected":
         return <ChipView key={c.kind} tip={c.tip} className="text-[color:var(--card-selected)]">{c.text}</ChipView>;
       case "cursor":
@@ -92,7 +99,8 @@ export function NodeFooter({ node, contextId }: { node: Placed; contextId: strin
       }
     }
   };
-  const chips = footerChips(node, { selected: hidesSelected, cursor: hidesCursor });
+  const tours = useTourCounts((s) => toursOf(s.counts, node.key));
+  const chips = footerChips(node, { selected: hidesSelected, cursor: hidesCursor }, tours);
   return (
     <>
       {/* the 1 px line above the footer runs the card's full inner width */}

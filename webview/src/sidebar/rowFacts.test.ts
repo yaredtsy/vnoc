@@ -42,6 +42,7 @@ for (const k of kinds) {
         codeOpen: false,
         docs: d.docs,
         byName: d.link === "name",
+        tours: 0,
       });
     });
   }

@@ -3,10 +3,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import type { SearchResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
+import { callNodesIn } from "@vnoc/shared/calls.ts";
+import type { CallTreeResult, SearchResult, StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
 import { MISSING_PIN } from "@vnoc/shared/tree";
-import { canvasTabs, closeCanvas, sleep, until, waitFor } from "./util";
+import { canvasTabs, closeCanvas, guarded, sleep, soft, until, waitFor } from "./util";
 
 // Search in a real window (docs/20-search/06-build-order.md S3): the STRUCTURE view's box asks the core and draws what it answers, and *V-NOC: Search…* puts the cursor in that box (a QuickPick re-sorted the core's order: S3b).
 // The suite cannot type in a webview, so `setSearch` puts text in the box as typing would, and the page says what it drew (`searchDrawn`). What a query finds, and in what
@@ -30,13 +31,17 @@ interface Api {
   searchFocused(): { focused: boolean; text: string }[];
   searchKey(key: string): void;
   searchDim(): { query: string; dimmed: string[] }[];
-  renderedPosts(): { context: string; visible: number }[];
-  dispatch(intent: { type: "expand"; ids: string[] } | { type: "select"; id: string | null }): void;
+  renderedPosts(): { context: string; visible: number; callCards: number }[];
+  dispatch(intent: { type: "expand"; ids: string[] } | { type: "select"; id: string | null } | { type: "focus"; id: string }): void;
+  callTrees(): Record<string, CallTreeResult>;
   docsShown(): { pinned: string | null; node: string | null; doc: string | null }[];
   sidebarOpen(): boolean;
   sidebarVisible(): boolean;
   webviewErrors(): string[];
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 /** how many answers had been drawn before this suite began: the timing at its end counts only its own */
 let drawnAtStart = 0;
@@ -71,7 +76,7 @@ async function showSidebar(): Promise<void> {
 
 suite("search", () => {
   suiteSetup(async () => {
-    api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+    api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
     // the box is in the STRUCTURE view: its page must exist and have drawn the tree before it can be typed in
     await showSidebar();
     await until("the STRUCTURE page to exist", () => api.sidebarOpen(), 30_000);
@@ -447,6 +452,76 @@ suite("search", () => {
         api.setSearch("");
         api.dispatch({ type: "select", id: null });
         await closeCanvas();
+      }
+    });
+  });
+
+  suite("a call view", () => {
+    // `entry` calls `pick_wrap_fn(pick_helper_fn(1))` and then `pick_helper_fn(2)`: the callee is called twice, one call inside another call's arguments
+    const LIB = "def pick_helper_fn(x):\n    return x\n\n\ndef pick_wrap_fn(x):\n    return x\n\n\ndef pick_unused_fn():\n    return 0\n";
+    const APP = "from pick_lib import pick_helper_fn, pick_wrap_fn\n\n\ndef pick_entry_fn():\n    pick_wrap_fn(pick_helper_fn(1))\n    pick_helper_fn(2)\n";
+    const ENTRY = "pick_app.py::pick_entry_fn";
+    const HELPER = "pick_lib.py::pick_helper_fn";
+    const UNUSED = "pick_lib.py::pick_unused_fn";
+    const files = () => ["pick_lib.py", "pick_app.py"].map((f) => path.join(folder(), f));
+    const focusOf = () => [...api.session().contexts.main.focus];
+    const lastFor = (query: string) => api.searchDim().filter((d) => d.query === query).at(-1);
+
+    test("typing the callee's name keeps its call card bright; picking it selects that card and the focus stays; a node the view does not draw is revealed as before", async function () {
+      this.timeout(180_000);
+      await showSidebar();
+      api.setSearch("");
+      fs.writeFileSync(files()[0], LIB);
+      fs.writeFileSync(files()[1], APP);
+      try {
+        await waitFor("the fixture in the structure", async () => (await nodesOf()).some((n) => n.id === ENTRY) && (await nodesOf()).some((n) => n.id === UNUSED), 30_000);
+        await vscode.commands.executeCommand("vnoc.openCanvas");
+        await until("the canvas tab", () => canvasTabs().length === 1);
+        // the call view of `entry`: it is the focus, and open, so its calls are drawn as call cards
+        api.dispatch({ type: "focus", id: ENTRY });
+        api.dispatch({ type: "expand", ids: [ENTRY] });
+        await until("its call tree", () => api.callTrees()[ENTRY] !== undefined, 30_000);
+        const calls = callNodesIn(ENTRY, api.callTrees()[ENTRY].root);
+        const helper = calls.filter((c) => c.node.key === HELPER);
+        assert.strictEqual(helper.length, 1, `the callee called twice is one call card (${calls.map((c) => c.node.name).join(", ")})`);
+        assert.strictEqual(helper[0].node.call_count, 2, "two calls: one inside the arguments of the other call");
+        const card = helper[0].id;
+        const wrap = calls.find((c) => c.node.name === "pick_wrap_fn")!.id;
+        await until("the call cards to be drawn", () => api.renderedPosts().some((r) => r.callCards >= 2), 30_000);
+
+        // typing its name: its call card is bright, the other is dim
+        api.setSearch("pick_helper_fn");
+        await until("the dim for the callee's name", () => lastFor("pick_helper_fn") !== undefined, 20_000);
+        const dimmed = lastFor("pick_helper_fn")!.dimmed;
+        assert.ok(!dimmed.includes(card), `the callee's call card is bright (dimmed: ${dimmed.join(", ")})`);
+        assert.ok(dimmed.includes(wrap), "the other call card is dim");
+
+        // picking it (Enter on the first row): that card is selected and the view's focus is as it was
+        const focus = focusOf();
+        assert.ok(focus.length > 0 && focus.at(-1) === ENTRY, `the view is focused on the entry (${focus.join(" > ")})`);
+        const rows = await drawn("the row for the callee", 0, (d) => d.query === "pick_helper_fn" && d.ids.includes(HELPER));
+        for (let i = rows.ids.indexOf(HELPER); i > 0; i--) api.searchKey("ArrowDown");
+        await until("the callee's row to be pointed at", () => api.session().highlight === HELPER, 5_000);
+        api.searchKey("Enter");
+        await until("the call card to be selected", () => api.session().contexts.main.selected === card, 20_000);
+        await until("the request to be done", () => api.session().reveal === null, 20_000);
+        assert.deepStrictEqual(focusOf(), focus, "the focus did not shorten to hold the callee's file");
+
+        // a node the view draws no call card for: revealed by structure, the focus shortens to hold it
+        await showSidebar();
+        api.setSearch("pick_unused_fn");
+        const again = await drawn("the row for the node that is not drawn", api.searchDrawn().length, (d) => d.query === "pick_unused_fn" && d.ids.includes(UNUSED));
+        for (let i = again.ids.indexOf(UNUSED); i > 0; i--) api.searchKey("ArrowDown");
+        await until("the unused row to be pointed at", () => api.session().highlight === UNUSED, 5_000);
+        api.searchKey("Enter");
+        await until("the node to be selected", () => api.session().contexts.main.selected === UNUSED, 20_000);
+        assert.notDeepStrictEqual(focusOf(), focus, "the focus shortened to hold it");
+        assert.deepStrictEqual(api.webviewErrors(), []);
+      } finally {
+        api.setSearch("");
+        api.dispatch({ type: "select", id: null });
+        await closeCanvas();
+        for (const f of files()) fs.rmSync(f, { force: true });
       }
     });
   });

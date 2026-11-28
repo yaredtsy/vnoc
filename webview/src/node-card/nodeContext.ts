@@ -21,9 +21,10 @@ export function fileExtname(key: string | null): string {
  * object to the command. One function, so a card and a row say the same things; `surface` says which one is asking.
  *
  * A call card is a `node` section like any card: its entries test `role == call` (and `surface == canvas`), so a node's entries never show on it. `nodeKey` is
- * the structure node it acts on (a call card's callee; null for a callee the project does not know), `id` and `callId` say which card it is.
+ * the structure node it acts on (a call card's callee; null for a callee the project does not know), `id` and `callId` say which card it is. `tours` is how many tours go
+ * through the node (the core's `vnoc/tourCounts`): **Show Tours** is in the menu when it is above 0.
  */
-export function nodeContext(f: { node: NodeFacts; contextId: ContextId; isFocusRoot: boolean; surface?: "canvas" | "sidebar" }): string {
+export function nodeContext(f: { node: NodeFacts; contextId: ContextId; isFocusRoot: boolean; surface?: "canvas" | "sidebar"; tours?: number }): string {
   const call = f.node.role === "call";
   return JSON.stringify({
     surface: f.surface ?? "canvas",
@@ -45,6 +46,7 @@ export function nodeContext(f: { node: NodeFacts; contextId: ContextId; isFocusR
     codeOpen: f.node.codeOpen,
     docs: f.node.docs,
     byName: f.node.link === "name",
+    tours: f.tours ?? 0,
   });
 }
 
@@ -54,3 +56,10 @@ export const paneContext = (surface: "canvas" | "sidebar"): string => JSON.strin
 /** A sidebar panel's header (08 §5): which context it is, and whether it is MAIN or an EXPLORE (only an EXPLORE has a Close). */
 export const panelContext = (panel: { id: ContextId; kind: "main" | "explore" }): string =>
   JSON.stringify({ surface: "sidebar", webviewSection: "context", preventDefaultContextMenuItems: true, contextId: panel.id, contextKind: panel.kind });
+
+/**
+ * What a stop of a tour tells VS Code about itself for its right-click menu (docs/26-tours/design/04-route-and-map.md §7): a tour card on the map and a stop's row in the
+ * route share one list, **Go to Code** and **Reveal in Main**. `nodeKey` is the structure node the stop is about (null for a stop whose node is gone).
+ */
+export const tourStopContext = (f: { tour: string; stop: string; nodeKey: string | null; surface: "canvas" | "sidebar" }): string =>
+  JSON.stringify({ surface: f.surface, webviewSection: "tourStop", preventDefaultContextMenuItems: true, tour: f.tour, stop: f.stop, nodeKey: f.nodeKey });

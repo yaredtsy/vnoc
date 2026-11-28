@@ -107,7 +107,8 @@ export class AttentionView implements vscode.TreeDataProvider<AttentionRow> {
         item.id = `missing:${m.id}`;
         item.description = [isDef ? m.path : m.kind, plural(m.docs, "doc")].filter(Boolean).join(" · ");
         item.iconPath = new vscode.ThemeIcon((m.kind && ICONS[m.kind]) || (isDef ? "symbol-function" : "question"));
-        item.tooltip = `${isDef ? `${m.path}::${m.qualname}` : m.path} is not in the code any more. Its docs are kept.`;
+        // a node a tour gave an ID to has no docs: there is nothing to keep, and Remove cleans up its `node.toml`
+        item.tooltip = `${isDef ? `${m.path}::${m.qualname}` : m.path} is not in the code any more. ${m.docs === 0 ? "It has no docs. Remove cleans it up." : "Its docs are kept."}`;
         item.contextValue = "missing";
         item.command = { command: "vnoc.openMissingDocs", title: "Open Docs", arguments: [row] };
         return item;

@@ -4,7 +4,10 @@ import { cn } from "@/lib/utils.ts";
 import { ActionStrip } from "../node-card/ActionStrip.tsx";
 import { KINDS, kindIcon } from "../node-card/kinds.ts";
 import { nodeContext } from "../node-card/nodeContext.ts";
+import { request } from "../host.ts";
+import { toursOf, useTourCounts } from "../state/tourCounts.ts";
 import { activate } from "./actions.ts";
+import { toursChipText, toursChipTip } from "./tours/onView.ts";
 import type { FlatRow } from "./flatten.ts";
 import { hoverParts } from "./hover.ts";
 import { rowDescription, rowFacts, rowLabel } from "./rowFacts.ts";
@@ -45,6 +48,7 @@ export function Row({ row, domId, start, contextId, selected, highlighted, curso
   const { node } = row;
   const description = rowDescription(node);
   const hover = hoverParts(node);
+  const tours = useTourCounts((s) => toursOf(s.counts, row.id));
   const line = (
     <div
       role="treeitem"
@@ -55,7 +59,7 @@ export function Row({ row, domId, start, contextId, selected, highlighted, curso
       aria-setsize={row.setSize}
       aria-posinset={row.posInSet}
       aria-label={rowLabel(row, { selected, cursor })}
-      data-vscode-context={nodeContext({ node: rowFacts(row), contextId, isFocusRoot: row.focusRoot, surface: "sidebar" })}
+      data-vscode-context={nodeContext({ node: rowFacts(row), contextId, isFocusRoot: row.focusRoot, surface: "sidebar", tours })}
       className={rowClasses({ selected, highlighted, treeFocused })}
       style={{ top: start, height: ROW_H, paddingLeft: INDENT_FIRST + row.depth * INDENT }}
       onClick={(e) => !(e.target as Element).closest("button") && onClick()}
@@ -92,8 +96,24 @@ export function Row({ row, domId, start, contextId, selected, highlighted, curso
         </span>
         <span className={nameClasses(node.syntax_error)}>{node.name}</span>
         {description && <span className={cn("ml-2 flex-none text-[0.92em]", selected ? "opacity-80" : "text-muted-foreground")}>{description}</span>}
+        {tours > 0 && (
+          <button
+            type="button"
+            tabIndex={-1}
+            data-part="tours"
+            title={toursChipTip(tours)}
+            aria-label={toursChipTip(tours)}
+            className={cn("flex-none rounded-sm px-1 text-[0.92em] hover:bg-toolbar-hover", "ml-auto", selected ? "opacity-80" : "text-muted-foreground")}
+            onClick={(e) => {
+              e.stopPropagation();
+              void request("showTours", { key: row.id, context: contextId }).catch(() => {});
+            }}
+          >
+            {toursChipText(tours)}
+          </button>
+        )}
         {cursor && (
-          <span className="ml-auto flex-none pl-2 text-[color:var(--card-cursor)]" title="the cursor is here">
+          <span className={cn("flex-none pl-2 text-[color:var(--card-cursor)]", tours === 0 && "ml-auto")} title="the cursor is here">
             ●
           </span>
         )}

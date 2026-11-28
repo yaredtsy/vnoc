@@ -364,6 +364,7 @@ fn who(agents: &[Agent]) -> String {
 fn about(action: &Action, command: &str, picked: &[Agent]) -> String {
     let what = match (action.part, action.change) {
         (Part::Skill, _) => "the skill",
+        (Part::TourSkill, _) => "the vnoc-tour skill",
         (Part::Rules, Change::AddBlock) => "the V-NOC block, after what was there",
         (Part::Rules, Change::RemoveBlock) => "the V-NOC block; the rest of the file is as it was",
         (Part::Rules, Change::Delete) => "it held nothing but the V-NOC block",
@@ -395,6 +396,9 @@ fn about(action: &Action, command: &str, picked: &[Agent]) -> String {
     }
 }
 
+/// What a permissions row says is allowed (TR13b: the tour commands too).
+const ALLOWED: &str = "V-NOC's read commands and the tour commands";
+
 /// A permissions row: what is allowed and for whom, then where (`in`), then what else there is to say.
 fn permission_text(action: &Action, dry_run: bool) -> String {
     let word = verb(action, dry_run);
@@ -408,7 +412,7 @@ fn permission_text(action: &Action, dry_run: bool) -> String {
         .first()
         .and_then(|a| agents::permission_name(*a))
         .unwrap_or("the agent");
-    let mut text = format!("{word}V-NOC's read commands for {name}\n");
+    let mut text = format!("{word}{ALLOWED} for {name}\n");
     text.push_str(&format!("{}{}\n", label("in"), action.path));
     let note = match (&action.why, action.change) {
         (Some(why), _) => Some(why.as_str()),
@@ -530,28 +534,42 @@ pub fn parse_yes_no(line: &str) -> Option<bool> {
     }
 }
 
-/// The question of 07 §4, naming only the agents it covers.
+/// The line before the question, dim, which stays on screen: what is still asked (07 §4). It is not part of the question, which must fit one row
+/// (the prompt is cleared by its count of lines, so a wrapped row leaves its first half behind).
+const PERMISSION_NOTE: &str =
+    "Other writes (doc new, doc tag, relink, repair, init, tour pin) still ask.";
+
+/// The question of 07 §4, naming the agent it covers, short enough for one row at 80 columns, also while it is asked (`? … (y/n) › yes`, 12 more
+/// columns) and when answered (`✔ … · yes`). Two names do not fit beside `without asking`, so two agents are `both agents`.
 fn permission_question(covered: &[Agent]) -> String {
     let names: Vec<&str> = covered
         .iter()
         .filter_map(|a| agents::permission_name(*a))
         .collect();
-    format!(
-        "Let {} run V-NOC's read commands without asking? Writes (doc new, doc tag, relink, repair, init) still ask.",
-        names.join(" and ")
-    )
+    let who = if names.len() > 1 {
+        "both agents".to_string()
+    } else {
+        names.join("")
+    };
+    format!("Let {who} run V-NOC's read and tour commands without asking?")
 }
 
-/// The question on standard error, Enter being yes. Esc is no. When the terminal cannot draw it, a typed `[Y/n]`.
+/// The question on standard error, Enter being yes. Esc is no. When the terminal cannot draw it, a typed `[Y/n]`. The answer stays on the
+/// question's row.
 fn ask_permissions(covered: &[Agent], prompt: Prompt) -> Result<bool, Failure> {
     let question = permission_question(covered);
+    let _ = writeln!(
+        std::io::stderr(),
+        "{}",
+        style::paint_direct(style::Stream::Err, style::dim(), PERMISSION_NOTE)
+    );
     if prompt == Prompt::Menu {
         let theme = theme();
         let asked = at_a_prompt(|| {
             Confirm::with_theme(&*theme)
                 .with_prompt(&question)
                 .default(true)
-                .report(false)
+                .report(true)
                 .interact_on_opt(&Term::stderr())
         });
         match asked {
@@ -834,7 +852,9 @@ fn describe(state: &State, part: Part) -> (&'static str, String, bool) {
         State::Changed => (
             "changed",
             match part {
-                Part::Skill => "by hand: vnoc agent install replaces it".to_string(),
+                Part::Skill | Part::TourSkill => {
+                    "by hand: vnoc agent install replaces it".to_string()
+                }
                 Part::Rules => "it differs from this vnoc's block (edited, or from another version): vnoc agent install replaces it".to_string(),
                 Part::Import => "it has more than the one import line V-NOC wrote: vnoc agent remove leaves it".to_string(),
                 Part::Permissions => String::new(),
@@ -854,18 +874,18 @@ fn permission_status_text(p: &agents::PermissionStatus) -> String {
     );
     match p.state {
         PermissionState::InPlace => format!(
-            "{}V-NOC's read commands for {name}\n{}{path}\n",
+            "{}{ALLOWED} for {name}\n{}{path}\n",
             label("allowed"),
             label("in")
         ),
         PermissionState::Partial => format!(
-            "{}V-NOC's read commands for {name}\n{}{path}\n{}",
+            "{}{ALLOWED} for {name}\n{}{path}\n{}",
             style::paint(style::warn(), format!("{:<13}", "partly")),
             label("in"),
             continued(&format!("some are missing: {ask} adds them"))
         ),
         PermissionState::Changed => format!(
-            "{}V-NOC's read commands for {name}\n{}{path}\n{}",
+            "{}{ALLOWED} for {name}\n{}{path}\n{}",
             style::paint(style::warn(), format!("{:<13}", "changed")),
             label("in"),
             continued(&format!(
@@ -873,7 +893,7 @@ fn permission_status_text(p: &agents::PermissionStatus) -> String {
             ))
         ),
         PermissionState::Missing => format!(
-            "{}V-NOC's read commands for {name}\n{}",
+            "{}{ALLOWED} for {name}\n{}",
             style::paint(style::warn(), format!("{:<13}", "not allowed")),
             continued(&format!("each one asks: {ask}"))
         ),
@@ -901,6 +921,7 @@ impl Render for StatusAnswer {
             text.push_str(&format!("{word}{}\n", file.path));
             let part = match file.part {
                 Part::Skill => "the skill",
+                Part::TourSkill => "the vnoc-tour skill",
                 Part::Rules => "the rules block",
                 Part::Import => "the import of AGENTS.md",
                 Part::Permissions => "the permissions",
@@ -913,9 +934,18 @@ impl Render for StatusAnswer {
             text.push_str(&continued(&line));
         }
         for part in &self.status.missing {
+            if *part == Part::TourSkill {
+                // an install made before tours
+                text.push_str(&format!(
+                    "{}vnoc-tour: not installed\n{}",
+                    style::paint(style::warn(), format!("{:<13}", "missing")),
+                    continued("the skill for tours: vnoc agent install --skill-only writes it")
+                ));
+                continue;
+            }
             let (what, fix) = match part {
                 Part::Skill => ("the skill", "--skill-only"),
-                Part::Rules | Part::Import | Part::Permissions => {
+                Part::Rules | Part::Import | Part::Permissions | Part::TourSkill => {
                     ("the rules block", "--rules-only")
                 }
             };
@@ -955,7 +985,12 @@ pub fn summary(status: &agents::Status) -> String {
     }
     let mut parts = Vec::new();
     for part in [Part::Skill, Part::Rules] {
-        let files: Vec<_> = status.files.iter().filter(|f| f.part == part).collect();
+        // the second skill is judged with the first: the worst state of either is what is said
+        let files: Vec<_> = status
+            .files
+            .iter()
+            .filter(|f| f.part == part || (part == Part::Skill && f.part == Part::TourSkill))
+            .collect();
         if files.is_empty() {
             continue;
         }
@@ -976,16 +1011,19 @@ pub fn summary(status: &agents::Status) -> String {
             });
         let places = files
             .iter()
+            .filter(|f| f.part != Part::TourSkill)
             .map(|f| match part {
                 Part::Skill => f.path.trim_end_matches("/vnoc/SKILL.md").to_string(),
-                Part::Rules | Part::Import | Part::Permissions => f.path.clone(),
+                Part::Rules | Part::Import | Part::Permissions | Part::TourSkill => f.path.clone(),
             })
             .collect::<Vec<_>>()
             .join(", ");
         parts.push(match worst.map(|f| &f.state) {
             None => match part {
                 Part::Skill => format!("skill current ({places})"),
-                Part::Rules | Part::Import | Part::Permissions => format!("rules in {places}"),
+                Part::Rules | Part::Import | Part::Permissions | Part::TourSkill => {
+                    format!("rules in {places}")
+                }
             },
             Some(State::Older { version }) => style::paint(
                 style::warn(),
@@ -1006,8 +1044,16 @@ pub fn summary(status: &agents::Status) -> String {
         });
     }
     for part in &status.missing {
+        if *part == Part::TourSkill {
+            parts.push(style::paint(
+                style::warn(),
+                "vnoc-tour: not installed (vnoc agent install --skill-only)",
+            ));
+            continue;
+        }
         let (name, flag) = match part {
             Part::Skill => ("skill", "--skill-only"),
+            Part::TourSkill => unreachable!("said above"),
             Part::Rules | Part::Import | Part::Permissions => ("rules", "--rules-only"),
         };
         parts.push(style::paint(
@@ -1123,12 +1169,75 @@ mod tests {
     fn the_question_names_only_the_agents_it_covers() {
         assert_eq!(
             permission_question(&[Agent::Claude]),
-            "Let Claude Code run V-NOC's read commands without asking? Writes (doc new, doc tag, relink, repair, init) still ask."
+            "Let Claude Code run V-NOC's read and tour commands without asking?"
         );
-        assert!(
-            permission_question(&[Agent::Claude, Agent::Codex])
-                .starts_with("Let Claude Code and Codex run")
+        assert_eq!(
+            permission_question(&[Agent::Claude, Agent::Codex]),
+            "Let both agents run V-NOC's read and tour commands without asking?"
         );
         assert!(permission_question(&[Agent::Codex]).starts_with("Let Codex run"));
+    }
+
+    /// Without its colour codes, what a theme writes.
+    fn plain(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_question_and_its_answer_are_whole_on_an_80_column_screen() {
+        let themes: [(&str, Box<dyn Theme>); 2] = [
+            ("colourful", Box::new(ColorfulTheme::default())),
+            ("simple", Box::new(SimpleTheme)),
+        ];
+        for covered in [
+            vec![Agent::Claude],
+            vec![Agent::Codex],
+            vec![Agent::Claude, Agent::Codex],
+        ] {
+            let question = permission_question(&covered);
+            for (name, theme) in &themes {
+                for answer in [true, false] {
+                    let mut asking = String::new();
+                    theme
+                        .format_confirm_prompt(&mut asking, &question, Some(true))
+                        .unwrap();
+                    let mut answered = String::new();
+                    theme
+                        .format_confirm_prompt_selection(&mut answered, &question, Some(answer))
+                        .unwrap();
+                    for (what, row) in [("asking", asking), ("answered", answered)] {
+                        let row = plain(&row);
+                        assert!(!row.contains('\n'), "{name} {what}: one row: {row:?}");
+                        assert!(
+                            row.chars().count() <= 80,
+                            "{name} {what}: {} columns: {row:?}",
+                            row.chars().count()
+                        );
+                        if what == "answered" {
+                            assert!(row.contains(&question), "{name}: the question is kept");
+                            assert!(
+                                row.trim_end().ends_with(if answer { "yes" } else { "no" }),
+                                "{name}: the answer is shown: {row:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(PERMISSION_NOTE.chars().count() <= 80);
+        assert!(!PERMISSION_NOTE.contains('\n'));
     }
 }

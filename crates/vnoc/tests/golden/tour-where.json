@@ -1,0 +1,64 @@
+{
+  "after": {
+    "at": "s2"
+  },
+  "at": "s1.b3",
+  "back": [
+    "cover"
+  ],
+  "before": {
+    "at": "s1.b2",
+    "title": "The call itself"
+  },
+  "by": "command",
+  "check": "fresh",
+  "code": {
+    "first": 17,
+    "lines": [
+      "    for _ in range(attempts):",
+      "        try:",
+      "            return one_try()",
+      "        except ConnectionError:",
+      "            continue",
+      "    raise ChargeError(f\"order {order.number}: the gateway kept dropping the call\")"
+    ],
+    "path": "billing/charge.py",
+    "source": "now"
+  },
+  "command": "tour where",
+  "here": "block",
+  "moved": "<time>",
+  "moved_ago": 0,
+  "open": false,
+  "question": "what happens when the gateway drops the call",
+  "schema": 1,
+  "seen": [
+    "s1"
+  ],
+  "state": "writing",
+  "step": {
+    "id": "s1.b3",
+    "kind": "block",
+    "lines": [
+      17,
+      22
+    ],
+    "number": 4,
+    "of": 4,
+    "text": "Only a dropped connection is retried: any other error leaves the loop at once. When every attempt drops, the function raises ChargeError.",
+    "title": "Try, and try again"
+  },
+  "steps": 7,
+  "stop": {
+    "id": "s1",
+    "kind": "function",
+    "name": "retry_charge",
+    "number": 1,
+    "of": 4,
+    "path": "billing/charge.py",
+    "planned": false
+  },
+  "stops": 4,
+  "title": "retry_charge",
+  "tour": "<tour>"
+}

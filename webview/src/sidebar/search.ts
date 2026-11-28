@@ -27,8 +27,9 @@ export function searchKey(key: string, count: number, active: number): SearchKey
 }
 
 /**
- * What a pick does: the node is revealed in the active context (03 §3): the focus shortens until it holds the node, the ancestors between open, the node is
- * selected. The click rule of 07 §4 follows (`rowClick`).
+ * What a pick does to the session when the canvas does not decide it (the host sends it, 03 §3): the node is revealed in the active context: the focus shortens
+ * until it holds the node, the ancestors between open, the node is selected. With the canvas open its page decides first (`CenterOn`, a call card it draws for the node is selected and
+ * the focus stays) and sends this same reveal only when there is none. The click rule of 07 §4 follows (`rowClick`).
  */
 export const pickIntent = (id: string): Intent => ({ type: "reveal", id, canvas: false });
 

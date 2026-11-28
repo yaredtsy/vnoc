@@ -1,0 +1,59 @@
+{
+  "command": "tour list",
+  "problems": [],
+  "schema": 1,
+  "tours": [
+    {
+      "author": "claude-code",
+      "folder": "private",
+      "id": "rate-for-yvzr",
+      "minutes": 1,
+      "offers": null,
+      "pinned": false,
+      "place": null,
+      "planned": 0,
+      "question": "where does the tax rate come from",
+      "quiet": false,
+      "readable": true,
+      "root": {
+        "kind": "function",
+        "name": "rate_for"
+      },
+      "state": "finished",
+      "state_word": "new",
+      "steps": 1,
+      "title": "rate_for",
+      "words": "new · 1 stop · <when>",
+      "written": 1
+    },
+    {
+      "author": "claude-code",
+      "folder": "project",
+      "id": "retry-charge-mjpt",
+      "minutes": 2,
+      "offers": null,
+      "pin": "6d0e3dd6479c54f027dcd25032e2da38bd084663",
+      "pin_in_repository": false,
+      "pinned": true,
+      "place": {
+        "at": "step",
+        "seen": 1,
+        "stop": 3
+      },
+      "planned": 0,
+      "question": "what happens when the gateway drops the call",
+      "quiet": false,
+      "readable": true,
+      "root": {
+        "kind": "function",
+        "name": "retry_charge"
+      },
+      "state": "finished",
+      "state_word": "stop 3",
+      "steps": 5,
+      "title": "retry_charge, then the invoice",
+      "words": "shared · stop 3 · 3 stops · <when>",
+      "written": 3
+    }
+  ]
+}

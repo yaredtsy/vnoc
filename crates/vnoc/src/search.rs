@@ -415,6 +415,7 @@ mod tests {
         let git_root =
             std::env::temp_dir().join(format!("vnoc-search-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&git_root);
+        crate::testdir::remove_at_end(&git_root);
         let data = UserData::new(&git_root);
         for (id, path, qualname, kind, text) in nodes {
             let toml = NodeToml::parse(&format!(

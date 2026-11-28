@@ -1,0 +1,19 @@
+{
+  "command": "tour add",
+  "refused": [
+    {
+      "problem": "499 of 420 characters",
+      "where": "intro"
+    },
+    {
+      "problem": "lines 40-44 are outside retry_charge (11-22)",
+      "where": "block 1"
+    },
+    {
+      "problem": "an image. A text has no images: say it in words, or draw it as a Mermaid diagram",
+      "where": "block 2 text"
+    }
+  ],
+  "schema": 1,
+  "tour": "<tour>"
+}

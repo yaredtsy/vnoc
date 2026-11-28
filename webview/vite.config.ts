@@ -16,6 +16,9 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: "../extension/media/webview",
       emptyOutDir: false,
+      // no `<link rel=modulepreload>`: a webview's CSP lets a script run only with the page's nonce, and the preload tags Vite adds for a lazy chunk's imports (Mermaid's diagrams)
+      // carry none, so they are blocked. A plain `import()` inherits the nonce of the script that made it, which is how the Shiki chunks load.
+      modulePreload: false,
       rollupOptions: {
         input: sidebar ? "src/sidebar/main.tsx" : "src/main.tsx",
         output: sidebar

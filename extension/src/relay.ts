@@ -1,6 +1,8 @@
 import type { CallTreeResult, CodeResult, Draft, EditDiffParams, EditSaveParams, EditSaveResult, EditStartParams, EditStartResult, Page, Events, EventMessage, Range, RequestMessage, Requests, ResponseMessage, StructureResult } from "@vnoc/shared/messages";
 import type { ContextId, Session } from "@vnoc/shared/session.ts";
+import type { AsWritten, Place, StopId, TourAskParams, TourCallsAnswer, TourHaltAnswer, TourId, TourMove, TourPinAnswer, TourPinParams, TourRow, TourUnreadable, TourView } from "@vnoc/shared/tours.ts";
 
+import { asksAgain } from "./askAgain.ts";
 import type { Docs } from "./docs";
 
 // What a webview may ask of the extension: one handler per request in `shared/messages.ts`. Leave one out and TypeScript says which.
@@ -46,11 +48,47 @@ export interface Deps {
   /** fetches a call tree again after it failed */
   retryCalls(key: string): Promise<void>;
   /** a click on a sidebar row: the click rule (07 §4) */
-  rowClick(context: ContextId, id: string): Promise<void>;
+  rowClick(context: ContextId, id: string, pick?: boolean): Promise<void>;
   /** a doc row of the search was picked: see `Requests.showDoc` */
   showDoc(params: Requests["showDoc"]["params"]): Promise<void>;
   /** a button of the sidebar's states */
   command(name: "openFolder" | "refreshStructure"): Promise<void>;
+  /** the host's holder of tours (`extension/src/tours.ts`): the core's list, the open tour as the host holds it, a move */
+  tours: {
+    list(params?: { on?: string; check?: TourId[] }): Promise<TourRow[]>;
+    get(id: TourId): Promise<TourView | TourUnreadable>;
+    go(id: TourId, move: TourMove): Promise<Place>;
+    halt(id: TourId): Promise<TourHaltAnswer>;
+    code(id: TourId, stop: StopId): Promise<AsWritten | null>;
+    calls(id: TourId): Promise<TourCallsAnswer>;
+    countsOf(): Promise<{ counts: Record<string, number> }>;
+    /** `vnoc/tourPin`: a dry one is asked again while the core says to; one with `commit` is asked once */
+    pin(params: TourPinParams): Promise<TourPinAnswer>;
+    /** the tour **Commit and Pin…** was chosen for in the host, once (see `Requests.tourDialogTake`) */
+    takeDialog(): { id: TourId; title: string | null } | null;
+    /** where **Ask for a Tour…** was chosen in the host, once (see `Requests.tourAskTake`) */
+    takeAsk(): { key?: string; tour?: TourId } | null;
+  };
+  /** **Ask for a Tour…**: the canvas page comes up with the ask dialog, filled in from a node or a row's tour */
+  openAsk(from: { key?: string; tour?: TourId }): void;
+  /** what the user does to a tour from a button (`tourActions.ts`): the host asks, saves, writes and says what happened */
+  tourActions: {
+    writeIds(id: TourId): Promise<unknown>;
+    settings(): Promise<unknown>;
+    delete(id: TourId): Promise<unknown>;
+    undo(tokens: readonly string[]): Promise<unknown>;
+    deleteFinished(): Promise<unknown>;
+    share(id: TourId, share: boolean): Promise<unknown>;
+    importFile(): Promise<unknown>;
+    checkAll(): Promise<unknown>;
+    ask(params?: TourAskParams): Promise<unknown>;
+  };
+  /** the bar's **Open Tour…**: the command `vnoc.openTour`, which asks which tour */
+  openTour(): Promise<void>;
+  /** a file's diff against HEAD (`git.openChange`), a link of the **Commit and Pin…** dialog */
+  openChange(path: string): Promise<void>;
+  /** `▶ N` and **Show Tours**: the node is selected in its context, the TOURS section shows its tours */
+  showTours(key: string, context: ContextId): Promise<void>;
 }
 
 export function createHandlers(d: Deps): Handlers {
@@ -80,8 +118,33 @@ export function createHandlers(d: Deps): Handlers {
     showLog: () => d.showLog(),
     reportIssue: () => d.reportIssue(),
     retryCalls: ({ key }) => d.retryCalls(key),
-    rowClick: ({ context, id }) => d.rowClick(context, id),
+    rowClick: ({ context, id, pick }) => d.rowClick(context, id, pick),
     command: ({ name }) => d.command(name),
+    tours: (params) => d.tours.list(params ?? undefined),
+    tour: ({ id }) => d.tours.get(id),
+    tourGo: ({ id, move }) => d.tours.go(id, move),
+    tourHalt: ({ id }) => d.tours.halt(id),
+    tourCode: ({ id, stop }) => d.tours.code(id, stop),
+    tourCalls: ({ id }) => d.tours.calls(id),
+    tourCounts: () => d.tours.countsOf(),
+    tourPin: (params) => d.tours.pin(params),
+    tourSettings: (params) => d.core("vnoc/tourSettings", params),
+    tourWriteIds: async ({ id }) => void (await d.tourActions.writeIds(id)),
+    tourDialogTake: async () => d.tours.takeDialog(),
+    tourAskOpen: async (from) => d.openAsk(from),
+    tourAskTake: async () => d.tours.takeAsk(),
+    openChange: ({ path }) => d.openChange(path),
+    tourSettingsPick: async () => void (await d.tourActions.settings()),
+    tourDelete: async ({ id }) => void (await d.tourActions.delete(id)),
+    tourUndo: async ({ tokens }) => void (await d.tourActions.undo(tokens)),
+    tourDeleteFinished: async () => void (await d.tourActions.deleteFinished()),
+    tourShare: async ({ id }) => void (await d.tourActions.share(id, true)),
+    tourAsk: async (params) => void (await d.tourActions.ask(params ?? undefined)),
+    tourAskText: (params) => d.core("vnoc/tourAsk", params ?? undefined),
+    tourImportFile: async () => void (await d.tourActions.importFile()),
+    tourCheckAll: async () => void (await d.tourActions.checkAll()),
+    openTour: () => d.openTour(),
+    showTours: ({ key, context }) => d.showTours(key, context),
   };
 }
 
@@ -92,7 +155,8 @@ export async function serve(handlers: Handlers, message: RequestMessage): Promis
     if (!handler) throw new Error(`unknown request ${String(message.method)}`);
     return { type: "res", id: message.id, result: await handler(message.params) };
   } catch (e) {
-    return { type: "res", id: message.id, error: String((e as Error).message ?? e) };
+    const error = String((e as Error).message ?? e);
+    return asksAgain(e) ? { type: "res", id: message.id, error, askAgain: true } : { type: "res", id: message.id, error };
   }
 }
 

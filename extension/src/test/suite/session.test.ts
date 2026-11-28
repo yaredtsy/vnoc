@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 
 import type { StructureResult, TreeNode } from "@vnoc/shared/messages";
 import type { Session } from "@vnoc/shared/session.ts";
-import { canvasTabs, closeCanvas, sleep, until } from "./util";
+import { canvasTabs, closeCanvas, guarded, sleep, soft, until } from "./util";
 
 // The session in a real window (docs/10-ui-rework/05-build-order.md §4): what the pure tests in shared/ cannot see, the canvas and the host together.
 
@@ -12,10 +12,13 @@ interface Api {
   session(): Session;
   saved(): { contexts: Record<string, { focus: string[] }> } | undefined;
 }
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once (nothing is skipped)
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+
 let api: Api;
 
 suiteSetup(async () => {
-  api = await vscode.extensions.getExtension("vnoc.vnoc")!.activate();
+  api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
 });
 
 suite("the session", () => {

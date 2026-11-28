@@ -12,3 +12,4 @@ extension/LICENSE
 tools/media/out/
 vnoc-cli-*
 tools/agent-trial/runs/
+tools/agent-trial/__pycache__/

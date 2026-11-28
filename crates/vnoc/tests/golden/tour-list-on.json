@@ -1,0 +1,42 @@
+{
+  "command": "tour list",
+  "on": "billing/charge.py::retry_charge.<locals>.one_try",
+  "problems": [],
+  "schema": 1,
+  "tours": [
+    {
+      "author": "claude-code",
+      "folder": "private",
+      "id": "<tour>",
+      "minutes": 3,
+      "offers": null,
+      "on": {
+        "first": "s2",
+        "how": "stops",
+        "inside": 0,
+        "of": 4,
+        "stops": [
+          2,
+          4
+        ],
+        "words": "stops 2 and 4 of 4"
+      },
+      "pinned": false,
+      "place": null,
+      "planned": 0,
+      "question": "what happens when the gateway drops the call",
+      "quiet": false,
+      "readable": true,
+      "root": {
+        "kind": "function",
+        "name": "retry_charge"
+      },
+      "state": "writing",
+      "state_word": "writing",
+      "steps": 7,
+      "title": "retry_charge",
+      "words": "4 stops · <when>",
+      "written": 4
+    }
+  ]
+}

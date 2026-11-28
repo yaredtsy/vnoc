@@ -390,6 +390,9 @@ impl Folder {
 
 impl Drop for Folder {
     fn drop(&mut self) {
+        if std::env::var_os("VNOC_KEEP_TEMP").is_some_and(|v| v == "1") {
+            return;
+        }
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }

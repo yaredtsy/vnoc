@@ -16,7 +16,7 @@ function session(names: string[], active: string = MAIN) {
   for (const name of names) {
     const call = callTo(name);
     const id = exploreId(call);
-    contexts[id] = { id, title: name, kind: "explore", parent: MAIN, call, preview: false, focus: [], selected: null, open: {}, recent: [] };
+    contexts[id] = { id, title: name, kind: "explore", parent: MAIN, call, tour: null, preview: false, focus: [], selected: null, open: {}, recent: [] };
     order.push(id);
   }
   return { ...s, contexts, order, active: active === MAIN ? MAIN : exploreId(callTo(active)) };
@@ -77,4 +77,19 @@ test("under 360 px: one chip with the active context's name, and a menu of them 
   assert.deepEqual(chips.all.map((c) => c.label), ["Main", "reserve_stock", "charge"]);
   assert.equal(chipsFor(session(["reserve_stock"]), ONE_CHIP, facts)?.mode, "row", "360 itself is wide enough");
   assert.equal(chipsFor(session([]), 100, facts), null, "one context is no chips, however narrow");
+});
+
+test("a tour's context is a chip `▶ title` with a ✕ that is never folded away; its tip says whose tour it is", () => {
+  const s = session(["a", "b", "c", "d"]);
+  const tourId = "tour:t-1";
+  const withTour = { ...s, contexts: { ...s.contexts, [tourId]: { ...s.contexts[MAIN], id: tourId, title: "checkout_order", kind: "tour" as const, parent: MAIN, tour: "t-1" } }, order: [...s.order, tourId], active: tourId };
+  const chips = chipsFor(withTour, wide, facts);
+  assert.equal(chips?.mode, "row");
+  if (chips?.mode !== "row") return;
+  const chip = chips.shown.find((c) => c.id === tourId)!;
+  assert.deepEqual([chip.label, chip.closable, chip.kind, chip.active, chip.tip], ["▶ checkout_order", true, "tour", true, "Tour of checkout_order"]);
+  assert.equal(chips.folded.some((c) => c.id === tourId), false, "only EXPLORE chips fold");
+  assert.equal(chips.folded.length, 1, "four EXPLORE chips: the earliest one folds");
+  // MAIN stays without a ✕
+  assert.equal(chips.shown[0].closable, false);
 });

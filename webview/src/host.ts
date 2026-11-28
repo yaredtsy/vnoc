@@ -21,7 +21,7 @@ window.addEventListener("message", (e: MessageEvent) => {
   const p = pending.get(e.data.id);
   if (!p) return;
   pending.delete(e.data.id);
-  if (e.data.error) p.reject(new Error(e.data.error));
+  if (e.data.error) p.reject(Object.assign(new Error(e.data.error), e.data.askAgain === true ? { askAgain: true } : {}));
   else p.resolve(e.data.result);
 });
 

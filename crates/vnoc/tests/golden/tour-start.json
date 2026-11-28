@@ -1,0 +1,9 @@
+{
+  "command": "tour start",
+  "created": [],
+  "created_vnoc": false,
+  "folder": "private",
+  "path": ".vnoc/local/tours/<tour>.jsonl",
+  "schema": 1,
+  "tour": "<tour>"
+}

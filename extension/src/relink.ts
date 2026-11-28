@@ -35,7 +35,7 @@ export async function relinkMissing(request: Request, gitRoot: string, missing: 
     void vscode.window.showInformationMessage(`V-NOC: there is no ${missing.kind ?? "node"} without docs to move ${nameOf(missing)} to.`);
     return false;
   }
-  const picked = await vscode.window.showQuickPick(items, { title: `Relink ${nameOf(missing)}`, placeHolder: "Where is it now? Find it by name or path", matchOnDescription: true });
+  const picked = await vscode.window.showQuickPick(items, { title: `Relink ${nameOf(missing)}`, placeHolder: "Where is it now? Find it by name or path", matchOnDescription: true, ignoreFocusOut: true });
   return picked ? relinkTo(request, gitRoot, missing, picked.node) : false;
 }
 
@@ -48,7 +48,7 @@ export async function attachMissingHere(request: Request, gitRoot: string, missi
     return false;
   }
   const items = fits.map((m) => ({ label: nameOf(m), description: `${m.qualname ? `${m.path} · ` : ""}${m.docs} ${m.docs === 1 ? "doc" : "docs"}`, iconPath: new vscode.ThemeIcon(m.kind ? ICON[m.kind as TreeNode["kind"]] ?? "question" : "question"), missing: m }));
-  const picked = await vscode.window.showQuickPick(items, { title: `Attach a Missing doc to ${node.name}`, placeHolder: "Which doc belongs here?", matchOnDescription: true });
+  const picked = await vscode.window.showQuickPick(items, { title: `Attach a Missing doc to ${node.name}`, placeHolder: "Which doc belongs here?", matchOnDescription: true, ignoreFocusOut: true });
   return picked ? relinkTo(request, gitRoot, picked.missing, node) : false;
 }
 

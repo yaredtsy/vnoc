@@ -232,7 +232,17 @@ pub async fn tree_for(
     depth: Option<u32>,
 ) -> Result<CallTreeResult, CallsError> {
     let answer = ask(project, index, host, key, depth).await?;
-    let merged = merge(&answer.root);
+    let mut merged = merge(&answer.root);
+    // the analysis has a budget (about 10,000 nodes): when it runs out the walk stops where it is, and every node from the root down to there is `cut`
+    // with the calls it had got to. The root is made whole from a one-level tree of its own; below it a cut node holds nothing, and opening it asks.
+    let partial_root = is_partial(&merged);
+    forget_partial_lists(&mut merged);
+    if partial_root && depth != Some(1) {
+        // best effort: when the one-level tree cannot be had, the root keeps the calls it has (as it did before)
+        if let Ok(probe) = ask(project, index, host, key, Some(1)).await {
+            complete_root(&mut merged, merge(&probe.root));
+        }
+    }
     // one read of the index for the whole mapping: the revision says which index the keys are from
     let index = index.read().unwrap();
     let known = |target: &CallTarget| {
@@ -251,6 +261,46 @@ pub async fn tree_for(
         revision: index.revision(),
         root,
     })
+}
+
+/// Whether the analysis stopped inside this node: it is `cut` and has some of its calls. (A node at the depth cap is `cut` with none.)
+fn is_partial(node: &Merged) -> bool {
+    node.marks.contains(&CallMark::Cut) && !node.children.is_empty()
+}
+
+/// Under the root, a node the analysis stopped in loses its calls: the list is not whole (the ones after the stop are missing), and drawn as if it
+/// were it hides them from a search and from the eye. It stays `cut`, so opening it asks for its own tree.
+fn forget_partial_lists(root: &mut Merged) {
+    for child in &mut root.children {
+        if is_partial(child) {
+            child.children.clear();
+        } else {
+            forget_partial_lists(child);
+        }
+    }
+}
+
+/// The root's calls from `probe`'s (the same root, one level deep: every call, each `cut`), in the probe's order, each with what the root's own tree had
+/// under it; a call the probe does not have comes last. The root is no longer `cut`.
+fn complete_root(root: &mut Merged, probe: Merged) {
+    let mut have: Vec<Option<Merged>> = std::mem::take(&mut root.children)
+        .into_iter()
+        .map(Some)
+        .collect();
+    let mut whole = Vec::with_capacity(probe.children.len().max(have.len()));
+    for called in probe.children {
+        let at = have.iter().position(|h| {
+            h.as_ref()
+                .is_some_and(|h| key_of(&h.target) == key_of(&called.target))
+        });
+        whole.push(match at.and_then(|at| have[at].take()) {
+            Some(known) => known,
+            None => called,
+        });
+    }
+    whole.extend(have.into_iter().flatten());
+    root.children = whole;
+    root.marks.retain(|m| *m != CallMark::Cut);
 }
 
 /// The short name of a target the index does not have: the part of its qualname after the last dot, which is right for Python (`C.f` is `f`) and
@@ -670,7 +720,11 @@ mod tests {
 
     /// The two refusals that need no driver: `host` has no path, so reaching it would be an error of another kind.
     async fn refused(key: &str) -> CallsError {
-        let dir = std::env::temp_dir().join(format!("vnoc-calls-ask-{}", std::process::id()));
+        // one folder for each call: two tests use this, and each removes its own when it ends
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("vnoc-calls-ask-{}-{n}", std::process::id()));
+        crate::testdir::remove_at_end(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let project = Project::open(&dir).unwrap();
         let (index, host) = (RwLock::new(Index::default()), DriverHost::default());
@@ -741,5 +795,63 @@ mod tests {
         assert_eq!(unknown.children[0].key, None);
         assert_eq!(shown("C.f", |_| None).children[0].name, "f");
         assert_eq!(shown("plain", |_| None).children[0].name, "plain");
+    }
+
+    /// `call`, marked `cut`.
+    fn cut(qualname: &str, line: u32, children: Vec<CallNode>) -> CallNode {
+        CallNode {
+            marks: vec![CallMark::Cut],
+            ..call(qualname, line, children)
+        }
+    }
+
+    #[test]
+    fn a_node_the_analysis_stopped_in_loses_its_partial_calls_and_stays_cut() {
+        // a -> b -> c -> d: the budget ran out inside c, which got to d only; b and c are `cut` with what they had, and e (b's later call) is missing
+        let mut merged = merge(&CallNode {
+            marks: vec![CallMark::Cut],
+            ..root(vec![
+                cut("b", 3, vec![cut("c", 4, vec![call("d", 5, vec![])])]),
+                call("f", 9, vec![call("g", 10, vec![])]),
+            ])
+        });
+        assert!(is_partial(&merged), "the root is cut and has calls");
+        forget_partial_lists(&mut merged);
+        let b = &merged.children[0];
+        assert_eq!(b.marks, [CallMark::Cut]);
+        assert!(b.children.is_empty(), "b's calls were not all there");
+        let f = &merged.children[1];
+        assert_eq!(names(&f.children), ["g"], "a whole node keeps its calls");
+        // a node at the depth cap (cut, no calls) is not partial
+        assert!(!is_partial(&merge(&cut("b", 3, vec![]))));
+        // and a whole node is not
+        assert!(!is_partial(&merge(&root(vec![call("b", 3, vec![])]))));
+    }
+
+    #[test]
+    fn the_root_is_made_whole_from_a_one_level_tree_keeping_what_was_under_its_calls() {
+        let mut merged = merge(&CallNode {
+            marks: vec![CallMark::Cut],
+            ..root(vec![
+                call("b", 3, vec![call("x", 30, vec![])]),
+                cut("d", 5, vec![]),
+            ])
+        });
+        let probe = merge(&root(vec![
+            cut("b", 3, vec![]),
+            cut("c", 4, vec![]),
+            cut("d", 5, vec![]),
+            cut("e", 6, vec![]),
+        ]));
+        complete_root(&mut merged, probe);
+        assert_eq!(names(&merged.children), ["b", "c", "d", "e"]);
+        assert_eq!(
+            names(&merged.children[0].children),
+            ["x"],
+            "b keeps its own calls"
+        );
+        assert_eq!(merged.children[2].marks, [CallMark::Cut]);
+        assert!(merged.children[3].children.is_empty());
+        assert!(merged.marks.is_empty(), "the root is whole now");
     }
 }

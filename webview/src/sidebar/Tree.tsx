@@ -4,10 +4,12 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ContextId } from "@vnoc/shared/session.ts";
 import { post, request } from "../host.ts";
 import { dispatch } from "../state/session.ts";
+import { toursOf, useTourCounts } from "../state/tourCounts.ts";
 import { act, clickRow } from "./actions.ts";
 import type { FlatRow } from "./flatten.ts";
 import { isSearchKey, sidebarKey } from "./keys.ts";
 import { ROW_H, Row } from "./Row.tsx";
+import { toursChipTip } from "./tours/onView.ts";
 import { type TypeAhead, noTypeAhead, typeAhead } from "./typeAhead.ts";
 import { inView, scrollFor } from "./viewport.ts";
 
@@ -75,6 +77,20 @@ export function Tree({ context, rows, selected, cursor, highlight, onList, onTab
     reported.current = key;
     post(note);
   }, [rows.length, selected, index, offset, drawnRange, context, height]);
+
+  // the rows that are drawn and show `▶ N`: what the extension's test suite reads
+  const counts = useTourCounts((s) => s.counts);
+  const chipsReported = useRef("");
+  useEffect(() => {
+    const chips = items.flatMap((item) => {
+      const n = toursOf(counts, rows[item.index]?.id ?? null);
+      return n > 0 ? [{ id: rows[item.index].id, tours: n, tip: toursChipTip(n) }] : [];
+    });
+    const text = JSON.stringify({ context, chips });
+    if (text === chipsReported.current) return;
+    chipsReported.current = text;
+    post({ type: "tourChips", surface: "sidebar", chips });
+  }, [counts, rows, drawnRange, context]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The card of the row under the pointer is pointed at on the canvas (06 §6): the session's `highlight`, which every surface reads. Told after a short rest.
   const over = useRef<string | null>(null);

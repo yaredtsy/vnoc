@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V-NOC tour: mockup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Static mockup of walkthrough/ (06-mockup-brief.md). Fake agent = a clock. Minicart's checkout_order, 10 stops, 20 steps.
+  Plain JS, no build step. Icons are VS Code's codicons from a CDN (needs a network). The strip at the bottom is NOT part of the design.
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@vscode/codicons@0.0.36/dist/codicon.css">
+<style>
+:root {
+  --bg: #1e1e1e; --side: #252526; --activity: #333333; --border: #3c3c3c; --fg: #cccccc; --dim: #9d9d9d;
+  --widget: #252526; --widget-border: #454545; --focus: #007fd4; --sel-active: #04395e; --sel-inactive: #37373d;
+  --hover: #2a2d2e; --btn2: #3a3d41; --blue: #3794ff; --err: #f48771; --warn: #cca700; --toolbar-hover: #5a5d5e50;
+  --folder: #dcb67a; --file: #75beff; --class: #ee9d28; --function: #b180d7; --status: #007acc; --status-fg: #fff;
+  --code-kw: #569cd6; --code-str: #ce9178; --code-com: #6a9955; --code-fn: #dcdcaa; --dot-grid: #333;
+  --lit: #ffffff14; --panel: #1e1e1e; --accent: #4ec9b0;
+}
+body.light {
+  --bg: #ffffff; --side: #f3f3f3; --activity: #2c2c2c; --border: #d4d4d4; --fg: #3b3b3b; --dim: #717171;
+  --widget: #ffffff; --widget-border: #c8c8c8; --focus: #0090f1; --sel-active: #0060c0; --sel-inactive: #e4e6f1;
+  --hover: #e8e8e8; --btn2: #e0e0e0; --blue: #0066bf; --err: #e51400; --warn: #bf8803; --toolbar-hover: #b8b8b850;
+  --folder: #b8860b; --file: #1a7fc4; --class: #c27a05; --function: #8250c8;
+  --code-kw: #0000ff; --code-str: #a31515; --code-com: #008000; --code-fn: #795e26; --dot-grid: #e2e2e2;
+  --lit: #fdff0033; --panel: #ffffff; --accent: #0f8a76;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: #111; color: var(--fg); font: 13px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; overflow: hidden; display: flex; flex-direction: column; }
+.mono, .code { font-family: "SF Mono", Menlo, Consolas, monospace; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.codicon { font-size: 16px; line-height: 1; vertical-align: middle; }
+.k-function { color: var(--function); } .k-class { color: var(--class); } .k-file { color: var(--file); } .k-folder { color: var(--folder); }
+
+#app { background: var(--bg); display: grid; grid-template-columns: 48px 300px 1fr; grid-template-rows: minmax(0, 1fr) 22px; height: calc(100vh - 44px); justify-content: start; }
+body.narrowW #app { grid-template-columns: 48px 300px 560px; }
+#activity { background: var(--activity); display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+#activity .a { width: 48px; height: 48px; display: grid; place-items: center; color: #858585; position: relative; } #activity .a .codicon { font-size: 24px; }
+#activity .a.on { color: #fff; } #activity .a.on::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #fff; }
+#status { grid-column: 1 / -1; background: var(--status); color: var(--status-fg); display: flex; align-items: center; padding: 0 10px; gap: 14px; font-size: 12px; }
+#status .sp { flex: 1; } #status button { padding: 0 6px; border-radius: 3px; height: 18px; } #status button:hover { background: #fff3; }
+#status .codicon { font-size: 13px; }
+
+/* sidebar */
+#side { background: var(--side); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--border); }
+.sec-title { height: 35px; padding: 0 8px 0 20px; display: flex; align-items: center; text-transform: uppercase; font-size: 11px; letter-spacing: .3px; color: var(--dim); flex: none; }
+.sp { flex: 1; } .ib { width: 22px; height: 22px; border-radius: 4px; display: grid; place-items: center; color: var(--fg); flex: none; }
+.ib:hover { background: var(--toolbar-hover); } .ib[disabled] { opacity: .35; pointer-events: none; }
+#search { margin: 0 8px 6px; display: flex; align-items: center; gap: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 2px; padding: 0 6px; height: 24px; color: var(--dim); flex: none; }
+#panels { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.panel { display: flex; flex-direction: column; min-height: 90px; border-top: 1px solid var(--border); position: relative; outline: 0; }
+.panel.active::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--focus); z-index: 2; }
+#pMain { flex: 0 0 38%; } #pTours { flex: 1 1 0; } #pTours.folded { flex: 0 0 auto; min-height: 0; }
+.panel-head .cnt { color: var(--dim); text-transform: none; } .panel-head .pdot { width: 6px; height: 6px; border-radius: 50%; background: var(--focus); animation: pulse 1.2s infinite; }
+.panel-head .ib { width: 20px; height: 20px; } .panel-head .ib .codicon { font-size: 14px; }
+.rhead { height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 6px; font-size: 12px; flex: none; border-bottom: 1px solid var(--border); }
+.rhead .back { color: var(--blue); cursor: pointer; display: flex; align-items: center; gap: 2px; padding: 0 4px; border-radius: 3px; } .rhead .back:hover { background: var(--hover); }
+.rhead .nm { font-weight: 700; } .rhead .n { color: var(--dim); margin-left: auto; } .rhead .codicon { font-size: 12px; }
+.views { display: flex; gap: 4px; padding: 4px 8px; flex: none; } .vbtn { height: 20px; padding: 0 8px; border: 1px solid var(--widget-border); border-radius: 10px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 62%; } .vbtn.on { background: var(--btn2); border-color: transparent; font-weight: 600; } .vbtn[disabled] { opacity: .45; cursor: default; }
+.trow { height: 40px; padding: 3px 8px 3px 10px; display: flex; flex-direction: column; justify-content: center; cursor: pointer; position: relative; flex: none; } .trow:hover { background: var(--hover); } .trow.fo { outline: 1px solid var(--focus); outline-offset: -1px; }
+.trow.open { background: var(--sel-inactive); } .trow.open::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--focus); } .trow.open .l1 .nm { font-weight: 700; }
+.trow .l1 { display: flex; align-items: center; gap: 5px; height: 18px; } .trow .l1 .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .trow .st { margin-left: auto; color: var(--dim); font-size: 12px; white-space: nowrap; padding-left: 8px; }
+.trow .st.live { color: var(--fg); } .trow .l2 { color: var(--dim); font-size: 12px; padding-left: 21px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 17px; line-height: 17px; }
+.trow .acts { display: none; position: absolute; right: 6px; top: 3px; } .trow:hover .acts { display: flex; } .trow:hover .st { visibility: hidden; }
+.trow.del { cursor: default; color: var(--dim); flex-direction: row; align-items: center; gap: 6px; font-size: 12px; } .trow.del:hover { background: none; } .trow.del a { color: var(--blue); cursor: pointer; }
+.tmsg { padding: 14px 16px; color: var(--dim); text-align: center; font-size: 12px; line-height: 1.5; } .tmsg .btn { margin: 8px 3px 0; } .tmsg code { font-family: "SF Mono", Menlo, monospace; }
+.row .tn { color: var(--blue); margin-left: 8px; font-size: 12px; flex: none; cursor: pointer; } .row .tn:hover { text-decoration: underline; }
+.row.sel { background: var(--sel-inactive); } #pMain.active .row.sel { background: var(--sel-active); color: #fff; } #pMain.active .row.sel .desc { color: #ffffffb0; }
+.tc .tn { color: var(--blue); cursor: pointer; } .tc .tn:hover { text-decoration: underline; } .tc.sel { outline: 2px solid var(--focus); outline-offset: -1px; }
+.sash { position: absolute; left: 0; right: 0; top: -3px; height: 4px; cursor: row-resize; z-index: 3; } .sash:hover { transition: background-color .1s .3s; background: var(--focus); }
+.panel-head { height: 22px; display: flex; align-items: center; padding: 0 6px 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; background: #ffffff08; flex: none; gap: 6px; cursor: pointer; }
+.panel.active .panel-head .t { font-weight: 700; } .panel-head .n { color: var(--dim); text-transform: none; }
+.focusbar { height: 24px; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 10px; font-size: 12px; color: var(--dim); flex: none; }
+.tree { flex: 1; overflow: auto; outline: 0; padding-bottom: 6px; }
+.row { height: 22px; display: flex; align-items: center; cursor: pointer; padding-right: 6px; white-space: nowrap; position: relative; }
+.row:hover { background: var(--hover); } .row.fo { outline: 1px solid var(--focus); outline-offset: -1px; }
+.row .chev { width: 16px; display: grid; place-items: center; color: var(--dim); flex: none; }
+.row .mk { width: 18px; text-align: center; flex: none; color: var(--dim); font-size: 13px; }
+.row .num { width: 18px; text-align: right; color: var(--dim); font-size: 12px; margin-right: 6px; flex: none; }
+.row .ic { margin-right: 5px; flex: none; display: grid; place-items: center; }
+.row .label { overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 62%; }
+.row .desc { color: var(--dim); font-size: 12px; margin-left: auto; padding-left: 8px; flex: none; }
+.row .go { display: none; margin-left: 4px; } .row:hover .go { display: grid; } .row:hover .desc { display: none; }
+.row.here { background: var(--sel-inactive); } .row.here .mk { color: var(--focus); }
+.row.seen .label, .row.nw .label { color: var(--dim); } .row.nw .mk { color: var(--dim); }
+.row.srow { height: 20px; color: var(--dim); font-size: 12px; } .row.srow.cur { color: var(--fg); }
+.row.srow .lab { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.tfoot { border-top: 1px solid var(--border); height: 26px; display: flex; align-items: center; padding: 0 8px 0 12px; font-size: 12px; color: var(--dim); gap: 8px; flex: none; }
+.tfoot .stopb { margin-left: auto; display: flex; gap: 3px; align-items: center; color: var(--fg); padding: 1px 6px; border-radius: 3px; } .tfoot .stopb:hover { background: var(--toolbar-hover); }
+.tfoot .stopb .codicon { font-size: 13px; }
+
+/* canvas */
+#cg { display: flex; flex-direction: column; min-width: 0; background: var(--bg); position: relative; outline: 0; overflow: hidden; }
+#bar { height: 35px; display: flex; align-items: center; gap: 6px; padding: 0 6px; border-bottom: 1px solid var(--border); flex: none; position: relative; }
+#bar .vr { width: 1px; height: 16px; background: var(--border); flex: none; }
+.chips { display: flex; gap: 4px; align-items: center; flex: none; }
+.chip { height: 22px; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 9px; border: 1px solid var(--widget-border); border-radius: 11px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.chip.on { background: var(--btn2); border-color: transparent; font-weight: 600; } .chip .x { display: grid; place-items: center; border-radius: 50%; } .chip .x:hover { background: var(--toolbar-hover); } .chip .codicon { font-size: 13px; }
+.chip .pdot { width: 6px; height: 6px; border-radius: 50%; background: var(--focus); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.crumbs { flex: 1; display: flex; align-items: center; gap: 1px; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 12px; }
+.crumb { padding: 1px 4px; border-radius: 3px; cursor: pointer; color: var(--dim); } .crumb:hover { background: var(--hover); color: var(--fg); }
+.crumb.last { color: var(--fg); font-weight: 700; cursor: default; } .crumb.last:hover { background: none; }
+.crumbs .sep { color: var(--dim); opacity: .7; }
+#agentTxt { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 4px; white-space: nowrap; flex: none; }
+#agentTxt .stopb { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 3px; color: var(--fg); } #agentTxt .stopb:hover { background: var(--toolbar-hover); } #agentTxt .stopb .codicon { font-size: 13px; }
+#mapWrap { flex: 1; min-height: 0; position: relative; display: flex; }
+#viewport { flex: 1; position: relative; overflow: hidden; cursor: grab; background-image: radial-gradient(var(--dot-grid) 1px, transparent 1px); background-size: 20px 20px; }
+#viewport.pan { cursor: grabbing; } #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; } #world.anim { transition: transform .2s ease; }
+#edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.edge { fill: none; stroke: var(--widget-border); stroke-width: 1.5; stroke-dasharray: 4 3; } .edge.contain { stroke-dasharray: none; } .edge.heavy { stroke: var(--focus); stroke-width: 2.5; stroke-dasharray: none; }
+#controls { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; background: var(--widget); border: 1px solid var(--widget-border); border-radius: 4px; overflow: hidden; z-index: 3; }
+#controls button { width: 26px; height: 26px; display: grid; place-items: center; } #controls button:hover { background: var(--hover); } #controls button + button { border-top: 1px solid var(--widget-border); }
+#minimap { position: absolute; right: 10px; bottom: 10px; width: 170px; height: 110px; background: var(--widget); border: 1px solid var(--widget-border); border-radius: 4px; z-index: 3; display: none; } #minimap.on { display: block; } #minimap svg { width: 100%; height: 100%; }
+#docs { position: absolute; right: 0; top: 0; bottom: 0; width: 260px; background: var(--side); border-left: 1px solid var(--border); z-index: 4; display: none; padding: 10px 14px; overflow: auto; font-size: 12px; } #docs.on { display: block; }
+#docs h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: var(--dim); font-weight: 400; } #docs p { margin: 0 0 10px; line-height: 1.5; }
+
+/* tour card */
+.tc { position: absolute; width: 300px; height: 80px; display: flex; flex-direction: column; background: var(--widget); border: 1px solid var(--widget-border); border-radius: 4px; cursor: pointer; user-select: none; box-shadow: 0 1px 3px #0003; font-size: 12px; }
+.tc::before { content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 3px; border-radius: 4px 0 0 4px; background: var(--function); }
+.tc.kind-class::before { background: var(--class); } .tc.kind-file::before { background: var(--file); } .tc.kind-folder::before { background: var(--folder); }
+.tc.nw { border-style: dashed; border-color: var(--dim); } .tc.here { outline: 2px solid var(--focus); outline-offset: -1px; border-color: transparent; } .tc.hl:not(.here) { outline: 2px dotted var(--focus); outline-offset: -1px; }
+.tc .hd { height: 30px; display: flex; align-items: center; padding: 0 4px 0 10px; gap: 6px; flex: none; } .tc .hd .nm { font-weight: 600; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc .meta { height: 22px; padding: 0 10px 0 12px; display: flex; align-items: center; color: var(--dim); gap: 8px; flex: none; } .tc .meta .r { margin-left: auto; }
+.tc .ft { flex: 1; border-top: 1px solid var(--widget-border); padding: 0 10px 0 12px; display: flex; align-items: center; gap: 10px; color: var(--dim); } .tc .ft .r { margin-left: auto; }
+.badge { min-width: 30px; height: 18px; padding: 0 5px; border-radius: 9px; border: 1px solid var(--dim); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--fg); font-weight: 600; flex: none; }
+.badge.seen { border-color: transparent; color: var(--dim); background: var(--hover); } .badge.here { background: var(--focus); border-color: var(--focus); color: #fff; } .badge.nw { border-style: dotted; color: var(--dim); } .badge.nw.here { color: #fff; border-style: solid; }
+.spin { display: inline-block; animation: spin 1.4s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.tc .ib { width: 20px; height: 20px; } .tc .ib .codicon { font-size: 14px; }
+.tc .warn { color: var(--warn); }
+
+/* stage */
+#stage { flex: none; border-top: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; position: relative; min-height: 0; overflow: hidden; }
+#stage .ssash { position: absolute; left: 0; right: 0; top: -3px; height: 6px; cursor: ns-resize; z-index: 5; } #stage .ssash:hover { background: var(--focus); opacity: .6; }
+.sh { height: 30px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--border); font-size: 12px; white-space: nowrap; }
+.sh .mk { font-size: 12px; color: var(--focus); } .sh.nw .mk { color: var(--dim); }
+.sh .nm { font-weight: 700; font-size: 13px; } .sh .loc { color: var(--dim); cursor: pointer; } .sh .loc:hover { text-decoration: underline; }
+.sh .via { color: var(--blue); cursor: pointer; display: flex; align-items: center; gap: 2px; } .sh .via:hover { text-decoration: underline; } .sh .via .codicon { font-size: 13px; }
+.sh .place { color: var(--dim); }
+.sbody { flex: 1; min-height: 0; display: flex; }
+.codewrap { flex: 1; min-width: 0; position: relative; display: flex; } .codepane { flex: 1; overflow: auto; padding: 7px 0; font-size: 12.5px; line-height: 19px; }
+.ln { display: flex; height: 19px; transition: opacity .15s; } .ln .n { width: 52px; text-align: right; padding-right: 10px; color: var(--dim); flex: none; user-select: none; } .ln .b { width: 3px; flex: none; margin-right: 10px; }
+.ln .t { white-space: pre; } .ln.dim { opacity: .55; } .ln.lit { background: var(--lit); } .ln.lit .b { background: var(--focus); } .ln.mark1 .b { background: var(--dim); width: 1px; margin-left: 1px; margin-right: 12px; }
+.chg .ln.lit { background: none; } .chg .ln.lit .b { background: none; border-left: 3px dashed var(--focus); } .ln.edited .t { background: #cca70033; }
+.ln .t .kw { color: var(--code-kw); } .ln .t .str { color: var(--code-str); } .ln .t .com { color: var(--code-com); } .ln .t .fn { color: var(--code-fn); }
+.call { cursor: pointer; } .call:hover { text-decoration: underline; color: var(--blue); }
+.more { position: absolute; left: 70px; bottom: 6px; background: var(--widget); border: 1px solid var(--widget-border); border-radius: 10px; padding: 1px 10px; font-size: 11px; display: none; z-index: 2; } .more:hover { background: var(--hover); } .more.on { display: block; }
+.textpane { width: 40%; min-width: 320px; max-width: 460px; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; position: relative; }
+.tgrip { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 4; } .tgrip:hover { background: var(--focus); opacity: .5; }
+.tx { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px 4px; }
+.fade { animation: fade .15s; } @keyframes fade { from { opacity: 0; } }
+.ttl { font-weight: 600; font-size: 13px; border-left: 2px solid var(--focus); padding-left: 8px; margin: 0 0 6px -10px; line-height: 1.4; }
+.tx p { margin: 0; line-height: 1.5; font-size: 13px; } .tx p.lead { font-size: 14px; } .tx code { font-family: "SF Mono", Menlo, monospace; font-size: 12px; background: var(--hover); padding: 0 3px; border-radius: 3px; }
+.mrk { margin-top: 6px; font-size: 12px; color: var(--dim); } .mrk.w { color: var(--warn); } .mrk .go { color: var(--blue); cursor: pointer; margin-left: 6px; } .mrk .go:hover { text-decoration: underline; }
+.bars i { display: block; height: 9px; border-radius: 3px; margin: 6px 0; background: linear-gradient(90deg, var(--widget-border), var(--hover), var(--widget-border)); background-size: 200% 100%; animation: shimmer 2s infinite linear; } @keyframes shimmer { to { background-position: -200% 0; } }
+.foot { height: 36px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px; }
+.segs { display: flex; gap: 2px; flex: 1; min-width: 0; } .seg { flex: 1; max-width: 18px; height: 14px; display: flex; align-items: center; cursor: pointer; } .seg i { display: block; width: 100%; height: 3px; border: 1px solid var(--widget-border); } .seg.f i { background: var(--focus); border-color: var(--focus); } .seg.n i { border-style: dotted; border-color: var(--dim); } .seg.w i { animation: pulse 1.2s infinite; }
+.btn { height: 26px; padding: 0 12px; border-radius: 2px; background: var(--status); color: #fff; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; } .btn:hover { filter: brightness(1.15); } .btn.sec { background: var(--btn2); color: var(--fg); } .btn[disabled] { opacity: .45; pointer-events: none; }
+.btn.dimn { background: var(--btn2); color: var(--dim); }
+.cover { flex: 1; min-height: 0; padding: 12px 28px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; } .cover h3 { margin: 0; font-size: 15px; } .cover .d { color: var(--dim); } .cover .q { font-style: italic; }
+.cover .act { margin-top: auto; display: flex; align-items: center; gap: 10px; } .cover .act .sp { flex: 1; } .cover .btns { display: flex; gap: 10px; margin-top: auto; }
+.mini { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px; font-size: 12px; white-space: nowrap; overflow: hidden; } .mini .ttlm { color: var(--dim); overflow: hidden; text-overflow: ellipsis; } .mini .place { margin-left: auto; color: var(--dim); }
+#cg.narrow .sbody { flex-direction: column; } #cg.narrow .codewrap { flex: none; height: 142px; } #cg.narrow .textpane { width: auto; max-width: none; min-width: 0; flex: 1; border-left: 0; border-top: 1px solid var(--border); } #cg.narrow .tgrip { display: none; }
+#cg.narrow .sh .loc, #cg.narrow .sh .via { display: none; } #cg.narrow .cover { padding: 8px 16px; }
+
+/* side trips */
+#stage.trip { --focus: var(--accent); }
+.ln .q { width: 14px; flex: none; text-align: center; color: var(--accent); font-weight: 700; cursor: pointer; font-size: 11px; user-select: none; }
+.ask { flex: none; padding: 2px 12px 2px 16px; display: flex; flex-direction: column; gap: 2px; }
+.askrow { display: flex; align-items: flex-end; gap: 4px; border: 1px solid var(--widget-border); border-radius: 3px; background: var(--bg); padding: 2px 4px 2px 6px; } .askrow:focus-within { border-color: var(--accent); }
+.askrow textarea { flex: 1; resize: none; border: 0; outline: 0; background: none; color: var(--fg); font: inherit; font-size: 12px; line-height: 18px; height: 18px; min-width: 0; padding: 0; overflow: hidden; }
+.askrow textarea::placeholder { color: var(--dim); opacity: .9; } .askrow .ret { color: var(--dim); cursor: pointer; font-size: 12px; padding: 0 2px; } .askrow .ret:hover { color: var(--fg); }
+.tl { font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; line-height: 16px; } .tl.go { cursor: pointer; } .tl.go:hover { color: var(--fg); text-decoration: underline; }
+.tl b.m { color: var(--accent); font-weight: 700; margin-right: 4px; } .tl.ur { color: var(--fg); font-weight: 700; }
+.chipd { align-self: flex-start; height: 20px; border: 1px solid var(--accent); color: var(--accent); border-radius: 10px; padding: 0 10px; font-size: 11.5px; margin-bottom: 2px; } .chipd:hover { background: var(--hover); }
+.deepc { border-bottom: 1px dotted var(--accent); cursor: pointer; } .deepc:hover { color: var(--accent); }
+.qq { color: var(--dim); font-style: italic; font-size: 12px; margin-bottom: 8px; line-height: 1.45; }
+.tc.trip { border-radius: 14px; border-color: var(--accent); border-style: dashed; } .tc.trip::before { background: var(--accent); border-radius: 14px 0 0 14px; } .tc.trip.cur { outline: 2px solid var(--accent); outline-offset: -1px; border-style: solid; }
+.tc.trip .tmark { color: var(--accent); font-weight: 700; width: 30px; text-align: center; }
+.edge.trip { stroke: var(--accent); stroke-dasharray: 3 4; }
+.row.ur .label, .row.ur .lab { font-weight: 700; color: var(--fg); } .row.trow2 .mk { color: var(--accent); font-weight: 700; } .row.trow2.cur { background: var(--sel-inactive); color: var(--fg); } .pulse { animation: pulse 1.4s infinite; }
+.trow.nest { padding-left: 28px; } .blink { color: var(--blue); cursor: pointer; } .blink:hover { text-decoration: underline; }
+.sh .tripmk, .mini .tripmk { color: var(--accent); font-weight: 700; }
+/* overlays */
+.overlay { position: absolute; inset: 0; z-index: 30; background: var(--bg); display: none; } .overlay.on { display: block; }
+.term { font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; line-height: 1.6; padding: 20px 28px; white-space: pre-wrap; color: var(--fg); } .term .dim { color: var(--dim); } .term .btn { margin-top: 16px; font-family: inherit; }
+.toast { position: absolute; right: 16px; bottom: 16px; width: 380px; background: var(--widget); border: 1px solid var(--widget-border); box-shadow: 0 2px 10px #0006; padding: 10px 12px; font-size: 12px; z-index: 40; display: none; } .toast.on { display: block; } .toast .acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+#tip { position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%); background: #000d; color: #fff; padding: 6px 12px; border-radius: 4px; font-size: 12px; z-index: 99; display: none; } #tip.on { display: block; }
+#menu { position: fixed; background: var(--widget); border: 1px solid var(--widget-border); box-shadow: 0 2px 10px #0006; z-index: 50; min-width: 190px; padding: 4px 0; display: none; font-size: 12px; } #menu.on { display: block; } #menu .it { padding: 4px 16px; cursor: pointer; display: flex; gap: 8px; } #menu .it:hover { background: var(--sel-active); color: #fff; } #menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+#modal { position: fixed; inset: 0; background: #0006; z-index: 60; display: none; } #modal.on { display: flex; justify-content: center; padding-top: 80px; }
+#modal .box { width: 560px; height: fit-content; background: var(--widget); border: 1px solid var(--widget-border); box-shadow: 0 4px 18px #0008; } #modal .hd { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--dim); } #modal .it { padding: 6px 12px; cursor: pointer; cursor: pointer; display: flex; gap: 12px; } #modal .it:hover { background: var(--sel-active); color: #fff; } #modal .it .d { color: var(--dim); margin-left: auto; }
+.end { flex: 1; padding: 12px 28px; display: flex; flex-direction: column; gap: 8px; } .end h3 { margin: 0; font-size: 15px; } .end .btns { display: flex; gap: 10px; margin-top: auto; padding-bottom: 8px; }
+
+/* demo strip */
+#strip { height: 44px; background: #111; color: #ddd; display: flex; align-items: center; gap: 18px; padding: 0 12px; font-size: 12px; flex: none; overflow-x: auto; white-space: nowrap; }
+#strip .g { display: flex; align-items: center; gap: 6px; } #strip b { color: #888; font-weight: 400; text-transform: uppercase; font-size: 10px; letter-spacing: .5px; }
+#strip button, #strip select { background: #2d2d2d; color: #ddd; border: 1px solid #444; border-radius: 3px; padding: 2px 8px; height: 24px; font: inherit; } #strip button:hover { background: #3a3a3a; } #strip button.on { background: #0e639c; border-color: #0e639c; }
+body.rm *, body.rm *::before, body.rm *::after { animation: none !important; transition: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="activity">
+    <div class="a"><i class="codicon codicon-files"></i></div><div class="a"><i class="codicon codicon-search"></i></div>
+    <div class="a"><i class="codicon codicon-source-control"></i></div><div class="a on"><i class="codicon codicon-type-hierarchy"></i></div><div class="a"><i class="codicon codicon-extensions"></i></div>
+  </div>
+  <div id="side">
+    <div class="sec-title">V-NOC: Structure<span class="sp"></span><span class="ib"><i class="codicon codicon-expand-all"></i></span><span class="ib"><i class="codicon codicon-collapse-all"></i></span><span class="ib"><i class="codicon codicon-ellipsis"></i></span></div>
+    <div id="search"><i class="codicon codicon-search" style="font-size:13px"></i> Search nodes…</div>
+    <div id="panels">
+      <div class="panel active" id="pMain" data-act="toMain">
+        <div class="panel-head"><span class="t">Main</span></div>
+        <div class="focusbar"><i class="codicon codicon-target" style="font-size:14px"></i> minicart › app<span class="sp"></span><i class="codicon codicon-arrow-left" style="font-size:14px"></i> <i class="codicon codicon-close" style="font-size:14px"></i></div>
+        <div class="tree" id="mainTree"></div>
+      </div>
+      <div class="panel" id="pTours" data-act="toTour" tabindex="0">
+        <div class="sash" id="sash"></div>
+        <div id="toursIn" style="display:flex;flex-direction:column;flex:1;min-height:0"></div>
+      </div>
+    </div>
+  </div>
+  <div id="cg" tabindex="-1">
+    <div id="bar">
+      <button class="ib" id="bBack" data-act="backBtn"><i class="codicon codicon-arrow-left"></i></button><span class="vr"></span>
+      <div class="chips"><span class="chip" id="chMain" data-act="toMain">Main</span><span class="chip" id="chTour" data-act="toTour"></span></div><span class="vr"></span>
+      <div class="crumbs" id="crumbs"></div><div id="agentTxt"></div>
+      <button class="ib" data-act="center" title="Centre the current stop"><i class="codicon codicon-target"></i></button>
+      <button class="ib" id="bDocs" data-act="docs" title="Docs"><i class="codicon codicon-info"></i></button>
+      <button class="ib" id="bMenu" data-act="menu"><i class="codicon codicon-ellipsis"></i></button>
+    </div>
+    <div id="mapWrap">
+      <div id="viewport"><div id="world"><svg id="edges" width="1" height="1"></svg><div id="cards"></div></div></div>
+      <div id="controls"><button data-act="zin" title="Zoom in"><i class="codicon codicon-add"></i></button><button data-act="zout" title="Zoom out"><i class="codicon codicon-remove"></i></button><button data-act="fit" title="Fit Route"><i class="codicon codicon-screen-full"></i></button></div>
+      <div id="minimap"></div>
+      <div id="docs"></div>
+    </div>
+    <div id="stage"><div class="ssash" id="ssash"></div><div id="stageIn" style="display:flex;flex-direction:column;flex:1;min-height:0"></div></div>
+    <div class="overlay" id="ovTerm"><div class="term" id="termTxt"></div></div>
+    <div class="overlay" id="ovHidden"><div style="display:flex;height:35px;background:var(--side)"><div class="mono" style="padding:9px 14px;background:var(--bg);border-top:1px solid var(--focus)">checkout.py</div></div><div class="term mono" style="padding:12px 20px;line-height:19px;color:var(--dim)">  11  def checkout_order(order: OrderRequest) -&gt; CompletedOrder:\n  12      """ID: 859e6adb-…"""\n  13      if not check_stock(order.sku, order.quantity):\n  14          raise ValueError(f"Out of stock: {order.sku}")\n  …   (you are typing in a code tab; the canvas is closed)</div>
+      <div class="toast on" id="toastHidden"><div><i class="codicon codicon-info" style="color:var(--blue)"></i> Tour of checkout_order: 10 stops, about 7 min.</div><div class="acts"><button class="btn" data-act="openTourN">Open Tour</button><button class="btn sec" data-act="notNow">Not Now</button></div></div></div>
+    <div id="menu"></div>
+  </div>
+  <div id="status"><span class="codicon codicon-source-control"></span> main<span class="sp"></span><button id="stItem" data-act="stItem"></button><span>V-NOC tour mockup</span></div>
+</div>
+<div id="strip">
+  <div class="g"><b>Theme</b><button data-s="theme">Dark+ / Light+</button></div>
+  <div class="g"><b>Agent</b><button data-s="restart">Start over</button><button data-s="all">Write all now</button>
+    <select id="spd"><option value="2000">2 s / stop</option><option value="4000" selected>4 s / stop</option><option value="12000">12 s / stop</option></select><button data-s="silent" id="bSilent">Go silent</button></div>
+  <div class="g"><b>Before the tour</b><button data-s="term">Terminal (frame 1)</button><button data-s="hidden">Canvas hidden (frame 2)</button></div>
+  <div class="g"><b>Code</b><button data-s="changed" id="bChanged">Code changed (stop 3)</button></div>
+  <div class="g"><b>Width</b><button data-s="wide" class="on" id="bWide">Wide</button><button data-s="narrow" id="bNarrow">Narrow</button></div>
+  <div class="g"><b>Reduce motion</b><button data-s="rm" id="bRm">off</button></div>
+</div>
+<div id="tip"></div>
+<div id="modal"><div class="box"><div class="hd">Open Tour</div><div id="modalList"></div></div></div>
+
+<script>
+"use strict";
+const FILES = {"app/checkout.py": ["\"\"\"FileID: da94c0ec-bba5-407b-8ef9-48de20405791\"\"\"", "from vn_logger import context_logger, logger_core", "", "from app.inventory import check_stock, release_stock, reserve_stock", "from app.models import OrderRequest", "from app.orders import CompletedOrder, create_order", "from app.payments import charge_payment", "", "", "@context_logger('859e6adb-30a8-48eb-ae59-0976b9b9d25a')", "def checkout_order(order: OrderRequest) -> CompletedOrder:", "    \"\"\"ID: 859e6adb-30a8-48eb-ae59-0976b9b9d25a\"\"\"", "    if not check_stock(order.sku, order.quantity):", "        raise ValueError(f\"Out of stock: {order.sku}\")", "", "    reserve_stock(order.sku, order.quantity)", "", "    try:", "        transaction_id = charge_payment(order)", "    except TimeoutError:", "        cancel_checkout(order)", "        raise", "", "    return create_order(order, transaction_id)", "", "", "@context_logger('160580fd-4a9d-4dd0-882a-b494388e2894')", "def cancel_checkout(order: OrderRequest) -> None:", "    \"\"\"ID: 160580fd-4a9d-4dd0-882a-b494388e2894\"\"\"", "    release_stock(order.sku, order.quantity)"], "app/inventory.py": ["\"\"\"FileID: fd425a3e-9aa9-4bb3-82f8-66ff7dc8a280\"\"\"", "from vn_logger import context_logger, logger_core", "", "LOW_STOCK_THRESHOLD = 2", "", "_STOCK = {", "    \"DOCK-01\": 3,", "}", "", "", "@context_logger('b47e48c0-a645-441a-be45-32751c682a94')", "def check_stock(sku: str, quantity: int) -> bool:", "    \"\"\"ID: b47e48c0-a645-441a-be45-32751c682a94\"\"\"", "    available = _STOCK.get(sku, 0)", "    return available >= quantity", "", "", "@context_logger('8a9cc864-99c6-4f9f-ae62-96c969bd2e34')", "def reserve_stock(sku: str, quantity: int) -> None:", "    \"\"\"ID: 8a9cc864-99c6-4f9f-ae62-96c969bd2e34\"\"\"", "    if not check_stock(sku, quantity):", "        raise ValueError(f\"Not enough stock for {sku}\")", "", "    _STOCK[sku] -= quantity", "    remaining = _STOCK[sku]", "", "    if remaining <= LOW_STOCK_THRESHOLD:", "        logger_core.logger.warning(f\"Only {remaining} unit(s) remaining for {sku}\")", "", "", "@context_logger('bb848a8d-9658-4096-8efd-6b9cb749bb4a')", "def release_stock(sku: str, quantity: int) -> None:", "    \"\"\"ID: bb848a8d-9658-4096-8efd-6b9cb749bb4a\"\"\"", "    _STOCK[sku] = _STOCK.get(sku, 0) + quantity"], "app/payments.py": ["\"\"\"FileID: 22030937-af9b-47ef-9c67-4ca21bf605d9\"\"\"", "from vn_logger import context_logger", "", "from app.gateway import send_charge", "", "@context_logger('b3e1bc9f-388c-48fc-b8db-6607df51ad58')", "def retry_charge(order, max_attempts=2):", "    \"\"\"ID: 7a4e1aac-0b78-4f2c-b532-dc4dfef80dee\"\"\"", "    for attempt in range(max_attempts):", "        try:", "            return send_charge(", "                order.total,", "                order.order_id", "            )", "        except TimeoutError:", "            if attempt == max_attempts - 1:", "                raise", "", "@context_logger('b3e1bc9f-388c-48fc-b8db-6607df51ad58')", "def charge_payment(order):", "    \"\"\"ID: b3e1bc9f-388c-48fc-b8db-6607df51ad58\"\"\"", "  ", "    return retry_charge(order)"], "app/orders.py": ["\"\"\"FileID: 9a1d2f0c-f274-409c-bf93-87eb2de3688c\"\"\"", "from dataclasses import dataclass", "", "from vn_logger import context_logger", "", "from app.models import OrderRequest", "", "_ORDERS: dict[str, \"CompletedOrder\"] = {}", "", "", "@dataclass", "class CompletedOrder:", "    \"\"\"ID: 9c135a57-76e1-4451-b661-8ce37c051c85\"\"\"", "    order_id: str", "    sku: str", "    quantity: int", "    total: float", "    customer: str", "    transaction_id: str", "", "", "@context_logger('6932df08-3fee-42eb-bf1f-f9192f62f0d2')", "def create_order(order: OrderRequest, transaction_id: str) -> CompletedOrder:", "    \"\"\"ID: 6932df08-3fee-42eb-bf1f-f9192f62f0d2\"\"\"", "    completed = CompletedOrder(", "        order_id=order.order_id,", "        sku=order.sku,", "        quantity=order.quantity,", "        total=order.total,", "        customer=order.customer,", "        transaction_id=transaction_id,", "    )", "    _ORDERS[order.order_id] = completed", "    return completed", "", "", "def hello():", "    \"\"\"ID: 6f0fb0b8-580a-485b-97bb-541407c0d80b\"\"\"", "    pass", "# hello"]};
+FILES["app/gateway.py"] = ["\"\"\"FileID: 8b53c33c-fa23-47a0-a59c-d4aec850f446\"\"\"", "from vn_logger import context_logger, logger_core", "", "# Tracks how many times each order has hit the gateway, so the demo is", "# deterministic: the first attempt for any order always times out.", "_ATTEMPTS: dict[str, int] = {}", "", "", "@context_logger('bfdab727-f72c-4156-89ac-83e3673c23fa')", "def send_charge(amount: float, order_id: str) -> str:", "    \"\"\"ID: bfdab727-f72c-4156-89ac-83e3673c23fa\"\"\"", "    attempt = _ATTEMPTS.get(order_id, 0) + 1", "    _ATTEMPTS[order_id] = attempt", "", "    if attempt == 1:", "        logger_core.logger.error(f\"Payment gateway timeout for order {order_id}\")", "        raise TimeoutError(f\"Gateway timeout for order {order_id}\")", "", "    return f\"txn_{order_id}_{attempt}\""];
+const FIX = [
+  { name:"checkout_order", kind:"function", level:0, parent:null, mode:"full", file:"app/checkout.py", s:11, e:24, via:null, col:0, row:0,
+    intro:"checkout_order turns an order request into a completed order: it holds the stock, takes the money, and records the sale, in that order.",
+    blocks:[ {s:11,e:16,focus:"Check the stock, then hold it",text:"Nothing is charged until the items are set aside. `check_stock` only looks; `reserve_stock` takes the units out of the count, so a second buyer cannot get them while this payment runs."},
+             {s:18,e:24,focus:"Charge, and give the stock back on a timeout",text:"If the payment gateway times out, `cancel_checkout` returns the reserved units and the error goes on to the caller. Only a charge that worked reaches `create_order`, which needs its transaction id."} ] },
+  { name:"check_stock", kind:"function", level:1, parent:0, mode:"full", file:"app/inventory.py", s:12, e:15, via:13, col:1, row:0,
+    intro:"check_stock answers one question: are there at least `quantity` units of this SKU? An unknown SKU counts as zero. It reads and never changes the stock.", blocks:[] },
+  { name:"reserve_stock", kind:"function", level:1, parent:0, mode:"full", file:"app/inventory.py", s:19, e:28, via:16, col:1, row:1, docs:1, out:1,
+    intro:"reserve_stock takes units out of the available count, so that nobody else can buy them.",
+    blocks:[ {s:19,e:22,focus:"Refuse what is not there",text:"It checks the stock again by itself. `checkout_order` already did, but a caller that skips the check must not push the count below zero."},
+             {s:24,e:28,focus:"Take the units, warn when few are left",text:"The count drops at once; there is no separate \"reserved\" number. With `LOW_STOCK_THRESHOLD` (2) or fewer left it logs a warning and carries on: low stock is news, not an error."} ] },
+  { name:"check_stock", kind:"function", level:2, parent:2, mode:"contextual", file:"app/inventory.py", s:12, e:15, via:21, first:1, col:2, row:1,
+    intro:"Called again here: reserve_stock does not trust its caller to have checked.", blocks:[] },
+  { name:"charge_payment", kind:"function", level:1, parent:0, mode:"full", file:"app/payments.py", s:20, e:23, via:19, col:1, row:2,
+    intro:"charge_payment is the name the rest of the app uses for \"take the money\". It only hands the order to `retry_charge`, so the retry rule can change without touching checkout.", blocks:[] },
+  { name:"retry_charge", kind:"function", level:2, parent:4, mode:"full", file:"app/payments.py", s:7, e:17, via:23, col:2, row:2, out:1,
+    intro:"retry_charge sends the charge to the gateway, and tries once more if the gateway times out.",
+    blocks:[ {s:7,e:14,focus:"Send the charge, up to two times",text:"Each attempt calls `send_charge` with the order's total and id. The first one that works returns the transaction id, and that ends the loop."},
+             {s:15,e:17,focus:"Give up only on the last attempt",text:"A timeout is swallowed unless it was the last attempt. Then it is raised again, and `checkout_order`'s `except` gives the stock back."} ] },
+  { name:"cancel_checkout", kind:"function", level:1, parent:0, mode:"full", file:"app/checkout.py", s:28, e:30, via:21, col:1, row:3,
+    intro:"cancel_checkout undoes the one thing `checkout_order` did before charging: it gives the reserved units back.", blocks:[] },
+  { name:"release_stock", kind:"function", level:2, parent:6, mode:"full", file:"app/inventory.py", s:32, e:34, via:30, col:2, row:3,
+    intro:"release_stock adds the units back to the count. A SKU that is not in the table starts from zero, so giving stock back never fails.", blocks:[] },
+  { name:"create_order", kind:"function", level:1, parent:0, mode:"full", file:"app/orders.py", s:23, e:34, via:24, col:1, row:4,
+    intro:"create_order writes down the finished sale and returns it.",
+    blocks:[ {s:23,e:32,focus:"Copy the request, add the transaction id",text:"The completed order is the request's fields plus the id the payment returned. Nothing is computed again here: the total is the one the customer sent."},
+             {s:33,e:34,focus:"Keep it in memory, by order id",text:"`_ORDERS` is a dict in the module. Orders are lost when the app restarts, and a second order with the same id replaces the first."} ] },
+  { name:"CompletedOrder", kind:"class", level:2, parent:8, mode:"full", file:"app/orders.py", s:12, e:19, via:25, degraded:true, col:2, row:4,
+    intro:"CompletedOrder is a class in app/orders.py.",
+    blocks:[ {s:12,e:15,focus:"Lines 12 to 15",text:""}, {s:16,e:19,focus:"Lines 16 to 19",text:""} ] },
+];
+let TID = 100, STOPS = FIX, N = 10, TOTAL_STEPS = 20, ROOT = "checkout_order", CUR = null;
+const base = f => f.split("/").filter(Boolean).pop();
+const nSteps = i => STOPS[i].blocks.length ? 1 + STOPS[i].blocks.length : 1;
+const stepTitle = (i, j) => j === 0 && STOPS[i].blocks.length ? "what it is for" : (STOPS[i].blocks[j - (STOPS[i].blocks.length ? 1 : 0)] || {}).focus || "what it is for";
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const ic = n => `<i class="codicon codicon-${n}"></i>`;
+const kindIc = k => k === "class" ? `<span class="k-class">${ic("symbol-class")}</span>` : k === "file" ? `<span class="k-file">${ic("file")}</span>` : k === "folder" ? `<span class="k-folder">${ic("folder")}</span>` : `<span class="k-function">${ic("symbol-method")}</span>`;
+const md = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
+
+const fresh = () => ({ place: { at: "cover" }, seen: new Set(), back: [], written: new Set(), writing: 0, agent: "writing", silent: false, rowFocus: 0 });
+function layout(st) { let mx = 0; const first = new Set(); st.forEach(s => { s.col = s.level; if (s.parent == null) s.row = 0; else if (!first.has(s.parent)) { first.add(s.parent); s.row = st[s.parent].row; } else s.row = ++mx; }); }
+const allSet = n => new Set([...Array(n).keys()]);
+function mkRec(o) {
+  const r = Object.assign({ cam: null, changed: false, opened: false, query: null, commit: "f4d6e15", trips: [], tstack: [] }, fresh(), { writing: null, agent: "complete" }, o);
+  r.stops.forEach(s => { if (!s.key) s.key = (s.kind === "file" || s.kind === "folder") ? s.name : base(s.file) + "::" + s.name; });
+  layout(r.stops); r.n = r.stops.length; if (!o.written) r.written = allSet(r.n); return r;
+}
+const stubs = defs => defs.map(([name, kind, level, parent, file]) => ({ name, kind, level, parent, mode: "full", file, s: 1, e: 1, via: null, intro: "No text in the mockup: only the first tour can be read.", blocks: [] }));
+const F = ["api.py", "checkout.py", "gateway.py", "inventory.py", "models.py", "orders.py", "payments.py", "__init__.py"];
+const T1 = mkRec({ id: 1, stops: FIX, root: "checkout_order", desc: "checkout_order, what it calls, and what those call", started: "today 18:40", opened: true, written: new Set(), writing: 0, agent: "writing" });
+const T2 = mkRec({ id: 2, root: "checkout_order", desc: "checkout_order and what it calls", started: "today 11:05", query: "what happens when the payment times out", opened: true,
+  stops: stubs([["checkout_order", "function", 0, null, "app/checkout.py"], ["check_stock", "function", 1, 0, "app/inventory.py"], ["reserve_stock", "function", 1, 0, "app/inventory.py"], ["charge_payment", "function", 1, 0, "app/payments.py"], ["cancel_checkout", "function", 1, 0, "app/checkout.py"], ["create_order", "function", 1, 0, "app/orders.py"]]) });
+const T3 = mkRec({ id: 3, root: "app/", desc: "app/ and its files", started: "yesterday", opened: true, stops: stubs([["app/", "folder", 0, null, "app/"], ...F.map(f => [f, "file", 1, 0, "app/" + f])]) });
+const T4 = mkRec({ id: 4, root: "reserve_stock", desc: "reserve_stock, only it", started: "12 Nov", opened: true, stops: stubs([["reserve_stock", "function", 0, null, "app/inventory.py"]]) });
+const T5 = mkRec({ id: 5, root: "checkout", desc: "checkout and what it calls", started: "10 Nov", stops: stubs([["checkout", "function", 0, null, "app/api.py"], ["checkout_order", "function", 1, 0, "app/checkout.py"]]) });
+T2.seen = allSet(6); T3.seen = new Set([0, 1, 2]); T3.place = { at: "step", stop: 3, step: 0 }; T4.stops[0].changed = true;
+const T6 = mkRec({ id: 6, parentTour: 1, root: "process_refund", desc: "process_refund and what it calls", started: "today 18:52", stops: stubs([["process_refund", "function", 0, null, "app/refunds.py"], ["load_order", "function", 1, 0, "app/refunds.py"], ["find_order", "function", 2, 1, "app/refunds.py"], ["check_window", "function", 1, 0, "app/refunds.py"], ["policy_days", "function", 2, 3, "app/refunds.py"], ["compute_refund", "function", 1, 0, "app/refunds.py"], ["tax_back", "function", 2, 5, "app/refunds.py"], ["fee_back", "function", 2, 5, "app/refunds.py"], ["restore_stock", "function", 1, 0, "app/refunds.py"], ["release_units", "function", 2, 8, "app/refunds.py"], ["charge_back", "function", 1, 0, "app/refunds.py"], ["gateway_refund", "function", 2, 10, "app/refunds.py"], ["notify_customer", "function", 1, 0, "app/refunds.py"], ["render_receipt", "function", 2, 12, "app/refunds.py"]]) });
+const TOURS = [T1, T2, T3, T4, T5, T6];
+const CANNED = {
+  "0.2": { q: "What if the charge fails with another error?", lit: [20, 22], title: "Only a timeout gives the stock back", text: "The `except` names `TimeoutError` and nothing else. Any other error from `charge_payment` leaves this function with the units still reserved, and nothing in the app gives them back." },
+  "2.2": { q: "What if two orders reserve the last unit at the same time?", lit: [21, 24], title: "Nothing stops two buyers", text: "The check on line 21 and the subtraction on line 24 are two separate steps on a plain dict, with no lock. Two requests can both pass the check, and the count goes below zero." },
+};
+const NOANS = { title: "No answer", text: "(the mockup has no answer for this step)" };
+const mkQ1 = () => ({ id: 1, kind: "q", host: { trip: null, stop: 0, step: 2 }, state: "ready", opened: true, askLines: [20, 22], steps: [Object.assign({}, CANNED["0.2"])] });
+T1.trips = [mkQ1()];
+function setCur(r) { CUR = r; STOPS = r.stops; N = r.n; ROOT = r.root; TOTAL_STEPS = STOPS.reduce((a, _, i) => a + nSteps(i), 0); }
+setCur(T1);
+function onT1(fn) { const p = CUR; setCur(T1); try { fn(); } finally { setCur(p); } }
+const S = { ctx: "tour", tourOpen: true, folded: false, userH: null, textW: null, narrow: false, minimap: false, docs: false,
+  pre: null, speed: 4000, light: false, rm: false, hl: null, cam: { main: null }, overCode: false,
+  sel: "inventory.py::reserve_stock", view: "all", toursFolded: false, showList: false, listFocus: 0, pend: null, pendT: null };
+["place", "seen", "back", "written", "writing", "agent", "silent", "rowFocus", "changed"].forEach(k => Object.defineProperty(S, k, { get() { return CUR[k]; }, set(v) { CUR[k] = v; } }));
+Object.defineProperty(S.cam, "tour", { get() { return CUR.cam; }, set(v) { CUR.cam = v; }, enumerable: true });
+
+/* ---------- derived ---------- */
+const here = i => S.place.at === "step" && S.place.stop === i;
+const isWritten = i => S.written.has(i);
+const agentLive = () => S.agent === "writing" || S.agent === "stopping";
+const tripById = id => CUR.trips.find(x => x.id === id);
+const tripNow = () => { const st = CUR.tstack; if (!st.length) return null; const e = st[st.length - 1], t = tripById(e.id); if (!t) { CUR.tstack = []; return null; } return { t, e }; };
+const sameHost = (a, b) => (a.trip ?? null) === (b.trip ?? null) && a.stop === b.stop && a.step === b.step;
+const hostTrips = h => CUR.trips.filter(t => sameHost(t.host, h));
+const stopTrips = (i, kind) => CUR.trips.filter(t => t.host.trip == null && t.host.stop === i && (!kind || t.kind === kind));
+const dTaken = () => CUR.trips.some(t => t.kind === "d");
+const deepOn = i => CUR.id === 1 && i === 5 && !dTaken();
+const unread = t => t.state === "ready" && !t.opened;
+const cut = (s, n) => s.length > n ? s.slice(0, n - 1) + "…" : s;
+const isChanged = i => CUR.id === 1 ? (i === 2 && CUR.changed) : !!STOPS[i].changed;
+function mark(i) { if (here(i)) return isWritten(i) ? "●" : "◌"; if (S.seen.has(i)) return "✓"; return isWritten(i) ? "○" : "◌"; }
+function rword(i, long) {
+  if (S.writing === i && (S.agent === "writing" || S.agent === "stopping")) return "writing…";
+  if (STOPS[i].degraded && isWritten(i)) return long ? "fallback" : "⚠ fallback";
+  if (isChanged(i) && isWritten(i)) return "changed";
+  if (STOPS[i].first != null && isWritten(i)) return long ? `⇢ explained at ${STOPS[i].first + 1}` : `⇢ ${STOPS[i].first + 1}`;
+  if (!long && CUR.trips) { const q = stopTrips(i, "q").length, d = stopTrips(i, "d").length; return [q ? `? ${q}` : "", d ? `↳ ${d}` : ""].filter(Boolean).join(" "); }
+  return "";
+}
+const curStop = () => S.place.at === "step" ? S.place.stop : null;
+const chain = i => { const c = []; for (let k = i; k != null; k = STOPS[k].parent) c.unshift(k); return c; };
+const lines = i => { const s = STOPS[i], f = FILES[s.file]; const out = []; if (!f || CUR.id !== 1) return out; for (let L = s.s; L <= s.e; L++) out.push([L, f[L - 1]]); return out; };
+function stepForLine(i, L) { const b = STOPS[i].blocks; for (let k = 0; k < b.length; k++) if (L >= b[k].s && L <= b[k].e) return k + 1; return 0; }
+function shownLine(i, L, txt) { return (CUR.id === 1 && i === 2 && CUR.changed && L === 22) ? '        raise ValueError(f"Insufficient stock for {sku}")' : txt; }
+
+/* ---------- navigation ---------- */
+function nextPlace(p) {
+  if (p.at === "cover") return { at: "step", stop: 0, step: 0 };
+  if (p.at === "end") return null;
+  if (p.step < nSteps(p.stop) - 1) return { at: "step", stop: p.stop, step: p.step + 1 };
+  return p.stop < N - 1 ? { at: "step", stop: p.stop + 1, step: 0 } : { at: "end" };
+}
+function prevPlace(p) {
+  if (p.at === "cover") return null;
+  if (p.at === "end") return { at: "step", stop: N - 1, step: nSteps(N - 1) - 1 };
+  if (p.step > 0) return { at: "step", stop: p.stop, step: p.step - 1 };
+  return p.stop > 0 ? { at: "step", stop: p.stop - 1, step: nSteps(p.stop - 1) - 1 } : { at: "cover" };
+}
+const same = (a, b) => a.at === b.at && a.stop === b.stop && a.step === b.step;
+function go(p, jump) {
+  if (!p) return;
+  if (jump && !same(p, S.place)) { S.back.push(S.place); if (S.back.length > 20) S.back.shift(); }
+  const prevStop = curStop(); CUR.tstack = [];
+  S.place = p;
+  if (p.at === "step" && p.step === nSteps(p.stop) - 1) S.seen.add(p.stop);
+  S.rowFocus = p.at === "step" ? p.stop : S.rowFocus;
+  render();
+  if (p.at === "step") { if (!S.anim0) cameraEnsure(p.stop); } else if (p.at === "cover" || p.at === "end") cameraFit(true);
+}
+const next = () => { const p = nextPlace(S.place); if (S.place.at === "step" && !isWritten(S.place.stop)) return; if (p) go(p, false); };
+const prev = () => go(prevPlace(S.place), false);
+const nextStop = d => { const i = curStop(); if (i == null) { if (S.place.at === "cover" && d > 0) go({ at: "step", stop: 0, step: 0 }, false); return; } const t = i + d; if (t >= 0 && t < N) go({ at: "step", stop: t, step: 0 }, false); };
+const jumpStop = (i, j) => go({ at: "step", stop: i, step: j || 0 }, true);
+function backBtn() { if (!S.back.length) return; const p = S.back.pop(); go(p, false); }
+function exitTour() { S.ctx = "main"; S.tourOpen = false; S.showList = false; render(); if (!S.cam.main) cameraFit(false); else applyCam(); }
+function toTour() { if (!S.tourOpen) return; S.ctx = "tour"; render(); applyCam(); }
+function toMain() { if (S.ctx === "main") return; S.ctx = "main"; render(); if (!S.cam.main) cameraFit(false); else applyCam(); }
+function tip(t) { const e = $("#tip"); e.textContent = t; e.classList.add("on"); clearTimeout(tip.t); tip.t = setTimeout(() => e.classList.remove("on"), 2600); }
+const goCode = () => { const i = curStop(); if (i == null) return; const s = STOPS[i]; const p = S.place; const L = p.step > 0 || !s.blocks.length ? (s.blocks[p.step - 1] || s).s : s.s; tip(`↗ opens ${s.file} at line ${L} in an editor tab beside the canvas (not in the mockup)`); };
+
+/* ---------- side trips ---------- */
+function codeOf(t) {
+  if (t.kind === "d") return { file: t.file, s: t.s, e: t.e };
+  if (t.host.trip == null) { const s = STOPS[t.host.stop]; return { file: s.file, s: s.s, e: s.e }; }
+  return codeOf(tripById(t.host.trip));
+}
+function mainHost(t) { while (t.host.trip != null) t = tripById(t.host.trip); return t.host; }
+function askTarget() {
+  const tv = tripNow();
+  if (!tv) return { host: { trip: null, stop: S.place.stop, step: S.place.step } };
+  if (tv.t.kind === "q") return { follow: tv.t };
+  return { host: { trip: tv.t.id, stop: 0, step: tv.e.step } };
+}
+function askSend(text) {
+  const tg = askTarget(), canned = (!tg.follow && tg.host.trip == null && CUR.id === 1) ? CANNED[`${tg.host.stop}.${tg.host.step}`] : null;
+  text = (text || "").trim(); if (!text && canned && !hostTrips(tg.host).some(t => t.kind === "q")) text = canned.q; if (!text) return;
+  if (tg.follow) {
+    const t = tg.follow, st = Object.assign({ q: text, pending: true, lit: null }, NOANS); t.steps.push(st); t.state = "answering";
+    setTimeout(() => { st.pending = false; t.state = "ready"; render(); }, 5000);
+  } else {
+    const h = tg.host, sp = h.trip == null ? STOPS[h.stop] : null, blk = sp && sp.blocks.length && h.step > 0 ? sp.blocks[h.step - 1] : null;
+    const t = { id: ++TID, kind: "q", host: h, state: "answering", opened: false, askLines: blk ? [blk.s, blk.e] : sp ? [sp.s, sp.e] : null, steps: [Object.assign({ q: text, lit: null }, canned ? { title: canned.title, text: canned.text, lit: canned.lit } : NOANS)] };
+    CUR.trips.push(t); setTimeout(() => { t.state = "ready"; render(); }, 5000);
+  }
+  S.askText = ""; render();
+}
+function goDeeper() {
+  if (CUR.id !== 1) return; if (dTaken()) { openTrip(CUR.trips.find(t => t.kind === "d").id); return; }
+  const t = { id: ++TID, kind: "d", name: "send_charge", file: "app/gateway.py", s: 10, e: 19, host: { trip: null, stop: 5, step: 1 }, state: "answering", opened: false, steps: [
+    { intro: true, lit: null, text: "send_charge is the payment gateway, faked for the demo: it counts the attempts per order, so the result is always the same." },
+    { lit: [10, 13], title: "Count this attempt for the order", text: "`_ATTEMPTS` remembers how many times each order id was sent. It is never cleared, so the count lasts as long as the app runs." },
+    { lit: [15, 19], title: "The first attempt always times out", text: "Attempt 1 logs an error and raises `TimeoutError`: that is what makes `retry_charge` try again. Attempt 2 returns a transaction id made of the order id and the attempt." }] };
+  CUR.trips.push(t); setTimeout(() => { t.state = "ready"; render(); }, 4000);
+  render(); const h = pos(5); cameraEnsureAt({ x: h.x + GX, y: h.y });
+}
+function openTrip(id) {
+  const t = tripById(id); if (!t) return; if (S.ctx !== "tour") S.ctx = "tour";
+  const h = mainHost(t), keep = tripNow() && t.host.trip != null && tripNow().t.id === t.host.trip;
+  if (!(S.place.at === "step" && S.place.stop === h.stop && S.place.step === h.step)) go({ at: "step", stop: h.stop, step: h.step }, false);
+  t.opened = true; CUR.tstack = keep ? [...CUR.tstack, { id, step: 0 }] : [{ id, step: 0 }]; render();
+  if (t.kind === "d") { const p = pos(t.host.stop); cameraEnsureAt({ x: p.x + GX, y: p.y }); }
+}
+function tripBack() { if (!CUR.tstack.length) return; CUR.tstack.pop(); render(); }
+function tripMove(d) { const tv = tripNow(); if (!tv) return; const n = tv.t.steps.length, k = tv.e.step + d; if (k >= 0 && k < n) { tv.e.step = k; render(); } else if (k >= n && tv.t.kind === "d") tripBack(); }
+const backLabel = t => t.host.trip == null ? `Back to stop ${t.host.stop + 1}` : `Back to ${tripById(t.host.trip).name || "the question"}`;
+const fromLabel = t => { if (t.host.trip == null) return `stop ${t.host.stop + 1} · ${STOPS[t.host.stop].name}`; const hh = mainHost(t); return `stop ${hh.stop + 1} › ${tripById(t.host.trip).name}`; };
+function askHTML(host, follow) {
+  const ts = follow ? (follow.steps.some(s => s.pending) ? [follow] : []) : hostTrips(host).slice().reverse().slice(0, 2);
+  const canned = !follow && host.trip == null && CUR.id === 1 ? CANNED[`${host.stop}.${host.step}`] : null;
+  const sug = canned && !hostTrips(host).some(t => t.kind === "q") ? canned.q : "";
+  const ph = follow ? "Ask a follow-up…" : sug ? sug : "Ask about these lines…";
+  const dp = !follow && host.trip == null && CUR.id === 1 && host.stop === 5 && host.step === 1 && !dTaken();
+  const lines = ts.map(t => { const ans = t.state === "answering", last = follow ? follow.steps[follow.steps.length - 1].q : t.steps[0].q;
+    return `<div class="tl ${ans ? "" : "go"} ${unread(t) ? "ur" : ""}" ${ans ? "" : `data-act="openTrip" data-t="${t.id}"`}>${t.kind === "q" ? `<b class="m">?</b>${esc(cut(last, 34))}` : `<b class="m">↳</b>${esc(t.name)}`} ${ans ? "· answering" : "›"}</div>`; }).join("");
+  return `<div class="ask">${dp ? `<button class="chipd" data-act="deeper">↳ Go deeper: send_charge</button>` : ""}<div class="askrow"><textarea id="askIn" rows="1" placeholder="${esc(ph)}" data-sug="${esc(sug)}"></textarea><span class="ret" data-act="askSend" title="Send (Enter)">↵</span></div>${lines}</div>`;
+}
+function tripStageHTML(tv) {
+  const { t, e } = tv, st = t.steps[e.step], cd = codeOf(t), multi = t.steps.length > 1, lastStep = e.step === t.steps.length - 1, bl = backLabel(t);
+  const d = t.kind === "d", pending = d ? t.state === "answering" : !!st.pending;
+  const head = `<div class="sh"><span class="tripmk">${d ? "↳" : "?"}</span><span class="nm">side trip from ${fromLabel(t)}</span>${d ? `<span style="color:var(--dim)">· ${t.name}${multi ? ` · ${e.step + 1} of ${t.steps.length}` : ""}</span>` : ""}<span class="loc" data-act="goCode" title="Go to Code">${base(cd.file)}:${cd.s}</span><span class="sp"></span><button class="ib" data-act="goCode" title="Go to Code">${ic("link-external")}</button><button class="ib" data-act="fold" title="Fold (.)">${ic("chevron-down")}</button></div>`;
+  if (S.folded) return `<div class="mini"><span class="tripmk">${d ? "↳" : "?"}</span> <b>side trip from ${fromLabel(t)}</b><span class="ttlm">${st.title ? "· " + esc(st.title) : ""}</span><span class="place"></span><button class="ib" data-act="tripBack" title="${bl}">${ic("chevron-left")}</button><button class="ib" data-act="fold" title="Unfold">${ic("chevron-up")}</button></div>`;
+  const f = FILES[cd.file];
+  const code = (f ? Array.from({ length: cd.e - cd.s + 1 }, (_, k) => cd.s + k) : []).map((L, idx) => {
+    const lit = !pending && st.lit && L >= st.lit[0] && L <= st.lit[1], cls = lit ? "lit" : (!pending && st.lit) ? "dim" : "";
+    return `<div class="ln ${cls} ${d && st.intro && !pending && idx === 0 ? "mark1" : ""}"><span class="n">${L}</span><span class="q"></span><span class="b"></span><span class="t">${hl(f[L - 1])}</span></div>`;
+  }).join("");
+  let tx;
+  if (pending) tx = `${!d && st.q ? `<div class="qq">“${esc(st.q)}”</div>` : ""}<div class="bars"><i style="width:92%"></i><i style="width:100%"></i><i style="width:58%"></i></div><div class="mrk" style="margin-top:14px">${d ? "The agent is writing this stop. You can read the code meanwhile." : "The agent is answering. You can keep reading: nothing waits for it."}</div>`;
+  else tx = `${st.q ? `<div class="qq">“${esc(st.q)}”</div>` : ""}${st.intro ? `<p class="lead">${md(st.text)}</p>` : `<div class="ttl">${esc(st.title)}</div><p>${md(st.text)}</p>`}`;
+  const nav = multi ? `<button class="btn sec" data-act="tripPrev" ${e.step === 0 ? "disabled" : ""}>‹</button><button class="btn sec" data-act="tripNext" ${lastStep && !d ? "disabled" : ""}>${lastStep && d ? bl + " ›" : "›"}</button>` : "";
+  const foot = `<div class="foot">${!d ? `<button class="btn sec" data-act="keep" title="Save this answer as a doc">＋ Keep</button>` : ""}${nav}<span style="flex:1"></span><button class="btn" data-act="tripBack">‹ ${bl}</button></div>`;
+  return `${head}<div class="sbody"><div class="codewrap"><div class="codepane" id="codepane">${code}</div><button class="more" id="more" data-act="more"></button></div>
+    <div class="textpane" ${S.textW ? `style="width:${S.textW}px"` : ""}><div class="tgrip" id="tgrip"></div><div class="tx ${S.fadeNext ? "fade" : ""}">${tx}</div>${askHTML(d ? { trip: t.id, stop: 0, step: e.step } : null, d ? null : t)}${foot}</div></div>`;
+}
+
+/* ---------- fake agent ---------- */
+let clock = null, silentT = null;
+function tick() {
+  onT1(() => {
+    if (!agentLive()) return;
+    if (S.writing != null) { S.written.add(S.writing); S.writing = S.writing + 1 < N ? S.writing + 1 : null; }
+    if (S.agent === "stopping") { S.agent = "stopped"; S.writing = null; } else if (S.writing == null) S.agent = "complete";
+  });
+  clockSet(); render();
+}
+function clockSet() {
+  clearInterval(clock); clock = null; clearTimeout(silentT);
+  if (T1.agent !== "writing" && T1.agent !== "stopping") return;
+  if (T1.silent) { silentT = setTimeout(() => { if (T1.agent === "writing") { T1.agent = "nonews"; render(); } }, 5000); return; }
+  clock = setInterval(tick, S.speed);
+}
+function stopAgent() { onT1(() => stopAgent0()); }
+function stopAgent0() { if (S.agent === "writing" || S.agent === "nonews") { S.agent = "stopping"; if (!S.silent) clockSet(); else { S.silent = false; syncStrip(); clockSet(); } render(); } }
+function agentLine(kind) {
+  const w = S.written.size, wi = (S.writing ?? 0) + 1;
+  switch (S.agent) {
+    case "writing": return kind === "bar" ? `writing ${wi}/${N}` : kind === "narrow" ? `${wi}/${N}` : `writing ${wi} of ${N}`;
+    case "stopping": return `stopping: the agent finishes stop ${wi}`;
+    case "stopped": return kind === "foot" ? `stopped: ${w} of ${N} written` : `stopped at ${w} of ${N}`;
+    case "nonews": return kind === "foot" ? `no news from the agent for 5 min · ${w} of ${N} written` : "no news from the agent";
+    default: return "";
+  }
+}
+
+/* ---------- highlight ---------- */
+const KW = new Set("def class return if not raise try except for in from import as None True False pass and or else elif with".split(" "));
+function hl(line, link, deep) {
+  const re = /("""[\s\S]*?"""|f?"[^"]*"|f?'[^']*'|#.*|[A-Za-z_]\w*|\s+|.)/g; let m, out = "", after = false;
+  while ((m = re.exec(line))) {
+    const t = m[0], e = esc(t);
+    if (/^f?["']/.test(t)) out += `<span class="str">${e}</span>`;
+    else if (t[0] === "#") out += `<span class="com">${e}</span>`;
+    else if (/^[A-Za-z_]/.test(t)) {
+      if (deep && t === deep.name) out += `<span class="deepc" data-act="deeper" title="Not on this tour. Click to go deeper.">${e}</span>`;
+      else if (link && t === link.name) out += `<span class="call" data-act="jump" data-i="${link.i}" title="Stop ${link.i + 1}">${e}</span>`;
+      else if (KW.has(t)) out += `<span class="kw">${e}</span>`;
+      else if (after) out += `<span class="fn">${e}</span>`;
+      else out += e;
+      after = (t === "def" || t === "class");
+      continue;
+    } else out += e;
+    if (!/^\s+$/.test(t)) after = false;
+  }
+  return out;
+}
+
+/* ---------- sidebar: MAIN and TOURS ---------- */
+const live = r => r.agent === "writing" || r.agent === "stopping";
+const vis = () => TOURS.filter(r => !r.deleted);
+const keyName = k => k ? k.split("::").pop() : "";
+function matchTour(r, key) {
+  if (!key) return null; const leaf = key.includes("::"), idx = [];
+  r.stops.forEach((s, i) => { if (leaf ? s.key === key : (s.key === key || s.key.startsWith(key + "::"))) idx.push(i); });
+  if (!idx.length) return null;
+  if (idx[0] === 0) return { text: r.stops[0].key === key ? "starts here" : "starts inside", open: null };
+  if (leaf || (idx.length === 1 && r.stops[idx[0]].key === key)) {
+    const nums = idx.map(i => i + 1), lab = nums.length === 1 ? `stop ${nums[0]}` : `stops ${nums.slice(0, -1).join(", ")} and ${nums[nums.length - 1]}`;
+    return { text: `${lab} of ${r.n}`, open: idx[0] };
+  }
+  return { text: `${idx.length} stops inside`, open: idx[0] };
+}
+const tcount = key => vis().filter(r => matchTour(r, key)).length;
+function selKey() { if (S.ctx === "tour" && S.tourOpen) return CUR.stops[curStop() ?? 0].key; return S.sel; }
+const recChanged = r => r.id === 1 ? r.changed : r.stops.some(s => s.changed);
+function recState(r) {
+  const n = r.n, w = r.written.size, wi = (r.writing ?? 0) + 1;
+  if (r.agent === "writing") return `writing ${wi}/${n}`; if (r.agent === "stopping") return "stopping"; if (r.agent === "stopped") return `stopped ${w}/${n}`; if (r.agent === "nonews") return "no news";
+  if (recChanged(r)) return "changed"; if (!r.opened) return "new"; if (r.seen.size >= n) return "finished"; if (r.place.at === "step") return `stop ${r.place.stop + 1}/${n}`; return "";
+}
+function mainRow(key, label, kind, indent, desc, chev) {
+  const n = tcount(key);
+  return `<div class="row ${S.sel === key ? "sel" : ""}" data-act="selNode" data-key="${key}" style="padding-left:${6 + indent * 14}px"><span class="chev">${chev ? ic(chev) : ""}</span><span class="ic">${kindIc(kind)}</span><span class="label">${label}</span><span class="desc">${desc}</span>${n ? `<span class="tn" data-act="showTours" data-key="${key}" title="on ${n} tour${n > 1 ? "s" : ""}: click to see them">▶ ${n}</span>` : ""}</div>`;
+}
+function renderMainPanel() {
+  $("#pMain").classList.toggle("active", S.ctx === "main");
+  $("#mainTree").innerHTML = mainRow("checkout.py", "checkout.py", "file", 0, "2 functions", "chevron-right") + mainRow("gateway.py", "gateway.py", "file", 0, "1 function", "chevron-right")
+    + mainRow("inventory.py", "inventory.py", "file", 0, "", "chevron-down")
+    + mainRow("inventory.py::check_stock", "check_stock", "function", 2, "", "") + mainRow("inventory.py::reserve_stock", "reserve_stock", "function", 2, "", "") + mainRow("inventory.py::release_stock", "release_stock", "function", 2, "", "")
+    + mainRow("orders.py", "orders.py", "file", 0, "1 class · 2 functions", "chevron-right") + mainRow("payments.py", "payments.py", "file", 0, "2 functions", "chevron-right");
+}
+function tripRow(x, s) {
+  const cur = CUR.tstack.some(e => e.id === x.id), ans = x.state === "answering";
+  return `<div class="row srow trow2 ${cur ? "cur" : ""} ${unread(x) ? "ur" : ""}" data-act="openTrip" data-t="${x.id}" style="padding-left:${6 + s.level * 12 + 66}px"><span class="mk ${ans ? "pulse" : ""}" style="width:14px">${x.kind === "q" ? "?" : "↳"}</span><span class="lab">${esc(x.kind === "q" ? x.steps[0].q : x.name)}${ans ? " · answering" : ""}</span></div>`;
+}
+function routeHTML() {
+  const cs = curStop(); let h = "";
+  STOPS.forEach((s, i) => {
+    const m = mark(i), cls = [here(i) ? "here" : "", S.seen.has(i) ? "seen" : "", !isWritten(i) ? "nw" : "", S.rowFocus === i && S.ctx === "tour" && document.activeElement === $("#pTours") ? "fo" : ""].join(" ");
+    h += `<div class="row ${cls}" data-act="jump" data-i="${i}" data-hl="${i}" style="padding-left:${6 + s.level * 12}px"><span class="mk">${m}</span><span class="num">${i + 1}</span><span class="ic">${kindIc(s.kind)}</span><span class="label">${s.name}</span><span class="desc">${rword(i)}</span><span class="go ib" data-act="goCode" data-i="${i}" title="Go to Code">${ic("link-external")}</span></div>`;
+    if (here(i)) {
+      const tr = j => CUR.trips.filter(x => x.host.trip == null && x.host.stop === i && x.host.step === j).map(x => tripRow(x, s)).join("");
+      if (nSteps(i) > 1) for (let j = 0; j < nSteps(i); j++) h += `<div class="row srow ${S.place.step === j && !CUR.tstack.length ? "cur" : ""}" data-act="jump" data-i="${i}" data-j="${j}" style="padding-left:${6 + s.level * 12 + 54}px"><span class="mk" style="width:14px">${S.place.step === j ? "▸" : ""}</span><span class="lab">${esc(stepTitle(i, j))}</span></div>` + tr(j);
+      else h += tr(0);
+    }
+  });
+  const line = agentLine("foot");
+  const foot = line ? `<div class="tfoot"><span>${line}</span>${S.agent === "writing" ? `<button class="stopb" data-act="stopBtn">${ic("debug-stop")} Stop</button>` : ""}</div>` : S.changed || (CUR.id !== 1 && recChanged(CUR)) ? `<div class="tfoot"><span>1 stop changed since this was written</span></div>` : "";
+  return `<div class="rhead"><span class="back" data-act="showList" title="Back to the list; the tour stays open">${ic("chevron-left")}Tours</span>${ic("play")}<span class="nm">${esc(ROOT)}</span><span class="n">${cs != null ? cs + 1 : S.place.at === "end" ? N : 0} of ${N}</span><span class="ib" data-act="closeTour" title="Close Tour">${ic("close")}</span></div><div class="tree" id="routeList">${h}</div>${foot}`;
+}
+function orderedTours() { const out = []; TOURS.filter(r => !r.parentTour || !TOURS.includes(TOURS.find(x => x.id === r.parentTour))).forEach(r => { out.push(r); TOURS.filter(c => c.parentTour === r.id).forEach(c => out.push(c)); }); return out; }
+function listL2(r, q) {
+  if (r.parentTour) return `${r.n} stops · from stop 6 of ${esc(TOURS.find(x => x.id === r.parentTour).root)}`;
+  const qn = (r.trips || []).filter(x => x.kind === "q").length;
+  return `${r.n} stop${r.n > 1 ? "s" : ""}${qn ? ` · ${qn} question${qn > 1 ? "s" : ""}` : ""} · ${r.started}${q}`;
+}
+function listHTML() {
+  const key = selKey(), all = vis(), on = key ? all.filter(r => matchTour(r, key)) : [];
+  if (S.view === "onSelection" && !key) S.view = "all";
+  const shown = S.view === "all" ? all : on; let k = 0, rows = "";
+  orderedTours().forEach(r => {
+    if (r === S.pend) { rows += `<div class="trow del">Deleted the tour of ${esc(r.root)}. <a data-act="undoDel">Undo</a></div>`; return; }
+    if (r.deleted || !shown.includes(r)) return;
+    const m = S.view === "onSelection" ? matchTour(r, key) : null, q = r.query ? ` · “${esc(r.query)}”` : "";
+    const l2 = m ? `${m.text}${q}` : listL2(r, q), st = recState(r), isOpen = S.tourOpen && CUR === r;
+    const tip = `Tour of ${r.desc}. ${r.n} stops, about ${Math.max(1, Math.ceil(r.stops.reduce((a, _, i) => a + (r.id === 1 ? nStepsOf(r, i) : 1), 0) * 20 / 60))} min. Started ${r.started}, for the code at ${r.commit}.${r.opened && r.place.at === "step" ? ` You are on stop ${r.place.stop + 1}.` : ""}`;
+    rows += `<div class="trow ${r.parentTour ? "nest" : ""} ${isOpen ? "open" : ""} ${k === S.listFocus && document.activeElement === $("#pTours") ? "fo" : ""}" data-act="openT" data-t="${r.id}" data-at="${m && m.open != null ? m.open : ""}" title="${esc(tip)}"><div class="l1">${kindIc(r.stops[0].kind)}<span class="nm">${esc(r.root)}</span><span class="st ${/^(writing|stopping)/.test(st) ? "live" : ""}">${st}</span></div><div class="l2">${l2}</div><div class="acts"><span class="ib" data-act="${live(r) ? "stopT" : "delT"}" data-t="${r.id}" title="${live(r) ? "Stop" : "Delete"}">${ic(live(r) ? "debug-stop" : "trash")}</span></div></div>`; k++;
+  });
+  let msg = "";
+  if (!all.length && !S.pend) msg = `<div class="tmsg">No tours yet. A tour is your agent explaining a piece of the code, step by step.<br><button class="btn" data-act="ask">${key ? `Copy a Request for ${esc(keyName(key))}` : "Copy a Request"}</button></div>`;
+  else if (S.view === "onSelection" && !on.length) msg = `<div class="tmsg">No tour goes through <code>${esc(keyName(key))}</code>.<br><button class="btn" data-act="ask">Ask for One</button><button class="btn sec" data-act="view" data-v="all">Show All ${all.length}</button></div>`;
+  return `<div class="views"><button class="vbtn ${S.view === "all" ? "on" : ""}" data-act="view" data-v="all">All ${all.length}</button><button class="vbtn ${S.view === "onSelection" ? "on" : ""}" data-act="view" data-v="onSelection" ${key ? "" : 'disabled title="Select a node to see its tours"'}>${key ? `On ${esc(keyName(key))} ${on.length}` : "On selection"}</button></div><div class="tree" id="tourList">${rows}${msg}</div>`;
+}
+const nStepsOf = (r, i) => r.stops[i].blocks.length ? 1 + r.stops[i].blocks.length : 1;
+function renderTours() {
+  const el = $("#pTours"), n = vis().length, wr = vis().some(live), route = S.tourOpen && !S.showList;
+  el.classList.toggle("folded", S.toursFolded); el.classList.toggle("active", S.ctx === "tour" && route);
+  const head = `<div class="panel-head" data-act="foldTours">${ic(S.toursFolded ? "chevron-right" : "chevron-down")}<span class="t">Tours</span><span class="cnt">${n}</span>${wr ? '<span class="pdot"></span>' : ""}<span class="sp"></span><span class="ib" data-act="ask" title="Ask for a Tour…">${ic("add")}</span><span class="ib" data-act="toursMenu" title="More">${ic("ellipsis")}</span></div>`;
+  $("#toursIn").innerHTML = head + (S.toursFolded ? "" : route ? routeHTML() : listHTML());
+  const cur = $("#routeList .row.here"); if (cur && !S.keepScroll) cur.scrollIntoView({ block: "nearest" });
+}
+function renderSide() { renderMainPanel(); renderTours(); }
+function openTour(r, at) {
+  S.pre = null; setCur(r); r.opened = true;
+  if (at != null) r.place = { at: "step", stop: at, step: 0 };
+  else if (!(r.place.at === "step" && r.seen.size < r.n)) r.place = { at: "cover" };
+  S.tourOpen = true; S.ctx = "tour"; S.showList = false; S.toursFolded = false;
+  const p = r.place; if (p.at === "step" && p.step === nSteps(p.stop) - 1) r.seen.add(p.stop);
+  render(); if (p.at === "cover" || !r.cam) cameraFit(false); else applyCam();
+  if (at != null) cameraEnsure(at);
+}
+function finalizeDel() { clearTimeout(S.pendT); if (S.pend) { const i = TOURS.indexOf(S.pend); if (i >= 0) TOURS.splice(i, 1); S.pend = null; render(); } }
+function delT(r) { if (!r || live(r)) return; finalizeDel(); if (S.tourOpen && CUR === r) exitTour(); r.deleted = true; S.pend = r; S.pendT = setTimeout(finalizeDel, 6000); render(); }
+function undoDel() { if (!S.pend) return; clearTimeout(S.pendT); S.pend.deleted = false; S.pend = null; render(); }
+function ask(key) {
+  key = key === undefined ? selKey() : key; const text = "Walk me through " + (key ? (key.endsWith("/") ? key : "app/" + key) : "");
+  try { navigator.clipboard.writeText(text).catch(() => {}); } catch (e) {}
+  tip(key ? `Copied: “${text}”. Paste it to your agent.` : "Copied. Add what you want explained.");
+}
+function renderModal() {
+  $("#modalList").innerHTML = vis().map(r => `<div class="it" data-act="openT" data-t="${r.id}" data-at=""><span>${esc(r.root)}</span><span class="d">${r.n} stops · ${r.started}${recState(r) ? " · " + recState(r) : ""}</span></div>`).join("");
+}
+function menuAt(btn, html) {
+  const m = $("#menu"), b = btn.getBoundingClientRect(); m.innerHTML = html; m.style.left = Math.min(b.left, innerWidth - 210) + "px"; m.style.top = b.bottom + 2 + "px"; m.classList.add("on");
+}
+
+/* ---------- bar, status ---------- */
+function renderBar() {
+  const inTour = S.ctx === "tour";
+  $("#chMain").classList.toggle("on", !inTour);
+  const ct = $("#chTour"); ct.style.display = S.tourOpen ? "" : "none"; ct.classList.toggle("on", inTour);
+  ct.title = `Tour of ${ROOT}: stop ${(curStop() ?? -1) + 1} of ${N}`;
+  ct.innerHTML = `${agentLive() ? '<span class="pdot"></span>' : ic("play")} ${ROOT} <span class="x" data-act="closeTour" title="Close Tour">${ic("close")}</span>`;
+  const b = $("#bBack"); b.disabled = !(inTour && S.back.length);
+  if (S.back.length) { const t = S.back[S.back.length - 1]; b.title = t.at === "step" ? `Back to stop ${t.stop + 1} (Alt+←)` : `Back to the ${t.at} (Alt+←)`; } else b.title = "Back";
+  const nar = S.narrow; let cr = "";
+  if (!inTour) cr = `<span class="crumb">minicart</span><span class="sep">›</span><span class="crumb last">app</span>`;
+  else {
+    const cs = curStop(), ch = cs == null ? [0] : chain(cs);
+    const list = nar ? ch.slice(-1) : ch;
+    cr = list.map((i, k) => `<span class="crumb ${cs != null && k === list.length - 1 || cs == null ? "last" : ""}" data-act="jump" data-i="${i}" data-hl="${i}">${STOPS[i].name}</span>`).join('<span class="sep">›</span>');
+    if (S.place.at === "end") cr += `<span class="sep">›</span><span class="crumb last">end</span>`;
+  }
+  $("#crumbs").innerHTML = cr;
+  const al = inTour ? agentLine(nar ? "narrow" : "bar") : "";
+  $("#agentTxt").innerHTML = al ? `${al}${S.agent === "writing" ? `<button class="stopb" data-act="stopBtn" title="Stop">${ic("debug-stop")}</button>` : ""}` : "";
+  $("#bDocs").classList.toggle("pressed", S.docs);
+  // status bar
+  const st = $("#stItem"), cs = curStop(), pos = cs != null ? cs + 1 : S.place.at === "end" ? N : 0, w = S.writing != null ? S.writing + 1 : N;
+  let t = "";
+  const sfx = S.agent === "writing" ? ` · writing ${w}/${N}` : S.agent === "stopping" ? " · stopping" : S.agent === "nonews" ? " · no news" : "";
+  if (S.tourOpen) t = `${ic("play")} Tour ${pos}/${N}${sfx}`; else if (T1.agent === "writing" || T1.agent === "stopping") t = `${ic("play")} Tour: ${T1.root} · writing ${(T1.writing ?? 0) + 1}/${T1.n}`;
+  if (S.pre === "hidden") t = `${ic("play")} Tour: ${ROOT} · writing 1/${N}`;
+  st.innerHTML = t; st.style.display = t ? "" : "none";
+}
+
+/* ---------- map ---------- */
+const CW = 300, CH = 80, GX = 380, GY = 100;
+const dTrips = () => (CUR.trips || []).filter(t => t.kind === "d");
+const wd = () => ({ w: Math.max(...STOPS.map(s => s.col), ...dTrips().map(t => STOPS[t.host.stop].col + 1)) * GX + CW, h: Math.max(...STOPS.map(s => s.row)) * GY + CH });
+const pos = i => ({ x: STOPS[i].col * GX, y: STOPS[i].row * GY });
+function outHTML(i) { const s = STOPS[i]; let out = s.out || 0; if (CUR.id === 1 && i === 5) { if (dTaken()) out = 0; else return `<span class="tn" data-act="deeper" title="Not on this tour. Click to go deeper.">+1</span>`; } return out ? `<span title="${out} call is not on this tour">+${out}</span>` : ""; }
+const qHTML = i => { const n = (CUR.trips || []).filter(t => t.kind === "q" && t.host.trip == null && t.host.stop === i).length; return n ? `<span class="tn" title="${n} question${n > 1 ? "s" : ""} asked here">? ${n}</span>` : ""; };
+function tripCardHTML(t) {
+  const h = pos(t.host.stop), cur = tripNow() && tripNow().t.id === t.id;
+  return `<div class="tc trip ${cur ? "cur" : ""} ${t.state === "answering" ? "nw" : ""}" data-act="openTrip" data-t="${t.id}" style="left:${h.x + GX}px;top:${h.y}px"><div class="hd"><span class="tmark">↳</span>${kindIc("function")}<span class="nm">${t.name}</span></div><div class="meta"><span>${base(t.file)}:${t.s}</span><span class="r">side trip</span></div><div class="ft"><span>${t.state === "ready" ? `${t.steps.length} steps` : ""}</span><span class="r">${t.state === "answering" ? "writing…" : unread(t) ? "ready" : ""}</span></div></div>`;
+}
+function cardHTML(i) {
+  const s = STOPS[i], p = pos(i), m = mark(i), wr = rword(i, true);
+  const bcls = here(i) ? "here" : S.seen.has(i) ? "seen" : !isWritten(i) ? "nw" : "";
+  const bt = m === "✓" ? `✓${i + 1}` : m === "●" ? `●${i + 1}` : m === "◌" ? `<span class="${S.writing === i && S.agent === "writing" ? "spin" : ""}">◌</span>${i + 1}` : `${i + 1}`;
+  const meta = (i === 0 || !s.via) ? `<span>${base(s.file)}${CUR.id === 1 ? ":" + s.s : ""}</span>` : `<span>↳ line ${s.via}</span><span class="r">${base(s.file)}</span>`;
+  const left = [isWritten(i) && nSteps(i) > 1 ? `${nSteps(i)} steps` : "", s.docs ? "1 doc" : "", outHTML(i), qHTML(i), (CUR.id === 1 && i === 5) ? `<span class="tn" data-act="openT" data-t="6" title="A tour branched from here: click to open it">▶ 1</span>` : ""].filter(Boolean).join("&nbsp;&nbsp;");
+  return `<div class="tc kind-${s.kind} ${here(i) ? "here" : ""} ${!isWritten(i) ? "nw" : ""} ${S.hl === i ? "hl" : ""}" data-act="jump" data-i="${i}" data-card="${i}" style="left:${p.x}px;top:${p.y}px">
+    <div class="hd"><span class="badge ${bcls}">${bt}</span>${kindIc(s.kind)}<span class="nm">${s.name}</span><span class="ib" data-act="goCode" data-i="${i}" title="Go to Code">${ic("link-external")}</span></div>
+    <div class="meta">${meta}</div><div class="ft"><span>${left}</span><span class="r ${wr.startsWith("fallback") ? "warn" : ""}">${wr}</span></div></div>`;
+}
+function renderMap() {
+  const cards = $("#cards"), edges = $("#edges");
+  if (S.ctx === "main") {
+    const M = [["app", "folder", "", 0, 100, "4 files"], ["checkout.py", "file", "checkout.py", 380, 0, "2 functions"], ["inventory.py", "file", "inventory.py", 380, 100, "3 functions"], ["payments.py", "file", "payments.py", 380, 200, "2 functions"], ["reserve_stock", "function", "inventory.py::reserve_stock", 760, 100, "line 19"]];
+    cards.innerHTML = M.map(([n, k, key, x, y, d]) => { const c = key ? tcount(key) : 0; return `<div class="tc kind-${k} ${key && S.sel === key ? "sel" : ""}" ${key ? `data-act="selNode" data-key="${key}"` : ""} style="left:${x}px;top:${y}px"><div class="hd" style="padding-left:12px">${kindIc(k)}<span class="nm">${n}</span></div><div class="meta"><span>${d}</span></div><div class="ft"><span></span>${c ? `<span class="r tn" data-act="showTours" data-key="${key}" title="on ${c} tours: click to see them">▶ ${c}</span>` : ""}</div></div>`; }).join("");
+    edges.innerHTML = [0, 100, 200].map(y => `<path class="edge contain" d="M300 140 H340 V${y + 40} H380"/>`).join("") + `<path class="edge contain" d="M680 140 H760"/>`; edges.setAttribute("width", 1060); edges.setAttribute("height", 300); return;
+  }
+  const cs = curStop(), path = new Set(cs != null ? chain(cs).slice(1) : []);
+  let e = ""; STOPS.forEach((s, i) => { if (s.parent == null) return; const a = pos(s.parent), b = pos(i), x1 = a.x + CW, y1 = a.y + 40, x2 = b.x, y2 = b.y + 40, mx = x1 + 40;
+    e += `<path class="edge ${path.has(i) ? "heavy" : ""}" d="M${x1} ${y1} H${mx} V${y2} H${x2}"/>`; });
+  dTrips().forEach(t => { const a = pos(t.host.stop); e += `<path class="edge trip" d="M${a.x + CW} ${a.y + 40} H${a.x + GX}"/>`; });
+  edges.innerHTML = e; edges.setAttribute("width", wd().w); edges.setAttribute("height", wd().h);
+  cards.innerHTML = STOPS.map((_, i) => cardHTML(i)).join("") + dTrips().map(tripCardHTML).join("");
+  renderMini();
+}
+function renderMini() {
+  const m = $("#minimap"); m.classList.toggle("on", S.minimap && S.ctx === "tour"); if (!m.classList.contains("on")) return;
+  m.innerHTML = `<svg viewBox="-20 -20 ${wd().w + 40} ${wd().h + 40}">${STOPS.map((_, i) => `<rect x="${pos(i).x}" y="${pos(i).y}" width="${CW}" height="${CH}" fill="${here(i) ? "var(--focus)" : "var(--widget-border)"}"/>`).join("")}</svg>`;
+}
+/* camera: S.cam[ctx] = {x,y,k} */
+const vp = () => $("#viewport").getBoundingClientRect();
+const worldSize = () => S.ctx === "main" ? { w: 1060, h: 340 } : wd();
+function applyCam(anim) {
+  const c = S.cam[S.ctx]; if (!c) return; const w = $("#world"); w.classList.toggle("anim", !!anim && !S.rm);
+  w.style.transform = `translate(${c.x}px,${c.y}px) scale(${c.k})`;
+}
+function cameraFit(anim) {
+  const r = vp(), ws = worldSize(); if (r.width < 10) return;
+  const k = Math.min(1, (r.width - 64) / ws.w, (r.height - 64) / ws.h);
+  S.cam[S.ctx] = { k, x: (r.width - ws.w * k) / 2, y: (r.height - ws.h * k) / 2 }; applyCam(anim);
+}
+function cameraEnsure(i, force) { cameraEnsureAt(typeof i === "number" ? pos(i) : i, force); }
+function cameraEnsureAt(p, force) {
+  if (S.ctx !== "tour") return; const c = S.cam.tour, r = vp(); if (!c) return cameraFit(false);
+  const L = c.x + p.x * c.k, T = c.y + p.y * c.k, R = L + CW * c.k, B = T + CH * c.k, M = 24;
+  let dx = 0, dy = 0;
+  if (L < M) dx = M - L; else if (R > r.width - M) dx = r.width - M - R;
+  if (T < M) dy = M - T; else if (B > r.height - M) dy = r.height - M - B;
+  if (force || Math.abs(dx) > r.width || Math.abs(dy) > r.height) { dx = r.width / 2 - (L + CW * c.k / 2); dy = r.height / 2 - (T + CH * c.k / 2); }
+  if (dx || dy) { c.x += dx; c.y += dy; applyCam(true); }
+}
+(function mapInput() {
+  const v = $("#viewport"); let drag = null;
+  v.addEventListener("mousedown", e => { if (e.target.closest(".tc")) return; const c = S.cam[S.ctx]; if (!c) return; drag = { x: e.clientX, y: e.clientY, cx: c.x, cy: c.y }; v.classList.add("pan"); $("#world").classList.remove("anim"); });
+  window.addEventListener("mousemove", e => { if (!drag) return; const c = S.cam[S.ctx]; c.x = drag.cx + e.clientX - drag.x; c.y = drag.cy + e.clientY - drag.y; applyCam(); });
+  window.addEventListener("mouseup", () => { drag = null; v.classList.remove("pan"); });
+  v.addEventListener("wheel", e => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - vp().left, e.clientY - vp().top); }, { passive: false });
+})();
+function zoom(f, ox, oy) { const c = S.cam[S.ctx], r = vp(); if (!c) return; ox = ox ?? r.width / 2; oy = oy ?? r.height / 2; const k = Math.max(.3, Math.min(2, c.k * f)), g = k / c.k; c.x = ox - (ox - c.x) * g; c.y = oy - (oy - c.y) * g; c.k = k; applyCam(); }
+
+/* ---------- stage ---------- */
+let lastKey = "", lastStop = -1, lastStep = -1;
+function stageH() { const cg = $("#cg").getBoundingClientRect(); const def = S.narrow ? 385 : 250; const max = Math.max(cg.height * .45, S.narrow ? 360 : 0), min = 30 + 5 * 19 + 14; return Math.max(min, Math.min(max, S.userH ?? def)); }
+function foot(extra) {
+  const p = S.place, cs = p.at === "step" ? p.stop : -1, last = p.at === "step" && p.stop === N - 1 && p.step === nSteps(p.stop) - 1;
+  const segs = STOPS.map((s, i) => { const c = (S.seen.has(i) || here(i)) ? "f" : !isWritten(i) ? "n" + (S.writing === i ? " w" : "") : ""; return `<span class="seg ${c}" data-act="jump" data-i="${i}" title="${i + 1} ${s.name}"><i></i></span>`; }).join("");
+  const nwHere = p.at === "step" && !isWritten(p.stop);
+  const nextB = p.at === "cover" ? `<button class="btn" data-act="next">Start ›</button>` : nwHere ? `<button class="btn dimn" disabled>Next ◌</button>` : `<button class="btn" data-act="next">${last ? "Finish" : "Next"} ›</button>`;
+  return `<div class="foot"><div class="segs">${segs}</div><button class="btn sec" data-act="prev" ${p.at === "cover" ? "disabled" : ""}>‹ Prev</button>${nextB}</div>`;
+}
+function stageHTML() {
+  const tv = tripNow(); if (tv) return tripStageHTML(tv);
+  const p = S.place;
+  if (S.folded) {
+    if (p.at !== "step") return `<div class="mini">${ic("play")} <b>Tour of ${ROOT}</b><span class="place">${p.at}</span><button class="ib" data-act="prev">${ic("chevron-left")}</button><button class="ib" data-act="next">${ic("chevron-right")}</button><button class="ib" data-act="fold" title="Unfold">${ic("chevron-up")}</button></div>`;
+    const s = STOPS[p.stop], ttl = !isWritten(p.stop) ? "not written" : (p.step === 0 && s.blocks.length ? "" : (s.blocks[p.step - (s.blocks.length ? 1 : 0)] || {}).focus || "");
+    return `<div class="mini"><span style="color:var(--focus)">${isWritten(p.stop) ? "●" : "◌"}</span> ${p.stop + 1} ${kindIc(s.kind)} <b>${s.name}</b>${ttl ? `<span class="ttlm">· ${esc(ttl)}</span>` : ""}<span class="place">stop ${p.stop + 1} of ${N}${nSteps(p.stop) > 1 ? ` · ${p.step + 1} of ${nSteps(p.stop)}` : ""}</span><button class="ib" data-act="prev">${ic("chevron-left")}</button><button class="ib" data-act="next">${ic("chevron-right")}</button><button class="ib" data-act="fold" title="Unfold">${ic("chevron-up")}</button></div>`;
+  }
+  if (p.at === "cover") {
+    const w = S.written.size; const sts = S.agent === "writing" ? `◌ the agent is writing stop ${(S.writing ?? 0) + 1} of ${N} …` : S.agent === "complete" ? `✓ all ${N} stops are written` : S.agent === "stopping" ? agentLine() : S.agent === "stopped" ? `stopped: ${w} of ${N} written` : agentLine("foot");
+    return `<div class="sh"><span class="mk">${ic("play")}</span><span class="nm">Tour of ${ROOT}</span><span class="sp"></span><button class="ib" data-act="fold" title="Fold">${ic("chevron-down")}</button></div>
+      <div class="cover">${CUR.query ? `<div class="q">“${esc(CUR.query)}”</div>` : `<div class="d"> </div>`}<div>${N} stops · about ${Math.max(1, Math.ceil(TOTAL_STEPS * 20 / 60))} min · ${esc(CUR.desc)}</div><div class="d">${esc(STOPS[0].file)} · written for the code as it is at ${CUR.commit}</div>${recChanged(CUR) ? `<div style="color:var(--warn)">${ic("warning")} The code changed after this was written.</div>` : ""}${CUR.parentTour ? `<div><span class="blink" data-act="openT" data-t="${CUR.parentTour}">‹ Back to the tour of ${esc(TOURS.find(x => x.id === CUR.parentTour).root)}</span></div>` : ""}
+      <div class="act"><span class="d">${sts}</span><span class="sp"></span><button class="btn" data-act="next">Start ›</button></div></div>`;
+  }
+  if (p.at === "end") {
+    const unseen = STOPS.map((_, i) => i).filter(i => !S.seen.has(i)), w = S.written.size;
+    const head = S.agent === "stopped" ? `End of what was written: ${w} of ${N} stops.` : `${N} stops · ${TOTAL_STEPS} steps · ${unseen.length ? `${unseen.length} not seen` : "all seen"}`;
+    const b1 = unseen.length ? `<button class="btn" data-act="jump" data-i="${unseen[0]}">Go to the first one I skipped</button>` : `<button class="btn sec" data-act="backLast">‹ Back to the last step</button>`;
+    return `<div class="sh"><span class="mk">✓</span><span class="nm">End of the tour of ${ROOT}</span><span class="sp"></span><button class="ib" data-act="fold" title="Fold">${ic("chevron-down")}</button></div>
+      <div class="end"><div style="margin-top:6px">${head}</div><div class="btns">${unseen.length ? `<button class="btn sec" data-act="backLast">‹ Back to the last step</button>` : b1}${unseen.length ? b1.replace('class="btn"', 'class="btn sec"') : ""}<button class="btn sec" data-act="again">Start Again</button><button class="btn" data-act="closeTour">Close Tour</button></div></div>`;
+  }
+  const i = p.stop, s = STOPS[i], wr = isWritten(i), nb = s.blocks.length, blk = nb && p.step > 0 ? s.blocks[p.step - 1] : null;
+  const via = s.via ? `<span class="via" data-act="jump" data-i="${s.parent}" data-j="${stepForLine(s.parent, s.via)}">${ic("call-outgoing")}called on line ${s.via}</span>` : "";
+  const place = `stop ${i + 1} of ${N}${nSteps(i) > 1 && wr ? ` · ${p.step + 1} of ${nSteps(i)}` : ""}`;
+  const head = `<div class="sh ${wr ? "" : "nw"}"><span class="mk">${wr ? "●" : "◌"}</span><span>${i + 1}</span>${kindIc(s.kind)}<span class="nm">${s.name}</span><span class="loc" data-act="goCode" title="Go to Code">${base(s.file)}${CUR.id === 1 ? ":" + s.s : ""}</span>${via}<span class="sp"></span><span class="place">${place}</span><button class="ib" data-act="goCode" title="Go to Code">${ic("link-external")}</button><button class="ib" data-act="fold" title="Fold (.)">${ic("chevron-down")}</button></div>`;
+  // code
+  const mode = !wr ? "plain" : s.mode === "contextual" ? "dim" : !nb ? "lit" : p.step === 0 ? "intro" : "block";
+  const links = {}; STOPS.forEach((c, k) => { if (c.parent === i) links[c.via] = { name: c.name, i: k }; });
+  const qs = wr ? stopTrips(i, "q").filter(x => x.host.step === p.step && x.askLines) : [];
+  const gut = L => { const q = qs.find(x => L >= x.askLines[0] && L <= x.askLines[1]); return q ? `<span class="q" data-act="openTrip" data-t="${q.id}" title="${esc(q.steps[0].q)}">?</span>` : '<span class="q"></span>'; };
+  const code = lines(i).map(([L, t], idx) => {
+    t = shownLine(i, L, t); const inB = blk && L >= blk.s && L <= blk.e;
+    const cls = mode === "lit" || inB ? "lit" : mode === "dim" || mode === "block" ? "dim" : "";
+    return `<div class="ln ${cls} ${mode === "intro" && idx === 0 ? "mark1" : ""} ${CUR.id === 1 && i === 2 && CUR.changed && L === 22 ? "edited" : ""}" data-L="${L}"><span class="n">${L}</span>${gut(L)}<span class="b"></span><span class="t">${hl(t, links[L], cls === "lit" && deepOn(i) && L === 11 ? { name: "send_charge" } : null)}</span></div>`;
+  }).join("") || '<div class="ln"><span class="t" style="padding-left:20px;color:var(--dim)">(the code of this stop is not in the mockup)</span></div>';
+  // text
+  let tx;
+  if (!wr) {
+    const msg = S.writing === i && agentLive() ? "The agent is writing this stop. You can read the code meanwhile." : S.agent === "stopped" ? "Not written: the tour was stopped here. Ask the agent to continue it." : S.agent === "nonews" ? "Not written. The agent may have stopped: look at its terminal, or ask it to continue the tour." : `Not written yet: the agent is on stop ${(S.writing ?? 0) + 1}.`;
+    tx = `<div class="bars"><i style="width:92%"></i><i style="width:100%"></i><i style="width:58%"></i></div><div class="mrk" style="margin-top:14px">${msg}</div>`;
+  } else {
+    const deg = s.degraded; let marks = "";
+    if (deg) marks += `<div class="mrk w">${ic("warning")} No explanation was written for these lines.</div>`;
+    if (isChanged(i)) marks += `<div class="mrk">The code changed after this was written. The lines may not match.</div>`;
+    if (mode === "intro" || mode === "lit" || mode === "dim") {
+      tx = `<p class="lead">${md(s.intro)}</p>`;
+      if (s.first != null) tx += `<div class="mrk">⇢ Explained at stop ${s.first + 1}<span class="go" data-act="jump" data-i="${s.first}">[Go there]</span></div>`;
+    } else tx = `<div class="ttl">${esc(blk.focus)}</div>${blk.text ? `<p>${md(blk.text)}</p>` : ""}`;
+    tx += marks;
+  }
+  return `${head}<div class="sbody"><div class="codewrap"><div class="codepane ${isChanged(i) ? "chg" : ""}" id="codepane">${code}</div><button class="more" id="more" data-act="more"></button></div>
+    <div class="textpane" ${S.textW ? `style="width:${S.textW}px"` : ""}><div class="tgrip" id="tgrip"></div><div class="tx ${S.fadeNext ? "fade" : ""}">${tx}</div>${wr ? askHTML({ trip: null, stop: i, step: p.step }, null) : ""}${foot()}</div></div>`;
+}
+function renderStage() {
+  const stage = $("#stage"), cg = $("#cg"), key = JSON.stringify(S.place) + (curStop() != null ? isWritten(curStop()) : "") + S.changed + JSON.stringify(CUR.tstack);
+  const old = $("#codepane"), keepTop = old ? old.scrollTop : 0;
+  const ae = document.activeElement; if (ae && ae.id === "askIn") { S.askText = ae.value; S.askFocus = true; } else S.askFocus = false;
+  S.fadeNext = key !== lastKey && lastKey !== ""; if (S.fadeNext) S.askText = "";
+  const showStage = S.ctx === "tour" && S.pre == null;
+  stage.style.display = showStage ? "" : "none";
+  stage.style.height = (S.folded ? 30 : stageH()) + "px"; $("#ssash").style.display = S.folded ? "none" : "";
+  $("#stageIn").innerHTML = stageHTML(); stage.classList.toggle("trip", !!tripNow());
+  const ai = $("#askIn"); if (ai) {
+    ai.value = S.askText || ""; const fit = () => { ai.style.height = "18px"; ai.style.height = Math.min(54, ai.scrollHeight) + "px"; }; fit();
+    ai.addEventListener("input", () => { S.askText = ai.value; fit(); });
+    ai.addEventListener("keydown", ev => { ev.stopPropagation(); if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); askSend(ai.value); } else if (ev.key === "Escape") ai.blur(); else if (ev.key === "Tab" && !ai.value && ai.dataset.sug) { ev.preventDefault(); ai.value = ai.dataset.sug; S.askText = ai.value; fit(); } });
+    if (S.askFocus) { ai.focus(); ai.setSelectionRange(ai.value.length, ai.value.length); }
+  }
+  lastKey = key;
+  const cp = $("#codepane"); if (cp && tripNow()) {
+    const fl = $(".ln.lit", cp); cp.scrollTop = fl ? Math.max(0, fl.offsetTop - 7 - 2 * 19) : 0; lastStop = -1; cp.addEventListener("scroll", moreChip); moreChip();
+    const tg = $("#tgrip"); if (tg) tg.addEventListener("mousedown", e => dragText(e));
+  } else if (cp) {
+    const p = S.place, i = p.stop; let top = 0;
+    if (i === lastStop) top = keepTop;
+    const s = STOPS[i], blk = s.blocks.length && p.step > 0 ? s.blocks[p.step - 1] : null;
+    if (blk && isWritten(i) && !S.overCode) {
+      const i0 = blk.s - s.s, i1 = blk.e - s.s, h = cp.clientHeight - 14;
+      if (!(i0 * 19 >= top && (i1 + 1) * 19 <= top + h)) top = Math.max(0, (i0 - 2) * 19);
+    }
+    cp.scrollTop = top; lastStop = i; lastStep = p.step;
+    cp.addEventListener("scroll", moreChip); cp.addEventListener("mouseenter", () => S.overCode = true); cp.addEventListener("mouseleave", () => S.overCode = false); moreChip();
+    const tg = $("#tgrip"); if (tg) tg.addEventListener("mousedown", e => dragText(e));
+  } else lastStop = -1;
+}
+function moreChip() {
+  const cp = $("#codepane"), b = $("#more"); if (!cp || !b) return;
+  const lits = $$(".ln.lit", cp); const bottom = cp.scrollTop + cp.clientHeight - 7; let more = 0;
+  lits.forEach(l => { if (l.offsetTop + 19 > bottom + 1) more++; });
+  b.classList.toggle("on", more > 0); b.textContent = `▾ ${more} more lit line${more > 1 ? "s" : ""}`;
+}
+function dragText(e) { const tp = $(".textpane"), x0 = e.clientX, w0 = tp.getBoundingClientRect().width; const mv = ev => { S.textW = Math.max(320, Math.min(460, w0 - (ev.clientX - x0))); tp.style.width = S.textW + "px"; }; const up = () => { removeEventListener("mousemove", mv); removeEventListener("mouseup", up); }; addEventListener("mousemove", mv); addEventListener("mouseup", up); e.preventDefault(); }
+$("#ssash").addEventListener("mousedown", e => { const h0 = stageH(), y0 = e.clientY; const mv = ev => { S.userH = h0 + (y0 - ev.clientY); $("#stage").style.height = stageH() + "px"; }; const up = () => { removeEventListener("mousemove", mv); removeEventListener("mouseup", up); render(); if (curStop() != null) cameraEnsure(curStop()); }; addEventListener("mousemove", mv); addEventListener("mouseup", up); e.preventDefault(); });
+$("#sash").addEventListener("mousedown", e => { e.stopPropagation(); const pm = $("#pMain"), h0 = pm.getBoundingClientRect().height, y0 = e.clientY, tot = $("#panels").getBoundingClientRect().height; const mv = ev => { pm.style.flex = `0 0 ${Math.max(90, Math.min(tot - 90, h0 + ev.clientY - y0))}px`; }; const up = () => { removeEventListener("mousemove", mv); removeEventListener("mouseup", up); }; addEventListener("mousemove", mv); addEventListener("mouseup", up); e.preventDefault(); });
+
+/* ---------- overlays ---------- */
+function renderPre() {
+  $("#ovTerm").classList.toggle("on", S.pre === "term"); $("#ovHidden").classList.toggle("on", S.pre === "hidden");
+  if (S.pre === "term") $("#termTxt").innerHTML = `<span class="dim">&gt; walk me through checkout_order</span>\n\n● How far should the tour of checkout_order go?\n\n  1. Only checkout_order                       1 stop    · about 1 min\n  2. And what it calls                         6 stops   · about 4 min\n  3. And what those call                      10 stops   · about 7 min\n  4. All the way down                         11 stops   · about 8 min\n\n<span class="dim">&gt; 3</span>\n\n● Tour started: checkout_order, what it calls, and what those call · 10 stops · about 7 min.\n  It is on the V-NOC canvas. Say "deeper" for more.\n\n<button class="btn" data-act="notifOpen">The agent runs: vnoc walk start  ›</button>`;
+}
+function menuOpen() {
+  menuAt($("#bMenu"), `<div class="it" data-act="fit">Fit Route</div><div class="it" data-act="mini">${S.minimap ? "Hide" : "Show"} Minimap</div><hr><div class="it" data-act="again">Start Again</div><div class="it" data-act="openModal">Open Tour…</div><div class="it" data-act="closeTour">Close Tour</div>`);
+}
+function renderDocs() { const d = $("#docs"), i = curStop(); d.classList.toggle("on", S.docs && S.ctx === "tour"); if (i == null) { d.innerHTML = `<h4>Docs</h4><p>Nothing selected.</p>`; return; } d.innerHTML = `<h4>Docs · ${STOPS[i].name}</h4><p>${i === 2 ? "A doc someone already wrote for this node: <i>“Stock is one number per SKU; there is no separate reserved count.”</i>" : "No doc on this node yet."}</p><p style="color:var(--dim)">(static) The panel follows the current stop, so a doc and the tour's sentence can be read side by side.</p>`; }
+
+/* ---------- render ---------- */
+function render() {
+  renderSide(); renderBar(); renderMap(); renderStage(); renderPre(); renderDocs();
+    $("#cg").classList.toggle("narrow", S.narrow);
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-act]"); if (!el) return; const a = el.dataset.act, i = +el.dataset.i, j = el.dataset.j != null ? +el.dataset.j : 0;
+  if (a !== "menu") $("#menu").classList.remove("on");
+  const swallow = ["jump", "goCode", "closeTour", "stopBtn"].includes(a);
+  if (a === "toMain" || a === "toTour") { if (e.target.closest("[data-act]:not([data-act=toMain]):not([data-act=toTour])") !== el && e.target.closest("[data-act]") !== el) return; }
+  switch (a) {
+    case "jump": if (S.ctx !== "tour") { S.ctx = "tour"; S.tourOpen = true; } if (S.place.at === "step" && S.place.stop === i && (el.dataset.j == null || S.place.step === j)) { render(); applyCam(); break; } S.keepScroll = el.closest("#routeList") != null; go({ at: "step", stop: i, step: j }, true); S.keepScroll = false; break;
+    case "next": next(); break; case "prev": prev(); break;
+    case "backBtn": case "backLast": a === "backLast" ? go(prevPlace(S.place), false) : backBtn(); break;
+    case "toMain": toMain(); break; case "toTour": toTour(); break;
+    case "closeTour": exitTour(); break; case "stopBtn": stopAgent(); break;
+    case "fold": S.folded = !S.folded; render(); if (curStop() != null) cameraEnsure(curStop()); break;
+    case "goCode": if (!isNaN(i)) { go({ at: "step", stop: i, step: 0 }, true); } goCode(); break;
+    case "center": if (curStop() != null) cameraEnsure(curStop(), true); break;
+    case "fit": cameraFit(true); break; case "zin": zoom(1.2); break; case "zout": zoom(1 / 1.2); break;
+    case "docs": S.docs = !S.docs; render(); break;
+    case "menu": e.stopPropagation(); $("#menu").classList.contains("on") ? $("#menu").classList.remove("on") : menuOpen(); break;
+    case "mini": S.minimap = !S.minimap; render(); break;
+    case "again": S.place = { at: "cover" }; S.seen = new Set(); S.back = []; render(); cameraFit(true); break;
+    case "more": { const cp = $("#codepane"); cp.scrollTop += cp.clientHeight - 20; break; }
+    case "openTrip": openTrip(+el.dataset.t); break; case "tripBack": tripBack(); break; case "tripPrev": tripMove(-1); break; case "tripNext": tripMove(1); break;
+    case "deeper": goDeeper(); break; case "keep": { const tv = tripNow(); if (tv) tip(`Saved as a doc on ${STOPS[mainHost(tv.t).stop].name}`); break; }
+    case "askSend": askSend(($("#askIn") || {}).value); break;
+    case "openModal": renderModal(); $("#modal").classList.add("on"); break;
+    case "openTourN": $("#modal").classList.remove("on"); openTour(T1); break;
+    case "openT": { $("#modal").classList.remove("on"); const r = TOURS.find(x => x.id === +el.dataset.t), at = el.dataset.at; if (S.tourOpen && CUR === r && !at) { S.showList = false; S.pre = null; S.ctx = "tour"; render(); applyCam(); } else openTour(r, at ? +at : null); break; }
+    case "delT": delT(TOURS.find(x => x.id === +el.dataset.t)); break; case "undoDel": undoDel(); break;
+    case "stopT": stopAgent(); break;
+    case "view": S.view = el.dataset.v; S.listFocus = 0; renderTours(); break;
+    case "showList": S.showList = true; render(); break;
+    case "foldTours": S.toursFolded = !S.toursFolded; renderTours(); break;
+    case "ask": ask(el.dataset.key); break;
+    case "toursMenu": e.stopPropagation(); menuAt(el, `<div class="it" data-act="delFinished">Delete Finished Tours</div><div class="it" data-act="delAll">Delete All Tours…</div>`); break;
+    case "delFinished": finalizeDel(); for (let k = TOURS.length - 1; k >= 0; k--) if (recState(TOURS[k]) === "finished") { if (S.tourOpen && CUR === TOURS[k]) exitTour(); TOURS.splice(k, 1); } render(); break;
+    case "delAll": if (confirm("Delete all tours that are not being written?")) { finalizeDel(); if (S.tourOpen && !live(CUR)) exitTour(); for (let k = TOURS.length - 1; k >= 0; k--) if (!live(TOURS[k])) TOURS.splice(k, 1); render(); } break;
+    case "selNode": S.sel = el.dataset.key; S.listFocus = 0; if (S.ctx !== "main") toMain(); else render(); break;
+    case "showTours": S.sel = el.dataset.key; S.toursFolded = false; S.showList = true; S.view = "onSelection"; S.listFocus = 0; if (S.ctx !== "main") toMain(); else render(); break;
+    case "notNow": $("#toastHidden").classList.remove("on"); break;
+    case "notifOpen": S.pre = null; S.ctx = "tour"; S.tourOpen = true; restart(); break;
+    case "stItem": S.pre = null; if (S.tourOpen) { toTour(); } else openTour(T1); break;
+  }
+});
+$("#modal").addEventListener("click", e => { if (e.target.id === "modal") $("#modal").classList.remove("on"); });
+document.addEventListener("click", e => { if (!e.target.closest("#menu,#bMenu,[data-act=toursMenu]")) $("#menu").classList.remove("on"); });
+document.addEventListener("dblclick", e => { const r = e.target.closest("#routeList .row:not(.srow)"); if (r) goCode(); });
+document.addEventListener("mouseover", e => { const el = e.target.closest("[data-hl]"); const n = el ? +el.dataset.hl : null; if (n !== S.hl) { S.hl = n; $$("[data-card]").forEach(c => c.classList.toggle("hl", +c.dataset.card === n && !c.classList.contains("here"))); } });
+$("#cg").addEventListener("mousedown", () => { if (!document.activeElement.closest("#cg")) $("#cg").focus(); });
+$("#pTours").addEventListener("keydown", e => {
+  const route = S.tourOpen && !S.showList;
+  if (route) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { S.rowFocus = Math.max(0, Math.min(N - 1, S.rowFocus + (e.key === "ArrowDown" ? 1 : -1))); renderTours(); const r = $$("#routeList .row:not(.srow)")[S.rowFocus]; r && r.classList.add("fo") && r.scrollIntoView({ block: "nearest" }); e.preventDefault(); e.stopPropagation(); }
+    else if (e.key === "Enter") { S.keepScroll = true; go({ at: "step", stop: S.rowFocus, step: 0 }, true); S.keepScroll = false; e.stopPropagation(); }
+    return;
+  }
+  const rows = $$("#tourList .trow[data-t]"); if (!rows.length && !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { S.listFocus = Math.max(0, Math.min(rows.length - 1, S.listFocus + (e.key === "ArrowDown" ? 1 : -1))); renderTours(); e.preventDefault(); }
+  else if (e.key === "Enter" || e.key === " ") { rows[S.listFocus] && rows[S.listFocus].click(); e.preventDefault(); }
+  else if (e.key === "Delete" || (e.key === "Backspace" && e.metaKey)) { const r = rows[S.listFocus] && TOURS.find(x => x.id === +rows[S.listFocus].dataset.t); delT(r); e.preventDefault(); }
+  else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { S.view = e.key === "ArrowRight" && selKey() ? "onSelection" : "all"; S.listFocus = 0; renderTours(); e.preventDefault(); }
+});
+$("#pTours").addEventListener("blur", () => $$("#pTours .fo").forEach(r => r.classList.remove("fo")));
+document.addEventListener("keydown", e => {
+  if (S.ctx !== "tour" || S.pre || e.target.closest("#pTours") || e.target.closest("select") || e.target.tagName === "TEXTAREA") return;
+  const tv0 = tripNow();
+  if (tv0) { const k0 = e.key; let u = true; if (k0 === "Escape" || (k0 === "ArrowLeft" && e.altKey)) tripBack(); else if (k0 === "ArrowRight" || k0 === " ") tripMove(1); else if (k0 === "ArrowLeft") tripMove(-1); else if (k0 === "/") { const a = $("#askIn"); if (a) { S.askFocus = true; a.focus(); } } else if (k0 === ".") { S.folded = !S.folded; render(); } else u = false; if (u) e.preventDefault(); return; }
+  const k = e.key, p = S.place; let used = true;
+  if (k === "ArrowRight" || k === " ") { p.at === "end" ? 0 : next(); }
+  else if (k === "ArrowLeft" && e.altKey) backBtn(); else if (k === "ArrowLeft") prev();
+  else if (k === "ArrowDown") nextStop(1); else if (k === "ArrowUp") nextStop(-1);
+  else if (k === "Home") go({ at: "cover" }, false); else if (k === "End") go({ at: "end" }, false);
+  else if (k === "Enter" && (e.metaKey || e.ctrlKey)) goCode();
+  else if (k === "Enter") { if (p.at === "cover") next(); else if (p.at === "end") exitTour(); else used = false; }
+  else if (k === "Escape") { if (S.folded) { S.folded = false; render(); } else exitTour(); }
+  else if (k === ".") { S.folded = !S.folded; render(); if (curStop() != null) cameraEnsure(curStop()); }
+  else if (k === "/") { const a = $("#askIn"); if (a) { S.askFocus = true; a.focus(); } else used = false; }
+  else used = false;
+  if (used) e.preventDefault();
+});
+
+/* ---------- demo strip ---------- */
+function syncStrip() { $("#bSilent").classList.toggle("on", T1.silent); $("#bChanged").classList.toggle("on", T1.changed); $("#bWide").classList.toggle("on", !document.body.classList.contains("narrowW")); $("#bNarrow").classList.toggle("on", document.body.classList.contains("narrowW")); $("#bRm").textContent = S.rm ? "on" : "off"; $("#bRm").classList.toggle("on", S.rm); }
+function restart() { setCur(T1); T1.trips = [mkQ1()]; T1.tstack = []; S.showList = false; Object.assign(S, fresh()); S.folded = false; clockSet(); render(); S.cam.tour = null; requestAnimationFrame(() => cameraFit(false)); syncStrip(); }
+$("#strip").addEventListener("click", e => {
+  const b = e.target.closest("[data-s]"); if (!b) return; const a = b.dataset.s;
+  if (a === "theme") { S.light = !S.light; document.body.classList.toggle("light", S.light); }
+  else if (a === "restart") { S.pre = null; S.ctx = "tour"; S.tourOpen = true; restart(); }
+  else if (a === "all") { onT1(() => { for (let i = 0; i < N; i++) S.written.add(i); S.writing = null; if (S.agent !== "stopped") S.agent = "complete"; S.silent = false; }); clockSet(); render(); }
+  else if (a === "silent") { T1.silent = !T1.silent; if (!T1.silent && T1.agent === "nonews") T1.agent = "writing"; clockSet(); render(); }
+  else if (a === "term") { S.pre = "term"; S.ctx = "tour"; render(); }
+  else if (a === "hidden") { $("#toastHidden").classList.add("on"); S.pre = "hidden"; render(); }
+  else if (a === "changed") { T1.changed = !T1.changed; render(); }
+  else if (a === "wide" || a === "narrow") { document.body.classList.toggle("narrowW", a === "narrow"); }
+  else if (a === "rm") { S.rm = !S.rm; document.body.classList.toggle("rm", S.rm); }
+  syncStrip();
+});
+$("#spd").addEventListener("change", e => { S.speed = +e.target.value; clockSet(); });
+new ResizeObserver(() => { const n = $("#cg").getBoundingClientRect().width < 640; if (n !== S.narrow) { S.narrow = n; render(); } else { $("#stage").style.height = (S.folded ? 30 : stageH()) + "px"; } if (curStop() != null && S.ctx === "tour") cameraEnsure(curStop()); }).observe($("#cg"));
+
+render(); clockSet(); requestAnimationFrame(() => { cameraFit(false); $("#cg").focus(); });
+</script>
+</body>
+</html>

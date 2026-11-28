@@ -20,12 +20,13 @@ use vnoc_domain::{
 };
 use vnoc_driver_protocol::{DefKind, PlanFileIdParams, PlanId, PlanIdsParams, TextEdit};
 
-use super::edits::EditSink;
+use super::edits::{EditSink, apply_text_edits};
 use super::folder_marker;
 use crate::driver_host::DriverHost;
 use crate::index::Index;
 use crate::project::Project;
 use crate::protocol::{AttachParams, AttachResult, Document};
+use crate::tours::{self, rebase::Edited};
 use crate::userdata::{
     NewDoc, UserData, UserDataError, after_frontmatter, is_tag, without_own_title,
 };
@@ -202,30 +203,44 @@ pub(super) fn find_target(index: &Index, key: &str) -> Result<(LocationKey, Targ
     }
 }
 
-pub async fn attach(
-    mut env: Env<'_>,
-    params: AttachParams,
-    options: AttachOptions,
-) -> Result<Attached, AttachError> {
-    check_note(&params.title, &options)?;
-    let (location, target) = find_target(&env.index.read().unwrap(), &params.key)?;
-    let document = document_for(
-        &env,
-        &target,
-        &location,
-        &params.key,
-        params.document.as_ref(),
-    )?;
+/// What [`ensure_node`] settled: the node's ID, and what was written for it.
+#[derive(Debug)]
+pub struct Ensured {
+    pub id: NodeId,
+    pub location: LocationKey,
+    pub kind: NodeKind,
+    /// whether the ID is in the code now (it was, or the marker was written)
+    pub id_in_code: bool,
+    /// `None` when the code was not touched (the node had its ID, or none was allowed, or the marker could not be written)
+    pub marker: Option<MarkerWritten>,
+    /// why the marker could not be written, in words for the user
+    pub notice: Option<String>,
+}
+
+/// Steps 1 to 3 of an attach, with no doc: the node's ID (the one in the code, else the one its location already has, else a new one), the marker
+/// in the code for a node that has none and is allowed one, and `node.toml`. `markers` is the editor's first-time answer (`AttachParams::markers`);
+/// `no_marker` is this call's own "no". `before_marker` is asked once the ID is known and before anything is written: an `Err` writes nothing
+/// (`attach` refuses a title the node already has there).
+pub async fn ensure_node(
+    env: &mut Env<'_>,
+    key: &str,
+    document: Option<&Document>,
+    markers: Option<bool>,
+    no_marker: bool,
+    before_marker: impl FnOnce(&UserData, &NodeId) -> Result<(), AttachError>,
+) -> Result<Ensured, AttachError> {
+    let (location, target) = find_target(&env.index.read().unwrap(), key)?;
+    let document = document_for(env, &target, &location, key, document)?;
 
     let data = UserData::new(env.project.git_root());
     let settings = data.settings()?;
-    // the question is asked once per project: afterwards `vnoc.toml` answers it; `no_marker` is this attach's own "no"
+    // the question is asked once per project: afterwards `vnoc.toml` answers it; `no_marker` is this call's own "no"
     let project_says = if settings.initialized {
         settings.markers
     } else {
-        params.markers.unwrap_or(true)
+        markers.unwrap_or(true)
     };
-    let markers_on = project_says && !options.no_marker;
+    let markers_on = project_says && !no_marker;
 
     // 1. which ID: the one in the code, else the one this location already has, else a new one
     let in_code = target.in_code();
@@ -238,25 +253,14 @@ pub async fn attach(
         (Some(id), _) | (None, Some(id)) => (id, false),
         (None, None) => (first_free_id(&location, |id| data.is_taken(id))?, true),
     };
-    // a title the node has is refused before anything is written
-    if !options.again
-        && let Some(held) = data
-            .docs_of(&id)
-            .into_iter()
-            .find(|doc| doc.title.trim().to_lowercase() == params.title.trim().to_lowercase())
-    {
-        return Err(AttachError::TitleTaken {
-            title: held.title,
-            path: held.path,
-        });
-    }
+    before_marker(&data, &id)?;
 
     // 2. the marker, for a node that has none and is allowed one
     let mut notice = None;
     let mut marker = None;
     let mut id_in_code = in_code.is_some();
     if is_new && markers_on {
-        match write_marker(&mut env, &target, &location, &id, &document).await {
+        match write_marker(env, &target, &location, &id, &document).await {
             Ok(written) => {
                 id_in_code = true;
                 marker = Some(written);
@@ -269,8 +273,8 @@ pub async fn attach(
         }
     }
 
-    // 3. `.vnoc/`: first time set up, then the node, then the doc
-    data.initialize(params.markers.unwrap_or(true))?;
+    // 3. `.vnoc/`: first time set up, then the node
+    data.initialize(markers.unwrap_or(true))?;
     let mut toml = NodeToml::new(&location);
     toml.set_id_in_code(if id_in_code {
         IdInCode::Yes
@@ -279,6 +283,50 @@ pub async fn attach(
     });
     toml.set_kind(&target.kind());
     data.create_node(&id, &toml)?;
+    Ok(Ensured {
+        id,
+        kind: target.kind(),
+        location,
+        id_in_code,
+        marker,
+        notice,
+    })
+}
+
+pub async fn attach(
+    mut env: Env<'_>,
+    params: AttachParams,
+    options: AttachOptions,
+) -> Result<Attached, AttachError> {
+    check_note(&params.title, &options)?;
+    // a title the node has is refused before anything is written
+    let refuse_a_title_held = |data: &UserData, id: &NodeId| {
+        if !options.again
+            && let Some(held) = data
+                .docs_of(id)
+                .into_iter()
+                .find(|doc| doc.title.trim().to_lowercase() == params.title.trim().to_lowercase())
+        {
+            return Err(AttachError::TitleTaken {
+                title: held.title,
+                path: held.path,
+            });
+        }
+        Ok(())
+    };
+    let ensured = ensure_node(
+        &mut env,
+        &params.key,
+        params.document.as_ref(),
+        params.markers,
+        options.no_marker,
+        refuse_a_title_held,
+    )
+    .await?;
+
+    // 4. the doc
+    let data = UserData::new(env.project.git_root());
+    let location = &ensured.location;
     let hint = if location.qualname().is_empty() {
         location.path().to_string()
     } else {
@@ -287,7 +335,7 @@ pub async fn attach(
     // V-NOC writes the title as the heading: a body that starts with it is not given it twice
     let (body, title_line_dropped) = without_own_title(&params.title, &options.body);
     let doc: PathBuf = data.create_doc(
-        &id,
+        &ensured.id,
         &NewDoc {
             title: &params.title,
             hint: &hint,
@@ -299,13 +347,13 @@ pub async fn attach(
 
     Ok(Done {
         result: AttachResult {
-            id: id.to_string(),
+            id: ensured.id.to_string(),
             doc: doc.to_string_lossy().into_owned(),
-            id_in_code,
-            notice,
+            id_in_code: ensured.id_in_code,
+            notice: ensured.notice,
             title_line_dropped,
         },
-        marker,
+        marker: ensured.marker,
     })
 }
 
@@ -418,7 +466,14 @@ async fn write_def_marker(
     if plan.edits.is_empty() {
         return Err("the function is not in the open document".into());
     }
-    apply_edits(env, document, "V-NOC: add an ID", &plan.edits).await?;
+    apply_edits(
+        env,
+        document,
+        location.path(),
+        "V-NOC: add an ID",
+        &plan.edits,
+    )
+    .await?;
     let first = plan.written.first().map(|w| w.span.start);
     Ok(MarkerWritten::Line(line_of(first, &plan.edits)))
 }
@@ -450,7 +505,14 @@ async fn write_file_marker(
     if let Some(reason) = plan.skipped {
         return Err(reason);
     }
-    apply_edits(env, document, "V-NOC: add a file ID", &plan.edits).await?;
+    apply_edits(
+        env,
+        document,
+        location.path(),
+        "V-NOC: add a file ID",
+        &plan.edits,
+    )
+    .await?;
     let first = plan.written.as_ref().map(|w| w.span.start);
     Ok(MarkerWritten::Line(line_of(first, &plan.edits)))
 }
@@ -470,13 +532,34 @@ fn write_folder_marker(
     })
 }
 
+/// The one place a marker edit is applied (checked: it is the only caller of `EditSink::apply`). The tours that have a stop in the file are
+/// told what happened to it, so V-NOC's own edit does not make them stale (`docs/26-tours/01-on-disk.md` §7). A tour never fails the edit.
 async fn apply_edits(
     env: &mut Env<'_>,
     document: &Document,
+    path: &RepoPath,
     label: &str,
     edits: &[TextEdit],
 ) -> Result<(), String> {
-    env.edits.apply(document, label, edits).await
+    env.edits.apply(document, label, edits).await?;
+    match apply_text_edits(&document.text, edits) {
+        Ok(after) => {
+            let edited = Edited {
+                path,
+                before: &document.text,
+                after: &after,
+                edits,
+            };
+            let vnoc_root = tours::store::vnoc_root(env.project.git_root());
+            if let Err(e) =
+                tours::rebase::rebase(&vnoc_root, env.project, env.index, env.host, &edited).await
+            {
+                tracing::warn!("tours: the tours in {path} were not rebased after the edit: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("tours: the edited text of {path} could not be made: {e}"),
+    }
+    Ok(())
 }
 
 #[cfg(test)]

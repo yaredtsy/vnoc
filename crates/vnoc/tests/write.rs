@@ -3,6 +3,9 @@
 //!
 //! Every test works on a copy of `tests/sample/` outside this repository (its git root would be this repository otherwise).
 
+#[path = "common/testdir.rs"]
+mod testdir;
+
 use std::path::{Path, PathBuf};
 
 use vnoc::cli::project::{Opened, open};
@@ -48,6 +51,7 @@ fn copy_dir(from: &Path, to: &Path) {
 fn sample_copy(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("vnoc-write-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     copy_dir(
         &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/sample"),
         &root,

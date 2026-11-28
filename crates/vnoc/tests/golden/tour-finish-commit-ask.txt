@@ -1,0 +1,5 @@
+finished: 5 stops, 8 steps
+ask the user  5 stops have no ID: the tour will not follow a rename.        vnoc tour ids <tour>
+ask the user  not pinned: 2 files have changes that are not committed       vnoc tour pin <tour> --commit
+                 M billing/charge.py
+                ?? api/new.py

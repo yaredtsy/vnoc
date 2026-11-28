@@ -1,0 +1,1458 @@
+use std::sync::Arc;
+
+use async_lsp::{ErrorCode, ResponseError};
+
+use super::{Core, State, bad_params, blocking, internal, open_project, ready_project, write_lock};
+use crate::calls::{self, CallsError};
+use crate::identity::{EditSink, Env};
+use crate::protocol;
+use crate::tours::act::{self, ActError};
+use crate::tours::check::{Answer, Mode};
+use crate::tours::doc;
+use crate::tours::document::{self, ImportError};
+use crate::tours::find;
+use crate::tours::finish::{self as finishing, Step};
+use crate::tours::on::{self, Query};
+use crate::tours::place::Move;
+use crate::tours::record::{StopId, TourId};
+use crate::tours::route;
+use crate::tours::rules::Refusal;
+use crate::tours::serve::{self, Cannot, GoError};
+use crate::tours::settings::{self, Choice, Key};
+use crate::tours::store::{self, Halt, StoreError};
+use crate::tours::view;
+use crate::watchdog::timed;
+
+// ------------------------------------------------------------------------------------------------------------------------------------ tours
+
+/// A store failure as a response: a tour that is not there, is in both places or cannot be read is the request's; the lock is busy (`REQUEST_FAILED`: the request
+/// was fine, the tour was not free); the disk is the core's.
+pub(super) fn tour_error(e: StoreError) -> ResponseError {
+    match e {
+        StoreError::NotFound(_)
+        | StoreError::InBoth(_)
+        | StoreError::TooBig(_)
+        | StoreError::Refused(_)
+        | StoreError::Unreadable { .. } => bad_params(e),
+        StoreError::Lock(_) => ResponseError::new(ErrorCode::REQUEST_FAILED, e),
+        StoreError::Io { .. } | StoreError::Init(_) | StoreError::NoFreeId => internal(e),
+    }
+}
+
+pub(super) fn parse_tour(id: &str) -> Result<TourId, ResponseError> {
+    TourId::parse(id).map_err(bad_params)
+}
+
+/// The answer for each of these tours: the core's memory, the recorded check, a check (03 §3). The first two rungs need no index, so they are asked first with none:
+/// a tour whose answer is remembered or recorded is answered while the first build or an update is still running. Only a real check waits: for the first build, then
+/// for an update that is running (a check made against the index it is about to replace would record a stale answer), then it is made with the index.
+pub(super) async fn answers_for(
+    state: &Arc<State>,
+    rows: Vec<Arc<store::Row>>,
+) -> Result<std::collections::BTreeMap<TourId, Answer>, ResponseError> {
+    answers_with(state, rows, Mode::default()).await
+}
+
+/// [`answers_for`] with the mode of the ask: `Mode { again: true }` checks anew whatever is remembered or recorded (**Check All Tours**).
+pub(super) async fn answers_with(
+    state: &Arc<State>,
+    rows: Vec<Arc<store::Row>>,
+    mode: Mode,
+) -> Result<std::collections::BTreeMap<TourId, Answer>, ResponseError> {
+    match ask_tours(state, &rows, false, mode).await? {
+        Ok(done) => return Ok(done),
+        Err(Cannot::Store(e)) => return Err(tour_error(e)),
+        Err(Cannot::NeedsIndex) => {}
+    }
+    // a request that cannot be answered in a moment says to ask again, it does not sit in a slot
+    super::wait_for_index(state).await?;
+    match ask_tours(state, &rows, true, mode).await? {
+        Ok(done) => Ok(done),
+        Err(Cannot::Store(e)) => Err(tour_error(e)),
+        Err(Cannot::NeedsIndex) => Err(internal("the index is not ready")),
+    }
+}
+
+/// One ask of the core's tours, with the index or without.
+pub(super) async fn ask_tours(
+    state: &Arc<State>,
+    rows: &[Arc<store::Row>],
+    with_index: bool,
+    mode: Mode,
+) -> Result<Result<std::collections::BTreeMap<TourId, Answer>, Cannot>, ResponseError> {
+    let (held, rows) = (state.clone(), rows.to_vec());
+    blocking(move || {
+        let project = held.project.get().ok_or(Cannot::Store(StoreError::Refused(
+            "no folder is open".into(),
+        )))?;
+        let ask = serve::Ask {
+            vnoc_root: &store::vnoc_root(project.git_root()),
+            project,
+            index: with_index.then_some(&held.index),
+        };
+        held.tours.answers(&ask, &rows, mode)
+    })
+    .await
+}
+
+/// The node `text` names, as the question `list --on` asks of the map. Waits for the first build. The root of the tree is every tour's: refused in the
+/// command's words.
+pub(super) async fn node_query(state: &Arc<State>, text: &str) -> Result<Query, ResponseError> {
+    let project = ready_project(state).await?;
+    let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+    let tree = index.tree(&project.name(), project.prefix());
+    let node = find::node_named(&index, project, &tree, text)
+        .ok_or_else(|| bad_params(format!("no node is named `{text}`")))?;
+    Query::of(node).ok_or_else(|| bad_params(on::ROOT_IS_EVERY_TOURS))
+}
+
+/// `vnoc/tours`: the rows of the list, newest first. The freshness of the rows named in `check` is asked for (and so, if need be, checked); the others say what the
+/// core remembers.
+pub(super) fn tours(
+    core: &mut Core,
+    params: Option<protocol::ToursParams>,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tours", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let params = params.unwrap_or_default();
+        let asked: Vec<TourId> = params
+            .check
+            .iter()
+            .map(|id| parse_tour(id))
+            .collect::<Result<_, _>>()?;
+        let rows = {
+            let (state, vnoc_root) = (state.clone(), vnoc_root.clone());
+            blocking(move || state.tours.sync(&vnoc_root).0).await?
+        };
+        let to_check: Vec<_> = rows
+            .iter()
+            .filter(|r| params.check_all || asked.contains(&r.id))
+            .cloned()
+            .collect();
+        let mut known = {
+            let (state, ids) = (
+                state.clone(),
+                rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+            );
+            blocking(move || state.tours.remembered(&ids)).await?
+        };
+        if !to_check.is_empty() {
+            let mode = Mode {
+                again: params.check_all,
+            };
+            for (id, answer) in answers_with(&state, to_check, mode).await? {
+                known.insert(id, answer.recorded);
+            }
+        }
+        // the node, if one was asked for: the one thing here that needs the index; found by what the tree says of it
+        let first = params.on.is_none() && params.first_on.is_some();
+        let query = match params.on.or(params.first_on) {
+            Some(text) => Some(node_query(&state, &text).await?),
+            None => None,
+        };
+        let shown = {
+            let (state, rows) = (state.clone(), rows.clone());
+            blocking(move || {
+                let project = state.project.get()?;
+                let root = store::vnoc_root(project.git_root());
+                let shown = serve::list_rows(project, &rows, &known, true, &|id| {
+                    store::read_place(&root, id)
+                });
+                Some(match &query {
+                    Some(query) if first => {
+                        serve::rows_first_on(shown, &rows, &state.tours.on(query))
+                    }
+                    Some(query) => serve::rows_on(shown, &rows, &state.tours.on(query)),
+                    None => shown,
+                })
+            })
+            .await?
+            .ok_or_else(|| internal("no folder is open"))?
+        };
+        // Check All Tours ends with one sentence of the core's: how many changed
+        if params.check_all {
+            let words = view::checked_words(&shown);
+            return Ok(serde_json::json!({ "tours": shown, "words": words }));
+        }
+        Ok(serde_json::json!({ "tours": shown }))
+    })
+}
+
+/// `vnoc/tour`: the tour as the stage plays it. Its freshness is asked for; the place is the one written, as the tour is now.
+pub(super) fn tour(
+    core: &mut Core,
+    params: protocol::TourParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tour", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let row = {
+            let (state, vnoc_root, id) = (state.clone(), vnoc_root.clone(), id.clone());
+            blocking(move || state.tours.row(&vnoc_root, &id)).await?
+        }
+        .ok_or_else(|| bad_params(StoreError::NotFound(id.clone())))?;
+        let Ok(found) = &row.tour else {
+            let why = row.tour.as_ref().err().map(|e| e.why.clone());
+            return Ok(serde_json::json!({ "unreadable": why }));
+        };
+        let answer = answers_for(&state, vec![row.clone()]).await?.remove(&id);
+        let shown = {
+            let (state, row, found) = (state.clone(), row.clone(), found.clone());
+            blocking(move || {
+                let project = state.project.get()?;
+                let root = store::vnoc_root(project.git_root());
+                let mut shown = serve::show_view(
+                    project,
+                    &found,
+                    row.place,
+                    &row.path,
+                    store::read_place(&root, &row.id).as_ref(),
+                );
+                if let Some(answer) = &answer {
+                    view::mark(&mut shown, answer);
+                }
+                Some(shown)
+            })
+            .await?
+            .ok_or_else(|| internal("no folder is open"))?
+        };
+        serde_json::to_value(shown).map_err(internal)
+    })
+}
+
+/// `vnoc/tourGo`: the same function as `vnoc tour go`, under the tours lock; the place written is remembered, so the watcher's word of it is not an echo.
+pub(super) fn tour_go(
+    core: &mut Core,
+    params: protocol::TourGoParams,
+) -> impl std::future::Future<Output = Result<crate::tours::view::PlaceView, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourGo", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let wanted = Move::parse(&params.r#move).map_err(bad_params)?;
+        let gone = blocking(move || state.tours.go(&vnoc_root, &id, wanted))
+            .await?
+            .map_err(|e| match e {
+                GoError::Store(e) => tour_error(e),
+                GoError::NoSuch { .. } => bad_params(e),
+            })?;
+        Ok(view::place_view(&gone.tour, gone.place))
+    })
+}
+
+/// `vnoc/tourOpen`: sets `place.open`, the same way.
+pub(super) fn tour_open(
+    core: &mut Core,
+    params: protocol::TourOpenParams,
+) -> impl std::future::Future<Output = Result<crate::tours::view::PlaceView, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourOpen", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        blocking(move || {
+            let place = state.tours.open(&vnoc_root, &id, params.open)?;
+            Ok(state.tours.place_view(&vnoc_root, &id, place))
+        })
+        .await?
+        .map_err(tour_error)
+    })
+}
+
+/// `vnoc/tourHalt`: writes `halt` through `store::halt`, the function of `vnoc tour halt`, and answers the tour's state.
+pub(super) fn tour_halt(
+    core: &mut Core,
+    params: protocol::TourHaltParams,
+) -> impl std::future::Future<Output = Result<protocol::TourHaltResult, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourHalt", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let (did, tour) = blocking(move || state.tours.halt(&vnoc_root, &id))
+            .await?
+            .map_err(tour_error)?;
+        Ok(protocol::TourHaltResult {
+            halt: match did {
+                Halt::Written => "written",
+                Halt::Already => "already",
+                Halt::Finished => "finished",
+            }
+            .to_string(),
+            state: view::state_word(tour.state).to_string(),
+        })
+    })
+}
+
+/// `vnoc/tourCode`: one stop of a pinned tour as it was written; `null` when there is none to give (03 §5).
+pub(super) fn tour_code(
+    core: &mut Core,
+    params: protocol::TourCodeParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourCode", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let stop = StopId::parse(&params.stop).map_err(bad_params)?;
+        let row = {
+            let (state, vnoc_root, id) = (state.clone(), vnoc_root.clone(), id.clone());
+            blocking(move || state.tours.row(&vnoc_root, &id)).await?
+        }
+        .ok_or_else(|| bad_params(StoreError::NotFound(id.clone())))?;
+        let tour = row.tour.as_ref().map_err(|e| {
+            bad_params(StoreError::Unreadable {
+                id: id.clone(),
+                why: e.why.clone(),
+                too_new: e.too_new,
+            })
+        })?;
+        let tour = tour.clone();
+        let code = blocking(move || {
+            let project = state.project.get()?;
+            Some(serve::stop_code(project, &tour, stop))
+        })
+        .await?
+        .ok_or_else(|| internal("no folder is open"))?
+        .map_err(bad_params)?;
+        serde_json::to_value(code).map_err(internal)
+    })
+}
+
+/// `vnoc/tourCounts`: how many tours pass through each node, by the tree's key. Waits for the first build; the map of nodes is the one `vnoc/tours { on }`
+/// asks, so nothing is replayed that was not.
+pub(super) fn tour_counts(
+    core: &mut Core,
+    _ignored: serde_json::Value,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourCounts", async move {
+        let project = ready_project(&state).await?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        // the tours are looked at (`stat`s) before they are counted: one that was written by another process and not announced is counted too
+        {
+            let (state, vnoc_root) = (state.clone(), vnoc_root.clone());
+            blocking(move || state.tours.sync(&vnoc_root)).await?;
+        }
+        let counts = {
+            let state = state.clone();
+            blocking(move || {
+                let project = state.project.get()?;
+                let tree = {
+                    let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+                    index.tree(&project.name(), project.prefix())
+                };
+                Some(state.tours.counts(&tree))
+            })
+            .await?
+            .ok_or_else(|| internal("no folder is open"))?
+        };
+        Ok(serde_json::json!({ "counts": counts }))
+    })
+}
+
+/// How long a `vnoc/tourCalls` request waits for the count: the core answers a request at a time per slot (`ConcurrencyLayer`: as many as there are cores), and a count asks the
+/// driver once for each stop. A count that takes longer goes on in the background and the request is answered with an error that says to ask again; the answer is kept when it is done.
+const CALLS_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
+/// How long the driver is given for one stop's calls.
+const CALLS_ASK: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// `vnoc/tourCalls`: for each written function or class stop, how many of the functions it calls, one level down, are not a stop of this tour (design 04 §3: the
+/// card's `+N`). The callees are the ones `vnoc tour route` finds ([`route::from_calls`], one level, the same `known`), each counted once, by tree key. Kept in the
+/// core until the tour's file or a stop's file changes; waits for the first build. The count is made by a task of its own (one at a time for a tour), so a driver that is slow
+/// holds no request: this one answers within [`CALLS_WAIT`], or says to ask again.
+pub(super) fn tour_calls(
+    core: &mut Core,
+    params: protocol::TourParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("tourCalls", async move {
+        let state = core.state.clone();
+        let project = ready_project(&state).await?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let id = parse_tour(&params.id)?;
+        let row = {
+            let (state, vnoc_root, id) = (state.clone(), vnoc_root.clone(), id.clone());
+            blocking(move || state.tours.row(&vnoc_root, &id)).await?
+        }
+        .ok_or_else(|| bad_params(StoreError::NotFound(id.clone())))?;
+        if let Err(e) = &row.tour {
+            return Err(bad_params(StoreError::Unreadable {
+                id: id.clone(),
+                why: e.why.clone(),
+                too_new: e.too_new,
+            }));
+        }
+        if let Some(off) = state.tours.calls_kept(&id) {
+            return Ok(serde_json::json!({ "off": off }));
+        }
+        if state.calls_running.lock().unwrap().insert(id.clone()) {
+            let (core, row, id) = (core.clone(), row.clone(), id.clone());
+            tokio::spawn(async move {
+                if let Err(e) = count_calls(&core, &row).await {
+                    tracing::debug!("the calls of tour {id} were not counted: {}", e.message);
+                }
+                core.state.calls_running.lock().unwrap().remove(&id);
+            });
+        }
+        let deadline = tokio::time::Instant::now() + CALLS_WAIT;
+        loop {
+            if let Some(off) = state.tours.calls_kept(&id) {
+                return Ok(serde_json::json!({ "off": off }));
+            }
+            let running = state.calls_running.lock().unwrap().contains(&id);
+            if !running || tokio::time::Instant::now() >= deadline {
+                return Err(being_counted());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+}
+
+/// The refusal of `vnoc/tourCalls` while the count goes on: in words, and as `data.askAgain`.
+fn being_counted() -> ResponseError {
+    super::ask_again_with("the calls of this tour are being counted: ask again")
+}
+
+/// What a stop's driver ask came to, for the count of `vnoc/tourCalls`.
+enum Asked<T> {
+    Calls(T),
+    /// the driver has no call trees: no stop has calls to count
+    NoDriver,
+    /// a node the driver cannot start a tree at, a driver that is slow (past [`CALLS_ASK`]) or broke: the stop is left out of the count, which goes on and is kept all the
+    /// same (the tour's or a stop's file changing drops it): a count made again at every ask would never end
+    Left,
+}
+
+fn of_the_ask<T>(asked: Result<Result<T, CallsError>, tokio::time::error::Elapsed>) -> Asked<T> {
+    match asked {
+        Ok(Ok(answered)) => Asked::Calls(answered),
+        Ok(Err(CallsError::MissingCapability(_))) => Asked::NoDriver,
+        Ok(Err(CallsError::Invalid(_) | CallsError::Internal(_))) | Err(_) => Asked::Left,
+    }
+}
+
+/// The count of `vnoc/tourCalls` for one tour, kept when the tour is as it was when it started (a stop whose driver ask failed is left out).
+async fn count_calls(core: &Core, row: &Arc<store::Row>) -> Result<(), ResponseError> {
+    let state = core.state.clone();
+    if let Some(hold) = super::test_millis("VNOC_HOLD_TOUR_CALLS_MS") {
+        tokio::time::sleep(hold).await; // for the window tests: a count that does not end, and the stage draws its code all the same
+    }
+    let project = ready_project(&state).await?;
+    let found = row
+        .tour
+        .as_ref()
+        .map_err(|e| bad_params(e.why.clone()))?
+        .clone();
+    // an update that is running goes first: it needs the driver too, and the calls are of the index it is about to give
+    drop(state.one_at_a_time.lock().await);
+    // the stops as the view has them: where each is now (a check moved its key), which are written, which are gone
+    let answer = answers_for(&state, vec![row.clone()])
+        .await?
+        .remove(&row.id);
+    let shown = {
+        let (state, row) = (state.clone(), row.clone());
+        blocking(move || {
+            let project = state.project.get()?;
+            let root = store::vnoc_root(project.git_root());
+            let mut shown = serve::show_view(
+                project,
+                &found,
+                row.place,
+                &row.path,
+                store::read_place(&root, &row.id).as_ref(),
+            );
+            if let Some(answer) = &answer {
+                view::mark(&mut shown, answer);
+            }
+            Some(shown)
+        })
+        .await?
+        .ok_or_else(|| internal("no folder is open"))?
+    };
+    let tree = {
+        let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+        index.tree(&project.name(), project.prefix())
+    };
+    let stops_of_the_tour: std::collections::BTreeSet<&str> = shown
+        .stops
+        .iter()
+        .filter_map(|s| s.key.as_deref())
+        .collect();
+    let known = |target: &vnoc_driver_protocol::CallTarget| {
+        let location = vnoc_domain::LocationKey::new(
+            project.repo_path(target.file.as_deref()?).ok()?,
+            target.qualname.clone(),
+            target.occurrence,
+        )
+        .ok()?;
+        tree.find(&location.to_string()).and_then(route::known_of)
+    };
+    let mut off = std::collections::BTreeMap::new();
+    for stop in &shown.stops {
+        let (Some(key), Some("function" | "class")) = (stop.key.as_deref(), stop.kind.as_deref())
+        else {
+            continue;
+        };
+        if stop.planned || stop.check == Some("gone") {
+            continue;
+        }
+        let Some(root) = tree.find(key).and_then(route::known_of) else {
+            continue;
+        };
+        let asked = tokio::time::timeout(
+            CALLS_ASK,
+            calls::ask(project, &state.index, &core.host, key, Some(1)),
+        )
+        .await;
+        let answered = match of_the_ask(asked) {
+            Asked::Calls(answered) => answered,
+            Asked::NoDriver => break,
+            Asked::Left => continue,
+        };
+        let item = route::from_calls(&calls::merge(&answered.root), root, 1, &known);
+        let outside: std::collections::BTreeSet<&str> = item
+            .children
+            .iter()
+            .map(|c| c.known.id.as_str())
+            .filter(|callee| !stops_of_the_tour.contains(callee))
+            .collect();
+        if !outside.is_empty() {
+            off.insert(stop.id.clone(), outside.len());
+        }
+    }
+    let files: std::collections::BTreeSet<String> = shown
+        .stops
+        .iter()
+        .flat_map(|s| std::iter::once(s.path.clone()).chain(s.now.as_ref().map(|n| n.path.clone())))
+        .collect();
+    // kept also when the index moved while the calls were asked: a file that changed drops the count through `vnoc/filesChanged`, as it does an answer
+    state.tours.keep_calls(row, off, files);
+    Ok(())
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------------ the user's actions
+
+/// An action's failure as a response: the request's mistakes are `INVALID_PARAMS` with the command's sentence, the store's are its own, the rest is the core's.
+pub(super) fn act_error(e: ActError) -> ResponseError {
+    use crate::identity::AttachError as A;
+    match e {
+        ActError::Store(e) => tour_error(e),
+        ActError::Usage(said) | ActError::NoStop { said, .. } => bad_params(said),
+        ActError::Attach(
+            e @ (A::TitleTaken { .. }
+            | A::BadTitle
+            | A::BodyTooLarge
+            | A::BodyHasFrontmatter
+            | A::BadTag(_)
+            | A::BadAuthor
+            | A::BadKey(_)
+            | A::NotInIndex(_)),
+        ) => bad_params(e),
+        ActError::Attach(e) => internal(e),
+        ActError::Environment(said) => internal(said),
+    }
+}
+
+/// `vnoc/tourPin`: [`act::pin_begin`] and [`act::pin_finish`], the functions of `vnoc tour pin`. With `commit` the project's write lock is taken first (and the
+/// attach mutex before it), then the tours lock inside the pin: the order of every writer.
+pub(super) fn tour_pin(
+    core: &mut Core,
+    params: protocol::TourPinParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("tourPin", async move {
+        let state = core.state.clone();
+        let project = ready_project(&state).await?;
+        let id = parse_tour(&params.id)?;
+        if params.dry && params.commit.is_some() {
+            return Err(bad_params(
+                "a dry pin commits nothing: ask for it with no `commit`",
+            ));
+        }
+        let dry = params.dry;
+        let _one_at_a_time;
+        let _one_writer;
+        if params.commit.is_some() {
+            _one_at_a_time = Some(state.attaching.lock().await);
+            _one_writer = Some(write_lock(project).await?);
+        } else {
+            _one_at_a_time = None;
+            _one_writer = None;
+        }
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let message = params.commit.as_ref().and_then(|c| c.message.clone());
+        let commit = params.commit.is_some();
+        let held = state.clone();
+        let done = blocking(move || {
+            let state = held;
+            let project = state
+                .project
+                .get()
+                .ok_or(ActError::Environment("no folder is open".into()))?;
+            let ask = if dry {
+                act::Ask::Look
+            } else {
+                act::Ask::Pin {
+                    commit,
+                    message: message.as_deref(),
+                }
+            };
+            act::not_in_both(&vnoc_root, &id)?;
+            let tour = act::read_tour(&vnoc_root, &id)?;
+            if let Some(commit) = act::pinned_already(project, &tour) {
+                return Ok(serde_json::json!({
+                    "tour": id.to_string(),
+                    "already": true,
+                    "state": "pinned",
+                    "commit": commit.as_str(),
+                }));
+            }
+            let out = match act::pin_begin(project, &vnoc_root, &id, &ask)? {
+                act::Begun::Done(pinned) => pinned.out,
+                act::Begun::Check { measured, head } => {
+                    act::pin_finish(
+                        project,
+                        &state.index,
+                        &vnoc_root,
+                        &id,
+                        &ask,
+                        &measured,
+                        head,
+                    )?
+                    .out
+                }
+            };
+            let mut shown =
+                serde_json::to_value(&out).map_err(|e| ActError::Environment(e.to_string()))?;
+            // each reason says itself, in the core's words: a page makes no sentence from a `code`
+            if let Some(reasons) = shown.get_mut("reasons").and_then(|r| r.as_array_mut()) {
+                for (said, reason) in reasons.iter_mut().zip(&out.reasons) {
+                    said["words"] = serde_json::json!(reason.words());
+                }
+            }
+            shown["tour"] = serde_json::json!(id.to_string());
+            Ok(shown)
+        })
+        .await?
+        .map_err(act_error)?;
+        Ok(done)
+    })
+}
+
+/// `vnoc/tourIds`: [`act::write_ids`], the function of `vnoc tour ids`, with the server's drivers. The edits go to the files on disk, as the command's do: a
+/// tour's stops are not open documents the editor could give (`vnoc/writeId` is for the node under the cursor); the watcher tells the core of the files, as of
+/// an `add`. The project's write lock is first; each marker's edit takes the tours lock to rebase the tours.
+pub(super) fn tour_ids(
+    core: &mut Core,
+    params: protocol::TourIdsParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("tourIds", async move {
+        let project = ready_project(&core.state).await?;
+        let id = parse_tour(&params.id)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        // the same lock as attach: both write an ID and a node.toml
+        let _one_at_a_time = core.state.attaching.lock().await;
+        let _one_writer = write_lock(project).await?;
+        let mut env = Env {
+            project,
+            index: &core.state.index,
+            host: &core.host,
+            edits: EditSink::Disk,
+        };
+        let written = act::write_ids(&mut env, &vnoc_root, &id, &[])
+            .await
+            .map_err(act_error)?;
+        let mut shown = serde_json::to_value(&written).map_err(internal)?;
+        shown["words"] = serde_json::json!(written.sentence());
+        Ok(shown)
+    })
+}
+
+/// `vnoc/tourEdit`: [`act::edit`].
+pub(super) fn tour_edit(
+    core: &mut Core,
+    params: protocol::TourEditParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourEdit", async move {
+        let project = open_project(&state)?;
+        let id = parse_tour(&params.id)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let (title, question) = (params.title.clone(), params.question.clone());
+        {
+            let id = id.clone();
+            let (dir, root) = (project.open_dir().to_path_buf(), project.name());
+            blocking(move || {
+                let named = store::Named {
+                    dir: Some(&dir),
+                    root: &root,
+                };
+                act::edit(
+                    &vnoc_root,
+                    &id,
+                    title.as_deref(),
+                    question.as_deref(),
+                    None,
+                    &named,
+                )
+            })
+            .await?
+            .map_err(act_error)?;
+        }
+        let (title, question) = (
+            params.title.as_deref().map(str::trim),
+            params.question.as_deref().map(str::trim),
+        );
+        let words = match (title, question) {
+            (Some(title), Some(_)) => {
+                format!("Renamed to “{title}”, and its question was changed.")
+            }
+            (Some(title), None) => format!("Renamed to “{title}”."),
+            (None, Some(_)) => "The question of the tour was changed.".to_string(),
+            (None, None) => "Nothing was changed.".to_string(),
+        };
+        Ok(serde_json::json!({
+            "tour": id.to_string(),
+            "title": title,
+            "question": question,
+            "words": words,
+        }))
+    })
+}
+
+/// `vnoc/tourShare`: [`store::share`], the function of `vnoc tour share`.
+pub(super) fn tour_share(
+    core: &mut Core,
+    params: protocol::TourShareParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourShare", async move {
+        let project = open_project(&state)?;
+        let id = parse_tour(&params.id)?;
+        let root = project.git_root().to_path_buf();
+        let vnoc_root = store::vnoc_root(&root);
+        let to = if params.share {
+            store::Where::Project
+        } else {
+            store::Where::Private
+        };
+        let moved = {
+            let (id, vnoc_root) = (id.clone(), vnoc_root.clone());
+            blocking(move || store::share(&vnoc_root, &id, to))
+                .await?
+                .map_err(tour_error)?
+        };
+        // whether it is pinned, for the sentence: a project tour that is not pinned shows changed stops without their old code
+        let pinned = {
+            let id = id.clone();
+            blocking(move || act::read_tour(&vnoc_root, &id).map(|t| t.pinned()))
+                .await?
+                .unwrap_or(false)
+        };
+        let words = match to {
+            store::Where::Project if pinned => {
+                "Moved to `.vnoc/tours/`. Commit it to share it.".to_string()
+            }
+            store::Where::Project => "Moved to `.vnoc/tours/`. Commit it to share it. It is not pinned: teammates will see changed stops without the old code.".to_string(),
+            store::Where::Private => {
+                "Moved to `.vnoc/local/tours/`. It is private again.".to_string()
+            }
+        };
+        let path = moved
+            .strip_prefix(&root)
+            .unwrap_or(&moved)
+            .to_string_lossy()
+            .replace('\\', "/");
+        Ok(serde_json::json!({
+            "tour": id.to_string(),
+            "folder": view::place_word(to),
+            "path": path,
+            "pinned": pinned,
+            "words": words,
+        }))
+    })
+}
+
+/// `vnoc/tourDelete`: [`store::delete`], the function of `vnoc tour delete`; the token is the trash entry.
+pub(super) fn tour_delete(
+    core: &mut Core,
+    params: protocol::TourDeleteParams,
+) -> impl std::future::Future<Output = Result<protocol::TourDeleteResult, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourDelete", async move {
+        let project = open_project(&state)?;
+        let id = parse_tour(&params.id)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let gone = blocking(move || {
+            // the name the sentence says is read before the file goes
+            let of = deleted_words(&vnoc_root, &id);
+            store::delete(&vnoc_root, &id).map(|gone| (gone, of))
+        })
+        .await?
+        .map_err(tour_error)?;
+        Ok(protocol::TourDeleteResult {
+            token: gone.0.entry,
+            words: gone.1,
+        })
+    })
+}
+
+/// What a sentence calls a tour: *“How the shop checks out”* by its title; *the tour of checkout_order* (its first stop) only when it has no title; *the tour
+/// checkout-order-7k2q* when it cannot be read. Read before the file goes.
+fn tour_name(vnoc_root: &std::path::Path, id: &TourId) -> String {
+    match act::read_tour(vnoc_root, id) {
+        Ok(tour) => match tour.title.trim() {
+            "" => match view::root_of(&tour) {
+                Some(root) => format!("the tour of {}", root.name),
+                None => format!("the tour {id}"),
+            },
+            title => format!("“{title}”"),
+        },
+        Err(_) => format!("the tour {id}"),
+    }
+}
+
+/// *"Deleted “How the shop checks out”."*
+fn deleted_words(vnoc_root: &std::path::Path, id: &TourId) -> String {
+    format!("Deleted {}.", tour_name(vnoc_root, id))
+}
+
+/// `vnoc/tourDeleteFinished`: each private, finished, readable tour goes to the trash as `vnoc/tourDelete` does one. Not a tour that exists in both folders (the store refuses
+/// it), nor one being written or stopped. A failure after the first delete ends the loop and is said in the words; before it, it is the answer.
+pub(super) fn tour_delete_finished(
+    core: &mut Core,
+    _params: serde_json::Value,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourDeleteFinished", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let rows = {
+            let (state, vnoc_root) = (state.clone(), vnoc_root.clone());
+            blocking(move || state.tours.sync(&vnoc_root).0).await?
+        };
+        let both = |id: &TourId| rows.iter().filter(|r| &r.id == id).count() > 1;
+        let wanted: Vec<TourId> = rows
+            .iter()
+            .filter(|r| r.place == store::Where::Private && !both(&r.id))
+            .filter(|r| {
+                r.tour
+                    .as_ref()
+                    .is_ok_and(|t| t.state == crate::tours::fold::State::Finished)
+            })
+            .map(|r| r.id.clone())
+            .collect();
+        let (deleted, trouble) = blocking(move || {
+            let mut deleted = Vec::new();
+            let mut trouble = None;
+            for id in wanted {
+                let name = tour_name(&vnoc_root, &id);
+                match store::delete(&vnoc_root, &id) {
+                    Ok(gone) => deleted.push((id, gone.entry, name)),
+                    Err(e) => {
+                        trouble = Some((name, e));
+                        break;
+                    }
+                }
+            }
+            (deleted, trouble)
+        })
+        .await?;
+        let mut words = match deleted.as_slice() {
+            [] => "There are no finished tours of yours to delete.".to_string(),
+            [(_, _, name)] => format!("Deleted {name}."),
+            many => format!("Deleted {} finished tours.", many.len()),
+        };
+        if let Some((name, e)) = trouble {
+            if deleted.is_empty() {
+                return Err(tour_error(e));
+            }
+            words.push_str(&format!(" Not deleted: {name}: {}", tour_error(e).message));
+        }
+        Ok(serde_json::json!({
+            "deleted": deleted.iter().map(|(id, token, _)| serde_json::json!({ "id": id.to_string(), "token": token })).collect::<Vec<_>>(),
+            "words": words,
+        }))
+    })
+}
+
+/// `vnoc/tourRestore`: [`store::restore`]: the file and the state come back where they were.
+pub(super) fn tour_restore(
+    core: &mut Core,
+    params: protocol::TourRestoreParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourRestore", async move {
+        let project = open_project(&state)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let back = blocking(move || store::restore(&vnoc_root, &params.token))
+            .await?
+            .map_err(tour_error)?;
+        Ok(serde_json::json!({
+            "tour": back.id.to_string(),
+            "folder": view::place_word(back.was),
+        }))
+    })
+}
+
+/// `vnoc/tourExport`: [`document::export`], the function of `vnoc tour export`: the text the command prints.
+pub(super) fn tour_export(
+    core: &mut Core,
+    params: protocol::TourExportParams,
+) -> impl std::future::Future<Output = Result<protocol::TourExportResult, ResponseError>> + Send + use<>
+{
+    let state = core.state.clone();
+    timed("tourExport", async move {
+        let project = ready_project(&state).await?;
+        let id = parse_tour(&params.id)?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        let held = state.clone();
+        let text = blocking(move || {
+            let project = held
+                .project
+                .get()
+                .ok_or(ActError::Environment("no folder is open".into()))?;
+            let index = held.index.read().unwrap_or_else(|e| e.into_inner());
+            document::export(project, Some(&index), &vnoc_root, &id, false)
+        })
+        .await?
+        .map_err(act_error)?;
+        Ok(protocol::TourExportResult { text })
+    })
+}
+
+/// What an import that was refused answers: every refusal with its place in the text and, where it is known, its line.
+fn refused_answer(text: &str, refusals: &[Refusal]) -> serde_json::Value {
+    let problems = if refusals.len() == 1 {
+        "1 problem".to_string()
+    } else {
+        format!("{} problems", refusals.len())
+    };
+    serde_json::json!({
+        "refused": refusals
+            .iter()
+            .map(|r| {
+                let line = document::line_of(text, &r.place, &r.problem);
+                // the sentence carries its own place (`stops[0].text: 412 of 280 characters`): it is shown as it is, so a list of them reads as the command's does
+                serde_json::json!({ "place": r.place, "words": r.problem, "line": line })
+            })
+            .collect::<Vec<_>>(),
+        "words": format!("Not written: {problems}. Fix them, then import the whole document again."),
+    })
+}
+
+/// `vnoc/tourImport`: [`document::write_import`], the function of `vnoc tour import [--replace]`, and then what `finish` does after `end` (02 §5): the IDs and the pin,
+/// as the project's settings say. The project's write lock is first (the IDs and a commit touch more than the tours), then the tours lock: the order of every writer.
+pub(super) fn tour_import(
+    core: &mut Core,
+    params: protocol::TourImportParams,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let core = core.clone();
+    timed("tourImport", async move {
+        let state = core.state.clone();
+        let project = ready_project(&state).await?;
+        let vnoc_root = store::vnoc_root(project.git_root());
+        // what needs no index: the document and its shape
+        let text = params.text;
+        let flat = match doc::parse(&text).and_then(|d| doc::flatten(&d)) {
+            Ok(flat) => flat,
+            Err(refusals) => return Ok(refused_answer(&text, &refusals)),
+        };
+        let replace = params.replace.as_deref().map(parse_tour).transpose()?;
+        let _one_at_a_time = state.attaching.lock().await;
+        let _one_writer = write_lock(project).await?;
+        let lock = match &replace {
+            Some(_) => Some(act::take_lock(&vnoc_root).await.map_err(act_error)?),
+            None => None,
+        };
+        let title = flat.title.trim().to_string();
+        let written = {
+            let (held, root, flat, replace) =
+                (state.clone(), vnoc_root.clone(), flat, replace.clone());
+            blocking(move || {
+                let project = held
+                    .project
+                    .get()
+                    .ok_or(ActError::Environment("no folder is open".into()))?;
+                let index = held.index.read().unwrap_or_else(|e| e.into_inner());
+                let tree = index.tree(&project.name(), project.prefix());
+                let resolve = |text: &str| document::resolve_node(&index, project, &tree, text);
+                document::write_import(
+                    project,
+                    &index,
+                    &root,
+                    &resolve,
+                    &flat,
+                    replace.as_ref().zip(lock.as_ref()),
+                )
+            })
+            .await?
+        };
+        let written = match written {
+            Ok(written) => written,
+            Err(ImportError::Refused(refusals)) => return Ok(refused_answer(&text, &refusals)),
+            Err(ImportError::Act(e)) => return Err(act_error(e)),
+        };
+        let mut words = {
+            let (root, id) = (vnoc_root.clone(), written.id.clone());
+            let stops = blocking(move || {
+                act::read_tour(&root, &id).map(|t| t.stops.iter().filter(|s| s.written).count())
+            })
+            .await?
+            .map_err(act_error)?;
+            document::import_words(&title, &written, stops)
+        };
+        for said in after_end(&core, project, &vnoc_root, &written.id).await {
+            words.push(' ');
+            words.push_str(&said);
+        }
+        Ok(serde_json::json!({ "id": written.id.to_string(), "words": words }))
+    })
+}
+
+/// Step 1 and step 2 of `finish` (02 §5) for an imported tour: the IDs when `[tours] ids` is `always`, then the pin, committing the files when `[tours] commit` is
+/// `always`. What `ask` and `never` leave is the cover's to offer, so it is not said here. A step that fails is said; the tour is written either way.
+async fn after_end(
+    core: &Core,
+    project: &crate::project::Project,
+    vnoc_root: &std::path::Path,
+    id: &TourId,
+) -> Vec<String> {
+    let mut said = Vec::new();
+    let read = match settings::read(vnoc_root) {
+        Ok(read) => read,
+        Err(e) => {
+            said.push(format!(
+                "Its settings could not be read, so nothing was done after it: {e}"
+            ));
+            return said;
+        }
+    };
+    let tour = match act::read_tour(vnoc_root, id) {
+        Ok(tour) => tour,
+        Err(e) => {
+            said.push(e.to_string());
+            return said;
+        }
+    };
+    // step 1: a stop whose node had an ID when it was written has nothing to give
+    let choice = finishing::effective(read.ids.value, false, false);
+    let writes_ids = act::project_writes_ids(project).unwrap_or(false);
+    let could = tour.stops.iter().any(|s| s.written && s.node.is_none());
+    if choice == Choice::Always && could && writes_ids {
+        let missing = finishing::missing(&act::picks_of(project, &core.state.index, &tour, &[]));
+        if finishing::step(choice, writes_ids, missing) == Step::Write {
+            let mut env = Env {
+                project,
+                index: &core.state.index,
+                host: &core.host,
+                edits: EditSink::Disk,
+            };
+            match act::write_ids(&mut env, vnoc_root, id, &[]).await {
+                Ok(written) => said.push(written.sentence()),
+                Err(e) => said.push(format!("IDs were not written: {e}")),
+            }
+        }
+    }
+    // step 2: the pin is always tried
+    let held = core.state.clone();
+    let (root, id, commit) = (vnoc_root.to_path_buf(), id.clone(), read.commit.value);
+    let pinned = blocking(move || {
+        let project = held
+            .project
+            .get()
+            .ok_or(ActError::Environment("no folder is open".into()))?;
+        let ask = act::Ask::Finish {
+            commit,
+            message: None,
+        };
+        match act::pin_begin(project, &root, &id, &ask)? {
+            act::Begun::Done(pinned) => Ok(pinned),
+            act::Begun::Check { measured, head } => {
+                act::pin_finish(project, &held.index, &root, &id, &ask, &measured, head)
+            }
+        }
+    })
+    .await;
+    match pinned {
+        Ok(Ok(pinned)) => {
+            if let Some(at) = pinned.at {
+                said.push(format!("Pinned at {at}."));
+            }
+        }
+        Ok(Err(e)) => said.push(format!("It could not be pinned: {e}")),
+        Err(e) => said.push(format!("It could not be pinned: {}", e.message)),
+    }
+    said
+}
+
+/// How long `vnoc/tourAsk` waits for the sizes of a node: they ask the driver for a call tree [`route::MAX_DEPTH`] levels deep. A slower one goes on in a task of
+/// its own and is kept (for the index it was made from), so the next ask has it.
+const SIZES_WAIT: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// The size of each depth 0 to [`route::MAX_DEPTH`] of the route of the node with this tree key, as `vnoc tour route` counts them (one route, cut as it cuts it).
+/// `None`: no route can start there. Waits for [`SIZES_WAIT`], then says to ask again.
+async fn route_sizes(
+    core: &Core,
+    id: &str,
+) -> Result<Option<Arc<Vec<route::Size>>>, ResponseError> {
+    let state = &core.state;
+    let revision = || {
+        state
+            .index
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .revision()
+    };
+    let kept = || {
+        let kept = state.route_sizes.lock().unwrap();
+        let (at, sizes) = kept.get(id)?;
+        (*at == revision()).then(|| sizes.clone())
+    };
+    if let Some(sizes) = kept() {
+        return Ok(sizes);
+    }
+    if state
+        .route_sizes_running
+        .lock()
+        .unwrap()
+        .insert(id.to_string())
+    {
+        let (core, id) = (core.clone(), id.to_string());
+        tokio::spawn(async move {
+            let made = make_sizes(&core, &id).await;
+            core.state
+                .route_sizes
+                .lock()
+                .unwrap()
+                .insert(id.clone(), made);
+            core.state.route_sizes_running.lock().unwrap().remove(&id);
+        });
+    }
+    let deadline = tokio::time::Instant::now() + SIZES_WAIT;
+    loop {
+        if let Some(sizes) = kept() {
+            return Ok(sizes);
+        }
+        let running = state.route_sizes_running.lock().unwrap().contains(id);
+        if tokio::time::Instant::now() >= deadline {
+            return Err(super::ask_again_with(
+                "the size of this route is being worked out: ask again",
+            ));
+        }
+        if !running {
+            // done, but for an index that has moved since: begin again
+            return Box::pin(route_sizes(core, id)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// The sizes of one node's route, with the revision of the index they were made from.
+async fn make_sizes(core: &Core, id: &str) -> (u64, Option<Arc<Vec<route::Size>>>) {
+    let state = &core.state;
+    let Some(project) = state.project.get() else {
+        return (0, None);
+    };
+    let (revision, tree) = {
+        let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+        (
+            index.revision(),
+            index.tree(&project.name(), project.prefix()),
+        )
+    };
+    let Some(node) = tree.find(id) else {
+        return (revision, None);
+    };
+    let Some(root) = route::known_of(node) else {
+        return (revision, None);
+    };
+    let built = route::build(
+        project,
+        &state.index,
+        &core.host,
+        &tree,
+        node,
+        root,
+        route::MAX_DEPTH,
+    )
+    .await;
+    match built {
+        Ok((item, _, _)) => (
+            revision,
+            Some(Arc::new(route::sizes(&item, route::MAX_DEPTH))),
+        ),
+        Err(_) => (revision, None),
+    }
+}
+
+/// `vnoc/tourAsk`: the sentence for an agent from the form's parts (`tours::document::ask`); **Ask for a New Tour** gives the row's tour for what the parts
+/// leave out, and `filled` says what it gave. TypeScript makes neither the sentence nor the line that says what to do with it.
+pub(super) fn tour_ask(
+    core: &mut Core,
+    params: Option<protocol::TourAskParams>,
+) -> impl std::future::Future<Output = Result<protocol::TourAskResult, ResponseError>> + Send + use<>
+{
+    let core = core.clone();
+    let state = core.state.clone();
+    timed("tourAsk", async move {
+        let params = params.unwrap_or_default();
+        // a row's tour: its root, question and detail, which the other keys override
+        let given = if let Some(id) = &params.tour {
+            let project = open_project(&state)?;
+            let (root, id) = (store::vnoc_root(project.git_root()), parse_tour(id)?);
+            let held = state.clone();
+            Some(
+                blocking(move || {
+                    let project = held
+                        .project
+                        .get()
+                        .ok_or(ActError::Environment("no folder is open".into()))?;
+                    let tour = act::read_tour(&root, &id)?;
+                    let address = tour
+                        .stops
+                        .iter()
+                        .find(|s| s.written)
+                        .map(|s| document::written_name(project, s));
+                    Ok::<_, ActError>((
+                        address,
+                        tour.question
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|q| !q.is_empty())
+                            .map(String::from),
+                        document::AskDetail::of_tour(tour.detail),
+                    ))
+                })
+                .await?
+                .map_err(act_error)?,
+            )
+        } else {
+            None
+        };
+        if params.depth.is_some_and(|d| d > route::MAX_DEPTH) {
+            return Err(bad_params(format!("`depth` is 0 to {}", route::MAX_DEPTH)));
+        }
+        // the node: the one `key` names (no such node is a bad request), else, when a depth is asked for, the root of the row's tour (its sentence still names it
+        // if the node is gone, only without the depth)
+        let given_address = given.as_ref().and_then(|(address, _, _)| address.clone());
+        let key = params.key.as_ref().filter(|k| !k.trim().is_empty());
+        let (looked_up, strict) = match (key, &given_address, params.depth) {
+            (Some(key), _, _) => (Some(key.clone()), true),
+            (None, Some(address), Some(_)) => (Some(address.clone()), false),
+            _ => (None, false),
+        };
+        let found = if let Some(key) = looked_up {
+            let project = ready_project(&state).await?;
+            let index = state.index.read().unwrap_or_else(|e| e.into_inner());
+            let tree = index.tree(&project.name(), project.prefix());
+            match find::node_named(&index, project, &tree, &key) {
+                // the project's root is every tour's: a sentence about it names nothing
+                Some(node) if node.location() != "." => Some((
+                    node.location(),
+                    node.kind == crate::index::Kind::Function,
+                    node.id.clone(),
+                )),
+                Some(_) => None,
+                None if strict => return Err(bad_params(format!("no node is named `{key}`"))),
+                None => None,
+            }
+        } else {
+            None
+        };
+        let (address, calls, sized) = match found {
+            Some((address, calls, id)) => (Some(address), calls, Some(id)),
+            None => (
+                if key.is_some() { None } else { given_address },
+                false,
+                None,
+            ),
+        };
+        let question = match &params.question {
+            Some(q) => Some(q.clone()),
+            None => given.as_ref().and_then(|(_, q, _)| q.clone()),
+        };
+        let detail = params
+            .detail
+            .or(given.as_ref().map(|(_, _, d)| *d))
+            .unwrap_or_default();
+        let asked = document::ask(&document::Parts {
+            address: address.as_deref(),
+            question: question.as_deref(),
+            depth: params.depth,
+            calls,
+            detail,
+        });
+        let sizes = match sized {
+            Some(id) => route_sizes(&core, &id).await?,
+            None => None,
+        };
+        Ok(protocol::TourAskResult {
+            text: asked.text,
+            words: asked.words.to_string(),
+            filled: given.map(|(key, question, detail)| protocol::TourAskFilled {
+                key,
+                question,
+                detail,
+            }),
+            sizes: sizes.map(|sizes| {
+                sizes
+                    .iter()
+                    .map(|s| protocol::TourAskSize {
+                        depth: s.depth,
+                        stops: s.stops,
+                        minutes: s.minutes,
+                        words: s.words(),
+                    })
+                    .collect()
+            }),
+        })
+    })
+}
+
+/// `vnoc/tourSettings`: [`act::settings`], the function of `vnoc tour settings`. A key that is given is changed first, under the project's write lock (it is
+/// the project's file).
+pub(super) fn tour_settings(
+    core: &mut Core,
+    params: Option<protocol::TourSettingsParams>,
+) -> impl std::future::Future<Output = Result<serde_json::Value, ResponseError>> + Send + use<> {
+    let state = core.state.clone();
+    timed("tourSettings", async move {
+        let project = open_project(&state)?;
+        let params = params.unwrap_or_default();
+        let choice = |text: &str| {
+            Choice::parse(text)
+                .ok_or_else(|| bad_params(format!("`{text}` is not one of always, ask, never")))
+        };
+        let mut set = Vec::new();
+        for (key, text) in [(Key::Ids, &params.ids), (Key::Commit, &params.commit)] {
+            if let Some(text) = text {
+                set.push((key, choice(text)?));
+            }
+        }
+        let _one_writer = if set.is_empty() {
+            None
+        } else {
+            Some(write_lock(project).await?)
+        };
+        let shown = {
+            let state = state.clone();
+            blocking(move || {
+                let project = state
+                    .project
+                    .get()
+                    .ok_or(ActError::Environment("no folder is open".into()))?;
+                act::settings(project, &set)
+            })
+            .await?
+            .map_err(act_error)?
+        };
+        serde_json::to_value(shown).map_err(internal)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::Project;
+    use crate::tours::check::Source;
+    use crate::tours::record::Detail;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_stop_whose_driver_ask_fails_or_runs_out_of_time_is_left_out_and_the_count_goes_on() {
+        let late = tokio::time::timeout(Duration::from_millis(1), std::future::pending::<()>())
+            .await
+            .unwrap_err();
+        assert!(matches!(of_the_ask::<u8>(Err(late)), Asked::Left));
+        for failed in [
+            CallsError::Internal("the driver went away".into()),
+            CallsError::Invalid("not a function".into()),
+        ] {
+            assert!(matches!(of_the_ask::<u8>(Ok(Err(failed))), Asked::Left));
+        }
+        assert!(matches!(
+            of_the_ask::<u8>(Ok(Err(CallsError::MissingCapability("no callTree".into())))),
+            Asked::NoDriver
+        ));
+        assert!(matches!(of_the_ask(Ok(Ok(7u8))), Asked::Calls(7)));
+    }
+
+    #[test]
+    fn the_refusal_while_the_calls_are_counted_says_ask_again_in_words_and_in_data() {
+        let e = being_counted();
+        assert_eq!(e.code, ErrorCode::REQUEST_FAILED);
+        assert!(e.message.ends_with("ask again"), "{e:?}");
+        assert_eq!(e.data, Some(serde_json::json!({ "askAgain": true })));
+    }
+
+    /// A state with a folder open and no index: the first build has not happened (`Status::Building`), and a tour with no stop in it.
+    fn state_with_a_tour(label: &str) -> (Arc<State>, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("vnoc-server-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::testdir::remove_at_end(&dir);
+        std::fs::create_dir_all(dir.join(".vnoc")).unwrap();
+        store::start(
+            &dir,
+            store::StartParams {
+                title: "T".into(),
+                question: None,
+                author: None,
+                detail: Detail::Normal,
+            },
+        )
+        .unwrap();
+        (opened(&dir), dir)
+    }
+
+    fn opened(dir: &std::path::Path) -> Arc<State> {
+        let state = Arc::new(State::new());
+        assert!(state.project.set(Project::open(dir).unwrap()).is_ok());
+        state
+    }
+
+    fn rows_of(state: &State, dir: &std::path::Path) -> Vec<Arc<store::Row>> {
+        let rows = state.tours.sync(&dir.join(".vnoc")).0;
+        assert_eq!(rows.len(), 1);
+        rows
+    }
+
+    #[tokio::test]
+    async fn a_tour_whose_record_is_valid_is_answered_while_an_update_holds_the_lock_and_the_first_build_is_not_done()
+     {
+        let (state, dir) = state_with_a_tour("no-wait");
+        // the first ask records the tour (it has no written stop: nothing to check)
+        let rows = rows_of(&state, &dir);
+        let first = answers_for(&state, rows).await.unwrap();
+        assert_eq!(first.values().next().unwrap().from, Source::Check);
+
+        // an update is running (it holds `one_at_a_time`) and there is no index: the memory answers
+        let running = state.one_at_a_time.lock().await;
+        let rows = rows_of(&state, &dir);
+        let asked = tokio::time::timeout(Duration::from_secs(5), answers_for(&state, rows))
+            .await
+            .expect("the answer did not wait for the update");
+        assert_eq!(asked.unwrap().values().next().unwrap().from, Source::Memory);
+
+        // a core that has just started has no memory, but the record on disk is valid: the record answers
+        let fresh = opened(&dir);
+        let rows = rows_of(&fresh, &dir);
+        let asked = tokio::time::timeout(Duration::from_secs(5), answers_for(&fresh, rows))
+            .await
+            .expect("the answer did not wait for the update");
+        assert_eq!(asked.unwrap().values().next().unwrap().from, Source::Record);
+        drop(running);
+    }
+}

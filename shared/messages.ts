@@ -2,6 +2,7 @@
 // (docs/10-ui-rework/01-state.md §4). Types only: nothing here runs, so any side can import it.
 
 import type { ContextId, Intent, Session } from "./session";
+import type { AsWritten, Place, SettingChoice, StopId, TourAskAnswer, TourAskParams, TourCallsAnswer, TourHaltAnswer, TourId, TourMove, TourPinAnswer, TourPinParams, TourRow, TourSettingsAnswer, TourUnreadable, TourView } from "./tours";
 
 export type Kind = "folder" | "file" | "class" | "function";
 
@@ -378,9 +379,63 @@ export interface Requests {
   /** ask the host to fetch an entry's call tree again, after it failed (the footer's Retry) */
   retryCalls: { params: { key: string }; result: void };
   /** a click on a sidebar row (07 §4): the host applies the click rule: the canvas is open → reveal the card there (never a code tab over it); closed → the code as a preview tab */
-  rowClick: { params: { context: ContextId; id: string }; result: void };
+  rowClick: { params: { context: ContextId; id: string; pick?: boolean }; result: void };
+  // `pick`: the click is a pick from the search: with the canvas open the host only asks it (`reveal` with `pick`), and the canvas selects the call card it draws for the node, or reveals the node by structure
   /** the buttons of the sidebar's states (06 §8): Open Folder, and Try Again (the core reads the project again) */
   command: { params: { name: "openFolder" | "refreshStructure" }; result: void };
+  /**
+   * The list of tours (`vnoc/tours`), in the core's order. With `on`, a structure key: the tours that pass through that node, each row with its `on`. The host holds the
+   * plain list and sends it again as the `tours` event when the core says a tour changed; a page that starts asks once.
+   */
+  tours: { params: { on?: string; check?: TourId[] } | void; result: TourRow[] };
+  /** A tour as the stage plays it (`vnoc/tour`), with the place as the core has it now. The host holds the open tour's and answers from it; `tour` events follow. */
+  tour: { params: { id: TourId }; result: TourView | TourUnreadable };
+  /** A move in a tour (`vnoc tour go`'s words: `next`, `prev`, `next-stop`, `prev-stop`, `back`, `s4`, `s3.b2`, `cover`, `end`): the core makes it and answers the new place, which the host takes */
+  tourGo: { params: { id: TourId; move: TourMove }; result: Place };
+  /** One stop of a pinned tour as it was written (`vnoc/tourCode`): its code at the pinned commit, and the lines of each of its steps there. `null` when the tour is not pinned, the commit is not in this repository, or the stop has no code. The page keeps it per (tour, stop) until the next `tour` event */
+  tourCode: { params: { id: TourId; stop: StopId }; result: AsWritten | null };
+  /** How many tours pass through each node, by the structure's key (`vnoc/tourCounts`): the `▶ N` on a card and a row. The host holds it and sends the `tourCounts` event when it changes; a page asks once when it starts */
+  tourCounts: { params: void; result: { counts: Record<string, number> } };
+  /** `▶ N` and **Show Tours**: select the node (in `context`), switch the TOURS section to **On the selected node**, show the section. The host does it: the card is on the canvas and the section is in the sidebar */
+  showTours: { params: { key: string; context: ContextId }; result: void };
+  /** The calls of a tour's written stops that are not on the tour (`vnoc/tourCalls`): the card's `+N`. The core keeps it until the tour's file or a stop's file changes; the page asks when the tour's map is drawn and on each `tour` event */
+  tourCalls: { params: { id: TourId }; result: TourCallsAnswer };
+  /** ■ Stop (`vnoc tour halt`'s act): the core writes the halt; the agent answers it at its next command. The host asks for the tour again, and the state says `stopping`, then `stopped` */
+  tourHalt: { params: { id: TourId }; result: TourHaltAnswer };
+  /** `vnoc/tourPin`, as the core answers it: the cover asks it `dry` (why the tour is not pinned, nothing written), and **Commit and Pin** asks it with `commit`. A refusal of the core is the request failing, with its words */
+  tourPin: { params: TourPinParams; result: TourPinAnswer };
+  /** `vnoc/tourSettings`: the project's two settings (`[tours] ids` and `commit`), read with no params, written with one. The dialog's *Always commit and pin without asking in this project* and the message's **Always Write IDs in This Project** write them */
+  tourSettings: { params: { ids?: SettingChoice; commit?: SettingChoice }; result: TourSettingsAnswer };
+  /** **Write IDs** on the cover: the host does what the row's **Write IDs for Its Stops** does (it asks to save the stops' files first, writes, and says what it wrote in a message). Answers when it is over */
+  tourWriteIds: { params: { id: TourId }; result: void };
+  /** the tour that **Commit and Pin…** was chosen for in the host (the row's menu, the **Pin** message): the one the page has not been told of yet, and `null` for none. Taken once: the page asks when it starts, and when `tourDialog` says so */
+  tourDialogTake: { params: void; result: { id: TourId; title: string | null } | null };
+  /** **Ask for a Tour…** from the TOURS section (`＋`, the empty states): the host brings the canvas page up and tells it to open the ask dialog, filled in from `key` (a node) or `tour` (a row's tour) */
+  tourAskOpen: { params: { key?: string; tour?: TourId }; result: void };
+  /** where the ask dialog was opened in the host (the node's menu, a row's **Ask for a New Tour**) and no page has been told: the page asks when it starts and when `tourAskDialog` says so; taken once, `null` for none */
+  tourAskTake: { params: void; result: { key?: string; tour?: TourId } | null };
+  /** a file's diff against HEAD (`git.openChange`): a link of the **Commit and Pin…** dialog. `path` is relative to the opened folder */
+  openChange: { params: { path: string }; result: void };
+  /** the TOURS section's `⋯` → **Tour Settings…**: the host's two QuickPicks */
+  tourSettingsPick: { params: void; result: void };
+  /** the row's `🗑` and the `Delete` key, as the row's menu **Delete**: the host asks the core (`vnoc/tourDelete`), closes the tour if it is the open one, and tells the pages with `tourDeleted`. A refusal (a tour being written) is a message in the core's words */
+  tourDelete: { params: { id: TourId }; result: void };
+  /** **Undo** on a deleted row: the host restores each token (`vnoc/tourRestore`) and asks the list again */
+  tourUndo: { params: { tokens: string[] }; result: void };
+  /** the TOURS section's `⋯` → **Delete Finished Tours** (private finished tours only): the host asks the core, and tells the pages with one `tourDeleted` for all */
+  tourDeleteFinished: { params: void; result: void };
+  /** the dialog's **Copy Prompt** (and the host's own **Ask for a Tour…** with no dialog): the host asks the core for the sentence (`vnoc/tourAsk`: `key` the node's, `question`, `depth`, `detail`; with `tour`, that tour's fills the rest), copies it and says the core's words */
+  tourAsk: { params: TourAskParams | void; result: void };
+  /** the form's prompt, live: the core's sentence for the same parts, with nothing copied and nothing said. `filled` is what a `tour` gave the form */
+  tourAskText: { params: TourAskParams | void; result: TourAskAnswer };
+  /** the TOURS section's `⋯` → **Import a Tour from JSON…**: the host asks for a file, and the core imports it */
+  tourImportFile: { params: void; result: void };
+  /** the TOURS section's `⋯` → **Check All Tours**: the host asks the core to check every tour anew, with progress; the rows say what it found */
+  tourCheckAll: { params: void; result: void };
+  /** the bar's `⋯` → **Open Tour…**: the host's command `vnoc.openTour` (the QuickPick, the selected node's tours first) */
+  openTour: { params: void; result: void };
+  /** the end card's **Share…**, as the row's menu **Share with the Project**: the host asks the core (`vnoc/tourShare`) and says its words, with **Pin** when the tour is not pinned */
+  tourShare: { params: { id: TourId }; result: void };
 }
 
 /** extension → webview. No answer. */
@@ -390,7 +445,7 @@ export interface Events {
   /** the whole session, every time it changes: whole snapshots cannot get out of step, and `seq` drops one that arrives late */
   session: Session;
   /** a menu entry that changes only what the canvas draws (not the session): show a card's code, fit the view, start an edit of a card (it shows its code first). `checkKeys`, `setDraft` and `save` are for the extension's test suite: it cannot press keys in a webview. `saveFile` is the Save button of "Save `<file>` to edit here" on a card; `showDocPanel` opens the canvas's doc panel; `docEdit`, `docSetDraft` and `docSave` (`key`: the doc's path) are Edit, typing and Save in a doc panel, on whichever page shows that doc */
-  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave" | "saveFile" | "setSearch" | "focusSearch" | "searchKey"; key?: string; text?: string };
+  viewCommand: { name: "showCode" | "hideCode" | "fitView" | "edit" | "checkKeys" | "setDraft" | "save" | "showDocPanel" | "docEdit" | "docSetDraft" | "docSave" | "saveFile" | "setSearch" | "focusSearch" | "searchKey" | "stageKey" | "stageClick" | "canvasWidth" | "pinDialog" | "askDialog" | "toursClick" | "setView" | "mapClick" | "showTours"; key?: string; text?: string };
   /** a call tree arrived: the entry's card shows it in its "Calls" section */
   callTree: { key: string; result: CallTreeResult };
   /** what the host is doing about the call tree of this entry: the canvas draws a spinner for `loading` and a retry for `failed`; `idle` is "nothing in flight" */
@@ -407,6 +462,20 @@ export interface Events {
   showNode: { id: string; path?: string };
   /** the set of files with unsaved changes changed: `paths` are all of them, relative to the opened folder, sorted (the whole set, as the session is: nothing to get out of step). A card marks its code while its file is in it */
   dirtyFiles: { paths: string[] };
+  /** the list of tours, again (the core said a tour changed, and a page asked for the list before): the whole list, in the core's order */
+  tours: { tours: TourRow[] };
+  /** the host is asking the core again because it said to (the first build is still running): the core's own words, drawn as a quiet line; `null` when that ended. Sent at each ask */
+  toursWaiting: { words: string | null };
+  /** the counts of tours through each node, again (a tour changed, or the index did): the whole answer of `vnoc/tourCounts` */
+  tourCounts: { counts: Record<string, number> };
+  /** **Commit and Pin…** was chosen in the host for this tour (a page that has not started asks `tourDialogTake`): the canvas page shows the dialog. `title` is for the message it proposes */
+  tourDialog: { id: TourId; title: string | null };
+  /** **Ask for a Tour…** was chosen in the host (a node's menu, a row's **Ask for a New Tour**, `＋`): the canvas page shows the ask dialog, filled in from `key` (a node) or `tour` (a row's tour) */
+  tourAskDialog: { key?: string; tour?: TourId };
+  /** these tours went to the trash (a delete, or **Delete Finished Tours**): the list shows one row in their place for six seconds, with the core's `words` and **Undo**, which restores every `token` */
+  tourDeleted: { ids: TourId[]; tokens: string[]; words: string };
+  /** the open tour, again: it changed, or its place did (the host took the core's answer). The whole view, with the place in it; `unreadable` when the file cannot be read now. `null`: no tour is open */
+  tour: { id: TourId; view: TourView | TourUnreadable } | { id: null; view: null };
 }
 
 /** webview → extension, no answer. */
@@ -414,7 +483,7 @@ export type Notes =
   | { type: "intent"; context: ContextId; intent: Intent } // the one way a webview changes the session
   | { type: "rendered"; context: string; visible: number; hidden: number; callCards: number; chevrons: number } // the extension's test suite uses it; `context`: the context the canvas drew; `callCards`: call cards drawn; `chevrons`: function and class cards that show a chevron for their calls
   | { type: "cardsDrawn"; keys: string[]; onScreen: string[] } // `keys`: the function and class cards on the canvas's screen that show nothing of their calls yet, the one to look at first first: the host probes those. `onScreen`: every function and class card on screen, with or without structure children: the host's prefetch of the selected one is for those
-  | { type: "chipsDrawn"; chips: { id: string; label: string; active: boolean }[] } // the bar's context chips changed (none: one context): the extension's test suite uses it
+  | { type: "chipsDrawn"; chips: { id: string; label: string; active: boolean; dot?: "pulsing" | "still" }[] } // the bar's context chips changed (none: one context); a tour's chip has a writing dot while it is being written (`pulsing`, or `still` with no news): the extension's test suite uses it
   | { type: "drafts"; page: Page; drafts: Draft[] } // a page's drafts (`page`: the canvas, or the docs tab: the host merges both into one copy), the whole list: the host keeps a copy so a closed canvas does not lose them (§7, 9.5c). At once when a draft starts, changes state or goes; 500 ms after the last keystroke for typing; at once when the page is hidden
   | { type: "draftsDrawn"; count: number; label: string } // the bar's "N unsaved drafts" chip changed (`count` 0, `label` "": no chip): the extension's test suite uses it
   | { type: "warned"; level: "none" | "warning" | "error"; text: string } // the bar's ⚠ changed: the extension's test suite uses it
@@ -424,12 +493,49 @@ export type Notes =
   | { type: "keysChecked"; found: boolean; target: string; taken: string[]; hosts: number } // the answer to the viewCommand `checkKeys`: the page dispatched keys at the editor of a code card (`found`: there was one, `target`: its tag, `hosts`: how many code areas the page had, editor made or not), and these were taken by something other than the editor (React Flow's Space, say): the extension's test suite uses it
   | { type: "searchDrawn"; query: string; ids: string[]; docs: string[]; total: number; notes: string[]; ms: number; trip: number } // the STRUCTURE view drew the rows of an answer (`query`: the box's text it answers, `ids`: the node rows in order, `docs`: the doc rows' `doc_path`s in order, `total`: how many matched before the limit, `notes`: the lines drawn under the box about its filters, `ms`: from the change of the box to the draw, `trip`: from sending the request to the draw): the extension's test suite uses it
   | { type: "docsShown"; pinned: string | null; node: string | null; doc: string | null } // the docs tab shows this: `pinned`: the node it is held on (a Missing node's carries `MISSING_PIN`), `node`: the node it draws, `doc`: the doc's path (null: none yet): the extension's test suite uses it
+  | { type: "docPanel"; open: boolean; node: string | null } // the canvas's doc panel (the bar's ⓘ) opened or closed, and the node it shows: the extension's test suite uses it
   | { type: "searchDim"; query: string; dimmed: string[] } // the canvas applied an answer of `searchCards` (`query`: the text it answers, `dimmed`: the ids of the cards it dimmed, the selected one never among them; a call card with no key is dimmed), and once with `dimmed: []` when the search ended: the extension's test suite uses it
   | { type: "searchFocused"; focused: boolean; text: string } // the STRUCTURE view handled the view command `focusSearch` (*V-NOC: Search…*): `focused`: the cursor is in the box now, `text`: what the box holds: the extension's test suite uses it
+  | { type: "stageDrawn"; tour: string; mode: "cover" | "step" | "end"; stop: string | null; step: string | null; kind: string | null; header: string; title: string | null; text: string | null; position: string; next: string; unseen: number; firstUnseen: string | null; calls: number[]; code: { first: number; text: string } | null; lit: number[]; thin: number[]; scrolledTo: number; coloured: number; asWritten: { commit: string; lit: number[] } | null; switch: "now" | "written" | null; checkFrom: string | null; markdown: { lists: number; tables: number; fences: number; diagrams: number; drawn: number; failed: number }; beat: string; nextState: string; nextLabel: string; sentence: string | null; adding: string | null; fade: boolean; segments: { total: number; planned: number; filled: number }; pin: string | null; reason: string | null; offers: string[]; layout: StageLayout } // the tour's stage drew this (`header`: the header's words, `position`: "stop 3 of 10 · 2 of 5", `next`: the primary button's word, `unseen`: the core's count the end card says, `calls`: the file lines of the code that lead to a later stop (a jump), `code`: the pane's text and the file line it starts at, `lit` and `thin`: the file lines drawn lit and with the thin mark, `scrolledTo`: the line at the top of the pane, from 0, `coloured`: the tokens of the code pane drawn in a syntax colour, `asWritten`: the pane shows the pinned commit's code (its short commit, and the file lines lit), `switch`: which of Now / As Written is chosen when the switch is offered, `checkFrom`: where the view's freshness came from (`memory`, `record` or `check`), `markdown`: what the step's text drew: its lists, tables, code fences, diagrams, and how many diagrams were drawn or failed to be, `beat`: finished / writing / stopping / stopped / quiet, `nextState`: ready / planned / adding (the last two are dim), `nextLabel`: the primary button's words, `sentence`: what a step that is not written says in place of its text, `adding`: the line under the last written step of a tour with no plan, `fade`: the text is fading in where the grey bars were, `segments`: the foot's segments, all of them, the dotted ones, the filled ones, `pin`: the cover's pin line (`pinned at f4d6e15`, `not pinned`; null elsewhere and while the tour is written), `reason`: the line under `not pinned`, in the core's words, `offers`: the lines the cover offers, each with its button's words after ` | `, `layout`: how the dock is laid out and whether anything is cut): the extension's test suite uses it
+  | { type: "toursDrawn"; folded: boolean; mode: "list" | "route"; count: number; header: string; view: "all" | "on"; buttons: string[]; empty: string | null; asks: string[]; list: { id: string; title: string; words: string; line2: string; stateWord: string | null; question: string | null; active: boolean; clickable: boolean; mark: "writing" | "playing" | null; stop: boolean; stopPlaying: boolean }[]; route: { id: string; kind: "stop" | "step"; text: string; mark: string | null; current: boolean; number: number | null; description: string | null; struck: boolean; depth: number }[]; deleted: { ids: string[]; words: string; after: string | null }[]; foot: { text: string; stop: boolean } | null; more: boolean; waiting: string | null; strip: { writing: string | null; stop: boolean; playing: string | null; stopPlaying: boolean } | null; routeHeader: { writing: string | null; stop: boolean; stopPlaying: boolean } | null} // the sidebar's TOURS section drew this (`view`: which list, `buttons`: the two view buttons' words, `empty`: the empty state's sentence when the second view has no tour, `asks`: the texts of the buttons of an empty state that ask for a tour (**Ask for One**, **Copy a Request for `name`**), `line2` of a row: its second line in this view (the core's `on.words` in the second view), `mode`: the list or the open tour's route, `count`: the rows it has, `header`: the route header's words, `list`: each row's title and the core's `words`, `deleted`: the rows that say a tour was deleted (the core's words, with Undo; `after`: the row above it), `route`: each stop and step with its mark, `foot`: the route's foot line and whether the ■ Stop is on it, `strip`: the line under the section's header (`writing`: `● writing`, or `● 2 writing`, and `stop`: its Stop button; `playing`: `▶ title` of the open tour while the list is shown, and `stopPlaying`: its button), `routeHeader`: the route header's `● writing` and its Stop, and whether its labelled **Stop Playing** is there, a row's `mark`: `writing` or `playing`, `stop` and `stopPlaying`: its always-shown buttons, `more`: the `◌ …` row under the last stop of a tour with no plan, `waiting`: the core's words while the host asks again for the list, null otherwise): the extension's test suite uses it
+  | { type: "mapDrawn"; tour: string; cards: { id: string; number: number; mark: string; here: boolean; callLine: number | null; description: string | null; struck: boolean; planned: boolean; writing: boolean; off: number }[]; heavy: string[]; edges: string[] } // the tour's map drew these cards (`off`: the card's `+N`, the calls not on the tour, 0 for none, `mark`: seen / here / ahead / planned, `here`: the ring, `callLine`: a call card's line), the ids of the heavy edges, and every edge as `source->target:call|node`: the extension's test suite uses it
+  | { type: "askDialog"; dialog: { about: string | null; question: string; agentDepth: boolean; depth: number; size: string | null; detail: string; prompt: string } | null } // the **Ask for a Tour** dialog changed (null: it is closed): the node's chip, the question, the *Let the agent decide* box, the depth, the core's size of that depth, the detail, and the prompt as the core gave it: the extension's test suite uses it
+  | { type: "pinDialog"; dialog: { tour: string; files: string[]; message: string; always: boolean; error: string | null } | null } // the **Commit and Pin…** dialog changed (null: it is closed): the files it lists, the message in its box, the check box, and the line it shows when a commit failed: the extension's test suite uses it
+  | { type: "tourChips"; surface: "canvas" | "sidebar"; chips: { id: string; tours: number; tip: string }[] } // the nodes on `surface` (cards on the canvas, rows of the structure that are drawn) that show `▶ N`, and the chip's tooltip: the extension's test suite uses it
+  | { type: "tourBar"; crumbs: string[]; moved: boolean; back: boolean; agent: string | null; stop: boolean } // the bar in a tour context drew these crumbs (the stops from the first to the current one), says `moved by the agent` (`moved`), and its `←` is enabled (`back`); `agent` is its words about the agent (`writing 6/10`, `stopping`, `stopped`, `no news`; null when the tour is finished) and `stop` is whether the ■ is on it: the extension's test suite uses it
+  | { type: "viewport"; context: string; x: number; y: number; zoom: number } // a canvas was panned or zoomed (the view `context` now has): the extension's test suite uses it
   | { type: "close" } // the docs tab
   | { type: "error"; message: string }; // a page crashed while drawing: the host logs it, and the test suite fails on it
 
 // What actually travels. `postMessage` carries one of these:
 export type RequestMessage = { [M in keyof Requests]: { type: "req"; id: number; method: M; params: Requests[M]["params"] } }[keyof Requests];
-export type ResponseMessage = { type: "res"; id: number; result: unknown } | { type: "res"; id: number; error: string };
+export type ResponseMessage = { type: "res"; id: number; result: unknown } | { type: "res"; id: number; error: string; /** the core said to ask again (`data.askAgain`): a page asks again, it does not show an error */ askAgain?: true };
 export type EventMessage = { [E in keyof Events]: { type: "event"; name: E; data: Events[E] } }[keyof Events];
+
+/** How the stage is laid out, measured in the page after it drew (`stageDrawn.layout`): the suite checks a narrow canvas with it. */
+export interface StageLayout {
+  /** the canvas the stage is in is under 640 px wide */
+  narrow: boolean;
+  /** the stage is folded to the mini bar */
+  folded: boolean;
+  /** the code and the text are one above the other */
+  stacked: boolean;
+  /** the height of the canvas the stage is in (the grip's limit is a share of it) */
+  canvasHeight: number;
+  /** the stage's width and height */
+  width: number;
+  height: number;
+  /** the code pane's height, and how many lines of code are whole in it */
+  codeHeight: number;
+  codeRows: number;
+  /** lines of the code that are wrapped onto more than one row */
+  wrapped: number;
+  /** the code pane scrolls sideways: a line is cut at its edge */
+  codeCut: boolean;
+  /** the foot's primary button and every icon of the header are inside the stage's box (nothing is clipped, `Next` is reachable); the names of those that are not */
+  outside: string[];
+  /** the `▾ N more lit lines` chip's box overlaps a row of code that is in view (it must never: null when there is no chip) */
+  chipOverCode: boolean | null;
+  /** the cover's parts, top to bottom, by their `data-part` (empty off the cover) */
+  coverParts: string[];
+}

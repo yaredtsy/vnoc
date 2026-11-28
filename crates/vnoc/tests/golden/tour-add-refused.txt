@@ -1,0 +1,5 @@
+✗ not written: 3 problems
+  fix them, then send the whole stop again
+    intro: 499 of 420 characters
+    block 1: lines 40-44 are outside retry_charge (11-22)
+    block 2 text: an image. A text has no images: say it in words, or draw it as a Mermaid diagram

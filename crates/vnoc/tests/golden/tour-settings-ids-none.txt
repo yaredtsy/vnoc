@@ -1,0 +1,4 @@
+set ids = always
+ids    always  from .vnoc/vnoc.toml
+commit ask     the default
+ids = "always" does nothing here: this project writes no ID lines ([ids] default = "none")

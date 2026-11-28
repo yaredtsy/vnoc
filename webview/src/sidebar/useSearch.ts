@@ -5,7 +5,7 @@ import type { SearchDoc, SearchNode, SearchResult } from "@vnoc/shared/messages.
 import { newest, outcomeOf } from "@vnoc/shared/search.ts";
 import { on, post, request } from "../host.ts";
 import { dispatch, useSession } from "../state/session.ts";
-import { pickIntent, pointedAt, rowAt, searchKey } from "./search.ts";
+import { pointedAt, rowAt, searchKey } from "./search.ts";
 
 /** An answer that was drawn: the text it answers, and when the box changed and the request was sent (for the test suite's note). */
 interface Answer {
@@ -157,11 +157,11 @@ export function useSearch(focusList: () => void) {
     toTree.current = true;
     setQuery("");
   };
-  /** Reveal in the active context (the focus shortens if it hides the node, 03 §3), then the click rule of 07 §4. The box clears; the list comes back with the row in view. */
+  /** The click rule of 07 §4 for a pick (see `rowClick`): the canvas selects a call card it draws for the node, else the node is revealed (the focus shortens if it hides it, 03 §3). The box clears; the list comes back with the row in view. */
   const pick = (row: SearchNode) => {
     const context = useSession.getState().active;
-    dispatch(pickIntent(row.id));
-    void request("rowClick", { context, id: row.id }).catch(() => {});
+    // nothing is dispatched here: with the canvas open it decides what a pick is (a call card it draws, or a reveal by structure); the host asks it, or reveals for the sidebar
+    void request("rowClick", { context, id: row.id, pick: true }).catch(() => {});
     clear();
   };
   /**
@@ -173,8 +173,7 @@ export function useSearch(focusList: () => void) {
     if (doc.node === null) void ask();
     else {
       const context = useSession.getState().active;
-      dispatch(pickIntent(doc.node));
-      void request("rowClick", { context, id: doc.node }).then(ask, ask);
+      void request("rowClick", { context, id: doc.node, pick: true }).then(ask, ask);
     }
     clear();
   };

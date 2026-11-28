@@ -1,0 +1,2675 @@
+import * as assert from "assert";
+import { execFileSync } from "child_process";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import * as vscode from "vscode";
+
+import type { Notes, StructureResult } from "@vnoc/shared/messages";
+import type { Session } from "@vnoc/shared/session.ts";
+import { canvasTabs, closeCanvas, guarded, sleep, soft, until, waitFor } from "./util";
+
+// A tour plays in a real window (docs/26-tours/06-build-order.md TR17). The tour is made by the built `vnoc tour` commands, so its hashes are real: a stop with blocks and
+// a detail, a short stop, a file with no blocks (contents), and a stop explained before. The suite cannot see the page, so it reads what the stage posts
+// (`stageDrawn`), and presses keys and buttons through the host (`stageKey`, `stageClick`: it cannot press or click in a webview).
+
+type Drawn = Extract<Notes, { type: "stageDrawn" }>;
+interface Api {
+  structure(): Promise<StructureResult>;
+  session(): Session;
+  stageDrawn(): Drawn[];
+  stageKey(key: string): void;
+  stageClick(button: string): void;
+  canvasWidth(px: number | null): void;
+  toursDrawn(): Extract<Notes, { type: "toursDrawn" }>[];
+  toursClick(what: string): void;
+  mapDrawn(): Extract<Notes, { type: "mapDrawn" }>[];
+  tourBar(): Extract<Notes, { type: "tourBar" }>[];
+  chips(): { id: string; label: string; active: boolean; dot?: "pulsing" | "still" }[];
+  mapClick(stop: string): void;
+  setView(text: string): void;
+  viewports(): Record<string, { x: number; y: number; zoom: number }>;
+  dispatch(intent: unknown, context?: string): void;
+  sidebarOpen(): boolean;
+  webviewErrors(): string[];
+  cli: { binaryPath(): string | undefined; driverPaths(): string[] };
+  tours: { open(): unknown; list(): Promise<{ id: string; words: string }[]> };
+  tourStatus(): string | null;
+  attention(): { missing: string[]; problems: unknown[]; lostIds: string[]; hasAttention: boolean; groups: Record<string, string[]> };
+  restartCore(): Promise<void>;
+  toursNoticed(): string[];
+  toursNoticeOpen(id: string): Promise<void> | undefined;
+  tourChips(): Extract<Notes, { type: "tourChips" }>[];
+  showTours(key: string, context: string): Promise<void>;
+  request<T>(method: string, params?: object): Promise<T>;
+  pinDialog(): Extract<Notes, { type: "pinDialog" }>[];
+  pinDialogClick(key: string, text?: string): void;
+  askDialog(): Extract<Notes, { type: "askDialog" }>[];
+  askDialogClick(key: string, text?: string): void;
+  tourMessages(): { level: string; text: string; buttons: string[] }[];
+  answerTourMessages(answers: (string | undefined)[] | null): void;
+  answerTourPicks(labels: string[] | null): void;
+  answerTourInputs(answers: (string | undefined)[] | null): void;
+  answerTourFiles(paths: (string | undefined)[] | null): void;
+  answerOpenTour(labels: string[] | null): void;
+  openTourPicks(): string[][];
+  openTourPickWords(): string[][];
+  docPanel(): { open: boolean; node: string | null }[];
+  dirtyFiles(): string[];
+}
+let api: Api;
+
+// the hooks of this file wait for the core: when it has stopped answering they stand aside (`soft`), and each test fails at once
+const suiteSetup = (fn: (this: Mocha.Context) => unknown) => globalThis.suiteSetup(soft(fn));
+const setup = (fn: (this: Mocha.Context) => unknown) => globalThis.setup(soft(fn));
+
+const workspace = () => vscode.workspace.workspaceFolders![0].uri.fsPath;
+
+// the code the tour is about: `checkout` is 13 lines (an intro and blocks), `has_stock` is 2 (a short stop)
+const SHOP = `"""The shop, for the tour suite."""
+
+
+def checkout(order, stock):
+    """Hold the stock, then charge."""
+    if not has_stock(stock, order):
+        raise ValueError(f"Not enough stock for {order['sku']}: wanted {order['qty']}, the warehouse has {stock.get(order['sku'], 0)} left, try a smaller order")
+
+    reserve(stock, order)
+    try:
+        receipt = charge(order)
+    except TimeoutError:
+        release(stock, order)
+        raise
+
+    return receipt
+
+
+def has_stock(stock, order):
+    return stock.get(order["sku"], 0) >= order["qty"]
+
+
+def reserve(stock, order):
+    stock[order["sku"]] -= order["qty"]
+
+
+def charge(order):
+    return {"paid": order["qty"] * 3}
+
+
+def release(stock, order):
+    stock[order["sku"]] += order["qty"]
+`;
+
+const CHECKOUT = `checkout holds the stock first, then charges, and gives the stock back when the charge times out.
+
+## 6-7 Refuse what is not there
+It looks before it holds anything, so nothing is held for an order that cannot be filled.
+
+## 9-14 Hold, then charge
+The stock is held before the money is taken, so a second buyer cannot take it while the payment runs.
+
+### 11-14 Give it back on a timeout
+A timeout is the one failure it knows how to undo: the units go back, then the error goes up.
+`;
+
+let tour = "";
+let second = "";
+/** the pinned tour of "a tour that no longer matches the code" (checkout, has_stock, release), for the suites after it */
+let pinnedId = "";
+const vnoc = (args: string[], input = "") =>
+  execFileSync(api.cli.binaryPath()!, ["--driver", api.cli.driverPaths().find((p) => p.includes("python"))!, ...args], { cwd: workspace(), encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, VNOC_DRIVER: "", VNOC_DRIVERS: "" } });
+const tourCmd = (args: string[], input = "") => vnoc(["tour", ...args], input);
+
+const last = (): Drawn | undefined => api.stageDrawn().at(-1);
+/** Waits for the stage to draw something that satisfies `ready`; the newest drawing is the one asked. */
+const stageShows = async (what: string, ready: (d: Drawn) => boolean, ms = 10_000, of = tour): Promise<Drawn> => {
+  try {
+    await until(what, () => {
+      const d = last();
+      return d !== undefined && d.tour === of && ready(d);
+    }, ms);
+  } catch (e) {
+    // what the page last drew, and if it crashed, why
+    const coreAt = (() => {
+      try {
+        return JSON.parse(tourCmd(["where", of, "--json"])).at;
+      } catch {
+        return "?";
+      }
+    })();
+    throw new Error(`${(e as Error).message}; the core's place is ${coreAt}; the stage last drew ${JSON.stringify({ ...last(), code: undefined })}; the page's errors: ${JSON.stringify(api.webviewErrors())}`);
+  }
+  // to watch it: `VNOC_SLOW=1200` waits that long (ms) on every step; `VNOC_SHOT=<file>` writes that file at the second block, and holds it for 6 s, for a screenshot
+  await sleep(Number(process.env.VNOC_SLOW ?? 0));
+  if (process.env.VNOC_SHOT && last()!.step === "s1.b3") {
+    fs.writeFileSync(process.env.VNOC_SHOT, "ready");
+    await sleep(6000);
+  }
+  return last()!;
+};
+const atStep = (step: string) => (d: Drawn) => d.step === step;
+const toCover = async (of = tour) => {
+  // a tour that was just opened is at its cover already: a click on "again" would send a move to the cover that can land after the test's own next move (two requests overtake each other)
+  if (JSON.parse(tourCmd(["where", of, "--json"])).at === "cover" && last()?.tour === of && last()?.mode === "cover") return;
+  api.stageClick("again");
+  // the core has the cover before the next click is sent: two moves sent together are two requests that may overtake each other (and when the stage already shows the cover
+  // there is nothing new to wait for on the page)
+  await until("the core's place to be the cover", () => JSON.parse(tourCmd(["where", of, "--json"])).at === "cover");
+  await stageShows("the cover", (d) => d.mode === "cover", 10_000, of);
+};
+
+suiteSetup(async () => {
+  api = guarded(await vscode.extensions.getExtension("vnoc.vnoc")!.activate());
+});
+
+// ── every test starts clean ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+const gitIn = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace(), encoding: "utf8" });
+const tomlFile = () => path.join(workspace(), ".vnoc", "vnoc.toml");
+const stateDir = () => path.join(workspace(), ".vnoc", "local", "tour-state");
+/** What the workspace was when the first test of a suite began (after its `suiteSetup`, which may commit what the suite is about): the head, `shop.py` and `vnoc.toml` (null: there was none). */
+const starts = new Map<Mocha.Suite, { head: string; shop: string | null; toml: string | null }>();
+/** The suites before this one in a whole run leave `[ids] default = "none"` in `vnoc.toml` (their first attach writes it), and the tour tests are made for a project with none: the first test removes it. */
+let tomlCleared = false;
+const readOrNull = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
+
+/**
+ * Before each test of this file (and only this file's: a root hook is every suite's): no tour context is open, MAIN is active, the workspace is as it was when the suite began (`git reset --hard` to
+ * the head then, `shop.py` and `vnoc.toml` as they were), and no tour has a place or a "seen" mark (the state files are gone). A test that needs more (a tour open, a place) sets it up itself.
+ */
+setup(async function (this: Mocha.Context) {
+  const test = this.currentTest;
+  if (test?.file !== __filename) return;
+  this.timeout(30_000);
+  const shop = path.join(workspace(), "tourdemo", "shop.py");
+  if (!tomlCleared) {
+    tomlCleared = true;
+    fs.rmSync(tomlFile(), { force: true });
+  }
+  if (!starts.has(test.parent!)) starts.set(test.parent!, { head: gitIn("rev-parse", "HEAD").trim(), shop: readOrNull(shop), toml: readOrNull(tomlFile()) });
+  const start = starts.get(test.parent!)!;
+  api.answerTourMessages(null);
+  api.answerTourPicks(null);
+  api.answerTourInputs(null);
+  api.pinDialogClick("cancel");
+  for (const c of Object.values(api.session().contexts).filter((c) => c.kind === "tour")) api.dispatch({ type: "closeContext", id: c.id }, c.id);
+  await until("no tour context", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour"));
+  if (api.session().active !== "main") api.dispatch({ type: "activate", id: "main" }, "main");
+  gitIn("reset", "--hard", start.head);
+  if (start.shop !== null && readOrNull(shop) !== start.shop) {
+    fs.mkdirSync(path.dirname(shop), { recursive: true });
+    fs.writeFileSync(shop, start.shop);
+  }
+  if (start.toml === null) fs.rmSync(tomlFile(), { force: true });
+  else if (readOrNull(tomlFile()) !== start.toml) fs.writeFileSync(tomlFile(), start.toml);
+  for (const f of fs.existsSync(stateDir()) ? fs.readdirSync(stateDir()) : []) fs.rmSync(path.join(stateDir(), f), { force: true });
+});
+
+/**
+ * Opens a tour by **Open Tour…**'s command with the tour's id (it asks nothing: no QuickPick, no keyboard focus), and waits for its context and the canvas. The core must know the tour (an
+ * agent's command just wrote it): that is waited for first.
+ */
+const openByCommand = async (id = tour) => {
+  await waitFor(`the core to list tour ${id}`, async () => (await api.tours.list()).some((r) => r.id === id), 30_000);
+  await vscode.commands.executeCommand("vnoc.openTour", id);
+  await until(`the context of tour ${id}`, () => api.session().active === `tour:${id}`);
+  await until("the canvas tab", () => canvasTabs().length > 0);
+};
+/** {@link openByCommand}, then the stage's own drawing of the cover: one drawn after this call, not a stale one of an earlier test. */
+const openAtCover = async (id = tour) => {
+  const drawn = api.stageDrawn().length;
+  await openByCommand(id);
+  await until("the core's place to be the cover", () => JSON.parse(tourCmd(["where", id, "--json"])).at === "cover");
+  await until("the cover drawn anew", () => api.stageDrawn().slice(drawn).some((d) => d.tour === id && d.mode === "cover"), 30_000);
+};
+
+/** The code and the tours of this suite. Not a root hook: every suite of the run shares the window and its workspace, and the ones before this must not see these files. */
+async function makeTours() {
+  // the code, in a folder of its own; the core reads it when the watcher says so
+  const dir = path.join(workspace(), "tourdemo");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "shop.py"), SHOP);
+  for (let waited = 0; ; waited += 500) {
+    const structure = await api.structure();
+    const file = structure.root.children.find((c) => c.id === "tourdemo");
+    if (file?.children.some((c) => c.id === "tourdemo/shop.py" && c.children.length >= 5)) break;
+    assert.ok(waited < 30_000, "the structure never held tourdemo/shop.py");
+    await sleep(500);
+  }
+  // the tour, as an agent writes it: start, add with heredoc bodies, finish
+  const started = JSON.parse(tourCmd(["start", "--title", "How the shop checks out", "--question", "what happens when the payment times out", "--author", "the suite", "--json"]));
+  tour = started.tour;
+  const add = (node: string, body: string, ...flags: string[]) => tourCmd(["add", tour, node, "--body-file", "-", ...flags], body);
+  add("tourdemo/shop.py::checkout", CHECKOUT);
+  add("tourdemo/shop.py::has_stock", "has_stock answers one question: are there enough units of this SKU in stock? It reads and never changes the count.\n", "--from", "s1", "--line", "6");
+  add("tourdemo/shop.py", "shop.py is the whole shop: checkout runs the sale, and the four small functions under it each do one thing.\n");
+  add("tourdemo/shop.py::has_stock", "Called again here: checkout does not trust its caller to have checked.\n", "--same-as", "s2", "--from", "s1", "--line", "6");
+  tourCmd(["finish", tour, "--no-ids"]);
+}
+
+/** Closes the code tabs and leaves the canvas: `closeAllEditors` would close the canvas with them. */
+const closeCodeTabs = async () => {
+  await vscode.window.tabGroups.close(vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputText));
+};
+
+suiteTeardown(async () => {
+  await closeCodeTabs();
+});
+
+suite("a tour on the canvas", () => {
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    await makeTours();
+  });
+
+  test("Open Tour… lists the tour, and its command with the tour's id opens the tour's context on the cover", async () => {
+    const rows = await api.tours.list();
+    assert.strictEqual(rows[0]?.id, tour, `the core lists the tour first (newest first): ${JSON.stringify(rows.map((r) => [r.id, r.words]))}`);
+    assert.ok(rows[0].words.startsWith("new · 4 stops"), `a row says its words: ${rows[0].words}`);
+    assert.strictEqual(api.session().active, "main", "no tour is open when the test starts");
+    await vscode.commands.executeCommand("vnoc.openTour", tour); // the command with the id: no pick
+    await until("the tour's context", () => api.session().active === `tour:${tour}`);
+    await until("the canvas tab", () => canvasTabs().length > 0);
+    const cover = await stageShows("the cover", (d) => d.mode === "cover");
+    assert.strictEqual(cover.title, "How the shop checks out");
+    assert.strictEqual(cover.next, "Start");
+    assert.strictEqual(cover.code, null, "the cover is one column");
+    assert.strictEqual(api.session().contexts[`tour:${tour}`].tour, tour);
+    assert.strictEqual(api.session().contexts[`tour:${tour}`].selected, "tourdemo/shop.py::checkout", "the first stop is the selection at the cover");
+  });
+
+  suite("on the open tour", () => {
+  setup(async function () {
+    this.timeout(60_000);
+    await openAtCover();
+  });
+
+  test("Next walks to the end card through a block and its details, and Prev walks back", async () => {
+    await toCover();
+    const steps: [string, string, string, string | null, number[], number[]][] = [
+      // step, kind, position, title, lit lines, thin lines
+      ["s1", "intro", "stop 1 of 4 · 1 of 4", null, [], [4]],
+      ["s1.b1", "block", "stop 1 of 4 · 2 of 4", "Refuse what is not there", [6, 7], []],
+      ["s1.b2", "block", "stop 1 of 4 · 3 of 4", "Hold, then charge", [9, 10, 11, 12, 13, 14], []],
+      ["s1.b3", "detail", "stop 1 of 4 · 4 of 4", "Give it back on a timeout", [11, 12, 13, 14], [9, 10]],
+      ["s2", "short", "stop 2 of 4", null, [19, 20], []],
+      // s4 hangs from s1 (`--from s1`), so it comes before s3 on the route, which has no parent: the core's order, not the order they were written in
+      ["s4", "same_as", "stop 3 of 4", null, [], []],
+      ["s3", "contents", "stop 4 of 4", null, [], []],
+    ];
+    const check = (d: Drawn, [step, kind, position, title, lit, thin]: (typeof steps)[number]) => {
+      assert.deepStrictEqual([d.step, d.kind, d.position, d.title, d.lit, d.thin], [step, kind, position, title, lit, thin], `at ${step}`);
+    };
+    for (const row of steps) {
+      api.stageClick("next");
+      check(await stageShows(`${row[0]}`, atStep(row[0])), row);
+    }
+    assert.strictEqual(last()!.next, "Finish", "the last step says Finish");
+    // the code pane of each: the node's code for a block, the contents of a file, the same code dim for a stop explained before
+    assert.strictEqual(steps.length, 7);
+    api.stageClick("next");
+    const end = await stageShows("the end card", (d) => d.mode === "end");
+    assert.strictEqual(end.step, null);
+    assert.strictEqual(end.code, null, "the end is one column");
+    for (const row of [...steps].reverse()) {
+      api.stageClick("prev");
+      check(await stageShows(`back to ${row[0]}`, atStep(row[0])), row);
+    }
+    api.stageClick("prev");
+    await stageShows("back to the cover", (d) => d.mode === "cover");
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+
+  test("a stop of the tour: the code pane shows the file's own lines, with their numbers; a file stop shows no code", async () => {
+    await toCover();
+    api.stageClick("next");
+    const s1 = await stageShows("the intro", atStep("s1"));
+    const lines = fs.readFileSync(path.join(workspace(), "tourdemo/shop.py"), "utf8").split("\n");
+    assert.strictEqual(s1.code?.first, 4, "checkout starts at line 4");
+    assert.strictEqual(s1.code?.text, lines.slice(3, 16).join("\n"), "the code is the file's lines 4 to 16");
+    assert.ok(s1.header.includes("checkout") && s1.header.includes("tourdemo/shop.py"), s1.header);
+    api.stageClick("next");
+    api.stageClick("next");
+    const block = await stageShows("the second block", atStep("s1.b2"));
+    assert.strictEqual(block.code?.text, s1.code?.text, "a block shows the same code, with other lines lit");
+    for (let i = 0; i < 4; i++) api.stageClick("next"); // s1.b3, s2, s4, s3
+    const file = await stageShows("the file stop", atStep("s3"));
+    assert.strictEqual(file.code, null, "contents are rows, not code");
+    assert.strictEqual(file.text?.startsWith("shop.py is the whole shop"), true);
+  });
+
+  test("the keys → ← Space Home End move the place, and Home and End go to the cover and the end", async () => {
+    await toCover();
+    api.stageKey("ArrowRight");
+    await stageShows("→ to the first step", atStep("s1"));
+    api.stageKey(" ");
+    await stageShows("Space to the next", atStep("s1.b1"));
+    api.stageKey("ArrowRight");
+    await stageShows("→ again", atStep("s1.b2"));
+    api.stageKey("ArrowLeft");
+    await stageShows("← back", atStep("s1.b1"));
+    api.stageKey("End");
+    await stageShows("End: the end card", (d) => d.mode === "end");
+    api.stageKey("ArrowLeft");
+    await stageShows("← from the end: the last step", atStep("s3"));
+    api.stageKey("Home");
+    await stageShows("Home: the cover", (d) => d.mode === "cover");
+    // the canvas's own arrows did not move a card: the tour context's selection is the current stop's
+    assert.strictEqual(api.session().contexts[`tour:${tour}`].selected, "tourdemo/shop.py::checkout");
+  });
+
+  /** the stage's fold is the page's own state and outlives a test: a test that folds it puts it back */
+  const unfold = () => {
+    if (last()?.layout.folded) api.stageKey(".");
+  };
+
+  test("the rest of the keys (design 05 §6): Enter starts, ↓ ↑ are the next and the previous stop, Alt+← goes back after a jump, . folds the stage, Esc unfolds it before it closes the tour, Enter on the end card closes", async function () {
+    this.timeout(120_000);
+    await toCover();
+    try {
+      await restOfTheKeys();
+    } finally {
+      unfold();
+    }
+  });
+  const restOfTheKeys = async () => {
+    // the cover says the tour's title in its header, and its body starts with the question
+    const cover = last()!;
+    assert.strictEqual(cover.title, "How the shop checks out");
+    assert.strictEqual(cover.header, "How the shop checks out", "the header says the title");
+    api.stageKey("Enter");
+    await stageShows("Enter on the cover starts the tour", atStep("s1"));
+    api.stageKey("ArrowDown");
+    await stageShows("↓ the next stop", (d) => d.mode === "step" && d.stop === "s2");
+    api.stageKey("ArrowDown");
+    await stageShows("↓ again", (d) => d.mode === "step" && d.stop === "s4");
+    api.stageKey("ArrowUp");
+    await stageShows("↑ the previous stop", (d) => d.mode === "step" && d.stop === "s2");
+    // a jump remembers where the reader was; Alt+← goes back to it
+    api.stageClick("jump:s3");
+    await stageShows("a jump to the file stop", (d) => d.stop === "s3");
+    api.stageKey("Alt+ArrowLeft");
+    await stageShows("Alt+← back to where the jump left", (d) => d.mode === "step" && d.stop === "s2");
+    // `.` folds the stage to the mini bar, and the arrows still move
+    api.stageKey(".");
+    const folded = await stageShows("the stage folds", (d) => d.layout.folded);
+    api.stageKey("ArrowRight");
+    await stageShows("→ moves on in the mini bar", (d) => d.layout.folded && d.step !== folded.step);
+    // Esc unfolds first, and the next Esc closes the tour
+    api.stageKey("Escape");
+    await stageShows("Esc unfolds the stage", (d) => !d.layout.folded);
+    assert.ok(api.session().contexts[`tour:${tour}`], "the tour is still open");
+    api.stageKey(".");
+    await stageShows("`.` folds it again", (d) => d.layout.folded);
+    api.stageKey(".");
+    await stageShows("and `.` unfolds it", (d) => !d.layout.folded);
+    api.stageKey("Escape");
+    await until("Esc closes the tour", () => api.session().contexts[`tour:${tour}`] === undefined);
+    // Enter on the end card: Close Tour (the place is kept: the tour opens where it was left)
+    const drawn = api.stageDrawn().length;
+    await openByCommand();
+    await until("the stage draws the reopened tour", () => api.stageDrawn().length > drawn);
+    api.stageKey("End");
+    await stageShows("the end card", (d) => d.mode === "end");
+    api.stageKey("Enter");
+    await until("Enter on the end card closes the tour", () => api.session().contexts[`tour:${tour}`] === undefined);
+  };
+
+  test("a canvas 520 px wide: the stage stacks, nothing is cut, Next is reachable, the mini bar and the cover fit; long lines of code wrap at any width", async function () {
+    if (process.env.CI) return this.skip(); // TR24x: CI's small, slow window; fixed after v0.4.0 (docs/26 §5)
+    this.timeout(120_000);
+    await toCover();
+    try {
+      api.canvasWidth(520);
+      const cover = await stageShows("the cover on a narrow canvas", (d) => d.mode === "cover" && d.layout.narrow);
+      assert.deepStrictEqual(cover.layout.outside, [], `nothing of the cover's header is cut: ${JSON.stringify(cover.layout)}`);
+      api.stageKey("Enter");
+      const step = await stageShows("a step on a narrow canvas", (d) => d.mode === "step" && d.layout.narrow && d.layout.stacked && d.code !== null && d.layout.codeRows >= 3);
+      assert.deepStrictEqual(step.layout.outside, [], `the header's buttons and Next › are inside the stage: ${JSON.stringify(step.layout)}`);
+      assert.ok(step.layout.width <= 520, `the stage is as wide as the canvas: ${step.layout.width}`);
+      assert.ok(step.layout.codeHeight >= 6 * 18 - 2, `the code keeps six lines: ${step.layout.codeHeight}`);
+      assert.strictEqual(step.layout.codeCut, false, "no line of code is cut at the pane's edge");
+      assert.ok(step.layout.wrapped >= 1, "the long line of checkout wraps");
+      // the mini bar
+      api.stageKey(".");
+      const bar = await stageShows("the mini bar on a narrow canvas", (d) => d.layout.folded && d.layout.narrow);
+      assert.deepStrictEqual(bar.layout.outside, [], `the bar's buttons are inside it: ${JSON.stringify(bar.layout)}`);
+      assert.strictEqual(bar.layout.height, 30);
+      api.stageKey(".");
+      await stageShows("unfolded again", (d) => !d.layout.folded);
+    } finally {
+      unfold();
+      api.canvasWidth(null);
+    }
+    // wide again: the panes are side by side, and the long line still wraps
+    const wide = await stageShows("the stage on a wide canvas", (d) => d.mode === "step" && !d.layout.narrow && !d.layout.stacked && d.code !== null);
+    assert.ok(wide.layout.wrapped >= 1, "the long line wraps");
+    assert.strictEqual(wide.layout.codeCut, false);
+    assert.deepStrictEqual(wide.layout.outside, []);
+  });
+
+  test("the `▾ N more lit lines` chip has a row of its own under the code, at 520 px and at full width; the cover's header says the title and `not pinned` stands between Start and its offers", async function () {
+    this.timeout(120_000);
+    await toCover();
+    // the cover: the header says the tour's title; the body starts with the question or the meta; the pin line is under Start and above the offers
+    const cover = last()!;
+    assert.strictEqual(cover.header, cover.title, "the cover's header is the tour's title");
+    const parts = cover.layout.coverParts;
+    assert.ok(parts[0] === "question" || parts[0] === "meta", `the body starts with the question, or the meta when there is none: ${JSON.stringify(parts)}`);
+    assert.ok(parts.indexOf("meta") >= 0 && parts.indexOf("start") > parts.indexOf("meta"), `Start follows the meta: ${JSON.stringify(parts)}`);
+    if (parts.includes("pin")) {
+      assert.strictEqual(parts.indexOf("pin"), parts.indexOf("start") + 1, `the pin line is right under Start: ${JSON.stringify(parts)}`);
+      const offer = parts.indexOf("offer");
+      if (offer >= 0) assert.ok(parts.indexOf("pin") < offer && parts.indexOf("pin-reason") < offer, `the pin and its reason come before the offers they explain: ${JSON.stringify(parts)}`);
+    }
+    // the chip: walked through every step of the first stop at both widths; it is never over a row of code, and a narrow pane does show it
+    const walk = async () => {
+      const seen: { step: string | null; over: boolean | null }[] = [];
+      api.stageKey("Enter");
+      await stageShows("the first step", atStep("s1"));
+      for (let i = 0; i < 5; i++) {
+        const d = await stageShows("a step settled", (x) => x.mode === "step" && x.code !== null);
+        await sleep(300);
+        const now = last()!;
+        seen.push({ step: now.step ?? d.step, over: now.layout.chipOverCode });
+        api.stageClick("next");
+        await sleep(300);
+      }
+      return seen;
+    };
+    try {
+      api.canvasWidth(520);
+      await stageShows("a narrow cover", (d) => d.mode === "cover" && d.layout.narrow);
+      const narrow = await walk();
+      assert.ok(narrow.every((s) => s.over !== true), `the chip never covers a row of code at 520 px: ${JSON.stringify(narrow)}`);
+      assert.ok(narrow.some((s) => s.over === false), `a chip was drawn at 520 px, so the check means something: ${JSON.stringify(narrow)}`);
+    } finally {
+      unfold();
+      api.canvasWidth(null);
+    }
+    await toCover();
+    const wide = await walk();
+    assert.ok(wide.every((s) => s.over !== true), `the chip never covers a row of code at full width: ${JSON.stringify(wide)}`);
+  });
+
+  test("the selection follows the stop: the node of the stop the place is on", async () => {
+    await toCover();
+    for (let i = 0; i < 5; i++) api.stageClick("next"); // s1, s1.b1, s1.b2, s1.b3, s2
+    await stageShows("the short stop", atStep("s2"));
+    await until("the selection to follow", () => api.session().contexts[`tour:${tour}`].selected === "tourdemo/shop.py::has_stock");
+  });
+
+  test("Go to Code opens the file at the step's first line", async () => {
+    await toCover();
+    for (let i = 0; i < 3; i++) api.stageClick("next");
+    await stageShows("the second block", atStep("s1.b2"));
+    await closeCodeTabs();
+    api.stageClick("goToCode");
+    await until("the editor at line 9", () => {
+      const e = vscode.window.activeTextEditor;
+      return !!e && e.document.uri.fsPath.endsWith(path.join("tourdemo", "shop.py")) && e.selection.active.line === 8;
+    });
+    await closeCodeTabs();
+  });
+
+  test("`vnoc tour go` run from a terminal moves the stage, and the place is the one the core keeps", async () => {
+    await toCover();
+    tourCmd(["go", tour, "s2"]);
+    const moved = await stageShows("the stage to follow the terminal", atStep("s2"));
+    assert.strictEqual(moved.kind, "short");
+    tourCmd(["go", tour, "s1.b3"]);
+    await stageShows("the stage to follow a second move", atStep("s1.b3"));
+    tourCmd(["go", tour, "cover"]);
+    await stageShows("the cover again", (d) => d.mode === "cover");
+  });
+
+  test("after three clicks on Next, `vnoc tour where` says the step the stage shows", async () => {
+    await toCover();
+    for (let i = 0; i < 3; i++) api.stageClick("next");
+    const shown = await stageShows("three steps in", atStep("s1.b2"));
+    const where = JSON.parse(tourCmd(["where", tour, "--json"]));
+    assert.strictEqual(where.step.id, shown.step, "a terminal sees the place the stage is at");
+    assert.strictEqual(where.step.id, "s1.b2");
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+
+  test("closing the tour gives MAIN back", async () => {
+    api.stageClick("closeTour");
+    await until("MAIN to be active", () => api.session().active === "main" && api.session().order.length >= 1 && !api.session().order.some((id) => id.startsWith("tour:")));
+  });
+  });
+});
+
+// ── the TOURS section of the sidebar (docs/26-tours/design/07-tour-list.md §2, 04 §1) ─────────────────────────────────────────────────────────
+
+const section = () => api.toursDrawn().at(-1);
+/** Waits for the section to draw something that satisfies `ready`. */
+const sectionShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof section>>) => boolean, ms = 10_000) => {
+  try {
+    await until(what, () => {
+      const d = section();
+      return d !== undefined && ready(d);
+    }, ms);
+  } catch (e) {
+    throw new Error(`${(e as Error).message}; the section last drew ${JSON.stringify(section())}`);
+  }
+  return section()!;
+};
+const stageStep = (step: string) => stageShows(`the stage at ${step}`, atStep(step));
+
+suite("the TOURS section", () => {
+  suiteSetup(async function () {
+    this.timeout(60_000);
+    // a second, newer tour: one short stop (the list is newest first)
+    await sleep(1100); // the tours are told apart by the second they were started in
+    second = JSON.parse(tourCmd(["start", "--title", "Is there stock?", "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", second, "tourdemo/shop.py::has_stock", "--body-file", "-"], "has_stock answers whether there are enough units. It reads and never changes the count.\n");
+    tourCmd(["finish", second, "--no-ids"]);
+    await vscode.commands.executeCommand("vnoc.structure.focus"); // the sidebar's page, which holds the section
+    await until("the sidebar page", () => api.sidebarOpen());
+    await sectionShows("the section", () => true, 30_000);
+  });
+
+  test("it folds and unfolds; unfolded, the list shows the suite's tours newest first, in the core's words", async () => {
+    api.toursClick("fold"); // folded, it says its name and the count (it is unfolded when a tour was opened before: the page keeps it)
+    await sectionShows("the section folded", (d) => d.folded);
+    api.toursClick("unfold");
+    const list = await sectionShows("the list", (d) => !d.folded && d.mode === "list" && d.list.length >= 2);
+    assert.deepStrictEqual(list.list.slice(0, 2).map((r) => r.id), [second, tour], "newest first");
+    assert.strictEqual(list.list[0].title, "Is there stock?");
+    assert.match(list.list[0].words, /^new · 1 stop · (just now|\d+ min ago)$/, "never opened: new, the size, and when it was started");
+    assert.strictEqual(list.list[1].question, "what happens when the payment times out");
+    assert.ok(/ · 4 stops · /.test(list.list[1].words), list.list[1].words);
+    assert.ok(list.count >= 2);
+  });
+
+  test("a click on a row of a tour never opened opens it at the cover, with its route in the section", async () => {
+    api.toursClick(`row:${second}`);
+    await until("the second tour's context", () => api.session().active === `tour:${second}`);
+    const cover = await stageShows("the cover", (d) => d.mode === "cover", 10_000, second);
+    assert.strictEqual(cover.title, "Is there stock?");
+    const route = await sectionShows("the route", (d) => d.mode === "route" && d.route.length === 1);
+    assert.deepStrictEqual(route.route.map((r) => [r.id, r.kind, r.mark, r.current]), [["s1", "stop", "ahead", false]], "at the cover nothing is here");
+    assert.ok(route.header.startsWith("‹ Tours ▶ Is there stock?"), route.header);
+    assert.strictEqual(route.folded, false);
+  });
+
+  test("leave a tour on stop 3: its row says so, and a click on the row returns to that place", async () => {
+    api.toursClick(`row:${tour}`);
+    await until("the first tour's context (it replaces the second)", () => api.session().active === `tour:${tour}`);
+    await toCover();
+    for (let i = 0; i < 6; i++) api.stageClick("next"); // s1, s1.b1, s1.b2, s1.b3, s2, s4: stop 3 of the route
+    const here = await stageStep("s4");
+    assert.strictEqual(here.position, "stop 3 of 4");
+    const route = await sectionShows("the route on stop 3", (d) => d.mode === "route" && d.route.some((r) => r.id === "s4" && r.current));
+    assert.deepStrictEqual(route.route.filter((r) => r.kind === "stop").map((r) => [r.id, r.number, r.mark]), [["s1", 1, "seen"], ["s2", 2, "seen"], ["s4", 3, "here"], ["s3", 4, route.route.find((r) => r.id === "s3")!.mark]], "s3 was read by an earlier test: its mark is the core's");
+    assert.notStrictEqual(route.route.find((r) => r.id === "s3")!.mark, "here");
+    assert.strictEqual(route.route.find((r) => r.id === "s4")!.description, "⇢ 2", "explained at stop 2");
+    // leave: the tour closes, the section shows the list, and the row says where it was left
+    api.toursClick("close");
+    await until("MAIN to be active", () => api.session().active === "main");
+    const list = await sectionShows("the list with the tour's row on stop 3", (d) => d.mode === "list" && d.list.some((r) => r.id === tour && r.words.startsWith("stop 3 · ")));
+    assert.match(list.list.find((r) => r.id === tour)!.words, /^stop 3 · 4 stops · (just now|\d+ min ago)$/);
+    // a click on the row: the tour opens where it was left, not at the cover
+    api.toursClick(`row:${tour}`);
+    await until("the tour's context", () => api.session().active === `tour:${tour}`);
+    const back = await stageStep("s4");
+    assert.strictEqual(back.position, "stop 3 of 4");
+  });
+
+  /** the tour open from its row, with the route in the section (a click on a row is what the reader does) */
+  const openFromItsRow = async (id = tour) => {
+    await sectionShows("the list", (d) => d.mode === "list" && d.list.some((r) => r.id === id), 30_000);
+    api.toursClick(`row:${id}`);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await toCover(id);
+    await sectionShows("the route", (d) => d.mode === "route");
+  };
+
+  test("‹ Tours shows the list and the tour stays open; its row has the bar and a click on it brings the route back", async () => {
+    await openFromItsRow();
+    for (let i = 0; i < 6; i++) api.stageClick("next"); // s1, s1.b1, s1.b2, s1.b3, s2, s4
+    await stageStep("s4");
+    api.toursClick("back");
+    const list = await sectionShows("the list", (d) => d.mode === "list" && !d.folded);
+    assert.strictEqual(list.list.find((r) => r.id === tour)!.active, true, "the open tour's row is the active one");
+    assert.ok(api.session().order.includes(`tour:${tour}`), "the tour's context is still there");
+    assert.strictEqual(api.session().active, `tour:${tour}`);
+    assert.strictEqual(last()!.step, "s4", "the stage did not move");
+    api.toursClick(`row:${tour}`);
+    const route = await sectionShows("the route again", (d) => d.mode === "route");
+    assert.ok(route.route.some((r) => r.id === "s4" && r.current));
+  });
+
+  test("a click on a stop of the route moves the stage, and on a step of the stop you are in", async () => {
+    await openFromItsRow();
+    api.toursClick("stop:s2");
+    await stageStep("s2");
+    api.toursClick("stop:s1");
+    await stageStep("s1");
+    // the steps of s1 are under it now, indented by their depth: a block, and the detail under it
+    const route = await sectionShows("the steps of s1", (d) => d.route.some((r) => r.kind === "step"));
+    assert.deepStrictEqual(route.route.filter((r) => r.kind === "step").map((r) => [r.id, r.text, r.depth]), [["s1", "what it is for", 0], ["s1.b1", "Refuse what is not there", 1], ["s1.b2", "Hold, then charge", 1], ["s1.b3", "Give it back on a timeout", 2]]);
+    api.toursClick("step:s1.b3");
+    const detail = await stageStep("s1.b3");
+    assert.strictEqual(detail.kind, "detail");
+    await sectionShows("the detail current", (d) => d.route.some((r) => r.id === "s1.b3" && r.current));
+    // a terminal's move shows in the route too
+    tourCmd(["go", tour, "s3"]);
+    await sectionShows("the route follows the terminal", (d) => d.route.some((r) => r.id === "s3" && r.current));
+  });
+
+  test("“called on line N” jumps to the step of its caller that holds the line", async () => {
+    await openFromItsRow();
+    api.toursClick("stop:s2"); // reached from s1 at line 6, which block s1.b1 (6-7) holds
+    await stageStep("s2");
+    api.stageClick("calledFrom");
+    const step = await stageStep("s1.b1");
+    assert.strictEqual(step.lit.join(","), "6,7");
+  });
+
+  test("the keys: ↓ ↑ move the focus, Enter opens or jumps, Escape in the route goes back to the list", async () => {
+    await openFromItsRow();
+    api.toursClick("key:Escape"); // the route: back to the list
+    await sectionShows("the list", (d) => d.mode === "list");
+    api.toursClick("key:ArrowDown"); // the first row (the newest)
+    api.toursClick("key:ArrowDown"); // the second: the suite's first tour
+    api.toursClick("key:Enter");
+    await until("the first tour opened by the keys", () => api.session().active === `tour:${tour}`);
+    await sectionShows("its route", (d) => d.mode === "route");
+    api.toursClick("key:ArrowUp"); // from the current stop to the one above, then jump
+    api.toursClick("key:Enter");
+    await until("a jump by the keys", () => last()!.stop !== "s3");
+  });
+
+  test("the end card says how many stops were not seen, and its first button goes to the first one skipped: the core's words", async () => {
+    api.toursClick("key:Escape"); // the list
+    await sectionShows("the list", (d) => d.mode === "list");
+    api.toursClick(`row:${second}`); // never read: its one stop is not seen
+    await until("the second tour", () => api.session().active === `tour:${second}`);
+    await toCover(second);
+    api.stageClick("end");
+    const end = await stageShows("the end card", (d) => d.mode === "end", 10_000, second);
+    assert.strictEqual(end.unseen, 1, `one written stop, not read to its last step; the core says ${tourCmd(["where", second, "--json"])}; the stage drew ${JSON.stringify(api.stageDrawn().slice(-6).map((d) => [d.tour === second ? "second" : "other", d.mode, d.step, d.unseen]))}`);
+    assert.strictEqual(end.firstUnseen, "s1", "the core names the first one skipped");
+    api.stageClick("skipped"); // the button: a jump to it
+    await stageShows("the stop that was skipped", (d) => d.step === "s1", 10_000, second);
+    api.stageClick("end");
+    const done = await stageShows("the end card, read", (d) => d.mode === "end" && d.unseen === 0, 10_000, second);
+    assert.strictEqual(done.firstUnseen, null, "all seen: nothing to go back to");
+    api.stageClick("again");
+    await stageShows("the cover", (d) => d.mode === "cover", 10_000, second);
+    api.stageClick("closeTour");
+    await until("MAIN to be active", () => api.session().active === "main");
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});
+
+// ── the tour on the map (docs/26-tours/design/04-route-and-map.md §2 – §4) ──────────────────────────────────────────────────────────────────
+
+const map = () => api.mapDrawn().filter((m) => m.tour === tour).at(-1);
+const mapShows = async (what: string, ready: (m: NonNullable<ReturnType<typeof map>>) => boolean, ms = 10_000) => {
+  try {
+    await until(what, () => {
+      const m = map();
+      return m !== undefined && ready(m);
+    }, ms);
+  } catch (e) {
+    throw new Error(`${(e as Error).message}; the map last drew ${JSON.stringify(map())}`);
+  }
+  return map()!;
+};
+const near = (a: { x: number; y: number; zoom: number } | undefined, x: number, y: number, zoom: number) => !!a && Math.abs(a.x - x) < 0.5 && Math.abs(a.y - y) < 0.5 && Math.abs(a.zoom - zoom) < 0.005;
+
+suite("the tour on the map", () => {
+  setup(async function () {
+    this.timeout(60_000);
+    await openAtCover();
+    for (let i = 0; i < 3; i++) api.stageClick("next");
+    await stageStep("s1.b2");
+  });
+
+  test("the map has one card for every stop, in the route's order, with the ring on the current one", async () => {
+    const m = await mapShows("the map at s1", (d) => d.cards.some((c) => c.here && c.id === "s1"));
+    assert.deepStrictEqual(m.cards.map((c) => [c.id, c.number]), [["s1", 1], ["s2", 2], ["s4", 3], ["s3", 4]]);
+    assert.deepStrictEqual(m.cards.filter((c) => c.here).map((c) => c.id), ["s1"], "one ring, on the stop the stage is on");
+    assert.ok(m.cards.every((c) => !c.planned), "a finished tour has no stop that is not written");
+    assert.strictEqual(m.cards.find((c) => c.id === "s1")!.mark, "here");
+  });
+
+  test("a stop reached by a call is a call card with its line, joined to its caller by a dashed edge; one with no caller has no edge", async () => {
+    const m = map()!;
+    assert.deepStrictEqual(m.cards.map((c) => [c.id, c.callLine]), [["s1", null], ["s2", 6], ["s4", 6], ["s3", null]]);
+    assert.deepStrictEqual([...m.edges].sort(), ["s1->s2:call", "s1->s4:call"]);
+    assert.strictEqual(m.cards.find((c) => c.id === "s4")!.description, "⇢ 2", "explained at stop 2");
+    assert.deepStrictEqual(m.heavy, [], "the current stop is the first: no way to it");
+  });
+
+  test("a click on a card is a jump to the stop: the stage moves, the ring moves, and the edges from the first stop are heavy", async () => {
+    api.mapClick("s4");
+    await stageStep("s4");
+    const m = await mapShows("the ring on s4", (d) => d.cards.some((c) => c.here && c.id === "s4"));
+    assert.deepStrictEqual(m.heavy, ["s1->s4"]);
+    assert.deepStrictEqual(m.cards.filter((c) => c.here).map((c) => c.id), ["s4"]);
+    api.mapClick("s1");
+    await stageStep("s1");
+  });
+
+  test("a call in the code that is a later stop of the tour is a jump to it", async () => {
+    assert.ok(last()!.calls.includes(6), `the code of checkout leads to the stops reached from line 6: ${JSON.stringify(last()!.calls)}`);
+    api.stageClick("callLine:6");
+    await stageStep("s2"); // the first stop on the route reached from that line
+    api.stageClick("jump:s1");
+    await stageStep("s1");
+  });
+
+  test("Main ⇄ tour keeps the step and both viewports", async function () {
+    if (process.env.CI) return this.skip(); // TR24x: CI's small, slow window; fixed after v0.4.0 (docs/26 §5)
+    const context = `tour:${tour}`;
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+    api.setView("120,60,0.8"); // the tour's own pan and zoom
+    await until("the tour's viewport", () => near(api.viewports()[context], 120, 60, 0.8));
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    await until("MAIN to be active", () => api.session().active === "main");
+    await sleep(600);
+    api.setView("40,30,0.6"); // MAIN's
+    await until("MAIN's viewport", () => near(api.viewports().main, 40, 30, 0.6));
+    delete api.viewports()[context];
+    delete api.viewports().main;
+    api.dispatch({ type: "activate", id: context }, context);
+    await until("the tour to be active again", () => api.session().active === context);
+    await until("the tour's viewport as it was", () => near(api.viewports()[context], 120, 60, 0.8));
+    await stageStep("s2");
+    assert.strictEqual(last()!.position, "stop 2 of 4", "the step is the one it was");
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    await until("MAIN's viewport as it was", () => near(api.viewports().main, 40, 30, 0.6));
+    api.dispatch({ type: "activate", id: context }, context);
+    await until("the tour again", () => api.session().active === context);
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});
+
+// ── the bar, the menus and Esc (docs/26-tours/design/04-route-and-map.md §5, §7) ────────────────────────────────────────────────────────────
+
+const bar = () => api.tourBar().at(-1);
+const barShows = async (what: string, ready: (b: NonNullable<ReturnType<typeof bar>>) => boolean, ms = 10_000) => {
+  try {
+    await until(what, () => {
+      const b = bar();
+      return b !== undefined && ready(b);
+    }, ms);
+  } catch (e) {
+    throw new Error(`${(e as Error).message}; the bar last said ${JSON.stringify(bar())}`);
+  }
+  return bar()!;
+};
+
+suite("the tour's bar", () => {
+  const context = () => `tour:${tour}`;
+  setup(async function () {
+    this.timeout(60_000);
+    await openAtCover();
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+  });
+
+  test("the chip is `▶ title` and the crumbs are the stops from the first to the current one", async () => {
+    const chip = api.chips().find((c) => c.id === context());
+    assert.deepStrictEqual([chip?.label, chip?.active], ["▶ How the shop checks out", true]);
+    assert.deepStrictEqual((await barShows("the crumbs", (b) => b.crumbs.length === 2)).crumbs, ["checkout", "has_stock"], "s2 was reached from s1");
+    api.stageClick("jump:s3"); // reached from no stop: its own crumb
+    await stageStep("s3");
+    assert.deepStrictEqual((await barShows("one crumb", (b) => b.crumbs.length === 1)).crumbs, ["shop.py"]);
+    api.stageClick("jump:s4"); // from s1
+    await stageStep("s4");
+    assert.deepStrictEqual((await barShows("two crumbs", (b) => b.crumbs.length === 2)).crumbs, ["checkout", "has_stock"]);
+  });
+
+  test("← is back to where you were, Alt+← is the same, and it is disabled with nothing to go back to", async () => {
+    await toCover();
+    api.stageClick("jump:s2"); // a jump: the cover is where we were
+    await stageStep("s2");
+    await barShows("← enabled", (b) => b.back);
+    api.stageKey("Alt+ArrowLeft");
+    await stageShows("back at the cover", (d) => d.mode === "cover");
+    assert.strictEqual(api.session().active, context(), "back is the tour's own, not MAIN's focus");
+  });
+
+  test("`vnoc tour go` from a terminal says `moved by the agent` for a few seconds, and a click of the reader's does not", async () => {
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+    await sleep(500);
+    assert.strictEqual(bar()!.moved, false, "the reader moved it");
+    const posted = api.tourBar().length;
+    tourCmd(["go", tour, "s4"]);
+    await stageStep("s4");
+    // every drawing of the bar since, not the last one: the words are on for three seconds, and a slow machine can look at them late
+    await until("moved by the agent", () => api.tourBar().slice(posted).some((b) => b.moved));
+    await barShows("the words go", (b) => !b.moved, 8_000);
+  });
+
+  test("Start Again goes to the cover", async () => {
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+    api.stageClick("menuStartAgain");
+    await stageShows("the cover", (d) => d.mode === "cover");
+  });
+
+  test("the menus of a stop: Reveal in Main makes MAIN active on that node and the tour stays where it was; Go to Code opens the file", async () => {
+    api.stageClick("jump:s2");
+    await stageStep("s2");
+    await vscode.commands.executeCommand("vnoc.tourRevealInMain", { nodeKey: "tourdemo/shop.py::has_stock" });
+    await until("MAIN to be active, on the node", () => api.session().active === "main" && api.session().contexts.main.selected === "tourdemo/shop.py::has_stock");
+    assert.ok(api.session().order.includes(context()), "the tour is still open");
+    api.dispatch({ type: "activate", id: context() }, context());
+    await stageStep("s2");
+    await closeCodeTabs();
+    await vscode.commands.executeCommand("vnoc.tourGoToCode", { nodeKey: "tourdemo/shop.py::has_stock" });
+    await until("the editor on has_stock", () => {
+      const e = vscode.window.activeTextEditor;
+      return !!e && e.document.uri.fsPath.endsWith(path.join("tourdemo", "shop.py")) && e.selection.active.line === 18;
+    });
+    await closeCodeTabs();
+    // the same entries from the bar's ⋯: Go to Code on the current stop, Reveal Root in Main
+    api.stageClick("menuGoToCode");
+    await until("the editor on the current stop", () => !!vscode.window.activeTextEditor?.document.uri.fsPath.endsWith(path.join("tourdemo", "shop.py")));
+    await closeCodeTabs();
+    api.stageClick("menuRevealRoot");
+    await until("MAIN on the first stop's node", () => api.session().active === "main" && api.session().contexts.main.selected === "tourdemo/shop.py::checkout");
+    api.dispatch({ type: "activate", id: context() }, context());
+    await until("the tour again", () => api.session().active === context());
+  });
+
+  test("Esc closes the tour's context and MAIN is as it was: its selection, its focus and its viewport", async () => {
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    await until("MAIN", () => api.session().active === "main");
+    await sleep(600);
+    api.setView("50,40,0.7");
+    await until("MAIN's viewport", () => near(api.viewports().main, 50, 40, 0.7));
+    const before = JSON.stringify(api.session().contexts.main);
+    api.dispatch({ type: "activate", id: context() }, context());
+    await until("the tour", () => api.session().active === context());
+    await stageStep(last()!.step!);
+    delete api.viewports().main;
+    api.stageKey("Escape");
+    await until("MAIN to be active, the tour closed", () => api.session().active === "main" && !api.session().order.some((id) => id.startsWith("tour:")));
+    assert.strictEqual(JSON.stringify(api.session().contexts.main), before, "MAIN is as it was");
+    await until("MAIN's viewport as it was", () => near(api.viewports().main, 50, 40, 0.7));
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});
+
+const MARKDOWN = `checkout runs the sale in three moves.
+
+- check the stock, and refuse an order that cannot be filled
+- hold the units, then charge
+- give the units back on a timeout
+
+| move | what it touches |
+| --- | --- |
+| \`has_stock\` | reads the count |
+| \`reserve\` | takes units out |
+
+\`\`\`mermaid
+flowchart LR
+  order --> has_stock
+  has_stock --> reserve
+  reserve --> charge
+\`\`\`
+`;
+
+const BROKEN = `has_stock answers one question about the count.
+
+\`\`\`mermaid
+flowchart LR
+  a -->
+\`\`\`
+`;
+
+suite("a step's text is Markdown", () => {
+  let md = "";
+  suiteSetup(async function () {
+    this.timeout(90_000);
+    await sleep(1100); // told apart by the second they were started in
+    md = JSON.parse(tourCmd(["start", "--title", "Markdown in a step", "--author", "the suite", "--json"])).tour;
+    // made by the built `vnoc tour add`, as an agent writes it: the core accepts the list, the table and the diagram
+    tourCmd(["add", md, "tourdemo/shop.py::checkout", "--body-file", "-"], MARKDOWN);
+    tourCmd(["add", md, "tourdemo/shop.py::has_stock", "--body-file", "-"], BROKEN);
+    tourCmd(["finish", md, "--no-ids"]);
+    await sectionShows("the new tour in the list", (d) => d.list.some((r) => r.id === md), 30_000);
+  });
+
+  setup(async function () {
+    this.timeout(60_000);
+    await openAtCover(md);
+  });
+
+  test("a list, a table and a Mermaid flowchart are drawn, and the code pane has syntax colours", async () => {
+    api.stageClick("start");
+    const d = await stageShows("the step drawn with its diagram", (x) => x.step === "s1" && x.markdown.diagrams === 1 && x.markdown.drawn === 1, 30_000, md);
+    assert.deepStrictEqual(d.markdown, { lists: 1, tables: 1, fences: 0, diagrams: 1, drawn: 1, failed: 0 });
+    assert.ok(d.coloured > 10, `the code pane drew ${d.coloured} coloured tokens`);
+    assert.strictEqual(d.text, MARKDOWN.trim(), "the stage has the core's text, with its lines");
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+
+  test("a diagram that does not parse shows its source and one line, and the next step is drawn", async () => {
+    api.stageClick("start");
+    await stageShows("stop 1", atStep("s1"), 30_000, md);
+    api.stageClick("next");
+    const d = await stageShows("the broken diagram's note", (x) => x.step === "s2" && x.markdown.diagrams === 1 && x.markdown.failed === 1, 30_000, md);
+    assert.deepStrictEqual(d.markdown, { lists: 0, tables: 0, fences: 0, diagrams: 1, drawn: 0, failed: 1 });
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+});
+
+// ── a tour read while it is written (docs/26-tours/05-on-screen.md §3, design 02 frames 6 and 8, 04 §6) ────────────────────────────────────────────────────
+
+const dropTourContext = async () => {
+  const open = Object.values(api.session().contexts).find((c) => c.kind === "tour");
+  if (open) api.dispatch({ type: "closeContext", id: open.id }, open.id);
+  await until("no tour context", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour"));
+};
+const mapOfTour = (id: string) => api.mapDrawn().filter((m) => m.tour === id).at(-1);
+const aMapShows = async (id: string, what: string, ready: (m: NonNullable<ReturnType<typeof mapOfTour>>) => boolean) => {
+  await until(what, () => {
+    const m = mapOfTour(id);
+    return m !== undefined && ready(m);
+  });
+  return mapOfTour(id)!;
+};
+/** a short stop of the demo code: its text, and the node it is about */
+const SHORT = {
+  has_stock: "has_stock answers one question: are there enough units of this SKU in stock? It reads and never changes the count.\n",
+  reserve: "reserve takes the units out of the count, so a second buyer cannot take them while this one pays.\n",
+  charge: "charge is the one place money is taken; it returns what was paid, and raises nothing itself.\n",
+  release: "release puts the units back when the charge did not go through, so the count is the one it was.\n",
+};
+const node = (name: keyof typeof SHORT) => `tourdemo/shop.py::${name}`;
+
+suite("a tour read while it is written", () => {
+  let writer = "";
+  let bare = "";
+
+  suiteSetup(async function () {
+    this.timeout(60_000);
+    await dropTourContext();
+    api.dispatch({ type: "activate", id: "main" }, "main");
+  });
+
+  /** A tour being written, the way the tests after the first need it: the plan of four stops, `n` of them written (in the plan's order), and the tour open on its cover. */
+  const writing = async (n: 1 | 2 | 3): Promise<string> => {
+    await sleep(1100); // told apart by the second they were started in
+    const id = JSON.parse(tourCmd(["start", "--title", "Written as it goes", "--question", "what keeps the stock right", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), node("charge"), node("release"), "--json"])).tour;
+    for (const name of (["has_stock", "reserve", "charge"] as const).slice(0, n)) tourCmd(["add", id, node(name), "--body-file", "-"], SHORT[name]);
+    await openAtCover(id);
+    return id;
+  };
+
+  test("a tour that starts while the canvas is hidden opens nothing: one notification, once, and its Open Tour brings the tour up on the cover", async function () {
+    this.timeout(60_000);
+    await closeCanvas();
+    await sleep(1100);
+    writer = JSON.parse(tourCmd(["start", "--title", "Written as it goes", "--question", "what keeps the stock right", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), node("charge"), node("release"), "--json"])).tour;
+    await until("the notification for the new tour", () => api.toursNoticed().includes(writer));
+    assert.deepStrictEqual(canvasTabs().length, 0, "the canvas stayed closed");
+    assert.ok(!Object.values(api.session().contexts).some((c) => c.kind === "tour"), "no tour context was made");
+    assert.strictEqual(api.tourStatus(), null, "no tour is open: no status bar item");
+    tourCmd(["add", writer, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await sleep(800);
+    assert.strictEqual(api.toursNoticed().filter((id) => id === writer).length, 1, "once per tour: a second change says nothing");
+    await api.toursNoticeOpen(writer); // the button of the notification
+    await until("the tour's context", () => api.session().active === `tour:${writer}`);
+    await until("the canvas tab", () => canvasTabs().length > 0);
+    const cover = await stageShows("the cover", (d) => d.mode === "cover", 20_000, writer);
+    assert.strictEqual(cover.beat, "writing");
+  });
+
+  test("the stops of the plan are on the route and the map at once, not written; the bar, the foot, the chip and the status bar item say the agent is writing", async function () {
+    this.timeout(60_000);
+    writer = await writing(1);
+    const route = await sectionShows("the route of the tour being written", (d) => d.mode === "route" && d.route.filter((r) => r.kind === "stop").length === 4);
+    assert.deepStrictEqual(route.route.filter((r) => r.kind === "stop").map((r) => [r.id, r.mark, r.description]), [["s1", "ahead", null], ["s2", "planned", "writing…"], ["s3", "planned", null], ["s4", "planned", null]], "stop 1 is written, the agent is on stop 2");
+    assert.deepStrictEqual(route.foot, { text: "writing 2 of 4", stop: true });
+    assert.strictEqual(route.more, false, "a plan: no row for more");
+    const map = await aMapShows(writer, "the four cards", (m) => m.cards.length === 4);
+    assert.deepStrictEqual(map.cards.map((c) => [c.id, c.planned, c.writing]), [["s1", false, false], ["s2", true, true], ["s3", true, false], ["s4", true, false]]);
+    await barShows("the agent's words and the ■", (b) => b.agent === "writing 2/4" && b.stop);
+    await until("the writing dot, pulsing", () => api.chips().find((c) => c.id === `tour:${writer}`)?.dot === "pulsing");
+    await until("the status bar item", () => api.tourStatus() === "▶ Tour · writing 2/4");
+    const cover = last()!;
+    assert.deepStrictEqual(cover.segments, { total: 4, planned: 3, filled: 0 }, "four segments, three dotted");
+  });
+
+  test("an add puts the stop on the route and the map with no reload, and the stage stays on the reader's step", async function () {
+    this.timeout(60_000);
+    writer = await writing(1);
+    api.stageClick("start");
+    const one = await stageShows("stop 1", atStep("s1"), 10_000, writer);
+    assert.strictEqual(one.kind, "short");
+    assert.strictEqual(one.position, "stop 1 of 4");
+    assert.strictEqual(one.nextState, "planned", "the next stop is not written: Next is dim");
+    assert.strictEqual(one.nextLabel, "Next");
+    await until("the status bar item follows the place", () => api.tourStatus() === "▶ Tour 1/4 · writing 2/4");
+    // the agent adds stop 2 while the reader is on stop 1
+    tourCmd(["add", writer, node("reserve"), "--body-file", "-"], SHORT.reserve);
+    const map = await aMapShows(writer, "stop 2 written on the map", (m) => m.cards.find((c) => c.id === "s2")?.planned === false);
+    assert.deepStrictEqual(map.cards.map((c) => [c.id, c.planned, c.writing]), [["s1", false, false], ["s2", false, false], ["s3", true, true], ["s4", true, false]]);
+    const route = await sectionShows("stop 2 written on the route", (d) => d.route.find((r) => r.id === "s2")?.mark === "ahead");
+    assert.deepStrictEqual(route.foot, { text: "writing 3 of 4", stop: true });
+    const now = await stageShows("still on stop 1, Next lit", (d) => d.nextState === "ready", 10_000, writer);
+    assert.strictEqual(now.step, "s1", "the stage never jumps to the newest stop");
+    assert.strictEqual(now.position, "stop 1 of 4");
+    await barShows("the bar moved on", (b) => b.agent === "writing 3/4");
+  });
+
+  test("reading ahead onto a stop that is not written shows it being written, and its text fades in where the grey bars were when the agent adds it", async function () {
+    this.timeout(60_000);
+    writer = await writing(2);
+    api.stageClick("jump:s3");
+    const ahead = await stageShows("stop 3, not written", atStep("s3"), 10_000, writer);
+    assert.strictEqual(ahead.kind, "planned");
+    assert.strictEqual(ahead.sentence, "The agent is writing this stop. You can read the code meanwhile.");
+    assert.strictEqual(ahead.text, "", "no text yet");
+    assert.ok(ahead.code !== null && ahead.code.text.includes("def charge"), "the code is readable meanwhile");
+    assert.strictEqual(ahead.nextState, "planned", "stop 4 is not written either");
+    assert.strictEqual(ahead.fade, false);
+    // a stop that is not the one being written says where the agent is
+    api.stageClick("jump:s4");
+    const further = await stageShows("stop 4, not written", atStep("s4"), 10_000, writer);
+    assert.strictEqual(further.sentence, "Not written yet: the agent is on stop 3.");
+    assert.strictEqual(further.nextLabel, "Finish", "the last stop of the route: nothing after it");
+    api.stageClick("jump:s3");
+    await stageShows("back on stop 3", atStep("s3"), 10_000, writer);
+    // the agent writes it: the same step now has the text, and it faded in
+    tourCmd(["add", writer, node("charge"), "--body-file", "-"], SHORT.charge);
+    const written = await stageShows("the text where the bars were", (d) => d.step === "s3" && d.kind === "short" && d.text === SHORT.charge.trim(), 10_000, writer);
+    assert.strictEqual(written.fade, true, "it fades in");
+    assert.strictEqual(written.sentence, null);
+    await stageShows("the fade is over", (d) => d.step === "s3" && !d.fade, 10_000, writer);
+    assert.deepStrictEqual(api.webviewErrors(), []);
+  });
+
+  test("■ on the bar is the core's halt: the bar, the foot and the stage say stopping until the agent answers, and stopped after its next add is refused", async function () {
+    this.timeout(60_000);
+    writer = await writing(3);
+    api.stageClick("jump:s4");
+    await stageShows("stop 4", atStep("s4"), 10_000, writer);
+    api.stageClick("menuStop"); // the ■ on the bar
+    const stopping = await barShows("stopping", (b) => b.agent === "stopping" && !b.stop);
+    assert.strictEqual(stopping.agent, "stopping");
+    const d = await stageShows("the stage says it will stop", (x) => x.beat === "stopping", 10_000, writer);
+    assert.strictEqual(d.sentence, "Not written yet: the agent stops after the stop it is on.");
+    const route = await sectionShows("the foot says stopping", (x) => x.foot?.text.startsWith("stopping") === true);
+    assert.strictEqual(route.foot?.stop, false, "no ■ after it was pressed");
+    await until("the status bar item", () => api.tourStatus() === "▶ Tour 4/4 · stopping");
+    assert.strictEqual(JSON.parse(tourCmd(["show", writer, "--json"])).state, "stopping", "the core's state, not the page's guess");
+    // the agent's next command: refused, and that is when the tour is stopped
+    let refused: { status?: number; stdout?: string; stderr?: string } | undefined;
+    try {
+      tourCmd(["add", writer, node("release"), "--body-file", "-"], SHORT.release);
+    } catch (e) {
+      refused = e as typeof refused;
+    }
+    assert.ok(refused, "the add was refused: it exited with an error");
+    assert.strictEqual(refused.status, 1);
+    assert.match(`${refused.stdout}${refused.stderr}`, /^(! )?stopped: the reader stopped this tour/m, "the core says the tour was stopped");
+    await barShows("stopped", (b) => b.agent === "stopped");
+    const stopped = await stageShows("the stage says stopped", (x) => x.beat === "stopped", 10_000, writer);
+    assert.strictEqual(stopped.sentence, "Not written: the tour was stopped here. Ask the agent to continue it.");
+    assert.strictEqual(stopped.step, "s4", "the reader stays where they were");
+    const foot = await sectionShows("the foot says stopped", (x) => x.foot?.text.startsWith("stopped:") === true);
+    assert.deepStrictEqual(foot.foot, { text: "stopped: 3 of 4 written", stop: false });
+    await until("the status bar item", () => api.tourStatus() === "▶ Tour 4/4 · stopped");
+    await until("the dot is gone", () => api.chips().find((c) => c.id === `tour:${writer}`)?.dot === undefined);
+    api.stageClick("jump:s1");
+    await stageShows("stop 1 again", atStep("s1"), 10_000, writer);
+    assert.strictEqual(last()!.nextState, "ready", "the next stop is written");
+  });
+
+  test("a tour with no plan: the written count only, one dotted segment and a `◌ …` row, Next dim on the last written step, and it lights when the next stop is added", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await sleep(1100);
+    bare = JSON.parse(tourCmd(["start", "--title", "No plan", "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", bare, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await sectionShows("the list has it", (d) => d.list.some((r) => r.id === bare), 30_000);
+    api.toursClick(`row:${bare}`);
+    await until("the tour's context", () => api.session().active === `tour:${bare}`);
+    await toCover(bare);
+    const cover = await stageShows("the cover", (d) => d.mode === "cover", 10_000, bare);
+    assert.strictEqual(cover.beat, "writing");
+    api.stageClick("start");
+    const one = await stageShows("stop 1", atStep("s1"), 10_000, bare);
+    assert.strictEqual(one.position, "stop 1 · 1 so far", "no `of`");
+    assert.deepStrictEqual(one.segments, { total: 2, planned: 1, filled: 1 }, "the stop, and one dotted segment after it");
+    assert.strictEqual(one.nextState, "adding");
+    assert.strictEqual(one.nextLabel, "Next", "not Finish: the tour is not finished");
+    assert.strictEqual(one.adding, "The agent is adding the next stop.");
+    assert.strictEqual(one.text, SHORT.has_stock.trim(), "the step's words stay");
+    const route = await sectionShows("the route with its `◌ …` row", (d) => d.mode === "route" && d.more);
+    assert.deepStrictEqual(route.foot, { text: "writing · 1 stop so far", stop: true });
+    assert.ok(route.header.includes("1 · 1 so far"), route.header);
+    await barShows("the bar", (b) => b.agent === "writing · 1 so far" && b.stop);
+    api.stageClick("next"); // nowhere to go: it does nothing, and the core is not asked to take the reader to the end card
+    await sleep(600);
+    assert.strictEqual(last()!.step, "s1");
+    assert.strictEqual(JSON.parse(tourCmd(["where", bare, "--json"])).at, "s1");
+    // the next stop arrives: Next lights, and nothing moves by itself
+    tourCmd(["add", bare, node("reserve"), "--body-file", "-"], SHORT.reserve);
+    const lit = await stageShows("Next lit", (d) => d.nextState === "ready", 10_000, bare);
+    assert.strictEqual(lit.step, "s1");
+    assert.strictEqual(lit.position, "stop 1 · 2 so far");
+    assert.strictEqual(lit.adding, null);
+    // the tour is finished: the written count is the size, and the words about the agent go
+    tourCmd(["finish", bare, "--no-ids"]);
+    const done = await stageShows("finished", (d) => d.beat === "finished", 10_000, bare);
+    assert.strictEqual(done.position, "stop 1 of 2");
+    assert.strictEqual(done.segments.total, 2);
+    await barShows("nothing on the bar", (b) => b.agent === null && !b.stop);
+    const after = await sectionShows("no foot", (d) => d.foot === null && !d.more);
+    assert.strictEqual(after.foot, null);
+    await until("the status bar item says only the place", () => api.tourStatus() === "▶ Tour 1/2");
+  });
+
+  test("a tour with no news for five minutes says so, and the agent writing again takes the words back without a word", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await sleep(1100);
+    const quiet = JSON.parse(tourCmd(["start", "--title", "Gone quiet", "--author", "the suite", "--plan", node("has_stock"), node("release"), "--json"])).tour;
+    await sectionShows("the list has it", (d) => d.list.some((r) => r.id === quiet), 30_000);
+    api.toursClick(`row:${quiet}`);
+    await until("the tour's context", () => api.session().active === `tour:${quiet}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 10_000, quiet);
+    // the file's time says nothing was added for six minutes
+    const file = path.join(workspace(), ".vnoc", "local", "tours", `${quiet}.jsonl`);
+    const old = new Date(Date.now() - 6 * 60_000);
+    fs.utimesSync(file, old, old);
+    await barShows("no news", (b) => b.agent === "no news" && !b.stop, 40_000);
+    const d = await stageShows("the stage says it", (x) => x.beat === "quiet", 10_000, quiet);
+    assert.strictEqual(d.mode, "cover");
+    await until("the chip's dot stands still", () => api.chips().find((c) => c.id === `tour:${quiet}`)?.dot === "still");
+    await until("the status bar item", () => api.tourStatus() === "▶ Tour · no news");
+    const route = await sectionShows("the foot", (x) => x.foot?.text.startsWith("no news from the agent") === true);
+    assert.strictEqual(route.foot?.stop, false);
+    api.stageClick("start");
+    const planned = await stageShows("stop 1, not written", atStep("s1"), 10_000, quiet);
+    assert.strictEqual(planned.sentence, "Not written. The agent may have stopped: look at its terminal, or ask it to continue the tour.");
+    // the agent writes again: no news is gone, with nothing said
+    tourCmd(["add", quiet, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await barShows("writing again", (b) => b.agent?.startsWith("writing") === true && b.stop, 40_000);
+    await until("the dot pulses again", () => api.chips().find((c) => c.id === `tour:${quiet}`)?.dot === "pulsing");
+    await stageShows("the text where the bars were", (x) => x.step === "s1" && x.kind === "short", 10_000, quiet);
+  });
+
+  test("a second tour that appears while one is open leaves the open one, the list has it, and one notification says so", async function () {
+    this.timeout(60_000);
+    writer = await writing(1); // a tour is open
+    const open = api.session().active;
+    assert.ok(open.startsWith("tour:"), open);
+    const before = api.toursNoticed().length;
+    await sleep(1100);
+    const next = JSON.parse(tourCmd(["start", "--title", "A second one", "--author", "the suite", "--plan", node("release"), "--json"])).tour;
+    await sectionShows("the list has the new tour", (d) => d.list.some((r) => r.id === next), 30_000);
+    assert.strictEqual(api.session().active, open, "the open tour stays");
+    await until("the notification for the second tour", () => api.toursNoticed().includes(next));
+    assert.strictEqual(api.toursNoticed().length, before + 1, "one notification, though the canvas is showing a tour");
+  });
+
+  test("W11: with the canvas visible and no tour open, a tour that appears and is being written becomes the tour context, at its cover", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await until("the canvas tab", () => canvasTabs().length > 0);
+    await until("MAIN active", () => api.session().active === "main");
+    const noticed = api.toursNoticed().length;
+    await sleep(1100);
+    const w11 = JSON.parse(tourCmd(["start", "--title", "Opened for you", "--author", "the suite", "--plan", node("has_stock"), node("release"), "--json"])).tour;
+    await until("the tour's context, active", () => api.session().active === `tour:${w11}`, 30_000);
+    const cover = await stageShows("the cover", (d) => d.mode === "cover", 20_000, w11);
+    assert.strictEqual(cover.beat, "writing");
+    assert.strictEqual(api.toursNoticed().length, noticed, "it was opened, not announced");
+    // a second tour while this one is open: not replaced, and nothing opens
+    await sleep(1100);
+    const other = JSON.parse(tourCmd(["start", "--title", "Not opened", "--author", "the suite", "--plan", node("release"), "--json"])).tour;
+    await sectionShows("the list has it", (d) => d.list.some((r) => r.id === other), 30_000);
+    assert.strictEqual(api.session().active, `tour:${w11}`, "the open tour is not replaced");
+    await until("its one notification", () => api.toursNoticed().includes(other));
+  });
+
+  test("the canvas hidden and no tour open: a tour that appears unfolds the section, is announced, and nothing opens", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    api.toursClick("fold");
+    await sectionShows("folded", (d) => d.folded);
+    await closeCanvas();
+    const noticed = api.toursNoticed().length;
+    await sleep(1100);
+    const third = JSON.parse(tourCmd(["start", "--title", "A third one", "--author", "the suite", "--json"])).tour;
+    await sectionShows("unfolded by the new tour", (d) => !d.folded && d.mode === "list" && d.list.some((r) => r.id === third), 30_000);
+    await until("the notification", () => api.toursNoticed().length === noticed + 1);
+    assert.ok(!Object.values(api.session().contexts).some((c) => c.kind === "tour"), "nothing was opened");
+  });
+});
+
+// ── a tour that no longer matches the code (docs/26-tours/05-on-screen.md §3, design 05 §4) ─────────────────────────────────────────────────────────────────────
+//
+// A pinned tour shows a changed or gone step as it was written (`tourCode`), with the label and the switch; a tour that is not pinned shows the code as it is, the lit lines dashed. Every test
+// edits `tourdemo/shop.py` on disk and puts it back with `git checkout`: nothing another suite reads stays changed.
+
+suite("a tour that no longer matches the code", () => {
+  let pinned = "";
+  let other = "";
+  const gitIn = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace(), stdio: "ignore" });
+  const shop = () => path.join(workspace(), "tourdemo", "shop.py");
+  /** the file, with `from` replaced by `to` (saved to disk: the core reads the file) */
+  const edit = (from: string, to: string) => {
+    const text = fs.readFileSync(shop(), "utf8");
+    assert.ok(text.includes(from), `shop.py has ${from}`);
+    fs.writeFileSync(shop(), text.replace(from, to));
+  };
+  const restore = () => gitIn("checkout", "--", "tourdemo/shop.py");
+  const openTour = async (id: string) => {
+    api.toursClick("fold"); // a click on a row needs the list: fold, then unfold, shows it whatever the section showed
+    api.toursClick("unfold");
+    await sectionShows("the list has the tour", (d) => d.mode === "list" && d.list.some((r) => r.id === id), 30_000);
+    api.toursClick(`row:${id}`);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+  };
+  const routeRow = (id: string) => section()?.route.find((r) => r.kind === "stop" && r.id === id);
+  const card = (tourId: string, id: string) => mapOfTour(tourId)?.cards.find((c) => c.id === id);
+
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    // a second file, for a tour that does not name shop.py
+    fs.writeFileSync(path.join(workspace(), "tourdemo", "util.py"), "def double(n):\n    \"\"\"Twice n.\"\"\"\n    return n * 2\n");
+    for (let waited = 0; ; waited += 500) {
+      const dir = (await api.structure()).root.children.find((c) => c.id === "tourdemo");
+      if (dir?.children.some((c) => c.id === "tourdemo/util.py" && c.children.length >= 1)) break;
+      assert.ok(waited < 30_000, "the structure never held tourdemo/util.py");
+      await sleep(500);
+    }
+    // the code is committed, so a finished tour can be pinned
+    gitIn("add", "tourdemo");
+    gitIn("commit", "-q", "-m", "the tour demo");
+    const started = JSON.parse(tourCmd(["start", "--title", "Pinned shop", "--author", "the suite", "--json"])).tour;
+    pinned = started;
+    pinnedId = started;
+    tourCmd(["add", pinned, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
+    tourCmd(["add", pinned, node("has_stock"), "--body-file", "-", "--from", "s1", "--line", "6"], SHORT.has_stock);
+    tourCmd(["add", pinned, node("release"), "--body-file", "-"], SHORT.release);
+    tourCmd(["finish", pinned, "--no-ids"]);
+    tourCmd(["pin", pinned]);
+    assert.ok(JSON.parse(tourCmd(["show", pinned, "--json"])).pinned, "the tour is pinned");
+    other = JSON.parse(tourCmd(["start", "--title", "Util only", "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", other, "tourdemo/util.py::double", "--body-file", "-"], "double returns twice its argument, and does nothing else with it: read it as one step with nothing hidden behind it.\n");
+    tourCmd(["finish", other, "--no-ids"]);
+    tourCmd(["check", other]); // records the check: the next ask of it reads no source
+  });
+
+  teardown(() => {
+    restore();
+  });
+
+  test("a pinned tour whose function was edited shows the step as it was written, with its label; Now shows the code as it is, dashed; the row and the card say changed", async function () {
+    this.timeout(60_000);
+    edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
+    await openTour(pinned);
+    await toCover(pinned);
+    api.stageClick("jump:s1.b2");
+    const written = await stageShows("as written", (d) => d.step === "s1.b2" && d.asWritten !== null, 20_000, pinned);
+    assert.strictEqual(written.asWritten!.commit.length, 7, "the label names the commit");
+    assert.deepStrictEqual(written.lit, [9, 10, 11, 12, 13, 14], "the block's lines at the commit");
+    assert.ok(written.code!.text.includes("    reserve(stock, order)\n"), written.code!.text);
+    assert.ok(!written.code!.text.includes("# held"), "the old code, not the file's");
+    assert.strictEqual(written.switch, "written", "As Written is where the step opens");
+    assert.deepStrictEqual(written.asWritten!.lit, written.lit);
+    // the stop is changed on the route and on the map
+    await sectionShows("the route says changed", (d) => routeRow("s1")?.description === "changed");
+    assert.strictEqual(routeRow("s1")?.struck, false);
+    await aMapShows(pinned, "the card says changed", (m) => m.cards.find((c) => c.id === "s1")?.description === "changed");
+    // Now: the file as it is, no label, the lit lines (dashed on the page)
+    api.stageClick("choose:now");
+    const now = await stageShows("now", (d) => d.step === "s1.b2" && d.switch === "now" && d.asWritten === null, 20_000, pinned);
+    assert.ok(now.code!.text.includes("# held"), "the code as it is now");
+    assert.deepStrictEqual(now.lit, [9, 10, 11, 12, 13, 14]);
+    // leave the step and come back: As Written again, the choice is not kept
+    api.stageClick("jump:s1.b1");
+    const fresh = await stageShows("a step that did not change", (d) => d.step === "s1.b1", 20_000, pinned);
+    assert.strictEqual(fresh.asWritten, null, "a fresh step of the same stop: as now");
+    assert.strictEqual(fresh.switch, null);
+    assert.deepStrictEqual(fresh.lit, [6, 7]);
+    api.stageClick("jump:s1.b2");
+    await stageShows("as written again", (d) => d.step === "s1.b2" && d.asWritten !== null && d.switch === "written", 20_000, pinned);
+    // a detail of the changed block that did not change is fresh: not marked
+    api.stageClick("jump:s1.b3");
+    const detail = await stageShows("the detail", (d) => d.step === "s1.b3", 20_000, pinned);
+    assert.strictEqual(detail.asWritten, null);
+    assert.deepStrictEqual(detail.lit, [11, 12, 13, 14]);
+    // a second tour that does not name shop.py: nothing of it was read for its check
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await openTour(other);
+    const cover = await stageShows("the second tour's cover", (d) => d.mode === "cover", 20_000, other);
+    assert.ok(cover.checkFrom === "memory" || cover.checkFrom === "record", `no source file was read for it: ${cover.checkFrom}`);
+  });
+
+  test("the same edit in a tour that is not pinned: the code as it is, no label, no switch", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
+    await openTour(tour);
+    await toCover(tour);
+    api.stageClick("jump:s1.b2");
+    const d = await stageShows("the code as it is", (x) => x.step === "s1.b2" && x.code !== null, 20_000, tour);
+    assert.strictEqual(d.asWritten, null);
+    assert.strictEqual(d.switch, null);
+    assert.ok(d.code!.text.includes("# held"), "the file as it is");
+    assert.deepStrictEqual(d.lit, [9, 10, 11, 12, 13, 14]);
+    await sectionShows("the route says changed", (x) => routeRow("s1")?.description === "changed");
+  });
+
+  test("a function deleted: gone and struck through; pinned, the step is shown as written with no Now; not pinned, there is no code pane", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    edit("def has_stock(stock, order):\n    return stock.get(order[\"sku\"], 0) >= order[\"qty\"]\n\n\n", "");
+    await openTour(pinned);
+    await toCover(pinned);
+    api.stageClick("jump:s2");
+    const written = await stageShows("the gone stop as written", (d) => d.step === "s2" && d.asWritten !== null, 20_000, pinned);
+    assert.strictEqual(written.switch, null, "a gone stop has no Now");
+    assert.ok(written.code!.text.includes("def has_stock"), "its code at the commit");
+    await sectionShows("the route says gone, struck", (d) => routeRow("s2")?.description === "gone" && routeRow("s2")?.struck === true);
+    await aMapShows(pinned, "the card says gone, struck", (m) => m.cards.find((c) => c.id === "s2")?.description === "gone" && m.cards.find((c) => c.id === "s2")?.struck === true);
+    assert.strictEqual(routeRow("s3")?.description, null, "release moved up: it is fresh");
+    // the tour that is not pinned: the stop has no code pane
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await openTour(tour);
+    await toCover(tour);
+    api.stageClick("jump:s2");
+    const bare = await stageShows("the gone stop, not pinned", (d) => d.step === "s2", 20_000, tour);
+    assert.strictEqual(bare.asWritten, null);
+    assert.strictEqual(bare.switch, null);
+    assert.strictEqual(bare.code, null, "no code pane");
+    await sectionShows("the route says gone, struck", (d) => routeRow("s2")?.description === "gone" && routeRow("s2")?.struck === true);
+  });
+
+  test("most of a pinned tour is about older code: the cover says so, and the route's foot says how many stops changed", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
+    edit("    stock[order[\"sku\"]] += order[\"qty\"]\n", "    stock[order[\"sku\"]] += 2 * order[\"qty\"]\n");
+    edit("def has_stock(stock, order):\n    return stock.get(order[\"sku\"], 0) >= order[\"qty\"]\n\n\n", "");
+    await openTour(pinned);
+    await toCover(pinned);
+    const route = await sectionShows("the foot says how many changed", (d) => d.foot?.text === "3 of 3 stops changed since this was written", 20_000);
+    assert.deepStrictEqual(route.route.filter((r) => r.kind === "stop").map((r) => [r.id, r.description, r.struck]), [["s1", "changed", false], ["s2", "gone", true], ["s3", "changed", false]]);
+    assert.strictEqual(route.foot?.stop, false);
+    api.stageClick("next");
+    await stageShows("the first step", (d) => d.mode === "step", 20_000, pinned);
+  });
+
+  test("a core that starts again: the list says changed from the record, and a tour opened first is answered from the record", async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    edit("    reserve(stock, order)\n", "    reserve(stock, order)  # held\n");
+    // the check is made and recorded while the tour is open
+    await openTour(pinned);
+    await stageShows("the tour, checked", (d) => d.checkFrom !== null, 20_000, pinned);
+    await sectionShows("the route says changed", (d) => routeRow("s1")?.description === "changed");
+    api.stageClick("closeTour");
+    await dropTourContext();
+    tourCmd(["check", pinned]); // the record on disk is of the file as it is now, whatever the window's core had made of it by now
+    await api.restartCore(); // the new core remembers nothing: the record on disk is all it has
+    // opened with no list asked in between (a list that is asked for checks the rows it holds, and the core then remembers the answer: `memory`)
+    const drawn = api.stageDrawn().length;
+    api.dispatch({ type: "tourOpen", id: pinned }, "main");
+    await until("the tour's context", () => api.session().active === `tour:${pinned}`);
+    const after = () => api.stageDrawn().slice(drawn).filter((d) => d.tour === pinned && d.checkFrom !== null);
+    await until("the reopened tour drawn", () => after().length > 0, 20_000);
+    // the page and the host both ask for the tour: the first answer is from the record, a second asked while it was being answered may be the core's memory of it. Never a check
+    await until("the record's answer", () => after().some((d) => d.checkFrom === "record"), 20_000);
+    assert.ok(after().every((d) => d.checkFrom !== "check"), `no source file was read: ${JSON.stringify(after().map((d) => d.checkFrom))}`);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await api.restartCore();
+    const rows = await api.tours.list(); // the first list asks plain, then with the ids it holds: the words say changed
+    assert.ok(rows.find((r) => r.id === pinned)?.words.includes("changed"), `the row says changed: ${JSON.stringify(rows.find((r) => r.id === pinned))}`);
+    assert.ok(!rows.find((r) => r.id === other)?.words.includes("changed"), "a tour whose code did not change says nothing");
+  });
+});
+
+// ── the tours of the selected node, `▶ N`, `+N` (docs/26-tours/design/07-tour-list.md §4, §6, §8; 04 §3) ────────────────────────────────────────────────────
+//
+// The list's second view follows the active context's selection and says, for each tour, how it is on the node (the core's words). A node on tours shows `▶ N` on its card and its row.
+// A tour's card shows the node's calls that are not on the tour. Nothing here edits a source file: the tours are made with the built commands, over `tourdemo/shop.py` as it is
+// committed and `tourdemo/lone.py`, a file of its own that this suite adds and takes away.
+
+suite("the tours of the selected node", () => {
+  const LONE = "def nobody():\n    return 0\n\n\ndef solo():\n    return 1\n";
+  const lone = (name: string) => `tourdemo/lone.py::${name}`;
+  const ONE = "It does one small thing, and the code around it relies on that: read it as a single step, with nothing hidden behind a second paragraph of explanation.\n";
+  const sidebarChips = () => api.tourChips().filter((c) => c.surface === "sidebar").at(-1)?.chips ?? [];
+  const canvasChips = () => api.tourChips().filter((c) => c.surface === "canvas").at(-1)?.chips ?? [];
+  const counts = async (): Promise<Record<string, number>> => (await api.request<{ counts: Record<string, number> }>("vnoc/tourCounts")).counts;
+  const coreRows = async (on: string): Promise<{ id: string; state_word: string; words: string; on: { how: string; words: string; first: string } }[]> => (await api.request<{ tours: any[] }>("vnoc/tours", { on })).tours;
+  /** MAIN is the active context with `key` selected, the section is showing the second view */
+  const selectOn = async (key: string | null) => {
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    api.dispatch({ type: "select", id: key }, "main");
+    api.dispatch({ type: "tourView", view: "onSelection" });
+    api.toursClick("unfold");
+    await until("MAIN selects it", () => api.session().active === "main" && api.session().contexts.main.selected === key);
+  };
+  let solo1 = "";
+
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    fs.writeFileSync(path.join(workspace(), "tourdemo", "lone.py"), LONE);
+    for (let waited = 0; ; waited += 500) {
+      const dir = (await api.structure()).root.children.find((c) => c.id === "tourdemo");
+      if (dir?.children.some((c) => c.id === "tourdemo/lone.py" && c.children.length >= 2)) break;
+      assert.ok(waited < 30_000, "the structure never held tourdemo/lone.py");
+      await sleep(500);
+    }
+  });
+
+  suiteTeardown(async () => {
+    api.dispatch({ type: "tourView", view: "all" });
+    fs.rmSync(path.join(workspace(), "tourdemo", "lone.py"), { force: true });
+  });
+
+  test("On the selected node lists the tours through a function with the core's words; a click opens at that stop, or at the cover for a tour that starts there", async function () {
+    this.timeout(90_000);
+    await selectOn(node("has_stock"));
+    const rows = await coreRows(node("has_stock"));
+    const all = (await api.request<{ tours: unknown[] }>("vnoc/tours")).tours.length;
+    assert.ok(rows.length >= 2 && rows.length < all, `some of the tours go through has_stock, not all: ${rows.length} of ${all}`);
+    const drawn = await sectionShows("the second view", (d) => d.view === "on" && d.list.length === rows.length && d.buttons[1] === `On has_stock ${rows.length}`, 30_000);
+    assert.deepStrictEqual(drawn.buttons, [`All ${all}`, `On has_stock ${rows.length}`]);
+    assert.deepStrictEqual(drawn.list.map((r) => [r.id, r.line2]), rows.map((r) => [r.id, r.on.words]), "line 2 is the core's words");
+    assert.strictEqual(drawn.list.find((r) => r.id === pinnedId)?.line2, "stop 2 of 3");
+    // the row keeps its state at the right of line 1: the core's `state_word`, the word its own `words` starts with (after `shared ·`)
+    assert.deepStrictEqual(drawn.list.map((r) => [r.id, r.stateWord]), rows.map((r) => [r.id, r.state_word]), "the state word is the core's");
+    // line 2 does not say again what line 1 says: a tour being written, stopping or stopped has `writing`, `stopping`, `stopped`, `no news` there (TR23b)
+    const onLine1 = ["writing", "stopping", "stopped", "no news"];
+    assert.ok(rows.every((r) => r.state_word !== "" && (onLine1.includes(r.state_word) || r.words.replace(/^shared · /, "").startsWith(r.state_word))), JSON.stringify(rows.map((r) => [r.state_word, r.words])));
+    assert.strictEqual(drawn.empty, null);
+    // a click opens at the stop the core named
+    api.toursClick(`row:${pinnedId}`);
+    await until("the tour's context", () => api.session().active === `tour:${pinnedId}`);
+    const at = await stageShows("the stage at has_stock", (d) => d.stop === "s2" && d.mode === "step", 20_000, pinnedId);
+    assert.strictEqual(at.stop, "s2");
+    api.stageClick("closeTour");
+    await dropTourContext();
+    // checkout: the first stop of two tours: "starts here", and a click goes to the cover
+    await selectOn(node("has_stock").replace("has_stock", "checkout"));
+    const starts = await sectionShows("starts here", (d) => d.view === "on" && d.list.some((r) => r.id === tour && r.line2 === "starts here"), 30_000);
+    assert.ok(starts.list.every((r) => r.line2 === "starts here" || /^stops? /.test(r.line2)), JSON.stringify(starts.list.map((r) => r.line2)));
+    api.toursClick(`row:${tour}`);
+    await until("the tour's context", () => api.session().active === `tour:${tour}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 20_000, tour);
+    api.stageClick("closeTour");
+    await dropTourContext();
+  });
+
+  test("a file lists the tours with stops inside it, and says how many", async function () {
+    this.timeout(60_000);
+    await selectOn("tourdemo/shop.py");
+    const rows = await coreRows("tourdemo/shop.py");
+    const drawn = await sectionShows("the file's tours", (d) => d.view === "on" && d.list.length === rows.length && rows.length > 0, 30_000);
+    assert.deepStrictEqual(drawn.list.map((r) => r.line2), rows.map((r) => r.on.words));
+    assert.strictEqual(drawn.list.find((r) => r.id === pinnedId)?.line2, "3 stops inside", "three stops of the pinned tour are in shop.py, none is the file");
+    assert.ok(drawn.buttons[1].startsWith("On shop.py "), drawn.buttons[1]);
+  });
+
+  test("a node no tour goes through says so, with Show All; with nothing selected On selection is disabled and the list is All; ← → switch", async function () {
+    this.timeout(60_000);
+    await selectOn(lone("nobody"));
+    const all = (await api.request<{ tours: unknown[] }>("vnoc/tours")).tours.length;
+    const empty = await sectionShows("the empty state", (d) => d.view === "on" && d.empty !== null && d.buttons[1] === "On nobody 0", 30_000);
+    assert.strictEqual(empty.empty, "No tour goes through nobody.");
+    assert.deepStrictEqual(empty.list, []);
+    // Show All goes back
+    api.toursClick("showAll");
+    const back = await sectionShows("All", (d) => d.view === "all" && d.list.length === all, 20_000);
+    assert.strictEqual(back.empty, null);
+    assert.strictEqual(api.session().tourList.view, "all");
+    // the keys on the buttons
+    api.toursClick("viewkey:ArrowRight");
+    await sectionShows("→ is the second view", (d) => d.view === "on");
+    api.toursClick("viewkey:ArrowLeft");
+    await sectionShows("← is All", (d) => d.view === "all");
+    api.toursClick("view:on");
+    await sectionShows("the button", (d) => d.view === "on");
+    // nothing selected: the button is disabled, the list is All, and what was chosen is kept
+    api.dispatch({ type: "select", id: null }, "main");
+    const none = await sectionShows("no selection", (d) => d.view === "all" && d.buttons[1] === "On selection", 20_000);
+    assert.deepStrictEqual(none.buttons, [`All ${all}`, "On selection"]);
+    assert.strictEqual(api.session().tourList.view, "onSelection", "the choice is kept");
+    api.toursClick("viewkey:ArrowRight");
+    await sleep(300);
+    assert.strictEqual(section()!.view, "all", "→ goes nowhere: the second button is disabled");
+  });
+
+  test("▶ N is on the card and the row of a node that is on tours, from the core's count; a click shows its tours; deleting a tour lowers it, and at 0 it goes", async function () {
+    this.timeout(120_000);
+    api.dispatch({ type: "tourView", view: "all" });
+    const make = async (title: string) => {
+      await sleep(1100);
+      const id = JSON.parse(tourCmd(["start", "--title", title, "--author", "the suite", "--json"])).tour;
+      tourCmd(["add", id, lone("solo"), "--body-file", "-"], ONE);
+      tourCmd(["finish", id, "--no-ids"]);
+      return id;
+    };
+    solo1 = await make("Solo once");
+    const solo2 = await make("Solo twice");
+    // the node is shown on the canvas and in the structure: a reveal opens what is above it
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    api.dispatch({ type: "reveal", id: lone("solo"), canvas: true }, "main");
+    const chip = (where: () => { id: string; tours: number; tip: string }[]) => where().find((c) => c.id === lone("solo"));
+    await until("the card and the row say ▶ 2", () => chip(canvasChips)?.tours === 2 && chip(sidebarChips)?.tours === 2, 30_000);
+    assert.strictEqual((await counts())[lone("solo")], 2, "the same number as the core's");
+    assert.strictEqual(chip(sidebarChips)?.tip, "on 2 tours: click to see them");
+    assert.strictEqual(chip(canvasChips)?.tip, "on 2 tours: click to see them");
+    assert.strictEqual(chip(sidebarChips)?.id && sidebarChips().some((c) => c.id === lone("nobody")), false, "a node no tour goes through shows nothing");
+    // a click on the chip: the node is selected, TOURS shows the second view
+    api.dispatch({ type: "select", id: null }, "main");
+    api.toursClick("fold");
+    await api.showTours(lone("solo"), "main");
+    await until("selected, and the second view chosen", () => api.session().contexts.main.selected === lone("solo") && api.session().tourList.view === "onSelection");
+    const shown = await sectionShows("the section shows the node's tours", (d) => !d.folded && d.mode === "list" && d.view === "on" && d.list.length === 2, 30_000);
+    assert.deepStrictEqual(shown.list.map((r) => r.id).sort(), [solo1, solo2].sort());
+    assert.deepStrictEqual(shown.list.map((r) => r.line2), ["starts here", "starts here"]);
+    // Show Tours in the node's menu does the same
+    api.dispatch({ type: "tourView", view: "all" });
+    api.dispatch({ type: "select", id: null }, "main");
+    api.toursClick("fold");
+    await vscode.commands.executeCommand("vnoc.showTours", { nodeKey: lone("solo"), contextId: "main" });
+    await until("the menu command did the same", () => api.session().contexts.main.selected === lone("solo") && api.session().tourList.view === "onSelection");
+    await sectionShows("the section shows it", (d) => !d.folded && d.view === "on" && d.list.length === 2, 30_000);
+    // a tour deleted from a terminal: the count drops on the card and the row, and at 0 they go
+    tourCmd(["delete", solo2]);
+    await until("▶ 1", () => chip(canvasChips)?.tours === 1 && chip(sidebarChips)?.tours === 1, 30_000);
+    assert.strictEqual(chip(sidebarChips)?.tip, "on 1 tour: click to see it");
+    assert.strictEqual((await counts())[lone("solo")], 1);
+    await sectionShows("the section has one tour", (d) => d.view === "on" && d.list.length === 1 && d.buttons[1] === "On solo 1", 30_000);
+    tourCmd(["delete", solo1]);
+    await until("no chip", () => chip(canvasChips) === undefined && chip(sidebarChips) === undefined, 30_000);
+    assert.strictEqual((await counts())[lone("solo")], undefined);
+    const empty = await sectionShows("the empty state", (d) => d.view === "on" && d.empty === "No tour goes through solo.", 30_000);
+    assert.deepStrictEqual(empty.list, []);
+  });
+
+  test("a tour card shows +N: its node's calls that are not on the tour, as the core counts them", async function () {
+    this.timeout(60_000);
+    api.dispatch({ type: "tourView", view: "all" });
+    api.toursClick("fold");
+    api.toursClick("unfold");
+    await sectionShows("the list has the tour", (d) => d.mode === "list" && d.list.some((r) => r.id === tour), 30_000);
+    api.toursClick(`row:${tour}`);
+    await until("the tour's context", () => api.session().active === `tour:${tour}`);
+    const off = (await api.request<{ off: Record<string, number> }>("vnoc/tourCalls", { id: tour })).off;
+    // checkout calls has_stock (a stop of this tour), reserve, charge and release (not stops)
+    assert.strictEqual(JSON.stringify(off), JSON.stringify({ s1: 3 }));
+    const map = await aMapShows(tour, "the cards say +N", (m) => m.cards.some((c) => c.off > 0));
+    assert.deepStrictEqual(map.cards.map((c) => [c.id, c.off]), map.cards.map((c) => [c.id, off[c.id] ?? 0]), "each card says what the core said for its stop");
+    // a move is a `tour` event: the card still says it
+    api.stageClick("next");
+    await sleep(500);
+    assert.strictEqual(mapOfTour(tour)!.cards.find((c) => c.id === "s1")!.off, 3);
+    api.stageClick("closeTour");
+    await dropTourContext();
+  });
+});
+
+// ── pin and IDs by a click (docs/26-tours/05-on-screen.md §3, §5 "Decided for TR22a") ───────────────────────────────────────────────────────────────────────────────
+//
+// The cover says why a tour is not pinned and offers what the settings allow; **Commit and Pin…** is one dialog; **Write IDs for Its Stops** saves first and says what it wrote; **Pin** and
+// **Tour Settings…** are commands. The suite cannot click in a webview or answer a message: it presses the page's buttons through the host and queues the answers. Each test makes its own
+// tour of its own edit, and puts the workspace back: git reset to the commit it had at the start of the suite, the files this test made removed, `.vnoc/vnoc.toml` as it was.
+
+suite("pin and IDs by a click", () => {
+  const gitOut = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace(), encoding: "utf8" });
+  const shop = () => path.join(workspace(), "tourdemo", "shop.py");
+  const toml = () => path.join(workspace(), ".vnoc", "vnoc.toml");
+  const untracked = () => gitOut("status", "--porcelain", "--untracked-files=all").split("\n").filter((l) => l.startsWith("??")).map((l) => l.slice(3));
+  let head0 = "";
+  let toml0: string | null = null;
+  let untracked0 = new Set<string>();
+  const dialog = () => api.pinDialog().at(-1)?.dialog ?? null;
+  const dialogShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof dialog>>) => boolean, ms = 30_000) => {
+    await until(what, () => {
+      const d = dialog();
+      return d !== null && ready(d);
+    }, ms);
+    return dialog()!;
+  };
+  /** the tour the way an agent writes it, of what shop.py is now: checkout and has_stock, finished with no IDs (the settings decide the rest) */
+  const finished = (title: string): string => {
+    const id = JSON.parse(tourCmd(["start", "--title", title, "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", id, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
+    tourCmd(["add", id, node("has_stock"), "--body-file", "-", "--from", "s1", "--line", "6"], SHORT.has_stock);
+    tourCmd(["finish", id, "--no-ids"]);
+    return id;
+  };
+  /** work that is not committed: a note after the last function (no stop of the tours moves) */
+  const leaveWork = () => fs.appendFileSync(shop(), "\n# not committed yet\n");
+  const openTour = async (id: string) => {
+    api.toursClick("fold");
+    api.toursClick("unfold");
+    await sectionShows("the list has the tour", (d) => d.mode === "list" && d.list.some((r) => r.id === id), 30_000);
+    api.toursClick(`row:${id}`);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await toCover(id);
+  };
+  const messagesFrom = (n: number) => api.tourMessages().slice(n);
+
+  suiteSetup(async function () {
+    this.timeout(60_000);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    head0 = gitOut("rev-parse", "HEAD").trim();
+    toml0 = fs.existsSync(toml()) ? fs.readFileSync(toml(), "utf8") : null;
+  });
+
+  setup(() => {
+    untracked0 = new Set(untracked());
+    api.answerTourMessages([]);
+  });
+
+  teardown(async function () {
+    this.timeout(30_000);
+    api.answerTourMessages(null);
+    api.answerTourPicks(null);
+    api.pinDialogClick("cancel");
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await vscode.window.tabGroups.close(vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputText));
+    gitOut("reset", "--hard", head0);
+    for (const f of untracked()) if (!untracked0.has(f) && !f.startsWith(".vnoc/")) fs.rmSync(path.join(workspace(), f), { force: true });
+    if (toml0 === null) fs.rmSync(toml(), { force: true });
+    else fs.writeFileSync(toml(), toml0);
+  });
+
+  test("a tour of uncommitted work: the cover says not pinned, why, and what it offers; Commit and Pin… lists exactly those files, and Cancel commits nothing", async function () {
+    this.timeout(90_000);
+    leaveWork();
+    const id = finished("Uncommitted shop");
+    await openTour(id);
+    const cover = await stageShows("not pinned, with its offers", (d) => d.mode === "cover" && d.pin === "not pinned" && d.offers.length === 2, 30_000, id);
+    await sleep(2000); // the dry pin's answer has come by now: its one reason is the files not committed, which has an offer, so it is said once
+    assert.strictEqual(last()!.reason, null, "a reason that has an offer is said once, as the offer");
+    assert.deepStrictEqual(last()!.offers, ["2 stops have no ID: the tour will not follow a rename. | Write IDs", "1 file has changes that are not committed. | Commit and Pin…"]);
+    // the dry pin names the files, and wrote nothing
+    const dry = await api.request<{ state: string; reasons: { code: string; files: { path: string }[]; words: string }[] }>("vnoc/tourPin", { id, dry: true });
+    assert.deepStrictEqual(dry.reasons[0].files.map((f) => f.path), ["tourdemo/shop.py"]);
+    assert.ok(!JSON.parse(tourCmd(["show", id, "--json"])).pinned, "asking why did not pin it");
+    // the dialog lists exactly them, with the message the core would use
+    const status = gitOut("status", "--porcelain");
+    const commits = gitOut("log", "--oneline");
+    api.stageClick("commitAndPin");
+    const open = await dialogShows("the dialog", (d) => d.tour === id && d.files.length > 0);
+    assert.deepStrictEqual(open.files, ["tourdemo/shop.py"]);
+    assert.strictEqual(open.message, 'Code for the tour "Uncommitted shop"');
+    assert.strictEqual(open.always, false);
+    assert.strictEqual(open.error, null);
+    // Cancel: nothing is committed, nothing is staged
+    api.pinDialogClick("cancel");
+    await until("the dialog closed", () => dialog() === null);
+    assert.strictEqual(gitOut("status", "--porcelain"), status, "git status is as it was");
+    assert.strictEqual(gitOut("log", "--oneline"), commits, "git log is as it was");
+    assert.strictEqual(gitOut("diff", "--cached", "--name-only"), "", "nothing staged");
+  });
+
+  test("Commit and Pin commits those files and the cover says pinned at …; the check box writes commit = always and changes nothing else in vnoc.toml", async function () {
+    this.timeout(90_000);
+    leaveWork();
+    const id = finished("Commit and pin");
+    await openTour(id);
+    await stageShows("not pinned", (d) => d.mode === "cover" && d.pin === "not pinned", 30_000, id);
+    api.stageClick("commitAndPin");
+    await dialogShows("the dialog", (d) => d.tour === id && d.files.length > 0);
+    api.pinDialogClick("message", "Code for the pin suite");
+    api.pinDialogClick("always");
+    const typed = await dialogShows("message and check box", (d) => d.message === "Code for the pin suite" && d.always);
+    assert.deepStrictEqual(typed.files, ["tourdemo/shop.py"]);
+    const before = toml0 ?? "";
+    api.pinDialogClick("commit");
+    await until("the dialog closed", () => dialog() === null, 30_000);
+    assert.strictEqual(gitOut("log", "-1", "--format=%s").trim(), "Code for the pin suite");
+    assert.strictEqual(gitOut("show", "--name-only", "--format=", "HEAD").trim(), "tourdemo/shop.py", "exactly the tour's file");
+    const pinned = await stageShows("pinned at the new commit", (d) => d.mode === "cover" && d.pin?.startsWith("pinned at ") === true, 30_000, id);
+    assert.strictEqual(pinned.pin, `pinned at ${gitOut("rev-parse", "--short=7", "HEAD").trim()}`);
+    assert.strictEqual(pinned.reason, null);
+    // the setting: `commit = "always"` in `[tours]`, and every other line of the file as it was
+    const after = fs.readFileSync(toml(), "utf8");
+    assert.ok(/^\[tours\]/m.test(after) && /^commit = "always"$/m.test(after), after);
+    const was = new Set(before.split("\n"));
+    const added = after.split("\n").filter((l) => !was.has(l) && l.trim() !== "");
+    assert.deepStrictEqual(added.filter((l) => l !== "[tours]" && l !== 'commit = "always"'), [], `nothing else changed: ${after}`);
+    assert.strictEqual((await api.request<{ commit: { value: string } }>("vnoc/tourSettings")).commit.value, "always");
+  });
+
+  test("with never the cover offers nothing but still says not pinned, and the menu's Commit and Pin… still works", async function () {
+    this.timeout(90_000);
+    await api.request("vnoc/tourSettings", { ids: "never", commit: "never" });
+    leaveWork();
+    const id = finished("Never offered");
+    await openTour(id);
+    const cover = await stageShows("not pinned and nothing offered", (d) => d.mode === "cover" && d.pin === "not pinned" && d.reason !== null, 30_000, id);
+    assert.deepStrictEqual(cover.offers, []);
+    assert.strictEqual(cover.reason, "1 file has changes that are not committed");
+    await vscode.commands.executeCommand("vnoc.tourCommitAndPin", { tour: id });
+    const open = await dialogShows("the dialog from the menu", (d) => d.tour === id && d.files.length > 0);
+    assert.deepStrictEqual(open.files, ["tourdemo/shop.py"]);
+    api.pinDialogClick("cancel");
+    await until("the dialog closed", () => dialog() === null);
+  });
+
+  test("Pin on a tour with files not committed is refused in the core's words, and its message offers Commit and Pin…", async function () {
+    this.timeout(90_000);
+    leaveWork();
+    const id = finished("Refused pin");
+    const said = api.tourMessages().length;
+    api.answerTourMessages(["Commit and Pin…"]);
+    await vscode.commands.executeCommand("vnoc.tourPin", { tour: id });
+    assert.deepStrictEqual(messagesFrom(said)[0], { level: "warn", text: "Not pinned: 1 file has changes that are not committed.", buttons: ["Commit and Pin…"] });
+    const open = await dialogShows("the dialog the message opened", (d) => d.tour === id && d.files.length > 0);
+    assert.deepStrictEqual(open.files, ["tourdemo/shop.py"]);
+    api.pinDialogClick("cancel");
+    await until("the dialog closed", () => dialog() === null);
+  });
+
+  test("Pin on a tour that can be pinned pins it, at HEAD", async function () {
+    this.timeout(90_000);
+    leaveWork();
+    const id = finished("Pinnable");
+    assert.ok(!JSON.parse(tourCmd(["show", id, "--json"])).pinned);
+    gitOut("commit", "-qam", "the work the tour is about");
+    const said = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourPin", { tour: id });
+    const head = gitOut("rev-parse", "HEAD").trim();
+    assert.deepStrictEqual(messagesFrom(said).map((m) => m.text), [`Pinned at ${head.slice(0, 7)}.`]);
+    const shown = JSON.parse(tourCmd(["show", id, "--json"]));
+    assert.strictEqual(shown.pinned, true);
+    assert.strictEqual(shown.pin, head);
+  });
+
+  test("Write IDs for Its Stops: a dirty stop file is saved first, after a question; then the IDs are written, and a rename in the source keeps the stop found", async function () {
+    this.timeout(120_000);
+    const id = finished("IDs for the stops");
+    await sleep(1500); // the editor's file watcher has told it of the last test's reset: a buffer made dirty before that would meet a file it thinks changed under it
+    const doc = await vscode.workspace.openTextDocument(shop());
+    const editor = await vscode.window.showTextDocument(doc);
+    await editor.edit((b) => b.insert(new vscode.Position(doc.lineCount, 0), "\n# unsaved\n"));
+    assert.ok(doc.isDirty);
+    await until("the host knows the file is dirty", () => api.dirtyFiles().includes("tourdemo/shop.py"));
+    // Cancel: nothing is saved and nothing is written
+    let said = api.tourMessages().length;
+    api.answerTourMessages(["Cancel"]);
+    await vscode.commands.executeCommand("vnoc.tourWriteIds", { tour: id });
+    assert.deepStrictEqual(messagesFrom(said), [{ level: "warn", text: "Save 1 file first? The IDs are written into it.", buttons: ["Save and Write IDs", "Cancel"] }]);
+    assert.ok(doc.isDirty, "not saved");
+    assert.ok(!/ID: /.test(fs.readFileSync(shop(), "utf8")), "no ID written");
+    // Save and Write IDs
+    said = api.tourMessages().length;
+    api.answerTourMessages(["Save and Write IDs", undefined]);
+    await vscode.commands.executeCommand("vnoc.tourWriteIds", { tour: id });
+    const sent = messagesFrom(said);
+    assert.strictEqual(sent[0].text, "Save 1 file first? The IDs are written into it.");
+    assert.ok(/^IDs? written for \d+ stops? in \d+ files?\.$/.test(sent[1].text), sent[1].text);
+    assert.deepStrictEqual(sent[1].buttons, ["Show Changes", "Always Write IDs in This Project"]);
+    assert.ok(!doc.isDirty, "saved first");
+    const written = fs.readFileSync(shop(), "utf8");
+    assert.ok(written.includes("# unsaved"), "what was typed was saved, not lost");
+    assert.ok((written.match(/ID: [0-9A-Z]+/g) ?? []).length >= 2, `an ID line for each stop: ${written}`);
+    // a rename in the source: the stop is found by its ID
+    fs.writeFileSync(shop(), written.replace("def has_stock(", "def in_stock("));
+    // what `vnoc tour check` finds by itself, reading the files: the stop is found by its ID, under its new name (it would be gone without one)
+    const checked = JSON.parse(tourCmd(["check", id, "--json"])).tours[0].stops.find((x: { id: string }) => x.id === "s2");
+    assert.ok(checked && checked.state !== "gone", `the stop follows the rename: ${JSON.stringify(checked)}`);
+    // and the running core, once it has the file: `now` says where the stop is, by its ID
+    let found: { check?: string; now?: { qualname: string } } | undefined;
+    for (let waited = 0; waited < 30_000; waited += 500) {
+      const view = await api.request<{ stops: { id: string; check?: string; now?: { qualname: string } }[] }>("vnoc/tour", { id });
+      found = view.stops.find((x) => x.id === "s2");
+      if (found?.now?.qualname === "in_stock") break;
+      await sleep(500);
+    }
+    assert.ok(found?.now?.qualname === "in_stock" && found.check !== "gone", `the running core follows the rename: ${JSON.stringify(found)}`);
+  });
+
+  test("Write IDs on a clean tour whose stops have no IDs: the file gets both IDs, and NEEDS ATTENTION shows nothing for those nodes", async function () {
+    this.timeout(120_000);
+    // two functions (named so that no other suite's node can be taken for them: the refactor suite has an `alpha`) in a file no other test has made a stop of: `.vnoc/` keeps the ID records of the earlier tests' stops (a `git reset` takes the markers out of the source and leaves the records, and
+    // those stops are then rightly "ID lost"), so a stop that has never had an ID is the case to look at
+    const fresh = path.join(workspace(), "tourdemo", "fresh.py");
+    fs.writeFileSync(fresh, "def fresh_one(x):\n    return x + 1\n\n\ndef fresh_two(x):\n    return fresh_one(x) * 2\n");
+    gitOut("add", "tourdemo/fresh.py");
+    gitOut("commit", "-q", "-m", "fresh.py");
+    head0 = gitOut("rev-parse", "HEAD").trim(); // the teardown resets to here, not before the file
+    const id = JSON.parse(tourCmd(["start", "--title", "IDs, then attention", "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", id, "tourdemo/fresh.py::fresh_one", "--body-file", "-"], "fresh_one adds one.\n");
+    tourCmd(["add", id, "tourdemo/fresh.py::fresh_two", "--body-file", "-"], "fresh_two doubles what fresh_one gives.\n");
+    tourCmd(["finish", id, "--no-ids"]);
+    assert.ok(!/ID: /.test(fs.readFileSync(fresh, "utf8")), "the stops have no ID yet");
+    const said = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourWriteIds", { tour: id });
+    const written = fs.readFileSync(fresh, "utf8");
+    assert.strictEqual((written.match(/ID: [0-9A-Z]+/g) ?? []).length, 2, `an ID line for each of the two stops (the core said ${JSON.stringify(api.tourMessages().slice(said))}): ${written}`);
+    // the core reads the file again (the watcher told it) and the structure has the IDs on both nodes
+    const named = async () => {
+      const file = (await api.structure()).root.children.find((c) => c.id === "tourdemo")?.children.find((c) => c.id === "tourdemo/fresh.py");
+      return ["fresh_one", "fresh_two"].map((n) => file?.children.find((c) => c.name === n)?.node_id ?? null);
+    };
+    await waitFor("the structure to have an ID on fresh_one and fresh_two", async () => (await named()).every((n) => n !== null), 30_000);
+    // and the view has caught up with that structure: the same revision for 1.5 s, then what it says
+    let revision = -1;
+    let since = Date.now();
+    await waitFor("the structure to stop changing", async () => {
+      const now = (await api.structure()).revision;
+      if (now !== revision) (revision = now), (since = Date.now());
+      return Date.now() - since >= 1500;
+    }, 30_000);
+    const shown = api.attention();
+    const ours = (text: string) => /fresh_one|fresh_two|fresh\.py/.test(text);
+    assert.deepStrictEqual(shown.lostIds.filter(ours), [], `no ID is lost for them: ${JSON.stringify(shown)}`);
+    assert.deepStrictEqual(Object.values(shown.groups).flat().filter(ours), [], `NEEDS ATTENTION shows nothing for them: ${JSON.stringify(shown.groups)}`);
+    assert.deepStrictEqual(shown.missing.filter(ours), [], JSON.stringify(shown.missing));
+  });
+
+  test("Write IDs in a project that writes no IDs shows the core's refusal", async function () {
+    this.timeout(60_000);
+    const id = finished("No IDs here");
+    const original = fs.existsSync(toml()) ? fs.readFileSync(toml(), "utf8") : "";
+    fs.mkdirSync(path.dirname(toml()), { recursive: true });
+    fs.writeFileSync(toml(), `${original}\n[ids]\ndefault = "none"\n`);
+    const said = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourWriteIds", { tour: id });
+    const sent = messagesFrom(said);
+    assert.strictEqual(sent.length, 1, JSON.stringify(sent));
+    assert.strictEqual(sent[0].level, "error");
+    assert.ok(sent[0].text.includes('[ids] default = "none"'), sent[0].text);
+  });
+
+  test("Tour Settings… picks a setting and then a value, and writes it: ids = never", async function () {
+    this.timeout(60_000);
+    api.answerTourPicks(["IDs for the stops", "never"]);
+    await vscode.commands.executeCommand("vnoc.tourSettings");
+    const after = fs.readFileSync(toml(), "utf8");
+    assert.ok(/^ids = "never"$/m.test(after), after);
+    assert.strictEqual((await api.request<{ ids: { value: string } }>("vnoc/tourSettings")).ids.value, "never");
+  });
+});
+
+// ── rename, share and delete (docs/26-tours/05-on-screen.md §3, design/07-tour-list.md §7) ────────────────────────────────────────────────────
+
+suite("rename, share and delete a tour", () => {
+  const privateFile = (id: string) => path.join(workspace(), ".vnoc", "local", "tours", `${id}.jsonl`);
+  const projectFile = (id: string) => path.join(workspace(), ".vnoc", "tours", `${id}.jsonl`);
+  const stateOf = (id: string) => path.join(stateDir(), `${id}.json`);
+  const trashed = (id: string) => (fs.existsSync(path.join(workspace(), ".vnoc", "local", "trash")) ? fs.readdirSync(path.join(workspace(), ".vnoc", "local", "trash")).filter((f) => f.includes(id)) : []);
+  /** a finished tour of the shop, in its own second (ids are made from the clock) */
+  const finished = async (title: string): Promise<string> => {
+    await sleep(1100);
+    const id = JSON.parse(tourCmd(["start", "--title", title, "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", id, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
+    tourCmd(["finish", id, "--no-ids"]);
+    return id;
+  };
+  const listShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof section>>) => boolean, ms = 30_000) => {
+    api.toursClick("back"); // a tour that appears while it is written opens by itself (W11): the list is `‹ Tours`
+    api.toursClick("fold");
+    api.toursClick("unfold");
+    return sectionShows(what, (d) => d.mode === "list" && ready(d), ms);
+  };
+  /** a tour that is being written opens by itself when the canvas is visible (W11): it is closed again, so that the section shows the list */
+  const closeWhenItOpens = async (id: string) => {
+    await until("the tour that is being written opens", () => api.session().contexts[`tour:${id}`] !== undefined, 30_000);
+    api.dispatch({ type: "closeContext", id: `tour:${id}` }, `tour:${id}`);
+    await until("it is closed", () => api.session().contexts[`tour:${id}`] === undefined);
+  };
+  const row = (d: NonNullable<ReturnType<typeof section>>, id: string) => d.list.find((r) => r.id === id);
+  /** every message the actions said from `n` on */
+  const said = (n: number) => api.tourMessages().slice(n);
+
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    if (tour === "") await makeTours(); // run alone (`VNOC_GREP`): the code the tours are about is made here
+    await dropTourContext();
+    await vscode.commands.executeCommand("vnoc.structure.focus"); // the sidebar's page, which holds the section
+    await until("the sidebar page", () => api.sidebarOpen());
+    await sectionShows("the section", () => true, 30_000);
+  });
+  setup(() => {
+    api.answerTourMessages([]);
+  });
+  teardown(() => {
+    api.answerTourMessages(null);
+    api.answerTourInputs(null);
+  });
+
+  test("Rename… sends the new title and says the core's words; an empty or unchanged title sends nothing; the core's refusal is a message", async function () {
+    this.timeout(90_000);
+    const id = await finished("Before the rename");
+    let from = api.tourMessages().length;
+    api.answerTourInputs(["  After the rename  "]);
+    await vscode.commands.executeCommand("vnoc.tourRename", { tour: id });
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Renamed to “After the rename”."]);
+    assert.strictEqual(JSON.parse(tourCmd(["show", id, "--json"])).title, "After the rename");
+    await listShows("the new title in the list", (d) => row(d, id)?.title === "After the rename");
+    // nothing typed, nothing changed, the box dismissed: nothing is sent, nothing is said
+    from = api.tourMessages().length;
+    api.answerTourInputs(["", "   ", "After the rename", undefined]);
+    for (let i = 0; i < 4; i++) await vscode.commands.executeCommand("vnoc.tourRename", { tour: id });
+    assert.deepStrictEqual(said(from), []);
+    assert.strictEqual(JSON.parse(tourCmd(["show", id, "--json"])).title, "After the rename");
+    // a title the core does not take: its words
+    api.answerTourInputs(["two\nlines"]);
+    await vscode.commands.executeCommand("vnoc.tourRename", { tour: id });
+    const refusal = said(from);
+    assert.strictEqual(refusal.length, 1, JSON.stringify(refusal));
+    assert.strictEqual(refusal[0].level, "error");
+    assert.ok(refusal[0].text.length > 0 && !refusal[0].text.startsWith("Renamed"), refusal[0].text);
+    assert.strictEqual(JSON.parse(tourCmd(["show", id, "--json"])).title, "After the rename");
+  });
+
+  test("Share with the Project moves the file and the row says shared ·; Make Private Again moves it back; the end card's Share… is the same act", async function () {
+    this.timeout(120_000);
+    const id = await finished("To share");
+    assert.ok(fs.existsSync(privateFile(id)) && !fs.existsSync(projectFile(id)));
+    let from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourShare", { tour: id });
+    assert.ok(!fs.existsSync(privateFile(id)) && fs.existsSync(projectFile(id)), "the file moved to .vnoc/tours/");
+    const sent = said(from);
+    assert.strictEqual(sent.length, 1, JSON.stringify(sent));
+    assert.ok(sent[0].text.startsWith("Moved to `.vnoc/tours/`. Commit it to share it."), sent[0].text);
+    // the core's own longer sentence, with Pin, when the tour is not pinned; the short one when it is
+    const pinned = JSON.parse(tourCmd(["show", id, "--json"])).pinned === true;
+    assert.deepStrictEqual(sent[0].buttons, pinned ? [] : ["Pin"], `pinned: ${pinned}`);
+    if (!pinned) assert.ok(sent[0].text.includes("It is not pinned: teammates will see changed stops without the old code."), sent[0].text);
+    const shared = await listShows("the row says shared ·", (d) => row(d, id)?.line2.startsWith("shared ·") === true);
+    assert.ok(row(shared, id)!.words.startsWith("shared ·"), row(shared, id)!.words);
+    // back
+    from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourMakePrivate", { tour: id });
+    assert.ok(fs.existsSync(privateFile(id)) && !fs.existsSync(projectFile(id)), "the file moved back");
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Moved to `.vnoc/local/tours/`. It is private again."]);
+    const back = await listShows("the row does not say shared", (d) => row(d, id) !== undefined && row(d, id)!.line2.startsWith("shared ·") === false);
+    assert.ok(!row(back, id)!.words.startsWith("shared"), row(back, id)!.words);
+    // the end card of a private finished tour: Share… is the same act
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 30_000, id);
+    api.stageClick("end");
+    await stageShows("the end card", (d) => d.mode === "end", 30_000, id);
+    from = api.tourMessages().length;
+    api.stageClick("share");
+    await until("the file moved by the end card's Share…", () => fs.existsSync(projectFile(id)) && !fs.existsSync(privateFile(id)), 30_000);
+    await until("the message", () => said(from).length === 1, 30_000);
+    assert.ok(said(from)[0].text.startsWith("Moved to `.vnoc/tours/`."), said(from)[0].text);
+  });
+
+  test("Delete: the row becomes the core's words and Undo for six seconds, Undo brings the tour and its state back to the same place, and no dialog is asked", async function () {
+    this.timeout(120_000);
+    const above = await finished("Delete above");
+    const id = await finished("Delete and undo");
+    const below = await finished("Delete below");
+    // a place: the state file that goes to the trash with the tour
+    tourCmd(["go", id, "s1"]);
+    await until("the state file", () => fs.existsSync(stateOf(id)));
+    const file = fs.readFileSync(privateFile(id));
+    const state = fs.readFileSync(stateOf(id));
+    const before = await listShows("the three rows", (d) => [above, id, below].every((x) => row(d, x) !== undefined));
+    const order = before.list.map((r) => r.id);
+    const from = api.tourMessages().length;
+    api.toursClick(`delete:${id}`); // the row's 🗑
+    const gone = await sectionShows("the row says it was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
+    const tomb = gone.deleted.find((x) => x.ids.includes(id))!;
+    assert.strictEqual(tomb.words, "Deleted “Delete and undo”.", "the core's words: by the tour's title");
+    assert.strictEqual(tomb.after, order[order.indexOf(id) - 1] ?? null, "in the place the row had");
+    assert.strictEqual(row(gone, id), undefined, "the row is not drawn as a tour any more");
+    assert.ok(!fs.existsSync(privateFile(id)) && !fs.existsSync(stateOf(id)), "the file and its state went");
+    assert.strictEqual(trashed(id).length > 0, true, "to the trash");
+    assert.deepStrictEqual(said(from), [], "no dialog, no message: the row is the message");
+    // Undo
+    api.toursClick("undo");
+    await until("the tour is back", () => fs.existsSync(privateFile(id)), 30_000);
+    assert.ok(fs.readFileSync(privateFile(id)).equals(file), "the same file");
+    assert.ok(fs.readFileSync(stateOf(id)).equals(state), "and its state");
+    const back = await listShows("the row is back and the deleted row gone", (d) => row(d, id) !== undefined && d.deleted.length === 0);
+    assert.deepStrictEqual(back.list.map((r) => r.id).filter((x) => order.includes(x)), order, "in the same place");
+  });
+
+  test("a deleted row goes after six seconds, and the file stays in the trash", async function () {
+    this.timeout(120_000);
+    const id = await finished("Delete and wait");
+    await listShows("the row", (d) => row(d, id) !== undefined);
+    api.toursClick(`delete:${id}`);
+    await sectionShows("the row says it was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
+    await sleep(6500);
+    const after = await sectionShows("the deleted row went", (d) => d.deleted.length === 0, 10_000);
+    assert.strictEqual(row(after, id), undefined, "and the tour does not come back");
+    assert.ok(!fs.existsSync(privateFile(id)));
+    assert.ok(trashed(id).length > 0, "its file is in the trash");
+    api.toursClick("undo"); // nothing is deleted any more: this is not an error
+    await sleep(500);
+  });
+
+  test("the Delete key deletes the focused row; deleting the open tour closes it", async function () {
+    this.timeout(120_000);
+    const id = await finished("Delete by key");
+    await listShows("the row", (d) => row(d, id) !== undefined);
+    // the newest tour is the first row
+    api.toursClick("key:ArrowDown");
+    api.toursClick("key:Delete");
+    await sectionShows("the first row, the newest, was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
+    assert.ok(!fs.existsSync(privateFile(id)));
+    api.toursClick("undo");
+    await until("the tour is back", () => fs.existsSync(privateFile(id)), 30_000);
+    // the open tour: its context closes
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await vscode.commands.executeCommand("vnoc.tourDelete", { tour: id });
+    await until("the tour's context closed", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour" && c.tour === id), 30_000);
+    assert.ok(!fs.existsSync(privateFile(id)));
+    api.toursClick("undo");
+    await until("the tour is back", () => fs.existsSync(privateFile(id)), 30_000);
+  });
+
+  test("a tour being written cannot be deleted: the core refuses in words and the row stays; ■ Stop on its row is the halt", async function () {
+    this.timeout(120_000);
+    await sleep(1100);
+    const id = JSON.parse(tourCmd(["start", "--title", "Still being written", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), "--json"])).tour;
+    tourCmd(["add", id, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await closeWhenItOpens(id);
+    await listShows("the row of the tour being written", (d) => row(d, id)?.mark === "writing" && row(d, id)?.words.startsWith("1 of 2 stops") === true);
+    const from = api.tourMessages().length;
+    api.toursClick(`delete:${id}`);
+    await until("the refusal", () => said(from).length === 1, 30_000);
+    assert.strictEqual(said(from)[0].level, "error");
+    assert.ok(/stop it first|being written/.test(said(from)[0].text), said(from)[0].text);
+    assert.ok(fs.existsSync(privateFile(id)), "the file is still there");
+    assert.strictEqual(section()?.deleted.length, 0);
+    // the row says it is being written and has its Stop in plain sight, with no hover; so do the section's strip and the status line
+    const live = row(section()!, id)!;
+    assert.deepStrictEqual([live.mark, live.stop], ["writing", true], JSON.stringify(live));
+    // (earlier tests leave tours being written: the strip counts what the list shows)
+    const writingNow = (d: NonNullable<ReturnType<typeof section>>) => d.list.filter((r) => r.stop).length;
+    const n = writingNow(section()!);
+    assert.strictEqual(section()?.strip?.writing, n === 1 ? "● writing" : `● ${n} writing`);
+    assert.strictEqual(section()?.strip?.stop, n === 1);
+    // ■ Stop on the row: the core's halt, and the row then shows the core's `stopping`
+    api.toursClick(`rowstop:${id}`);
+    await until("the core's state", () => JSON.parse(tourCmd(["show", id, "--json"])).state === "stopping", 30_000);
+    // line 1 says it (the core's `state_word`), so line 2 is the size alone: the state is not said twice
+    const stopping = await listShows("the row says stopping", (d) => row(d, id)?.mark === "writing" && row(d, id)?.stop === false);
+    assert.ok(row(stopping, id)!.words.startsWith("1 of 2 stops"), row(stopping, id)!.words);
+    assert.deepStrictEqual([row(stopping, id)!.mark, row(stopping, id)!.stop], ["writing", false], "no Stop to press twice");
+    assert.strictEqual(writingNow(stopping), n - 1, "one fewer is being written");
+  });
+
+  test("the strip counts the tours being written, and the open tour's route header has its own Stop", async function () {
+    this.timeout(120_000);
+    await sleep(1100);
+    const a = JSON.parse(tourCmd(["start", "--title", "Written for the strip", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), "--json"])).tour;
+    tourCmd(["add", a, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await closeWhenItOpens(a);
+    await sleep(1100);
+    const b = JSON.parse(tourCmd(["start", "--title", "Written too", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), "--json"])).tour;
+    await closeWhenItOpens(b);
+    const two = await listShows("two tours at least are being written", (d) => d.list.filter((r) => r.stop).length >= 2 && row(d, a)?.stop === true && row(d, b)?.stop === true);
+    assert.strictEqual(two.strip?.writing, `● ${two.list.filter((r) => r.stop).length} writing`);
+    assert.strictEqual(two.strip?.stop, false, "Stop only when one is");
+    tourCmd(["halt", b]);
+    // the open tour: its route header says it is being written, with its Stop; the labelled Stop Playing is there
+    await vscode.commands.executeCommand("vnoc.openTour", a);
+    await until("the tour's context", () => api.session().active === `tour:${a}`);
+    const route = await sectionShows("the route header", (d) => d.mode === "route" && d.routeHeader?.stop === true, 30_000);
+    assert.ok(route.routeHeader?.writing?.startsWith("writing"), JSON.stringify(route.routeHeader));
+    assert.strictEqual(route.routeHeader?.stopPlaying, true);
+    api.toursClick("stop");
+    await until("the core's state", () => JSON.parse(tourCmd(["show", a, "--json"])).state === "stopping", 30_000);
+    api.toursClick("stopplaying");
+    await until("the tour's context closed", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour" && c.tour === a), 30_000);
+  });
+
+  test("the open tour's row says it is playing with a Stop Playing that closes the tour and keeps the place", async function () {
+    this.timeout(120_000);
+    const id = await finished("Played from the list");
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    const at = await listShows("the list, with the open tour's row playing", (d) => row(d, id)?.mark === "playing");
+    assert.deepStrictEqual([row(at, id)!.stopPlaying, row(at, id)!.active], [true, true]);
+    assert.strictEqual(at.strip?.playing, `▶ Played from the list`);
+    assert.strictEqual(at.strip?.stopPlaying, true);
+    // a click on `▶ <title>` goes back to the route, whose header has the labelled button
+    api.toursClick("backtoroute");
+    const route = await sectionShows("the route", (d) => d.mode === "route" && d.routeHeader?.stopPlaying === true);
+    assert.strictEqual(route.strip?.playing ?? null, null, "the route has its own header: the strip does not say `▶ title` there");
+    // Stop Playing: the tour closes, its place is kept, and the row says where it stopped
+    api.toursClick("back");
+    api.toursClick("stopplaying");
+    await until("the tour's context closed", () => !Object.values(api.session().contexts).some((c) => c.kind === "tour" && c.tour === id), 30_000);
+    const after = await listShows("the row, not playing", (d) => row(d, id) !== undefined && row(d, id)!.mark !== "playing");
+    assert.strictEqual(row(after, id)!.stopPlaying, false);
+    assert.strictEqual(after.strip?.playing ?? null, null);
+  });
+
+  test("the status bar item's click offers Stop Writing and Stop Playing, and each does its own thing", async function () {
+    this.timeout(120_000);
+    await sleep(1100);
+    const id = JSON.parse(tourCmd(["start", "--title", "Written for the status bar", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), "--json"])).tour;
+    tourCmd(["add", id, node("has_stock"), "--body-file", "-"], SHORT.has_stock);
+    await until("the tour that is being written opens", () => api.session().contexts[`tour:${id}`] !== undefined, 30_000);
+    await until("the tour's view reaches the host", () => (api.tours.open() as { state?: string } | null)?.state === "writing", 30_000);
+    api.answerTourPicks(["Stop Writing"]);
+    await vscode.commands.executeCommand("vnoc.tourStatus");
+    await until("the core's state", () => JSON.parse(tourCmd(["show", id, "--json"])).state === "stopping", 30_000);
+    api.answerTourPicks(["Stop Playing"]);
+    await vscode.commands.executeCommand("vnoc.tourStatus");
+    await until("the tour's context closed", () => api.session().contexts[`tour:${id}`] === undefined, 30_000);
+    api.answerTourPicks(null);
+  });
+
+  test("Tour Settings… and Rename… stay open when the focus goes elsewhere", async function () {
+    this.timeout(120_000);
+    const id = await finished("Renamed with a picker");
+    // each is VS Code's own picker or box (no queued answer); the focus is taken away, and after a second each is still waiting for an answer
+    const stays = async (command: string, arg?: unknown) => {
+      let settled = false;
+      const done = Promise.resolve(vscode.commands.executeCommand(command, arg)).then(() => void (settled = true));
+      await sleep(1000);
+      await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
+      await sleep(1000);
+      const open = !settled;
+      await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+      await done;
+      return open;
+    };
+    assert.ok(await stays("vnoc.tourSettings"), "Tour Settings… closed itself");
+    assert.ok(await stays("vnoc.tourRename", { tour: id }), "Rename… closed itself");
+  });
+
+  test("a tour that cannot be read is dim and says so, and can be deleted", async function () {
+    this.timeout(120_000);
+    await sleep(1100);
+    const id = "broken-4dry";
+    fs.mkdirSync(path.dirname(privateFile(id)), { recursive: true });
+    fs.writeFileSync(privateFile(id), "this is not a tour\n");
+    const unreadable = await listShows("the row that cannot be read", (d) => row(d, id) !== undefined && row(d, id)!.clickable === false);
+    assert.ok(row(unreadable, id)!.words.startsWith("cannot be read"), row(unreadable, id)!.words);
+    api.toursClick(`delete:${id}`);
+    await sectionShows("it was deleted", (d) => d.deleted.some((x) => x.ids.includes(id)), 30_000);
+    assert.ok(!fs.existsSync(privateFile(id)));
+    api.toursClick("undo");
+    await until("it is back", () => fs.existsSync(privateFile(id)), 30_000);
+    fs.rmSync(privateFile(id), { force: true });
+  });
+
+  test("Delete Finished Tours takes the private finished ones with one Undo for all, and leaves a shared tour and one being written", async function () {
+    this.timeout(180_000);
+    const a = await finished("Finished one");
+    const b = await finished("Finished two");
+    const shared = await finished("Finished and shared");
+    tourCmd(["share", shared]);
+    await sleep(1100);
+    const writing = JSON.parse(tourCmd(["start", "--title", "Not finished", "--author", "the suite", "--plan", node("has_stock"), node("reserve"), "--json"])).tour;
+    await closeWhenItOpens(writing);
+    await listShows("the rows", (d) => [a, b, shared, writing].every((x) => row(d, x) !== undefined));
+    const privateFinished = JSON.parse(tourCmd(["list", "--json"])).tours.filter((t: { folder: string; state: string }) => t.folder === "private" && t.state === "finished").map((t: { id: string }) => t.id);
+    assert.ok(privateFinished.includes(a) && privateFinished.includes(b) && !privateFinished.includes(shared) && !privateFinished.includes(writing), JSON.stringify(privateFinished));
+    api.toursClick("deleteFinished");
+    const gone = await sectionShows("one row for all of them", (d) => d.deleted.length === 1 && d.deleted[0].ids.includes(a) && d.deleted[0].ids.includes(b), 30_000);
+    assert.deepStrictEqual([...gone.deleted[0].ids].sort(), [...privateFinished].sort());
+    assert.strictEqual(gone.deleted[0].words, `Deleted ${privateFinished.length} finished tours.`, "the core's words");
+    assert.ok(!fs.existsSync(privateFile(a)) && !fs.existsSync(privateFile(b)));
+    assert.ok(fs.existsSync(projectFile(shared)), "a shared tour stays");
+    assert.ok(fs.existsSync(privateFile(writing)), "a tour being written stays");
+    // one Undo for all
+    api.toursClick("undo");
+    await until("all of them are back", () => privateFinished.every((id: string) => fs.existsSync(privateFile(id))), 30_000);
+    await sectionShows("no deleted row", (d) => d.deleted.length === 0);
+    // the project's folder is a repository's: what the test shared is not left there
+    tourCmd(["share", shared, "--private"]);
+  });
+});
+
+suite("JSON, check all, ask for a tour, open tour, show docs", () => {
+  const folder = () => path.join(workspace(), "tourdemo");
+  const shop = () => path.join(folder(), "shop.py");
+  const privateFile = (id: string) => path.join(workspace(), ".vnoc", "local", "tours", `${id}.jsonl`);
+  /** a finished tour of the shop, in its own second (ids are made from the clock) */
+  const finished = async (title: string, node = "tourdemo/shop.py::checkout", body = CHECKOUT): Promise<string> => {
+    await sleep(1100);
+    const id = JSON.parse(tourCmd(["start", "--title", title, "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", id, node, "--body-file", "-"], body);
+    tourCmd(["finish", id, "--no-ids"]);
+    return id;
+  };
+  const row = (d: NonNullable<ReturnType<typeof section>>, id: string) => d.list.find((r) => r.id === id);
+  const listShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof section>>) => boolean, ms = 30_000) => {
+    api.toursClick("back");
+    api.toursClick("fold");
+    api.toursClick("unfold");
+    return sectionShows(what, (d) => d.mode === "list" && ready(d), ms);
+  };
+  const said = (n: number) => api.tourMessages().slice(n);
+  const edit = (from: string, to: string) => fs.writeFileSync(shop(), fs.readFileSync(shop(), "utf8").replace(from, to));
+  const jsonTab = async () => {
+    await until("an untitled JSON tab is the active editor", () => vscode.window.activeTextEditor?.document.isUntitled === true && vscode.window.activeTextEditor.document.languageId === "json", 30_000);
+    return vscode.window.activeTextEditor!;
+  };
+  const replaceAll = async (editor: vscode.TextEditor, text: string) => {
+    const doc = editor.document;
+    await editor.edit((b) => b.replace(new vscode.Range(0, 0, doc.lineCount, 0), text));
+  };
+  let temp = "";
+  let shop0 = "";
+
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    if (tour === "") await makeTours();
+    await dropTourContext();
+    await vscode.commands.executeCommand("vnoc.structure.focus");
+    await until("the sidebar page", () => api.sidebarOpen());
+    await sectionShows("the section", () => true, 30_000);
+    shop0 = fs.readFileSync(shop(), "utf8");
+    temp = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-tour-json-"));
+  });
+  suiteTeardown(() => fs.rmSync(temp, { recursive: true, force: true }));
+  setup(() => {
+    api.answerTourMessages([]);
+  });
+  teardown(async function () {
+    this.timeout(30_000);
+    api.answerTourMessages(null);
+    api.answerTourFiles(null);
+    api.answerOpenTour(null);
+    api.stageClick("closeTour");
+    await dropTourContext();
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor").then(undefined, () => {});
+    if (fs.readFileSync(shop(), "utf8") !== shop0) fs.writeFileSync(shop(), shop0);
+  });
+
+  test("Open as JSON: change one text, Import into This Tour, and the stage shows it at the same step; a bad edit lists its refusals on the tab by line, and writes nothing", async function () {
+    this.timeout(180_000);
+    const id = await finished("JSON round trip");
+    tourCmd(["go", id, "s1.b1"]);
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    const before = await stageShows("the block it was left on", (d) => d.step === "s1.b1", 30_000, id);
+    assert.ok(before.text?.includes("so nothing is held for an order"), before.text ?? "");
+    // Open as JSON: an untitled JSON tab with the core's document, exactly what `vnoc tour export` prints
+    await vscode.commands.executeCommand("vnoc.tourOpenJson", { tour: id });
+    const tab = await jsonTab();
+    assert.strictEqual(tab.document.getText(), tourCmd(["export", id]));
+    // one text changed, imported into this tour: the core's words, and the stage shows it at the same step
+    const text = tab.document.getText();
+    await replaceAll(tab, text.replace("so nothing is held for an order", "so nothing at all is held for an order"));
+    const from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourImportInto");
+    await until("the core's words", () => said(from).length === 1, 30_000);
+    assert.strictEqual(said(from)[0].level, "info");
+    assert.ok(said(from)[0].text.startsWith("Replaced “JSON round trip”: 1 stop (1 kept, 0 new, 0 gone)."), said(from)[0].text);
+    const after = await stageShows("the new text at the same step", (d) => d.step === "s1.b1" && d.text?.includes("so nothing at all is held") === true, 30_000, id);
+    assert.strictEqual(after.title, before.title);
+    assert.strictEqual(JSON.parse(tourCmd(["where", id, "--json"])).step.id, "s1.b1", "the place is kept");
+    assert.strictEqual(vscode.languages.getDiagnostics(tab.document.uri).length, 0);
+    // a bad edit: a text over its budget (line N of the text) and a title that is empty
+    const good = tab.document.getText();
+    await replaceAll(tab, good.replace("so nothing at all is held for an order that cannot be filled.", "x".repeat(900)).replace('"title": "JSON round trip"', '"title": ""'));
+    const file = fs.readFileSync(privateFile(id));
+    const mark = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourImportInto");
+    await until("the refusal said", () => said(mark).length === 1, 30_000);
+    assert.strictEqual(said(mark)[0].level, "warn");
+    assert.ok(said(mark)[0].text.startsWith("Not written: 2 problems."), said(mark)[0].text);
+    const problems = vscode.languages.getDiagnostics(tab.document.uri);
+    assert.strictEqual(problems.length, 2, JSON.stringify(problems.map((d) => d.message)));
+    for (const d of problems) {
+      assert.strictEqual(d.severity, vscode.DiagnosticSeverity.Error);
+      assert.strictEqual(d.source, "V-NOC");
+      const lineText = tab.document.lineAt(d.range.start.line).text;
+      const key = d.code === "title" ? '"title"' : '"text"';
+      assert.ok(lineText.includes(key), `${String(d.code)} is on its line: ${lineText.slice(0, 60)}`);
+    }
+    assert.deepStrictEqual(problems.map((d) => d.code).sort(), ["stops[0].blocks[0].text", "title"]);
+    assert.ok(problems.find((d) => d.code === "title")!.message.includes("title"), "the core's words");
+    assert.ok(fs.readFileSync(privateFile(id)).equals(file), "nothing was written");
+    // editing the text again takes the marks off: they pointed at lines that moved
+    await replaceAll(tab, good);
+    await until("the marks are gone", () => vscode.languages.getDiagnostics(tab.document.uri).length === 0);
+  });
+
+  test("Export as JSON… writes the file the dialog chose, with the text `vnoc tour export` prints; a dismissed dialog writes nothing", async function () {
+    this.timeout(90_000);
+    const id = await finished("To export");
+    const file = path.join(temp, "export.json");
+    let from = api.tourMessages().length;
+    api.answerTourFiles([file, undefined]);
+    await vscode.commands.executeCommand("vnoc.tourExportJson", { tour: id });
+    assert.strictEqual(fs.readFileSync(file, "utf8"), tourCmd(["export", id]));
+    assert.deepStrictEqual(said(from).map((m) => m.text), [`Saved the tour to ${file}.`]);
+    from = api.tourMessages().length;
+    fs.rmSync(file);
+    await vscode.commands.executeCommand("vnoc.tourExportJson", { tour: id });
+    assert.ok(!fs.existsSync(file) && said(from).length === 0, "a dismissed dialog writes and says nothing");
+  });
+
+  test("Import a Tour from JSON… makes a new tour and a new row; a file with a fault has its refusals on the file", async function () {
+    this.timeout(120_000);
+    const id = await finished("To copy");
+    const doc = JSON.parse(tourCmd(["export", id]));
+    doc.title = "Imported copy";
+    const file = path.join(temp, "import.json");
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    const from = api.tourMessages().length;
+    api.answerTourFiles([file]);
+    await vscode.commands.executeCommand("vnoc.tourImportFile");
+    await until("the core's words", () => said(from).length === 1, 30_000);
+    // then what finish does after the end: in a repository the tour is pinned, and the words say so
+    assert.ok(said(from)[0].text.startsWith("Imported “Imported copy”: 1 stop."), said(from)[0].text);
+    const list = await listShows("a row for the imported tour", (d) => d.list.some((r) => r.title === "Imported copy"));
+    const made = row(list, list.list.find((r) => r.title === "Imported copy")!.id)!;
+    assert.notStrictEqual(made.id, id);
+    assert.ok(fs.existsSync(privateFile(made.id)));
+    // a fault: a node that is not there, at its line of the file
+    doc.title = "Never written";
+    doc.stops[0].node = "tourdemo/shop.py::nowhere";
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    const mark = api.tourMessages().length;
+    api.answerTourFiles([file]);
+    await vscode.commands.executeCommand("vnoc.tourImportFile");
+    await until("the refusal said", () => said(mark).length === 1, 30_000);
+    assert.strictEqual(said(mark)[0].level, "warn");
+    const problems = vscode.languages.getDiagnostics(vscode.Uri.file(file));
+    assert.strictEqual(problems.length, 1, JSON.stringify(problems.map((d) => d.message)));
+    assert.strictEqual(problems[0].code, "stops[0].node");
+    assert.ok(vscode.window.activeTextEditor!.document.lineAt(problems[0].range.start.line).text.includes('"node"'));
+    assert.ok(!(await api.tours.list()).some((r) => r.words.includes("Never written")));
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  });
+
+  test("Check All Tours checks every tour and the row says what it found", async function () {
+    this.timeout(120_000);
+    const id = await finished("To check", "tourdemo/shop.py::has_stock", SHORT.has_stock);
+    await listShows("the row is fresh", (d) => row(d, id) !== undefined && !row(d, id)!.words.includes("changed"));
+    edit("    return stock.get(order[\"sku\"], 0) >= order[\"qty\"]", "    return stock.get(order[\"sku\"], 0) > order[\"qty\"]");
+    const from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourCheckAll");
+    const changed = await listShows("the row says changed", (d) => row(d, id)?.words.includes("changed") === true, 60_000);
+    assert.ok(row(changed, id)!.words.includes("changed"), row(changed, id)!.words);
+    assert.strictEqual(said(from).length, 1, "the core's one sentence ends it");
+    assert.match(said(from)[0].text, /^Checked \d+ tours?: \d+ changed/, "how many changed");
+  });
+
+  test("Ask for a Tour… is a dialog of the canvas page, filled in from where it was opened; its prompt is the core's, and Copy Prompt copies it, says the core's words and closes it", async function () {
+    this.timeout(120_000);
+    const id = JSON.parse(tourCmd(["start", "--title", "Asked again", "--question", "why this order?", "--detail", "quick", "--json"])).tour;
+    tourCmd(["add", id, "tourdemo/shop.py::checkout", "--body-file", "-"], CHECKOUT);
+    tourCmd(["finish", id, "--no-ids"]);
+    const dialog = () => api.askDialog().at(-1)?.dialog ?? null;
+    const dialogShows = async (what: string, ready: (d: NonNullable<ReturnType<typeof dialog>>) => boolean, ms = 30_000) => {
+      await until(what, () => {
+        const d = dialog();
+        return d !== null && ready(d);
+      }, ms);
+      return dialog()!;
+    };
+    const prompt = (text: string) => dialogShows(`the prompt ${text}`, (d) => d.prompt === text);
+    const closed = () => until("the dialog is closed", () => api.askDialog().length > 0 && dialog() === null, 30_000);
+    // a node's menu: the dialog opens with the node as its chip; nothing is copied yet
+    await vscode.env.clipboard.writeText("untouched");
+    let from = api.tourMessages().length;
+    await vscode.commands.executeCommand("vnoc.tourAsk", { nodeKey: "tourdemo/shop.py::checkout", contextId: "main" });
+    const opened = await prompt("Walk me through tourdemo/shop.py::checkout");
+    assert.deepStrictEqual([opened.about, opened.agentDepth, opened.detail], ["checkout", true, "agent"]);
+    assert.strictEqual(await vscode.env.clipboard.readText(), "untouched");
+    // Esc closes it, and copies nothing
+    api.askDialogClick("cancel");
+    await closed();
+    assert.strictEqual(await vscode.env.clipboard.readText(), "untouched");
+    // `＋` with a node selected: the same dialog. A question, the agent's box unticked, 2 levels (its size shows), Quick; the sentence is the core's and follows the last change
+    api.dispatch({ type: "select", id: "tourdemo/shop.py::checkout" }, "main");
+    api.toursClick("ask");
+    await prompt("Walk me through tourdemo/shop.py::checkout");
+    api.askDialogClick("question", "why does it hold the stock first?");
+    api.askDialogClick("agent");
+    api.askDialogClick("depth", "2");
+    api.askDialogClick("detail", "quick");
+    const sentence = "Walk me through tourdemo/shop.py::checkout: why does it hold the stock first? Cover it and what it calls, 2 levels deep. Make it a quick tour.";
+    const filled = await prompt(sentence);
+    assert.deepStrictEqual([filled.agentDepth, filled.depth, filled.detail], [false, 2, "quick"]);
+    const sized = await dialogShows("the size of 2 levels, in the core's words", (d) => d.size !== null);
+    assert.match(sized.size!, /^\d+ stops? · about \d+ min$/);
+    // ⌘Enter (the same function): the sentence is copied, the core's words are said, the dialog is gone
+    api.askDialogClick("copy");
+    await waitFor("the sentence is copied", async () => (await vscode.env.clipboard.readText()) === sentence, 30_000);
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Copied. Paste it to your agent."]);
+    await closed();
+    // the chip is removed: the question alone, and no depth (it is a depth of a node)
+    await vscode.commands.executeCommand("vnoc.tourAsk", { nodeKey: "tourdemo/shop.py::checkout", contextId: "main" });
+    await prompt("Walk me through tourdemo/shop.py::checkout");
+    api.askDialogClick("question", "how does it end?");
+    api.askDialogClick("agent");
+    api.askDialogClick("depth", "0");
+    await prompt("Walk me through tourdemo/shop.py::checkout: how does it end? Cover only that.");
+    api.askDialogClick("about:remove");
+    await prompt("Walk me through how does it end?");
+    api.askDialogClick("cancel");
+    await closed();
+    // the palette means the selected node: none selected, the dialog has no chip and the start of a sentence
+    api.dispatch({ type: "select", id: null }, "main");
+    await vscode.commands.executeCommand("vnoc.tourAsk");
+    const bare = await prompt("Walk me through ");
+    assert.strictEqual(bare.about, null);
+    api.askDialogClick("cancel");
+    await closed();
+    // a function no tour passes through: the second view is empty, and its empty state asks for one: the same dialog
+    const quiet = path.join(folder(), "quiet.py");
+    fs.writeFileSync(quiet, "def quiet():\n    return None\n");
+    for (let waited = 0; ; waited += 500) {
+      const file = (await api.structure()).root.children.find((c) => c.id === "tourdemo")?.children.find((c) => c.id === "tourdemo/quiet.py");
+      if (file?.children.length) break;
+      assert.ok(waited < 30_000, "the structure never held tourdemo/quiet.py");
+      await sleep(500);
+    }
+    await vscode.commands.executeCommand("vnoc.showTours", { nodeKey: "tourdemo/quiet.py::quiet", contextId: "main" });
+    const empty = await sectionShows("the empty state with its button", (d) => d.view === "on" && d.empty !== null && d.asks.length > 0, 30_000);
+    assert.deepStrictEqual(empty.asks, ["Ask for One"]);
+    api.toursClick("ask");
+    await prompt("Walk me through tourdemo/quiet.py::quiet");
+    api.askDialogClick("cancel");
+    await closed();
+    api.toursClick("view:all");
+    fs.rmSync(quiet);
+    // a row's Ask for a New Tour: the dialog is filled with that tour's root, question and detail, and the prompt is the core's
+    await vscode.commands.executeCommand("vnoc.tourAskAgain", { tour: id });
+    const again = await prompt("Walk me through tourdemo/shop.py::checkout: why this order? Make it a quick tour.");
+    assert.deepStrictEqual([again.about, again.question, again.detail], ["checkout", "why this order?", "quick"]);
+    from = api.tourMessages().length;
+    api.askDialogClick("copy");
+    await waitFor("the sentence is copied", async () => (await vscode.env.clipboard.readText()) === "Walk me through tourdemo/shop.py::checkout: why this order? Make it a quick tour.", 30_000);
+    assert.deepStrictEqual(said(from).map((m) => m.text), ["Copied. Paste it to your agent."]);
+    await closed();
+    api.dispatch({ type: "select", id: null }, "main");
+  });
+
+  test("Open Tour… in the bar's ⋯ asks which, with the selected node's tours first, and opens the one picked", async function () {
+    this.timeout(120_000);
+    const onCheckout = await finished("On checkout again");
+    const elsewhere = await finished("Elsewhere", "tourdemo/shop.py::release", SHORT.release);
+    await vscode.commands.executeCommand("vnoc.openTour", elsewhere);
+    await until("the tour's context", () => api.session().active === `tour:${elsewhere}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 30_000, elsewhere);
+    // the bar's ⋯ → Open Tour… (the suite sends the entry's name): the picker is the host's, and the core orders it
+    const shown = api.openTourPicks().length;
+    api.answerOpenTour(["On checkout again"]);
+    api.dispatch({ type: "select", id: "tourdemo/shop.py::checkout" }, "main");
+    api.dispatch({ type: "activate", id: "main" }, "main");
+    await vscode.commands.executeCommand("vnoc.openCanvas");
+    await sleep(500);
+    await vscode.commands.executeCommand("vnoc.openTour");
+    const picks = api.openTourPicks()[shown];
+    assert.ok(picks, "a list was shown");
+    assert.strictEqual(picks[0], "— on checkout", `the node's tours come first: ${JSON.stringify(picks)}`);
+    assert.ok(picks.indexOf("On checkout again") < picks.indexOf("— other tours") && picks.indexOf("— other tours") < picks.indexOf("Elsewhere"), JSON.stringify(picks));
+    // a tour on the node says why (the core's `on.words`) before what its row says; the others say the row's words alone
+    const words = api.openTourPickWords()[shown];
+    assert.match(words[picks.indexOf("On checkout again")], /^(starts here|stops? [\d, and]+ of \d+|\d+ stops? inside) · /, `the pick says why it is on the node: ${JSON.stringify(words)}`);
+    assert.doesNotMatch(words[picks.indexOf("Elsewhere")], /starts here|inside/, "a tour that is not on the node says only its row's words");
+    await until("the picked tour is open", () => api.session().active === `tour:${onCheckout}`, 30_000);
+    // from a tour's bar: the same request, through the bar's own entry
+    const second = api.openTourPicks().length;
+    api.answerOpenTour(["Elsewhere"]);
+    api.stageClick("menuOpenTour");
+    await until("the bar asked", () => api.openTourPicks().length > second, 30_000);
+    await until("the picked tour is open", () => api.session().active === `tour:${elsewhere}`, 30_000);
+  });
+
+  test("Show Docs in a stop's menu opens the docs panel, as the bar's ⓘ does", async function () {
+    this.timeout(90_000);
+    const id = await finished("For docs");
+    await vscode.commands.executeCommand("vnoc.openTour", id);
+    await until("the tour's context", () => api.session().active === `tour:${id}`);
+    await stageShows("the cover", (d) => d.mode === "cover", 30_000, id);
+    const from = api.docPanel().length;
+    await vscode.commands.executeCommand("vnoc.tourShowDocs", { tour: id, stop: "s1", nodeKey: "tourdemo/shop.py::checkout" });
+    await until("the docs panel is open", () => api.docPanel().slice(from).some((d) => d.open), 30_000);
+    assert.strictEqual(api.docPanel().at(-1)!.node, "tourdemo/shop.py::checkout", "for the tour's current stop: the selection");
+    // from the menu of another card: the docs are that card's stop's, not the current one's
+    api.dispatch({ type: "select", id: "tourdemo/shop.py::checkout" }, `tour:${id}`);
+    await vscode.commands.executeCommand("vnoc.tourShowDocs", { tour: id, stop: "s9", nodeKey: "tourdemo/shop.py::has_stock" });
+    await until("the docs are the right-clicked card's", () => api.docPanel().at(-1)?.node === "tourdemo/shop.py::has_stock", 30_000);
+    api.dispatch({ type: "closeContext", id: `tour:${id}` }, `tour:${id}`);
+  });
+});
+
+// ── TR24s: a far block comes into view, keys scroll wherever the pointer is, a taller stage, short nested names ────────────────────────────────────────────
+
+/** a long function (lines 4-90) whose second block is far below its start, and a function nested in another */
+const LONG = [
+  '"""A long job, for the tour suite."""',
+  "",
+  "",
+  "def long_job(items):",
+  "    total = 0",
+  "    for item in items:",
+  "        total += item",
+  ...Array.from({ length: 80 }, (_, i) => `    total += ${i}  # filler ${i}`),
+  "    if total > 100:",
+  "        total = 100",
+  "    return total",
+  "",
+  "",
+  "def outer():",
+  "    def inner(x):",
+  "        return x + 1",
+  "    return inner(1)",
+  "",
+].join("\n");
+
+suite("TR24s: the screen", () => {
+  let far = "";
+  suiteSetup(async function () {
+    this.timeout(120_000);
+    await sleep(1100); // told apart by the second they were started in
+    const dir = path.join(workspace(), "tourdemo");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "long.py"), LONG);
+    for (let waited = 0; ; waited += 500) {
+      const file = (await api.structure()).root.children.find((c) => c.id === "tourdemo")?.children.find((c) => c.id === "tourdemo/long.py");
+      if (file && file.children.length >= 2) break;
+      assert.ok(waited < 30_000, "the structure never held tourdemo/long.py");
+      await sleep(500);
+    }
+    far = JSON.parse(tourCmd(["start", "--title", "A far block", "--author", "the suite", "--json"])).tour;
+    tourCmd(["add", far, "tourdemo/long.py::long_job", "--body-file", "-"], "long_job adds the items up and clamps the sum at the end.\n\n## 5-7 Start the sum\nIt starts at zero and adds each item.\n\n## 88-89 Clamp at the end\nThe sum never goes past one hundred.\n");
+    tourCmd(["add", far, "tourdemo/long.py::outer.<locals>.inner", "--body-file", "-"], "inner adds one; it lives inside outer and nothing else calls it.\n");
+    tourCmd(["finish", far, "--no-ids"]);
+  });
+
+  setup(async function () {
+    this.timeout(60_000);
+    await openAtCover(far);
+  });
+
+  /** the first lit line is in view: the pane's own top line and the rows whole in it, from what the stage drew */
+  const litInView = (d: Drawn) => {
+    const first = d.lit[0] - d.code!.first;
+    return d.lit.length > 0 && first >= d.scrolledTo && first < d.scrolledTo + Math.max(1, d.layout.codeRows);
+  };
+
+  test("G6: a move to a block of another stop, far below the function's start, scrolls its lit lines into view", async function () {
+    this.timeout(90_000);
+    tourCmd(["go", far, "s2"]);
+    await stageShows("stop 2", (d) => d.stop === "s2" && d.code !== null, 30_000, far);
+    tourCmd(["go", far, "s1.b2"]);
+    const d = await stageShows("the far block drawn", (x) => x.step === "s1.b2" && x.lit.includes(88) && x.code !== null, 30_000, far);
+    assert.ok(d.scrolledTo > 0, `the pane scrolled: ${d.scrolledTo}`);
+    assert.ok(litInView(d), `lit ${d.lit[0]}-${d.lit.at(-1)} is in view (top ${d.scrolledTo}, ${d.layout.codeRows} rows)`);
+    tourCmd(["go", far, "cover"]);
+    await stageShows("the cover", (x) => x.mode === "cover", 30_000, far);
+    tourCmd(["go", far, "s1.b2"]);
+    const again = await stageShows("the far block from the cover", (x) => x.step === "s1.b2" && x.lit.includes(88), 30_000, far);
+    assert.ok(litInView(again), `from the cover: lit ${again.lit[0]} is in view (top ${again.scrolledTo})`);
+    if (process.env.VNOC_SHOT_DIR) fs.writeFileSync(path.join(process.env.VNOC_SHOT_DIR, "far-block"), "ready");
+  });
+
+  test("G8: the key Next brings the next lit block into view with the pointer over the pane", async function () {
+    this.timeout(90_000);
+    tourCmd(["go", far, "s1.b1"]);
+    await stageShows("the first block", (x) => x.step === "s1.b1" && x.code !== null, 30_000, far);
+    api.stageClick("pointer:in");
+    await sleep(200);
+    api.stageKey("ArrowRight");
+    const d = await stageShows("the far block by key", (x) => x.step === "s1.b2" && x.lit.includes(88), 30_000, far);
+    assert.ok(litInView(d), `by key, with the pointer over the pane: lit ${d.lit[0]} is in view (top ${d.scrolledTo})`);
+    api.stageClick("pointer:out");
+    api.stageKey("ArrowLeft");
+    const back = await stageShows("the first block again", (x) => x.step === "s1.b1" && x.code !== null, 30_000, far);
+    assert.ok(litInView(back), `back by key: lit ${back.lit[0]} is in view (top ${back.scrolledTo})`);
+  });
+
+  test("G9: the grip goes to 70% of the canvas and no further", async function () {
+    this.timeout(90_000);
+    api.stageClick("start");
+    await stageShows("a step", (x) => x.mode === "step", 30_000, far);
+    const start = last()!.layout.height;
+    try {
+      api.stageClick("grip:-5000");
+      api.stageKey("ArrowRight");
+      const d = await stageShows("a step drawn at the limit", (x) => x.mode === "step" && x.layout.height > start, 30_000, far);
+      const { height, canvasHeight } = d.layout;
+      assert.ok(canvasHeight > 0, "the layout says the canvas's height");
+      const limit = Math.floor(canvasHeight * 0.7);
+      assert.ok(height <= limit + 1 && height >= limit - 1, `the stage is ${height} px of a canvas ${canvasHeight} px: the limit is ${limit}`);
+      assert.ok(height > Math.floor(canvasHeight * 0.45), `past the old 45% (${Math.floor(canvasHeight * 0.45)})`);
+    } finally {
+      api.stageClick(`grip:${last()!.layout.height - 215}`);
+    }
+  });
+
+  test("G10: a nested function's stop is named by its own name, not its qualified one", async function () {
+    this.timeout(90_000);
+    tourCmd(["go", far, "s2"]);
+    const d = await stageShows("the nested function's stop", (x) => x.stop === "s2" && x.header.includes("inner"), 30_000, far);
+    assert.ok(!d.header.includes("<locals>") && !d.header.includes("outer"), `the header: ${d.header}`);
+  });
+});

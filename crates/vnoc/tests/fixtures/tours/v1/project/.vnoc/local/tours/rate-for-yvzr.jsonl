@@ -1,0 +1,4 @@
+{"type":"tour","schema":1,"id":"rate-for-yvzr","title":"rate_for","question":"where does the tax rate come from","author":"claude-code","at":"2026-11-24T21:09:40Z","detail":"normal"}
+{"type":"stop","id":"s1","path":"billing/tax.py","qualname":"rate_for","kind":"function","node":"4KF02248CHCTYAG49B0KKZ5SD7","lines":[6,7],"hash":"6d82722ce79afbeb","text":"rate_for looks the country up in the RATES table and answers 0.0 for a country that is not there, so an unknown country pays no tax.","confidence":"high"}
+{"type":"bookmark","at":"s1","note":"a record type from a newer V-NOC"}
+{"type":"end","at":"2026-11-24T21:09:40Z"}

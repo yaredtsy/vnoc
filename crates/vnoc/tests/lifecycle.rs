@@ -3,6 +3,9 @@
 //!
 //! VS-D67 condition 3: unknown notifications and unknown requests plus a full lifecycle, and the core is still alive.
 
+#[path = "common/testdir.rs"]
+mod testdir;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -31,6 +34,7 @@ fn driver_path() -> PathBuf {
 fn fixtures(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vnoc-lifecycle-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    testdir::remove_at_end(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     for entry in std::fs::read_dir(repo_root().join("crates/vnoc-domain/tests/fixtures")).unwrap() {
         let entry = entry.unwrap();
@@ -55,11 +59,21 @@ struct Core {
 impl Core {
     /// Starts the core on `root`. `driver`: the path to put in `initializationOptions.driverPath` (None = leave it out).
     fn start(driver: Option<PathBuf>, root: &std::path::Path) -> Core {
+        Core::start_with_env(driver, root, &[])
+    }
+
+    /// As `start`, with environment variables set for the core (the debug-only switches for tests).
+    fn start_with_env(
+        driver: Option<PathBuf>,
+        root: &std::path::Path,
+        env: &[(&str, &str)],
+    ) -> Core {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_vnoc"));
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .env_remove("VNOC_DRIVER");
+            .env_remove("VNOC_DRIVER")
+            .envs(env.iter().copied());
         let mut child = cmd.spawn().unwrap();
         let (stdin, out) = (
             child.stdin.take().unwrap(),
@@ -150,6 +164,19 @@ impl Core {
     }
 
     /// Panics if stdout holds anything but frames: the core's stdout IS the protocol.
+    /// The next frame, or None when the core's output ended.
+    fn read_frame_or_end(&mut self) -> Option<Value> {
+        let mut line = String::new();
+        if self.out.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        let len: usize = line.strip_prefix("Content-Length:")?.trim().parse().ok()?;
+        self.out.read_line(&mut String::new()).ok()?;
+        let mut buf = vec![0u8; len];
+        self.out.read_exact(&mut buf).ok()?;
+        serde_json::from_slice(&buf).ok()
+    }
+
     fn read_frame(&mut self) -> Value {
         let mut line = String::new();
         self.out.read_line(&mut line).unwrap();
@@ -965,6 +992,7 @@ const ORDERS: &str = "class OrderService:\n    def parse_order(self, raw):\n    
 fn orders_project(label: &str, vnoc_toml: Option<&str>) -> (Core, PathBuf) {
     let root = std::env::temp_dir().join(format!("vnoc-attach-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     std::fs::create_dir_all(root.join(".vnoc")).unwrap();
     std::fs::write(root.join("orders.py"), ORDERS).unwrap();
     match vnoc_toml {
@@ -1062,6 +1090,89 @@ fn attaching_a_doc_writes_the_id_the_node_and_the_doc() {
     assert_eq!(second["id"], json!(id));
     assert_eq!(core.edit_requests.len(), 1);
     assert!(second["doc"].as_str().unwrap().ends_with("edge-cases.md"));
+    core.finish();
+}
+
+/// `vnoc tour …` in the project (the command line, as another process: an agent writing a tour while the core is open), with `stdin` for its body.
+fn tour_command(root: &std::path::Path, args: &[&str], stdin: &str) -> (bool, String) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc"))
+        .current_dir(root)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .arg("--driver")
+        .arg(driver_path())
+        .arg("tour")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
+    let out = child.wait_with_output().unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), said)
+}
+
+#[test]
+fn an_attach_through_the_editor_tells_the_tours_of_the_file_where_their_lines_went() {
+    // The editor's sink: the core asks the editor to apply the edit (here a stand-in that writes the file), and after it the tours with a stop in
+    // that file get a `rebase` record, so the ID line the core just wrote does not make them stale. (`tests/cli.rs` covers the disk's sink.)
+    let (mut core, root) = orders_project("rebase", Some("format = 1\n"));
+    let (ok, said) = tour_command(
+        &root,
+        &[
+            "start",
+            "--title",
+            "orders",
+            "--question",
+            "what do orders do",
+            "--json",
+        ],
+        "",
+    );
+    assert!(ok, "{said}");
+    let started: Value = serde_json::from_str(&said).unwrap();
+    let tour = started["tour"].as_str().unwrap().to_string();
+    for (node, text) in [
+        (
+            "orders.py::OrderService.parse_order",
+            "parse_order hands back the raw request unchanged, for now.\n",
+        ),
+        (
+            "orders.py::OrderService.other",
+            "other does nothing yet, and is here so there is a second stop after the first.\n",
+        ),
+    ] {
+        let (ok, said) = tour_command(&root, &["add", &tour, node, "--body-file", "-"], text);
+        assert!(ok, "{node}: {said}");
+    }
+    assert!(tour_command(&root, &["check"], "").1.contains("all fresh"));
+
+    let key = "orders.py::OrderService.parse_order";
+    core.request("vnoc/attach", attach_params(&root, key, "Why", Some(true)))
+        .expect("attach answers");
+    assert_eq!(core.edit_requests.len(), 1, "the editor applied the edit");
+    let code = std::fs::read_to_string(root.join("orders.py")).unwrap();
+    assert_eq!(code.lines().count(), ORDERS.lines().count() + 1, "{code}");
+
+    let file =
+        std::fs::read_to_string(root.join(format!(".vnoc/local/tours/{tour}.jsonl"))).unwrap();
+    let rebase: Value = serde_json::from_str(
+        file.lines()
+            .find(|l| l.contains(r#""type":"rebase""#))
+            .expect("a rebase record"),
+    )
+    .unwrap();
+    // `parse_order` 2-3 is 2-4 now; `other` moved down by one: 5-6 is 6-7
+    assert_eq!(rebase["steps"]["s1"]["lines"], json!([2, 4]));
+    assert_eq!(rebase["steps"]["s2"]["lines"], json!([6, 7]));
+    let (ok, said) = tour_command(&root, &["check", "--again"], "");
+    assert!(ok && said.contains("all fresh"), "{said}");
     core.finish();
 }
 
@@ -1531,6 +1642,7 @@ fn write_record(root: &std::path::Path, id: &str, path: &str, qualname: &str) {
 fn structure_lists_missing_nodes_and_problems_and_leaves_unscanned_code_alone() {
     let root = std::env::temp_dir().join(format!("vnoc-missing-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     std::fs::create_dir_all(root.join("ignored")).unwrap();
     std::fs::write(root.join("orders.py"), ORDERS).unwrap();
     std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
@@ -2306,6 +2418,7 @@ fn sites(node: &Value) -> Vec<(u64, u64, u64)> {
 fn a_call_tree_comes_back_merged_and_mapped_to_the_structure() {
     let root = std::env::temp_dir().join(format!("vnoc-calltree-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     let mut core = calls_project(&root, &root);
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
     assert_eq!(
@@ -2396,6 +2509,7 @@ fn a_call_tree_comes_back_merged_and_mapped_to_the_structure() {
 fn a_class_is_the_root_with_what_its_init_calls_and_a_bad_key_is_refused() {
     let root = std::env::temp_dir().join(format!("vnoc-calltree-class-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     let mut core = calls_project(&root, &root);
 
     let result = core
@@ -2442,6 +2556,7 @@ fn a_class_is_the_root_with_what_its_init_calls_and_a_bad_key_is_refused() {
 fn a_call_tree_of_a_subfolder_has_keys_from_the_git_root_and_paths_from_the_folder() {
     let repo = std::env::temp_dir().join(format!("vnoc-calltree-sub-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&repo);
+    testdir::remove_at_end(&repo);
     std::fs::create_dir_all(repo.join(".git")).unwrap();
     let sub = repo.join("services/api");
     let mut core = calls_project(&sub, &sub);
@@ -2485,6 +2600,7 @@ fn a_call_site_in_an_inherited_constructor_names_the_base_file() {
     // `class Child(Base)` is in pkg/child.py and has no `__init__`; `Base.__init__` in pkg/base.py calls `a()` from pkg/calc.py
     let folder = std::env::temp_dir().join(format!("vnoc-calltree-inherit-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
+    testdir::remove_at_end(&folder);
     copy_tree(
         &repo_root().join("drivers/python/tests/fixtures/call_tree"),
         &folder,
@@ -2521,6 +2637,7 @@ fn a_call_site_in_an_inherited_constructor_names_the_base_file() {
 fn files_project(name: &str, files: &[(&str, String)]) -> Core {
     let folder = std::env::temp_dir().join(format!("vnoc-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
+    testdir::remove_at_end(&folder);
     std::fs::create_dir_all(&folder).unwrap();
     for (file, text) in files {
         std::fs::write(folder.join(file), text).unwrap();
@@ -2557,6 +2674,7 @@ fn spine(root: &Value) -> Vec<&Value> {
 fn has_calls_counts_what_opening_would_show_and_nothing_else_leaves_the_core() {
     let root = std::env::temp_dir().join(format!("vnoc-hascalls-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     let mut core = calls_project(&root, &root);
     let structure = core.request("vnoc/structure", Value::Null).unwrap();
 
@@ -2879,6 +2997,7 @@ fn structure_carries_the_lost_marker_of_the_sample_and_only_it() {
     // `tests/sample/` (a copy of it, outside this repository): `rate_for`'s record says its ID is in the code, and the code has none
     let root = std::env::temp_dir().join(format!("vnoc-lifecycle-lost-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
+    testdir::remove_at_end(&root);
     copy_tree(&repo_root().join("crates/vnoc/tests/sample"), &root);
     let mut core = Core::start(Some(driver_path()), &root);
     let s = core.request("vnoc/structure", Value::Null).unwrap();
@@ -3085,5 +3204,2194 @@ fn a_doc_whose_tags_were_edited_by_hand_is_found_by_the_new_tag_with_no_index_ch
         .filter(|(method, _)| method == "vnoc/indexChanged")
         .collect();
     assert!(announced.is_empty(), "a tag edit announced {announced:?}");
+    core.finish();
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------- tours (TR15a)
+//
+// The core answers the extension for tours (docs/26-tours/03-core.md §8): the requests, the notifications, and what a path of `vnoc/filesChanged` is to a tour. The
+// agent and the reader are other processes here: `vnoc tour …` commands, as in life.
+
+/// A copy of the sample project outside this repository, symlinks resolved (the paths the editor sends are under the folder it opened).
+fn tour_project(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("vnoc-tours-core-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    testdir::remove_at_end(&dir);
+    copy_tree(&repo_root().join("crates/vnoc/tests/sample"), &dir);
+    dunce::canonicalize(dir).unwrap()
+}
+
+/// `vnoc <args>` in the project, as another process, with `input` on its standard input.
+fn vnoc_tour(root: &Path, args: &[&str], input: &str) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vnoc"))
+        .current_dir(root)
+        .env_remove("VNOC_DRIVER")
+        .env_remove("VNOC_DRIVERS")
+        .arg("--driver")
+        .arg(driver_path())
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
+    child.wait_with_output().unwrap()
+}
+
+fn vnoc_ok(root: &Path, args: &[&str], input: &str) -> String {
+    let out = vnoc_tour(root, args, input);
+    assert!(
+        out.status.success(),
+        "vnoc {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+const RETRY: &str = "billing/charge.py::retry_charge";
+
+const RETRY_BODY: &str = "retry_charge calls the gateway and tries again when the call drops, up to a fixed number of attempts, then gives up with an error that names the order.
+
+## 14-15 One attempt, as a function
+one_try is the single charge call; keeping it in a function lets the loop below treat \"charge\" as one thing that either returns or raises.
+
+### 15 The call itself
+This is the only line that talks to the gateway, so it is the only place a dropped connection can come from.
+
+## 17-22 Try, and try again
+Only a dropped connection is retried: any other error leaves the loop at once. When every attempt drops, the function raises ChargeError.
+";
+
+/// A tour started in the project by another process; its id.
+fn start_tour(root: &Path) -> String {
+    let out = vnoc_ok(
+        root,
+        &["tour", "start", "--title", "retry_charge", "--json"],
+        "",
+    );
+    serde_json::from_str::<Value>(&out).unwrap()["tour"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn add_retry(root: &Path, tour: &str) {
+    vnoc_ok(
+        root,
+        &["tour", "add", tour, RETRY, "--body-file", "-"],
+        RETRY_BODY,
+    );
+}
+
+fn tour_file(root: &Path, id: &str) -> PathBuf {
+    root.join(format!(".vnoc/local/tours/{id}.jsonl"))
+}
+
+fn state_file(root: &Path, id: &str) -> PathBuf {
+    root.join(format!(".vnoc/local/tour-state/{id}.json"))
+}
+
+/// A core on the project with its first build done: the index revision it has.
+fn ready_core(root: &Path) -> (Core, u64) {
+    let mut core = Core::start(Some(driver_path()), root);
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    let revision = structure["revision"].as_u64().unwrap();
+    core.wait_for("vnoc/indexChanged"); // the first build's: what comes after is a change
+    (core, revision)
+}
+
+impl Core {
+    /// Waits long enough for anything the core was going to send about what it was just told, then drains what arrived: `notifications` is complete.
+    fn settle(&mut self) {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        self.request("vnoc/ping", Value::Null).unwrap();
+    }
+
+    fn saw(&self, method: &str) -> usize {
+        self.notifications
+            .iter()
+            .filter(|(m, _)| m == method)
+            .count()
+    }
+
+    /// The tour as the stage has it.
+    fn tour(&mut self, id: &str) -> Value {
+        self.request("vnoc/tour", json!({ "id": id })).unwrap()
+    }
+}
+
+#[test]
+fn tours_lists_a_tour_started_in_another_process() {
+    let root = tour_project("list");
+    let (mut core, _) = ready_core(&root);
+    let empty = core.request("vnoc/tours", Value::Null).unwrap();
+    assert_eq!(empty["tours"], json!([]));
+    let id = start_tour(&root);
+    // a request with no `check` and one with the id: both answer, `null` params too
+    for params in [json!({}), json!({ "check": [id] }), Value::Null] {
+        let listed = core.request("vnoc/tours", params).unwrap();
+        let rows = listed["tours"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{listed}");
+        assert_eq!(rows[0]["id"], json!(id));
+        assert_eq!(rows[0]["state"], "writing");
+        assert_eq!(rows[0]["quiet"], false);
+        assert_eq!(rows[0]["place"], Value::Null, "nobody has opened it: new");
+        assert_eq!(rows[0]["root"], Value::Null, "no stop yet");
+    }
+    // the row asked for has its freshness; a tour with nothing written is fresh
+    let listed = core
+        .request("vnoc/tours", json!({ "check": [id] }))
+        .unwrap();
+    assert_eq!(listed["tours"][0]["check"], "fresh");
+    assert_eq!(
+        core.request("vnoc/tours", json!({ "check": ["no such tour"] }))
+            .unwrap_err()["code"],
+        -32602
+    );
+    core.finish();
+}
+
+#[test]
+fn an_add_is_tours_changed_and_never_index_changed_and_a_batch_of_tour_paths_starts_no_update() {
+    let root = tour_project("add");
+    let (mut core, revision) = ready_core(&root);
+    let id = start_tour(&root);
+    // a file the core was never told about: an index update would find it (a walk reads what is new), and announce it
+    std::fs::write(root.join("unlisted.py"), "def unlisted():\n    pass\n").unwrap();
+
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [tour_file(&root, &id)] }),
+    );
+    assert_eq!(core.wait_for("vnoc/toursChanged"), json!({ "ids": [id] }));
+    add_retry(&root, &id);
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [
+            tour_file(&root, &id),
+            root.join(".vnoc/local/tours.lock"),
+            root.join(".vnoc/local/tours"),
+        ] }),
+    );
+    core.settle();
+    // everything one `add` caused, from the tour's file, the lock and the folder the watcher named: one word, and not the index's
+    assert_eq!(
+        core.notifications,
+        [("vnoc/toursChanged".to_string(), json!({ "ids": [id] }))]
+    );
+    assert_eq!(core.saw("vnoc/indexChanged"), 0, "a tour is not the index");
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(structure["revision"].as_u64().unwrap(), revision);
+    let names: Vec<&str> = structure["root"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"unlisted.py"), "no update ran: {names:?}");
+    // the tour is there, with its stop
+    let listed = core.request("vnoc/tours", json!({})).unwrap();
+    assert_eq!(listed["tours"][0]["written"], 1);
+    assert_eq!(listed["tours"][0]["root"]["name"], "retry_charge");
+
+    // a mixed batch updates for the other path only; an empty batch is "look again", as it was
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [tour_file(&root, &id), root.join("unlisted.py")] }),
+    );
+    core.wait_for("vnoc/toursChanged");
+    let changed = core.wait_for("vnoc/indexChanged");
+    assert_eq!(changed["revision"].as_u64().unwrap(), revision + 1);
+    core.finish();
+}
+
+#[test]
+fn vnoc_tour_twice_reads_the_stops_files_once_and_a_change_to_one_of_them_is_tours_changed() {
+    let root = tour_project("memory");
+    let (mut core, _) = ready_core(&root);
+    let id = start_tour(&root);
+    add_retry(&root, &id);
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [tour_file(&root, &id)] }),
+    );
+    core.wait_for("vnoc/toursChanged");
+
+    let first = core.tour(&id);
+    assert_eq!(first["check"]["fresh"], true, "{first}");
+    assert_ne!(first["check"]["from"], "memory");
+    let recorded = std::fs::read(state_file(&root, &id)).unwrap();
+    // the stop's file is gone from the disk, and nobody told the core: an answer from memory does not know, a read would
+    let source = root.join("billing/charge.py");
+    let text = std::fs::read_to_string(&source).unwrap();
+    std::fs::remove_file(&source).unwrap();
+    let second = core.tour(&id);
+    assert_eq!(second["check"]["from"], "memory", "{second}");
+    assert_eq!(second["check"]["fresh"], true);
+    assert_eq!(second["stops"], first["stops"]);
+    assert_eq!(
+        std::fs::read(state_file(&root, &id)).unwrap(),
+        recorded,
+        "nothing was recorded again: nothing was read"
+    );
+
+    // told, the core drops it and says so; the next ask reads again and finds the stop gone
+    core.notify("vnoc/filesChanged", json!({ "paths": [source] }));
+    assert_eq!(core.wait_for("vnoc/toursChanged"), json!({ "ids": [id] }));
+    let third = core.tour(&id);
+    assert_eq!(third["check"]["from"], "check");
+    assert_eq!(third["check"]["gone"], 1);
+    assert_eq!(third["stops"][0]["check"], "gone");
+
+    // the file is back, changed in the lines the stop was about: the stop is changed
+    std::fs::write(
+        &source,
+        text.replacen("def retry_charge", "def retry_charge_v2", 1),
+    )
+    .unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [source] }));
+    core.wait_for("vnoc/toursChanged");
+    let fourth = core.tour(&id);
+    assert_eq!(fourth["check"]["from"], "check");
+    assert_ne!(fourth["stops"][0]["check"], Value::Null, "{fourth}");
+    core.finish();
+}
+
+#[test]
+fn a_change_to_another_file_is_not_tours_changed_and_the_answer_is_kept() {
+    let root = tour_project("other");
+    let (mut core, _) = ready_core(&root);
+    let id = start_tour(&root);
+    add_retry(&root, &id);
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [tour_file(&root, &id)] }),
+    );
+    core.wait_for("vnoc/toursChanged");
+    core.tour(&id);
+
+    let other = root.join("orders/status.py");
+    let mut text = std::fs::read_to_string(&other).unwrap();
+    text.push_str("\n\ndef added_later():\n    pass\n");
+    std::fs::write(&other, text).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [other] }));
+    core.wait_for("vnoc/indexChanged"); // the index is the source's
+    core.settle();
+    assert_eq!(core.saw("vnoc/toursChanged"), 0);
+    assert_eq!(core.tour(&id)["check"]["from"], "memory");
+    core.finish();
+}
+
+#[test]
+fn tour_go_writes_the_state_file_and_does_not_echo_but_another_process_does() {
+    let root = tour_project("go");
+    let (mut core, _) = ready_core(&root);
+    let id = start_tour(&root);
+    add_retry(&root, &id);
+
+    // the core's own move: the place is written, the answer is the place
+    let place = core
+        .request("vnoc/tourGo", json!({ "id": id, "move": "next" }))
+        .unwrap();
+    assert_eq!(place["at"], "s1");
+    assert_eq!(place["by"], "reader");
+    // the answer has the current stop and the numbers of "stop 1 of N · 1 of M": made from the tour, not kept in the state file
+    assert_eq!(place["stop"], "s1");
+    assert_eq!(place["position"]["stop"], 1);
+    assert_eq!(place["position"]["step"], 1);
+    assert!(
+        place["position"]["of"].as_u64().unwrap() >= 1
+            && place["position"]["steps"].as_u64().unwrap() >= 1
+    );
+    let written: Value =
+        serde_json::from_slice(&std::fs::read(state_file(&root, &id)).unwrap()).unwrap();
+    assert_eq!(written["place"]["at"], "s1");
+    assert!(
+        written["place"].get("stop").is_none() && written["place"].get("position").is_none(),
+        "the state file keeps the place only"
+    );
+    // the watcher reports the write: it is the core's own, and not a move
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [state_file(&root, &id)] }),
+    );
+    core.settle();
+    assert_eq!(core.saw("vnoc/tourPlaceChanged"), 0, "an echo");
+    assert_eq!(core.saw("vnoc/indexChanged"), 0);
+
+    // another process moves it
+    vnoc_ok(&root, &["tour", "go", &id, "s1.b1"], "");
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [state_file(&root, &id)] }),
+    );
+    let moved = core.wait_for("vnoc/tourPlaceChanged");
+    assert_eq!(moved["id"], json!(id));
+    assert_eq!(moved["place"]["at"], "s1.b1");
+    assert_eq!(moved["place"]["by"], "command");
+    assert_eq!(moved["place"]["stop"], "s1");
+    assert_eq!(moved["place"]["position"]["step"], 2);
+
+    // the same state file rewritten for a check (a change to the stop's file, then the next ask) is no move: the place is the one told
+    let source = root.join("billing/charge.py");
+    let text = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(&source, format!("{text}\n\ndef added_later():\n    pass\n")).unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [source] }));
+    core.wait_for("vnoc/indexChanged");
+    assert_eq!(core.tour(&id)["check"]["from"], "check");
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [state_file(&root, &id)] }),
+    );
+    core.settle();
+    assert_eq!(
+        core.saw("vnoc/tourPlaceChanged"),
+        0,
+        "a check recorded is not a move"
+    );
+    // and the view has the place the reader is at
+    let shown = core.tour(&id);
+    assert_eq!(shown["place"]["at"], "s1.b1");
+    assert_eq!(shown["place"]["stop"], "s1");
+    assert_eq!(shown["writing"], Value::Null);
+    // the list says each row's second line, and `tourOpen` answers a place with its stop too
+    let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
+    assert!(
+        row["words"].as_str().unwrap().starts_with("1 stop"),
+        "{row}"
+    );
+    // the one word `words` starts with is a field of its own
+    assert_eq!(row["state_word"], "writing", "{row}");
+    let opened = core
+        .request("vnoc/tourOpen", json!({ "id": id, "open": true }))
+        .unwrap();
+    assert_eq!(
+        (opened["open"].clone(), opened["stop"].clone()),
+        (json!(true), json!("s1"))
+    );
+    core.finish();
+}
+
+#[test]
+fn tour_go_refuses_what_the_command_refuses_and_tour_open_sets_open() {
+    let root = tour_project("open");
+    let (mut core, _) = ready_core(&root);
+    let id = start_tour(&root);
+    add_retry(&root, &id);
+    let nope = core
+        .request("vnoc/tourGo", json!({ "id": id, "move": "s9" }))
+        .unwrap_err();
+    assert_eq!(nope["code"], -32602);
+    assert!(nope["message"].as_str().unwrap().contains("no stop s9"));
+    let nope = core
+        .request("vnoc/tourGo", json!({ "id": id, "move": "sideways" }))
+        .unwrap_err();
+    assert_eq!(nope["code"], -32602);
+    assert_eq!(
+        core.request(
+            "vnoc/tourGo",
+            json!({ "id": "no-such-0000", "move": "next" })
+        )
+        .unwrap_err()["code"],
+        -32602
+    );
+
+    let opened = core
+        .request("vnoc/tourOpen", json!({ "id": id, "open": true }))
+        .unwrap();
+    assert_eq!(opened["open"], true);
+    assert_eq!(opened["at"], "cover");
+    let where_ = vnoc_ok(&root, &["tour", "where", &id, "--json"], "");
+    assert_eq!(
+        serde_json::from_str::<Value>(&where_).unwrap()["open"],
+        true
+    );
+    let closed = core
+        .request("vnoc/tourOpen", json!({ "id": id, "open": false }))
+        .unwrap();
+    assert_eq!(closed["open"], false);
+    core.finish();
+}
+
+#[test]
+fn tour_halt_and_then_an_add_from_the_command_is_refused_as_stopped() {
+    let root = tour_project("halt");
+    let (mut core, _) = ready_core(&root);
+    let id = start_tour(&root);
+    let halted = core.request("vnoc/tourHalt", json!({ "id": id })).unwrap();
+    assert_eq!(halted, json!({ "halt": "written", "state": "stopping" }));
+    let out = vnoc_tour(
+        &root,
+        &["tour", "add", &id, RETRY, "--body-file", "-"],
+        RETRY_BODY,
+    );
+    assert!(!out.status.success(), "the add is refused");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+    .to_lowercase();
+    assert!(said.contains("stopped"), "{said}");
+    let again = core.request("vnoc/tourHalt", json!({ "id": id })).unwrap();
+    assert_eq!(again["halt"], "already");
+    core.finish();
+}
+
+#[test]
+fn an_answer_of_vnoc_tour_has_the_steps_the_place_and_what_the_row_says() {
+    let root = tour_project("view");
+    let (mut core, _) = ready_core(&root);
+    let id = start_tour(&root);
+    add_retry(&root, &id);
+    let shown = core.tour(&id);
+    let stop = &shown["stops"][0];
+    let steps: Vec<(&str, u64)> = stop["reading"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["id"].as_str().unwrap(), s["depth"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(steps, [("s1", 0), ("s1.b1", 1), ("s1.b2", 2), ("s1.b3", 1)]);
+    assert_eq!(stop["reading"][2]["parent"], "s1.b1");
+    assert!(
+        stop["reading"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["fresh"] == "fresh")
+    );
+    assert_eq!(shown["place"]["at"], "cover");
+    assert_eq!(shown["minutes"], 2);
+    // being written with no plan: the size is not known (`null`, not left out), and the file was just written: not quiet
+    assert_eq!(shown["of"], Value::Null);
+    assert_eq!(shown["quiet"], false);
+    // the file untouched for five minutes: the view says no news, and the row says the same
+    let file = std::fs::File::options()
+        .write(true)
+        .open(tour_file(&root, &id))
+        .unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(6 * 60))
+        .unwrap();
+    drop(file);
+    let shown = core.tour(&id);
+    assert_eq!(shown["quiet"], true, "{shown}");
+    let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
+    assert_eq!(row["quiet"], true);
+    assert!(
+        row["words"].as_str().unwrap().starts_with("1 stop"),
+        "{row}"
+    );
+    assert_eq!(row["state_word"], "no news", "{row}");
+    let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
+    assert_eq!(
+        row["root"],
+        json!({ "kind": "function", "name": "retry_charge" })
+    );
+    assert_eq!(row["place"], Value::Null);
+    core.request("vnoc/tourGo", json!({ "id": id, "move": "s1.b3" }))
+        .unwrap();
+    let row = core.request("vnoc/tours", json!({})).unwrap()["tours"][0].clone();
+    // the last step of the only stop: it has been read
+    assert_eq!(row["place"], json!({ "stop": 1, "at": "step", "seen": 1 }));
+    core.finish();
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------- tours (TR15b)
+//
+// Tours on a node, a stop as written, and the count for a node (docs/26-tours/03-core.md §6, §8).
+
+const PARSE: &str = "orders/service.py::OrderService.parse_order";
+const PLACE: &str = "orders/service.py::OrderService.place";
+/// A stop that is one step: one paragraph, so no blocks are asked for.
+const ONE_STEP: &str = "It does one small thing, and the code around it relies on that: read it as a single step, with nothing hidden behind a second paragraph of explanation.\n";
+
+fn git_in(root: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .expect("git is installed");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The sample project as a git repository with everything committed, so a finished tour is pinned.
+fn tour_git_project(label: &str) -> PathBuf {
+    let root = tour_project(label);
+    git_in(&root, &["init", "-q"]);
+    // a local identity: the core's own `git commit` (Commit and Pin) must work on a machine with no global one, as CI
+    git_in(&root, &["config", "user.name", "t"]);
+    git_in(&root, &["config", "user.email", "t@t"]);
+    git_in(&root, &["config", "commit.gpgsign", "false"]);
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-qm", "sample"]);
+    root
+}
+
+/// A finished tour with these stops (each one step); its id.
+fn finished_tour(root: &Path, title: &str, stops: &[&str]) -> String {
+    let out = vnoc_ok(root, &["tour", "start", "--title", title, "--json"], "");
+    let id = serde_json::from_str::<Value>(&out).unwrap()["tour"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for (n, stop) in stops.iter().enumerate() {
+        // a node said again is a second visit to the first stop on it (`--same-as`), as a tour says it: a second stop beside it is refused
+        let first = stops.iter().position(|s| s == stop).unwrap();
+        let same = format!("s{}", first + 1);
+        let mut args = vec!["tour", "add", &id, stop, "--body-file", "-"];
+        if first < n {
+            args.extend(["--same-as", &same]);
+        }
+        vnoc_ok(root, &args, ONE_STEP);
+    }
+    vnoc_ok(root, &["tour", "finish", &id, "--no-ids"], "");
+    id
+}
+
+fn on_rows(core: &mut Core, node: &str) -> Vec<Value> {
+    core.request("vnoc/tours", json!({ "on": node })).unwrap()["tours"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+fn tell_tour_changed(core: &mut Core, root: &Path, id: &str) {
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [tour_file(root, id)] }),
+    );
+    core.wait_for("vnoc/toursChanged");
+}
+
+#[test]
+fn tours_on_a_node_lists_the_tours_through_it_with_line_2_and_a_file_lists_those_with_stops_in_it()
+{
+    let root = tour_git_project("on");
+    let (mut core, _) = ready_core(&root);
+    let first = finished_tour(&root, "parse first", &[PARSE]);
+    let second = finished_tour(&root, "place then parse", &[PLACE, PARSE]);
+    let apart = finished_tour(&root, "elsewhere", &["billing/charge.py::refund"]);
+    for id in [&first, &second, &apart] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+
+    let rows = on_rows(&mut core, PARSE);
+    let said: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r["id"].as_str().unwrap(),
+                r["on"]["how"].as_str().unwrap(),
+                r["on"]["words"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    // the same order as the list, and only the tours that pass through the function
+    let all = core.request("vnoc/tours", json!({})).unwrap()["tours"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let order: Vec<&str> = all
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .filter(|id| *id != apart)
+        .collect();
+    assert_eq!(said.iter().map(|s| s.0).collect::<Vec<_>>(), order);
+    for (id, how, words) in &said {
+        if *id == first {
+            assert_eq!((*how, *words), ("starts", "starts here"));
+        } else {
+            assert_eq!((*how, *words), ("stops", "stop 2 of 2"), "{id}");
+        }
+    }
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0]["on"]["of"].as_u64().unwrap() >= 1);
+
+    // the command says the same words for the same node
+    let listed = vnoc_ok(&root, &["tour", "list", "--on", PARSE, "--json"], "");
+    let listed: Value = serde_json::from_str(&listed).unwrap();
+    let by_command: Vec<(String, String)> = listed["tours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["id"].as_str().unwrap().to_string(),
+                r["on"]["words"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let by_request: Vec<(String, String)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r["id"].as_str().unwrap().to_string(),
+                r["on"]["words"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(by_request, by_command);
+
+    // a file: the tours with stops in it, the stops inside it said
+    let in_file = on_rows(&mut core, "orders/service.py");
+    let words: Vec<(&str, &str)> = in_file
+        .iter()
+        .map(|r| {
+            (
+                r["on"]["how"].as_str().unwrap(),
+                r["on"]["words"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(in_file.len(), 2, "{in_file:?}");
+    assert!(words.contains(&("inside", "1 stop inside")), "{words:?}");
+    assert!(words.contains(&("inside", "2 stops inside")), "{words:?}");
+    // a node nothing passes through, a node that is not there, and the root
+    assert!(on_rows(&mut core, "api/app.py").is_empty());
+    assert_eq!(
+        core.request("vnoc/tours", json!({ "on": "no/such.py" }))
+            .unwrap_err()["code"],
+        -32602
+    );
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    let root_key = structure["root"]["id"].as_str().unwrap().to_string();
+    let refused = core
+        .request("vnoc/tours", json!({ "on": root_key }))
+        .unwrap_err();
+    assert_eq!(
+        refused["message"],
+        "the project's root folder is every tour's: name a folder in it"
+    );
+    core.finish();
+}
+
+#[test]
+fn tour_counts_counts_tours_not_stops_by_the_key_of_structure_and_a_tour_write_never_moves_the_revision()
+ {
+    let root = tour_git_project("counts");
+    let (mut core, revision) = ready_core(&root);
+    let empty = core.request("vnoc/tourCounts", Value::Null).unwrap();
+    assert_eq!(empty, json!({ "counts": {} }));
+
+    let one = finished_tour(&root, "one", &[PARSE, PARSE]);
+    tell_tour_changed(&mut core, &root, &one);
+    let counts = core.request("vnoc/tourCounts", Value::Null).unwrap();
+    // two stops on one function are one tour; the file and the class that hold it count the tour too
+    assert_eq!(counts["counts"][PARSE], 1, "{counts}");
+    assert_eq!(counts["counts"]["orders/service.py"], 1, "{counts}");
+    assert_eq!(
+        counts["counts"]["orders/service.py::OrderService"], 1,
+        "{counts}"
+    );
+    assert!(counts["counts"].get(PLACE).is_none(), "{counts}");
+    // the key is the one `vnoc/structure` gives a node
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    let service = structure["root"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "orders")
+        .unwrap()["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "service.py")
+        .unwrap()
+        .clone();
+    assert_eq!(service["id"], "orders/service.py");
+
+    let two = finished_tour(&root, "two", &[PARSE]);
+    tell_tour_changed(&mut core, &root, &two);
+    let counts = core.request("vnoc/tourCounts", Value::Null).unwrap();
+    assert_eq!(counts["counts"][PARSE], 2, "{counts}");
+    println!("tourCounts: {counts}");
+
+    // one is deleted; the watcher says so; the count is 1
+    vnoc_ok(&root, &["tour", "delete", &two], "");
+    tell_tour_changed(&mut core, &root, &two);
+    let counts = core.request("vnoc/tourCounts", Value::Null).unwrap();
+    assert_eq!(counts["counts"][PARSE], 1, "{counts}");
+
+    core.settle();
+    assert_eq!(core.saw("vnoc/indexChanged"), 0, "a tour is not the index");
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(structure["revision"].as_u64().unwrap(), revision);
+    core.finish();
+}
+
+/// More requests waiting than the core has request slots: every one is answered, and so is a `vnoc/ping` sent after them. (The editor's pages ask for many things at once while the first
+/// build runs.) With `async-lsp`'s `ConcurrencyLayer` at its default, the request that finds every slot taken waits for a free one in a place where the requests already running are not polled
+/// and nothing is read from the editor: the slots never free, the core answers nothing more, and it does not even see its editor go away.
+#[test]
+fn more_requests_waiting_than_there_are_request_slots_are_all_answered_and_so_is_a_ping() {
+    let root = tour_git_project("flood");
+    let mut core = Core::start_with_env(
+        Some(driver_path()),
+        &root,
+        &[
+            ("VNOC_WAIT_LIMIT_MS", "1500"),
+            ("VNOC_HOLD_FIRST_BUILD_MS", "3000"),
+        ],
+    );
+    // a core that is stuck is killed after 40 s, so that the test fails instead of hanging
+    let pid = core.child.id().to_string();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watch = {
+        let done = done.clone();
+        std::thread::spawn(move || {
+            for _ in 0..80 {
+                if done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let _ = Command::new("kill").arg(&pid).status();
+        })
+    };
+    let slots = std::thread::available_parallelism().map_or(8, |n| n.get());
+    let asked = slots * 4;
+    for i in 0..asked {
+        core.send(json!({ "jsonrpc": "2.0", "id": 1000 + i, "method": "vnoc/tourCounts" }));
+    }
+    core.send(json!({ "jsonrpc": "2.0", "id": 9999, "method": "vnoc/ping" }));
+    let mut answered = std::collections::BTreeSet::new();
+    while answered.len() < asked + 1 {
+        let frame = core.read_frame_or_end();
+        let Some(frame) = frame else { break };
+        if frame["method"].is_null() {
+            answered.insert(frame["id"].as_u64().unwrap());
+        }
+    }
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    watch.join().unwrap();
+    assert!(
+        answered.contains(&9999),
+        "the ping was never answered ({} of {} were)",
+        answered.len(),
+        asked + 1
+    );
+    assert_eq!(answered.len(), asked + 1, "every request is answered");
+    core.finish();
+}
+
+/// A request that waits for a first build longer than the wait limit is refused with the words and `data.askAgain`; once the build is done the same request is
+/// answered on its merits, and that refusal (an id that is not a tour) has no flag.
+#[test]
+fn a_request_that_waits_too_long_for_the_first_build_is_refused_with_the_ask_again_flag() {
+    let root = tour_git_project("ask-again");
+    let mut core = Core::start_with_env(
+        Some(driver_path()),
+        &root,
+        &[
+            ("VNOC_WAIT_LIMIT_MS", "300"),
+            ("VNOC_HOLD_FIRST_BUILD_MS", "2500"),
+        ],
+    );
+    let refused = core
+        .request("vnoc/tourCalls", json!({ "id": "t-nope" }))
+        .unwrap_err();
+    println!("refusal: {refused}");
+    assert_eq!(refused["code"], -32803, "{refused}");
+    assert_eq!(refused["data"], json!({ "askAgain": true }), "{refused}");
+    assert!(refused["message"].as_str().unwrap().ends_with("ask again"));
+    let mut answered = None;
+    for _ in 0..40 {
+        match core.request("vnoc/tourCalls", json!({ "id": "t-nope" })) {
+            Err(e) if e["data"]["askAgain"] == json!(true) => {
+                std::thread::sleep(std::time::Duration::from_millis(100))
+            }
+            other => {
+                answered = Some(other);
+                break;
+            }
+        }
+    }
+    let e = answered.expect("the build ended").unwrap_err();
+    assert_eq!(e["code"], -32602, "{e}");
+    assert!(e.get("data").is_none() || e["data"].is_null(), "{e}");
+    core.finish();
+}
+
+/// The count is made by a task of its own, and a request that is not answered in a moment says to ask again (it is not a failure): ask again.
+fn tour_calls(core: &mut Core, id: &str) -> Value {
+    for _ in 0..40 {
+        match core.request("vnoc/tourCalls", json!({ "id": id })) {
+            Ok(answer) => return answer,
+            Err(e)
+                if e["message"]
+                    .as_str()
+                    .is_some_and(|m| m.ends_with("ask again")) =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(100))
+            }
+            Err(e) => panic!("tourCalls: {e}"),
+        }
+    }
+    panic!("the calls of {id} were never counted")
+}
+
+#[test]
+fn tour_calls_counts_the_callees_that_are_not_stops_once_each_and_keeps_the_answer_until_a_stop_file_changes()
+ {
+    let root = tour_git_project("calls");
+    let (mut core, _) = ready_core(&root);
+    // `place` calls `parse_order`; `parse_order` calls `Line` and `Order`
+    let alone = finished_tour(&root, "place alone", &[PLACE]);
+    let both = finished_tour(&root, "place then parse", &[PLACE, PARSE]);
+    let file = finished_tour(&root, "a file", &["orders/service.py"]);
+    for id in [&alone, &both, &file] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+    // the callee is not a stop: counted
+    let answer = tour_calls(&mut core, &alone);
+    println!("tourCalls: {answer}");
+    assert_eq!(answer, json!({ "off": { "s1": 1 } }));
+    // the callee is a stop of the tour: not counted; the stop that calls two more is
+    assert_eq!(tour_calls(&mut core, &both), json!({ "off": { "s2": 2 } }));
+    // a file is not a function or a class
+    assert_eq!(tour_calls(&mut core, &file), json!({ "off": {} }));
+    // an id that is not a tour
+    assert_eq!(
+        core.request("vnoc/tourCalls", json!({ "id": "t-nope" }))
+            .unwrap_err()["code"],
+        -32602
+    );
+
+    // a second ask is the core's memory: the source was edited behind its back, and the answer is the one it gave
+    let service = root.join("orders/service.py");
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(
+        &service,
+        text.replace("order = self.parse_order(raw)", "order = raw"),
+    )
+    .unwrap();
+    assert_eq!(tour_calls(&mut core, &alone), json!({ "off": { "s1": 1 } }));
+    // the editor says the file changed: the answer is dropped (and the tour is told of it), and asked anew
+    core.notify("vnoc/filesChanged", json!({ "paths": [service] }));
+    core.wait_for("vnoc/toursChanged");
+    assert_eq!(tour_calls(&mut core, &alone), json!({ "off": {} }));
+    core.finish();
+}
+
+#[test]
+fn tour_calls_leaves_out_a_stop_whose_driver_ask_fails_and_keeps_the_count_all_the_same() {
+    let root = tour_git_project("calls-fails");
+    let (mut core, _) = ready_core(&root);
+    // `place` calls `parse_order`; `apply_tax` is in a file that will not be readable by the driver
+    let id = finished_tour(
+        &root,
+        "one that fails",
+        &[PLACE, "billing/tax.py::apply_tax"],
+    );
+    tell_tour_changed(&mut core, &root, &id);
+    // the file is broken behind the core's back: the index still has `apply_tax`, and the driver cannot read it
+    let tax = root.join("billing/tax.py");
+    let whole = std::fs::read_to_string(&tax).unwrap();
+    std::fs::write(&tax, "def apply_tax(amount, country:\n").unwrap();
+    let answer = tour_calls(&mut core, &id);
+    println!("tourCalls: {answer}");
+    // the stop that failed is left out; the other one is counted
+    assert_eq!(answer, json!({ "off": { "s1": 1 } }));
+    // and the count was kept: with the file whole again the answer is the same one, at once (a count made anew would have `apply_tax`'s two)
+    std::fs::write(&tax, whole).unwrap();
+    let again = core
+        .request("vnoc/tourCalls", json!({ "id": id }))
+        .expect("kept: answered at once, not 'ask again'");
+    assert_eq!(again, json!({ "off": { "s1": 1 } }));
+    core.finish();
+}
+
+#[test]
+fn tour_code_gives_the_old_lines_of_a_pinned_tour_and_null_when_there_are_none_to_give() {
+    let root = tour_git_project("code");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    tell_tour_changed(&mut core, &root, &id);
+    let shown = core.tour(&id);
+    assert_eq!(shown["pinned"], true, "finish pinned it: {shown}");
+
+    // not changed yet: any stop of a pinned tour has its code as written
+    let now = core
+        .request("vnoc/tourCode", json!({ "id": id, "stop": "s1" }))
+        .unwrap();
+    assert_eq!(now["path"], "orders/service.py");
+    assert_eq!(now["lines"], json!([10, 13]));
+    assert_eq!(now["lit"], json!([[10, 13]]));
+    assert_eq!(now["commit"].as_str().unwrap().len(), 7);
+    let written_first = now["code"][0].as_str().unwrap().to_string();
+    assert_eq!(written_first, "    def parse_order(self, raw):");
+
+    // the function is edited and committed: the stop is changed, and the code as written is still the old lines
+    let path = root.join("orders/service.py");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text.replace("raw[\"number\"], lines", "raw[\"number\"], list(lines)"),
+    )
+    .unwrap();
+    git_in(&root, &["commit", "-qam", "edit parse_order"]);
+    let old = core
+        .request("vnoc/tourCode", json!({ "id": id, "stop": "s1" }))
+        .unwrap();
+    assert_eq!(
+        old["code"], now["code"],
+        "the commit's lines, not the file's"
+    );
+    assert!(old["code"].as_array().unwrap().iter().any(|l| {
+        l.as_str()
+            .unwrap()
+            .ends_with("Order(raw[\"number\"], lines)")
+    }));
+    assert_eq!(old, now);
+
+    // a stop the tour does not have is the request's mistake, in the words `go` uses
+    let bad = core
+        .request("vnoc/tourCode", json!({ "id": id, "stop": "s9" }))
+        .unwrap_err();
+    assert_eq!(bad["code"], -32602);
+    assert_eq!(bad["message"], "no stop s9 in this tour");
+    assert_eq!(
+        core.request("vnoc/tourCode", json!({ "id": id, "stop": "nonsense" }))
+            .unwrap_err()["code"],
+        -32602
+    );
+
+    // not pinned: a tour still being written
+    let writing = start_tour(&root);
+    add_retry(&root, &writing);
+    tell_tour_changed(&mut core, &root, &writing);
+    let none = core
+        .request("vnoc/tourCode", json!({ "id": writing, "stop": "s1" }))
+        .unwrap();
+    assert_eq!(none, Value::Null);
+
+    // pinned to a commit this repository does not have
+    let file = tour_file(&root, &id);
+    let record = std::fs::read_to_string(&file).unwrap();
+    let pinned: Value = record
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|r| r["type"] == "pin")
+        .unwrap();
+    let commit = pinned["commit"].as_str().unwrap();
+    std::fs::write(&file, record.replace(commit, &"a".repeat(40))).unwrap();
+    tell_tour_changed(&mut core, &root, &id);
+    let missing = core
+        .request("vnoc/tourCode", json!({ "id": id, "stop": "s1" }))
+        .unwrap();
+    assert_eq!(missing, Value::Null);
+    core.finish();
+}
+
+#[test]
+fn tour_code_says_where_each_step_was_at_the_commit_the_intro_and_each_block_and_detail() {
+    let root = tour_git_project("code-steps");
+    let (mut core, _) = ready_core(&root);
+    let id = vnoc_ok(
+        &root,
+        &["tour", "start", "--title", "two stops", "--json"],
+        "",
+    );
+    let id = serde_json::from_str::<Value>(&id).unwrap()["tour"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    vnoc_ok(
+        &root,
+        &["tour", "add", &id, RETRY, "--body-file", "-"],
+        RETRY_BODY,
+    );
+    vnoc_ok(
+        &root,
+        &["tour", "add", &id, PARSE, "--body-file", "-"],
+        ONE_STEP,
+    );
+    vnoc_ok(&root, &["tour", "finish", &id, "--no-ids"], "");
+    tell_tour_changed(&mut core, &root, &id);
+    assert_eq!(core.tour(&id)["pinned"], true);
+
+    // a stop with blocks and a detail: the intro is the stop's lines, each block and the detail its own, at the commit
+    let blocks = core
+        .request("vnoc/tourCode", json!({ "id": id, "stop": "s1" }))
+        .unwrap();
+    eprintln!("tourCode s1: {blocks}");
+    let [first, last] = [
+        blocks["lines"][0].as_u64().unwrap(),
+        blocks["lines"][1].as_u64().unwrap(),
+    ];
+    assert_eq!(
+        blocks["steps"],
+        json!({ "s1": [first, last], "s1.b1": [14, 15], "s1.b2": [15, 15], "s1.b3": [17, 22] }),
+        "{blocks}"
+    );
+    assert_eq!(blocks["lit"], json!([[14, 15], [15, 15], [17, 22]]));
+
+    // a stop with no blocks: the intro is the whole stop
+    let whole = core
+        .request("vnoc/tourCode", json!({ "id": id, "stop": "s2" }))
+        .unwrap();
+    assert_eq!(
+        whole["steps"],
+        json!({ "s2": whole["lines"] }),
+        "the intro is the stop's lines: {whole}"
+    );
+    core.finish();
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------- tours (TR15c)
+//
+// The user's actions as requests (docs/26-tours/03-core.md §8): each is the function of the command, and says what the command says.
+
+/// A change to the file of the tour that git has not been told of, and one to a file the tour does not touch.
+fn leave_uncommitted(root: &Path) {
+    let service = root.join("orders/service.py");
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(
+        &service,
+        format!("{text}\n# a note added after the last commit\n"),
+    )
+    .unwrap();
+    let tax = root.join("billing/tax.py");
+    let text = std::fs::read_to_string(&tax).unwrap();
+    std::fs::write(&tax, format!("{text}\n# not the tour's\n")).unwrap();
+    std::fs::write(root.join("scratch.py"), "x = 1\n").unwrap();
+}
+
+fn git_out(root: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap()
+}
+
+fn set_tour_setting(core: &mut Core, key: &str, value: &str) -> Value {
+    core.request("vnoc/tourSettings", json!({ key: value }))
+        .unwrap()
+}
+
+/// Every file under `.vnoc`, by path, with its bytes: a dry pin must leave them as they were.
+fn vnoc_files(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(dir: &Path, base: &Path, into: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, base, into);
+            } else {
+                into.insert(
+                    path.strip_prefix(base).unwrap().display().to_string(),
+                    std::fs::read(&path).unwrap_or_default(),
+                );
+            }
+        }
+    }
+    let mut found = std::collections::BTreeMap::new();
+    walk(&root.join(".vnoc"), root, &mut found);
+    found
+}
+
+#[test]
+fn a_dry_tour_pin_answers_pinned_when_it_would_and_writes_nothing() {
+    let root = tour_git_project("pin-dry");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    // `finish` pinned it: take the pin record off, so it is a tour that can be pinned
+    let file = tour_file(&root, &id);
+    let record = std::fs::read_to_string(&file).unwrap();
+    let without: String = record
+        .lines()
+        .filter(|l| !l.contains("\"type\":\"pin\""))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert_ne!(record, without, "the tour had a pin record");
+    std::fs::write(&file, &without).unwrap();
+    tell_tour_changed(&mut core, &root, &id);
+    let before = vnoc_files(&root);
+    let status = git_out(&root, &["status", "--porcelain"]);
+
+    let dry = core
+        .request("vnoc/tourPin", json!({ "id": id, "dry": true }))
+        .unwrap();
+    println!("tourPin dry: {dry}");
+    let head = git_out(&root, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_eq!(dry["state"], "pinned", "it would be pinned: {dry}");
+    assert_eq!(dry["commit"], json!(head));
+    assert!(dry.get("committed").is_none(), "{dry}");
+    // and nothing was written: the tour's file has no pin record, no file under `.vnoc` changed, git has nothing new
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), without);
+    assert_eq!(vnoc_files(&root), before, "a dry pin writes no file");
+    assert_eq!(git_out(&root, &["status", "--porcelain"]), status);
+    assert_eq!(git_out(&root, &["log", "--oneline"]).lines().count(), 1);
+    let row = &core.request("vnoc/tours", json!({})).unwrap()["tours"][0];
+    assert_eq!(row["pinned"], false, "still not pinned: {row}");
+
+    // a dry pin that also commits is not a thing
+    let both = core
+        .request(
+            "vnoc/tourPin",
+            json!({ "id": id, "dry": true, "commit": {} }),
+        )
+        .unwrap_err();
+    assert_eq!(both["code"], -32602, "{both}");
+
+    // the real one then pins it
+    let pinned = core.request("vnoc/tourPin", json!({ "id": id })).unwrap();
+    assert_eq!(pinned["state"], "pinned", "{pinned}");
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("\"type\":\"pin\""),
+        "the pin record is written by the real pin"
+    );
+    core.finish();
+}
+
+#[test]
+fn a_dry_tour_pin_on_uncommitted_work_names_the_files_in_the_cores_words_and_stages_and_commits_nothing()
+ {
+    let root = tour_git_project("pin-dry-ask");
+    let (mut core, _) = ready_core(&root);
+    leave_uncommitted(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    tell_tour_changed(&mut core, &root, &id);
+    let before = vnoc_files(&root);
+    let status = git_out(&root, &["status", "--porcelain"]);
+
+    let dry = core
+        .request("vnoc/tourPin", json!({ "id": id, "dry": true }))
+        .unwrap();
+    println!("tourPin dry: {dry}");
+    // a dry pin writes nothing: no file of `.vnoc` changed (the real pin below does write: it records its check, with the second it was made in)
+    assert_eq!(vnoc_files(&root), before);
+    // the same answer as the real one (`tourPin` with no commit says `not_pinned`: `ask` is the answer of a `finish` that is to ask), with each reason in words
+    let real = core.request("vnoc/tourPin", json!({ "id": id })).unwrap();
+    assert_eq!(dry["state"], real["state"]);
+    assert_eq!(dry["state"], "not_pinned");
+    assert_eq!(dry["reasons"][0]["code"], "uncommitted");
+    assert_eq!(
+        dry["reasons"][0]["files"],
+        json!([{ "status": " M", "path": "orders/service.py" }])
+    );
+    assert_eq!(
+        dry["reasons"][0]["words"],
+        "1 file has changes that are not committed"
+    );
+    assert_eq!(real["reasons"][0]["words"], dry["reasons"][0]["words"]);
+    assert!(dry.get("commit").is_none(), "{dry}");
+    // nothing was staged or committed, and no file of `.vnoc` changed
+    assert_eq!(git_out(&root, &["diff", "--cached", "--name-only"]), "");
+    assert_eq!(git_out(&root, &["status", "--porcelain"]), status);
+    assert_eq!(git_out(&root, &["log", "--oneline"]).lines().count(), 1);
+    core.finish();
+}
+
+#[test]
+fn tour_pin_on_uncommitted_work_is_refused_with_the_files_and_with_commit_commits_exactly_those() {
+    let root = tour_git_project("pin");
+    let (mut core, revision) = ready_core(&root);
+    leave_uncommitted(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    tell_tour_changed(&mut core, &root, &id);
+    let row = &core.request("vnoc/tours", json!({})).unwrap()["tours"][0];
+    assert_eq!(row["pinned"], false, "{row}");
+
+    let refused = core.request("vnoc/tourPin", json!({ "id": id })).unwrap();
+    println!("tourPin refusal: {refused}");
+    assert_eq!(refused["state"], "not_pinned");
+    assert_eq!(refused["reasons"][0]["code"], "uncommitted");
+    assert_eq!(
+        refused["reasons"][0]["files"],
+        json!([{ "status": " M", "path": "orders/service.py" }])
+    );
+    assert!(refused.get("commit").is_none());
+    assert_eq!(
+        git_out(&root, &["log", "--oneline"]).lines().count(),
+        1,
+        "nothing was committed"
+    );
+
+    // with `commit`: exactly the tour's file, and the pin is made at the new commit
+    let pinned = core
+        .request(
+            "vnoc/tourPin",
+            json!({ "id": id, "commit": { "message": "Code for the parse tour" } }),
+        )
+        .unwrap();
+    assert_eq!(pinned["state"], "pinned", "{pinned}");
+    assert_eq!(pinned["committed"]["files"], json!(["orders/service.py"]));
+    assert_eq!(pinned["committed"]["message"], "Code for the parse tour");
+    let head = git_out(&root, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_eq!(pinned["commit"], json!(head));
+    let shown = git_out(&root, &["show", "--stat", "--format=%s", "HEAD"]);
+    assert!(shown.contains("Code for the parse tour"), "{shown}");
+    assert!(shown.contains("orders/service.py"), "{shown}");
+    assert!(
+        !shown.contains("tax.py") && !shown.contains("scratch.py"),
+        "{shown}"
+    );
+    let status = git_out(&root, &["status", "--porcelain"]);
+    assert!(
+        status.contains("billing/tax.py") && status.contains("scratch.py"),
+        "{status}"
+    );
+    tell_tour_changed(&mut core, &root, &id);
+    let row = &core.request("vnoc/tours", json!({})).unwrap()["tours"][0];
+    assert_eq!(row["pinned"], true, "{row}");
+
+    // pinned and HEAD has the commit behind it: nothing to do
+    let again = core.request("vnoc/tourPin", json!({ "id": id })).unwrap();
+    assert_eq!(
+        (again["already"].clone(), again["state"].clone()),
+        (json!(true), json!("pinned"))
+    );
+    // a tour that is not there
+    assert_eq!(
+        core.request("vnoc/tourPin", json!({ "id": "no-such-tour" }))
+            .unwrap_err()["code"],
+        -32602
+    );
+    // a pin, or a commit for it, is not the index changing
+    core.settle();
+    assert_eq!(core.saw("vnoc/indexChanged"), 0);
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(structure["revision"].as_u64().unwrap(), revision);
+    core.finish();
+}
+
+#[test]
+fn tour_ids_writes_the_id_lines_and_the_tour_stays_fresh_because_the_edit_rebased_it() {
+    let root = tour_git_project("ids");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "place", &[PLACE]);
+    tell_tour_changed(&mut core, &root, &id);
+    let before = std::fs::read_to_string(root.join("orders/service.py")).unwrap();
+    assert!(!before.contains("def place(self, raw):\n        \"\"\"ID:"));
+
+    let written = core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    assert_eq!(
+        written["changed"],
+        json!(["orders/service.py"]),
+        "{written}"
+    );
+    assert_eq!(written["stops"][0]["state"], "written");
+    assert_eq!(written["recorded"], true);
+    assert_eq!(
+        written["words"], "ID written for 1 stop in 1 file.",
+        "{written}"
+    );
+    let after = std::fs::read_to_string(root.join("orders/service.py")).unwrap();
+    assert!(
+        after.contains("def place(self, raw):\n        \"\"\"ID: "),
+        "{after}"
+    );
+    assert!(
+        core.edit_requests.is_empty(),
+        "the edit is on disk, as the command's"
+    );
+
+    // the files the extension's watcher would report
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [
+            root.join("orders/service.py"),
+            tour_file(&root, &id),
+            root.join(".vnoc/nodes"),
+        ] }),
+    );
+    core.wait_for("vnoc/toursChanged");
+    core.wait_for("vnoc/indexChanged");
+    let shown = core.tour(&id);
+    assert_eq!(
+        shown["check"]["fresh"], true,
+        "the edit rebased the tour: {shown}"
+    );
+    assert!(
+        shown["stops"][0]["node"].as_str().is_some(),
+        "the stop has its ID now: {shown}"
+    );
+    // asked again, there is nothing to write
+    let again = core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    assert_eq!(again["changed"], json!([]), "{again}");
+    assert_eq!(again["recorded"], false);
+    assert_eq!(again["words"], "Every stop already has an ID.", "{again}");
+    core.finish();
+}
+
+#[test]
+fn tour_ids_on_stops_whose_ids_are_recorded_and_whose_lines_are_gone_says_so_not_that_every_stop_has_one()
+ {
+    let root = tour_git_project("ids-lost");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "lost lines", &[PLACE]);
+    tell_tour_changed(&mut core, &root, &id);
+    core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    let service = root.join("orders/service.py");
+    let watcher = |core: &mut Core| {
+        core.notify(
+            "vnoc/filesChanged",
+            json!({ "paths": [service.clone(), tour_file(&root, &id), root.join(".vnoc/nodes")] }),
+        );
+        core.wait_for("vnoc/indexChanged");
+    };
+    watcher(&mut core);
+    // the `ID:` line goes (an edit by hand, a merge): `node.toml` still says the ID is in the code
+    let text = std::fs::read_to_string(&service).unwrap();
+    let cut: Vec<&str> = text.lines().filter(|l| !l.contains("\"\"\"ID: ")).collect();
+    assert!(cut.len() < text.lines().count(), "the ID line was written");
+    std::fs::write(&service, cut.join("\n") + "\n").unwrap();
+    watcher(&mut core);
+    let again = core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    assert_eq!(again["changed"], json!([]), "{again}");
+    assert_eq!(
+        again["words"], "1 stop's ID is lost from the code: see Needs Attention.",
+        "{again}"
+    );
+    core.finish();
+}
+
+#[test]
+fn a_stop_that_was_given_an_id_is_found_under_its_new_name_after_a_rename() {
+    let root = tour_git_project("ids-rename");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "with an id", &[PLACE]);
+    tell_tour_changed(&mut core, &root, &id);
+    core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    let service = root.join("orders/service.py");
+    let watcher = |core: &mut Core| {
+        core.notify(
+            "vnoc/filesChanged",
+            json!({ "paths": [service.clone(), tour_file(&root, &id), root.join(".vnoc/nodes")] }),
+        );
+        core.wait_for("vnoc/indexChanged");
+    };
+    watcher(&mut core);
+    // `place` is renamed in the source
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(&service, text.replace("def place(", "def place_order(")).unwrap();
+    watcher(&mut core);
+    let found = core.tour(&id);
+    assert_ne!(found["stops"][0]["check"], "gone", "{found}");
+    assert_eq!(
+        found["stops"][0]["now"]["qualname"], "OrderService.place_order",
+        "found by its ID, under its new name: {found}"
+    );
+    core.finish();
+}
+
+#[test]
+fn tour_edit_and_tour_share_there_and_back_and_tour_delete_then_restore_gives_the_same_file() {
+    let root = tour_git_project("edit");
+    let (mut core, revision) = ready_core(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    tell_tour_changed(&mut core, &root, &id);
+
+    let edited = core
+        .request(
+            "vnoc/tourEdit",
+            json!({ "id": id, "title": "  How an order is parsed  ", "question": "why twice?" }),
+        )
+        .unwrap();
+    assert_eq!(edited["title"], "How an order is parsed");
+    assert_eq!(
+        edited["words"], "Renamed to “How an order is parsed”, and its question was changed.",
+        "{edited}"
+    );
+    let only_title = core
+        .request(
+            "vnoc/tourEdit",
+            json!({ "id": id, "title": "How an order is parsed" }),
+        )
+        .unwrap();
+    assert_eq!(
+        only_title["words"], "Renamed to “How an order is parsed”.",
+        "{only_title}"
+    );
+    tell_tour_changed(&mut core, &root, &id);
+    let row = &core.request("vnoc/tours", json!({})).unwrap()["tours"][0];
+    assert_eq!(
+        (row["title"].clone(), row["question"].clone()),
+        (json!("How an order is parsed"), json!("why twice?"))
+    );
+    // the command's own words for a title it refuses
+    let bad = core
+        .request("vnoc/tourEdit", json!({ "id": id, "title": "two\nlines" }))
+        .unwrap_err();
+    assert_eq!(bad["code"], -32602);
+    // and a title that is only where the tour is
+    let place = core
+        .request(
+            "vnoc/tourEdit",
+            json!({ "id": id, "title": "orders/service.py::OrderService.parse_order" }),
+        )
+        .unwrap_err();
+    assert_eq!(place["code"], -32602);
+    assert!(
+        place["message"].as_str().unwrap().contains(
+            "--title: say what the tour explains, not where it is (\"How checkout survives a payment timeout\")"
+        ),
+        "{place}"
+    );
+    let by_command = vnoc_tour(&root, &["tour", "edit", &id, "--title", "two\nlines"], "");
+    let said = String::from_utf8_lossy(&by_command.stderr).to_string();
+    assert!(
+        said.contains(bad["message"].as_str().unwrap().lines().next().unwrap()),
+        "{said} / {bad}"
+    );
+
+    // share, and back
+    let private = tour_file(&root, &id);
+    let project_file = root.join(format!(".vnoc/tours/{id}.jsonl"));
+    assert!(private.is_file() && !project_file.exists());
+    let shared = core
+        .request("vnoc/tourShare", json!({ "id": id, "share": true }))
+        .unwrap();
+    assert_eq!(shared["folder"], "project");
+    assert_eq!(shared["path"], format!(".vnoc/tours/{id}.jsonl"));
+    // pinned (the files were committed when it was finished): the short sentence
+    assert_eq!(shared["pinned"], true, "{shared}");
+    assert_eq!(
+        shared["words"], "Moved to `.vnoc/tours/`. Commit it to share it.",
+        "{shared}"
+    );
+    assert!(!private.exists() && project_file.is_file());
+    let refused = core
+        .request("vnoc/tourShare", json!({ "id": id, "share": true }))
+        .unwrap_err();
+    assert_eq!(refused["code"], -32602, "already the project's: {refused}");
+    let back = core
+        .request("vnoc/tourShare", json!({ "id": id, "share": false }))
+        .unwrap();
+    assert_eq!(back["folder"], "private");
+    assert_eq!(
+        back["words"], "Moved to `.vnoc/local/tours/`. It is private again.",
+        "{back}"
+    );
+    assert!(private.is_file() && !project_file.exists());
+
+    // delete, then restore: the same file, and its state with it
+    core.request("vnoc/tourGo", json!({ "id": id, "move": "s1" }))
+        .unwrap();
+    let file_before = std::fs::read(&private).unwrap();
+    let state_before = std::fs::read(state_file(&root, &id)).unwrap();
+    let gone = core
+        .request("vnoc/tourDelete", json!({ "id": id }))
+        .unwrap();
+    let token = gone["token"].as_str().unwrap().to_string();
+    assert_eq!(gone["words"], "Deleted “How an order is parsed”.", "{gone}");
+    assert!(!private.exists() && !state_file(&root, &id).exists());
+    let restored = core
+        .request("vnoc/tourRestore", json!({ "token": token }))
+        .unwrap();
+    assert_eq!(restored, json!({ "tour": id, "folder": "private" }));
+    assert_eq!(std::fs::read(&private).unwrap(), file_before);
+    assert_eq!(std::fs::read(state_file(&root, &id)).unwrap(), state_before);
+    assert_eq!(
+        core.request("vnoc/tourRestore", json!({ "token": token }))
+            .unwrap_err()["code"],
+        -32602,
+        "the entry is not in the trash any more"
+    );
+    // a tour being written is not deleted: the command's rule
+    let writing = start_tour(&root);
+    assert_eq!(
+        core.request("vnoc/tourDelete", json!({ "id": writing }))
+            .unwrap_err()["code"],
+        -32602
+    );
+    core.settle();
+    assert_eq!(core.saw("vnoc/indexChanged"), 0);
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    assert_eq!(structure["revision"].as_u64().unwrap(), revision);
+    core.finish();
+}
+
+#[test]
+fn tour_delete_finished_takes_the_private_finished_tours_only_and_each_comes_back_with_its_token() {
+    let root = tour_git_project("delete-finished");
+    let (mut core, _) = ready_core(&root);
+    let a = finished_tour(&root, "a", &[PARSE]);
+    std::thread::sleep(std::time::Duration::from_millis(1100)); // ids are made from the clock
+    let b = finished_tour(&root, "b", &[PLACE]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    // work that is not committed: this tour cannot be pinned, and sharing it says what teammates will see
+    let service = root.join("orders/service.py");
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(&service, format!("{text}\n# not committed\n")).unwrap();
+    let shared = finished_tour(&root, "shared", &[PARSE]);
+    let moved = core
+        .request("vnoc/tourShare", json!({ "id": shared, "share": true }))
+        .unwrap();
+    assert_eq!(moved["pinned"], false, "{moved}");
+    assert_eq!(
+        moved["words"],
+        "Moved to `.vnoc/tours/`. Commit it to share it. It is not pinned: teammates will see changed stops without the old code.",
+        "{moved}"
+    );
+    let writing = start_tour(&root);
+    tell_tour_changed(&mut core, &root, &a);
+
+    let done = core
+        .request("vnoc/tourDeleteFinished", Value::Null)
+        .unwrap();
+    assert_eq!(done["words"], "Deleted 2 finished tours.", "{done}");
+    let mut ids: Vec<String> = done["deleted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["id"].as_str().unwrap().to_string())
+        .collect();
+    ids.sort();
+    let mut want = vec![a.clone(), b.clone()];
+    want.sort();
+    assert_eq!(ids, want, "{done}");
+    assert!(!tour_file(&root, &a).exists() && !tour_file(&root, &b).exists());
+    assert!(
+        root.join(format!(".vnoc/tours/{shared}.jsonl")).is_file(),
+        "a shared tour stays"
+    );
+    assert!(
+        tour_file(&root, &writing).is_file(),
+        "a tour being written stays"
+    );
+
+    // one Undo for all: each token puts its tour back
+    for d in done["deleted"].as_array().unwrap() {
+        core.request("vnoc/tourRestore", json!({ "token": d["token"] }))
+            .unwrap();
+    }
+    assert!(tour_file(&root, &a).is_file() && tour_file(&root, &b).is_file());
+
+    // nothing left of that kind: said in words, nothing deleted
+    core.request("vnoc/tourDeleteFinished", Value::Null)
+        .unwrap();
+    let none = core
+        .request("vnoc/tourDeleteFinished", Value::Null)
+        .unwrap();
+    assert_eq!(none["deleted"], json!([]), "{none}");
+    assert_eq!(
+        none["words"], "There are no finished tours of yours to delete.",
+        "{none}"
+    );
+    core.finish();
+}
+
+#[test]
+fn tour_settings_reads_with_no_param_and_changes_only_the_key_it_is_given() {
+    let root = tour_git_project("settings");
+    let (mut core, _) = ready_core(&root);
+    let toml = root.join(".vnoc/vnoc.toml");
+    let before = std::fs::read_to_string(&toml).unwrap();
+    for params in [Value::Null, json!({})] {
+        let read = core.request("vnoc/tourSettings", params).unwrap();
+        assert_eq!(read["ids"]["from"], "default", "{read}");
+        assert_eq!(read["commit"]["from"], "default");
+        assert!(read.get("changed").is_none());
+    }
+    assert_eq!(
+        std::fs::read_to_string(&toml).unwrap(),
+        before,
+        "a read writes nothing"
+    );
+
+    let set = set_tour_setting(&mut core, "commit", "always");
+    assert_eq!(
+        set["commit"],
+        json!({ "value": "always", "from": "file" }),
+        "{set}"
+    );
+    assert_eq!(set["ids"]["from"], "default");
+    assert_eq!(set["changed"], json!(["commit"]));
+    let after = std::fs::read_to_string(&toml).unwrap();
+    assert!(
+        after.starts_with(&before),
+        "nothing that was there moved: {after}"
+    );
+    assert!(
+        after.contains("commit = \"always\"") && !after.contains("ids ="),
+        "{after}"
+    );
+
+    let both = set_tour_setting(&mut core, "ids", "never");
+    assert_eq!(both["commit"]["value"], "always");
+    assert_eq!(both["ids"], json!({ "value": "never", "from": "file" }));
+    // the command reads what the request wrote
+    let by_command: Value =
+        serde_json::from_str(&vnoc_ok(&root, &["tour", "settings", "--json"], "")).unwrap();
+    assert_eq!(by_command["ids"], both["ids"]);
+    assert_eq!(by_command["commit"], both["commit"]);
+
+    let now = std::fs::read_to_string(&toml).unwrap();
+    let bad = core
+        .request("vnoc/tourSettings", json!({ "commit": "sometimes" }))
+        .unwrap_err();
+    assert_eq!(bad["code"], -32602);
+    assert_eq!(std::fs::read_to_string(&toml).unwrap(), now, "{bad}");
+    core.finish();
+}
+
+#[test]
+fn offers_are_the_ids_and_the_files_only_under_ask_and_only_for_a_finished_tour() {
+    let root = tour_git_project("offers");
+    let (mut core, _) = ready_core(&root);
+    leave_uncommitted(&root);
+    // `place` has no ID; `parse_order` has one
+    let id = finished_tour(&root, "both", &[PARSE, PLACE]);
+    let writing = start_tour(&root);
+    add_retry(&root, &writing);
+    for t in [&id, &writing] {
+        tell_tour_changed(&mut core, &root, t);
+    }
+    let offers = |core: &mut Core, tour: &str| -> (Value, Value) {
+        let row = core.request("vnoc/tours", json!({})).unwrap()["tours"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == tour)
+            .unwrap()["offers"]
+            .clone();
+        (row, core.tour(tour)["offers"].clone())
+    };
+
+    set_tour_setting(&mut core, "ids", "ask");
+    set_tour_setting(&mut core, "commit", "ask");
+    let (row, view) = offers(&mut core, &id);
+    println!("offers: {row}");
+    assert_eq!(row, json!({ "ids": 1, "commit": ["orders/service.py"] }));
+    assert_eq!(row, view, "the row and the view say the same");
+    // a tour that is still being written offers nothing
+    assert_eq!(offers(&mut core, &writing), (Value::Null, Value::Null));
+
+    // "always" was done at `finish`, and "never" is not offered
+    set_tour_setting(&mut core, "ids", "always");
+    assert_eq!(
+        offers(&mut core, &id).0,
+        json!({ "ids": 0, "commit": ["orders/service.py"] })
+    );
+    set_tour_setting(&mut core, "commit", "always");
+    assert_eq!(offers(&mut core, &id), (Value::Null, Value::Null));
+    set_tour_setting(&mut core, "ids", "never");
+    set_tour_setting(&mut core, "commit", "never");
+    assert_eq!(offers(&mut core, &id), (Value::Null, Value::Null));
+
+    // ask again; the files are committed (pinned): only the IDs are left to offer
+    set_tour_setting(&mut core, "ids", "ask");
+    set_tour_setting(&mut core, "commit", "ask");
+    core.request("vnoc/tourPin", json!({ "id": id, "commit": {} }))
+        .unwrap();
+    tell_tour_changed(&mut core, &root, &id);
+    assert_eq!(offers(&mut core, &id).0, json!({ "ids": 1, "commit": [] }));
+    // written, the IDs are not offered any more
+    core.request("vnoc/tourIds", json!({ "id": id })).unwrap();
+    core.notify(
+        "vnoc/filesChanged",
+        json!({ "paths": [root.join("orders/service.py"), tour_file(&root, &id)] }),
+    );
+    core.wait_for("vnoc/toursChanged");
+    assert_eq!(offers(&mut core, &id), (Value::Null, Value::Null));
+    core.finish();
+}
+
+#[test]
+fn tour_delete_words_name_the_title_the_root_only_without_a_title_and_the_id_when_unreadable() {
+    let root = tour_git_project("delete-words");
+    let (mut core, _) = ready_core(&root);
+    let a = finished_tour(&root, "How the shop checks out", &[PARSE]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let b = finished_tour(&root, "Second", &[PLACE]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let unreadable = "zz-broken-0001";
+    std::fs::write(
+        root.join(format!(".vnoc/local/tours/{unreadable}.jsonl")),
+        "not a tour\n",
+    )
+    .unwrap();
+    for id in [&a, &b] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+    let gone = core.request("vnoc/tourDelete", json!({ "id": a })).unwrap();
+    assert_eq!(
+        gone["words"], "Deleted “How the shop checks out”.",
+        "{gone}"
+    );
+    let broken = core
+        .request("vnoc/tourDelete", json!({ "id": unreadable }))
+        .unwrap();
+    assert_eq!(
+        broken["words"],
+        format!("Deleted the tour {unreadable}."),
+        "{broken}"
+    );
+    // one finished tour left (`b`): named; the sentence for several is a count
+    let one = core
+        .request("vnoc/tourDeleteFinished", Value::Null)
+        .unwrap();
+    assert_eq!(one["words"], "Deleted “Second”.", "{one}");
+    core.finish();
+}
+
+#[test]
+fn tour_export_is_what_the_command_prints_and_import_replace_gives_the_same_tour_back() {
+    let root = tour_git_project("export-import");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "parse and place", &[PARSE, PLACE]);
+    tell_tour_changed(&mut core, &root, &id);
+    core.request("vnoc/tourGo", json!({ "id": id, "move": "s2" }))
+        .unwrap();
+
+    let exported = core
+        .request("vnoc/tourExport", json!({ "id": id }))
+        .unwrap();
+    let text = exported["text"].as_str().unwrap().to_string();
+    assert_eq!(text, vnoc_ok(&root, &["tour", "export", &id], ""));
+    println!("{}", text.lines().take(15).collect::<Vec<_>>().join("\n"));
+    assert!(text.starts_with("{\n  \"schema\": 1,\n  \"title\": \"parse and place\""));
+
+    // nothing edited: the same tour, with its ids, and the reader's place where it was
+    let before = core.tour(&id);
+    let same = core
+        .request("vnoc/tourImport", json!({ "text": text, "replace": id }))
+        .unwrap();
+    assert_eq!(same["id"], json!(id), "{same}");
+    assert!(
+        same["words"]
+            .as_str()
+            .unwrap()
+            .starts_with("Replaced “parse and place”: 2 stops (2 kept, 0 new, 0 gone)."),
+        "{same}"
+    );
+    assert_eq!(vnoc_ok(&root, &["tour", "export", &id], ""), text);
+    tell_tour_changed(&mut core, &root, &id);
+    let after = core.tour(&id);
+    assert_eq!(after["stops"], before["stops"]);
+    assert_eq!(after["place"], before["place"], "the place was kept");
+
+    // one text edited
+    let edited = text.replace("It does one small thing", "It does one SMALL thing");
+    assert_ne!(edited, text);
+    core.request("vnoc/tourImport", json!({ "text": edited, "replace": id }))
+        .unwrap();
+    assert!(vnoc_ok(&root, &["tour", "export", &id], "").contains("one SMALL thing"));
+
+    // the same document as a new tour: another id, the command reads it
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let new = core
+        .request("vnoc/tourImport", json!({ "text": text }))
+        .unwrap();
+    assert_ne!(new["id"], json!(id));
+    assert!(
+        new["words"]
+            .as_str()
+            .unwrap()
+            .starts_with("Imported “parse and place”: 2 stops."),
+        "{new}"
+    );
+    let new_id = new["id"].as_str().unwrap();
+    assert!(tour_file(&root, new_id).is_file());
+
+    // a tour that is not there, and one being written
+    assert_eq!(
+        core.request(
+            "vnoc/tourImport",
+            json!({ "text": text, "replace": "no-such-tour" })
+        )
+        .unwrap_err()["code"],
+        -32602
+    );
+    let writing = start_tour(&root);
+    let refused = core
+        .request(
+            "vnoc/tourImport",
+            json!({ "text": text, "replace": writing }),
+        )
+        .unwrap_err();
+    assert_eq!(refused["code"], -32602);
+    assert!(
+        refused["message"]
+            .as_str()
+            .unwrap()
+            .contains("is being written"),
+        "{refused}"
+    );
+    core.finish();
+}
+
+#[test]
+fn a_document_that_is_refused_answers_every_refusal_with_its_place_and_line_and_writes_nothing() {
+    let root = tour_git_project("import-refused");
+    let (mut core, _) = ready_core(&root);
+    let id = finished_tour(&root, "parse", &[PARSE]);
+    tell_tour_changed(&mut core, &root, &id);
+    let text = core
+        .request("vnoc/tourExport", json!({ "id": id }))
+        .unwrap()["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let file_before = std::fs::read(tour_file(&root, &id)).unwrap();
+
+    // a text too long and a title that is empty, in one document: both are said, each at its line
+    let long = "x".repeat(900);
+    let bad = text
+        .replace("It does one small thing", &long)
+        .replace("\"title\": \"parse\"", "\"title\": \"\"");
+    let answer = core
+        .request("vnoc/tourImport", json!({ "text": bad, "replace": id }))
+        .unwrap();
+    println!("{}", answer.to_string().replace(&long, "xxx…"));
+    let refused = answer["refused"].as_array().expect("refusals as data");
+    let places: Vec<&str> = refused
+        .iter()
+        .map(|r| r["place"].as_str().unwrap())
+        .collect();
+    assert!(
+        places.contains(&"title") && places.contains(&"stops[0].text"),
+        "{places:?}"
+    );
+    for (place, key) in [("title", "\"title\""), ("stops[0].text", "\"text\"")] {
+        let r = refused.iter().find(|r| r["place"] == place).unwrap();
+        let line = r["line"].as_u64().expect("the line is known") as usize;
+        assert!(
+            bad.lines().nth(line - 1).unwrap().contains(key),
+            "{place} at line {line}"
+        );
+    }
+    // and a node that is not there
+    let nowhere = text.replace(
+        "orders/service.py::OrderService.parse_order",
+        "orders/service.py::nowhere",
+    );
+    let answer = core
+        .request("vnoc/tourImport", json!({ "text": nowhere }))
+        .unwrap();
+    println!("{answer}");
+    let node = &answer["refused"][0];
+    assert_eq!(node["place"], "stops[0].node", "{answer}");
+    assert_eq!(
+        node["words"],
+        "stops[0].node: no node at orders/service.py::nowhere"
+    );
+    assert!(
+        nowhere
+            .lines()
+            .nth(node["line"].as_u64().unwrap() as usize - 1)
+            .unwrap()
+            .contains("\"node\"")
+    );
+    assert_eq!(std::fs::read(tour_file(&root, &id)).unwrap(), file_before);
+
+    // text that is not JSON: the parser's line
+    let broken = core
+        .request(
+            "vnoc/tourImport",
+            json!({ "text": "{\n  \"schema\": 1,\n  oops\n}" }),
+        )
+        .unwrap();
+    assert_eq!(broken["refused"][0]["place"], "document", "{broken}");
+    assert_eq!(broken["refused"][0]["line"], 3, "{broken}");
+    // the words are the command's: the same sentence for the same document
+    let by_command = vnoc_tour(&root, &["tour", "import", "-"], &bad);
+    let said = String::from_utf8_lossy(&by_command.stderr).to_string();
+    for r in refused {
+        assert!(said.contains(r["words"].as_str().unwrap()), "{said}");
+    }
+    core.finish();
+}
+
+#[test]
+fn check_all_checks_every_tour_anew_and_a_row_says_what_the_check_found() {
+    let root = tour_git_project("check-all");
+    let (mut core, _) = ready_core(&root);
+    let a = finished_tour(&root, "parse", &[PARSE]);
+    let b = finished_tour(&root, "place", &[PLACE]);
+    for id in [&a, &b] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+    let checks = |listed: &Value| -> Vec<(String, Value)> {
+        listed["tours"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["id"].as_str().unwrap().to_string(), r["check"].clone()))
+            .collect()
+    };
+    let plain = core.request("vnoc/tours", json!({})).unwrap();
+    assert!(
+        checks(&plain)
+            .iter()
+            .all(|(_, c)| c.is_null() || c == "fresh"),
+        "{plain}"
+    );
+    // the code of `parse_order` changes under the tour: the core is told, as the editor would
+    let service = root.join("orders/service.py");
+    let text = std::fs::read_to_string(&service).unwrap();
+    std::fs::write(
+        &service,
+        text.replace("def parse_order", "def parse_order_now"),
+    )
+    .unwrap();
+    core.notify("vnoc/filesChanged", json!({ "paths": [service] }));
+    core.wait_for("vnoc/indexChanged");
+    let all = core
+        .request("vnoc/tours", json!({ "check_all": true }))
+        .unwrap();
+    let found = checks(&all);
+    assert_eq!(found.len(), 2, "{all}");
+    let of = |id: &str| found.iter().find(|(i, _)| i == id).unwrap().1.clone();
+    assert_eq!(of(&a), "changed", "{all}");
+    assert_eq!(of(&b), "fresh", "{all}");
+    core.finish();
+}
+
+#[test]
+fn tour_ask_is_the_sentence_with_the_nodes_address_or_waits_for_one_and_a_row_asks_again() {
+    let root = tour_git_project("ask");
+    let (mut core, _) = ready_core(&root);
+    let with = core
+        .request("vnoc/tourAsk", json!({ "key": PARSE }))
+        .unwrap();
+    assert_eq!(with["text"], format!("Walk me through {PARSE}"), "{with}");
+    assert_eq!(with["words"], "Copied. Paste it to your agent.", "{with}");
+    // a node has the size of each depth 0 to 6, in the words of `vnoc tour route`: one stop at 0, never fewer as the depth grows
+    let sizes = with["sizes"].as_array().expect("a node has sizes");
+    assert_eq!(sizes.len(), 7, "{with}");
+    for (depth, size) in sizes.iter().enumerate() {
+        assert_eq!(size["depth"], depth, "{with}");
+        let stops = size["stops"].as_u64().unwrap();
+        assert!(stops >= 1 && (depth == 0 || stops >= sizes[depth - 1]["stops"].as_u64().unwrap()));
+        let minutes = size["minutes"].as_u64().unwrap();
+        let unit = if stops == 1 { "stop" } else { "stops" };
+        assert_eq!(
+            size["words"],
+            format!("{stops} {unit} · about {minutes} min"),
+            "{with}"
+        );
+    }
+    assert_eq!(sizes[0]["words"], "1 stop · about 1 min", "{with}");
+    for params in [Value::Null, json!({})] {
+        let without = core.request("vnoc/tourAsk", params).unwrap();
+        assert_eq!(
+            without,
+            json!({ "text": "Walk me through ", "words": "Add what you want explained." })
+        );
+    }
+    // the tree's own key says the same as the reference
+    let structure = core.request("vnoc/structure", Value::Null).unwrap();
+    let file = structure["root"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "orders")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let folder = core
+        .request("vnoc/tourAsk", json!({ "key": file }))
+        .unwrap();
+    assert_eq!(folder["text"], "Walk me through orders", "{folder}");
+    // a folder's depths are what it holds: the folder alone at 0, more below
+    let held = folder["sizes"].as_array().expect("a folder has sizes");
+    assert_eq!(held[0]["stops"], 1, "{folder}");
+    assert!(held[1]["stops"].as_u64().unwrap() > 1, "{folder}");
+    // the form's parts: the node, a question, how far, how much
+    let parts = core
+        .request(
+            "vnoc/tourAsk",
+            json!({
+                "key": PARSE,
+                "question": "why does it retry twice?",
+                "depth": 2,
+                "detail": "quick",
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        parts["text"],
+        format!(
+            "Walk me through {PARSE}: why does it retry twice? Cover it and what it calls, 2 levels deep. Make it a quick tour."
+        ),
+        "{parts}"
+    );
+    assert_eq!(parts["words"], "Copied. Paste it to your agent.", "{parts}");
+    assert_eq!(parts["sizes"].as_array().unwrap().len(), 7, "{parts}");
+    // depth 0 is only that; a folder is worded by what it holds
+    let only = core
+        .request("vnoc/tourAsk", json!({ "key": PARSE, "depth": 0 }))
+        .unwrap();
+    assert_eq!(
+        only["text"],
+        format!("Walk me through {PARSE}. Cover only that."),
+        "{only}"
+    );
+    let held = core
+        .request("vnoc/tourAsk", json!({ "key": file, "depth": 1 }))
+        .unwrap();
+    assert_eq!(
+        held["text"], "Walk me through orders. Cover it one level deep.",
+        "{held}"
+    );
+    // a question alone, and nothing at all (the depth and the detail have nothing to be about)
+    let only_question = core
+        .request(
+            "vnoc/tourAsk",
+            json!({ "question": "how does checkout end?" }),
+        )
+        .unwrap();
+    assert_eq!(
+        only_question,
+        json!({ "text": "Walk me through how does checkout end?", "words": "Copied. Paste it to your agent." })
+    );
+    let nothing = core
+        .request("vnoc/tourAsk", json!({ "depth": 1, "detail": "quick" }))
+        .unwrap();
+    assert_eq!(
+        nothing,
+        json!({ "text": "Walk me through ", "words": "Add what you want explained." })
+    );
+    // a depth past 6 is a bad request
+    assert_eq!(
+        core.request("vnoc/tourAsk", json!({ "key": PARSE, "depth": 7 }))
+            .unwrap_err()["code"],
+        -32602
+    );
+    assert_eq!(
+        core.request("vnoc/tourAsk", json!({ "key": "no/such.py" }))
+            .unwrap_err()["code"],
+        -32602
+    );
+    // a row's Ask for a New Tour: the root, the question, the depth
+    let out = vnoc_ok(
+        &root,
+        &[
+            "tour",
+            "start",
+            "--title",
+            "parse",
+            "--question",
+            "why twice?",
+            "--detail",
+            "quick",
+            "--json",
+        ],
+        "",
+    );
+    let id = serde_json::from_str::<Value>(&out).unwrap()["tour"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    vnoc_ok(
+        &root,
+        &["tour", "add", &id, PARSE, "--body-file", "-"],
+        ONE_STEP,
+    );
+    vnoc_ok(&root, &["tour", "finish", &id, "--no-ids"], "");
+    tell_tour_changed(&mut core, &root, &id);
+    let again = core.request("vnoc/tourAsk", json!({ "tour": id })).unwrap();
+    assert_eq!(
+        again["text"],
+        format!("Walk me through {PARSE}: why twice? Make it a quick tour."),
+        "{again}"
+    );
+    // what the tour gave, for the form to show
+    assert_eq!(
+        again["filled"],
+        json!({ "key": PARSE, "question": "why twice?", "detail": "quick" }),
+        "{again}"
+    );
+    // the other keys override the tour's: a question of its own, a depth, a detail
+    let changed = core
+        .request(
+            "vnoc/tourAsk",
+            json!({ "tour": id, "key": PARSE, "question": "why retry", "depth": 1, "detail": "detailed" }),
+        )
+        .unwrap();
+    assert_eq!(
+        changed["text"],
+        format!(
+            "Walk me through {PARSE}: why retry. Cover it and what it calls, one level deep. Make it a detailed tour."
+        ),
+        "{changed}"
+    );
+    // a depth with only the tour: its root is the node, so the depth is worded by its kind and has its sizes (without a depth the tour's root has none)
+    let by_tour = core
+        .request("vnoc/tourAsk", json!({ "tour": id, "depth": 1 }))
+        .unwrap();
+    assert_eq!(
+        by_tour["text"],
+        format!(
+            "Walk me through {PARSE}: why twice? Cover it and what it calls, one level deep. Make it a quick tour."
+        ),
+        "{by_tour}"
+    );
+    assert_eq!(
+        by_tour["sizes"].as_array().map(Vec::len),
+        Some(7),
+        "{by_tour}"
+    );
+    assert!(again.get("sizes").is_none(), "{again}");
+    // `agent` says nothing, even where the tour said quick; an empty question takes the tour's away
+    let plain = core
+        .request(
+            "vnoc/tourAsk",
+            json!({ "tour": id, "question": "", "detail": "agent" }),
+        )
+        .unwrap();
+    assert_eq!(plain["text"], format!("Walk me through {PARSE}"), "{plain}");
+    core.finish();
+}
+
+#[test]
+fn tours_first_on_a_node_lists_every_tour_with_the_ones_on_it_first() {
+    let root = tour_git_project("first-on");
+    let (mut core, _) = ready_core(&root);
+    let first = finished_tour(&root, "elsewhere", &["billing/charge.py::refund"]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let second = finished_tour(&root, "parse", &[PARSE]);
+    for id in [&first, &second] {
+        tell_tour_changed(&mut core, &root, id);
+    }
+    let plain: Vec<String> = core.request("vnoc/tours", json!({})).unwrap()["tours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(plain, [second.clone(), first.clone()], "newest first");
+    // the newest is the one on the node: the order shows nothing; the other way round it does
+    let rows = core
+        .request(
+            "vnoc/tours",
+            json!({ "first_on": "billing/charge.py::refund" }),
+        )
+        .unwrap();
+    let ids: Vec<&str> = rows["tours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [first.as_str(), second.as_str()], "{rows}");
+    assert!(rows["tours"][0]["on"]["words"].is_string());
+    assert!(rows["tours"][1]["on"].is_null());
     core.finish();
 }

@@ -626,3 +626,414 @@ impl Request for CallTree {
     type Result = CallTreeResult;
     const METHOD: &'static str = "vnoc/callTree";
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------- tours
+//
+// 03 §8 of docs/26-tours. The wire is snake_case. What a request answers is the Rust type the commands' `--json` prints (`tours::view`, `tours::place`): one
+// type for each answer. A page computes none of it. A tour request takes the tours lock and never the project's write lock, and a tour never moves the index's
+// revision.
+
+/// `vnoc/tours`: every tour, newest first, as the list draws it. `check` is the ids of the rows being drawn: each is asked for its freshness (the core's
+/// memory, the recorded check, a check: 03 §3), and a row not named says what the core already knows of it, or nothing.
+///
+/// `on` is a node: the tree's key for it (`Node::id`, what `vnoc/structure` gives), or any reference `vnoc tour list --on` takes that names it as plainly
+/// (`path::qualname`, a path, an ID; not relative to a current folder, a request has none). The answer is then only the tours that pass through that node, in the
+/// same order, each row with its `on` (`how`, `stops`, `inside`, `first`, `of`, `words`: line 2 of the row).
+pub enum Tours {}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ToursParams {
+    #[serde(default)]
+    pub check: Vec<String>,
+    #[serde(default)]
+    pub on: Option<String>,
+    /// **Check All Tours**: every tour is checked anew (`vnoc tour check --again`), through the same rungs and the same wait (a request that cannot be answered
+    /// in a moment says `askAgain`). The rows say what the check found.
+    #[serde(default)]
+    pub check_all: bool,
+    /// a node, as `on` names one: every tour is listed, those on the node first (each with its `on`), the others after them in their order. The picker of **Open Tour…**
+    #[serde(default)]
+    pub first_on: Option<String>,
+}
+
+impl Request for Tours {
+    type Params = Option<ToursParams>;
+    /// `{ "tours": [ListRowView] }`
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tours";
+}
+
+/// `vnoc/tour`: one tour as the stage plays it (`TourView`, with the place, the steps and a check), or `{ "unreadable": why }`.
+pub enum Tour {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourParams {
+    pub id: String,
+}
+
+impl Request for Tour {
+    type Params = TourParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tour";
+}
+
+/// `vnoc/tourGo`: a move, in the words of `vnoc tour go` (`next`, `prev`, `next-stop`, `prev-stop`, `back`, or a jump to `s4`, `s3.b2`, `cover`, `end`). The
+/// core makes it, writes the state file, and answers with the new place.
+pub enum TourGo {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourGoParams {
+    pub id: String,
+    #[serde(rename = "move")]
+    pub r#move: String,
+}
+
+impl Request for TourGo {
+    type Params = TourGoParams;
+    type Result = crate::tours::view::PlaceView;
+    const METHOD: &'static str = "vnoc/tourGo";
+}
+
+/// `vnoc/tourOpen`: a window shows this tour (`open`), or closed it. Sets `place.open`; answers with the place.
+pub enum TourOpen {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourOpenParams {
+    pub id: String,
+    pub open: bool,
+}
+
+impl Request for TourOpen {
+    type Params = TourOpenParams;
+    type Result = crate::tours::view::PlaceView;
+    const METHOD: &'static str = "vnoc/tourOpen";
+}
+
+/// `vnoc/tourCode`: one stop's code as it was written, for a pinned tour whose commit this repository has: `{ commit, path, lines, code, lit }` (what
+/// `vnoc tour show --as-written` gives a stop), for any stop of it, changed or not. `null` when the tour is not pinned, the commit is missing, or the stop
+/// is planned. A stop the tour does not have is an `INVALID_PARAMS` answer with the sentence `vnoc tour go` says.
+pub enum TourCode {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourCodeParams {
+    pub id: String,
+    /// `s3`
+    pub stop: String,
+}
+
+impl Request for TourCode {
+    type Params = TourCodeParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourCode";
+}
+
+/// `vnoc/tourCounts`: how many tours (not stops) pass through each node that any does: `{ "counts": { "<node key>": n } }`. The key is the tree's own, the
+/// `id` `vnoc/structure` gives the node, so a page looks a node up without computing anything. A class, a file or a folder with stops inside counts when
+/// `vnoc tour list --on` lists the tour for it. It is a request of its own and not a field of `Node`: a tour write must not need a new revision of the structure
+/// (D12). Waits for the first build. Asked again after `vnoc/toursChanged`.
+pub enum TourCounts {}
+
+impl Request for TourCounts {
+    type Params = serde_json::Value;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourCounts";
+}
+
+/// `vnoc/tourCalls`: for each written function or class stop of the tour, how many of the functions it calls (one level down, as `vnoc tour route` finds them, each counted
+/// once) are not a stop of this tour: `{ "off": { "<stop id>": n } }`. A stop with none, or of another kind, is left out. Kept in the core per tour until the tour's file or a
+/// stop's file changes, as the answers are; waits for the first build. The page draws it as `+N` on the stop's card.
+pub enum TourCalls {}
+
+impl Request for TourCalls {
+    type Params = TourParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourCalls";
+}
+
+/// `vnoc/tourHalt`: the reader pressed Stop. Writes `halt` (what `vnoc tour halt` writes); the agent's next write is refused.
+pub enum TourHalt {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourHaltParams {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourHaltResult {
+    /// `written`, `already` (stopping or stopped before), or `finished` (nothing to stop)
+    pub halt: String,
+    /// the tour's state now: `writing`, `stopping`, `stopped` or `finished`
+    pub state: String,
+}
+
+impl Request for TourHalt {
+    type Params = TourHaltParams;
+    type Result = TourHaltResult;
+    const METHOD: &'static str = "vnoc/tourHalt";
+}
+
+/// `vnoc/tourPin`: the pin of one tour (`vnoc tour pin`): `{ state: "pinned", commit }`, or `{ state: "not_pinned", reasons: [..] }` with the stale stops, the
+/// files that are not committed (`reasons[].files`), git's own words. With `commit`, the files that are the one thing in the way are committed first, exactly those
+/// files and the `node.toml` of the tour's IDs, with `message` (`Code for the tour "<title>"` by default); the answer then has `committed`. A tour that is
+/// pinned at a commit HEAD has behind it answers `already: true` and does nothing. With `dry` the answer is the same and nothing is written: `pinned` means it would be.
+/// Each reason in the answer has `words`, the core's sentence for it (the pages make none).
+pub enum TourPin {}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct TourPinCommit {
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourPinParams {
+    pub id: String,
+    #[serde(default)]
+    pub commit: Option<TourPinCommit>,
+    /// answer as a pin would and write nothing (no pin record, no file, no commit): `pinned` says it would be pinned now, and the reasons say why not. Not with `commit`
+    #[serde(default)]
+    pub dry: bool,
+}
+
+impl Request for TourPin {
+    type Params = TourPinParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourPin";
+}
+
+/// `vnoc/tourIds`: gives the nodes of the tour's stops an ID (`vnoc tour ids`): the ID lines are written into the code through the editor, `node.toml` beside
+/// them, and the tour is told where its lines went, so it stays fresh. Answers `{ stops, changed, recorded }`: `changed` is the files that were changed.
+pub enum TourIds {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourIdsParams {
+    pub id: String,
+}
+
+impl Request for TourIds {
+    type Params = TourIdsParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourIds";
+}
+
+/// `vnoc/tourEdit`: the tour's title and question (`vnoc tour edit`), in the command's words when one is refused. Answers what was set, with `words`: the core's sentence for it.
+pub enum TourEdit {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourEditParams {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub question: Option<String>,
+}
+
+impl Request for TourEdit {
+    type Params = TourEditParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourEdit";
+}
+
+/// `vnoc/tourShare`: moves the tour's file to the project's folder (`share: true`) or back to the private one. Answers `{ tour, folder, path, pinned, words }`: `words` is the
+/// core's sentence (*"Moved to `.vnoc/tours/`. Commit it to share it."*, and when the tour is not pinned, what teammates will see), `pinned` says whether the page offers **Pin**.
+pub enum TourShare {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourShareParams {
+    pub id: String,
+    pub share: bool,
+}
+
+impl Request for TourShare {
+    type Params = TourShareParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourShare";
+}
+
+/// `vnoc/tourDelete`: the tour's file and state go to the trash (`vnoc tour delete`). Answers `{ token, words }`: the trash entry `vnoc/tourRestore` takes, and the core's
+/// sentence (*"Deleted the tour of checkout_order."*), which the page shows with **Undo** after it. A tour being written is refused, in words.
+pub enum TourDelete {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourDeleteParams {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourDeleteResult {
+    pub token: String,
+    pub words: String,
+}
+
+impl Request for TourDelete {
+    type Params = TourDeleteParams;
+    type Result = TourDeleteResult;
+    const METHOD: &'static str = "vnoc/tourDelete";
+}
+
+/// `vnoc/tourDeleteFinished`: **Delete Finished Tours**: every tour that is private, finished and readable goes to the trash, as `vnoc/tourDelete` does one. Answers
+/// `{ deleted: [{ id, token }], words }`: one `token` for each (the page restores them all with one Undo), and the core's sentence (*"Deleted 3 finished tours."*). A tour that is
+/// being written or stopped, and a shared one, is left.
+pub enum TourDeleteFinished {}
+
+impl Request for TourDeleteFinished {
+    type Params = serde_json::Value;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourDeleteFinished";
+}
+
+/// `vnoc/tourRestore`: Undo of a delete: the file and the state come back as they were. Answers `{ tour, folder }`.
+pub enum TourRestore {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourRestoreParams {
+    pub token: String,
+}
+
+impl Request for TourRestore {
+    type Params = TourRestoreParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourRestore";
+}
+
+/// `vnoc/tourSettings`: the two settings of `[tours]` in `.vnoc/vnoc.toml` (`vnoc tour settings`): `ids` and `commit`, each `always`, `ask` or `never`. With a
+/// param, that key is changed first and nothing else in the file moves. Answers both, with where each comes from.
+pub enum TourSettings {}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct TourSettingsParams {
+    #[serde(default)]
+    pub ids: Option<String>,
+    #[serde(default)]
+    pub commit: Option<String>,
+}
+
+impl Request for TourSettings {
+    type Params = Option<TourSettingsParams>;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourSettings";
+}
+
+/// `vnoc/tourExport`: the tour as one nested document (`vnoc tour export`, 02 §10), as text: exactly what the command prints.
+pub enum TourExport {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourExportParams {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourExportResult {
+    pub text: String,
+}
+
+impl Request for TourExport {
+    type Params = TourExportParams;
+    type Result = TourExportResult;
+    const METHOD: &'static str = "vnoc/tourExport";
+}
+
+/// `vnoc/tourImport`: a document as a new tour, or (`replace`) as that tour made anew (`vnoc tour import [--replace]`, 02 §10). Answers `{ id, words }`.
+/// A document that is refused is **data**, not an error: `{ refused: [{ place, words, line? }], words }` with every refusal of the whole document (nothing was
+/// written): `place` is the JSON path in the text (`stops[0].blocks[0].text`), `words` the core's sentence, `line` the line of the text it is on when it is known.
+/// A tour that is being written, one that does not exist and the like are errors, in the command's words.
+pub enum TourImport {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourImportParams {
+    pub text: String,
+    #[serde(default)]
+    pub replace: Option<String>,
+}
+
+impl Request for TourImport {
+    type Params = TourImportParams;
+    type Result = serde_json::Value;
+    const METHOD: &'static str = "vnoc/tourImport";
+}
+
+/// `vnoc/tourAsk`: the sentence to paste to an agent to ask for a tour, and the line that says so (**Ask for a Tour…**, design/07 §7), built from the form's
+/// parts. `key` is the node (as `vnoc/tours`' `on` names one); `question` is what the person wants to understand; `depth` is how many levels from the node, 0
+/// (only that) to 6, absent when the agent decides; `detail` is `agent` (says nothing), `quick`, `normal` or `detailed`. With no node and no question the
+/// sentence is `Walk me through ` and the words say to add what is wanted. `tour` is a row's **Ask for a New Tour**: that tour's root, question and detail fill
+/// what the other keys do not give (a `question` of `""` takes the tour's away), and `filled` answers with them, for the form to show. Answers
+/// `{ text, words, filled?, sizes? }`; `sizes` (when `key` is a node the route can start at) is, for each depth 0 to 6, the stops and minutes `vnoc tour route`
+/// counts, with the words for them. A node whose size is not known in about a second is `askAgain`.
+pub enum TourAsk {}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct TourAskParams {
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub question: Option<String>,
+    #[serde(default)]
+    pub depth: Option<u32>,
+    #[serde(default)]
+    pub detail: Option<crate::tours::document::AskDetail>,
+    #[serde(default)]
+    pub tour: Option<String>,
+}
+
+/// What a tour gave the form: the address of its root (none when no stop is written), its question, its detail as a choice.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourAskFilled {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+    pub detail: crate::tours::document::AskDetail,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourAskResult {
+    pub text: String,
+    pub words: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filled: Option<TourAskFilled>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sizes: Option<Vec<TourAskSize>>,
+}
+
+/// What one depth of the route is: its stops and minutes, and the words for them (`9 stops · about 6 min`).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourAskSize {
+    pub depth: u32,
+    pub stops: usize,
+    pub minutes: usize,
+    pub words: String,
+}
+
+impl Request for TourAsk {
+    type Params = Option<TourAskParams>;
+    type Result = TourAskResult;
+    const METHOD: &'static str = "vnoc/tourAsk";
+}
+
+/// `vnoc/toursChanged` (core → editor): these tours changed (a file of the tours store appeared, changed or went), or the answer the core gave about their
+/// freshness no longer holds. Ask again for what is shown.
+pub enum ToursChanged {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ToursChangedParams {
+    pub ids: Vec<String>,
+}
+
+impl Notification for ToursChanged {
+    type Params = ToursChangedParams;
+    const METHOD: &'static str = "vnoc/toursChanged";
+}
+
+/// `vnoc/tourPlaceChanged` (core → editor): the place of a tour was moved by another process (`vnoc tour go`). Not sent for the core's own `vnoc/tourGo`.
+pub enum TourPlaceChanged {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TourPlaceChangedParams {
+    pub id: String,
+    pub place: crate::tours::view::PlaceView,
+}
+
+impl Notification for TourPlaceChanged {
+    type Params = TourPlaceChangedParams;
+    const METHOD: &'static str = "vnoc/tourPlaceChanged";
+}

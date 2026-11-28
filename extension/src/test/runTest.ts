@@ -34,11 +34,11 @@ function crlfAll(dir: string): void {
   }
 }
 
-async function main() {
+/** A copy of the fixtures, as a git repository: one window's folder. */
+function makeWorkspace(tmp: string, name: string): string {
   const root = path.resolve(__dirname, "../..");
   const repo = path.resolve(root, "..");
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-ext-"));
-  const workspace = path.join(tmp, "ws");
+  const workspace = path.join(tmp, name);
   fs.mkdirSync(workspace);
   fs.cpSync(path.join(repo, "crates/vnoc-domain/tests/fixtures"), workspace, { recursive: true });
   // a small project in a second language, beside the first (its own folder: the domain crate's fixtures are golden-tested and must not change)
@@ -48,16 +48,49 @@ async function main() {
   // a git repository, so the refactor suite can `git mv` (the runners have no git identity: it is given here)
   const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=V-NOC test", "-c", "user.email=test@vnoc.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: workspace, stdio: "ignore" });
   git("init", "-q");
+  // the identity is saved in the repository too: the core's own `git commit` (Commit and Pin) has none of the `-c` flags above
+  git("config", "user.name", "V-NOC test");
+  git("config", "user.email", "test@vnoc.invalid");
+  git("config", "commit.gpgsign", "false");
   git("add", "-A");
   git("commit", "-q", "-m", "fixture");
+  return workspace;
+}
+
+/**
+ * A window that another application covers (or that is in the background) is a hidden page to Chromium: a webview in it gets no animation frames, React Flow's fit never ends, and a reveal that waits for it
+ * never does (the suites' "timed out waiting for the canvas to do the reveal"). The suite is run from a terminal, with other work going on, so these windows are not throttled.
+ */
+const NO_THROTTLING = ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-features=CalculateNativeWinOcclusion"];
+
+/** The suites that run in a window of their own, with a core whose first build is held past the time a request may wait, and whose count of a tour's calls never ends (`suite/waits.test.ts`). */
+const HELD = ["waits"];
+
+/** One window, one run of its suites. `env` is for the suites and, through the extension, for the core. */
+async function window(tmp: string, name: string, env: Record<string, string>): Promise<void> {
+  const root = path.resolve(__dirname, "../..");
+  const workspace = makeWorkspace(tmp, `ws-${name}`);
+  const userData = path.join(tmp, `user-${name}`);
   await runTests({
     vscodeExecutablePath: await vscodeExecutable(),
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(root, "out/test/suite/index"),
-    launchArgs: [workspace, "--disable-extensions", `--user-data-dir=${path.join(tmp, "user")}`, `--extensions-dir=${path.join(tmp, "ext")}`, "--disable-workspace-trust"],
+    launchArgs: [workspace, ...NO_THROTTLING, "--disable-extensions", `--user-data-dir=${userData}`, `--extensions-dir=${path.join(tmp, `ext-${name}`)}`, "--disable-workspace-trust"],
     // the `cli` suite installs the `vnoc` command: into this folder, never the real ~/.local/bin (and nothing of the user's PATH)
-    extensionTestsEnv: { VNOC_TEST_WORKSPACE: workspace, VNOC_CLI_DIR: path.join(tmp, "cli-bin") },
+    extensionTestsEnv: { VNOC_TEST_WORKSPACE: workspace, VNOC_CLI_DIR: path.join(tmp, `cli-bin-${name}`), ...env },
   });
+}
+
+async function main() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vnoc-ext-"));
+  const asked = (process.env.VNOC_SUITE ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const main = asked.length === 0 || asked.some((s) => !HELD.includes(s));
+  const held = asked.length === 0 || asked.some((s) => HELD.includes(s));
+  const failed: unknown[] = [];
+  // the ordinary window first (all its suites); then the one whose core is held. A failure in the first does not stop the second
+  if (main) await window(tmp, "main", {}).catch((e) => failed.push(e));
+  if (held) await window(tmp, "held", { VNOC_WINDOW: "held", VNOC_WAIT_LIMIT_MS: "2000", VNOC_HOLD_FIRST_BUILD_MS: "12000", VNOC_HOLD_TOUR_CALLS_MS: "900000" }).catch((e) => failed.push(e));
+  if (failed.length > 0) throw failed[0];
 }
 main().catch((e) => {
   console.error(e);

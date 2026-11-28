@@ -1,22 +1,25 @@
 import { useEffect, useMemo } from "react";
 
 import { callFacts } from "@vnoc/shared/calls.ts";
+import { beatOf } from "@vnoc/shared/tourWriting.ts";
 import { Codicon } from "@/components/Codicon.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu.tsx";
 import { post } from "@/host.ts";
 import { useCalls } from "@/state/calls.ts";
 import { dispatch, useSession } from "@/state/session.ts";
 import { cn } from "@/lib/utils.ts";
+import { useTour } from "../../tour/store.ts";
 import { CHIP, filled, outlined } from "./chipStyle.ts";
 import { type ContextChip, chipsFor } from "./chipsFor.ts";
 
-/** One chip: the name activates the context; an EXPLORE chip has a ✕ that closes it (and its children). */
-function Chip({ chip }: { chip: ContextChip }) {
+/** One chip: the name activates the context; an EXPLORE chip has a ✕ that closes it (and its children). A tour's chip has a dot while the tour is being written. */
+function Chip({ chip, dot }: { chip: ContextChip; dot?: "pulsing" | "still" }) {
   return (
     <span className={cn(CHIP, "max-w-40 pr-1", chip.active ? filled : outlined, !chip.closable && "pr-1.5")} data-active={chip.active} data-context={chip.id}>
       <button type="button" className="flex min-w-0 items-center gap-1 outline-none" title={chip.tip} aria-pressed={chip.active} onClick={() => dispatch({ type: "activate", id: chip.id })}>
-        {chip.closable && <Codicon name="compass" className="flex-none text-[13px]" />}
+        {chip.kind === "explore" && <Codicon name="compass" className="flex-none text-[13px]" />}
         <span className="truncate">{chip.label}</span>
+        {dot && <span className={cn("tour-dot", dot === "pulsing" && "tour-dot-pulsing")} data-part="writing-dot" data-dot={dot} title={dot === "pulsing" ? "The agent is writing this tour" : "The agent is not being heard from"} />}
       </button>
       {chip.closable && (
         <button type="button" className="flex size-4 flex-none items-center justify-center rounded-[3px] hover:bg-toolbar-hover" title={`Close ${chip.label}`} aria-label={`Close ${chip.label}`} onClick={() => dispatch({ type: "closeContext", id: chip.id })}>
@@ -55,7 +58,20 @@ export function ContextChips({ width }: { width: number }) {
   const trees = useCalls((s) => s.trees);
   const chips = useMemo(() => chipsFor({ contexts, order, active }, width, (call) => callFacts(trees, call)), [contexts, order, active, width, trees]);
   // what the bar draws, for the extension's test suite: the contexts, and which one is active
-  const report = useMemo(() => (chips === null ? [] : (chips.mode === "one" ? chips.all : [...chips.shown, ...chips.folded]).map((c) => ({ id: c.id, label: c.label, active: c.active }))), [chips]);
+  // a tour's chip has a writing dot while the tour is being written: it pulses unless the agent has gone quiet (the core's words: `state`, and the list's `quiet`)
+  const held = useTour();
+  const dots = useMemo(() => {
+    const out: Record<string, "pulsing" | "still"> = {};
+    for (const id of order) {
+      const c = contexts[id];
+      if (c.kind !== "tour" || held.id !== c.tour || !held.view || !("stops" in held.view)) continue;
+      const beat = beatOf(held.view);
+      if (beat === "writing") out[id] = "pulsing";
+      else if (beat === "quiet" || beat === "stopping") out[id] = "still";
+    }
+    return out;
+  }, [order, contexts, held]);
+  const report = useMemo(() => (chips === null ? [] : (chips.mode === "one" ? chips.all : [...chips.shown, ...chips.folded]).map((c) => ({ id: c.id, label: c.label, active: c.active, ...(dots[c.id] ? { dot: dots[c.id] } : {}) }))), [chips, dots]);
   useEffect(() => post({ type: "chipsDrawn", chips: report }), [report]);
   if (!chips) return null;
   return (
@@ -65,10 +81,10 @@ export function ContextChips({ width }: { width: number }) {
       ) : (
         <>
           {/* MAIN first; the folded ones are the earliest EXPLORE chips, so they sit right after it */}
-          <Chip chip={chips.shown[0]} />
+          <Chip chip={chips.shown[0]} dot={dots[chips.shown[0].id]} />
           {chips.folded.length > 0 && <ContextMenu label={`+${chips.folded.length}`} items={chips.folded} filledChip={false} tip="More explored calls" />}
           {chips.shown.slice(1).map((c) => (
-            <Chip key={c.id} chip={c} />
+            <Chip key={c.id} chip={c} dot={dots[c.id]} />
           ))}
         </>
       )}

@@ -1,0 +1,2 @@
+finished: 4 stops, 7 steps · pinned at <commit>
+ask the user  4 stops have no ID: the tour will not follow a rename.        vnoc tour ids <tour>

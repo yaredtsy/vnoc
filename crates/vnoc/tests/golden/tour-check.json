@@ -1,0 +1,61 @@
+{
+  "command": "tour check",
+  "schema": 1,
+  "stale": 1,
+  "tours": [
+    {
+      "at": "<time>",
+      "changed": 3,
+      "fresh": false,
+      "from": "record",
+      "gone": 0,
+      "id": "<tour>",
+      "readable": true,
+      "stops": [
+        {
+          "blocks": [
+            {
+              "id": "s1.b1",
+              "state": "changed"
+            },
+            {
+              "id": "s1.b2",
+              "state": "changed"
+            }
+          ],
+          "id": "s1",
+          "lines": [
+            11,
+            22
+          ],
+          "name": "retry_charge",
+          "path": "billing/charge.py",
+          "state": "changed"
+        },
+        {
+          "blocks": [],
+          "id": "s2",
+          "lines": [
+            14,
+            15
+          ],
+          "name": "retry_charge.<locals>.one_try",
+          "path": "billing/charge.py",
+          "state": "changed"
+        },
+        {
+          "blocks": [],
+          "id": "s4",
+          "lines": [
+            14,
+            15
+          ],
+          "name": "retry_charge.<locals>.one_try",
+          "path": "billing/charge.py",
+          "state": "changed"
+        }
+      ]
+    }
+  ],
+  "unreadable": 0
+}

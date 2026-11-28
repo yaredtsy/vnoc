@@ -1,0 +1,54 @@
+{
+  "code": [
+    "def retry_charge(gateway, order, attempts=MAX_ATTEMPTS):",
+    "    \"\"\"Charge the order, trying again when the gateway drops the call.\"\"\"",
+    "",
+    "    def one_try():",
+    "        return gateway.charge(order.total)",
+    "",
+    "    for _ in range(attempts):",
+    "        try:",
+    "            return one_try()",
+    "        except ConnectionError:",
+    "            continue",
+    "    raise ChargeError(f\"order {order.number}: the gateway kept dropping the call\")"
+  ],
+  "commit": "<commit>",
+  "lines": [
+    11,
+    22
+  ],
+  "lit": [
+    [
+      14,
+      15
+    ],
+    [
+      15,
+      15
+    ],
+    [
+      17,
+      22
+    ]
+  ],
+  "path": "billing/charge.py",
+  "steps": {
+    "s1": [
+      11,
+      22
+    ],
+    "s1.b1": [
+      14,
+      15
+    ],
+    "s1.b2": [
+      15,
+      15
+    ],
+    "s1.b3": [
+      17,
+      22
+    ]
+  }
+}

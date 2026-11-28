@@ -1,0 +1,51 @@
+{
+  "blocks": [
+    {
+      "first_line": "def one_try():",
+      "id": "s1.b1",
+      "lines": [
+        14,
+        15
+      ],
+      "title": "One attempt, as a function"
+    },
+    {
+      "first_line": "return gateway.charge(order.total)",
+      "id": "s1.b2",
+      "lines": [
+        15,
+        15
+      ],
+      "parent": "s1.b1",
+      "title": "The call itself"
+    },
+    {
+      "first_line": "for _ in range(attempts):",
+      "id": "s1.b3",
+      "lines": [
+        17,
+        22
+      ],
+      "title": "Try, and try again"
+    }
+  ],
+  "command": "tour add",
+  "kind": "function",
+  "lines": [
+    11,
+    22
+  ],
+  "number": 1,
+  "path": "billing/charge.py",
+  "planned": 0,
+  "schema": 1,
+  "steps": [
+    "s1",
+    "s1.b1",
+    "s1.b2",
+    "s1.b3"
+  ],
+  "stop": "s1",
+  "tour": "<tour>",
+  "written": 1
+}

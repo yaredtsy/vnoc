@@ -1,0 +1,22 @@
+{
+  "already": false,
+  "command": "tour finish",
+  "ids": {
+    "command": "vnoc tour ids <tour>",
+    "missing": 1,
+    "state": "ask"
+  },
+  "left_the_route": 0,
+  "pin": {
+    "reasons": [
+      {
+        "code": "not_a_repository"
+      }
+    ],
+    "state": "not_pinned"
+  },
+  "schema": 1,
+  "steps": 4,
+  "stops": 1,
+  "tour": "<tour>"
+}

@@ -1,0 +1,30 @@
+{
+  "command": "tour list",
+  "problems": [],
+  "schema": 1,
+  "tours": [
+    {
+      "author": "claude-code",
+      "folder": "private",
+      "id": "<tour>",
+      "minutes": 2,
+      "offers": null,
+      "pinned": false,
+      "place": null,
+      "planned": 0,
+      "question": "what happens when the gateway drops the call",
+      "quiet": false,
+      "readable": true,
+      "root": {
+        "kind": "function",
+        "name": "retry_charge"
+      },
+      "state": "writing",
+      "state_word": "writing",
+      "steps": 4,
+      "title": "retry_charge",
+      "words": "1 stop · <when>",
+      "written": 1
+    }
+  ]
+}
